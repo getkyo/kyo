@@ -6,8 +6,6 @@ import scala.annotation.targetName
 import scala.compiletime.summonFrom
 import scala.deriving.Mirror
 
-// TODO this file is quite large, could we break it up? any internal impls that coulg go to the internal package?
-
 /** SQL Abstract Syntax Tree for the Sql DSL.
   *
   * Holds every AST node, every typeclass, and every DSL method that constructs an AST node. The companion `Sql` object exposes top-level
@@ -66,7 +64,7 @@ object SqlAst:
       * design. CONTRIBUTING.md §195 restricts symbolic operators to `kyo-data`, `kyo-prelude`, and `kyo-core`; kyo-sql is not named in that
       * list. A SQL expression DSL is a categorically different context: the operators mirror the SQL they compile to (`col >= 18 &&
       * col.name != ""`), and every operator maps 1-to-1 to a SQL construct with no natural named-method equivalent. This exemption is
-      * deliberate and documented here per the maintainer decision recorded in the audit.
+      * deliberate.
       */
     sealed trait Term[A] extends SqlAst[A]:
 
@@ -535,9 +533,8 @@ object SqlAst:
           *
           * ===Static-SQL note===
           *
-          * The builder chain `Sql.windowSpec.partitionBy(x).rowNumber` lifts cleanly through the compile-time `.runStatic` path (Phase 9b
-          * fix to `resolveBindings`'s Select-of-construction fold, the previous limitation requiring an explicit `WindowSpec(...)`
-          * constructor at static call sites is gone).
+          * The builder chain `Sql.windowSpec.partitionBy(x).rowNumber` lifts cleanly through the compile-time `.runStatic` path; no
+          * explicit `WindowSpec(...)` constructor is required at static call sites.
           *
           * ===Replace semantics===
           *

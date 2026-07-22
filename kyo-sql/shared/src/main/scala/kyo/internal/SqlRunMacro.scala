@@ -27,7 +27,7 @@ object SqlRunMacro:
       * Each subtype `<: SqlAst.Executable[?]` by construction (verified at `SqlAst.scala`: `Query[A] extends Executable[A]`,
       * `Action[A] extends Executable[A]`, `Fragment[A] extends Executable[A]`). The widening is a safe upcast: `asExprOf` is the macro-API
       * analogue of an unchecked Scala upcast, and the subtype relationship makes it well-typed. Factored here so the cast is justified once
-      * rather than inline at each call site (PHASE-7 audit W-2).
+      * rather than inline at each call site.
       */
     private def widenStatement[E](e: Expr[E])(using Quotes): Expr[SqlAst.Executable[?]] =
         // Safe upcast: every caller passes Expr[Query[A]] / Expr[Insert[T, F]] / Expr[Update[T, F]] /

@@ -37,12 +37,11 @@ import kyo.net.NetAddress
   *
   * ==Unsafe usage==
   *
-  * `ConnectionPool`'s `poll`, `release`, `discard`, `tryReserve`, `unreserve`, and `close` all require `AllowUnsafe`, they operate on a
-  * lock-free Vyukov ring buffer that does CAS directly on atomic longs. Each call site carries a `// Unsafe:` justification comment as
-  * required by STEERING.md. The `isAlive` and `discard` callbacks passed to `ConnectionPool.init` are invoked by the pool while inside an
-  * `AllowUnsafe` context, outside of any Kyo fiber suspension. Running `conn.isOpen` / `conn.close` there requires evaluating a `< Sync`
-  * effect synchronously via `Sync.Unsafe.evalOrThrow`. This is STEERING case 2 (cleanup / health-check callback invoked outside the Kyo
-  * fiber boundary).
+  * `ConnectionPool`'s `poll`, `release`, `discard`, `tryReserve`, `unreserve`, and `close` all require `AllowUnsafe`: they operate on a
+  * lock-free Vyukov ring buffer that does CAS directly on atomic longs. Each call site carries a `// Unsafe:` justification comment. The
+  * `isAlive` and `discard` callbacks passed to `ConnectionPool.init` are invoked by the pool while inside an `AllowUnsafe` context,
+  * outside of any Kyo fiber suspension. Running `conn.isOpen` / `conn.close` there requires evaluating a `< Sync` effect synchronously via
+  * `Sync.Unsafe.evalOrThrow` (cleanup / health-check callback invoked outside the Kyo fiber boundary).
   */
 sealed trait SqlClientBackend:
 
@@ -309,7 +308,7 @@ sealed trait SqlClientBackend:
     protected val slotChans: ConcurrentHashMap[SqlConfig.Address, Channel[Unit]]
 
     // Unsafe: requires AllowUnsafe to call Sync.Unsafe.evalOrThrow.
-    // STEERING case 2: lazy resource initialisation run synchronously from inside Sync.Unsafe.defer.
+    // Unsafe: lazy resource initialisation run synchronously from inside Sync.Unsafe.defer.
     protected def getOrCreateSlotChanUnsafe(address: SqlConfig.Address, maxConns: Int)(using AllowUnsafe, Frame): Channel[Unit] =
         slotChans.computeIfAbsent(
             address,
@@ -594,7 +593,7 @@ final class PostgresSqlClientBackend private[client] (
         config: SqlConfig
     )(f: PostgresConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe and all pool ops require AllowUnsafe.
-        // STEERING case 2: bridging to kyo-net ConnectionPool.
+        // Unsafe: bridging to kyo-net ConnectionPool.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             val netKey = NetAddress.Tcp(address.host, address.port)
             withSlotS[A, S](slotCh, config) {
@@ -787,7 +786,7 @@ final class PostgresSqlClientBackend private[client] (
         // pool.close() sets closed=true so tryReserve returns false, no new connections are established.
         // Slot channels are kept open during the grace period so in-flight connections can offer slots back.
         // Unsafe: pool.close() is a lock-free drain; requires AllowUnsafe.
-        // STEERING case 2: cleanup on shutdown path.
+        // Unsafe: cleanup on shutdown path.
         val idleConnsK: Chunk[PostgresConnection] < Sync =
             Sync.Unsafe.defer(pool.close())
         idleConnsK.flatMap { idleConns =>
@@ -829,7 +828,7 @@ final class PostgresSqlClientBackend private[client] (
             drainK.andThen {
                 // Step 3: Force-close slot channels and remaining connections.
                 // Unsafe: channel.close and pool cleanup require AllowUnsafe.
-                // STEERING case 2: cleanup on shutdown path.
+                // Unsafe: cleanup on shutdown path.
                 Sync.Unsafe.defer {
                     slotChans.forEach { (_, ch) =>
                         discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](ch.close)))
@@ -900,7 +899,7 @@ final class PostgresSqlClientBackend private[client] (
         config: SqlConfig
     )(f: PostgresConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe runs Channel.initUnscoped synchronously on the hot path.
-        // STEERING case 2: lazy initialisation of a Channel that is pure-Sync.
+        // Unsafe: lazy initialisation of a Channel that is pure-Sync.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             withSlot(slotCh, config) {
                 acquireAndRun(address, password, config)(f)
@@ -929,7 +928,7 @@ final class PostgresSqlClientBackend private[client] (
                         Result.Failure(SqlConnectionQueryTimeoutException(config.queryTimeout))
                     )(f(conn))
         // Unsafe: pool operations require AllowUnsafe (lock-free CAS on ring buffer).
-        // STEERING case 2: bridging to kyo-net ConnectionPool whose API requires AllowUnsafe.
+        // Unsafe: bridging to kyo-net ConnectionPool whose API requires AllowUnsafe.
         Sync.Unsafe.defer(spinAcquire(netKey)).flatMap {
             case Present(conn) =>
                 metrics.recordAcquire.andThen(releaseOnExit(netKey, conn)(timedF(conn)))
@@ -979,7 +978,7 @@ final class PostgresSqlClientBackend private[client] (
         Log.use { logger =>
             Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
-                // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
+                // Unsafe: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
                     if SqlClientBackend.shouldReleaseOnExit(error) then
                         poolRelease(netKey, conn)
@@ -1019,7 +1018,7 @@ final class PostgresSqlClientBackend private[client] (
         Log.use { logger =>
             Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
-                // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
+                // Unsafe: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
                     if SqlClientBackend.shouldReleaseOnExit(error) then
                         poolRelease(netKey, conn)
@@ -1057,7 +1056,7 @@ final class PostgresSqlClientBackend private[client] (
     )(using Frame): PostgresConnection < (Async & Abort[SqlException] & Scope) =
         val netKey = NetAddress.Tcp(address.host, address.port)
         // Unsafe: getOrCreateSlotChanUnsafe and pool ops need AllowUnsafe.
-        // STEERING case 2: bridging to kyo-net ConnectionPool.
+        // Unsafe: bridging to kyo-net ConnectionPool.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             // Take slot then register slot release in Scope.ensure BEFORE attempting connect.
             // If pgConnect fails, the surrounding Scope still closes and releases the slot,
@@ -1111,7 +1110,7 @@ final class PostgresSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): PostgresConnection < (Async & Abort[SqlException] & Scope) =
         // Unsafe: pool ops (spinAcquire, poolRelease, poolUnreserve, poolDiscard) require AllowUnsafe; Scope.ensure callback runs outside fiber suspension.
-        // STEERING case 2: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
+        // Unsafe: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
         // Slot release is owned by the OUTER Scope.ensure in acquireStreamConn, the per-conn
         // Scope.ensure here only handles connection lifecycle.
         // G-Leak-3 fix: on stream abort we check whether the error is protocol-fatal.
@@ -1122,7 +1121,7 @@ final class PostgresSqlClientBackend private[client] (
             case Present(conn) =>
                 Scope.ensure { error =>
                     // Unsafe: pool ops require AllowUnsafe.
-                    // STEERING case 2: Scope.ensure callback runs outside fiber suspension.
+                    // Unsafe: Scope.ensure callback runs outside fiber suspension.
                     Sync.Unsafe.defer {
                         error match
                             case Absent =>
@@ -1143,7 +1142,7 @@ final class PostgresSqlClientBackend private[client] (
                     pgConnect(address, password, config).flatMap { conn =>
                         Scope.ensure { error =>
                             // Unsafe: pool ops require AllowUnsafe.
-                            // STEERING case 2: Scope.ensure callback runs outside fiber suspension.
+                            // Unsafe: Scope.ensure callback runs outside fiber suspension.
                             Sync.Unsafe.defer {
                                 error match
                                     case Absent =>
@@ -1234,7 +1233,7 @@ final class PostgresSqlClientBackend private[client] (
                     Abort.fail(SqlConnectionTypeLookupMissingException(Chunk.from(missing)))
                 else
                     // Unsafe: AtomicRef.unsafe.set is AllowUnsafe; inside Sync.Unsafe.defer which is the approved bridging pattern.
-                    // STEERING case 2: setting a per-connection AtomicRef during connection startup, before the connection is exposed.
+                    // Unsafe: setting a per-connection AtomicRef during connection startup, before the connection is exposed.
                     Sync.Unsafe.defer(conn.typeRegistryRef.unsafe.set(foundMap))
                 end if
             }
@@ -1416,7 +1415,7 @@ end PostgresSqlClientBackend
   * ==Unsafe usage==
   *
   * Same as [[PostgresSqlClientBackend]]: `ConnectionPool` operations (`poll`, `release`, `discard`, `tryReserve`, `unreserve`, `close`) require
-  * `AllowUnsafe`. `isAlive` / `discard` callbacks are STEERING case 2.
+  * `AllowUnsafe`. `isAlive` / `discard` callbacks run outside the fiber suspension boundary.
   */
 final class MysqlSqlClientBackend private[client] (
     private val pool: ConnectionPool[NetAddress, MysqlConnection],
@@ -1596,7 +1595,7 @@ final class MysqlSqlClientBackend private[client] (
         config: SqlConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe and all pool ops require AllowUnsafe.
-        // STEERING case 2: bridging to kyo-net ConnectionPool.
+        // Unsafe: bridging to kyo-net ConnectionPool.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             val netKey = NetAddress.Tcp(address.host, address.port)
             withSlotS[A, S](slotCh, config) {
@@ -1838,7 +1837,7 @@ final class MysqlSqlClientBackend private[client] (
         // pool.close() sets closed=true so tryReserve returns false, no new connections are established.
         // Slot channels are kept open during the grace period so in-flight connections can offer slots back.
         // Unsafe: pool.close() is a lock-free drain; requires AllowUnsafe.
-        // STEERING case 2: cleanup on shutdown path.
+        // Unsafe: cleanup on shutdown path.
         val idleConnsK: Chunk[MysqlConnection] < Sync =
             Sync.Unsafe.defer(pool.close())
         idleConnsK.flatMap { idleConns =>
@@ -1880,7 +1879,7 @@ final class MysqlSqlClientBackend private[client] (
             drainK.andThen {
                 // Step 3: Force-close slot channels and remaining connections.
                 // Unsafe: channel.close and pool cleanup require AllowUnsafe.
-                // STEERING case 2: cleanup on shutdown path.
+                // Unsafe: cleanup on shutdown path.
                 Sync.Unsafe.defer {
                     slotChans.forEach { (_, ch) =>
                         discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](ch.close)))
@@ -1952,7 +1951,7 @@ final class MysqlSqlClientBackend private[client] (
         config: SqlConfig
     )(f: MysqlConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe runs Channel.initUnscoped synchronously on the hot path.
-        // STEERING case 2: lazy initialisation of a Channel that is pure-Sync.
+        // Unsafe: lazy initialisation of a Channel that is pure-Sync.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             withSlot(slotCh, config) {
                 acquireAndRun(address, password, config)(f)
@@ -1979,7 +1978,7 @@ final class MysqlSqlClientBackend private[client] (
                         Result.Failure(SqlConnectionQueryTimeoutException(config.queryTimeout))
                     )(f(conn))
         // Unsafe: pool operations require AllowUnsafe (lock-free CAS on ring buffer).
-        // STEERING case 2: bridging to kyo-net ConnectionPool whose API requires AllowUnsafe.
+        // Unsafe: bridging to kyo-net ConnectionPool whose API requires AllowUnsafe.
         Sync.Unsafe.defer(spinAcquire(netKey)).flatMap {
             case Present(conn) =>
                 conn.connectionId.get.flatMap { connId =>
@@ -2021,7 +2020,7 @@ final class MysqlSqlClientBackend private[client] (
         Log.use { logger =>
             Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
-                // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
+                // Unsafe: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
                     if SqlClientBackend.shouldReleaseOnExit(error) then
                         poolRelease(netKey, conn)
@@ -2061,7 +2060,7 @@ final class MysqlSqlClientBackend private[client] (
         Log.use { logger =>
             Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
-                // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
+                // Unsafe: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
                     if SqlClientBackend.shouldReleaseOnExit(error) then
                         poolRelease(netKey, conn)
@@ -2100,7 +2099,7 @@ final class MysqlSqlClientBackend private[client] (
     )(using Frame): MysqlConnection < (Async & Abort[SqlException] & Scope) =
         val netKey = NetAddress.Tcp(address.host, address.port)
         // Unsafe: getOrCreateSlotChanUnsafe and pool ops need AllowUnsafe.
-        // STEERING case 2: bridging to kyo-net ConnectionPool.
+        // Unsafe: bridging to kyo-net ConnectionPool.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             // Take slot then register slot release in Scope.ensure BEFORE attempting connect.
             // If myConnect fails, the surrounding Scope still closes and releases the slot,
@@ -2154,7 +2153,7 @@ final class MysqlSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): MysqlConnection < (Async & Abort[SqlException] & Scope) =
         // Unsafe: pool ops (spinAcquire, poolRelease, poolUnreserve, poolDiscard) require AllowUnsafe; Scope.ensure callback runs outside fiber suspension.
-        // STEERING case 2: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
+        // Unsafe: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
         // Slot release is owned by the OUTER Scope.ensure in acquireStreamConn, the per-conn
         // Scope.ensure here only handles connection lifecycle.
         // G-Leak-3 fix: on stream abort we check whether the error is protocol-fatal.
@@ -2165,7 +2164,7 @@ final class MysqlSqlClientBackend private[client] (
             case Present(conn) =>
                 Scope.ensure { error =>
                     // Unsafe: pool ops require AllowUnsafe.
-                    // STEERING case 2: Scope.ensure callback runs outside fiber suspension.
+                    // Unsafe: Scope.ensure callback runs outside fiber suspension.
                     Sync.Unsafe.defer {
                         error match
                             case Absent =>
@@ -2184,7 +2183,7 @@ final class MysqlSqlClientBackend private[client] (
                     myConnect(address, password, config).flatMap { conn =>
                         Scope.ensure { error =>
                             // Unsafe: pool ops require AllowUnsafe.
-                            // STEERING case 2: Scope.ensure callback runs outside fiber suspension.
+                            // Unsafe: Scope.ensure callback runs outside fiber suspension.
                             Sync.Unsafe.defer {
                                 error match
                                     case Absent =>
@@ -2401,17 +2400,14 @@ object SqlClientBackend:
         bv match
             case b: BoundValue[a] => b.schema.writeMysql(b.value)
 
-    // Phase 56 audit (#512), caching encoder dispatch per-SqlSchema does not apply to the current
-    // implementation. `writePostgres` / `writeMysql` allocate a fresh PostgresParamWriter /
-    // MysqlParamWriter per call and invoke the Schema's closed-over `writeFn` lambda. The lambda
-    // itself is allocated ONCE at schema construction (Schema.init) and reused across calls, there
-    // is no per-call encoder-lookup walk. Inside the param writer, each primitive method (`int`,
-    // `string`, ...) appends a BoundParam wrapping a statically-referenced encoder constant
-    // (`PostgresEncoder.int4Binary`, etc.); no Map lookup, no field-by-field dispatch.
-    // The audit's caching gain was hypothetical against an implementation that doesn't exist; the
-    // actual hot path already runs the minimum work (one writer alloc + the field-walk that's
-    // unavoidable because the parameter values differ each call). Closing out #512 as
-    // non-applicable.
+    // No per-call encoder cache is needed. `writePostgres` / `writeMysql` allocate a fresh
+    // PostgresParamWriter / MysqlParamWriter per call and invoke the Schema's closed-over `writeFn`
+    // lambda. The lambda itself is allocated ONCE at schema construction (Schema.init) and reused
+    // across calls: there is no per-call encoder-lookup walk. Inside the param writer, each primitive
+    // method (`int`, `string`, ...) appends a BoundParam wrapping a statically-referenced encoder
+    // constant (`PostgresEncoder.int4Binary`, etc.): no Map lookup, no field-by-field dispatch. The
+    // hot path already runs the minimum work: one writer allocation plus the field walk that is
+    // unavoidable because the parameter values differ each call.
 
     /** Creates a Postgres-backed [[SqlClientBackend]] wrapped by a fresh [[ConnectionPool[NetAddress, PostgresConnection]]].
       *
@@ -2426,7 +2422,7 @@ object SqlClientBackend:
             maxConnectionsPerHost = config.maxConnections.max(2),
             idleConnectionTimeout = config.idleTimeout,
             // Unsafe: isAlive is called from pool.poll (non-Kyo context, AllowUnsafe already in scope).
-            // STEERING case 2: health-check callback invoked outside any fiber suspension.
+            // Unsafe: health-check callback invoked outside any fiber suspension.
             isAlive = conn =>
                 try
                     if !Sync.Unsafe.evalOrThrow(conn.isOpen) then false
@@ -2445,7 +2441,7 @@ object SqlClientBackend:
                         java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.isAlive: unexpected error: ${t.getMessage}")
                         false,
             // Unsafe: discard is called from pool eviction path (non-Kyo context, AllowUnsafe in scope).
-            // STEERING case 2: cleanup callback invoked outside any fiber suspension.
+            // Unsafe: cleanup callback invoked outside any fiber suspension.
             // Log.live.unsafe.error routes through kyo.Log instead of raw stderr.
             discard = conn =>
                 try discard(Sync.Unsafe.evalOrThrow(conn.close))
@@ -2471,7 +2467,7 @@ object SqlClientBackend:
             maxConnectionsPerHost = config.maxConnections.max(2),
             idleConnectionTimeout = config.idleTimeout,
             // Unsafe: isAlive is called from pool.poll (non-Kyo context, AllowUnsafe already in scope).
-            // STEERING case 2: health-check callback invoked outside any fiber suspension.
+            // Unsafe: health-check callback invoked outside any fiber suspension.
             isAlive = conn =>
                 try
                     if !Sync.Unsafe.evalOrThrow(conn.isOpen) then false
@@ -2490,7 +2486,7 @@ object SqlClientBackend:
                         java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.isAlive: unexpected error: ${t.getMessage}")
                         false,
             // Unsafe: discard is called from pool eviction path (non-Kyo context, AllowUnsafe in scope).
-            // STEERING case 2: cleanup callback invoked outside any fiber suspension.
+            // Unsafe: cleanup callback invoked outside any fiber suspension.
             // Note: conn.quit() has Async in its effect type and cannot be evaluated synchronously here.
             // We close the TCP socket directly via closeNow, which is sufficient, the server detects the EOF.
             // Log.live.unsafe.error routes through kyo.Log instead of raw stderr.

@@ -9,9 +9,9 @@ import scala.quoted.*
   * `.run` / `.runStatic`) produces byte-identical SQL to the runtime renderer (used by `.renderPostgres` / `.renderMysql` /
   * `.runDynamic`). Any divergence would surface as `.run` and `.runDynamic` returning different execution results on the same query.
   *
-  * Lives in test sources only: the compile-time SQL emitter is intentionally NOT a user-facing API (see the module-level plan doc); a
-  * probe kept next to the parity tests is a coverage tool, not a shipped surface. Mirrors the same-file inline-def-plus-macro-impl
-  * separation pattern that [[SqlLiftHarness]] uses to bridge test callers to a main-source macro.
+  * Lives in test sources only: the compile-time SQL emitter is intentionally NOT a user-facing API, and a probe kept next to the parity
+  * tests is a coverage tool rather than a shipped surface. Mirrors the same-file inline-def-plus-macro-impl separation pattern that
+  * [[SqlLiftHarness]] uses to bridge test callers to a main-source macro.
   */
 object SqlStaticProbe:
 

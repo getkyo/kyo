@@ -106,13 +106,12 @@ object MysqlDecoder:
     // MySQL sends JSON column values as length-encoded string payloads (raw UTF-8 JSON text).
     // The length prefix is stripped by BinaryResultsetRowUnmarshaller before reaching this decoder.
     //
-    // Production-read note (Phase 17 audit W-2): `MysqlRowReader.string()` decodes TYPE_JSON columns
-    // through its generic `readUtf8String(nextBytes())` path; the byte output is byte-identical to
-    // this singleton (both `new String(bytes.toArray, UTF_8)` from the same lenenc-stripped span).
-    // The singleton is therefore test-asserted only, it pins the contract that JSON columns surface
-    // as raw UTF-8 strings without further parsing, so any future production refactor that switches
-    // away from `string()` (e.g. routes JSON through a typed-codec map) starts from this declared
-    // shape rather than inferring it from `string()`'s implementation.
+    // `MysqlRowReader.string()` decodes TYPE_JSON columns through its generic `readUtf8String(nextBytes())`
+    // path; the byte output is byte-identical to this singleton (both `new String(bytes.toArray, UTF_8)`
+    // from the same lenenc-stripped span). The singleton is therefore test-asserted only: it pins the
+    // contract that JSON columns surface as raw UTF-8 strings without further parsing, so any future
+    // refactor that switches away from `string()` (e.g. routes JSON through a typed-codec map) starts
+    // from this declared shape rather than inferring it from `string()`'s implementation.
     val jsonDecoder: MysqlDecoder[String] = new MysqlDecoder[String]:
         def decode(bytes: Span[Byte])(using kyo.Frame): String < kyo.Abort[SqlDecodeException] =
             new String(bytes.toArray, StandardCharsets.UTF_8)

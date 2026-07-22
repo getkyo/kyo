@@ -239,7 +239,7 @@ object PostgresDecoder:
                 end if
 
     // --- Timestamptz, kyo.Instant ---
-    // Uses kyo.Instant (preferred over java.time.Instant per STEERING rules).
+    // Uses kyo.Instant (preferred over java.time.Instant).
 
     val timestamptz: PostgresDecoder[kyo.Instant] = new PostgresDecoder[kyo.Instant]:
         def oids = Set(OID_TIMESTAMPTZ)

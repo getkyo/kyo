@@ -52,7 +52,7 @@ object PostgresEncoder:
     // Array OIDs
     val OID_INT4_ARRAY  = 1007 // _int4 (int4[])
     val OID_TEXT_ARRAY  = 1009 // _text (text[])
-    val OID_JSONB_ARRAY = 3807 // _jsonb (jsonb[]), codec deferred to Phase 17 follow-up (see GAP-FIX/PLAN.md #502)
+    val OID_JSONB_ARRAY = 3807 // _jsonb (jsonb[]), no built-in codec; register a custom codec via EncodingRegistry to use jsonb[].
 
     // PG inet/cidr address family constants (pgsql/include/utils/inet.h).
     private val PGSQL_AF_INET  = 2.toByte // IPv4
@@ -297,7 +297,7 @@ object PostgresEncoder:
         end write
 
     // --- Timestamptz, kyo.Instant ---
-    // Uses kyo.Instant (preferred over java.time.Instant per STEERING rules).
+    // Uses kyo.Instant (preferred over java.time.Instant).
     // Wire: 8-byte int64 microseconds since PostgreSQL epoch (2000-01-01 00:00:00 UTC).
 
     val timestamptzBinary: PostgresEncoder[kyo.Instant] = new PostgresEncoder[kyo.Instant]:

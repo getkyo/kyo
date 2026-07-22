@@ -91,8 +91,7 @@ private[kyo] object SqlStaticMacro:
     /** Same as [[impl]] but returns `None` instead of `errorAndAbort` when the AST is not liftable.
       *
       * Used by `SqlRunMacro`'s `.run` fast-path to avoid two FromExpr traversals (one to probe liftability, another to render): the lift
-      * and the render happen in a single pass and the result is returned. Saves a full AST walk per static call site at compile time
-      * (PHASE-7 audit W-3).
+      * and the render happen in a single pass and the result is returned. Saves a full AST walk per static call site at compile time.
       */
     def tryImpl(q: Expr[SqlAst.Executable[?]])(using Quotes): Option[Expr[SqlRendered]] =
         liftAst(q).map(ast => renderLifted(ast, q))

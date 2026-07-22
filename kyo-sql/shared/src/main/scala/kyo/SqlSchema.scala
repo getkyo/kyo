@@ -596,8 +596,7 @@ object SqlSchema:
     )
 
     /** `Chunk[Int]` schema: Postgres uses the native binary `int4[]` array wire codec (OID 1007); MySQL falls back to a JSON array encoded
-      * / decoded via [[kyo.Json]] (which honours quoting, escaping, and DoS limits, the old hand-rolled `StringBuilder` path was buggy for
-      * values requiring escaping and is replaced per Phase 16 audit W-2).
+      * / decoded via [[kyo.Json]] (which honours quoting, escaping, and DoS limits).
       */
     given chunkIntSchema: SqlSchema[Chunk[Int]] = SqlSchema.of[Chunk[Int]](
         write = (v, w) =>
@@ -639,8 +638,7 @@ object SqlSchema:
     )
 
     /** `Chunk[String]` schema: Postgres uses the native binary `text[]` array wire codec (OID 1009); MySQL falls back to a JSON array
-      * encoded / decoded via [[kyo.Json]] (handles quoting, escaping, and Unicode correctly, the old hand-rolled `StringBuilder` /
-      * `split(",")` path was buggy for any element containing `,`, `"`, or `\` and is replaced per Phase 16 audit W-2).
+      * encoded / decoded via [[kyo.Json]] (handles quoting, escaping, and Unicode correctly).
       */
     given chunkStringSchema: SqlSchema[Chunk[String]] = SqlSchema.of[Chunk[String]](
         write = (v, w) =>
@@ -1527,7 +1525,7 @@ object SqlSchema:
 
         /** Returns a new [[SqlSchema]] with the given [[SqlSchema.Naming]] attached.
           *
-          * The strategy is stored on the [[SqlSchema.State]] wrapper. Phase 3 macros read it via [[SqlSchema.readNaming]] to
+          * The strategy is stored on the [[SqlSchema.State]] wrapper. The static-SQL macros read it via [[SqlSchema.readNaming]] to
           * convert Scala field names to SQL column names at expansion time. Transforms compose: calling `.withNaming` after
           * `.withTableName` preserves the table-name override and vice versa.
           *
@@ -1539,9 +1537,9 @@ object SqlSchema:
 
         /** Returns a new [[SqlSchema]] with the given SQL table name attached.
           *
-          * The name is stored on the [[SqlSchema.State]] wrapper. Phase 3 macros read it via [[SqlSchema.readTableNameOverride]] and emit
-          * it as the table name literal rather than deriving from the Scala type name. Transforms compose: calling `.withTableName` after
-          * `.withNaming` preserves the naming strategy and vice versa.
+          * The name is stored on the [[SqlSchema.State]] wrapper. The static-SQL macros read it via [[SqlSchema.readTableNameOverride]] and
+          * emit it as the table name literal rather than deriving from the Scala type name. Transforms compose: calling `.withTableName`
+          * after `.withNaming` preserves the naming strategy and vice versa.
           *
           * @param name
           *   the SQL table name to use (e.g. `"countries"`)

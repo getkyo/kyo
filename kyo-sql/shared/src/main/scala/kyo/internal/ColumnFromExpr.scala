@@ -92,9 +92,9 @@ object ColumnFromExpr:
 
     /** `FromExpr[WindowSpec.Builder]`, lifts `new WindowSpec.Builder(partitions, orderings, frameOpt)` constructor applies.
       *
-      * After the Phase 8 fix to `WindowSpec.Builder`'s builder methods (explicit `new WindowSpec.Builder(...)` constructors replacing
-      * `.copy(...)` with `Chunk.from` / `:+`), the inlined call-site trees are plain constructor Apply nodes that `kyo.FromExpr.derived`'s
-      * product-case walker handles. `fromExprWindowFrame` (above) is in scope for the `frameOpt: Maybe[WindowFrame]` field.
+      * The builder methods use explicit `new WindowSpec.Builder(...)` constructors rather than `.copy(...)` with `Chunk.from` / `:+`, so
+      * the inlined call-site trees are plain constructor Apply nodes that `kyo.FromExpr.derived`'s product-case walker handles.
+      * `fromExprWindowFrame` (above) is in scope for the `frameOpt: Maybe[WindowFrame]` field.
       */
     given fromExprWindowSpecBuilder: scala.quoted.FromExpr[WindowSpec.Builder] with
         def unapply(x: Expr[WindowSpec.Builder])(using Quotes): Option[WindowSpec.Builder] =
@@ -125,7 +125,7 @@ object ColumnFromExpr:
         def column(x: Expr[?]): Option[Column[?, ?]] =
             val t = unwrap(kyo.internal.FromExprDerived.resolveBindings(x.asTerm))
             t match
-                // `Column[N, V](alias, name, sqlName)`, direct constructor (three-arg form after Phase 3).
+                // `Column[N, V](alias, name, sqlName)`, direct constructor (three-arg form).
                 case Apply(TypeApply(Select(qual, "apply"), _), List(aliasE, nameE, sqlNameE))
                     if qual.symbol.name == "Column" || qual.symbol.name == "Column$" =>
                     for
