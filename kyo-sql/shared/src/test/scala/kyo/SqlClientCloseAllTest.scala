@@ -99,14 +99,16 @@ class SqlClientCloseAllTest extends Test:
                 case Result.Panic(t) =>
                     fail(s"Unexpected panic: ${t.getMessage}")
                 case Result.Success(client) =>
-                    // Verify the pool is live before closeAll.
-                    client.isClosed.flatMap { before =>
-                        assert(!before, "isClosed should be false before close")
-                        // closeAll with zero grace period, skips the poll loop and goes directly
-                        // to step 3 (the synchronous drain).
-                        client.close(Duration.Zero).flatMap { _ =>
-                            client.isClosed.map { after =>
-                                assert(after, "isClosed should be true after closeAll, drain ran to completion")
+                    Scope.ensure(Abort.run(client.close).unit).andThen {
+                        // Verify the pool is live before closeAll.
+                        client.isClosed.flatMap { before =>
+                            assert(!before, "isClosed should be false before close")
+                            // closeAll with zero grace period, skips the poll loop and goes directly
+                            // to step 3 (the synchronous drain).
+                            client.close(Duration.Zero).flatMap { _ =>
+                                client.isClosed.map { after =>
+                                    assert(after, "isClosed should be true after closeAll, drain ran to completion")
+                                }
                             }
                         }
                     }
@@ -148,25 +150,27 @@ class SqlClientCloseAllTest extends Test:
                     case Result.Panic(t) =>
                         fail(s"Unexpected panic: ${t.getMessage}")
                     case Result.Success(client) =>
-                        // Signal that the pool is warmed up.
-                        warmedUp.release.andThen {
-                            // Start closeAll with a long grace period in a background fiber.
-                            // The grace period poll loop yields repeatedly, the fiber can be
-                            // interrupted while it is sleeping in that poll loop.
-                            Fiber.initUnscoped(client.close(60.seconds)).flatMap { closeFiber =>
-                                // Wait briefly for the fiber to enter the poll loop.
-                                Async.sleep(50.millis).andThen {
-                                    // Interrupt closeAll mid-grace-period-poll.
-                                    closeFiber.interrupt.flatMap { _ =>
-                                        // Issue a second close (zero grace) to flush any remaining conns.
-                                        // This must still complete without error because pool.close()
-                                        // is idempotent (the closed flag prevents double-drain).
-                                        client.close(Duration.Zero).flatMap { _ =>
-                                            client.isClosed.map { closed =>
-                                                assert(
-                                                    closed,
-                                                    "isClosed must be true: pool.close() in Step 1 sets the flag atomically"
-                                                )
+                        Scope.ensure(Abort.run(client.close).unit).andThen {
+                            // Signal that the pool is warmed up.
+                            warmedUp.release.andThen {
+                                // Start closeAll with a long grace period in a background fiber.
+                                // The grace period poll loop yields repeatedly, the fiber can be
+                                // interrupted while it is sleeping in that poll loop.
+                                Fiber.initUnscoped(client.close(60.seconds)).flatMap { closeFiber =>
+                                    // Wait briefly for the fiber to enter the poll loop.
+                                    Async.sleep(50.millis).andThen {
+                                        // Interrupt closeAll mid-grace-period-poll.
+                                        closeFiber.interrupt.flatMap { _ =>
+                                            // Issue a second close (zero grace) to flush any remaining conns.
+                                            // This must still complete without error because pool.close()
+                                            // is idempotent (the closed flag prevents double-drain).
+                                            client.close(Duration.Zero).flatMap { _ =>
+                                                client.isClosed.map { closed =>
+                                                    assert(
+                                                        closed,
+                                                        "isClosed must be true: pool.close() in Step 1 sets the flag atomically"
+                                                    )
+                                                }
                                             }
                                         }
                                     }

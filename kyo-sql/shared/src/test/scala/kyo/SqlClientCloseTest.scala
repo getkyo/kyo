@@ -79,11 +79,13 @@ class SqlClientCloseTest extends Test:
                 SqlClient.initUnscoped(url, baseConfig)
             ).flatMap {
                 case Result.Success(client) =>
-                    client.isClosed.flatMap { before =>
-                        assert(!before, "isClosed should be false before close")
-                        client.close.flatMap { _ =>
-                            client.isClosed.map { after =>
-                                assert(after, "isClosed should be true after close")
+                    Scope.ensure(Abort.run(client.close).unit).andThen {
+                        client.isClosed.flatMap { before =>
+                            assert(!before, "isClosed should be false before close")
+                            client.close.flatMap { _ =>
+                                client.isClosed.map { after =>
+                                    assert(after, "isClosed should be true after close")
+                                }
                             }
                         }
                     }
@@ -107,14 +109,16 @@ class SqlClientCloseTest extends Test:
                 SqlClient.initUnscoped(url, baseConfig)
             ).flatMap {
                 case Result.Success(client) =>
-                    // First close: should mark as closed and drain the pool.
-                    client.close.flatMap { _ =>
-                        client.isClosed.flatMap { afterFirst =>
-                            assert(afterFirst, "isClosed should be true after first close")
-                            // Second close: must be a no-op (no exception, no double-drain).
-                            client.close.flatMap { _ =>
-                                client.isClosed.map { afterSecond =>
-                                    assert(afterSecond, "isClosed should still be true after second close")
+                    Scope.ensure(Abort.run(client.close).unit).andThen {
+                        // First close: should mark as closed and drain the pool.
+                        client.close.flatMap { _ =>
+                            client.isClosed.flatMap { afterFirst =>
+                                assert(afterFirst, "isClosed should be true after first close")
+                                // Second close: must be a no-op (no exception, no double-drain).
+                                client.close.flatMap { _ =>
+                                    client.isClosed.map { afterSecond =>
+                                        assert(afterSecond, "isClosed should still be true after second close")
+                                    }
                                 }
                             }
                         }
@@ -139,10 +143,12 @@ class SqlClientCloseTest extends Test:
                 SqlClient.initUnscoped(url, baseConfig)
             ).flatMap {
                 case Result.Success(client) =>
-                    // Pass an explicit non-default grace period; must complete without error.
-                    client.close(100.millis).flatMap { _ =>
-                        client.isClosed.map { closed =>
-                            assert(closed, "isClosed should be true after close(100.millis)")
+                    Scope.ensure(Abort.run(client.close).unit).andThen {
+                        // Pass an explicit non-default grace period; must complete without error.
+                        client.close(100.millis).flatMap { _ =>
+                            client.isClosed.map { closed =>
+                                assert(closed, "isClosed should be true after close(100.millis)")
+                            }
                         }
                     }
                 case Result.Failure(e) =>
@@ -167,11 +173,13 @@ class SqlClientCloseTest extends Test:
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
                 case Result.Success(client) =>
-                    // close() with no argument must use config.closeGrace (42ms), not the hard-coded 30s.
-                    // Verify by confirming it completes and isClosed becomes true.
-                    client.close.flatMap { _ =>
-                        client.isClosed.map { closed =>
-                            assert(closed, "isClosed should be true after parameterless close() using config.closeGrace")
+                    Scope.ensure(Abort.run(client.close).unit).andThen {
+                        // close() with no argument must use config.closeGrace (42ms), not the hard-coded 30s.
+                        // Verify by confirming it completes and isClosed becomes true.
+                        client.close.flatMap { _ =>
+                            client.isClosed.map { closed =>
+                                assert(closed, "isClosed should be true after parameterless close() using config.closeGrace")
+                            }
                         }
                     }
                 case Result.Failure(e) =>

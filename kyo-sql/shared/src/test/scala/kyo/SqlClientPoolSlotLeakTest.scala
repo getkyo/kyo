@@ -129,34 +129,36 @@ class SqlClientPoolSlotLeakTest extends Test:
             Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
-                case Result.Failure(e)      => fail(s"init failed: $e")
-                case Result.Panic(t)        => fail(s"init panic: ${t.getMessage}")
+                case Result.Failure(e) => fail(s"init failed: $e")
+                case Result.Panic(t)   => fail(s"init panic: ${t.getMessage}")
                 case Result.Success(client) =>
-                    // First query: will timeout (query body runs, then hits queryTimeout).
-                    Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).flatMap {
-                        firstResult =>
-                            // Second query: must also be able to acquire the slot.
-                            Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).map {
-                                secondResult =>
-                                    // Neither failure should be pool-exhaustion.
-                                    firstResult match
-                                        case Result.Failure(e) =>
-                                            assert(
-                                                !isPoolExhausted(e),
-                                                s"First query unexpectedly hit pool-exhaustion: $e"
-                                            )
-                                        case _ => ()
-                                    end match
-                                    secondResult match
-                                        case Result.Failure(e) =>
-                                            assert(
-                                                !isPoolExhausted(e),
-                                                "Slot was leaked after body success, second acquire hit pool-exhaustion"
-                                            )
-                                        case Result.Success(_) => succeed
-                                        case Result.Panic(t)   => succeed // any non-exhaustion outcome is fine
-                                    end match
-                            }
+                    Scope.ensure(Abort.run(client.close).unit).andThen {
+                        // First query: will timeout (query body runs, then hits queryTimeout).
+                        Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).flatMap {
+                            firstResult =>
+                                // Second query: must also be able to acquire the slot.
+                                Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).map {
+                                    secondResult =>
+                                        // Neither failure should be pool-exhaustion.
+                                        firstResult match
+                                            case Result.Failure(e) =>
+                                                assert(
+                                                    !isPoolExhausted(e),
+                                                    s"First query unexpectedly hit pool-exhaustion: $e"
+                                                )
+                                            case _ => ()
+                                        end match
+                                        secondResult match
+                                            case Result.Failure(e) =>
+                                                assert(
+                                                    !isPoolExhausted(e),
+                                                    "Slot was leaked after body success, second acquire hit pool-exhaustion"
+                                                )
+                                            case Result.Success(_) => succeed
+                                            case Result.Panic(t)   => succeed // any non-exhaustion outcome is fine
+                                        end match
+                                }
+                        }
                     }
             }
         }
@@ -177,33 +179,35 @@ class SqlClientPoolSlotLeakTest extends Test:
             Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
-                case Result.Failure(e)      => fail(s"init failed: $e")
-                case Result.Panic(t)        => fail(s"init panic: ${t.getMessage}")
+                case Result.Failure(e) => fail(s"init failed: $e")
+                case Result.Panic(t)   => fail(s"init panic: ${t.getMessage}")
                 case Result.Success(client) =>
-                    // First query: aborts (server closes mid-query).
-                    Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).flatMap {
-                        firstResult =>
-                            // Second query: must be able to acquire the slot (slot was returned on Abort).
-                            Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).map {
-                                secondResult =>
-                                    firstResult match
-                                        case Result.Failure(e) =>
-                                            assert(
-                                                !isPoolExhausted(e),
-                                                s"First query unexpectedly hit pool-exhaustion: $e"
-                                            )
-                                        case _ => ()
-                                    end match
-                                    secondResult match
-                                        case Result.Failure(e) =>
-                                            assert(
-                                                !isPoolExhausted(e),
-                                                "Slot was leaked after body Abort, second acquire hit pool-exhaustion"
-                                            )
-                                        case Result.Success(_) => succeed
-                                        case Result.Panic(t)   => succeed
-                                    end match
-                            }
+                    Scope.ensure(Abort.run(client.close).unit).andThen {
+                        // First query: aborts (server closes mid-query).
+                        Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).flatMap {
+                            firstResult =>
+                                // Second query: must be able to acquire the slot (slot was returned on Abort).
+                                Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).map {
+                                    secondResult =>
+                                        firstResult match
+                                            case Result.Failure(e) =>
+                                                assert(
+                                                    !isPoolExhausted(e),
+                                                    s"First query unexpectedly hit pool-exhaustion: $e"
+                                                )
+                                            case _ => ()
+                                        end match
+                                        secondResult match
+                                            case Result.Failure(e) =>
+                                                assert(
+                                                    !isPoolExhausted(e),
+                                                    "Slot was leaked after body Abort, second acquire hit pool-exhaustion"
+                                                )
+                                            case Result.Success(_) => succeed
+                                            case Result.Panic(t)   => succeed
+                                        end match
+                                }
+                        }
                     }
             }
         }
@@ -281,42 +285,44 @@ class SqlClientPoolSlotLeakTest extends Test:
                 Abort.run[SqlConnectionException](
                     SqlClient.initUnscoped(url, config)
                 ).flatMap {
-                    case Result.Failure(e)      => fail(s"init failed: $e")
-                    case Result.Panic(t)        => fail(s"init panic: ${t.getMessage}")
+                    case Result.Failure(e) => fail(s"init failed: $e")
+                    case Result.Panic(t)   => fail(s"init panic: ${t.getMessage}")
                     case Result.Success(client) =>
-                        // Start the query in a background fiber.
-                        Fiber.initUnscoped(
-                            Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1")))
-                        ).flatMap { queryFiber =>
-                            // Wait until the slot is held (server saw the startup message).
-                            slotHeld.await.andThen {
-                                // Interrupt the query fiber while the slot is held.
-                                queryFiber.interrupt.flatMap { interrupted =>
-                                    assert(interrupted, "Expected query fiber to be interrupted")
-                                    // Now attempt a second acquire, the slot must have been returned
-                                    // by Sync.ensure even though the fiber was cancelled.
-                                    // The fake server still hangs, so we wrap the second query in a
-                                    // short Async.timeout: if the slot was NOT returned the acquire
-                                    // itself times out in 500ms (pool-exhaustion); if the slot WAS
-                                    // returned, the acquire succeeds but the query hangs and the outer
-                                    // Async.timeout fires in 1s, either way we don't hang forever.
-                                    Abort.run[SqlException](
-                                        Async.timeoutWithError(
-                                            1.second,
-                                            Result.Failure(SqlConnectionQueryTimeoutException(1.second))
-                                        )(
-                                            SqlClient.let(client)(client.query("SELECT 1"))
-                                        )
-                                    ).map { result =>
-                                        result match
-                                            case Result.Failure(e) =>
-                                                assert(
-                                                    !isPoolExhausted(e),
-                                                    "Slot was leaked after fiber cancellation, second acquire hit pool-exhaustion"
-                                                )
-                                            case Result.Success(_) => succeed
-                                            case Result.Panic(t)   => succeed
-                                        end match
+                        Scope.ensure(Abort.run(client.close).unit).andThen {
+                            // Start the query in a background fiber.
+                            Fiber.initUnscoped(
+                                Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1")))
+                            ).flatMap { queryFiber =>
+                                // Wait until the slot is held (server saw the startup message).
+                                slotHeld.await.andThen {
+                                    // Interrupt the query fiber while the slot is held.
+                                    queryFiber.interrupt.flatMap { interrupted =>
+                                        assert(interrupted, "Expected query fiber to be interrupted")
+                                        // Now attempt a second acquire, the slot must have been returned
+                                        // by Sync.ensure even though the fiber was cancelled.
+                                        // The fake server still hangs, so we wrap the second query in a
+                                        // short Async.timeout: if the slot was NOT returned the acquire
+                                        // itself times out in 500ms (pool-exhaustion); if the slot WAS
+                                        // returned, the acquire succeeds but the query hangs and the outer
+                                        // Async.timeout fires in 1s, either way we don't hang forever.
+                                        Abort.run[SqlException](
+                                            Async.timeoutWithError(
+                                                1.second,
+                                                Result.Failure(SqlConnectionQueryTimeoutException(1.second))
+                                            )(
+                                                SqlClient.let(client)(client.query("SELECT 1"))
+                                            )
+                                        ).map { result =>
+                                            result match
+                                                case Result.Failure(e) =>
+                                                    assert(
+                                                        !isPoolExhausted(e),
+                                                        "Slot was leaked after fiber cancellation, second acquire hit pool-exhaustion"
+                                                    )
+                                                case Result.Success(_) => succeed
+                                                case Result.Panic(t)   => succeed
+                                            end match
+                                        }
                                     }
                                 }
                             }
