@@ -20,6 +20,11 @@ import kyo.net.NetTlsConfig
   */
 class TlsIntegrationTest extends kyo.Test:
 
+    // Scope the podman/docker HttpClient per leaf so its idle-connection pool does not leak
+    // unix sockets across tests that call ContainerPredef.*.initWith directly.
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        HttpClient.init().flatMap(c => HttpClient.let(c)(body))
+
     // Each leaf spins up its own Postgres container with TLS enabled. Running the six leaves in
     // parallel against the same Docker daemon that also hosts the shared PG + MySQL fixtures for
     // the rest of the suite pushes the container port-binding and TLS handshake past their default

@@ -11,6 +11,11 @@ import kyo.OwnContainer
   */
 class ScramIntegrationTest extends kyo.Test:
 
+    // Scope the podman/docker HttpClient per leaf so its idle-connection pool does not leak
+    // unix sockets across tests that call ContainerPredef.*.initWith directly.
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        HttpClient.init().flatMap(c => HttpClient.let(c)(body))
+
     // Helper: init a SqlClient via SCRAM and return it.
     private def initScramClient(
         pg: ContainerPredef.Postgres

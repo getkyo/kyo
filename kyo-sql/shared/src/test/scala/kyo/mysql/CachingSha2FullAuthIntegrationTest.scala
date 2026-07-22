@@ -13,6 +13,11 @@ import kyo.OwnContainer
   */
 class CachingSha2FullAuthIntegrationTest extends kyo.Test:
 
+    // Scope the podman/docker HttpClient per leaf so its idle-connection pool does not leak
+    // unix sockets across tests that call ContainerPredef.*.initWith directly.
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        HttpClient.init().flatMap(c => HttpClient.let(c)(body))
+
     // Each leaf spins its own MySQL container. Serialize leaves so at most one MySQL boot races
     // for host resources at a time; the 30-second port-binding budget is unreliable under parallel
     // container starts on a single Docker host.

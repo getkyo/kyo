@@ -19,6 +19,11 @@ import kyo.net.NetTlsConfig
   */
 class CancelIntegrationTest extends kyo.Test:
 
+    // Scope the podman/docker HttpClient per leaf so its idle-connection pool does not leak
+    // unix sockets across tests that call ContainerPredef.*.initWith directly.
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        HttpClient.init().flatMap(c => HttpClient.let(c)(body))
+
     override def timeout: Duration = 8.minutes
 
     /** Starts a TLS-enabled Postgres container by generating a self-signed cert on the host, bind-mounting it into the container, and
