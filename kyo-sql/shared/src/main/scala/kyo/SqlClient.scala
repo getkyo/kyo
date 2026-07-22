@@ -23,8 +23,8 @@ import kyo.net.NetTlsConfig
 /** Sealed handle for a database connection pool.
   *
   * `SqlClient` is the main entry point for all database operations. Obtain a Postgres client via [[SqlClient.init]] or a MySQL client via
-  * [[SqlClient.initMysql]]. The concrete subclass ([[PostgresSqlClient]] or [[MysqlSqlClient]]) carries the backend at the type level, so
-  * backend-specific operations (e.g. [[PostgresSqlClient.copyIn]], [[MysqlSqlClient.loadLocalInfile]]) are available without a cast.
+  * [[SqlClient.initMysql]]. The concrete subclass ([[SqlClient.Postgres]] or [[SqlClient.Mysql]]) carries the backend at the type level, so
+  * backend-specific operations (e.g. [[SqlClient.Postgres.copyIn]], [[SqlClient.Mysql.loadLocalInfile]]) are available without a cast.
   *
   * ==API surface==
   *
@@ -1042,380 +1042,380 @@ sealed abstract class SqlClient:
 
 end SqlClient
 
-// TODO move to SqlClient.Mysql/Postgres. Each file = one type and oen companion
-/** Postgres-backed [[SqlClient]]. Obtain via [[SqlClient.init]] / [[SqlClient.initWith]] / [[SqlClient.initUnscoped]].
-  *
-  * Backend-specific extension methods (copyIn, copyOut, cancellableQuery, cancellableQueryFiber, parameters, simpleQuery) are available
-  * directly on values of this type without a cast.
-  */
-final class PostgresSqlClient(
-    val backend: PostgresSqlClientBackend,
-    val url: SqlConfig.Url,
-    val config: SqlConfig,
-    val closedRef: AtomicBoolean
-) extends SqlClient:
-    self =>
+object SqlClient:
 
-    /** Streams data from `data` into the database using `COPY ... FROM STDIN`.
+    // TODO move to SqlClient.Mysql/Postgres. Each file = one type and oen companion
+    /** Postgres-backed [[SqlClient]]. Obtain via [[SqlClient.init]] / [[SqlClient.initWith]] / [[SqlClient.initUnscoped]].
       *
-      * If a transaction is active in the current fiber (via [[SqlClient.txLocal]]), uses the bound connection directly so that the COPY
-      * participates in the same transaction (enabling `BEGIN → COPY → ROLLBACK` on the same physical connection). Otherwise acquires a
-      * dedicated connection from the pool for the duration of the upload. The connection is returned to the pool after the upload
-      * completes (success or failure).
-      *
-      * On error or cancellation, sends [[CopyFail]] and drains [[ReadyForQuery]] before returning the connection.
-      *
-      * @param sql
-      *   a `COPY ... FROM STDIN` statement (with text, CSV, or binary format options as needed)
-      * @param data
-      *   the byte stream to upload; each [[Span[Byte]]] element becomes one or more [[CopyData]] packets
-      * @return
-      *   the number of rows loaded by the server (from the "COPY N" command tag)
+      * Backend-specific extension methods (copyIn, copyOut, cancellableQuery, cancellableQueryFiber, parameters, simpleQuery) are available
+      * directly on values of this type without a cast.
       */
-    @scala.annotation.targetName("copyInPg")
-    def copyIn[S](sql: String, data: Stream[Span[Byte], S])(using Frame): Long < (Async & Abort[SqlException] & S) =
-        SqlClient.txLocal.use {
-            case Present(ctx: TransactionContext.Postgres) =>
-                // Inside a Postgres transaction: use the bound connection so COPY participates in the transaction.
-                SqlClient.local.use { (_, config) =>
-                    ctx.connection.copyIn(sql, data, config.copyOutCleanupTimeout)
-                }
-            case _ =>
-                // Outside a transaction: acquire a dedicated connection from the pool (previous behavior).
+    final class Postgres(
+        val backend: PostgresSqlClientBackend,
+        val url: SqlConfig.Url,
+        val config: SqlConfig,
+        val closedRef: AtomicBoolean
+    ) extends SqlClient:
+        self =>
+
+        /** Streams data from `data` into the database using `COPY ... FROM STDIN`.
+          *
+          * If a transaction is active in the current fiber (via [[SqlClient.txLocal]]), uses the bound connection directly so that the COPY
+          * participates in the same transaction (enabling `BEGIN → COPY → ROLLBACK` on the same physical connection). Otherwise acquires a
+          * dedicated connection from the pool for the duration of the upload. The connection is returned to the pool after the upload
+          * completes (success or failure).
+          *
+          * On error or cancellation, sends [[CopyFail]] and drains [[ReadyForQuery]] before returning the connection.
+          *
+          * @param sql
+          *   a `COPY ... FROM STDIN` statement (with text, CSV, or binary format options as needed)
+          * @param data
+          *   the byte stream to upload; each [[Span[Byte]]] element becomes one or more [[CopyData]] packets
+          * @return
+          *   the number of rows loaded by the server (from the "COPY N" command tag)
+          */
+        @scala.annotation.targetName("copyInPg")
+        def copyIn[S](sql: String, data: Stream[Span[Byte], S])(using Frame): Long < (Async & Abort[SqlException] & S) =
+            SqlClient.txLocal.use {
+                case Present(ctx: TransactionContext.Postgres) =>
+                    // Inside a Postgres transaction: use the bound connection so COPY participates in the transaction.
+                    SqlClient.local.use { (_, config) =>
+                        ctx.connection.copyIn(sql, data, config.copyOutCleanupTimeout)
+                    }
+                case _ =>
+                    // Outside a transaction: acquire a dedicated connection from the pool (previous behavior).
+                    SqlClient.local.use { (_, config) =>
+                        self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
+                            conn.copyIn(sql, data, config.copyOutCleanupTimeout)
+                        }
+                    }
+            }
+
+        /** Executes `COPY ... TO STDOUT` and returns a lazy stream of raw data chunks.
+          *
+          * Acquires a dedicated connection from the pool; the connection is held for the lifetime of the returned [[Stream]]. Close the
+          * stream (or let the enclosing [[Scope]] exit) to release the connection.
+          *
+          * If the consumer closes the stream before [[CopyDone]] is received, the cleanup path sends [[CopyFail]] and drains
+          * [[ReadyForQuery]] before returning the connection (uninterruptible, bounded by `config.copyOutCleanupTimeout`).
+          *
+          * @param sql
+          *   a `COPY ... TO STDOUT` statement
+          * @return
+          *   a [[Stream]] of [[Span[Byte]]] COPY data payloads; the stream ends when the server sends [[CopyDone]]
+          */
+        @scala.annotation.targetName("copyOutPg")
+        def copyOut(sql: String)(using Frame): Stream[Span[Byte], Async & Abort[SqlException] & Scope] =
+            Stream[Span[Byte], Async & Abort[SqlException] & Scope](
                 SqlClient.local.use { (_, config) =>
                     self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
-                        conn.copyIn(sql, data, config.copyOutCleanupTimeout)
+                        conn.copyOut(sql, config.copyOutCleanupTimeout).emit
                     }
                 }
-        }
+            )
 
-    /** Executes `COPY ... TO STDOUT` and returns a lazy stream of raw data chunks.
-      *
-      * Acquires a dedicated connection from the pool; the connection is held for the lifetime of the returned [[Stream]]. Close the
-      * stream (or let the enclosing [[Scope]] exit) to release the connection.
-      *
-      * If the consumer closes the stream before [[CopyDone]] is received, the cleanup path sends [[CopyFail]] and drains
-      * [[ReadyForQuery]] before returning the connection (uninterruptible, bounded by `config.copyOutCleanupTimeout`).
-      *
-      * @param sql
-      *   a `COPY ... TO STDOUT` statement
-      * @return
-      *   a [[Stream]] of [[Span[Byte]]] COPY data payloads; the stream ends when the server sends [[CopyDone]]
-      */
-    @scala.annotation.targetName("copyOutPg")
-    def copyOut(sql: String)(using Frame): Stream[Span[Byte], Async & Abort[SqlException] & Scope] =
-        Stream[Span[Byte], Async & Abort[SqlException] & Scope](
+        /** Acquires a pooled Postgres connection, runs `sql`, and exposes a [[SqlCancelHandle.Postgres]] that can interrupt the query.
+          *
+          * Returns `(SqlCancelHandle.Postgres, Chunk[SqlRow])`. The [[SqlCancelHandle.Postgres]] carries the `(processId, secretKey)` pair from
+          * `BackendKeyData` and is available immediately. Pass it to [[cancel]] from a separate fiber while this query fiber is active to
+          * send a fresh `CancelRequest` TCP connection to the server.
+          *
+          * Example:
+          * {{{
+          * for
+          *   (handle, rows) <- client.cancellableQuery("SELECT pg_sleep(5)")
+          *   _              <- Fiber.init(Async.sleep(1.second).andThen(client.cancel(handle)))
+          * yield rows
+          * }}}
+          *
+          * @note
+          *   The example above discards the cancel fiber. In production code, store the fiber reference and join or interrupt it after the
+          *   query completes to avoid resource leaks.
+          */
+        @scala.annotation.targetName("cancellableQueryPg0")
+        def cancellableQuery(sql: String)(using Frame): (SqlCancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+            cancellableQuery(SqlAst.Fragment.lit[Any](sql))
+
+        @scala.annotation.targetName("cancellableQueryPg")
+        def cancellableQuery(
+            executable: SqlAst.Executable[?]
+        )(using Frame): (SqlCancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+            val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
+            SqlClient.local.use { (_, config) =>
+                self.backend.withCancelInfo(self.url.address, self.url.password, config) { (conn, pid, secret) =>
+                    val handle = SqlCancelHandle.Postgres(self.url.address, config.tls, pid, secret)
+                    conn.extendedQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToPostgres)).map(rows => (handle, rows))
+                }
+            }
+        end cancellableQuery
+
+        /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Postgres]] together with a [[Fiber]] that
+          * resolves to the query rows.
+          *
+          * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
+          */
+        @scala.annotation.targetName("cancellableQueryFiberPg0")
+        def cancellableQueryFiber(sql: String)(using
+            Frame
+        ): (SqlCancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+            cancellableQueryFiber(SqlAst.Fragment.lit[Any](sql))
+
+        /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Postgres]] together with a [[Fiber]] that
+          * resolves to the query rows.
+          *
+          * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
+          * yields the handle AFTER the query completes, this overload completes the outer computation as soon as the connection has been
+          * acquired and the cancel handle is materialised. The eventual rows are carried by the returned [[Fiber]]. A separate cancelling
+          * fiber can read the handle immediately and call [[cancel]] while the query is still in flight.
+          *
+          * The fiber owns the pooled connection for its lifetime; the connection is returned to the pool when the fiber completes (success,
+          * failure, panic, or interrupt). Callers that obtain a handle but do not wish to wait on the rows should still drain the fiber
+          * (e.g. via `.get` after `cancel`) or interrupt it to release the connection.
+          *
+          * Example:
+          * {{{
+          * for
+          *   (handle, queryFiber) <- client.cancellableQueryFiber(sql"SELECT pg_sleep(5)")
+          *   _                    <- Async.sleep(1.second)
+          *   _                    <- client.cancel(handle)
+          *   result               <- Abort.run(queryFiber.get)
+          * yield result
+          * }}}
+          */
+        @scala.annotation.targetName("cancellableQueryFiberPg")
+        def cancellableQueryFiber(
+            executable: SqlAst.Executable[?]
+        )(using Frame): (SqlCancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+            val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
+            SqlClient.local.use { (_, config) =>
+                Fiber.Promise.init[SqlCancelHandle.Postgres, Abort[SqlException]].flatMap { handlePromise =>
+                    Fiber.initUnscoped {
+                        Abort.run[SqlException](
+                            self.backend.withCancelInfo(self.url.address, self.url.password, config) { (conn, pid, secret) =>
+                                val handle = SqlCancelHandle.Postgres(self.url.address, config.tls, pid, secret)
+                                // Publish the handle BEFORE the query starts so a cancelling fiber can read it
+                                // while extendedQuery is still suspended on the wire.
+                                handlePromise.complete(Result.succeed(handle)).andThen {
+                                    conn.extendedQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToPostgres))
+                                }
+                            }
+                        ).flatMap { result =>
+                            result match
+                                case Result.Success(rows) =>
+                                    (rows: Chunk[SqlRow] < (Async & Abort[SqlException]))
+                                case Result.Failure(e) =>
+                                    // The body never reached the success-path complete; surface the failure on the promise
+                                    // so the outer `handlePromise.get` does not block forever. Idempotent, if the success
+                                    // path already completed, `complete` returns false and the failure propagates only via
+                                    // `Abort.fail` to the fiber result.
+                                    handlePromise.complete(Result.fail(e)).andThen(Abort.fail[SqlException](e))
+                                case Result.Panic(t) =>
+                                    handlePromise.complete(Result.panic(t)).andThen(Abort.error[SqlException](Result.Panic(t)))
+                        }
+                    }.flatMap { fiber =>
+                        handlePromise.get.map(handle => (handle, fiber))
+                    }
+                }
+            }
+        end cancellableQueryFiber
+
+        /** Returns the server startup parameters captured during the connection handshake.
+          *
+          * Returns the ParameterStatus map (server_version, server_encoding, timezone, integer_datetimes, etc.) populated during startup,
+          * plus updates from SET commands. Pool-stable: all connections from the same client return the startup parameter set.
+          */
+        def parameters(using Frame): Map[String, String] < (Async & Abort[SqlException]) =
             SqlClient.local.use { (_, config) =>
                 self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
-                    conn.copyOut(sql, config.copyOutCleanupTimeout).emit
+                    conn.parameters.get
                 }
             }
-        )
 
-    /** Acquires a pooled Postgres connection, runs `sql`, and exposes a [[SqlCancelHandle.Postgres]] that can interrupt the query.
-      *
-      * Returns `(SqlCancelHandle.Postgres, Chunk[SqlRow])`. The [[SqlCancelHandle.Postgres]] carries the `(processId, secretKey)` pair from
-      * `BackendKeyData` and is available immediately. Pass it to [[cancel]] from a separate fiber while this query fiber is active to
-      * send a fresh `CancelRequest` TCP connection to the server.
-      *
-      * Example:
-      * {{{
-      * for
-      *   (handle, rows) <- client.cancellableQuery("SELECT pg_sleep(5)")
-      *   _              <- Fiber.init(Async.sleep(1.second).andThen(client.cancel(handle)))
-      * yield rows
-      * }}}
-      *
-      * @note
-      *   The example above discards the cancel fiber. In production code, store the fiber reference and join or interrupt it after the
-      *   query completes to avoid resource leaks.
-      */
-    @scala.annotation.targetName("cancellableQueryPg0")
-    def cancellableQuery(sql: String)(using Frame): (SqlCancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
-        cancellableQuery(SqlAst.Fragment.lit[Any](sql))
-
-    @scala.annotation.targetName("cancellableQueryPg")
-    def cancellableQuery(
-        executable: SqlAst.Executable[?]
-    )(using Frame): (SqlCancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
-        val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
-        SqlClient.local.use { (_, config) =>
-            self.backend.withCancelInfo(self.url.address, self.url.password, config) { (conn, pid, secret) =>
-                val handle = SqlCancelHandle.Postgres(self.url.address, config.tls, pid, secret)
-                conn.extendedQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToPostgres)).map(rows => (handle, rows))
+        /** Executes `sql` via the Postgres simple-query protocol and returns the rows.
+          *
+          * Unlike [[query]], this DOES NOT prepare the statement, the query is sent via the Simple Query message (no parse/bind/execute
+          * round-trip, no entry in pg_prepared_statements).
+          *
+          * Use this for one-off SQL where you don't want to pay the prepared-statement cache cost or have the query appear in server-side
+          * statement metadata.
+          *
+          * SQL must be parameterless, passing `?` placeholders is invalid for the simple query protocol. Use [[query]] with [[BoundValue]]
+          * params for parameterised queries.
+          */
+        def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
+            SqlClient.local.use { (_, config) =>
+                self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
+                    conn.simpleQuery(sql)
+                }
             }
-        }
-    end cancellableQuery
 
-    /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Postgres]] together with a [[Fiber]] that
-      * resolves to the query rows.
-      *
-      * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
-      */
-    @scala.annotation.targetName("cancellableQueryFiberPg0")
-    def cancellableQueryFiber(sql: String)(using
-        Frame
-    ): (SqlCancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
-        cancellableQueryFiber(SqlAst.Fragment.lit[Any](sql))
+    end Postgres
 
-    /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Postgres]] together with a [[Fiber]] that
-      * resolves to the query rows.
+    /** MySQL-backed [[SqlClient]]. Obtain via [[SqlClient.initMysql]] / [[SqlClient.initMysqlWith]] / [[SqlClient.initMysqlUnscoped]].
       *
-      * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
-      * yields the handle AFTER the query completes, this overload completes the outer computation as soon as the connection has been
-      * acquired and the cancel handle is materialised. The eventual rows are carried by the returned [[Fiber]]. A separate cancelling
-      * fiber can read the handle immediately and call [[cancel]] while the query is still in flight.
-      *
-      * The fiber owns the pooled connection for its lifetime; the connection is returned to the pool when the fiber completes (success,
-      * failure, panic, or interrupt). Callers that obtain a handle but do not wish to wait on the rows should still drain the fiber
-      * (e.g. via `.get` after `cancel`) or interrupt it to release the connection.
-      *
-      * Example:
-      * {{{
-      * for
-      *   (handle, queryFiber) <- client.cancellableQueryFiber(sql"SELECT pg_sleep(5)")
-      *   _                    <- Async.sleep(1.second)
-      *   _                    <- client.cancel(handle)
-      *   result               <- Abort.run(queryFiber.get)
-      * yield result
-      * }}}
+      * Backend-specific extension methods (cancellableQuery, cancellableQueryFiber, loadLocalInfile) are available directly on values of this
+      * type without a cast.
       */
-    @scala.annotation.targetName("cancellableQueryFiberPg")
-    def cancellableQueryFiber(
-        executable: SqlAst.Executable[?]
-    )(using Frame): (SqlCancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
-        val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
-        SqlClient.local.use { (_, config) =>
-            Fiber.Promise.init[SqlCancelHandle.Postgres, Abort[SqlException]].flatMap { handlePromise =>
-                Fiber.initUnscoped {
-                    Abort.run[SqlException](
-                        self.backend.withCancelInfo(self.url.address, self.url.password, config) { (conn, pid, secret) =>
-                            val handle = SqlCancelHandle.Postgres(self.url.address, config.tls, pid, secret)
-                            // Publish the handle BEFORE the query starts so a cancelling fiber can read it
-                            // while extendedQuery is still suspended on the wire.
-                            handlePromise.complete(Result.succeed(handle)).andThen {
-                                conn.extendedQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToPostgres))
-                            }
+    final class Mysql(
+        val backend: MysqlSqlClientBackend,
+        val url: SqlConfig.Url,
+        val config: SqlConfig,
+        val closedRef: AtomicBoolean
+    ) extends SqlClient:
+        self =>
+
+        /** Acquires a pooled MySQL connection, runs `sql`, and exposes a [[SqlCancelHandle.Mysql]] that can interrupt the query.
+          *
+          * Returns `(SqlCancelHandle.Mysql, Chunk[SqlRow])`. The [[SqlCancelHandle.Mysql]] is populated from the connection's `connectionId`
+          * (assigned during the MySQL handshake) and is available immediately. Pass it to [[cancel]] from a separate fiber while this query
+          * fiber is active to send `KILL QUERY <connectionId>`.
+          *
+          * Example:
+          * {{{
+          * for
+          *   (handle, rows) <- mysqlClient.cancellableQuery("SELECT SLEEP(5)")
+          *   _              <- Fiber.init(Async.sleep(1.second).andThen(mysqlClient.cancel(handle)))
+          * yield rows
+          * }}}
+          *
+          * @note
+          *   The example above discards the cancel fiber. In production code, store the fiber reference and join or interrupt it after the
+          *   query completes to avoid resource leaks.
+          */
+        @scala.annotation.targetName("cancellableQueryMy")
+        def cancellableQuery(
+            sql: String,
+            params: Chunk[BoundMysqlParam[?]]
+        )(using Frame): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+            SqlClient.local.use { (_, config) =>
+                self.backend.withCancelInfoMysql(self.url.address, self.url.password, config) { (conn, connId) =>
+                    val handle = SqlCancelHandle.Mysql(self.url.address, connId)
+                    conn.extendedQuery(sql, params).map { mysqlRows =>
+                        val rows = mysqlRows.map { r =>
+                            import kyo.internal.postgres.FieldDescription
+                            import kyo.internal.postgres.types.Format
+                            val fields = r.columns.map(col => FieldDescription(col.name, 0, 0, 0, 0, 0, 0))
+                            new SqlRow(r.values, fields, Format.Text)
                         }
-                    ).flatMap { result =>
-                        result match
-                            case Result.Success(rows) =>
-                                (rows: Chunk[SqlRow] < (Async & Abort[SqlException]))
-                            case Result.Failure(e) =>
-                                // The body never reached the success-path complete; surface the failure on the promise
-                                // so the outer `handlePromise.get` does not block forever. Idempotent, if the success
-                                // path already completed, `complete` returns false and the failure propagates only via
-                                // `Abort.fail` to the fiber result.
-                                handlePromise.complete(Result.fail(e)).andThen(Abort.fail[SqlException](e))
-                            case Result.Panic(t) =>
-                                handlePromise.complete(Result.panic(t)).andThen(Abort.error[SqlException](Result.Panic(t)))
+                        (handle, rows)
                     }
-                }.flatMap { fiber =>
-                    handlePromise.get.map(handle => (handle, fiber))
                 }
             }
-        }
-    end cancellableQueryFiber
+        end cancellableQuery
 
-    /** Returns the server startup parameters captured during the connection handshake.
-      *
-      * Returns the ParameterStatus map (server_version, server_encoding, timezone, integer_datetimes, etc.) populated during startup,
-      * plus updates from SET commands. Pool-stable: all connections from the same client return the startup parameter set.
-      */
-    def parameters(using Frame): Map[String, String] < (Async & Abort[SqlException]) =
-        SqlClient.local.use { (_, config) =>
-            self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
-                conn.parameters.get
-            }
-        }
+        /** Acquires a pooled MySQL connection, runs `executable` (a rendered [[SqlAst.Executable]]), and exposes a [[SqlCancelHandle.Mysql]]
+          * that can interrupt the query.
+          *
+          * The executable is rendered via [[SqlRender]] against the MySQL backend, producing the SQL string and bind parameters. Pass a
+          * parameter-free `sql"..."` fragment for no-parameter queries.
+          */
+        @scala.annotation.targetName("cancellableQueryMyBound")
+        def cancellableQuery(
+            executable: SqlAst.Executable[?]
+        )(using Frame): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+            val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
+            self.cancellableQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToMysql))
+        end cancellableQuery
 
-    /** Executes `sql` via the Postgres simple-query protocol and returns the rows.
-      *
-      * Unlike [[query]], this DOES NOT prepare the statement, the query is sent via the Simple Query message (no parse/bind/execute
-      * round-trip, no entry in pg_prepared_statements).
-      *
-      * Use this for one-off SQL where you don't want to pay the prepared-statement cache cost or have the query appear in server-side
-      * statement metadata.
-      *
-      * SQL must be parameterless, passing `?` placeholders is invalid for the simple query protocol. Use [[query]] with [[BoundValue]]
-      * params for parameterised queries.
-      */
-    def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        SqlClient.local.use { (_, config) =>
-            self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
-                conn.simpleQuery(sql)
-            }
-        }
+        /** Acquires a pooled MySQL connection, starts `sql`, and returns the [[SqlCancelHandle.Mysql]] together with a [[Fiber]] that resolves
+          * to the query rows.
+          *
+          * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
+          */
+        @scala.annotation.targetName("cancellableQueryFiberMy0")
+        def cancellableQueryFiber(sql: String)(using
+            Frame
+        ): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+            cancellableQueryFiber(SqlAst.Fragment.lit[Any](sql))
 
-end PostgresSqlClient
-
-/** MySQL-backed [[SqlClient]]. Obtain via [[SqlClient.initMysql]] / [[SqlClient.initMysqlWith]] / [[SqlClient.initMysqlUnscoped]].
-  *
-  * Backend-specific extension methods (cancellableQuery, cancellableQueryFiber, loadLocalInfile) are available directly on values of this
-  * type without a cast.
-  */
-final class MysqlSqlClient(
-    val backend: MysqlSqlClientBackend,
-    val url: SqlConfig.Url,
-    val config: SqlConfig,
-    val closedRef: AtomicBoolean
-) extends SqlClient:
-    self =>
-
-    /** Acquires a pooled MySQL connection, runs `sql`, and exposes a [[SqlCancelHandle.Mysql]] that can interrupt the query.
-      *
-      * Returns `(SqlCancelHandle.Mysql, Chunk[SqlRow])`. The [[SqlCancelHandle.Mysql]] is populated from the connection's `connectionId`
-      * (assigned during the MySQL handshake) and is available immediately. Pass it to [[cancel]] from a separate fiber while this query
-      * fiber is active to send `KILL QUERY <connectionId>`.
-      *
-      * Example:
-      * {{{
-      * for
-      *   (handle, rows) <- mysqlClient.cancellableQuery("SELECT SLEEP(5)")
-      *   _              <- Fiber.init(Async.sleep(1.second).andThen(mysqlClient.cancel(handle)))
-      * yield rows
-      * }}}
-      *
-      * @note
-      *   The example above discards the cancel fiber. In production code, store the fiber reference and join or interrupt it after the
-      *   query completes to avoid resource leaks.
-      */
-    @scala.annotation.targetName("cancellableQueryMy")
-    def cancellableQuery(
-        sql: String,
-        params: Chunk[BoundMysqlParam[?]]
-    )(using Frame): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
-        SqlClient.local.use { (_, config) =>
-            self.backend.withCancelInfoMysql(self.url.address, self.url.password, config) { (conn, connId) =>
-                val handle = SqlCancelHandle.Mysql(self.url.address, connId)
-                conn.extendedQuery(sql, params).map { mysqlRows =>
-                    val rows = mysqlRows.map { r =>
-                        import kyo.internal.postgres.FieldDescription
-                        import kyo.internal.postgres.types.Format
-                        val fields = r.columns.map(col => FieldDescription(col.name, 0, 0, 0, 0, 0, 0))
-                        new SqlRow(r.values, fields, Format.Text)
-                    }
-                    (handle, rows)
-                }
-            }
-        }
-    end cancellableQuery
-
-    /** Acquires a pooled MySQL connection, runs `executable` (a rendered [[SqlAst.Executable]]), and exposes a [[SqlCancelHandle.Mysql]]
-      * that can interrupt the query.
-      *
-      * The executable is rendered via [[SqlRender]] against the MySQL backend, producing the SQL string and bind parameters. Pass a
-      * parameter-free `sql"..."` fragment for no-parameter queries.
-      */
-    @scala.annotation.targetName("cancellableQueryMyBound")
-    def cancellableQuery(
-        executable: SqlAst.Executable[?]
-    )(using Frame): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
-        val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
-        self.cancellableQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToMysql))
-    end cancellableQuery
-
-    /** Acquires a pooled MySQL connection, starts `sql`, and returns the [[SqlCancelHandle.Mysql]] together with a [[Fiber]] that resolves
-      * to the query rows.
-      *
-      * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
-      */
-    @scala.annotation.targetName("cancellableQueryFiberMy0")
-    def cancellableQueryFiber(sql: String)(using
-        Frame
-    ): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
-        cancellableQueryFiber(SqlAst.Fragment.lit[Any](sql))
-
-    /** Acquires a pooled MySQL connection, starts `executable`, and returns the [[SqlCancelHandle.Mysql]] together with a [[Fiber]] that
-      * resolves to the query rows.
-      *
-      * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
-      * yields the handle AFTER the query completes, this overload completes the outer computation as soon as the connection has been
-      * acquired and the cancel handle is materialised. The eventual rows are carried by the returned [[Fiber]]. A separate cancelling
-      * fiber can read the handle immediately and call [[cancel]] (which sends `KILL QUERY <connectionId>`) while the query is still in
-      * flight.
-      *
-      * The fiber owns the pooled connection for its lifetime; the connection is returned to the pool when the fiber completes (success,
-      * failure, panic, or interrupt). Pool sizing must allow at least one additional slot beyond the in-flight queries because
-      * [[cancel]] borrows a second connection to send the KILL.
-      *
-      * Example:
-      * {{{
-      * for
-      *   (handle, queryFiber) <- mysqlClient.cancellableQueryFiber(sql"SELECT SLEEP(5)")
-      *   _                    <- Async.sleep(1.second)
-      *   _                    <- mysqlClient.cancel(handle)
-      *   result               <- Abort.run(queryFiber.get)
-      * yield result
-      * }}}
-      */
-    @scala.annotation.targetName("cancellableQueryFiberMy")
-    def cancellableQueryFiber(
-        executable: SqlAst.Executable[?]
-    )(using Frame): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
-        val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
-        val myParams = rendered.params.flatMap(SqlClientBackend.boundToMysql)
-        SqlClient.local.use { (_, config) =>
-            Fiber.Promise.init[SqlCancelHandle.Mysql, Abort[SqlException]].flatMap { handlePromise =>
-                Fiber.initUnscoped {
-                    Abort.run[SqlException](
-                        self.backend.withCancelInfoMysql(self.url.address, self.url.password, config) { (conn, connId) =>
-                            val handle = SqlCancelHandle.Mysql(self.url.address, connId)
-                            // Publish the handle BEFORE the query starts so a cancelling fiber can read it
-                            // while extendedQuery is still suspended on the wire.
-                            handlePromise.complete(Result.succeed(handle)).andThen {
-                                conn.extendedQuery(rendered.sql, myParams).map { mysqlRows =>
-                                    mysqlRows.map { r =>
-                                        import kyo.internal.postgres.FieldDescription
-                                        import kyo.internal.postgres.types.Format
-                                        val fields = r.columns.map(col => FieldDescription(col.name, 0, 0, 0, 0, 0, 0))
-                                        new SqlRow(r.values, fields, Format.Text)
+        /** Acquires a pooled MySQL connection, starts `executable`, and returns the [[SqlCancelHandle.Mysql]] together with a [[Fiber]] that
+          * resolves to the query rows.
+          *
+          * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
+          * yields the handle AFTER the query completes, this overload completes the outer computation as soon as the connection has been
+          * acquired and the cancel handle is materialised. The eventual rows are carried by the returned [[Fiber]]. A separate cancelling
+          * fiber can read the handle immediately and call [[cancel]] (which sends `KILL QUERY <connectionId>`) while the query is still in
+          * flight.
+          *
+          * The fiber owns the pooled connection for its lifetime; the connection is returned to the pool when the fiber completes (success,
+          * failure, panic, or interrupt). Pool sizing must allow at least one additional slot beyond the in-flight queries because
+          * [[cancel]] borrows a second connection to send the KILL.
+          *
+          * Example:
+          * {{{
+          * for
+          *   (handle, queryFiber) <- mysqlClient.cancellableQueryFiber(sql"SELECT SLEEP(5)")
+          *   _                    <- Async.sleep(1.second)
+          *   _                    <- mysqlClient.cancel(handle)
+          *   result               <- Abort.run(queryFiber.get)
+          * yield result
+          * }}}
+          */
+        @scala.annotation.targetName("cancellableQueryFiberMy")
+        def cancellableQueryFiber(
+            executable: SqlAst.Executable[?]
+        )(using Frame): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+            val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
+            val myParams = rendered.params.flatMap(SqlClientBackend.boundToMysql)
+            SqlClient.local.use { (_, config) =>
+                Fiber.Promise.init[SqlCancelHandle.Mysql, Abort[SqlException]].flatMap { handlePromise =>
+                    Fiber.initUnscoped {
+                        Abort.run[SqlException](
+                            self.backend.withCancelInfoMysql(self.url.address, self.url.password, config) { (conn, connId) =>
+                                val handle = SqlCancelHandle.Mysql(self.url.address, connId)
+                                // Publish the handle BEFORE the query starts so a cancelling fiber can read it
+                                // while extendedQuery is still suspended on the wire.
+                                handlePromise.complete(Result.succeed(handle)).andThen {
+                                    conn.extendedQuery(rendered.sql, myParams).map { mysqlRows =>
+                                        mysqlRows.map { r =>
+                                            import kyo.internal.postgres.FieldDescription
+                                            import kyo.internal.postgres.types.Format
+                                            val fields = r.columns.map(col => FieldDescription(col.name, 0, 0, 0, 0, 0, 0))
+                                            new SqlRow(r.values, fields, Format.Text)
+                                        }
                                     }
                                 }
                             }
+                        ).flatMap { result =>
+                            result match
+                                case Result.Success(rows) =>
+                                    (rows: Chunk[SqlRow] < (Async & Abort[SqlException]))
+                                case Result.Failure(e) =>
+                                    // The body never reached the success-path complete; surface the failure on the promise
+                                    // so the outer `handlePromise.get` does not block forever.
+                                    handlePromise.complete(Result.fail(e)).andThen(Abort.fail[SqlException](e))
+                                case Result.Panic(t) =>
+                                    handlePromise.complete(Result.panic(t)).andThen(Abort.error[SqlException](Result.Panic(t)))
                         }
-                    ).flatMap { result =>
-                        result match
-                            case Result.Success(rows) =>
-                                (rows: Chunk[SqlRow] < (Async & Abort[SqlException]))
-                            case Result.Failure(e) =>
-                                // The body never reached the success-path complete; surface the failure on the promise
-                                // so the outer `handlePromise.get` does not block forever.
-                                handlePromise.complete(Result.fail(e)).andThen(Abort.fail[SqlException](e))
-                            case Result.Panic(t) =>
-                                handlePromise.complete(Result.panic(t)).andThen(Abort.error[SqlException](Result.Panic(t)))
+                    }.flatMap { fiber =>
+                        handlePromise.get.map(handle => (handle, fiber))
                     }
-                }.flatMap { fiber =>
-                    handlePromise.get.map(handle => (handle, fiber))
                 }
             }
-        }
-    end cancellableQueryFiber
+        end cancellableQueryFiber
 
-    /** Executes a `LOAD DATA LOCAL INFILE` statement, streaming `data` bytes to the server.
-      *
-      * The caller supplies the byte stream, use `Stream.from(span)` for in-memory data, `Path.readBytes` for file-backed data, or any
-      * other `Stream[Byte, S]` source. The server's filename in the `LOCAL INFILE` SQL is arbitrary; kyo-sql ignores what the server
-      * echoes back and always uploads `data` unconditionally.
-      *
-      * The CLIENT_LOCAL_FILES capability is negotiated automatically. The server must also have `local_infile=ON` (MySQL system
-      * variable); otherwise the server rejects the statement with [[SqlException.Server]].
-      *
-      * @param sql
-      *   a `LOAD DATA LOCAL INFILE 'filename' INTO TABLE ...` statement
-      * @param data
-      *   the byte stream to upload (caller-supplied)
-      * @return
-      *   the affected-row count from the server's OK packet
-      */
-    def loadLocalInfile[S](sql: String, data: Stream[Byte, S])(using Frame): Long < (Async & Abort[SqlException] & S) =
-        SqlClient.local.use { (_, config) =>
-            self.backend.loadLocalInfileMysql(self.url.address, self.url.password, sql, data, config)
-        }
+        /** Executes a `LOAD DATA LOCAL INFILE` statement, streaming `data` bytes to the server.
+          *
+          * The caller supplies the byte stream, use `Stream.from(span)` for in-memory data, `Path.readBytes` for file-backed data, or any
+          * other `Stream[Byte, S]` source. The server's filename in the `LOCAL INFILE` SQL is arbitrary; kyo-sql ignores what the server
+          * echoes back and always uploads `data` unconditionally.
+          *
+          * The CLIENT_LOCAL_FILES capability is negotiated automatically. The server must also have `local_infile=ON` (MySQL system
+          * variable); otherwise the server rejects the statement with [[SqlException.Server]].
+          *
+          * @param sql
+          *   a `LOAD DATA LOCAL INFILE 'filename' INTO TABLE ...` statement
+          * @param data
+          *   the byte stream to upload (caller-supplied)
+          * @return
+          *   the affected-row count from the server's OK packet
+          */
+        def loadLocalInfile[S](sql: String, data: Stream[Byte, S])(using Frame): Long < (Async & Abort[SqlException] & S) =
+            SqlClient.local.use { (_, config) =>
+                self.backend.loadLocalInfileMysql(self.url.address, self.url.password, sql, data, config)
+            }
 
-end MysqlSqlClient
-
-object SqlClient:
+    end Mysql
 
     /** Accumulates pipeline statements for execution via [[SqlClient.pipeline]].
       *
@@ -1647,14 +1647,14 @@ object SqlClient:
       * @param rawUrl
       *   database URL in the form `postgres://user:pw@host:port/db[?opts]`
       */
-    def init(rawUrl: String)(using Frame): PostgresSqlClient < (Async & Scope & Abort[SqlException]) =
+    def init(rawUrl: String)(using Frame): Postgres < (Async & Scope & Abort[SqlException]) =
         initWith(rawUrl)(identity)
 
-    /** Creates a Postgres [[PostgresSqlClient]] scoped to the enclosing [[Scope]], using custom config.
+    /** Creates a Postgres [[Postgres]] scoped to the enclosing [[Scope]], using custom config.
       *
       * Delegates to `initWith(rawUrl, config)(identity)`.
       */
-    def init(rawUrl: String, config: SqlConfig)(using Frame): PostgresSqlClient < (Async & Scope & Abort[SqlException]) =
+    def init(rawUrl: String, config: SqlConfig)(using Frame): Postgres < (Async & Scope & Abort[SqlException]) =
         initWith(rawUrl, config)(identity)
 
     /** Creates a Postgres [[SqlClient]], registers `Scope.ensure(close)`, applies `f`, and returns.
@@ -1673,12 +1673,12 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initWith[B, S](rawUrl: String)(inline f: PostgresSqlClient => B < S)(using
+    inline def initWith[B, S](rawUrl: String)(inline f: Postgres => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
         initWith(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a Postgres [[PostgresSqlClient]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
+    /** Creates a Postgres [[Postgres]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
       *
       * Effect set: `Async & Scope & Abort[SqlException] & S`.
       *
@@ -1693,7 +1693,7 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initWith[B, S](rawUrl: String, config: SqlConfig)(inline f: PostgresSqlClient => B < S)(using
+    inline def initWith[B, S](rawUrl: String, config: SqlConfig)(inline f: Postgres => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
@@ -1712,7 +1712,7 @@ object SqlClient:
                         }
                         backend.flatMap { (b: PostgresSqlClientBackend) =>
                             AtomicBoolean.init(false).flatMap { closedRef =>
-                                val client = new PostgresSqlClient(b, url, mergedConfig, closedRef)
+                                val client = new Postgres(b, url, mergedConfig, closedRef)
                                 Scope.ensure(client.close).andThen {
                                     val warmN = mergedConfig.minConnections.min(mergedConfig.maxConnections)
                                     b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
@@ -1739,12 +1739,12 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def use[B, S](rawUrl: String)(inline f: PostgresSqlClient => B < S)(using
+    inline def use[B, S](rawUrl: String)(inline f: Postgres => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         use(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a Postgres [[PostgresSqlClient]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
+    /** Creates a Postgres [[Postgres]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
       * `Sync.ensure`.
       *
       * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
@@ -1760,7 +1760,7 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def use[B, S](rawUrl: String, config: SqlConfig)(inline f: PostgresSqlClient => B < S)(using
+    inline def use[B, S](rawUrl: String, config: SqlConfig)(inline f: Postgres => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
@@ -1777,7 +1777,7 @@ object SqlClient:
                         }
                         backend.flatMap { (b: PostgresSqlClientBackend) =>
                             AtomicBoolean.init(false).flatMap { closedRef =>
-                                val client = new PostgresSqlClient(b, url, mergedConfig, closedRef)
+                                val client = new Postgres(b, url, mergedConfig, closedRef)
                                 val warmN  = mergedConfig.minConnections.min(mergedConfig.maxConnections)
                                 // client.close is Async, not Sync, so we cannot use Sync.ensure here.
                                 // Instead, Scope.run discharges the Scope effect inline so it does not
@@ -1798,10 +1798,10 @@ object SqlClient:
       *
       * The caller is responsible for calling `client.close()` when done.
       */
-    def initUnscoped(rawUrl: String)(using Frame): PostgresSqlClient < (Async & Abort[SqlException]) =
+    def initUnscoped(rawUrl: String)(using Frame): Postgres < (Async & Abort[SqlException]) =
         initUnscopedWith(rawUrl)(identity)
 
-    def initUnscoped(rawUrl: String, config: SqlConfig)(using Frame): PostgresSqlClient < (Async & Abort[SqlException]) =
+    def initUnscoped(rawUrl: String, config: SqlConfig)(using Frame): Postgres < (Async & Abort[SqlException]) =
         initUnscopedWith(rawUrl, config)(identity)
 
     /** Creates a Postgres [[SqlClient]] with no cleanup registered, applies `f`, and returns.
@@ -1819,12 +1819,12 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initUnscopedWith[B, S](rawUrl: String)(inline f: PostgresSqlClient => B < S)(using
+    inline def initUnscopedWith[B, S](rawUrl: String)(inline f: Postgres => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         initUnscopedWith(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a Postgres [[PostgresSqlClient]] with custom config, no cleanup registered, applies `f`, and returns.
+    /** Creates a Postgres [[Postgres]] with custom config, no cleanup registered, applies `f`, and returns.
       *
       * No `Scope.ensure` or `Sync.ensure` is registered. The caller is responsible for calling `client.close()`.
       *
@@ -1841,7 +1841,7 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initUnscopedWith[B, S](rawUrl: String, config: SqlConfig)(inline f: PostgresSqlClient => B < S)(using
+    inline def initUnscopedWith[B, S](rawUrl: String, config: SqlConfig)(inline f: Postgres => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
@@ -1858,7 +1858,7 @@ object SqlClient:
                         }
                         backend.flatMap { (b: PostgresSqlClientBackend) =>
                             AtomicBoolean.init(false).flatMap { closedRef =>
-                                val client = new PostgresSqlClient(b, url, mergedConfig, closedRef)
+                                val client = new Postgres(b, url, mergedConfig, closedRef)
                                 val warmN  = mergedConfig.minConnections.min(mergedConfig.maxConnections)
                                 b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
                             }
@@ -1877,10 +1877,10 @@ object SqlClient:
       * @param rawUrl
       *   database URL in the form `mysql://user:pw@host:port/db[?opts]`
       */
-    def initMysql(rawUrl: String)(using Frame): MysqlSqlClient < (Async & Scope & Abort[SqlException]) =
+    def initMysql(rawUrl: String)(using Frame): Mysql < (Async & Scope & Abort[SqlException]) =
         initMysqlWith(rawUrl)(identity)
 
-    def initMysql(rawUrl: String, config: SqlConfig)(using Frame): MysqlSqlClient < (Async & Scope & Abort[SqlException]) =
+    def initMysql(rawUrl: String, config: SqlConfig)(using Frame): Mysql < (Async & Scope & Abort[SqlException]) =
         initMysqlWith(rawUrl, config)(identity)
 
     /** Creates a MySQL [[SqlClient]], registers `Scope.ensure(close)`, applies `f`, and returns.
@@ -1896,12 +1896,12 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initMysqlWith[B, S](rawUrl: String)(inline f: MysqlSqlClient => B < S)(using
+    inline def initMysqlWith[B, S](rawUrl: String)(inline f: Mysql => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
         initMysqlWith(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a MySQL [[MysqlSqlClient]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
+    /** Creates a MySQL [[Mysql]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
       *
       * Effect set: `Async & Scope & Abort[SqlException] & S`.
       *
@@ -1916,7 +1916,7 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initMysqlWith[B, S](rawUrl: String, config: SqlConfig)(inline f: MysqlSqlClient => B < S)(using
+    inline def initMysqlWith[B, S](rawUrl: String, config: SqlConfig)(inline f: Mysql => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
@@ -1934,7 +1934,7 @@ object SqlClient:
                     }
                     backend.flatMap { (b: MysqlSqlClientBackend) =>
                         AtomicBoolean.init(false).flatMap { closedRef =>
-                            val client = new MysqlSqlClient(b, url, mergedConfig, closedRef)
+                            val client = new Mysql(b, url, mergedConfig, closedRef)
                             Scope.ensure(client.close).andThen {
                                 val warmN = mergedConfig.minConnections.min(mergedConfig.maxConnections)
                                 b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
@@ -1958,12 +1958,12 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def useMysql[B, S](rawUrl: String)(inline f: MysqlSqlClient => B < S)(using
+    inline def useMysql[B, S](rawUrl: String)(inline f: Mysql => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         useMysql(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a MySQL [[MysqlSqlClient]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
+    /** Creates a MySQL [[Mysql]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
       * `Sync.ensure`.
       *
       * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
@@ -1979,7 +1979,7 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def useMysql[B, S](rawUrl: String, config: SqlConfig)(inline f: MysqlSqlClient => B < S)(using
+    inline def useMysql[B, S](rawUrl: String, config: SqlConfig)(inline f: Mysql => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
@@ -1995,7 +1995,7 @@ object SqlClient:
                     }
                     backend.flatMap { (b: MysqlSqlClientBackend) =>
                         AtomicBoolean.init(false).flatMap { closedRef =>
-                            val client = new MysqlSqlClient(b, url, mergedConfig, closedRef)
+                            val client = new Mysql(b, url, mergedConfig, closedRef)
                             val warmN  = mergedConfig.minConnections.min(mergedConfig.maxConnections)
                             // client.close is Async; use Scope.run to discharge Scope inline.
                             Scope.run(
@@ -2010,10 +2010,10 @@ object SqlClient:
     end useMysql
 
     /** Creates a MySQL [[SqlClient]] with no cleanup registered. Delegates to `initMysqlUnscopedWith(rawUrl)(identity)`. */
-    def initMysqlUnscoped(rawUrl: String)(using Frame): MysqlSqlClient < (Async & Abort[SqlException]) =
+    def initMysqlUnscoped(rawUrl: String)(using Frame): Mysql < (Async & Abort[SqlException]) =
         initMysqlUnscopedWith(rawUrl)(identity)
 
-    def initMysqlUnscoped(rawUrl: String, config: SqlConfig)(using Frame): MysqlSqlClient < (Async & Abort[SqlException]) =
+    def initMysqlUnscoped(rawUrl: String, config: SqlConfig)(using Frame): Mysql < (Async & Abort[SqlException]) =
         initMysqlUnscopedWith(rawUrl, config)(identity)
 
     /** Creates a MySQL [[SqlClient]] with no cleanup registered, applies `f`, and returns.
@@ -2029,12 +2029,12 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initMysqlUnscopedWith[B, S](rawUrl: String)(inline f: MysqlSqlClient => B < S)(using
+    inline def initMysqlUnscopedWith[B, S](rawUrl: String)(inline f: Mysql => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         initMysqlUnscopedWith(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a MySQL [[MysqlSqlClient]] with custom config, no cleanup registered, applies `f`, and returns.
+    /** Creates a MySQL [[Mysql]] with custom config, no cleanup registered, applies `f`, and returns.
       *
       * Effect set: `Async & Abort[SqlException] & S`.
       *
@@ -2049,7 +2049,7 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initMysqlUnscopedWith[B, S](rawUrl: String, config: SqlConfig)(inline f: MysqlSqlClient => B < S)(using
+    inline def initMysqlUnscopedWith[B, S](rawUrl: String, config: SqlConfig)(inline f: Mysql => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
@@ -2065,7 +2065,7 @@ object SqlClient:
                     }
                     backend.flatMap { (b: MysqlSqlClientBackend) =>
                         AtomicBoolean.init(false).flatMap { closedRef =>
-                            val client = new MysqlSqlClient(b, url, mergedConfig, closedRef)
+                            val client = new Mysql(b, url, mergedConfig, closedRef)
                             val warmN  = mergedConfig.minConnections.min(mergedConfig.maxConnections)
                             b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
                         }

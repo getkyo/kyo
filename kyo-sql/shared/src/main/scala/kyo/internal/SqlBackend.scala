@@ -3,7 +3,7 @@ package kyo.internal
 /** Internal marker types identifying the database engine at render / execute time.
   *
   * Not user-facing: the backend for a live [[kyo.SqlClient]] is derived from the URL scheme (`postgres://` vs `mysql://`) and never
-  * configured by callers. Users pick their engine by choosing [[kyo.PostgresSqlClient]] vs [[kyo.MysqlSqlClient]]; the render layer reaches for
+  * configured by callers. Users pick their engine by choosing [[kyo.SqlClient.Postgres]] vs [[kyo.SqlClient.Mysql]]; the render layer reaches for
   * one of these tags internally to select placeholder syntax (`?` vs `$N`) and other per-engine details.
   */
 sealed abstract class SqlBackend
@@ -51,7 +51,7 @@ object SqlBackend:
       *
       * This object also acts as a factory: use `SqlBackend.Mysql.versioned(major, minor, patch)` to obtain a backend targeting a specific
       * MySQL server version for feature gating (used by render-layer tests; there is currently no runtime path that hands a
-      * user-configured server version to a live [[kyo.MysqlSqlClient]]).
+      * user-configured server version to a live [[kyo.SqlClient.Mysql]]).
       */
     object Mysql extends SqlBackend.Mysql:
         def serverVersion: (Int, Int, Int) = (8, 4, 0)

@@ -26,12 +26,12 @@ class SqlBackendTest extends Test:
         assert(errors.nonEmpty)
     }
 
-    "SqlClient.Postgres / SqlClient.Mysql aliases are removed" in {
-        // The plan deletes the type aliases. Referencing them must be a compile error.
-        val errsPg = compiletime.testing.typeCheckErrors("val x: SqlClient.Postgres = ???")
-        val errsMy = compiletime.testing.typeCheckErrors("val x: SqlClient.Mysql = ???")
-        assert(errsPg.nonEmpty)
-        assert(errsMy.nonEmpty)
+    "SqlClient.Postgres and SqlClient.Mysql are subtypes of SqlClient" in {
+        // After nesting the concrete client classes under the SqlClient companion, the fully-qualified
+        // names must resolve as concrete final classes extending SqlClient.
+        val evPg: SqlClient.Postgres <:< SqlClient = summon[SqlClient.Postgres <:< SqlClient]
+        val evMy: SqlClient.Mysql <:< SqlClient    = summon[SqlClient.Mysql <:< SqlClient]
+        assert(evPg != null && evMy != null)
     }
 
     "SqlClient.usePostgres fails with SqlException.Connection when no client is active" in {

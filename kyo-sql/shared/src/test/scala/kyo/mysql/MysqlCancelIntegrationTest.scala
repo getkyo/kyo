@@ -19,7 +19,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
     override def timeout: Duration = 3.minutes
 
     private def initClient[A, S](ctx: SqlSharedContainers.SchemaCtx, maxConns: Int = 2)(
-        f: MysqlSqlClient => A < (S & Async & Abort[SqlException])
+        f: SqlClient.Mysql => A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
         SqlClient.initMysqlWith(
             s"mysql://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}",

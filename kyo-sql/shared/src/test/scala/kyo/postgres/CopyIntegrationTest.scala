@@ -37,7 +37,7 @@ class CopyIntegrationTest extends kyo.Test:
       * All DDL, COPY, and verification queries go through `client` using pool connections. No auxiliary raw connection is needed.
       */
     private def withPg[A, S](
-        f: PostgresSqlClient => A < (S & Async & Abort[SqlException])
+        f: SqlClient.Postgres => A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
         SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
             val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"

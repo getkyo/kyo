@@ -23,7 +23,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
         s"mysql://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}"
 
     private def withMyClient[A, S](
-        f: MysqlSqlClient => A < (S & Async & Abort[SqlException])
+        f: SqlClient.Mysql => A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Scope & Abort[SqlException | ContainerException]) =
         withLocalInfileOn { ctx =>
             SqlClient.initMysqlWith(
