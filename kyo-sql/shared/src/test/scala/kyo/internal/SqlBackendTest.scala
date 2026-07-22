@@ -49,6 +49,23 @@ class SqlBackendTest extends Test:
         }
     }
 
+    "usePostgres block sees a SqlClient.Postgres so PG-only members compile" in {
+        // Compile-only: if usePostgres passed an abstract SqlClient the calls below would not typecheck.
+        // The block never runs (no active client, Abort.fail short-circuits) but its type is Chunk[SqlClient.Notification].
+        val prog: Chunk[SqlClient.Notification] < (Async & Abort[SqlException] & Scope) =
+            SqlClient.usePostgres { (p: SqlClient.Postgres) => p.notifications("chan").take(0).run }
+        val _ = prog
+        succeed
+    }
+
+    "useMysql block sees a SqlClient.Mysql so MySQL-only members compile" in {
+        // Compile-only: the type ascription (m: SqlClient.Mysql) would fail if useMysql passed the abstract type.
+        val prog: Int < (Async & Abort[SqlException]) =
+            SqlClient.useMysql { (m: SqlClient.Mysql) => 42 }
+        val _ = prog
+        succeed
+    }
+
     "kyo.internal.SqlBackend pattern-matches correctly as sealed abstract class" in {
         // Verify that the exhaustive match still compiles and dispatches correctly
         // after kyo.internal.SqlBackend / Postgres / Mysql changed from sealed trait to sealed abstract class.

@@ -2225,10 +2225,11 @@ object SqlClient:
             }
         )
 
-    /** Runs `f` with the active client when it is Postgres-backed.
+    /** Runs `f` with the active client when it is a [[SqlClient.Postgres]].
       *
-      * Fails at runtime with `SqlConnectionException` if the active client is backed by MySQL. Use this to reach Postgres-only methods
-      * (`copyIn`, `copyOut`, `pipeline`, `cancellableQuery`) with a typed driver-mismatch failure surfaced early.
+      * Fails at runtime with [[SqlConnectionException]] if the active client is a [[SqlClient.Mysql]]. `f` receives a narrowed
+      * [[SqlClient.Postgres]] so PG-only members (`copyIn`, `copyOut`, `pipeline`, `cancellableQuery`, `notifications`) compile without a
+      * cast.
       *
       * @tparam A
       *   the result type of `f`
@@ -2237,22 +2238,19 @@ object SqlClient:
       * @param f
       *   function receiving the Postgres-backed client
       */
-    def usePostgres[A, S](f: SqlClient => A < S)(using Frame): A < (S & Async & Abort[SqlException]) =
+    def usePostgres[A, S](f: SqlClient.Postgres => A < S)(using Frame): A < (S & Async & Abort[SqlException]) =
         SqlClient.local.use { (maybeClient, _) =>
             maybeClient match
-                case Absent =>
-                    Abort.fail(SqlConnectionNoActiveClientException())
-                case Present(client) if client.url.address.driver == "postgres" =>
-                    f(client)
-                case Present(client) =>
-                    val activeBackend =
-                        if client.url.address.driver == "mysql" then SqlBackend.Mysql else SqlBackend.Postgres
-                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, activeBackend, "usePostgres"))
+                case Absent                         => Abort.fail(SqlConnectionNoActiveClientException())
+                case Present(p: SqlClient.Postgres) => f(p)
+                case Present(other) =>
+                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "usePostgres"))
         }
 
-    /** Runs `f` with the active client when it is MySQL-backed.
+    /** Runs `f` with the active client when it is a [[SqlClient.Mysql]].
       *
-      * Fails at runtime with `SqlConnectionException` if the active client is backed by Postgres.
+      * Fails at runtime with [[SqlConnectionException]] if the active client is a [[SqlClient.Postgres]]. `f` receives a narrowed
+      * [[SqlClient.Mysql]] so MySQL-only members (`loadLocalInfile`, `cancellableQuery`, `cancellableQueryFiber`) compile without a cast.
       *
       * @tparam A
       *   the result type of `f`
@@ -2261,17 +2259,13 @@ object SqlClient:
       * @param f
       *   function receiving the MySQL-backed client
       */
-    def useMysql[A, S](f: SqlClient => A < S)(using Frame): A < (S & Async & Abort[SqlException]) =
+    def useMysql[A, S](f: SqlClient.Mysql => A < S)(using Frame): A < (S & Async & Abort[SqlException]) =
         SqlClient.local.use { (maybeClient, _) =>
             maybeClient match
-                case Absent =>
-                    Abort.fail(SqlConnectionNoActiveClientException())
-                case Present(client) if client.url.address.driver == "mysql" =>
-                    f(client)
-                case Present(client) =>
-                    val activeBackend =
-                        if client.url.address.driver == "postgres" then SqlBackend.Postgres else SqlBackend.Mysql
-                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, activeBackend, "useMysql"))
+                case Absent                      => Abort.fail(SqlConnectionNoActiveClientException())
+                case Present(m: SqlClient.Mysql) => f(m)
+                case Present(other) =>
+                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "useMysql"))
         }
 
     /** Validates that each type name in `names` does not contain characters that would break SQL literal interpolation.
