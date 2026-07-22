@@ -124,7 +124,6 @@ object MysqlPipelineExchange:
             case Result.Success(r) => r
             case Result.Failure(e) => Result.Failure(e)
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] MysqlPipelineExchange: unexpected panic: ${t.getMessage}")
                 Abort.error(Result.Panic(t))
         }
 

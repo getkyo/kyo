@@ -443,7 +443,6 @@ object MysqlConnection:
             case Result.Failure(_) =>
                 Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] MysqlConnection.connect: panic: ${t.getMessage}")
                 Abort.fail(SqlConnectionConnectFailedException(host, port, t))
             case Result.Success(conn) =>
                 MysqlChannel(conn).flatMap { rawChannel =>
@@ -504,7 +503,6 @@ object MysqlConnection:
             case Result.Failure(_) =>
                 Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] MysqlConnection.connectWithMode: panic: ${t.getMessage}")
                 Abort.fail(SqlConnectionConnectFailedException(host, port, t))
             case Result.Success(conn) =>
                 MysqlChannel(conn).flatMap { rawChannel =>

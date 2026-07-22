@@ -1488,13 +1488,7 @@ object SqlSchema:
                     e match
                         case decode: SqlDecodeException => Abort.fail(decode)
                         case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
-                case Result.Panic(t) =>
-                    java.lang.System.err.println(
-                        s"[kyo-sql] readPostgres: unexpected decode panic: ${t.getMessage}"
-                    )
-                    t match
-                        case decode: SqlDecodeException => Abort.fail(decode)
-                        case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
+                case Result.Panic(t) => Abort.panic(t)
             end match
         end readPostgres
 
@@ -1513,13 +1507,7 @@ object SqlSchema:
                     e match
                         case decode: SqlDecodeException => Abort.fail(decode)
                         case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
-                case Result.Panic(t) =>
-                    java.lang.System.err.println(
-                        s"[kyo-sql] readMysql: unexpected decode panic: ${t.getMessage}"
-                    )
-                    t match
-                        case decode: SqlDecodeException => Abort.fail(decode)
-                        case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
+                case Result.Panic(t) => Abort.panic(t)
             end match
         end readMysql
 

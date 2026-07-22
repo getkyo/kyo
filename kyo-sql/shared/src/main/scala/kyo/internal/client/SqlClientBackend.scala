@@ -332,7 +332,6 @@ sealed trait SqlClientBackend:
                     case Result.Success(()) => ()
                     case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.withSlot: slotCh.take panic: ${t.getMessage}")
                         Abort.error(Result.Panic(t))
                 }
             else
@@ -344,9 +343,6 @@ sealed trait SqlClientBackend:
                         case Result.Success(()) => ()
                         case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(
-                                s"[kyo-sql] SqlClientBackend.withSlot: slotCh.take panic (timeout path): ${t.getMessage}"
-                            )
                             Abort.error(Result.Panic(t))
                     }
                 )
@@ -394,7 +390,6 @@ sealed trait SqlClientBackend:
                     case Result.Success(()) => ()
                     case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.withSlotS: slotCh.take panic: ${t.getMessage}")
                         Abort.error(Result.Panic(t))
                 }
             else
@@ -406,9 +401,6 @@ sealed trait SqlClientBackend:
                         case Result.Success(()) => ()
                         case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(
-                                s"[kyo-sql] SqlClientBackend.withSlotS: slotCh.take panic (timeout path): ${t.getMessage}"
-                            )
                             Abort.error(Result.Panic(t))
                     }
                 )
@@ -756,7 +748,6 @@ final class PostgresSqlClientBackend private[client] (
                         // SqlException failures; anything else becomes a Result.Panic.
                         e
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] PostgresSqlClientBackend.warmUp: unexpected panic: ${t.getMessage}")
                         SqlConnectionWarmupPanicException(t)
                 }
                 firstFailure match
@@ -1084,7 +1075,6 @@ final class PostgresSqlClientBackend private[client] (
                 case Result.Success(()) => ()
                 case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                 case Result.Panic(t) =>
-                    java.lang.System.err.println(s"[kyo-sql] PostgresSqlClientBackend.acquireStreamConn panic: ${t.getMessage}")
                     Abort.error(Result.Panic(t))
             }
         else
@@ -1096,9 +1086,6 @@ final class PostgresSqlClientBackend private[client] (
                     case Result.Success(()) => ()
                     case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(
-                            s"[kyo-sql] PostgresSqlClientBackend.acquireStreamConn panic (timeout path): ${t.getMessage}"
-                        )
                         Abort.error(Result.Panic(t))
                 }
             )
@@ -1313,9 +1300,6 @@ final class PostgresSqlClientBackend private[client] (
                     case Result.Failure(e) =>
                         Abort.fail(e)
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(
-                            s"[kyo-sql] PostgresSqlClientBackend.pgConnect: allow plaintext panic: ${t.getMessage}"
-                        )
                         Abort.error(Result.Panic(t))
                 }
             case _ =>
@@ -1373,7 +1357,6 @@ final class PostgresSqlClientBackend private[client] (
             case Result.Failure(_) =>
                 ()
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] pumpNotifications: panic: ${t.getMessage}")
                 ()
             case Result.Success(msg) =>
                 import kyo.internal.postgres.NotificationResponse
@@ -1396,7 +1379,6 @@ final class PostgresSqlClientBackend private[client] (
                     case Result.Failure(_) =>
                         Emit.valueWith(Chunk.empty[SqlClient.Postgres.Notification])(Loop.done)
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] notificationStream: take panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionNotificationPanicException(t))
                 }
 
@@ -1807,7 +1789,6 @@ final class MysqlSqlClientBackend private[client] (
                         // SqlException failures; anything else becomes a Result.Panic.
                         e
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] MysqlSqlClientBackend.warmUp: unexpected panic: ${t.getMessage}")
                         SqlConnectionWarmupPanicException(t)
                 }
                 firstFailure match
@@ -2127,7 +2108,6 @@ final class MysqlSqlClientBackend private[client] (
                 case Result.Success(()) => ()
                 case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                 case Result.Panic(t) =>
-                    java.lang.System.err.println(s"[kyo-sql] MysqlSqlClientBackend.acquireStreamConn panic: ${t.getMessage}")
                     Abort.error(Result.Panic(t))
             }
         else
@@ -2139,9 +2119,6 @@ final class MysqlSqlClientBackend private[client] (
                     case Result.Success(()) => ()
                     case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(
-                            s"[kyo-sql] MysqlSqlClientBackend.acquireStreamConn panic (timeout path): ${t.getMessage}"
-                        )
                         Abort.error(Result.Panic(t))
                 }
             )
@@ -2292,7 +2269,6 @@ final class MysqlSqlClientBackend private[client] (
                     case Result.Failure(e) =>
                         Abort.fail(e)
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] MysqlSqlClientBackend.myConnect: allow plaintext panic: ${t.getMessage}")
                         Abort.error(Result.Panic(t))
                 }
             case _ =>
@@ -2438,7 +2414,6 @@ object SqlClientBackend:
                 catch
                     // finalizer-context: stderr because we're in an AllowUnsafe pool callback
                     case t: Throwable =>
-                        java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.isAlive: unexpected error: ${t.getMessage}")
                         false,
             // Unsafe: discard is called from pool eviction path (non-Kyo context, AllowUnsafe in scope).
             // Unsafe: cleanup callback invoked outside any fiber suspension.
@@ -2483,7 +2458,6 @@ object SqlClientBackend:
                 catch
                     // finalizer-context: stderr because we're in an AllowUnsafe pool callback
                     case t: Throwable =>
-                        java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.isAlive: unexpected error: ${t.getMessage}")
                         false,
             // Unsafe: discard is called from pool eviction path (non-Kyo context, AllowUnsafe in scope).
             // Unsafe: cleanup callback invoked outside any fiber suspension.

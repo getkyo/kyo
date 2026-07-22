@@ -110,7 +110,6 @@ private[mysql] object StreamQueryExchange:
                                 case Result.Failure(e) =>
                                     Abort.fail(SqlConnectionProtocolDecodeException("column count", e))
                                 case Result.Panic(t) =>
-                                    java.lang.System.err.println(s"[kyo-sql] StreamQueryExchange: column count panic: ${t.getMessage}")
                                     Abort.fail(SqlConnectionProtocolDecodeException("column count", t))
                             }
                         end if
@@ -160,7 +159,6 @@ private[mysql] object StreamQueryExchange:
                     case Result.Failure(e) =>
                         Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] StreamQueryExchange: binary row panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", t))
                 }
             else
@@ -238,7 +236,6 @@ private[mysql] object StreamQueryExchange:
             case Result.Failure(e) =>
                 Abort.fail(SqlConnectionProtocolDecodeException("ERR", e))
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] StreamQueryExchange: ERR decode panic: ${t.getMessage}")
                 Abort.fail(SqlConnectionProtocolDecodeException("ERR", t))
         }
     end readErrAndFail

@@ -141,7 +141,6 @@ private[mysql] object ExtendedQueryExchange:
                         case Result.Failure(e) =>
                             Abort.fail(SqlConnectionProtocolDecodeException("StmtPrepareOk", e))
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(s"[kyo-sql] ExtendedQueryExchange: prepare panic: ${t.getMessage}")
                             Abort.fail(SqlConnectionProtocolDecodeException("StmtPrepareOk", t))
                     }
                 else
@@ -199,7 +198,6 @@ private[mysql] object ExtendedQueryExchange:
                             case Result.Failure(e) =>
                                 Abort.fail(SqlConnectionProtocolDecodeException("ColumnDefinition41", e))
                             case Result.Panic(t) =>
-                                java.lang.System.err.println(s"[kyo-sql] ExtendedQueryExchange: coldef panic: ${t.getMessage}")
                                 Abort.fail(SqlConnectionProtocolDecodeException("ColumnDefinition41", t))
                         }
                     }
@@ -268,7 +266,6 @@ private[mysql] object ExtendedQueryExchange:
                         case Result.Success(ok) => (Chunk.empty[MysqlRow], ok.affectedRows, ok.lastInsertId)
                         case Result.Failure(e)  => Abort.fail(SqlConnectionProtocolDecodeException("OK", e))
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(s"[kyo-sql] ExtendedQueryExchange: execute OK panic: ${t.getMessage}")
                             Abort.fail(SqlConnectionProtocolDecodeException("OK", t))
                     }
                 else if firstByte == 0xff then
@@ -304,7 +301,6 @@ private[mysql] object ExtendedQueryExchange:
                         case Result.Failure(e) =>
                             Abort.fail(SqlConnectionProtocolDecodeException("column count", e))
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(s"[kyo-sql] ExtendedQueryExchange: column count panic: ${t.getMessage}")
                             Abort.fail(SqlConnectionProtocolDecodeException("column count", t))
                     }
                 end if
@@ -356,7 +352,6 @@ private[mysql] object ExtendedQueryExchange:
                     case Result.Failure(e) =>
                         Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] ExtendedQueryExchange: binary row panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", t))
                 }
             else if firstByte == 0xff then
@@ -381,7 +376,6 @@ private[mysql] object ExtendedQueryExchange:
                     case Result.Failure(e) =>
                         Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] ExtendedQueryExchange: binary row panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", t))
                 }
             else
@@ -416,7 +410,6 @@ private[mysql] object ExtendedQueryExchange:
             case Result.Success(err) => err
             case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("ERR", e))
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] ExtendedQueryExchange: ERR decode panic: ${t.getMessage}")
                 Abort.fail(SqlConnectionProtocolDecodeException("ERR", t))
         }
     end readErrPayload

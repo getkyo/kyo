@@ -71,7 +71,6 @@ private[mysql] object ResultSetExchange:
                     case Result.Failure(e) =>
                         Abort.fail(SqlConnectionProtocolDecodeException("ColumnDefinition41", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] ResultSetExchange: column def decode panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("ColumnDefinition41", t))
                 }
             }
@@ -100,7 +99,6 @@ private[mysql] object ResultSetExchange:
                     case Result.Success(err) => Abort.fail(MysqlErrors.mkServerError(err, sqlText, 0, connectionId))
                     case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("ERR", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] ResultSetExchange: ERR decode panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("ERR", t))
                 }
             else
@@ -115,7 +113,6 @@ private[mysql] object ResultSetExchange:
                     case Result.Failure(e) =>
                         Abort.fail(SqlConnectionProtocolDecodeException("Row", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] ResultSetExchange: row decode panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("Row", t))
                 }
             end if

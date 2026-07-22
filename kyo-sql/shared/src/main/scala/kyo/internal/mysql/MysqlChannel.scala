@@ -136,7 +136,6 @@ final class MysqlChannel(
                     case Result.Success(_) => ()
                     case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing"))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] MysqlChannel: write panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionWritePanicException(t))
                 }
             }
@@ -157,7 +156,6 @@ final class MysqlChannel(
                 case Result.Success(msg) => msg
                 case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("message", e))
                 case Result.Panic(t) =>
-                    java.lang.System.err.println(s"[kyo-sql] MysqlChannel: decode panic: ${t.getMessage}")
                     Abort.fail(SqlConnectionProtocolDecodeException("message", t))
             }
         }
@@ -171,7 +169,6 @@ final class MysqlChannel(
                 case Result.Success(hs) => hs
                 case Result.Failure(e)  => Abort.fail(SqlConnectionProtocolDecodeException("Handshake", e))
                 case Result.Panic(t) =>
-                    java.lang.System.err.println(s"[kyo-sql] MysqlChannel: handshake decode panic: ${t.getMessage}")
                     Abort.fail(SqlConnectionProtocolDecodeException("Handshake", t))
             }
         }
@@ -206,7 +203,6 @@ final class MysqlChannel(
             case Result.Failure(_) =>
                 Abort.fail(SqlConnectionClosedException("reading"))
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] MysqlChannel: read panic: ${t.getMessage}")
                 Abort.fail(SqlConnectionClosedException("reading (panic: " + t.getMessage + ")"))
         }
     end pullChunk

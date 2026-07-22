@@ -124,9 +124,6 @@ private[mysql] object LocalInfileExchange:
                                             // Cleanup failed (write error or ERR from server).
                                             channel.markCorrupted().andThen(channel.endCleanup()).andThen(latch.release)
                                         case Result.Panic(t) =>
-                                            java.lang.System.err.println(
-                                                s"[kyo-sql] LocalInfileExchange: cleanup panic: ${t.getMessage}"
-                                            )
                                             channel.markCorrupted().andThen(channel.endCleanup()).andThen(latch.release)
                                     }
                                 }
@@ -136,9 +133,6 @@ private[mysql] object LocalInfileExchange:
                                     // Inner 5-second cleanup timeout fired. Mark corrupted and unblock callers.
                                     channel.markCorrupted().andThen(channel.endCleanup()).andThen(latch.release)
                                 case Result.Panic(t) =>
-                                    java.lang.System.err.println(
-                                        s"[kyo-sql] LocalInfileExchange: cleanup timeout-wrapper panic: ${t.getMessage}"
-                                    )
                                     channel.markCorrupted().andThen(channel.endCleanup()).andThen(latch.release)
                             }
                         }
@@ -214,7 +208,6 @@ private[mysql] object LocalInfileExchange:
                     case Result.Failure(e) =>
                         Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE OK", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] LocalInfileExchange: OK decode panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE OK", t))
                 }
             else if firstByte == 0xff then
@@ -228,7 +221,6 @@ private[mysql] object LocalInfileExchange:
                     case Result.Failure(e) =>
                         Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", e))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] LocalInfileExchange: ERR decode panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", t))
                 }
             else
@@ -265,7 +257,6 @@ private[mysql] object LocalInfileExchange:
             case Result.Failure(_) =>
                 Abort.fail(SqlConnectionClosedException("writing LOCAL INFILE"))
             case Result.Panic(t) =>
-                java.lang.System.err.println(s"[kyo-sql] LocalInfileExchange: write panic: ${t.getMessage}")
                 Abort.fail(SqlConnectionWritePanicException(t))
         }
     end sendRawPayload

@@ -101,7 +101,6 @@ private[mysql] object InitTlsExchange:
                     case Result.Failure(netEx) =>
                         Abort.fail(SqlConnectionConnectFailedException(host, port, netEx))
                     case Result.Panic(t) =>
-                        java.lang.System.err.println(s"[kyo-sql] InitTlsExchange: TLS upgrade panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionConnectFailedException(host, port, t))
                 }
             }

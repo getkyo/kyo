@@ -410,11 +410,15 @@ final private[kyo] class HttpContainerBackend(
         val seconds = timeout.toMillis / 1000
         // Start the /wait call as a background fiber BEFORE sending stop, so the exit code is
         // captured before auto-remove cleanup can race and remove the container from the daemon.
-        Fiber.initUnscoped(waitForExit(id, timeout)).map { waitFiber =>
+        // The observer fiber uses Duration.Infinity: `timeout` is the daemon's grace window before
+        // SIGKILL, not the client's overall deadline; the container may take longer than `timeout`
+        // to reach the terminal state and its exit code must still be captured. The `/stop` HTTP
+        // response bounds the caller-visible wait; a hung daemon is handled by fiber cancellation.
+        Fiber.initUnscoped(waitForExit(id, Duration.Infinity)).map { waitFiber =>
             // The daemon's `/stop?t=$seconds` waits up to `seconds` for graceful shutdown, then
             // SIGKILLs the container; its HTTP response returns only once the container has
-            // actually stopped. The HTTP-client deadline must therefore cover the *full* grace
-            // period plus SIGKILL and API overhead — `timeout + 30s`. Clamping it down to
+            // actually stopped. The HTTP-client deadline must therefore cover the full grace
+            // period plus SIGKILL and API overhead: `timeout + 30s`. Clamping it down to
             // `timeout` (the daemon's grace contract) guaranteed a spurious HttpTimeoutException
             // whenever the daemon used most of its grace window. `c.timeout.max(...)` keeps any
             // longer caller override.

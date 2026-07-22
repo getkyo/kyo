@@ -56,7 +56,6 @@ private[mysql] object SimpleQueryExchange:
                         case Result.Failure(e) =>
                             Abort.fail(SqlConnectionProtocolDecodeException("OK", e))
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange: OK decode panic: ${t.getMessage}")
                             Abort.fail(SqlConnectionProtocolDecodeException("OK", t))
                     }
                 else if firstByte == 0xff then
@@ -70,7 +69,6 @@ private[mysql] object SimpleQueryExchange:
                         case Result.Failure(e) =>
                             Abort.fail(SqlConnectionProtocolDecodeException("ERR", e))
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange: ERR decode panic: ${t.getMessage}")
                             Abort.fail(SqlConnectionProtocolDecodeException("ERR", t))
                     }
                 else if firstByte == 0xfb then
@@ -90,7 +88,6 @@ private[mysql] object SimpleQueryExchange:
                         case Result.Failure(e) =>
                             Abort.fail(SqlConnectionProtocolDecodeException("column count", e))
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange: column count panic: ${t.getMessage}")
                             Abort.fail(SqlConnectionProtocolDecodeException("column count", t))
                     }
                 end if
@@ -139,7 +136,6 @@ private[mysql] object SimpleQueryExchange:
                         case Result.Failure(e) =>
                             Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", e))
                         case Result.Panic(t) =>
-                            java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange.runLocalInfile: ERR decode panic: ${t.getMessage}")
                             Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", t))
                     }
                 else
