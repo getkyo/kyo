@@ -72,16 +72,7 @@ sealed abstract class SqlClient:
                 if rendered.params.nonEmpty then
                     Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("query"))
                 else
-                    ctx.connection.simpleQuery(rendered.sql).map(rows =>
-                        rows.map(r =>
-                            import kyo.internal.postgres.FieldDescription
-                            import kyo.internal.postgres.types.Format
-                            val fields = r.columns.map(column =>
-                                FieldDescription(column.name, 0, 0, 0, 0, 0, 0)
-                            )
-                            new SqlRow(r.values, fields, Format.Text)
-                        )
-                    )
+                    ctx.connection.simpleQuery(rendered.sql).map(_.map(SqlClientBackend.mysqlRowToRow))
             case Absent =>
                 SqlClient.local.use { (_, config) =>
                     self.backend.queryBound(self.url.address, self.url.password, rendered.sql, rendered.params, config)
@@ -214,16 +205,7 @@ sealed abstract class SqlClient:
                 if params.nonEmpty then
                     Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("query"))
                 else
-                    myCtx.connection.simpleQuery(sql).map(rows =>
-                        rows.map(r =>
-                            import kyo.internal.postgres.FieldDescription
-                            import kyo.internal.postgres.types.Format
-                            val fields = r.columns.map(column =>
-                                FieldDescription(column.name, 0, 0, 0, 0, 0, 0)
-                            )
-                            new SqlRow(r.values, fields, Format.Text)
-                        )
-                    )
+                    myCtx.connection.simpleQuery(sql).map(_.map(SqlClientBackend.mysqlRowToRow))
             case Absent =>
                 SqlClient.local.use { (_, config) =>
                     self.backend.query(self.url.address, self.url.password, pgSql, params, config)
@@ -300,14 +282,8 @@ sealed abstract class SqlClient:
                 case Present(ctx: TransactionContext.Postgres) =>
                     ctx.connection.extendedQuery(sql, params.flatMap(SqlClientBackend.boundToPostgres))
                 case Present(ctx: TransactionContext.Mysql) =>
-                    ctx.connection.extendedQuery(sql, params.flatMap(SqlClientBackend.boundToMysql)).map { mysqlRows =>
-                        mysqlRows.map { r =>
-                            import kyo.internal.postgres.FieldDescription
-                            import kyo.internal.postgres.types.Format
-                            val fields = r.columns.map(col => FieldDescription(col.name, 0, 0, 0, 0, 0, 0))
-                            new SqlRow(r.values, fields, Format.Text)
-                        }
-                    }
+                    ctx.connection.extendedQuery(sql, params.flatMap(SqlClientBackend.boundToMysql))
+                        .map(_.map(SqlClientBackend.mysqlRowToRow))
                 case Absent =>
                     SqlClient.local.use { (_, config) =>
                         self.backend.queryBound(self.url.address, self.url.password, sql, params, config)
@@ -1415,15 +1391,9 @@ object SqlClient:
             SqlClient.local.use { (_, config) =>
                 self.backend.withCancelInfoMysql(self.url.address, self.url.password, config) { (conn, connId) =>
                     val handle = SqlClient.CancelHandle.Mysql(self.url.address, connId)
-                    conn.extendedQuery(sql, params).map { mysqlRows =>
-                        val rows = mysqlRows.map { r =>
-                            import kyo.internal.postgres.FieldDescription
-                            import kyo.internal.postgres.types.Format
-                            val fields = r.columns.map(col => FieldDescription(col.name, 0, 0, 0, 0, 0, 0))
-                            new SqlRow(r.values, fields, Format.Text)
-                        }
-                        (handle, rows)
-                    }
+                    conn.extendedQuery(sql, params).map(mysqlRows =>
+                        (handle, mysqlRows.map(SqlClientBackend.mysqlRowToRow))
+                    )
                 }
             }
         end cancellableQuery
@@ -1491,14 +1461,7 @@ object SqlClient:
                                 // Publish the handle BEFORE the query starts so a cancelling fiber can read it
                                 // while extendedQuery is still suspended on the wire.
                                 handlePromise.complete(Result.succeed(handle)).andThen {
-                                    conn.extendedQuery(rendered.sql, myParams).map { mysqlRows =>
-                                        mysqlRows.map { r =>
-                                            import kyo.internal.postgres.FieldDescription
-                                            import kyo.internal.postgres.types.Format
-                                            val fields = r.columns.map(col => FieldDescription(col.name, 0, 0, 0, 0, 0, 0))
-                                            new SqlRow(r.values, fields, Format.Text)
-                                        }
-                                    }
+                                    conn.extendedQuery(rendered.sql, myParams).map(_.map(SqlClientBackend.mysqlRowToRow))
                                 }
                             }
                         ).flatMap { result =>

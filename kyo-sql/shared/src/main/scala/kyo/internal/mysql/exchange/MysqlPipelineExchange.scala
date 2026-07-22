@@ -2,10 +2,8 @@ package kyo.internal.mysql.exchange
 
 import kyo.*
 import kyo.SqlException
-import kyo.SqlRow
+import kyo.internal.client.SqlClientBackend
 import kyo.internal.mysql.*
-import kyo.internal.postgres.FieldDescription
-import kyo.internal.postgres.types.Format
 
 /** Implements MySQL sequential pipeline execution.
   *
@@ -108,22 +106,8 @@ object MysqlPipelineExchange:
                             Maybe(cid)
                         ).map { case (mysqlRows, affectedRows, _) =>
                             if mysqlRows.nonEmpty then
-                                val sqlRows = mysqlRows.map { r =>
-                                    val fields = r.columns.map { column =>
-                                        FieldDescription(
-                                            name = column.name,
-                                            tableOid = 0,
-                                            columnAttr = 0,
-                                            dataType = 0,
-                                            dataTypeSize = 0,
-                                            typeModifier = 0,
-                                            formatCode = 0
-                                        )
-                                    }
-                                    new SqlRow(r.values, fields, Format.Text)
-                                }
                                 (Result.Success(SqlClient.PipelineBuilder.Outcome(
-                                    sqlRows,
+                                    mysqlRows.map(SqlClientBackend.mysqlRowToRow),
                                     0L
                                 )): Result[SqlException, SqlClient.PipelineBuilder.Outcome])
                             else

@@ -1427,32 +1427,7 @@ final class MysqlSqlClientBackend private[client] (
 
     // --- Row conversion helper ---
 
-    /** Converts a [[MysqlRow]] to a [[Row]] with synthetic field descriptors.
-      *
-      * The synthetic [[FieldDescription]] contains the column name from [[ColumnDefinition41]]. OID and other PG-specific fields are set to
-      * zero/defaults. This allows callers to use `row.column(name)` for name-based access.
-      */
-    private def mysqlRowToRow(r: MysqlRow): SqlRow =
-        val fields = r.columns.map { column =>
-            FieldDescription(
-                name = column.name,
-                tableOid = 0,
-                columnAttr = 0,
-                dataType = 0,
-                dataTypeSize = 0,
-                typeModifier = 0,
-                formatCode = 0
-            )
-        }
-        // The `format` field on the produced SqlRow is retained from the source MysqlRow so
-        // callers that consume the raw byte column can differentiate binary vs text bytes.
-        // Downstream typed decoding via `SqlRow.decode` currently routes MySQL rows through
-        // `MysqlRowReader` which reads little-endian binary regardless of format, so callers
-        // that need text-protocol simple-query results should compare raw bytes rather than call
-        // `decode[T]`. A future generalisation should extend `MysqlRowReader` to also handle
-        // text-protocol byte parsing for numeric types.
-        new SqlRow(r.values, fields, r.format)
-    end mysqlRowToRow
+    private def mysqlRowToRow(r: MysqlRow): SqlRow = SqlClientBackend.mysqlRowToRow(r)
 
     // --- query / execute / executeRaw / streamQuery (BoundParam surface) ---
 
@@ -2356,6 +2331,27 @@ end MysqlSqlClientBackend
 // --- Companion object ---
 
 object SqlClientBackend:
+
+    /** Converts a [[MysqlRow]] to an [[SqlRow]] with synthetic Postgres-shaped [[FieldDescription]]s.
+      *
+      * The synthetic fields carry the MySQL column name; OID and other PG-specific fields are zeroed. The row's [[Format]] is preserved
+      * unchanged from the source: extended-protocol rows arrive as [[Format.Binary]], text-protocol rows as [[Format.Text]]. Downstream
+      * decoders dispatch on this field, so callers routing extended-protocol rows through here must not force [[Format.Text]].
+      */
+    private[kyo] def mysqlRowToRow(r: MysqlRow): SqlRow =
+        val fields = r.columns.map { column =>
+            FieldDescription(
+                name = column.name,
+                tableOid = 0,
+                columnAttr = 0,
+                dataType = 0,
+                dataTypeSize = 0,
+                typeModifier = 0,
+                formatCode = 0
+            )
+        }
+        new SqlRow(r.values, fields, r.format)
+    end mysqlRowToRow
 
     /** Returns true if the exception indicates the connection is protocol-poisoned and must be discarded rather than returned to the pool.
       *

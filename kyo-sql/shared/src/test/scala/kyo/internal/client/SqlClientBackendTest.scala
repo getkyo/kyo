@@ -56,4 +56,37 @@ class SqlClientBackendTest extends kyo.Test:
         )
     }
 
+    "mysqlRowToRow preserves the source row's wire Format (regression: extended-protocol binary rows were being wrapped as Format.Text on the tx / cancel / pipeline paths, causing MysqlRowReader to decode binary bytes as text)" in {
+        import kyo.internal.mysql.ColumnDefinition41
+        import kyo.internal.mysql.MysqlRow
+        import kyo.internal.postgres.types.Format
+
+        val column = ColumnDefinition41(
+            catalog = "",
+            schema = "",
+            table = "",
+            orgTable = "",
+            name = "n",
+            orgName = "n",
+            charset = 0,
+            columnLength = 0L,
+            columnType = 0,
+            flags = 0,
+            decimals = 0
+        )
+        val values = Chunk(Maybe(Span[Byte](0.toByte)))
+
+        val binaryRow = new MysqlRow(values, Chunk(column), Format.Binary)
+        assert(
+            SqlClientBackend.mysqlRowToRow(binaryRow).format == Format.Binary,
+            "mysqlRowToRow must forward the Binary format from an extended-protocol MysqlRow"
+        )
+
+        val textRow = new MysqlRow(values, Chunk(column), Format.Text)
+        assert(
+            SqlClientBackend.mysqlRowToRow(textRow).format == Format.Text,
+            "mysqlRowToRow must forward the Text format from a simple-query MysqlRow"
+        )
+    }
+
 end SqlClientBackendTest
