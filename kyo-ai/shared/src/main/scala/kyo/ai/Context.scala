@@ -3,18 +3,17 @@ package kyo.ai
 import Context.*
 import kyo.*
 
-/** The conversation history for an LLM interaction: an ordered sequence of typed messages.
+/** The conversation history for an LLM interaction: an ordered, immutable sequence of typed messages.
   *
-  * `Context` IS the conversation. Each builder appends a typed `Message` and returns a new `Context`
-  * (the value is immutable). Builders log-and-skip degenerate inputs: a blank system/user/assistant
-  * content is dropped, a user message with neither content nor image is dropped, an assistant message
-  * with neither content nor calls is dropped. `Role` carries the exact lowercase wire-strings the
-  * providers require (`system`/`user`/`assistant`/`tool`), surfaced via `role.name` on every request.
+  * `Context` IS the conversation. Each builder appends a typed `Message` and returns a new `Context`.
+  * Builders log-and-skip degenerate inputs (blank content, a user message with neither content nor
+  * image, an assistant message with neither content nor calls). `Role` carries the exact lowercase
+  * wire-strings providers require (`system`/`user`/`assistant`/`tool`), surfaced via `role.name`.
   *
-  * `merge` is prefix-aware: it finds the common prefix shared with the argument and appends only the
-  * non-common suffix, so merging an accumulated context with a derived one never duplicates the shared
-  * history. `Context`, `Role`, `CallId`, and the `Message` trait all `derives CanEqual` so the
-  * equality-based merge and context-repair logic compile under strict equality.
+  * `merge` is prefix-aware: it appends only the argument's non-common suffix, so merging an accumulated
+  * context with a derived one never duplicates shared history. `Context`, `Role`, `CallId`, and
+  * `Message` all `derives CanEqual` so the equality-based merge and context-repair logic compile under
+  * strict equality.
   *
   * @param messages
   *   the ordered conversation messages
@@ -70,8 +69,19 @@ object Context:
     /** The provider-assigned identifier of a tool call. */
     case class CallId(id: String) derives CanEqual, Schema
 
-    /** A single tool call requested by the assistant: the call id, the function name, the raw argument JSON. */
-    case class Call(id: CallId, function: String, arguments: String) derives Schema
+    /** A tool call the model asked for.
+      *
+      * `providerExtra` carries whatever the endpoint attached to the call and expects back verbatim on
+      * later turns. Opaque on purpose: one endpoint refuses the next request unless the token it issued
+      * with a call is returned with it, and the refusal names an internal field, not the tool. Nothing
+      * reads the contents, so it is preserved, not interpreted.
+      */
+    case class Call(
+        id: CallId,
+        function: String,
+        arguments: String,
+        providerExtra: Maybe[Structure.Value] = Absent
+    ) derives Schema
 
     /** A conversation message, tagged with its role. */
     sealed trait Message(val role: Role) derives CanEqual, Schema:

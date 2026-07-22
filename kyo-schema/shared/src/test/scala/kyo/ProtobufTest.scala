@@ -100,6 +100,15 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     "encode/decode" - {
 
+        "rejects trailing content after the decoded value" in {
+            // Decoding a value is not the same as decoding the input. Without this the extra bytes are
+            // discarded in silence and a partly consumed payload is indistinguishable from a clean one.
+            val bytes    = Protobuf.encode[MTPerson](MTPerson("Alice", 30))
+            val trailing = Span.from(bytes.toArray :+ 0x42.toByte)
+            assert(Protobuf.decode[MTPerson](trailing).isFailure, "bytes after the value must not be ignored")
+            assert(Protobuf.decode[MTPerson](bytes).isSuccess, "and the value alone must still decode")
+        }
+
         "protobuf encode simple" in {
             val person = MTPerson("Alice", 30)
             val bytes  = Protobuf.encode[MTPerson](person)

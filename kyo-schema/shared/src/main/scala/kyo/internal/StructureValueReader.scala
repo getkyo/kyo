@@ -24,6 +24,10 @@ import kyo.Codec.Reader
 final class StructureValueReader(root: Structure.Value)(using _frame: Frame) extends IntrospectingReader:
     override def frame: Frame = _frame
 
+    // Nothing to be left over: this reads a value that is already parsed, so there is no input after
+    // it for anything to hide in.
+    private[kyo] def requireEndOfInput(): Unit = ()
+
     sealed private trait StackFrame
     private case class ObjectFrame(fields: Iterator[(String, Structure.Value)], var current: Maybe[(String, Structure.Value)])
         extends StackFrame

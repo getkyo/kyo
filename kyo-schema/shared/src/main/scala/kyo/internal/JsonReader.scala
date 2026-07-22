@@ -590,6 +590,10 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         pos += 1
     end expectByte
 
+    private[kyo] def requireEndOfInput(): Unit =
+        skipWhitespace()
+        if pos < input.size then error("Unexpected trailing content")
+
     private def error(msg: String): Nothing =
         given Frame       = _frame
         val contextRadius = 30

@@ -2288,6 +2288,25 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded.byLevel.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))
         }
 
+        "rejects trailing content after the decoded root value" in {
+            // The sibling codecs in this module already do: the Ion reader ends its parse with an
+            // explicit trailing-content check, and BSON asserts the same. JSON accepted anything after
+            // the first complete value, so a payload holding two values back to back decoded to the
+            // first and discarded the rest in silence, and so did one followed by prose.
+            //
+            // That silence has a cost outside this module. A caller decoding a reply cannot tell a
+            // well-formed answer from one with unexplained bytes stuck to it, so a provider defect and
+            // a model that misunderstood the format both look like success.
+            val twoValues = Json.decode[Int]("1 2")
+            assert(twoValues.isFailure, s"two values back to back must not decode to the first: $twoValues")
+            val trailingProse = Json.decode[Boolean]("true and then some")
+            assert(trailingProse.isFailure, s"a value followed by prose must not decode: $trailingProse")
+            val overClosed = Json.decode[Int]("1}")
+            assert(overClosed.isFailure, s"a value followed by a stray bracket must not decode: $overClosed")
+            // Whitespace is not content and stays acceptable on either side.
+            assert(Json.decode[Int](" 1 \n ") == Result.Success(1), "surrounding whitespace must still decode")
+        }
+
         "an oversized OrderedDict[String, V] field decodes to a typed failure, not a bare thrown exception" in {
             val json   = (0 until 20000).map(n => s""""k$n":$n""").mkString("""{"settings":{""", ",", "}}")
             val result = Json.decode[MTOrderedDictConfig](json, maxCollectionSize = 10000)

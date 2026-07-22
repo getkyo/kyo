@@ -19,6 +19,10 @@ final private[kyo] class YamlReader private (
 )(using _frame: Frame) extends Codec.IntrospectingReader:
     import YamlReader.*
 
+    // Nothing is left to check here: this reader walks an event stream produced up front, and that
+    // scan already refuses content after the root node.
+    private[kyo] def requireEndOfInput(): Unit = ()
+
     private var prepared: Boolean               = events ne null
     private var stack: List[ContainerFrame]     = Nil
     private var delegate: Maybe[YamlReader]     = Absent

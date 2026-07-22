@@ -112,7 +112,15 @@ object Log extends kyo.internal.LogPlatformSpecific:
         case silent extends Level(60)
     end Level
 
-    val live: Log = Log(Unsafe.AsyncUnsafe(Unsafe.ConsoleLogger("kyo.logs", Level.warn)))
+    /** The level the process-wide logger emits at (`-Dkyo.Log.defaultLevel`, or `KYO_LOG_DEFAULTLEVEL`).
+      *
+      * Raising it is how a running program is asked what it is doing. Without a knob the only ways to
+      * see a debug line were to edit the source or wrap every call site in `Log.let`, so diagnosing a
+      * live path meant reproducing it outside the program instead of reading it from within.
+      */
+    private[kyo] object defaultLevel extends StaticFlag[Level](Level.warn)
+
+    val live: Log = Log(Unsafe.AsyncUnsafe(Unsafe.ConsoleLogger("kyo.logs", defaultLevel())))
 
     private val local = Local.init(live)
 
@@ -524,6 +532,18 @@ object Log extends kyo.internal.LogPlatformSpecific:
         /** Drop events strictly below `level`; write the rest inline. */
         case class DropBelow(level: Log.Level) extends Overflow
     end Overflow
+
+    /** Parses `-Dkyo.Log.defaultLevel`: one of the `Log.Level` names, any casing, whitespace trimmed. */
+    private[kyo] given Flag.Reader[Level] with
+        def typeName: String = "Log.Level"
+        def apply(s: String): Either[Throwable, Level] =
+            Maybe.fromOption(Level.values.find(_.toString.equalsIgnoreCase(s.trim))) match
+                case Present(level) => Right(level)
+                case Absent =>
+                    Left(new IllegalArgumentException(
+                        s"unknown log level: ${s.trim} (expected one of ${Level.values.map(_.toString).mkString(", ")})"
+                    ))
+    end given
 
     /** Parses `-Dkyo.Log.asyncLogging.overflow`: `"SyncFallback"` or `"DropBelow:<level>"`. */
     private[kyo] given Flag.Reader[Overflow] with

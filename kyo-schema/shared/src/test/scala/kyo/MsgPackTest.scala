@@ -80,6 +80,15 @@ class MsgPackTest extends kyo.test.Test[Any]:
             assert(first(_.boolean(false)) == 0xc2)
         }
 
+        "rejects trailing content after the decoded value" in {
+            // Decoding a value is not the same as decoding the input. Without this the extra bytes are
+            // discarded in silence and a partly consumed payload is indistinguishable from a clean one.
+            val bytes    = MsgPack.encode(MPPerson("Alice", 30))
+            val trailing = Span.from(bytes.toArray :+ 0xc0.toByte)
+            assert(MsgPack.decode[MPPerson](trailing).isFailure, "bytes after the value must not be ignored")
+            assert(MsgPack.decode[MPPerson](bytes).isSuccess, "and the value alone must still decode")
+        }
+
         "small map uses a fixmap header" in {
             val bytes = MsgPack.encode(MPPerson("Alice", 30))
             // 2-field map => fixmap header 0x82
