@@ -1634,19 +1634,19 @@ lazy val `kyo-aeron` =
                     else Nil
                 Seq(
                     FfiLibrary(
-                        id          = "kyo_aeron",
-                        cSources    = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        id = "kyo_aeron",
+                        cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
                         includeDirs = Seq(
                             aeronStaged / "include" / "aeron",
                             aeronStaged / "include" / "aeronmd"
                         ),
-                        libDirs     = Seq(aeronStaged / "lib"),
+                        libDirs = Seq(aeronStaged / "lib"),
                         // aeron_driver_static already embeds the full client, so it alone provides the
                         // complete client + driver API. Adding aeron_static too duplicates every client
                         // symbol and fails the Darwin ld64 link.
-                        linkLibs    = Seq("aeron_driver_static"),
-                        linkFlags   = linuxSystemLinkFlags,
-                        staticLink  = true
+                        linkLibs = Seq("aeron_driver_static"),
+                        linkFlags = linuxSystemLinkFlags,
+                        staticLink = true
                     )
                 )
             }
@@ -1724,7 +1724,7 @@ lazy val `kyo-aeron` =
                 val nodeMods   = targetBase / "node_modules"
                 val marker     = nodeMods / "koffi" / "package.json"
                 val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
-                val pjContent  =
+                val pjContent =
                     s"""{"name":"kyo-aeron-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
                 val pj = targetBase / "package.json"
                 if (!pj.exists() || IO.read(pj) != pjContent) {
@@ -1779,7 +1779,7 @@ lazy val `kyo-aeron` =
                 val nodeMods   = targetBase / "node_modules"
                 val marker     = nodeMods / "koffi" / "package.json"
                 val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
-                val pjContent  =
+                val pjContent =
                     s"""{"name":"kyo-aeron-wasm-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
                 val pj = targetBase / "package.json"
                 if (!pj.exists() || IO.read(pj) != pjContent) {
