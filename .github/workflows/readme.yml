@@ -35,4 +35,16 @@ jobs:
           command: |
             sudo apt-get update
             sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
+      # libaeron (build-time only): `sbt doctest` compiles kyo-aeron's C shim (kyo_aeron.c), which
+      # statically links -laeron_driver_static from the gitignored staged tree. Same reason as liburing
+      # above: this workflow does not use .github/actions/setup, so the staging step is repeated here.
+      # The runner is pinned to ubuntu-latest, so the os-arch is always linux-x86_64.
+      - name: Prepare libaeron
+        shell: bash
+        run: |
+          command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
+          # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
+          # target is not preinstalled.
+          dpkg -s uuid-dev >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 uuid-dev; }
+          bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
       - run: sbt doctest

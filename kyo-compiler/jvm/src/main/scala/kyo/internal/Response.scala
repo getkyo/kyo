@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** The neutral, serializable op reply, the aeron wire reply (the upickle [[Compiler.AsMessage]]
+/** The neutral, serializable op reply, the aeron wire reply (the kyo-schema [[Compiler.AsMessage]]
   * codec, carried inside the [[Envelope]] wrapper).
   *
   * Like [[Request]] it carries no id field (the id correlation is the transport's); a reply case is
