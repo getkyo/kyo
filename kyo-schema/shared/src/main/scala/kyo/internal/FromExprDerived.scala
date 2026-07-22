@@ -1341,9 +1341,8 @@ object FromExprDerived:
                         val asCon          = asConstruction(peeledReceiver)
                         // Case-field fold. The original guard only checked the head symbol
                         // (`caseSym.flags.is(Case)` / `caseSym.companionClass.flags.is(Case)`), which
-                        // fails when the head names an `export` / re-export alias (e.g. `kyo.SqlAst`
-                        // re-exports `WindowSpecBuilder` from `kyo.internal.dsl`, the alias's
-                        // `companionClass` is `NoSymbol`). The added arm accepts the fold when the
+                        // fails when the head names an `export` / re-export alias whose
+                        // `companionClass` is `NoSymbol`. The added arm accepts the fold when the
                         // field accessor's owner IS a case class AND the construction's arg count
                         // matches that class's caseFields count, a conservative shape check that
                         // ensures we're indexing the right arg list even when the head symbol is
@@ -1789,7 +1788,7 @@ object FromExprDerived:
                                     else
                                         // Chunk.apply(varargs) / Chunk.from(varargs), the args term is a single
                                         // Typed(Repeated(...), _) or Repeated(elems, _), possibly wrapped in `Inlined`
-                                        // when it arrives through an inline def (e.g. `InsertBuilder.values`).
+                                        // when it arrives through an inline def (e.g. `Insert.Builder.values`).
                                         //
                                         // Phase H.5, also handles `<varargs>.map(<closure>)`: the DSL's INSERT
                                         // `ON CONFLICT` / `overriding` builders write `Chunk.from(specs.map(_(columns)))`,
@@ -1836,7 +1835,7 @@ object FromExprDerived:
                                                         (endsWith(norm, "Chunk.apply") ||
                                                             endsWith(norm, "IterableFactory.apply") ||
                                                             // `Chunk.from(varargs)`, produced by inline-def varargs forwarding
-                                                            // such as `InsertBuilder.values(rows: T*)` → `Chunk.from(rows)`.
+                                                            // such as `Insert.Builder.values(rows: T*)` → `Chunk.from(rows)`.
                                                             endsWith(norm, "Chunk.from")) =>
                                                     extractElems(reps)
                                                 case Apply(Select(_, "toChunk"), List(arg)) =>

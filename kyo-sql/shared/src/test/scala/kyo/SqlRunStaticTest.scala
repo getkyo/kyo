@@ -8,7 +8,7 @@ import scala.compiletime.testing.typeCheckErrors
   * Scenarios:
   *   - `.runStatic` on a fully-reducible inline query emits a compile-time splice (no runtime render).
   *   - `.runStatic` on a window-function query compiles statically (Phase 8 adds `FromExpr` givens for `WindowSpec` / `WindowFrame` /
-  *     `FrameBound` / `WindowSpecBuilder`).
+  *     `FrameBound` / `WindowSpec.Builder`).
   *   - `.runStatic` on a non-liftable Update emits a compile error via `report.errorAndAbort`.
   *   - `.run` on a static query succeeds; this exercises the `isStaticallyReducible` probe that selects the static fast-path (falls back to
   *     runtime when not liftable).
@@ -44,9 +44,9 @@ class SqlRunStaticTest extends Test:
 
     // ── Leaf B, runStatic on a window function now compiles (Phase 8 adds FromExpr for WindowSpec)
     //
-    // WindowSpecBuilder.partitionBy now uses explicit `new WindowSpecBuilder(...)` constructors
+    // WindowSpec.Builder.partitionBy now uses explicit `new WindowSpec.Builder(...)` constructors
     // (Phase 8 fix) and `FromExpr` givens for WindowSpec / WindowFrame / FrameBound /
-    // WindowSpecBuilder are in scope, so the macro lifts window expressions at compile time.
+    // WindowSpec.Builder are in scope, so the macro lifts window expressions at compile time.
 
     "Query.runStatic on a window function compiles statically (Phase 8: WindowSpec is liftable)" in {
         def shape(using Frame): Chunk[Long] < (Async & Abort[SqlException] & Scope) =
@@ -74,7 +74,7 @@ class SqlRunStaticTest extends Test:
 
     // ── Leaf E, Update.runStatic fails at compile time (sets lambda not liftable) ─
     //
-    // `UpdateBuilder.set(inline specs: ...)` applies each spec lambda via `specs.map(_(columns))`
+    // `Update.Builder.set(inline specs: ...)` applies each spec lambda via `specs.map(_(columns))`
     // which produces a runtime `Chunk`, not reducible by `FromExpr.derived`. Phase 7 wires
     // runStatic to report.errorAndAbort when the AST is not liftable.
 

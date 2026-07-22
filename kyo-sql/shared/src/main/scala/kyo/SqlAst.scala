@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Record.~
 import kyo.SqlSchema.BoundValue
-import kyo.internal.dsl.WindowSpecBuilder
 import scala.annotation.targetName
 import scala.compiletime.summonFrom
 import scala.deriving.Mirror
@@ -12,8 +11,8 @@ import scala.deriving.Mirror
 /** SQL Abstract Syntax Tree for the Sql DSL.
   *
   * Holds every AST node, every typeclass, and every DSL method that constructs an AST node. The companion `Sql` object exposes top-level
-  * entry points (`from`, `insert`, `when`, etc.) that delegate here. DSL builders (e.g. [[kyo.internal.dsl.WindowSpecBuilder]]) live in
-  * `kyo.internal.dsl` and are re-exported from the `Sql` companion for user-facing access.
+  * entry points (`from`, `insert`, `when`, etc.) that delegate here. DSL builders live in the companion of the AST type they produce (e.g.
+  * [[WindowSpec.Builder]], [[Insert.Builder]], [[Update.Builder]]).
   *
   * Users typically `import kyo.SqlAst.*` to bring all types and the DSL methods on `Term` / `Column` / `Query` / etc. into scope.
   *
@@ -28,9 +27,6 @@ import scala.deriving.Mirror
   *     subquery).
   */
 object SqlAst:
-
-    // Re-export the window-spec builder so `import kyo.SqlAst.*` keeps working.
-    export kyo.internal.dsl.WindowSpecBuilder
 
     // --- SqlAst, unified root ---
 
@@ -487,14 +483,14 @@ object SqlAst:
     // --- WindowAggregate, wraps an Aggregate.Call, only usable via .over(spec) ---
 
     final case class WindowAggregate[A](inner: Aggregate.Call[A]) derives CanEqual:
-        inline def over(inline spec: WindowSpec): Term[A]           = Windowed(inner, spec)
-        inline def over(inline builder: WindowSpecBuilder): Term[A] = Windowed(inner, builder.build)
+        inline def over(inline spec: WindowSpec): Term[A]            = Windowed(inner, spec)
+        inline def over(inline builder: WindowSpec.Builder): Term[A] = Windowed(inner, builder.build)
 
     // --- WindowFunction, column-based and standalone window functions ---
 
     sealed trait WindowFunction[A]:
-        inline def over(inline spec: WindowSpec): Term[A]           = Windowed(this, spec)
-        inline def over(inline builder: WindowSpecBuilder): Term[A] = Windowed(this, builder.build)
+        inline def over(inline spec: WindowSpec): Term[A]            = Windowed(this, spec)
+        inline def over(inline builder: WindowSpec.Builder): Term[A] = Windowed(this, builder.build)
 
     object WindowFunction:
         given CanEqual[WindowFunction[?], WindowFunction[?]] = CanEqual.derived
@@ -527,6 +523,89 @@ object SqlAst:
         orderBy: Chunk[OrderSpec],
         frame: Maybe[WindowFrame]
     ) derives CanEqual
+
+    object WindowSpec:
+
+        /** Window-spec builder. Terminator methods (`rowNumber`, `rank`, etc.) finalise to a `Term[A]`.
+          *
+          * Builder methods use explicit `new Builder(...)` constructors rather than `.copy(...)` with `Chunk.from` / `:+` so that the
+          * inlined call-site trees are liftable by `FromExpr.derived` (the static-SQL macro). `Chunk(key)` / `Chunk(keys*)` emit a
+          * `Chunk.apply` varargs tree which the `FromExpr[Chunk[A]]` derivation recognises; `.copy(...)` and `Chunk.from(keys)` produce
+          * runtime method calls that the macro cannot reduce.
+          *
+          * ===Static-SQL note===
+          *
+          * The builder chain `Sql.windowSpec.partitionBy(x).rowNumber` lifts cleanly through the compile-time `.runStatic` path (Phase 9b
+          * fix to `resolveBindings`'s Select-of-construction fold, the previous limitation requiring an explicit `WindowSpec(...)`
+          * constructor at static call sites is gone).
+          *
+          * ===Replace semantics===
+          *
+          * `partitionBy(b)` after `partitionBy(a)` replaces the partition list; it does NOT append. The resulting `Builder.partitions`
+          * field is `Chunk(b)`, not `Chunk(a, b)`. Use the vararg overload `partitionBy(a, b)` for multi-key partitions.
+          *
+          * Similarly, `orderBy(spec2)` after `orderBy(spec1)` replaces the ordering list with `Chunk(spec2)`.
+          */
+        final case class Builder(
+            partitions: Chunk[Term[?]],
+            orderings: Chunk[OrderSpec],
+            frameOpt: Maybe[WindowFrame]
+        ) derives CanEqual:
+            // -- build chain (return fresh builder) ------------------------------------
+
+            /** Replace the partition list with `Chunk(key)`.
+              *
+              * @note
+              *   replace semantic, calling `partitionBy(b)` after `partitionBy(a)` yields `partitions = Chunk(b)`, not `Chunk(a, b)`. Use
+              *   `partitionBy(a, b)` for multi-key partitions.
+              */
+            inline def partitionBy[N <: String & Singleton, V](inline key: Column[N, V]): Builder =
+                new Builder(Chunk(key), orderings, frameOpt)
+
+            /** Replace the partition list with `Chunk(keys*)`.
+              *
+              * @note
+              *   replace semantic, calling `partitionBy(b)` after `partitionBy(a)` yields `partitions = Chunk(b)`, not `Chunk(a, b)`.
+              */
+            @targetName("partitionByVarargs")
+            inline def partitionBy(inline keys: Term[?]*): Builder =
+                new Builder(Chunk(keys*), orderings, frameOpt)
+
+            /** Replace the ordering list with `Chunk(spec)`. */
+            inline def orderBy(inline spec: OrderSpec): Builder =
+                new Builder(partitions, Chunk(spec), frameOpt)
+
+            /** Replace the ordering list with `Chunk(specs*)`. */
+            @targetName("orderByVarargs")
+            inline def orderBy(inline specs: OrderSpec*): Builder =
+                new Builder(partitions, Chunk(specs*), frameOpt)
+
+            inline def frameRows(inline start: FrameBound, inline end: FrameBound): Builder =
+                new Builder(partitions, orderings, Maybe(WindowFrame(WindowFrame.Kind.Rows, start, Maybe(end))))
+            inline def frameRows(inline start: FrameBound): Builder =
+                new Builder(partitions, orderings, Maybe(WindowFrame(WindowFrame.Kind.Rows, start, Maybe.empty)))
+            inline def frameRange(inline start: FrameBound, inline end: FrameBound): Builder =
+                new Builder(partitions, orderings, Maybe(WindowFrame(WindowFrame.Kind.Range, start, Maybe(end))))
+            inline def frameRange(inline start: FrameBound): Builder =
+                new Builder(partitions, orderings, Maybe(WindowFrame(WindowFrame.Kind.Range, start, Maybe.empty)))
+            inline def frameGroups(inline start: FrameBound, inline end: FrameBound): Builder =
+                new Builder(partitions, orderings, Maybe(WindowFrame(WindowFrame.Kind.Groups, start, Maybe(end))))
+            inline def frameGroups(inline start: FrameBound): Builder =
+                new Builder(partitions, orderings, Maybe(WindowFrame(WindowFrame.Kind.Groups, start, Maybe.empty)))
+
+            /** Build the underlying [[WindowSpec]] from the accumulated state. */
+            inline def build: WindowSpec = WindowSpec(partitions, orderings, frameOpt)
+
+            // -- standalone window-function terminators --------------------------------
+            inline def rowNumber: Term[Long]                 = Windowed(WindowFunction.RowNumber, build)
+            inline def rank: Term[Long]                      = Windowed(WindowFunction.Rank, build)
+            inline def denseRank: Term[Long]                 = Windowed(WindowFunction.DenseRank, build)
+            inline def percentRank: Term[Double]             = Windowed(WindowFunction.PercentRank, build)
+            inline def cumeDist: Term[Double]                = Windowed(WindowFunction.CumeDist, build)
+            inline def ntile(inline n: Int): Term[Int]       = Windowed(WindowFunction.Ntile(intLit(n)), build)
+            inline def ntile(inline n: Term[Int]): Term[Int] = Windowed(WindowFunction.Ntile(n), build)
+        end Builder
+    end WindowSpec
 
     final case class WindowFrame(kind: WindowFrame.Kind, start: FrameBound, end: Maybe[FrameBound]) derives CanEqual
     object WindowFrame:
@@ -640,11 +719,11 @@ object SqlAst:
         def columns: Record[F]
 
         // -- Joins ----------------------------------------------------------
-        inline def innerJoin[T2, F2](inline other: From[T2, F2]): JoinOnBuilder[T, F, T2, F2] = JoinOnBuilder(JoinKind.Inner, this, other)
-        inline def leftJoin[T2, F2](inline other: From[T2, F2]): JoinOnBuilder[T, F, T2, F2]  = JoinOnBuilder(JoinKind.Left, this, other)
-        inline def rightJoin[T2, F2](inline other: From[T2, F2]): JoinOnBuilder[T, F, T2, F2] = JoinOnBuilder(JoinKind.Right, this, other)
-        inline def fullOuterJoin[T2, F2](inline other: From[T2, F2]): JoinOnBuilder[T, F, T2, F2] =
-            JoinOnBuilder(JoinKind.FullOuter, this, other)
+        inline def innerJoin[T2, F2](inline other: From[T2, F2]): Join.OnBuilder[T, F, T2, F2] = Join.OnBuilder(JoinKind.Inner, this, other)
+        inline def leftJoin[T2, F2](inline other: From[T2, F2]): Join.OnBuilder[T, F, T2, F2]  = Join.OnBuilder(JoinKind.Left, this, other)
+        inline def rightJoin[T2, F2](inline other: From[T2, F2]): Join.OnBuilder[T, F, T2, F2] = Join.OnBuilder(JoinKind.Right, this, other)
+        inline def fullOuterJoin[T2, F2](inline other: From[T2, F2]): Join.OnBuilder[T, F, T2, F2] =
+            Join.OnBuilder(JoinKind.FullOuter, this, other)
         inline def crossJoin[T2, F2](inline other: From[T2, F2]): CrossJoin[(T, T2), F & F2] =
             CrossJoin(this, other, columns & other.columns)
 
@@ -762,6 +841,20 @@ object SqlAst:
         columnNames: Chunk[String]
     ) extends From[T, F]
 
+    object Table:
+        final class Builder[T]:
+            transparent inline def apply[N <: String & Singleton](alias: N)(using f: Fields[T]) =
+                val cols = internal.buildColumns[T, N](alias)
+                Table[T, internal.RecordF[cols.type]](
+                    cols,
+                    alias,
+                    kyo.internal.SqlMacros.tableName[T],
+                    kyo.internal.SqlMacros.columnNames[T]
+                )
+            end apply
+        end Builder
+    end Table
+
     final case class Nested[T, F](
         columns: Record[F],
         source: Query[?],
@@ -769,12 +862,30 @@ object SqlAst:
         columnNames: Chunk[String]
     ) extends From[T, F]
 
+    object Nested:
+        final class Builder[T]:
+            transparent inline def apply[N <: String & Singleton](alias: N, query: Query[?])(using f: Fields[T]) =
+                val cols = internal.buildColumns[T, N](alias)
+                Nested[T, internal.RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
+            end apply
+        end Builder
+    end Nested
+
     final case class Lateral[T, F](
         columns: Record[F],
         source: Query[?],
         alias: String,
         columnNames: Chunk[String]
     ) extends From[T, F]
+
+    object Lateral:
+        final class Builder[T]:
+            transparent inline def apply[N <: String & Singleton](alias: N, query: Query[?])(using f: Fields[T]) =
+                val cols = internal.buildColumns[T, N](alias)
+                Lateral[T, internal.RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
+            end apply
+        end Builder
+    end Lateral
 
     /** `(VALUES (…), (…)) AS alias` query source. `rows` is stored as decomposed pure data, outer `Chunk` = rows, inner `Chunk` = one
       * [[kyo.BoundValue]] per column in declaration order, so the AST lifts via `FromExpr.derived` with zero reflection. The row type `T`
@@ -787,6 +898,23 @@ object SqlAst:
         columnNames: Chunk[String]
     ) extends From[T, F]
 
+    object ValuesFrom:
+        final class Builder[T]:
+            transparent inline def apply[N <: String & Singleton](alias: N, inline rows: T*)(using
+                m: Mirror.ProductOf[T],
+                f: Fields[T]
+            ) =
+                val cols = internal.buildColumns[T, N](alias)
+                ValuesFrom[T, internal.RecordF[cols.type]](
+                    cols,
+                    kyo.internal.SqlMacros.rowValues[T](rows),
+                    alias,
+                    kyo.internal.SqlMacros.columnNames[T]
+                )
+            end apply
+        end Builder
+    end ValuesFrom
+
     enum JoinKind derives CanEqual:
         case Inner, Left, Right, FullOuter
 
@@ -798,21 +926,23 @@ object SqlAst:
         columns: Record[F]
     ) extends From[T, F]
 
+    object Join:
+        final case class OnBuilder[T1, F1, T2, F2](
+            kind: JoinKind,
+            left: From[T1, F1],
+            right: From[T2, F2]
+        ):
+            inline def on(inline predicate: Record[F1 & F2] => Term[Boolean]): Join[(T1, T2), F1 & F2] =
+                val merged = left.columns & right.columns
+                Join(kind, left, right, predicate(merged), merged)
+        end OnBuilder
+    end Join
+
     final case class CrossJoin[T, F](
         left: From[?, ?],
         right: From[?, ?],
         columns: Record[F]
     ) extends From[T, F]
-
-    final case class JoinOnBuilder[T1, F1, T2, F2](
-        kind: JoinKind,
-        left: From[T1, F1],
-        right: From[T2, F2]
-    ):
-        inline def on(inline predicate: Record[F1 & F2] => Term[Boolean]): Join[(T1, T2), F1 & F2] =
-            val merged = left.columns & right.columns
-            Join(kind, left, right, predicate(merged), merged)
-    end JoinOnBuilder
 
     final case class Where[T, F](
         sql: From[T, F],
@@ -1061,8 +1191,8 @@ object SqlAst:
                 autoKey,
                 returning
             )
-        inline def onConflictDoUpdate(inline targets: (Record[F] => Column[? <: String, ?])*): OnConflictDoUpdateBuilder[T, F] =
-            OnConflictDoUpdateBuilder(this, Chunk.from(targets.map(_(columns))), Maybe.empty)
+        inline def onConflictDoUpdate(inline targets: (Record[F] => Column[? <: String, ?])*): Insert.OnConflict.DoUpdateBuilder[T, F] =
+            Insert.OnConflict.DoUpdateBuilder(this, Chunk.from(targets.map(_(columns))), Maybe.empty)
         inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): Insert[T, F] =
             copy(returning = Maybe(Chunk.from(cols.map(_(columns)))))
     end Insert
@@ -1087,6 +1217,26 @@ object SqlAst:
                 sets: Chunk[SetSpec[?, ?]],
                 where: Maybe[Term[Boolean]]
             ) extends OnConflict[F] derives CanEqual
+
+            final case class DoUpdateBuilder[T, F](
+                insert: Insert[T, F],
+                targets: Chunk[Column[?, ?]],
+                whereClause: Maybe[Term[Boolean]]
+            ):
+                inline def where(inline predicate: Record[F] => Term[Boolean]): DoUpdateBuilder[T, F] =
+                    copy(whereClause = Maybe(predicate(insert.columns)))
+                inline def apply(inline sets: (Record[F] => SetSpec[? <: String, ?])*): Insert[T, F] =
+                    Insert[T, F](
+                        insert.columns,
+                        insert.tableName,
+                        insert.columnNames,
+                        insert.source,
+                        insert.overrides,
+                        Maybe(Insert.OnConflict.DoUpdate(targets, Chunk.from(sets.map(_(insert.columns))), whereClause)),
+                        insert.autoKey,
+                        insert.returning
+                    )
+            end DoUpdateBuilder
         end OnConflict
 
         extension [T, F](inline ins: Insert[T, F])
@@ -1109,80 +1259,60 @@ object SqlAst:
                     client.executeBoundInsert(r.sql, r.params)
                 }
         end extension
+
+        final case class Builder[T, F](
+            columns: Record[F],
+            tableName: String,
+            columnNames: Chunk[String],
+            autoKey: Maybe[String] = Maybe.empty
+        ):
+            inline def values(inline rows: T*): Insert[T, F] =
+                Insert[T, F](
+                    columns,
+                    tableName,
+                    columnNames,
+                    Insert.Values(kyo.internal.SqlMacros.rowValues[T](rows)),
+                    Chunk.empty,
+                    Maybe.empty,
+                    autoKey,
+                    Maybe.empty
+                )
+            @targetName("valuesSeq")
+            inline def values(inline rows: Seq[T]): Insert[T, F] =
+                Insert[T, F](
+                    columns,
+                    tableName,
+                    columnNames,
+                    Insert.Values(kyo.internal.SqlMacros.rowValues[T](rows)),
+                    Chunk.empty,
+                    Maybe.empty,
+                    autoKey,
+                    Maybe.empty
+                )
+            inline def partialValues(inline specs: (Record[F] => SetSpec[? <: String, ?])*): Insert[T, F] =
+                Insert[T, F](
+                    columns,
+                    tableName,
+                    columnNames,
+                    Insert.PartialValues(Chunk.from(specs.map(_(columns)))),
+                    Chunk.empty,
+                    Maybe.empty,
+                    autoKey,
+                    Maybe.empty
+                )
+            inline def fromSelect[B](inline cols: (Record[F] => Column[? <: String, ?])*)(inline query: Query[B]): Insert[T, F] =
+                Insert[T, F](
+                    columns,
+                    tableName,
+                    columnNames,
+                    Insert.FromSelect(Chunk.from(cols.map(_(columns))), query),
+                    Chunk.empty,
+                    Maybe.empty,
+                    autoKey,
+                    Maybe.empty
+                )
+        end Builder
     end Insert
-
-    final case class InsertBuilder[T, F](
-        columns: Record[F],
-        tableName: String,
-        columnNames: Chunk[String],
-        autoKey: Maybe[String] = Maybe.empty
-    ):
-        inline def values(inline rows: T*): Insert[T, F] =
-            Insert[T, F](
-                columns,
-                tableName,
-                columnNames,
-                Insert.Values(kyo.internal.SqlMacros.rowValues[T](rows)),
-                Chunk.empty,
-                Maybe.empty,
-                autoKey,
-                Maybe.empty
-            )
-        @targetName("valuesSeq")
-        inline def values(inline rows: Seq[T]): Insert[T, F] =
-            Insert[T, F](
-                columns,
-                tableName,
-                columnNames,
-                Insert.Values(kyo.internal.SqlMacros.rowValues[T](rows)),
-                Chunk.empty,
-                Maybe.empty,
-                autoKey,
-                Maybe.empty
-            )
-        inline def partialValues(inline specs: (Record[F] => SetSpec[? <: String, ?])*): Insert[T, F] =
-            Insert[T, F](
-                columns,
-                tableName,
-                columnNames,
-                Insert.PartialValues(Chunk.from(specs.map(_(columns)))),
-                Chunk.empty,
-                Maybe.empty,
-                autoKey,
-                Maybe.empty
-            )
-        inline def fromSelect[B](inline cols: (Record[F] => Column[? <: String, ?])*)(inline query: Query[B]): Insert[T, F] =
-            Insert[T, F](
-                columns,
-                tableName,
-                columnNames,
-                Insert.FromSelect(Chunk.from(cols.map(_(columns))), query),
-                Chunk.empty,
-                Maybe.empty,
-                autoKey,
-                Maybe.empty
-            )
-    end InsertBuilder
-
-    final case class OnConflictDoUpdateBuilder[T, F](
-        insert: Insert[T, F],
-        targets: Chunk[Column[?, ?]],
-        whereClause: Maybe[Term[Boolean]]
-    ):
-        inline def where(inline predicate: Record[F] => Term[Boolean]): OnConflictDoUpdateBuilder[T, F] =
-            copy(whereClause = Maybe(predicate(insert.columns)))
-        inline def apply(inline sets: (Record[F] => SetSpec[? <: String, ?])*): Insert[T, F] =
-            Insert[T, F](
-                insert.columns,
-                insert.tableName,
-                insert.columnNames,
-                insert.source,
-                insert.overrides,
-                Maybe(Insert.OnConflict.DoUpdate(targets, Chunk.from(sets.map(_(insert.columns))), whereClause)),
-                insert.autoKey,
-                insert.returning
-            )
-    end OnConflictDoUpdateBuilder
 
     final case class Update[T, F](
         columns: Record[F],
@@ -1215,33 +1345,33 @@ object SqlAst:
                     client.executeBoundUpdate(r.sql, r.params)
                 }
         end extension
+
+        final case class Builder[T, F](
+            columns: Record[F],
+            tableName: String,
+            sets: Chunk[SetSpec[?, ?]] = Chunk.empty
+        ):
+            inline def set(inline specs: (Record[F] => SetSpec[? <: String, ?])*): Builder[T, F] =
+                copy(sets = sets ++ Chunk.from(specs.map(_(columns))))
+            inline def where(inline predicate: Record[F] => Term[Boolean]): Update[T, F] =
+                Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe.empty)
+            inline def build: Update[T, F] = Update[T, F](columns, tableName, sets, Maybe.empty, Maybe.empty)
+            inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): ReturningBuilder[T, F] =
+                ReturningBuilder(columns, tableName, sets, Chunk.from(cols.map(_(columns))))
+        end Builder
+
+        final case class ReturningBuilder[T, F](
+            columns: Record[F],
+            tableName: String,
+            sets: Chunk[SetSpec[?, ?]],
+            returningCols: Chunk[Column[?, ?]]
+        ):
+            inline def where(inline predicate: Record[F] => Term[Boolean]): Update[T, F] =
+                Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe(returningCols))
+            inline def build: Update[T, F] =
+                Update[T, F](columns, tableName, sets, Maybe.empty, Maybe(returningCols))
+        end ReturningBuilder
     end Update
-
-    final case class UpdateBuilder[T, F](
-        columns: Record[F],
-        tableName: String,
-        sets: Chunk[SetSpec[?, ?]] = Chunk.empty
-    ):
-        inline def set(inline specs: (Record[F] => SetSpec[? <: String, ?])*): UpdateBuilder[T, F] =
-            copy(sets = sets ++ Chunk.from(specs.map(_(columns))))
-        inline def where(inline predicate: Record[F] => Term[Boolean]): Update[T, F] =
-            Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe.empty)
-        inline def build: Update[T, F] = Update[T, F](columns, tableName, sets, Maybe.empty, Maybe.empty)
-        inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): UpdateReturningBuilder[T, F] =
-            UpdateReturningBuilder(columns, tableName, sets, Chunk.from(cols.map(_(columns))))
-    end UpdateBuilder
-
-    final case class UpdateReturningBuilder[T, F](
-        columns: Record[F],
-        tableName: String,
-        sets: Chunk[SetSpec[?, ?]],
-        returningCols: Chunk[Column[?, ?]]
-    ):
-        inline def where(inline predicate: Record[F] => Term[Boolean]): Update[T, F] =
-            Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe(returningCols))
-        inline def build: Update[T, F] =
-            Update[T, F](columns, tableName, sets, Maybe.empty, Maybe(returningCols))
-    end UpdateReturningBuilder
 
     final case class Delete[T, F](
         columns: Record[F],
@@ -1273,99 +1403,64 @@ object SqlAst:
                     client.executeBoundUpdate(r.sql, r.params)
                 }
         end extension
+
+        final case class Builder[T, F](
+            columns: Record[F],
+            tableName: String
+        ):
+            inline def where(inline predicate: Record[F] => Term[Boolean]): Delete[T, F] =
+                Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe.empty)
+            inline def build: Delete[T, F] = Delete[T, F](columns, tableName, Maybe.empty, Maybe.empty)
+            inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): ReturningBuilder[T, F] =
+                ReturningBuilder(columns, tableName, Chunk.from(cols.map(_(columns))))
+        end Builder
+
+        final case class ReturningBuilder[T, F](
+            columns: Record[F],
+            tableName: String,
+            returningCols: Chunk[Column[?, ?]]
+        ):
+            inline def where(inline predicate: Record[F] => Term[Boolean]): Delete[T, F] =
+                Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe(returningCols))
+            inline def build: Delete[T, F] =
+                Delete[T, F](columns, tableName, Maybe.empty, Maybe(returningCols))
+        end ReturningBuilder
     end Delete
-
-    final case class DeleteBuilder[T, F](
-        columns: Record[F],
-        tableName: String
-    ):
-        inline def where(inline predicate: Record[F] => Term[Boolean]): Delete[T, F] =
-            Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe.empty)
-        inline def build: Delete[T, F] = Delete[T, F](columns, tableName, Maybe.empty, Maybe.empty)
-        inline def returning(inline cols: (Record[F] => Column[? <: String, ?])*): DeleteReturningBuilder[T, F] =
-            DeleteReturningBuilder(columns, tableName, Chunk.from(cols.map(_(columns))))
-    end DeleteBuilder
-
-    final case class DeleteReturningBuilder[T, F](
-        columns: Record[F],
-        tableName: String,
-        returningCols: Chunk[Column[?, ?]]
-    ):
-        inline def where(inline predicate: Record[F] => Term[Boolean]): Delete[T, F] =
-            Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe(returningCols))
-        inline def build: Delete[T, F] =
-            Delete[T, F](columns, tableName, Maybe.empty, Maybe(returningCols))
-    end DeleteReturningBuilder
 
     final case class SetSpec[N <: String & Singleton, V](column: Column[N, V], value: Term[V]) derives CanEqual
 
     // --- CASE WHEN builder ---
 
-    final case class WhenBuilder(predicate: Term[Boolean]) derives CanEqual:
+    object Case:
 
-        inline def to[A](inline value: Term[A]): CaseBuilder[A] = CaseBuilder(Chunk((predicate, value)))
+        final case class WhenBuilder(predicate: Term[Boolean]) derives CanEqual:
 
-        @targetName("toRaw")
-        inline def to[A](inline value: A)(using s: SqlSchema[A]): CaseBuilder[A] = CaseBuilder(Chunk((predicate, Literal(value, s))))
-    end WhenBuilder
+            inline def to[A](inline value: Term[A]): Builder[A] = Builder(Chunk((predicate, value)))
 
-    final case class CaseBuilder[A](whens: Chunk[(Term[Boolean], Term[A])]) derives CanEqual:
+            @targetName("toRaw")
+            inline def to[A](inline value: A)(using s: SqlSchema[A]): Builder[A] = Builder(Chunk((predicate, Literal(value, s))))
+        end WhenBuilder
 
-        inline def when(inline predicate: Term[Boolean]): WhenContinuation[A] = WhenContinuation(whens, predicate)
+        final case class Builder[A](whens: Chunk[(Term[Boolean], Term[A])]) derives CanEqual:
 
-        inline def otherwise(inline value: Term[A]): Term[A] = CaseExpr(whens, value)
+            inline def when(inline predicate: Term[Boolean]): WhenContinuation[A] = WhenContinuation(whens, predicate)
 
-        @targetName("otherwiseRaw")
-        inline def otherwise(inline value: A)(using s: SqlSchema[A]): Term[A] = CaseExpr(whens, Literal(value, s))
+            inline def otherwise(inline value: Term[A]): Term[A] = CaseExpr(whens, value)
 
-        inline def otherwiseNull: Term[Maybe[A]] = CaseExprNullable(whens)
-    end CaseBuilder
+            @targetName("otherwiseRaw")
+            inline def otherwise(inline value: A)(using s: SqlSchema[A]): Term[A] = CaseExpr(whens, Literal(value, s))
 
-    final case class WhenContinuation[A](whens: Chunk[(Term[Boolean], Term[A])], predicate: Term[Boolean]) derives CanEqual:
+            inline def otherwiseNull: Term[Maybe[A]] = CaseExprNullable(whens)
+        end Builder
 
-        inline def to(inline value: Term[A]): CaseBuilder[A] = CaseBuilder(whens :+ ((predicate, value)))
+        final case class WhenContinuation[A](whens: Chunk[(Term[Boolean], Term[A])], predicate: Term[Boolean]) derives CanEqual:
 
-        @targetName("toRaw")
-        inline def to(inline value: A)(using s: SqlSchema[A]): CaseBuilder[A] = CaseBuilder(whens :+ ((predicate, Literal(value, s))))
-    end WhenContinuation
+            inline def to(inline value: Term[A]): Builder[A] = Builder(whens :+ ((predicate, value)))
 
-    // --- Source-construction builders ---
-
-    final class FromBuilder[T]:
-        transparent inline def apply[N <: String & Singleton](alias: N)(using f: Fields[T]) =
-            val cols = internal.buildColumns[T, N](alias)
-            Table[T, internal.RecordF[cols.type]](cols, alias, kyo.internal.SqlMacros.tableName[T], kyo.internal.SqlMacros.columnNames[T])
-        end apply
-    end FromBuilder
-
-    final class NestedBuilder[T]:
-        transparent inline def apply[N <: String & Singleton](alias: N, query: Query[?])(using f: Fields[T]) =
-            val cols = internal.buildColumns[T, N](alias)
-            Nested[T, internal.RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
-        end apply
-    end NestedBuilder
-
-    final class LateralBuilder[T]:
-        transparent inline def apply[N <: String & Singleton](alias: N, query: Query[?])(using f: Fields[T]) =
-            val cols = internal.buildColumns[T, N](alias)
-            Lateral[T, internal.RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
-        end apply
-    end LateralBuilder
-
-    final class ValuesBuilder[T]:
-        transparent inline def apply[N <: String & Singleton](alias: N, inline rows: T*)(using
-            m: Mirror.ProductOf[T],
-            f: Fields[T]
-        ) =
-            val cols = internal.buildColumns[T, N](alias)
-            ValuesFrom[T, internal.RecordF[cols.type]](
-                cols,
-                kyo.internal.SqlMacros.rowValues[T](rows),
-                alias,
-                kyo.internal.SqlMacros.columnNames[T]
-            )
-        end apply
-    end ValuesBuilder
+            @targetName("toRaw")
+            inline def to(inline value: A)(using s: SqlSchema[A]): Builder[A] = Builder(whens :+ ((predicate, Literal(value, s))))
+        end WhenContinuation
+    end Case
 
     // --- Typeclasses ---
 

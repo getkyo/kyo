@@ -69,7 +69,7 @@ class SqlClientInsertOutcomeTest extends Test:
     }
 
     "Update .returning DSL chain (after .where) is intermediate-builder-driven, not direct" in {
-        // Phase 40 added .returning via UpdateReturningBuilder / DeleteReturningBuilder rather
+        // Phase 40 added .returning via Update.ReturningBuilder / Delete.ReturningBuilder rather
         // than directly on Update/Delete. The chain in the previous typeCheck doesn't compile
         // because .where returns Update, and Update lacks a .returning method. The actual API
         // is `Sql.update[T].set(...).returning(...).where(...)`, order matters.

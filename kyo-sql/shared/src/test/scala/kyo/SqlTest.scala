@@ -347,9 +347,10 @@ class SqlTest extends Test:
     }
 
     // PHASE-10-AUDIT W-1 regression leaf:
-    // Phase 10 moved `WindowSpecBuilder` from `SqlAst` to `kyo.internal.dsl`. This leaf re-renders a
-    // `Sql.windowSpec.partitionBy(...).orderBy(...).rank` chain through the post-move builder and
-    // asserts byte-exact PG SQL, guarding against any renderer regression introduced by the move.
+    // Phase 10 moved the window-spec builder into the `WindowSpec` companion (`SqlAst.WindowSpec.Builder`).
+    // This leaf re-renders a `Sql.windowSpec.partitionBy(...).orderBy(...).rank` chain through the
+    // post-move builder and asserts byte-exact PG SQL, guarding against any renderer regression
+    // introduced by the move.
     "Phase 10 regression: Sql.windowSpec builder renders byte-exact PG SQL after move out of SqlAst" in {
         val q = people.select(c =>
             (c.p.name, Sql.windowSpec.partitionBy(c.p.deptId).orderBy(c.p.age.asc).rank)

@@ -90,16 +90,16 @@ object ColumnFromExpr:
             kyo.FromExpr.derived[WindowSpec].unapply(x)
     end fromExprWindowSpec
 
-    /** `FromExpr[WindowSpecBuilder]`, lifts `new WindowSpecBuilder(partitions, orderings, frameOpt)` constructor applies.
+    /** `FromExpr[WindowSpec.Builder]`, lifts `new WindowSpec.Builder(partitions, orderings, frameOpt)` constructor applies.
       *
-      * After the Phase 8 fix to `WindowSpecBuilder`'s builder methods (explicit `new WindowSpecBuilder(...)` constructors replacing
+      * After the Phase 8 fix to `WindowSpec.Builder`'s builder methods (explicit `new WindowSpec.Builder(...)` constructors replacing
       * `.copy(...)` with `Chunk.from` / `:+`), the inlined call-site trees are plain constructor Apply nodes that `kyo.FromExpr.derived`'s
       * product-case walker handles. `fromExprWindowFrame` (above) is in scope for the `frameOpt: Maybe[WindowFrame]` field.
       */
-    given fromExprWindowSpecBuilder: scala.quoted.FromExpr[WindowSpecBuilder] with
-        def unapply(x: Expr[WindowSpecBuilder])(using Quotes): Option[WindowSpecBuilder] =
+    given fromExprWindowSpecBuilder: scala.quoted.FromExpr[WindowSpec.Builder] with
+        def unapply(x: Expr[WindowSpec.Builder])(using Quotes): Option[WindowSpec.Builder] =
             import kyo.SqlSchema.given
-            kyo.FromExpr.derived[WindowSpecBuilder].unapply(x)
+            kyo.FromExpr.derived[WindowSpec.Builder].unapply(x)
     end fromExprWindowSpecBuilder
 
     /** `FromExpr[Cast[?, ?]]`, `Column.cast[B]` expands to `Cast(expr, summon[SqlSchema[B]].sqlTypeName)`; the `sqlTypeName` argument is a

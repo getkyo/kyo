@@ -15,16 +15,16 @@ object Sql:
     // --- FROM / source entry points ---
 
     /** Build a Table from a case class. Schema gives the SQL table name; alias is the user-chosen prefix. */
-    inline def from[T]: FromBuilder[T] = new FromBuilder[T]
+    inline def from[T]: Table.Builder[T] = new Table.Builder[T]
 
     /** Use an existing query as a source with new column aliases. */
-    inline def nested[T]: NestedBuilder[T] = new NestedBuilder[T]
+    inline def nested[T]: Nested.Builder[T] = new Nested.Builder[T]
 
     /** Lateral subquery, its WHERE clause may reference columns from the surrounding FROM. */
-    inline def lateral[T]: LateralBuilder[T] = new LateralBuilder[T]
+    inline def lateral[T]: Lateral.Builder[T] = new Lateral.Builder[T]
 
     /** `VALUES (…), (…), …` constructor that produces a query of `T`. */
-    inline def values[T]: ValuesBuilder[T] = new ValuesBuilder[T]
+    inline def values[T]: ValuesFrom.Builder[T] = new ValuesFrom.Builder[T]
 
     // --- INSERT / UPDATE / DELETE entry points ---
 
@@ -37,7 +37,7 @@ object Sql:
       */
     transparent inline def insert[T](using f: Fields[T]) =
         val cols = SqlAst.internal.buildRowColumns[T]
-        InsertBuilder[T, SqlAst.internal.RecordF[cols.type]](
+        Insert.Builder[T, SqlAst.internal.RecordF[cols.type]](
             cols,
             kyo.internal.SqlMacros.tableName[T],
             kyo.internal.SqlMacros.columnNames[T],
@@ -48,12 +48,12 @@ object Sql:
     /** UPDATE entry point. */
     transparent inline def update[T](using f: Fields[T]) =
         val cols = SqlAst.internal.buildRowColumns[T]
-        UpdateBuilder[T, SqlAst.internal.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
+        Update.Builder[T, SqlAst.internal.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
 
     /** DELETE entry point. */
     transparent inline def delete[T](using f: Fields[T]) =
         val cols = SqlAst.internal.buildRowColumns[T]
-        DeleteBuilder[T, SqlAst.internal.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
+        Delete.Builder[T, SqlAst.internal.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
 
     // --- CTE (WITH) entry points ---
 
@@ -70,7 +70,7 @@ object Sql:
     // --- CASE WHEN entry point ---
 
     /** Open a CASE WHEN expression: `Sql.when(pred).to(value).when(pred2).to(value2).otherwise(default)`. */
-    inline def when(inline predicate: Term[Boolean]): WhenBuilder = WhenBuilder(predicate)
+    inline def when(inline predicate: Term[Boolean]): Case.WhenBuilder = Case.WhenBuilder(predicate)
 
     // --- Window spec entry point ---
 
@@ -78,7 +78,7 @@ object Sql:
       * then call a terminator (`.rowNumber`, `.rank`, etc.) for standalone window functions, or pass to `.over(spec)` from a column-based
       * aggregate / window function.
       */
-    inline def windowSpec: WindowSpecBuilder = WindowSpecBuilder(Chunk.empty, Chunk.empty, Maybe.empty)
+    inline def windowSpec: WindowSpec.Builder = WindowSpec.Builder(Chunk.empty, Chunk.empty, Maybe.empty)
 
     // --- Escape hatches ---
 

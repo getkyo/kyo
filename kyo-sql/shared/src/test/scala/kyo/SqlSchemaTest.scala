@@ -709,7 +709,7 @@ class SqlSchemaTest extends Test:
         succeed
     }
 
-    // --- 25. WindowSpecBuilder.partitionBy replace semantic (Phase 10 / G4.1) ---
+    // --- 25. WindowSpec.Builder.partitionBy replace semantic (Phase 10 / G4.1) ---
 
     // ---- Replace-semantic tests for Sql.windowSpec.partitionBy (Phase 10 + audit W-5) ----
     //
