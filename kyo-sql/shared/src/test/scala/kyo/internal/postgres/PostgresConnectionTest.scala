@@ -112,9 +112,9 @@ class PostgresConnectionTest extends kyo.Test:
                             Scope.ensure(conn.close).andThen(conn.isOpen)
                         }
                 }.map {
-                    case Result.Failure(e: SqlServerException) =>
+                    case Result.Failure(e: SqlConnectionAuthenticationFailedException) =>
                         assert(e.sqlState == "28P01", s"Expected SQLSTATE 28P01 for wrong password, got: ${e.sqlState}")
-                    case other => fail(s"Expected SqlServerException(28P01) for wrong password, got: $other")
+                    case other => fail(s"Expected SqlConnectionAuthenticationFailedException(28P01) for wrong password, got: $other")
                 }
             }
         }

@@ -181,20 +181,20 @@ class ScramPlusIntegrationTest extends kyo.Test:
                             }
                         }
                     }.map {
-                        case Result.Failure(e: SqlServerException) =>
+                        case Result.Failure(e: SqlConnectionAuthenticationFailedException) =>
                             // PG raises ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION (28000) for SCRAM
                             // SASL response failures (including channel-binding mismatch), NOT
                             // ERRCODE_INVALID_PASSWORD (28P01). See PG src/backend/libpq/auth-scram.c.
                             assert(
                                 e.sqlState == "28000",
-                                s"Expected SQLSTATE 28000 (invalid_authorization_specification, PG raises this for SCRAM SASL failures) for MITM cert hash mismatch, got: ${e.sqlState}, ${e.message}"
+                                s"Expected SQLSTATE 28000 (invalid_authorization_specification, PG raises this for SCRAM SASL failures) for MITM cert hash mismatch, got: ${e.sqlState}, ${e.serverMessage}"
                             )
                         case Result.Success(_) =>
                             fail(
                                 "Expected authentication failure with wrong cert hash, but connection succeeded, SCRAM-PLUS channel binding check is broken!"
                             )
                         case Result.Failure(other) =>
-                            fail(s"Expected SqlServerException(28000) for wrong cert hash, got: $other")
+                            fail(s"Expected SqlConnectionAuthenticationFailedException(28000) for wrong cert hash, got: $other")
                         case Result.Panic(t) =>
                             fail(s"Unexpected panic in leaf 3: ${t.getMessage}")
                     }
@@ -309,7 +309,7 @@ class ScramPlusIntegrationTest extends kyo.Test:
 
     // ── Leaf 8: Wrong password under SCRAM-PLUS → sqlState=28P01; no state leak ─
 
-    "wrong password under SCRAM-PLUS produces SqlServerException with sqlState=28P01 and does NOT leak channel-binding state".tagged(
+    "wrong password under SCRAM-PLUS produces SqlConnectionAuthenticationFailedException with sqlState=28P01 and does NOT leak channel-binding state".tagged(
         "kyo.OwnContainer"
     ) in {
         Scope.run {
@@ -333,7 +333,7 @@ class ScramPlusIntegrationTest extends kyo.Test:
                             }
                         }
                     }.flatMap {
-                        case Result.Failure(e: SqlServerException) =>
+                        case Result.Failure(e: SqlConnectionAuthenticationFailedException) =>
                             assert(
                                 e.sqlState == "28P01",
                                 s"Expected SQLSTATE 28P01 (invalid_password) for wrong SCRAM-PLUS password, got: ${e.sqlState}"
@@ -365,7 +365,7 @@ class ScramPlusIntegrationTest extends kyo.Test:
                         case Result.Success(_) =>
                             fail("Expected authentication failure with wrong password under SCRAM-PLUS, but connection succeeded!")
                         case Result.Failure(other) =>
-                            fail(s"Expected SqlServerException(28P01) for wrong SCRAM-PLUS password, got: $other")
+                            fail(s"Expected SqlConnectionAuthenticationFailedException(28P01) for wrong SCRAM-PLUS password, got: $other")
                         case Result.Panic(t) =>
                             fail(s"Unexpected panic in leaf 8: ${t.getMessage}")
                     }

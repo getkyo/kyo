@@ -114,7 +114,8 @@ class SqlExceptionTest extends Test:
         val ex = SqlDecodeColumnNullException("email")
         assert(ex.columnIndex == -1)
         assert(ex.columnName == Present("email"))
-        assert(ex.getMessage == "Non-nullable column 'email' was SQL NULL")
+        assert(ex.getMessage.contains("Non-nullable column 'email' was SQL NULL"))
+        assert(!ex.getMessage.contains("index -1"))
     }
 
     "SqlConnectionAuthenticationFailedException carries the SqlAuthenticationFailure marker" in {

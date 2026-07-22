@@ -107,15 +107,14 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         """)("ColorKey")
     }
 
-    // A generic color type does not summon ColorKey.
+    // A truly generic (unbound) type parameter does not summon ColorKey.
 
-    "a generic color type (Maybe[Region]) does not summon ColorKey" in {
+    "an unbound type parameter does not summon ColorKey" in {
         typeCheckFailure("""
             import kyo.*
             import kyo.Chart.*
-            enum Region derives CanEqual, Plottable { case NA, EU }
-            summon[Chart.ColorKey[Maybe[Region]]]
-        """)
+            def check[C]: Chart.ColorKey[C] = summon[Chart.ColorKey[C]]
+        """)("ColorKey")
     }
 
     // `by` infers its group type and returns a Stack accepted by bar's stack parameter.

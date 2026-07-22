@@ -33,7 +33,7 @@ class ScramIntegrationTest extends kyo.Test:
         }
     }
 
-    "StartupExchange SCRAM wrong password raises SqlServerException".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM wrong password raises SqlConnectionAuthenticationFailedException".tagged("kyo.OwnContainer") in {
         Scope.run {
             ContainerPredef.Postgres.initWith(
                 ContainerPredef.Postgres.Config.default.password("correctpassword")
@@ -47,12 +47,12 @@ class ScramIntegrationTest extends kyo.Test:
                             )
                         }
                     }.map {
-                        case Result.Failure(e: SqlServerException) =>
+                        case Result.Failure(e: SqlConnectionAuthenticationFailedException) =>
                             assert(
                                 e.sqlState == "28P01" || e.sqlState == "28000",
                                 s"Expected sqlState 28P01 or 28000 for wrong SCRAM password, got: ${e.sqlState}"
                             )
-                        case other => fail(s"Expected SqlServerException for wrong SCRAM password, got: $other")
+                        case other => fail(s"Expected SqlConnectionAuthenticationFailedException for wrong SCRAM password, got: $other")
                     }
                 }
             }

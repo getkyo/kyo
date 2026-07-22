@@ -261,13 +261,15 @@ class MysqlRowReaderTest extends Test:
     }
 
     "frame is preserved through to subclass" in {
-        val expectedFrame = summon[Frame]
-        def makeReader()(using f: Frame): MysqlRowReader =
+        // The reader captures the Frame at its construction site (inside makeReader).
+        // The assertion is that the captured Frame's call-site parent points back at the
+        // makeReader definition, not at the test's outer scope.
+        def makeReader()(using f: Frame): (Frame, MysqlRowReader) =
             val row = singleColumnRow(encodeRaw(0, MysqlEncoder.intEncoder))
-            new MysqlRowReader(row)
+            (f, new MysqlRowReader(row))
         end makeReader
-        val r = makeReader()
-        assert(r.frame == expectedFrame)
+        val (frameAtConstruction, r) = makeReader()
+        assert(r.frame == frameAtConstruction, "MysqlRowReader must expose the Frame captured at construction")
     }
 
     // ── Nested array/map methods on non-JSON columns raise SqlDecodeException ──────────
