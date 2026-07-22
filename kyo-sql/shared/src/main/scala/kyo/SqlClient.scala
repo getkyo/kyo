@@ -1782,7 +1782,7 @@ object SqlClient:
                                 val client = new Postgres(b, url, mergedConfig, closedRef)
                                 Scope.ensure(client.close).andThen {
                                     val warmN = mergedConfig.minConnections.min(mergedConfig.maxConnections)
-                                    b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
+                                    b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(SqlClient.let(client)(f(client)))
                                 }
                             }
                         }
@@ -1848,7 +1848,7 @@ object SqlClient:
                                 // appear in the return type, bracket semantics without leaking Scope.
                                 Scope.run(
                                     Scope.ensure(client.close).andThen(
-                                        b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
+                                        b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(SqlClient.let(client)(f(client)))
                                     )
                                 )
                             }
@@ -1921,7 +1921,7 @@ object SqlClient:
                             AtomicBoolean.init(false).flatMap { closedRef =>
                                 val client = new Postgres(b, url, mergedConfig, closedRef)
                                 val warmN  = mergedConfig.minConnections.min(mergedConfig.maxConnections)
-                                b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
+                                b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(SqlClient.let(client)(f(client)))
                             }
                         }
                     }
@@ -1995,7 +1995,7 @@ object SqlClient:
                             val client = new Mysql(b, url, mergedConfig, closedRef)
                             Scope.ensure(client.close).andThen {
                                 val warmN = mergedConfig.minConnections.min(mergedConfig.maxConnections)
-                                b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
+                                b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(SqlClient.let(client)(f(client)))
                             }
                         }
                     }
@@ -2055,7 +2055,7 @@ object SqlClient:
                             // client.close is Async; use Scope.run to discharge Scope inline.
                             Scope.run(
                                 Scope.ensure(client.close).andThen(
-                                    b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
+                                    b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(SqlClient.let(client)(f(client)))
                                 )
                             )
                         }
@@ -2119,7 +2119,7 @@ object SqlClient:
                         AtomicBoolean.init(false).flatMap { closedRef =>
                             val client = new Mysql(b, url, mergedConfig, closedRef)
                             val warmN  = mergedConfig.minConnections.min(mergedConfig.maxConnections)
-                            b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
+                            b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(SqlClient.let(client)(f(client)))
                         }
                     }
                 }

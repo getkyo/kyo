@@ -71,4 +71,30 @@ class SqlClientMergeConfigTest extends Test:
         }
     }
 
+    "initWith installs the client's merged config into SqlClient.local so per-op reads see it (regression: init used to leave SqlClient.local at SqlConfig.default, so per-op reads of maxConnections / acquireTimeout / etc drifted from the client-level config)" in {
+        val customConfig = SqlConfig.default.copy(
+            maxConnections = 42,
+            minConnections = 0,
+            acquireTimeout = 17.seconds,
+            queryTimeout = 33.seconds,
+            metricsEnabled = false
+        )
+        Abort.run[SqlException](Scope.run {
+            SqlClient.initWith("postgres://alice:secret@localhost:9999/mydb", customConfig) { client =>
+                SqlClient.local.use { (maybeClient, config) =>
+                    assert(maybeClient.isDefined, "init must install a fiber-local client")
+                    assert(maybeClient.exists(_ eq client), "init must install itself as the active fiber-local client")
+                    assert(config.maxConnections == 42, "per-op reads must see the client's maxConnections")
+                    assert(config.acquireTimeout == 17.seconds, "per-op reads must see the client's acquireTimeout")
+                    assert(config.queryTimeout == 33.seconds, "per-op reads must see the client's queryTimeout")
+                    assert(config.metricsEnabled == false, "per-op reads must see the client's metricsEnabled")
+                }
+            }
+        }).map {
+            case Result.Success(_) => succeed
+            case Result.Failure(e) => fail(s"initWith body must run and complete without error: $e")
+            case Result.Panic(t)   => fail(s"initWith panicked: ${t.getMessage}")
+        }
+    }
+
 end SqlClientMergeConfigTest
