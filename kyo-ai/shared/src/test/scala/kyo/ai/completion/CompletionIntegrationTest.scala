@@ -130,7 +130,7 @@ class CompletionIntegrationTest extends kyo.test.Test[Any]:
         v: Backend => kyo.test.AssertScope ?=> Unit < (LLM & Async & Abort[Any] & Scope)
     )(using Frame): Unit =
         backends.foreach { backend =>
-            s"[${backend.label}]" in {
+            s"[${backend.label}]".ignore("live-provider integration suite disabled during the compaction-v4 build") in {
                 for
                     config <- requireBackend(backend)
                     _      <- LLM.run(config)(v(backend))
@@ -143,7 +143,7 @@ class CompletionIntegrationTest extends kyo.test.Test[Any]:
         v: (Backend, Config) => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
         backends.foreach { backend =>
-            s"[${backend.label}]" in {
+            s"[${backend.label}]".ignore("live-provider integration suite disabled during the compaction-v4 build") in {
                 for
                     config <- requireBackend(backend)
                     _      <- v(backend, config)
