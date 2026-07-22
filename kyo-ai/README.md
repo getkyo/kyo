@@ -427,7 +427,7 @@ A reply that stops at the ceiling with nothing to act on fails with `AIOutputLim
 
 ### Declaring a model
 
-To use a model the catalog does not list, declare its facts with `Config.model(provider, name, contextWindow, outputMaximum, reasoning, acceptsTemperature)`. To re-point an existing entry at an equivalent id, when a snapshot, fine-tune, or proxy alias shares that entry's capabilities, use `modelName(...)`.
+To use a model the catalog does not list, declare its facts with `Config.model(provider, name, contextWindow, outputMaximum, reasoning, acceptsTemperature, acceptsImages)`. To re-point an existing entry at an equivalent id, when a snapshot, fine-tune, or proxy alias shares that entry's capabilities, use `modelName(...)`.
 
 ### The providers
 
@@ -445,7 +445,8 @@ def initConfig: AI.Config < Sync =
         contextWindow = 200000,
         outputMaximum = AI.Config.OutputMaximum.Verified(64000),
         AI.Config.ReasoningEncoding.TokenBudget,
-        acceptsTemperature = true
+        acceptsTemperature = true,
+        acceptsImages = true
     )
 ```
 
