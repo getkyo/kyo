@@ -2289,37 +2289,25 @@ object SqlClient:
         end if
     end sanitizeTypeNames
 
-    /** Merges [[SqlConfig]] overrides with defaults derived from the URL.
+    /** Merges [[SqlConfig]] overrides with URL-derived TLS settings.
+      *
+      * Starts from the user's `config` and overrides only the TLS-related fields that must come from the URL:
+      *
+      *   - `tlsMode`: URL wins (sslmode is a URL-level directive; no programmatic override).
+      *   - `tls`, `caCertPath`: user wins if set, URL fills in otherwise.
+      *
+      * Every other field in `config` is preserved unchanged so knobs like `metricsEnabled`, `encodingRegistry`, `cancelTimeout`,
+      * `resetOnRelease`, `closeGrace`, `streamBatchSize`, and `copyOutCleanupTimeout` reach the backend as-is.
       *
       * Calls [[SqlConfig.Url.toConfig]] which delegates to [[kyo.internal.tls.TlsContext.build]]; fails with [[SqlConnectionException]] for
       * invalid sslmode + sslrootcert combinations (e.g., `verify-ca` without `sslrootcert`).
       */
-    private def mergeConfig(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlConfig < Abort[SqlConnectionException] =
+    private[kyo] def mergeConfig(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlConfig < Abort[SqlConnectionException] =
         url.toConfig.map { urlConfig =>
-            urlConfig.copy(
-                maxConnections = config.maxConnections,
-                minConnections = config.minConnections,
-                acquireTimeout = config.acquireTimeout,
-                queryTimeout = config.queryTimeout,
-                idleTimeout = config.idleTimeout,
-                retrySchedule = config.retrySchedule,
+            config.copy(
                 tls = config.tls.orElse(urlConfig.tls),
                 caCertPath = config.caCertPath.orElse(urlConfig.caCertPath),
-                preparedStmtCacheSize = config.preparedStmtCacheSize,
-                preparedStmtTtl = config.preparedStmtTtl,
-                pipelineMode = config.pipelineMode,
-                // tlsMode comes from URL; programmatic config override is not supported.
-                tlsMode = urlConfig.tlsMode,
-                typeNames = config.typeNames,
-                // Phase 23 lifecycle fields, pass through from user config.
-                maxLifetime = config.maxLifetime,
-                connectionTestQuery = config.connectionTestQuery,
-                connectionInitSql = config.connectionInitSql,
-                keepaliveTime = config.keepaliveTime,
-                connectTimeout = config.connectTimeout,
-                socketTimeout = config.socketTimeout,
-                leakDetectionThreshold = config.leakDetectionThreshold,
-                connectionInitTimeout = config.connectionInitTimeout
+                tlsMode = urlConfig.tlsMode
             )
         }
     end mergeConfig
