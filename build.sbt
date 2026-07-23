@@ -289,6 +289,7 @@ lazy val kyoJVM: Project = project
         `kyo-schema-msgpack`.jvm,
         `kyo-schema-bson`.jvm,
         `kyo-schema-ion`.jvm,
+        `kyo-schema-yaml`.jvm,
         `kyo-schema-tests`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
@@ -369,6 +370,7 @@ lazy val kyoJS = project
         `kyo-schema-msgpack`.js,
         `kyo-schema-bson`.js,
         `kyo-schema-ion`.js,
+        `kyo-schema-yaml`.js,
         `kyo-schema-tests`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -428,6 +430,7 @@ lazy val kyoNative = project
         `kyo-schema-msgpack`.native,
         `kyo-schema-bson`.native,
         `kyo-schema-ion`.native,
+        `kyo-schema-yaml`.native,
         `kyo-schema-tests`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -478,6 +481,7 @@ lazy val kyoWasm = project
         `kyo-schema-msgpack`.wasm,
         `kyo-schema-bson`.wasm,
         `kyo-schema-ion`.wasm,
+        `kyo-schema-yaml`.wasm,
         `kyo-schema-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
@@ -728,6 +732,7 @@ lazy val `kyo-schema-tests` =
         .dependsOn(`kyo-schema-msgpack`)
         .dependsOn(`kyo-schema-bson`)
         .dependsOn(`kyo-schema-ion`)
+        .dependsOn(`kyo-schema-yaml`)
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema-tests"))
         .withKyoTest
@@ -782,6 +787,19 @@ lazy val `kyo-schema-ion` =
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema-ion"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-yaml` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-yaml"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -2552,6 +2570,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-http`)
         .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-yaml`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
