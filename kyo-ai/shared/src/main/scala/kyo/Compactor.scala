@@ -38,6 +38,12 @@ trait Compactor[-S] extends AI.Enablement[S]:
       */
     def tools(ai: AI)(using Frame): Chunk[Tool[LLM]] = Chunk.empty
 
+    // Discriminates the built-in Default strategy from Compactor.none and any user-supplied
+    // compactor. The seam runs Default's occupancy trigger, background preparation, drift, and
+    // eviction machinery only for the Default instance; every other compactor owns its own view
+    // through `render` alone, so the off switch forks no fiber and issues no model call.
+    private[kyo] def isDefault: Boolean = false
+
     // The sanctioned erased-carrier discharge every enablement kind uses (Mode.scala:24-26
     // this.asInstanceOf[Mode[Any]]); Compactor is contravariant in S, so widening to the
     // Compactor[Any] env slot needs this one cast, matching the sibling kinds exactly.
@@ -443,6 +449,8 @@ object Compactor:
         // ---------------------------------------------------------------------------------------
         object Default extends Compactor[Any]:
 
+            override private[kyo] def isDefault: Boolean = true
+
             def render(ctx: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =
                 AI.config.map { config =>
                     val window   = config.modelMaxTokens
@@ -576,31 +584,7 @@ object Compactor:
 
             // ---- key supersession (typed compactionKey via the Info closure, no cast) ----
             def superKeys(units: Chunk[Region], raw: Chunk[Message])(using Frame): Dict[Int, (String, Tool.Kind)] < LLM =
-                Tool.internal.infos.map { infos =>
-                    val byName = infos.foldLeft(Dict.empty[String, Tool.internal.Info[?, ?, LLM]])((m, i) => m.update(i.name, i))
-                    units.foldLeft(Dict.empty[Int, (String, Tool.Kind)]) { (acc, u) =>
-                        val calls = u.indices.flatMap { idx =>
-                            raw(idx) match
-                                case AssistantMessage(_, cs, _, _) => cs
-                                case _                             => Chunk.empty
-                        }
-                        val keyed = calls.foldLeft(Absent: Maybe[(String, Tool.Kind)]) { (found, call) =>
-                            found match
-                                case Present(_) => found
-                                case Absent =>
-                                    byName.get(call.function) match
-                                        case Absent => Absent
-                                        case Present(info) =>
-                                            info.compactionKeyFor(call.arguments) match
-                                                case Present(k) => Present((k, info.kind))
-                                                case Absent     => Absent
-                        }
-                        keyed match
-                            case Present(kk) => acc.update(u.id, kk)
-                            case Absent      => acc
-                    }
-                }
-            end superKeys
+                Tool.internal.infos.map(infos => superKeysFrom(units, raw, infos))
 
             def supersession(units: Chunk[Region], keys: Dict[Int, (String, Tool.Kind)]): Dict[Int, Int] =
                 val (result, _) =
@@ -1392,19 +1376,10 @@ object Compactor:
                 // need-shaped fills, each staged write-once and incrementally.
                 val reachable = analysisReach(units, spans, aPrep, tailUnits(units))
                 val analysis  = runAnalysis(ctx, analysisPending(ctx, config), config, prep, reachable)
-                analysis.andThen {
-                    Kyo.foreachDiscard(need.sortBy(_.start)) { sp =>
-                        val key = SpanKey(sp.start, sp.end)
-                        prep.staged.get.map { staged =>
-                            if staged.summaryOf(key).isDefined then Kyo.unit
-                            else
-                                runFill(sp, spans, ctx, config, prep).handle(Abort.run[AIGenException]).map {
-                                    case Result.Success(bytes) => prep.staged.getAndUpdate(_.withSummary(key, bytes)).unit
-                                    case _                     => Kyo.unit
-                                }
-                        }
-                    }
-                }
+                // The need-shaped fills run through the shared fillRemaining body (write-once, each fill's
+                // failure degraded to an absent slot). Any residual Abort is already discharged per fill, so
+                // the fiber body stays < Async.
+                analysis.andThen(fillRemaining(ctx, config, prep, need, infos).handle(Abort.run[AIGenException]).unit)
             end preparationRun
 
             // Forks the single-flight run from the snapshot via Fiber.initUnscoped (no Scope cascade into

@@ -55,6 +55,11 @@ final case class Config private (
       */
     def tokenizer(tokenizer: Tokenizer): Config = copy(tokenizer = Present(tokenizer))
 
+    /** Clears a user tokenizer set earlier in the chain, returning to the provider's offline tiktoken
+      * default. Mirrors the other optional-field resets (`noContextCeiling`, `noDriftThreshold`).
+      */
+    def noTokenizer: Config = copy(tokenizer = Absent)
+
     // The output reservation counted once, on the hard-limit side: the user's maxTokens
     // when set, else a conservative default so window - reservation never over-reads what the
     // provider actually has left for input.
@@ -85,15 +90,42 @@ final case class Config private (
     // fails here with the violated inequality named, never at a boundary; the override that would
     // push the effective high above the hard-limit line is thus unconstructible.
     private[kyo] def validatedAxis: Config =
-        val lo   = effectiveLow
-        val prep = prepareLine
-        val high = effectiveHigh
-        val hard = hardLimitTokens
+        // The prepareWatermark per-field clamp guarantees prepareWatermark > lowWatermark as a FRACTION,
+        // but the axis is enforced on the toInt projections (effectiveLow, prepareLine), and truncation
+        // can collapse two distinct fractions onto the same integer (e.g. effectiveHigh=128000,
+        // lowWatermark=0.6, prepareWatermark=nextUp(0.6) both project to 76800). When the fraction
+        // ordering already holds, raise prepareWatermark to the smallest fraction whose prepareLine.toInt
+        // strictly exceeds effectiveLow.toInt, so a repairable builder value constructs cleanly. A genuine
+        // reorder (prepareWatermark NOT above lowWatermark as a fraction) is left untouched for the
+        // require below to reject.
+        val needsRepair =
+            compaction.lowWatermark < compaction.prepareWatermark && effectiveLow >= prepareLine && effectiveHigh > 0
+        val checked =
+            if needsRepair then copy(compaction = compaction.copy(prepareWatermark = repairedPrepareWatermark))
+            else this
+        val lo   = checked.effectiveLow
+        val prep = checked.prepareLine
+        val high = checked.effectiveHigh
+        val hard = checked.hardLimitTokens
         require(lo < prep, s"compaction axis: effectiveLow ($lo) must be < prepareWatermark*effectiveHigh ($prep)")
         require(prep <= high, s"compaction axis: prepareWatermark*effectiveHigh ($prep) must be <= effectiveHigh ($high)")
         require(high < hard, s"compaction axis: effectiveHigh ($high) must be < hardLimit*(window-maxOutput) ($hard)")
-        this
+        checked
     end validatedAxis
+
+    // The smallest prepareWatermark fraction whose (fraction*effectiveHigh).toInt strictly exceeds
+    // effectiveLow, found by advancing one ulp at a time from the nominal (effectiveLow+1)/effectiveHigh
+    // so the search uses the exact projection prepareLine applies; capped at 1.0 (speculation off).
+    private def repairedPrepareWatermark: Double =
+        val high = effectiveHigh
+        val low  = effectiveLow
+        @scala.annotation.tailrec
+        def loop(p: Double): Double =
+            if p >= 1.0 then 1.0
+            else if (p * high).toInt > low then p
+            else loop(math.nextUp(p))
+        loop((low + 1).toDouble / high.toDouble)
+    end repairedPrepareWatermark
 
     // Internal Maybe form for cross-run seed derivation, where the prior seed may be Absent.
     private[kyo] def seed(seed: Maybe[Int]): Config = copy(seed = seed)

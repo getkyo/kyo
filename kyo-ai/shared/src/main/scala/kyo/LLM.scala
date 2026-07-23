@@ -527,33 +527,33 @@ object LLM:
         Frame
     ): Context < (LLM & Async & Abort[AIGenException]) =
         compactor match
-            case Present(c) =>
+            case Present(c) if c.isDefault =>
+                // The Default strategy owns the full occupancy / preparation / drift / eviction pipeline.
                 // Usage-anchored occupancy; the boundary trigger is the effective high
                 // watermark, min(highWatermark*window, contextCeiling). maxOutputTokens is
                 // NOT part of occupancy: it is counted once on the hard-limit side inside render.
                 val occupied = Compactor.internal.occupancy(ctx)
                 LLM.env.map { env =>
                     LLM.session(ai).map { session =>
-                        if occupied >= config.effectiveHigh then
-                            // The boundary: tick the recall-decay clock, then ADOPT staged
-                            // summaries and JOIN the fiber for this boundary's exact need,
-                            // then render + install the rebuilt compacted list from the
-                            // filled state. raw is never shrunk.
-                            val ticked = ctx.withCompaction(ctx.compactionState.tickBoundary)
-                            Compactor.internal.Default.boundaryPrepare(ai, ticked, config, session, env.preparations).map {
+                        // The size-boundary render, shared by the occupancy trigger and a confirmed drift
+                        // fire: ADOPT staged summaries and JOIN the fiber for this boundary's exact need,
+                        // render + install the rebuilt compacted list, then bound raw's heap via evict.
+                        // Pure eviction; the compacted view is untouched. raw is never shrunk.
+                        def boundaryRender(triggered: Context, sess: AISession): Context < (LLM & Async & Abort[AIGenException]) =
+                            Compactor.internal.Default.boundaryPrepare(ai, triggered, config, sess, env.preparations).map {
                                 (prepared, session2) =>
                                     LLM.setSession(ai, session2).andThen {
                                         c.render(prepared).map { rebuilt =>
-                                            // The raw-retention boundary: after the view is rendered and
-                                            // installed, bound raw's heap by forgetting the oldest
-                                            // frozen+demoted middle wholesale. Pure; the compacted view is
-                                            // untouched, the coarse band appears at the next render.
                                             val updated = prepared.copy(compacted = rebuilt)
                                             val evicted = Compactor.internal.Default.evict(updated, config)
                                             ai.setContext(evicted).andThen(evicted)
                                         }
                                     }
                             }
+                        if occupied >= config.effectiveHigh then
+                            // The boundary: tick the recall-decay clock, then render the filled state.
+                            val ticked = ctx.withCompaction(ctx.compactionState.tickBoundary)
+                            boundaryRender(ticked, session)
                         else
                             // Below the size boundary: measure relevance drift over the served
                             // view (model-free, over adopted + staged analyses). A CONFIRMED drift
@@ -570,27 +570,10 @@ object LLM:
                                             staged.analyses.toChunk.map(_._2)
                                         ) match
                                             case Compactor.internal.Default.DriftDecision.Fire =>
+                                                // A confirmed drift is a boundary of the other cause; the
+                                                // raw-retention backstop runs here too, inside boundaryRender.
                                                 val fired = ctx.withCompaction(ctx.compactionState.tickBoundary.recordDriftFire)
-                                                Compactor.internal.Default.boundaryPrepare(
-                                                    ai,
-                                                    fired,
-                                                    config,
-                                                    session1,
-                                                    env.preparations
-                                                ).map {
-                                                    (prepared, session2) =>
-                                                        LLM.setSession(ai, session2).andThen {
-                                                            c.render(prepared).map { rebuilt =>
-                                                                // The raw-retention backstop also runs
-                                                                // after a drift fire (a boundary of the
-                                                                // other cause), after the view is installed.
-                                                                // Pure; the compacted view is untouched.
-                                                                val updated = prepared.copy(compacted = rebuilt)
-                                                                val evicted = Compactor.internal.Default.evict(updated, config)
-                                                                ai.setContext(evicted).andThen(evicted)
-                                                            }
-                                                        }
-                                                }
+                                                boundaryRender(fired, session1)
                                             case Compactor.internal.Default.DriftDecision.Arm =>
                                                 // Latch pending and arm the drift cause, serving the view
                                                 // unchanged. setSession seats the preparation, then
@@ -649,6 +632,20 @@ object LLM:
                         end if
                     }
                 }
+            case Present(c) =>
+                // A non-Default enabled compactor (Compactor.none's raw pass-through or a user strategy)
+                // owns its own view: NONE of Default's background preparation fiber, drift arming, or
+                // eviction machinery runs (the off switch forks no fiber and issues no model call). The
+                // framework still owns byte-stability for ANY implementation: below the occupancy trigger
+                // the context is re-served unchanged (render is consulted only at a boundary, so the
+                // provider prompt cache survives); at/above it the compactor's own render rebuilds the
+                // compacted list, installed via setContext. For the pass-through this re-serves raw.
+                if Compactor.internal.occupancy(ctx) < config.effectiveHigh then Kyo.lift(ctx)
+                else
+                    c.render(ctx).map { rebuilt =>
+                        val updated = ctx.copy(compacted = rebuilt)
+                        ai.setContext(updated).andThen(updated)
+                    }
             case Absent => Kyo.lift(ctx)
     end renderView
 

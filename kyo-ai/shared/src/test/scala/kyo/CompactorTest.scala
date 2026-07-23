@@ -133,6 +133,77 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Compactor.none drives no background preparation or model call across the boundary seam" in {
+        // demotable() sits above the effectiveHigh trigger for a 16384 window; with the Default strategy the
+        // seam forks preparation and issues summarizer fills at the boundary. Compactor.none must be a true
+        // pass-through through the seam itself (not just renderWith): only the user gen completion reaches
+        // the server, and the served request carries the raw context. The summarizer is pinned to the same
+        // server, so any Default fill that leaked through would be counted here.
+        val ctx = demotable()
+        TestCompletionServer.run { server =>
+            val base   = cfg(16384).apiUrl(server.baseUrl)
+            val config = base.compaction(_.summarizer(base))
+            server.enqueueBody(genBody("1")).andThen {
+                LLM.run(config) {
+                    AI.enable(Compactor.none) {
+                        AI.init.map(ai => ai.setContext(ctx).andThen(ai.gen[Int]))
+                    }
+                }.andThen {
+                    server.captured.map { cap =>
+                        assert(occupancy(ctx) >= config.effectiveHigh, "the seeded context sits above the boundary trigger")
+                        assert(
+                            cap.size == 1,
+                            s"only the user gen completion reaches the server; zero background summarizer/analysis calls, got ${cap.size}"
+                        )
+                        assert(
+                            cap.head.body.contains("region 0"),
+                            "the served request carries the raw regions verbatim (no demotion under the off switch)"
+                        )
+                        assert(cap.head.body.contains("region 9"), "every raw region is served unchanged under the off switch")
+                    }
+                }
+            }
+        }
+    }
+
+    "a custom Compactor's own render drives the served view, bypassing the Default pipeline" in {
+        // A custom compactor owns its own view; the seam must consult its render and run NONE of Default's
+        // preparation/drift/eviction machinery, so no summarizer/analysis completion fires.
+        AtomicInt.init(0).map { renders =>
+            val sentinel = "CUSTOM_COMPACTED_VIEW"
+            val custom = new Compactor[Any]:
+                def render(c: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =
+                    renders.incrementAndGet.andThen(Kyo.lift(Chunk[Message](UserMessage(sentinel, Absent))))
+            val ctx = demotable()
+            TestCompletionServer.run { server =>
+                val base   = cfg(16384).apiUrl(server.baseUrl)
+                val config = base.compaction(_.summarizer(base))
+                server.enqueueBody(genBody("1")).andThen {
+                    LLM.run(config) {
+                        AI.enable(custom) {
+                            AI.init.map(ai => ai.setContext(ctx).andThen(ai.gen[Int]))
+                        }
+                    }.andThen {
+                        renders.get.map { rc =>
+                            server.captured.map { cap =>
+                                assert(rc >= 1, "the custom compactor's own render is consulted for the served view")
+                                assert(
+                                    cap.size == 1,
+                                    s"the Default background summarizer/analysis pipeline never runs for a custom compactor, got ${cap.size}"
+                                )
+                                assert(cap.head.body.contains(sentinel), "the served request carries the custom render's view")
+                                assert(
+                                    !cap.head.body.contains("region 0"),
+                                    "the Default demotion pipeline never touched the context (raw regions not served)"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ==== the summarizer route knob ====
 
     "the summarizer route knob selects warm / provider.small / pinned" in {

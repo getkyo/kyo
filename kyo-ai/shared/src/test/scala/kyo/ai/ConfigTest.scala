@@ -227,6 +227,51 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(d.noDriftThreshold.driftThreshold == Absent, "noDriftThreshold recovers size-only triggering exactly")
     }
 
+    "a prepareWatermark below lowWatermark repairs to a valid integer axis and constructs" in {
+        // opus_4_8: effectiveHigh clamps to the 128000 ceiling, so effectiveLow = 0.6*128000 = 76800.
+        // prepareWatermark(0.5) is below lowWatermark; the per-field clamp raises it, and the axis repair
+        // guarantees the INTEGER prepareLine strictly exceeds effectiveLow so validatedAxis never throws.
+        val repaired = Config.Anthropic.opus_4_8.compaction(_.prepareWatermark(0.5))
+        assert(
+            repaired.effectiveLow < repaired.prepareLine,
+            s"the repaired axis holds on the integer projections: effectiveLow ${repaired.effectiveLow} < prepareLine ${repaired.prepareLine}"
+        )
+        assert(repaired.prepareLine <= repaired.effectiveHigh, "the repaired prepareLine stays at or below effectiveHigh")
+    }
+
+    "a prepareWatermark exactly at lowWatermark repairs and constructs (the boundary value)" in {
+        val atLow = Config.Anthropic.opus_4_8.compaction(_.prepareWatermark(0.6))
+        assert(
+            atLow.effectiveLow < atLow.prepareLine,
+            s"a prepareWatermark equal to lowWatermark is raised to a valid axis, got low=${atLow.effectiveLow} prep=${atLow.prepareLine}"
+        )
+    }
+
+    "a genuine low-above-prepare reorder still throws after the prepareWatermark repair" in {
+        // lowWatermark set above prepareWatermark is a real reorder, not a truncation collapse, so the
+        // repair leaves it untouched and validatedAxis rejects it naming the violated inequality.
+        val thrown =
+            try
+                Config.Anthropic.opus_4_8.compaction(_.prepareWatermark(0.7).lowWatermark(0.95))
+                None
+            catch case e: IllegalArgumentException => Some(e.getMessage)
+        assert(
+            thrown.exists(m => m.contains("effectiveLow") && m.contains("must be <")),
+            s"a lowWatermark-above-prepareWatermark reorder throws naming effectiveLow, got: $thrown"
+        )
+    }
+
+    "noTokenizer resets a user tokenizer to the provider's offline default (Absent)" in {
+        val custom = Config.Anthropic.default.tokenizer(new Tokenizer:
+            def count(texts: Chunk[String])(using Frame): Chunk[Int] < (LLM & Async & Abort[HttpException | AIGenException]) =
+                Kyo.lift(texts.map(_ => 0)))
+        assert(custom.tokenizer.isDefined, "the tokenizer builder sets a Present tokenizer")
+        assert(
+            custom.noTokenizer.tokenizer == Absent,
+            "noTokenizer returns to the provider default, mirroring noContextCeiling/noDriftThreshold"
+        )
+    }
+
     private class TestUnsafeSystem(
         envVars: Map[String, String] = Map.empty,
         properties: Map[String, String] = Map.empty
