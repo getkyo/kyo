@@ -129,6 +129,57 @@ object Compactor:
         object Graph:
             val empty: Graph = Graph(Dict.empty)
 
+        // §5f preparation batching constants (provisional, replay-tunable, owner-confirm).
+        val fillBatchSpans: Int     = 6 // provisional, replay-tunable, v4 §5f, owner-confirm
+        val priorSummaryBudget: Int = 4 // provisional, replay-tunable, v4 §5f, owner-confirm
+
+        // The write-once staging cell key (§5f :1326): a span's raw ordinal range. Ordinals are
+        // stable under the retention forget (§10.5), so keys never alias across a session.
+        final case class SpanKey(start: Int, end: Int) derives CanEqual
+
+        // §5f staging cell (:1331-1345). Write-once summaries keyed by SpanKey; the analyses map
+        // keyed by region ordinal (§5c) is added alongside the typed analysis output.
+        final case class Staged(summaries: Dict[SpanKey, String] = Dict.empty[SpanKey, String]):
+            // First-writer-wins: a summary lands only into an EMPTY slot; a re-emission to a filled
+            // slot is discarded, so whichever bytes reach the slot first are permanent.
+            def withSummary(key: SpanKey, bytes: String): Staged =
+                if summaries.contains(key) then this
+                else copy(summaries = summaries.update(key, bytes))
+            def summaryOf(key: SpanKey): Maybe[String] = summaries.get(key)
+        end Staged
+
+        // The two arming causes (§5f :1242-1252), the prepare line and the drift tripwire (§5g):
+        // both share ONE single-flight run.
+        enum ArmCause derives CanEqual:
+            case Prepare, Drift
+
+        // One per session (§5f :1337-1345): the staging cell plus the single-flight handle and the
+        // set of causes currently in their armed band (latched on a line-cross, cleared on a
+        // recross-below, so a cause re-arms only when its own line is recrossed, §5f :1261-1262). The
+        // background fiber writes ONLY `staged` (CAS updates); the foreground adopts staged entries
+        // into write-once compaction state and joins the fiber through `inFlight` at the boundary.
+        final case class Preparation(
+            staged: AtomicRef[Staged],
+            inFlight: AtomicRef[Maybe[Fiber[Unit, Any]]],
+            armed: AtomicRef[Set[ArmCause]]
+        )
+
+        object Preparation:
+            def init(using Frame): Preparation < Sync =
+                for
+                    s <- AtomicRef.init(Staged())
+                    f <- AtomicRef.init(Absent: Maybe[Fiber[Unit, Any]])
+                    a <- AtomicRef.init(Set.empty[ArmCause])
+                yield Preparation(s, f, a)
+        end Preparation
+
+        // §5f Lifecycle (:1449-1463): interrupt every in-flight preparation fiber. LLM.run wraps the
+        // run body in Sync.ensure(interruptAll(registry)) so no fiber leaks past the run on ANY exit
+        // (normal, abort, panic, interrupt); a boundary never calls this (it JOINS), only teardown and
+        // per-cause disarm interrupt. Interrupting a completed fiber is a harmless no-op.
+        def interruptAll(registry: AtomicRef[Set[Fiber[Unit, Any]]])(using Frame): Unit < Sync =
+            registry.get.map(fs => Kyo.foreachDiscard(fs)(f => f.interrupt))
+
         /** The recall tool's typed input, object-wrapped so the wire schema is
           * `{"id":{"type":"integer"}}` (providers reject a bare integer parameter schema).
           */
@@ -254,9 +305,11 @@ object Compactor:
         // ---------------------------------------------------------------------------------------
         // The single shipped default. render returns only the rebuilt compacted Chunk[Message]; raw
         // never appears in its signature. It reads the ACTIVE kyo.ai.Config live, makes ZERO model
-        // calls, and forks NO fibers. The P2 boundary is synchronous: measure -> derive fresh ->
-        // demote (the unified rule) -> project -> hard-limit backstop. The preparation fiber, the
-        // analysis pass, the validity gate, and the drift trigger layer on in P3/P4/P5.
+        // calls, and forks NO fibers ITSELF: it derives A_fresh and PROJECTS from the write-once
+        // summaries already ADOPTED into ctx.compactionState by the seam (LLM.renderView runs §5f's
+        // adopt -> derive-need -> join around this call, so every summary-level slot render reads is
+        // filled). The validity gate selects the join need source in the seam (§5f boundaryNeed); the
+        // rendered assignment is always A_fresh, so a false invalidation costs zero new model calls.
         // ---------------------------------------------------------------------------------------
         object Default extends Compactor[Any]:
 
@@ -267,17 +320,18 @@ object Compactor:
                     val hard     = config.hardLimitTokens
                     val occupied = occupancy(ctx)
                     val pressure = if low <= 0 then 1.0 else occupied.toDouble / low.toDouble
+                    val state    = ctx.compactionState
                     val units    = group(ctx.raw)
                     val spans    = formSpans(units, ctx.raw, config)
                     superKeys(units, ctx.raw).map { keys =>
                         val superseded = supersession(units, keys)
                         val graph      = deriveGraph(units, ctx.raw, superseded)
-                        val seed       = seedVector(units, ctx.raw, ctx.compactionState)
+                        val seed       = seedVector(units, ctx.raw, state)
                         val scores     = score(units, graph, superseded, seed)
                         val prevLevels = demotedOrigins(ctx.compacted)
                         val since      = ctx.raw.size
                         val demotions  = cut(ctx, units, spans, scores, pressure, occupied, low, since, prevLevels)
-                        val view       = project(ctx.raw, units, spans, demotions, since, prevLevels, ctx.compactionState, keys)
+                        val view       = project(ctx.raw, units, spans, demotions, since, prevLevels, state, keys)
                         if viewTokens(view) <= hard then view
                         else
                             val forcedView = forced(ctx.raw, units, spans, scores, pressure, hard, since, prevLevels)
@@ -558,6 +612,74 @@ object Compactor:
             def spanMaxLiveness(sp: Span, scores: Dict[Int, Double]): Double =
                 sp.regionIds.foldLeft(0.0)((m, id) => math.max(m, scores.get(id).getOrElse(0.0)))
 
+            // §5f :1180-1197 A_prep: the speculative level assignment under PROJECTED boundary semantics.
+            // The v4 cut carries no cache-gate veto (§5d unified rule), so the projection is simply the
+            // same cut run at the projected boundary: for the SIZE cause a boundary at exactly
+            // effectiveHigh, so projected pressure is effectiveHigh/effectiveLow and pass 2 runs as at the
+            // boundary; for the drift cause (§5g) current occupancy with pressure floored at 1. Pure,
+            // in-memory, model-free; recomputed every seam pass (§5f :1234), so the gate compares an
+            // assignment at most one generation old. `driftCause` selects the projected pressure basis.
+            def projectedAssignment(
+                ctx: Context,
+                units: Chunk[Region],
+                spans: Chunk[Span],
+                scores: Dict[Int, Double],
+                config: Config,
+                since: Int,
+                prevLevels: Dict[Int, Context.Origin],
+                driftCause: Boolean
+            )(using Frame): Dict[Int, Level] =
+                val high     = config.effectiveHigh
+                val low      = config.effectiveLow
+                val occupied = occupancy(ctx)
+                val projPressure =
+                    if driftCause then math.max(occupied.toDouble / math.max(low, 1).toDouble, 1.0)
+                    else if low <= 0 then 1.0
+                    else high.toDouble / low.toDouble
+                val projOccupied = if driftCause then occupied else high
+                cut(ctx, units, spans, scores, projPressure, projOccupied, low, since, prevLevels)
+            end projectedAssignment
+
+            // §5f :1199-1229 the need-shaped fill set: EXACTLY the spans A_prep assigns the summary level.
+            // A projected-pinned span is absent from the assignment (never demoted); a projected-pointer
+            // span carries Level.Pointer; neither buys a fill. The assignment is the bound: no
+            // speculationMargin, no covered-savings ledger (§5f :1227-1229).
+            def fillNeed(spans: Chunk[Span], assignment: Dict[Int, Level]): Chunk[Span] =
+                spans.filter(sp => assignment.get(sp.start).contains(Level.Summary))
+
+            // The LLM-free core of keyed supersession (§5c): takes the tool infos captured in the
+            // FOREGROUND (where LLM is available), so the background fiber, which is LLM-free, computes
+            // keyed supersession from the snapshot without reading Tool.internal.infos. The foreground
+            // superKeys is unchanged; it reads infos and this is the same pure keying it applies.
+            def superKeysFrom(
+                units: Chunk[Region],
+                raw: Chunk[Message],
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]]
+            )(using Frame): Dict[Int, (String, Tool.Kind)] =
+                val byName = infos.foldLeft(Dict.empty[String, Tool.internal.Info[?, ?, LLM]])((m, i) => m.update(i.name, i))
+                units.foldLeft(Dict.empty[Int, (String, Tool.Kind)]) { (acc, u) =>
+                    val calls = u.indices.flatMap { idx =>
+                        raw(idx) match
+                            case AssistantMessage(_, cs, _, _) => cs
+                            case _                             => Chunk.empty
+                    }
+                    val keyed = calls.foldLeft(Absent: Maybe[(String, Tool.Kind)]) { (found, call) =>
+                        found match
+                            case Present(_) => found
+                            case Absent =>
+                                byName.get(call.function) match
+                                    case Absent => Absent
+                                    case Present(info) =>
+                                        info.compactionKeyFor(call.arguments) match
+                                            case Present(k) => Present((k, info.kind))
+                                            case Absent     => Absent
+                    }
+                    keyed match
+                        case Present(kk) => acc.update(u.id, kk)
+                        case Absent      => acc
+                }
+            end superKeysFrom
+
             // ---- the cut: the unified DEMOTION RULE (§5d), one rule for size-fired and drift-fired
             // boundaries. Pinning: a span with any at-or-above-keep(max(pressure,1)) member stays verbatim.
             // Pass 1 (relevance, unconditional): every demotable span to its summary level, no stop
@@ -648,6 +770,272 @@ object Compactor:
                 case msg: UserMessage      => msg.copy(content = elide(msg.content, budget))
                 case msg: AssistantMessage => msg.copy(content = elide(msg.content, budget))
                 case msg: SystemMessage    => msg.copy(content = elide(msg.content, budget))
+
+            // =========================================================================================
+            // §5f preparation machinery: the seam-facing arm (below the boundary) and boundaryPrepare
+            // (adopt + join at the boundary), the single-flight fiber, the fill routes, and the gate.
+            // Everything here is model-free EXCEPT runFill (a degraded typed completion) and the join.
+            // =========================================================================================
+
+            // Materializes the per-session Preparation cell on first use (§5f :1337-1345).
+            def ensurePreparation(session: AISession)(using Frame): (Preparation, AISession) < Sync =
+                session.preparation match
+                    case Present(prep) => Kyo.lift((prep, session))
+                    case Absent        => Preparation.init.map(prep => (prep, session.withPreparation(prep)))
+
+            // §5f :1369-1373 ADOPT: move every staged summary into write-once compaction state; state
+            // wins, duplicates discarded, so a fiber/boundary race is idempotent by construction.
+            def adopt(state: Context.CompactionState, staged: Staged): Context.CompactionState =
+                staged.summaries.foldLeft(state)((s, key, bytes) => s.withSummary(key.start, key.end, bytes))
+
+            // §5f :1379-1403 the VALIDITY GATE (pinning partition). Agree iff, for every span in the
+            // prepared domain, A_prep and A_fresh agree on pinned-verbatim (absent from the assignment)
+            // vs demoted (Present at ANY level): pass-2 depth is demoted-to-demoted and never gates. BOTH
+            // disagreement directions break agreement (prepared-demoted/fresh-pinned = soundness,
+            // prepared-pinned/fresh-demotable = completeness). Pure; used to select the join need source
+            // so a false invalidation costs zero new model calls (the ingredients survive write-once).
+            def validityGate(aPrep: Dict[Int, Level], aFresh: Dict[Int, Level], spans: Chunk[Span]): Boolean =
+                spans.forall(sp => aPrep.get(sp.start).isDefined == aFresh.get(sp.start).isDefined)
+
+            // §5f :1414 the boundary's exact need, gated: A_fresh over the adopted state, then the fill
+            // set of the gate-selected assignment (adopt -> A_prep, invalidate -> A_fresh) restricted to
+            // spans whose write-once slot is still empty. LLM-free (infos captured in the foreground).
+            def boundaryNeed(ctx: Context, config: Config, infos: Chunk[Tool.internal.Info[?, ?, LLM]])(using Frame): Chunk[Span] =
+                val units      = group(ctx.raw)
+                val spans      = formSpans(units, ctx.raw, config)
+                val superseded = supersession(units, superKeysFrom(units, ctx.raw, infos))
+                val graph      = deriveGraph(units, ctx.raw, superseded)
+                val seed       = seedVector(units, ctx.raw, ctx.compactionState)
+                val scores     = score(units, graph, superseded, seed)
+                val prevLevels = demotedOrigins(ctx.compacted)
+                val since      = ctx.raw.size
+                val occupied   = occupancy(ctx)
+                val low        = config.effectiveLow
+                val pressure   = if low <= 0 then 1.0 else occupied.toDouble / low.toDouble
+                val aFresh     = cut(ctx, units, spans, scores, pressure, occupied, low, since, prevLevels)
+                val aPrep      = projectedAssignment(ctx, units, spans, scores, config, since, prevLevels, driftCause = false)
+                val source     = if validityGate(aPrep, aFresh, spans) then aPrep else aFresh
+                val state      = ctx.compactionState
+                fillNeed(spans, source).filter(sp => state.summaryOf(sp.start, sp.end).isEmpty)
+            end boundaryNeed
+
+            // Per-pass arming below the boundary (§5f :1242-1263). Computes the prepare cause; the drift
+            // cause (§5g) shares the same single-flight run. A fresh cross into the armed band with no run in flight forks the
+            // single-flight run; a pass whose cause cleared eagerly interrupts the in-flight run. Returns
+            // the possibly-seated session so the seam threads it back through setSession.
+            def armBelowBoundary(
+                ai: AI,
+                ctx: Context,
+                config: Config,
+                session: AISession,
+                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]]
+            )(using Frame): AISession < (LLM & Async & Abort[AIGenException]) =
+                ensurePreparation(session).map { (prep, session2) =>
+                    val occupied     = occupancy(ctx)
+                    val prepareArmed = occupied >= config.prepareLine && occupied < config.effectiveHigh
+                    prep.armed.get.map { current =>
+                        if !prepareArmed && current.contains(ArmCause.Prepare) then
+                            prep.inFlight.getAndSet(Absent).map {
+                                case Present(f) => f.interrupt.andThen(deregister(registry, f))
+                                case Absent     => Kyo.unit
+                            }.andThen(prep.armed.getAndUpdate(_ - ArmCause.Prepare).unit).andThen(session2)
+                        else if prepareArmed && !current.contains(ArmCause.Prepare) then
+                            prep.inFlight.get.map {
+                                case Present(_) => prep.armed.getAndUpdate(_ + ArmCause.Prepare).unit.andThen(session2)
+                                case Absent =>
+                                    Tool.internal.infos.map { infos =>
+                                        forkPreparation(ctx, config, prep, infos, registry)
+                                            .andThen(prep.armed.getAndUpdate(_ + ArmCause.Prepare).unit)
+                                            .andThen(session2)
+                                    }
+                            }
+                        else Kyo.lift(session2)
+                    }
+                }
+            end armBelowBoundary
+
+            // The boundary: (1) adopt staged -> ctx, (2) derive the exact need, (3) join the fiber for
+            // that need, (4) adopt what the join wrote. Returns the ctx to render (with filled state) and
+            // the possibly-seated session (§5f :1362-1418).
+            def boundaryPrepare(
+                ai: AI,
+                ctx: Context,
+                config: Config,
+                session: AISession,
+                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]]
+            )(using Frame): (Context, AISession) < (LLM & Async & Abort[AIGenException]) =
+                ensurePreparation(session).map { (prep, session2) =>
+                    prep.staged.get.map { staged0 =>
+                        val adopted0 = ctx.withCompaction(adopt(ctx.compactionState, staged0))
+                        Tool.internal.infos.map { infos =>
+                            val need = boundaryNeed(adopted0, config, infos)
+                            joinPreparation(adopted0, config, prep, need, infos).map { filled =>
+                                val adopted1 = adopted0.withCompaction(adopt(adopted0.compactionState, filled))
+                                (adopted1, session2)
+                            }
+                        }
+                    }
+                }
+            end boundaryPrepare
+
+            // §5f :1414-1447 JOIN. Armed-and-finished (empty need) returns instantly (the invisible case);
+            // a run still in flight is awaited (Fiber.get, Async suspension, never a thread block) then the
+            // remainder topped up; no run in flight (the huge turn) starts the fills against the exact need
+            // and joins them through the SAME fill code. A missing analysis is never a blocking need.
+            def joinPreparation(
+                ctx: Context,
+                config: Config,
+                prep: Preparation,
+                need: Chunk[Span],
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]]
+            )(using Frame): Staged < (Async & Abort[AIGenException]) =
+                if need.isEmpty then prep.staged.get
+                else
+                    prep.inFlight.get.map {
+                        case Present(fiber) => fiber.get.andThen(fillRemaining(ctx, config, prep, need, infos))
+                        case Absent         => fillRemaining(ctx, config, prep, need, infos)
+                    }
+            end joinPreparation
+
+            // Fills each still-empty span in `need` (write-once), degrading a failed fill to an absent
+            // slot -> the substitute elision at render, never failing the user's generation. Runs in dependency
+            // order (oldest first) so the degraded route feeds earlier summaries to later fills (§5f :1296).
+            def fillRemaining(
+                ctx: Context,
+                config: Config,
+                prep: Preparation,
+                need: Chunk[Span],
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]]
+            )(using Frame): Staged < (Async & Abort[AIGenException]) =
+                val spans = formSpans(group(ctx.raw), ctx.raw, config)
+                Kyo.foreachDiscard(need.sortBy(_.start)) { sp =>
+                    val key = SpanKey(sp.start, sp.end)
+                    prep.staged.get.map { staged =>
+                        if staged.summaryOf(key).isDefined then Kyo.unit
+                        else
+                            runFill(sp, spans, ctx, config, prep).handle(Abort.run[AIGenException]).map {
+                                case Result.Success(bytes) => prep.staged.getAndUpdate(_.withSummary(key, bytes)).unit
+                                case _                     => Kyo.unit
+                            }
+                    }
+                }.andThen(prep.staged.get)
+            end fillRemaining
+
+            // The single-flight fiber body (§5f :1320-1329): LLM-free wrt the foreground handler.
+            // Recomputes the need-shaped fill set over the SNAPSHOT (raw/config/compaction state in ctx,
+            // tool infos captured) and fills each summary-level span, staging results write-once
+            // INCREMENTALLY as each completes so a partial run is still useful. Every failure recovered
+            // here so no auxiliary failure ever escapes the fiber.
+            def preparationRun(
+                ctx: Context,
+                config: Config,
+                prep: Preparation,
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]]
+            )(using Frame): Unit < Async =
+                val units      = group(ctx.raw)
+                val spans      = formSpans(units, ctx.raw, config)
+                val superseded = supersession(units, superKeysFrom(units, ctx.raw, infos))
+                val graph      = deriveGraph(units, ctx.raw, superseded)
+                val seed       = seedVector(units, ctx.raw, ctx.compactionState)
+                val scores     = score(units, graph, superseded, seed)
+                val prevLevels = demotedOrigins(ctx.compacted)
+                val since      = ctx.raw.size
+                val aPrep      = projectedAssignment(ctx, units, spans, scores, config, since, prevLevels, driftCause = false)
+                val need       = fillNeed(spans, aPrep).filter(sp => ctx.compactionState.summaryOf(sp.start, sp.end).isEmpty)
+                Kyo.foreachDiscard(need.sortBy(_.start)) { sp =>
+                    val key = SpanKey(sp.start, sp.end)
+                    prep.staged.get.map { staged =>
+                        if staged.summaryOf(key).isDefined then Kyo.unit
+                        else
+                            runFill(sp, spans, ctx, config, prep).handle(Abort.run[AIGenException]).map {
+                                case Result.Success(bytes) => prep.staged.getAndUpdate(_.withSummary(key, bytes)).unit
+                                case _                     => Kyo.unit
+                            }
+                    }
+                }
+            end preparationRun
+
+            // Forks the single-flight run from the snapshot via Fiber.initUnscoped (no Scope cascade into
+            // the seam row); stores the handle in the per-session cell and the run-level registry (swept
+            // by LLM.run's Sync.ensure). LLM-free (infos already captured).
+            // plan: the run-level registry accumulates handles; a done-filter prune on the next fork keeps
+            // it bounded (interruptAll no-ops on a completed handle, so leak-freedom holds either way).
+            def forkPreparation(
+                ctx: Context,
+                config: Config,
+                prep: Preparation,
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]],
+                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]]
+            )(using Frame): Unit < Async =
+                Fiber.initUnscoped(preparationRun(ctx, config, prep, infos)).map { fiber =>
+                    prep.inFlight.set(Present(fiber)).andThen(register(registry, fiber))
+                }
+
+            def register(registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]], fiber: Fiber[Unit, Any])(using Frame): Unit < Sync =
+                registry match
+                    case Present(r) => r.getAndUpdate(_ + fiber).unit
+                    case Absent     => Kyo.unit
+
+            def deregister(registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]], fiber: Fiber[Unit, Any])(using Frame): Unit < Sync =
+                registry match
+                    case Present(r) => r.getAndUpdate(_ - fiber).unit
+                    case Absent     => Kyo.unit
+
+            // §6 summarizer knob -> fill config (§5f :1265-1297): Present pins the fill model; Absent
+            // selects the warm route with provider.small as the degraded fallback. The degraded/pinned
+            // route runs here (the warm §10.3 prompt-cache route is owner-directed future work), so
+            // Absent resolves to provider.small.
+            def resolveFillConfig(config: Config): Config =
+                config.compaction.summarizer match
+                    case Present(cfg) => cfg
+                    case Absent       => config.provider.small
+
+            // §5f :1289-1297 the degraded packing rule: the summarizer has its own (smaller) window, so the
+            // input is BOUNDED and relevance-selected, never the whole history: the raw span, a
+            // size-bounded set of earlier prior-span summaries (priorSummaryBudget, recency-first), and the
+            // task anchor (system head + first user turn). The instruction asks for labeled sections, most
+            // load-bearing first (§5f :1266-1268), the one thing terse asks of the fill.
+            def buildFillContext(sp: Span, spans: Chunk[Span], ctx: Context, staged: Staged)(using Frame): Context =
+                val raw      = ctx.raw
+                val anchor   = raw.take(1) ++ raw.filter(_.role == Role.User).take(1)
+                val spanMsgs = raw.slice(sp.start, sp.end)
+                val priors =
+                    spans.filter(_.end <= sp.start).reverse.foldLeft(Chunk.empty[Message]) { (acc, p) =>
+                        if acc.size >= priorSummaryBudget then acc
+                        else
+                            staged.summaryOf(SpanKey(p.start, p.end)) match
+                                case Present(b) => acc.append(SystemMessage(b))
+                                case Absent     => acc
+                    }
+                val instruction: Message = SystemMessage(
+                    "Summarize the following span of a conversation into labeled sections, most load-bearing " +
+                        "first. Preserve identifiers, decisions, and unresolved threads; omit pleasantries."
+                )
+                val body = Chunk(instruction) ++ anchor ++ priors ++ spanMsgs
+                Context(body, body)
+            end buildFillContext
+
+            // A single degraded-route fill (§5f :1287-1297). Runs a self-contained nested LLM.run over the
+            // snapshot: the wire entry (Completion.apply) carries LLM, so the nested run discharges it,
+            // coupling to NO foreground state (the LLM-free property, §5f :1320). A transport failure maps
+            // to AITransportException; the caller recovers it to an absent artifact.
+            def runFill(sp: Span, spans: Chunk[Span], ctx: Context, config: Config, prep: Preparation)(using
+                Frame
+            ): String < (Async & Abort[AIGenException]) =
+                val fillConfig = resolveFillConfig(config)
+                prep.staged.get.map { staged =>
+                    val fillCtx = buildFillContext(sp, spans, ctx, staged)
+                    LLM.run(fillConfig) {
+                        Abort.recover[HttpException](e => Abort.fail(AITransportException(e))) {
+                            fillConfig.provider.completion(fillConfig, fillCtx, Chunk.empty, Absent)
+                        }
+                    }.map { reply =>
+                        reply.messages.headMaybe match
+                            case Present(m) => m.content
+                            case Absent     => Abort.fail(AIDecodeException("empty fill reply"))
+                    }
+                }
+            end runFill
 
             // A pinned unit rendered verbatim, with the role-2 within-verbatim elision applied when its own
             // content exceeds the generous budget (§5d); a smaller unit renders unchanged. The stamp is dropped

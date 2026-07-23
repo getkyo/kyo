@@ -9,9 +9,20 @@ import kyo.ai.Context
   * effectful prompts, modes), so it is in-memory only and not serializable; the serializable slice is
   * `session.context`, the conversation history (`Context derives Schema`).
   */
-case class AISession(context: Context, env: AIEnv):
+case class AISession(
+    context: Context,
+    env: AIEnv,
+    preparation: Maybe[Compactor.internal.Preparation] = Absent
+):
     /** Sets this instance's config override. */
     def config(config: Config): AISession = copy(env = env.config(config))
+
+    /** Seats (or replaces) this instance's background-preparation cell (§5f). Ephemeral: it holds
+      * AtomicRef staging + the single-flight fiber handle, never serialized, so a snapshot/recover
+      * loses only in-flight preparation, never a surfaced failure. private[kyo] carrier.
+      */
+    private[kyo] def withPreparation(prep: Compactor.internal.Preparation): AISession =
+        copy(preparation = Present(prep))
 
     /** Layers a tool onto this instance. */
     def addTool(tool: Tool[Any]): AISession = copy(env = env.addTools(Chunk(tool)))

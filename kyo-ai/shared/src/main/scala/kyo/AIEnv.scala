@@ -15,10 +15,18 @@ case class AIEnv(
     tools: Chunk[Tool[Any]],
     thoughts: Chunk[Thought[Any]],
     mode: Chunk[Mode[Any]],
-    compactor: Maybe[Compactor[Any]] = Absent
+    compactor: Maybe[Compactor[Any]] = Absent,
+    preparations: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]] = Absent
 ):
     /** Sets the config (`Present`), overriding any inherited one. */
     def config(config: Config): AIEnv = copy(config = Present(config))
+
+    /** Seats the run-level interrupt registry (§5f Lifecycle): the set of in-flight preparation
+      * fibers LLM.run's Sync.ensure sweeps on any exit so none leaks past the run.
+      * Set once at LLM.run; instance envs inherit it through the scope env.
+      */
+    def preparations(registry: AtomicRef[Set[Fiber[Unit, Any]]]): AIEnv =
+        copy(preparations = Present(registry))
 
     /** Sets the compactor (`Present`). Single active policy, last-wins, not a pipeline: an instance
       * env holds `Absent` to inherit the scope compactor or `Present` to override it.

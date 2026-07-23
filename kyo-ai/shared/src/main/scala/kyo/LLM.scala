@@ -110,7 +110,12 @@ object LLM:
                         case op: Op.SetEnv =>
                             Loop.continue(state.copy(env = op.env), cont(state.env))
                         case op: Op.Discard =>
-                            Loop.continue(state.without(op.target), cont(()))
+                            // §5f eager interrupt on instance discard: stop this instance's in-flight preparation run
+                            // before dropping its slot; the run-level Sync.ensure is the backstop on other exits.
+                            val eager = state.sessionOf(op.target).preparation match
+                                case Present(p) => p.inFlight.get.map { case Present(f) => f.interrupt; case Absent => false }
+                                case Absent     => Kyo.lift(false)
+                            eager.andThen(Loop.continue(state.without(op.target), cont(())))
                         case _: Op.GetState.type =>
                             Loop.continue(state, cont(state))
                         case op: Op.SetState =>
@@ -392,19 +397,30 @@ object LLM:
 
     /** Discharges `LLM`, threading a fresh `State`. */
     def run[A, S](v: A < (LLM & S))(using Frame): A < (S & Async & Abort[AIGenException]) =
-        Config.default.map(c => runWith(State.empty(c))(v)((_, a) => a))
+        Config.default.map(c => bracketed(State.empty(c))(v)((_, a) => a))
 
     /** Runs with a transformed configuration. */
     def run[A, S](f: Config => Config)(v: A < (LLM & S))(using Frame): A < (S & Async & Abort[AIGenException]) =
-        Config.default.map(c => runWith(State.empty(f(c)))(v)((_, a) => a))
+        Config.default.map(c => bracketed(State.empty(f(c)))(v)((_, a) => a))
 
     /** Runs with a specific configuration. */
     def run[A, S](config: Config)(v: A < (LLM & S))(using Frame): A < (S & Async & Abort[AIGenException]) =
-        runWith(State.empty(config))(v)((_, a) => a)
+        bracketed(State.empty(config))(v)((_, a) => a)
 
     /** Runs and returns the final `State` (transcripts) with the value. Internal/test use only. */
     private[kyo] def runTuple[A, S](v: A < (LLM & S))(using Frame): (LLM.State, A) < (S & Async & Abort[AIGenException]) =
-        Config.default.map(c => runWith(State.empty(c))(v)((s, a) => (s, a)))
+        Config.default.map(c => bracketed(State.empty(c))(v)((s, a) => (s, a)))
+
+    // §5f Lifecycle (:1449-1463): create the run-level preparation-interrupt registry, seat it in
+    // the run env, and bracket the run so Sync.ensure interrupts every in-flight preparation fiber
+    // on ANY exit (normal, abort, panic, interrupt), so no fiber leaks past the run.
+    private def bracketed[A, S, B, S2](state: State)(v: A < (LLM & S))(
+        done: (State, A) => B < S2
+    )(using Frame): B < (S & S2 & Async & Abort[AIGenException]) =
+        AtomicRef.init(Set.empty[Fiber[Unit, Any]]).map { registry =>
+            val seated = state.copy(env = state.env.preparations(registry))
+            Sync.ensure(Compactor.internal.interruptAll(registry))(runWith(seated)(v)(done))
+        }
 
     // The `private[kyo]` effect surface `AI` is built on: the sole place `LLM`'s ArrowEffect ops are
     // summoned. Read = noun, write = setNoun, lifecycle/action = verb; every op targets exactly one instance.
@@ -491,16 +507,32 @@ object LLM:
                 // watermark (§4, §6), min(highWatermark*window, contextCeiling). maxOutputTokens is
                 // NOT part of occupancy: it is counted once on the hard-limit side inside render (§7).
                 val occupied = Compactor.internal.occupancy(ctx)
-                if occupied >= config.effectiveHigh then
-                    // A boundary of either cause ticks the recall-decay clock (§5e), then renders and
-                    // installs the rebuilt compacted list. raw is never shrunk.
-                    val ticked = ctx.withCompaction(ctx.compactionState.tickBoundary)
-                    c.render(ticked).map { rebuilt =>
-                        val updated = ticked.copy(compacted = rebuilt)
-                        ai.setContext(updated).andThen(updated)
+                LLM.env.map { env =>
+                    LLM.session(ai).map { session =>
+                        if occupied >= config.effectiveHigh then
+                            // The §5f boundary: tick the recall-decay clock (§5e), then ADOPT staged
+                            // summaries and JOIN the fiber for this boundary's exact need (§5f
+                            // :1362-1418), then render + install the rebuilt compacted list from the
+                            // filled state. raw is never shrunk.
+                            val ticked = ctx.withCompaction(ctx.compactionState.tickBoundary)
+                            Compactor.internal.Default.boundaryPrepare(ai, ticked, config, session, env.preparations).map {
+                                (prepared, session2) =>
+                                    LLM.setSession(ai, session2).andThen {
+                                        c.render(prepared).map { rebuilt =>
+                                            val updated = prepared.copy(compacted = rebuilt)
+                                            ai.setContext(updated).andThen(updated)
+                                        }
+                                    }
+                            }
+                        else
+                            // Below the boundary: re-serve ctx unchanged (byte-stability) and ARM the
+                            // background preparation fiber for this seam pass (§5f :1242-1263).
+                            Compactor.internal.Default.armBelowBoundary(ai, ctx, config, session, env.preparations).map { session2 =>
+                                LLM.setSession(ai, session2).andThen(ctx)
+                            }
+                        end if
                     }
-                else Kyo.lift(ctx)
-                end if
+                }
             case Absent => Kyo.lift(ctx)
     end renderView
 
