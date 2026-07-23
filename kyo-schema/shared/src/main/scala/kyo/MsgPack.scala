@@ -118,8 +118,8 @@ object MsgPack:
       */
     def decode[A](
         input: Span[Byte],
-        maxDepth: Int = Json.DefaultMaxDepth,
-        maxCollectionSize: Int = Json.DefaultMaxCollectionSize
+        maxDepth: Int = Codec.DefaultMaxDepth,
+        maxCollectionSize: Int = Codec.DefaultMaxCollectionSize
     )(using msgpack: MsgPack, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         val reader = msgpack.newReader(input)
         reader.resetLimits(maxDepth, maxCollectionSize)
@@ -129,8 +129,8 @@ object MsgPack:
     /** Decodes MessagePack binary bytes into a value of type A. Alias of [[decode]] for naming symmetry with the other binary codecs. */
     def decodeBytes[A](
         input: Span[Byte],
-        maxDepth: Int = Json.DefaultMaxDepth,
-        maxCollectionSize: Int = Json.DefaultMaxCollectionSize
+        maxDepth: Int = Codec.DefaultMaxDepth,
+        maxCollectionSize: Int = Codec.DefaultMaxCollectionSize
     )(using msgpack: MsgPack, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         decode[A](input, maxDepth, maxCollectionSize)
 

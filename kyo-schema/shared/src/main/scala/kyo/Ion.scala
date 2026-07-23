@@ -56,10 +56,10 @@ object Ion:
     end AnnotationEmissionMode
 
     /** Default maximum nesting depth for structs and lists in Ion decoding. */
-    inline val DefaultMaxDepth = Json.DefaultMaxDepth
+    inline val DefaultMaxDepth = Codec.DefaultMaxDepth
 
     /** Default maximum number of entries in any single collection or struct in Ion decoding. */
-    inline val DefaultMaxCollectionSize = Json.DefaultMaxCollectionSize
+    inline val DefaultMaxCollectionSize = Codec.DefaultMaxCollectionSize
 
     /** Wire-shape and decode-limit configuration for the Ion codec.
       *

@@ -35,6 +35,12 @@ end Codec
 
 object Codec:
 
+    /** Default maximum nesting depth for decoding (DoS limit), shared by every built-in codec. */
+    inline val DefaultMaxDepth = 512
+
+    /** Default maximum number of entries in any single collection or object during decoding (DoS limit), shared by every built-in codec. */
+    inline val DefaultMaxCollectionSize = 100000
+
     abstract class Reader:
         /** The source location where this Reader was constructed.
           *

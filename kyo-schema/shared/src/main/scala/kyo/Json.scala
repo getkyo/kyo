@@ -19,10 +19,10 @@ end Json
   */
 object Json:
     /** Default maximum nesting depth for objects/arrays in JSON decoding (DoS limit). */
-    inline val DefaultMaxDepth = 512
+    inline val DefaultMaxDepth = Codec.DefaultMaxDepth
 
     /** Default maximum number of entries in any single collection or object in JSON decoding (DoS limit). */
-    inline val DefaultMaxCollectionSize = 100000
+    inline val DefaultMaxCollectionSize = Codec.DefaultMaxCollectionSize
 
     given Json = Json()
 

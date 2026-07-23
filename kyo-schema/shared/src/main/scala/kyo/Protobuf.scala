@@ -68,8 +68,8 @@ object Protobuf:
       */
     final case class Config(
         conformance: Conformance = Conformance.Strict,
-        maxDepth: Int = Json.DefaultMaxDepth,
-        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxDepth: Int = Codec.DefaultMaxDepth,
+        maxCollectionSize: Int = Codec.DefaultMaxCollectionSize,
         protoSchemaProvenance: Boolean = true
     ) derives CanEqual
 

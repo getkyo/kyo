@@ -42,9 +42,9 @@ end Bson
   *   [[kyo.Json]] for JSON serialization
   */
 object Bson:
-    inline val DefaultMaxDepth = Json.DefaultMaxDepth
+    inline val DefaultMaxDepth = Codec.DefaultMaxDepth
 
-    inline val DefaultMaxCollectionSize = Json.DefaultMaxCollectionSize
+    inline val DefaultMaxCollectionSize = Codec.DefaultMaxCollectionSize
 
     /** Decode-limit configuration for BSON.
       *

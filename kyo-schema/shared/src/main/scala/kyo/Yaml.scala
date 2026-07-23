@@ -34,10 +34,10 @@ end Yaml
   */
 object Yaml:
     /** Default maximum nesting depth for YAML schema decoding. */
-    inline val DefaultMaxDepth = Json.DefaultMaxDepth
+    inline val DefaultMaxDepth = Codec.DefaultMaxDepth
 
     /** Default maximum number of entries in a decoded YAML collection or mapping. */
-    inline val DefaultMaxCollectionSize = Json.DefaultMaxCollectionSize
+    inline val DefaultMaxCollectionSize = Codec.DefaultMaxCollectionSize
 
     /** Default YAML codec instance for generic schema encoding and decoding. */
     given Yaml = Yaml()
