@@ -2,6 +2,7 @@ package kyo
 
 import kyo.*
 import kyo.ai.*
+import kyo.ai.Context
 import kyo.ai.Context.*
 import kyo.ai.completion.Completion
 
@@ -45,7 +46,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
     def serverConfig(baseUrl: String): Config =
         Config.OpenAI.default
             .apiKey("test")
-            .model(Config.OpenAI, "gpt-4o", 128000)
+            .model(Config.OpenAI, "gpt-4o", 128000, Config.OutputMaximum.Verified(16384), Config.ReasoningEncoding.Unavailable, true, true)
             .apiUrl(baseUrl)
 
     /** Splits a string into fragments at `cuts` random byte boundaries, for boundary-invariance tests. */
@@ -64,11 +65,71 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         val escaped = fragment.replace("\\", "\\\\").replace("\"", "\\\"")
         s"""{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"$escaped","name":""}}]}}]}"""
 
+    "a stalled stream fails typed at the configured timeout after delivering its fragments" in {
+        TestCompletionServer.runStreaming { server =>
+            // The provider emits part of the envelope and then stops producing without a terminator. The
+            // fragments must REACH the consumer and the call must still end at its deadline, so the
+            // assertion is arrived-then-failed: a bound covering only the response headers would fail
+            // before anything was delivered, and a stream with no bound would never end at all.
+            val config = serverConfig(server.baseUrl).timeout(300.millis)
+            for
+                seen <- AtomicRef.init(Chunk.empty[String])
+                _    <- server.enqueueStreamStall(Chunk(argDelta("""{"resultValue":""""), argDelta("partial")))
+                result <- Abort.run[AIException](
+                    LLM.run(config)(Scope.run(AI.stream[String].map(_.foreach(s => seen.updateAndGet(_.append(s)).unit))))
+                )
+                delivered <- seen.get
+            yield
+                assert(
+                    delivered.mkString == "partial",
+                    s"the emitted fragments must reach the consumer before the deadline: $delivered"
+                )
+                result match
+                    case Result.Failure(_: AICompletionTimeoutException) => succeed
+                    case other => fail(s"expected the streaming deadline to fire on a stalled stream, got: $other")
+                end match
+            end for
+        }
+    }
+
+    "a slow consumer does not spend the streaming deadline" in {
+        TestCompletionServer.runStreaming { server =>
+            // The deadline is a budget on the provider's production, not on wall-clock: a consumer that
+            // pauses between elements for longer than the timeout must still receive the WHOLE stream, so
+            // the assertion is on the delivered value. Asserting only that the call completed would also
+            // be satisfied by an empty stream, which proves nothing about the bound.
+            val config   = serverConfig(server.baseUrl).timeout(300.millis)
+            val expected = List(Answer("ok"), Answer("two"))
+            val args     = elementArgs(expected)
+            val split    = Chunk(args.substring(0, 12), args.substring(12, 24), args.substring(24))
+            for
+                seen <- AtomicRef.init(Chunk.empty[Answer])
+                _    <- server.enqueueStream(split.map(argDelta))
+                _ <- LLM.run(config)(
+                    Scope.run(AI.stream[Answer].map(_.foreach(a => Async.sleep(700.millis).andThen(seen.updateAndGet(_.append(a)).unit))))
+                )
+                delivered <- seen.get
+            yield assert(
+                delivered == Chunk.from(expected),
+                s"a consumer slower than the timeout must still receive the whole stream, got: $delivered"
+            )
+            end for
+        }
+    }
+
     /** A config pointing the Anthropic backend at the test server with a dummy key. */
     def anthropicServerConfig(baseUrl: String): Config =
         Config.Anthropic.default
             .apiKey("test")
-            .model(Config.Anthropic, "claude-sonnet-4-5", 200000)
+            .model(
+                Config.Anthropic,
+                "claude-sonnet-4-5",
+                200000,
+                Config.OutputMaximum.Verified(64000),
+                Config.ReasoningEncoding.TokenBudget,
+                true,
+                acceptsImages = true
+            )
             .apiUrl(baseUrl)
 
     /** Wraps an argument JSON fragment in a real Anthropic content_block_delta / input_json_delta event. */
@@ -219,9 +280,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
     }
 
     "stream uses the POST-to-SSE route with stream:true in the wire body" in {
-        // Enqueue one valid OpenAI SSE delta envelope so the stream runs end to end.
-        // After the call, assert the captured request hit the correct path and carried
-        // stream:true in the JSON body (the field that activates SSE on the provider side).
+        // stream:true in the JSON body is the field that activates SSE on the provider side.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"ok\"}"))).andThen {
@@ -284,9 +343,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
     }
 
     "stream fails with AIStreamDeltaException on a malformed SSE delta that is not a valid OpenAI chunk" in {
-        // Enqueue an SSE chunk that is not a parseable OpenAI streaming envelope. The
-        // parseDeltaArguments call returns Result.Failure, which the stream raises as a typed
-        // Abort.fail(AIStreamDeltaException) in its row, captured by Abort.run[AIException] as Result.Failure.
+        // The malformed chunk fails parseDeltaArguments, which the stream raises as a typed AIStreamDeltaException.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk("{{{not valid json}}}")).andThen {
@@ -316,7 +373,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         // Abort.recover[HttpException] inside the stream and mapped to a typed Abort.fail(AITransportException).
         val config = Config.OpenAI.default
             .apiKey("test")
-            .model(Config.OpenAI, "gpt-4o", 128000)
+            .model(Config.OpenAI, "gpt-4o", 128000, Config.OutputMaximum.Verified(16384), Config.ReasoningEncoding.Unavailable, true, true)
             .apiUrl("http://127.0.0.1:1/v1")
         Abort.run[AIException] {
             LLM.run(config) {
@@ -360,10 +417,88 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "stream surfaces a provider error event as the declared tool-call rejection, never a swallowed empty stream" in {
+        // A provider can enforce a forced tool choice by ending the SSE with an error event carrying its
+        // rejection code (Groq: {"error":{...,"code":"tool_use_failed",...}}) rather than an HTTP status.
+        // That event decodes as a StreamChunk whose fields are all absent, so a parser that only reads
+        // choices treats it as a skip and the stream ends with an empty buffer, hiding the provider's
+        // message behind an opaque incomplete failure. It must instead surface as the same typed leaf the
+        // non-streaming 400 produces, driven by the entry's InvalidToolCalls declaration.
+        TestCompletionServer.runStreaming { server =>
+            val config = Config.Groq.gpt_oss_20b.apiKey("test").apiUrl(server.baseUrl)
+            val errorEvent =
+                """{"error":{"message":"Tool choice is required, but model did not call a tool","type":"invalid_request_error","code":"tool_use_failed","status_code":400}}"""
+            server.enqueueStream(Chunk(errorEvent)).andThen {
+                Abort.run[AIException] {
+                    LLM.run(config)(AI.stream[String].map(_.run))
+                }.map { result =>
+                    result match
+                        case Result.Failure(ex: AIToolCallRejectedException) =>
+                            assert(
+                                ex.getMessage.contains("Tool choice is required"),
+                                s"the provider's message must be carried, got: ${ex.getMessage}"
+                            )
+                        case _ =>
+                            assert(false, s"expected AIToolCallRejectedException, got: $result")
+                    end match
+                }
+            }
+        }
+    }
+
+    "stream classifies a non-tool provider error event by its status, never swallowing it" in {
+        // An error event whose code the entry does not declare as a tool-call rejection still surfaces
+        // loudly, classified by its status the way an HTTP failure is: a mid-stream 429 is a rate limit,
+        // not a silently skipped delta.
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            val errorEvent =
+                """{"error":{"message":"slow down","type":"rate_limit_error","status_code":429}}"""
+            server.enqueueStream(Chunk(errorEvent)).andThen {
+                Abort.run[AIException] {
+                    LLM.run(config)(AI.stream[String].map(_.run))
+                }.map { result =>
+                    result match
+                        case Result.Failure(ex: AIRateLimitException) =>
+                            assert(ex.getMessage.contains("slow down"), s"the provider's message must be carried, got: ${ex.getMessage}")
+                        case _ =>
+                            assert(false, s"expected AIRateLimitException, got: $result")
+                    end match
+                }
+            }
+        }
+    }
+
+    "stream fails closed: an undeclared rejection code is classified by status, never as a tool-call rejection" in {
+        // The OpenAI entry does not declare tool_use_failed as its rejection code, so the same error bytes
+        // Groq's entry reads as a tool-call rejection must here stay an ordinary status-classified
+        // rejection. This is the streaming mirror of classifyHttp's fail-closed 400 handling: the rejection
+        // leaf appears only when the entry declares the code and the body carries exactly it.
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            val errorEvent =
+                """{"error":{"message":"Tool choice is required, but model did not call a tool","type":"invalid_request_error","code":"tool_use_failed","status_code":400}}"""
+            server.enqueueStream(Chunk(errorEvent)).andThen {
+                Abort.run[AIException] {
+                    LLM.run(config)(AI.stream[String].map(_.run))
+                }.map { result =>
+                    result match
+                        case Result.Failure(_: AIToolCallRejectedException) =>
+                            assert(false, s"OpenAI declares no such code; must not be typed as a tool-call rejection: $result")
+                        case Result.Failure(ex: AIRequestRejectedException) =>
+                            assert(ex.status == 400, s"classified by the body's status, got: ${ex.status}")
+                            assert(ex.getMessage.contains("Tool choice is required"), s"the message must be carried, got: ${ex.getMessage}")
+                        case _ =>
+                            assert(false, s"expected AIRequestRejectedException, got: $result")
+                    end match
+                }
+            }
+        }
+    }
+
     "every streaming request carries the result_tool definition" in {
         // Every streaming request must carry the result_tool definition in its tools array: without it the
-        // model has no tool to call and cannot emit structured JSON. Capture the raw streaming request body
-        // and assert the tools array names "result_tool".
+        // model has no tool to call and cannot emit structured JSON.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta("{\"resultValue\":[{\"text\":\"hi\"}]}"))).andThen {
@@ -380,6 +515,42 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                         assert(
                             body.contains("result_tool"),
                             s"streaming request tools array must include result_tool, got: $body"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "every streaming request carries the request-scoped result directive, trailing and unstored" in {
+        // Streaming has no eval loop and no repair turn, so the result must arrive as a result_tool
+        // call on the one streamed turn. The HTTP backends compel the call by protocol (tool_choice);
+        // the command harnesses have no forcing knob, so the shared directive rides every backend's
+        // request identically, like the forced-turn finalize directive. Request-scoped: the stored
+        // conversation never contains it.
+        val directive = s"Deliver the result by calling the '${kyo.ai.completion.Completion.resultToolName}' tool"
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueStream(Chunk(argDelta("{\"resultValue\":[{\"text\":\"hi\"}]}"))).andThen {
+                LLM.run(config) {
+                    AI.initWith { ai =>
+                        ai.userMessage("explain")
+                            .andThen(ai.stream[Answer].map(_.run))
+                            .map(_ => ai.context)
+                    }
+                }.map { ctx =>
+                    server.captured.map { caps =>
+                        assert(caps.nonEmpty, "the streaming request should have been captured")
+                        assert(
+                            caps.head.body.contains(directive),
+                            s"the streaming request must carry the result directive, got: ${caps.head.body}"
+                        )
+                        assert(
+                            !ctx.raw.exists {
+                                case Context.SystemMessage(content, _, _) => content.contains("Deliver the result by calling")
+                                case _                                    => false
+                            },
+                            s"the directive must not persist in the conversation: ${ctx.raw}"
                         )
                     }
                 }
@@ -406,11 +577,35 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a stream that stops at the output ceiling fails typed, not as an unfinished envelope" in {
+        // The streamed reply reports the same stop the non-streamed one does, in its message delta.
+        // Without decoding it, a truncated stream looked identical to one that simply never finished,
+        // and failed carrying a buffer dump that named neither the cause nor the knob.
+        TestCompletionServer.runStreaming { server =>
+            val config = anthropicServerConfig(server.baseUrl)
+            val ceilingStop =
+                """{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":1}}"""
+            server.enqueueStream(Chunk(
+                anthropicArgDelta("{\"resultValue\":[{\"text\":\"par"),
+                ceilingStop
+            )).andThen {
+                Abort.run[AIException](LLM.run(config)(Scope.run(AI.stream[Answer].map(_.run)))).map {
+                    case Result.Failure(e: AIOutputLimitException) =>
+                        assert(
+                            e.maxOutputTokens == Present(config.effectiveMaxOutputTokens),
+                            s"the failure must name the ceiling the request carried: ${e.maxOutputTokens}"
+                        )
+                    case other => fail(s"expected the output-ceiling failure on the stream, got: $other")
+                }
+            }
+        }
+    }
+
     "a streamed generation collects into the fully decoded values" in {
         // (a) The streaming surface composes at its rows: the stream value carries its I/O
         // effects in the element row, and a full collect under LLM.run yields a Chunk on the run residual.
-        val tokens: Stream[Answer, Async & Scope & Abort[AIStreamException]] < LLM = AI.stream[Answer]
-        val _                                                                      = tokens
+        val tokens: Stream[Answer, LLM & Async & Scope & Abort[AIStreamException]] < LLM = AI.stream[Answer]
+        val _                                                                            = tokens
         // (b) A full collect terminates in the fully decoded Answers and the request carried result_tool.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
@@ -659,12 +854,34 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "stream yields an empty stream when no deltas arrive" in {
+    "a stream that never decodes a value fails rather than yielding an empty one" in {
+        // This asserted the opposite: that no deltas yield an empty stream. That contradicted the
+        // documented contract, which says a stream ending without a decodable value raises
+        // AIStreamIncompleteException, and the distinction matters because the empty case is reachable.
+        // A request no forced choice compels can be answered in prose, which produces no tool-call
+        // fragments at all; reading that as an empty success hands a caller who asked for a value
+        // nothing, with no failure to notice.
+        //
+        // An empty resultValue ARRAY remains a legitimate empty stream; the leaf below covers it.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk.empty[String]).andThen {
+                Abort.run[AIStreamException](LLM.run(config)(AI.stream[Answer].map(_.run))).map { result =>
+                    assert(result.isFailure, s"a stream that decoded nothing must fail: $result")
+                    result match
+                        case Result.Failure(_: AIStreamIncompleteException) => succeed("incomplete, as documented")
+                        case other => assert(false, s"expected AIStreamIncompleteException, got: $other")
+                }
+            }
+        }
+    }
+
+    "an empty resultValue array is a legitimate empty stream" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueStream(Chunk(argDelta("""{"resultValue":[]}"""))).andThen {
                 LLM.run(config)(AI.stream[Answer].map(_.run.map { collected =>
-                    assert(collected == Chunk.empty, s"no deltas must yield an empty stream, got: $collected")
+                    assert(collected == Chunk.empty, s"an array that arrived empty yields no elements: $collected")
                 }))
             }
         }
@@ -806,9 +1023,9 @@ class LLMStreamTest extends kyo.test.Test[Any]:
     // --- type level ---
 
     "AI.stream's row is Stream[A, Async & Scope & Abort[AIStreamException]] < LLM for String and a record" in {
-        val asText: Stream[String, Async & Scope & Abort[AIStreamException]] < LLM = AI.stream[String]
-        val asRec: Stream[Answer, Async & Scope & Abort[AIStreamException]] < LLM  = AI.stream[Answer]
-        val _                                                                      = (asText, asRec)
+        val asText: Stream[String, LLM & Async & Scope & Abort[AIStreamException]] < LLM = AI.stream[String]
+        val asRec: Stream[Answer, LLM & Async & Scope & Abort[AIStreamException]] < LLM  = AI.stream[Answer]
+        val _                                                                            = (asText, asRec)
         assert(true)
     }
 
@@ -861,6 +1078,83 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a streamed turn joins the conversation" - {
+
+        "a fully consumed stream records the result_tool call it made, so a later turn can read it" in {
+            val text = "streamed answer"
+            val full = prefixArgs(text)
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                val frags  = Chunk(full.substring(0, 18), full.substring(18))
+                server.enqueueStream(frags.map(argDelta)).andThen {
+                    LLM.run(config)(AI.initWith { ai =>
+                        ai.stream[String].map(_.run.map { chunks =>
+                            ai.context.map { ctx =>
+                                assert(chunks.mkString == text, s"the stream must deliver its value: $chunks")
+                                // The streamed fragments were the result_tool call's arguments, so the turn
+                                // joins the conversation as that call closed by a synthetic result, exactly
+                                // as a generated turn does, never as plain assistant prose.
+                                val calls = ctx.raw.collect { case AssistantMessage(_, cs, _, _) => cs }.flatten
+                                assert(calls.size == 1, s"the streamed turn records one result_tool call: ${ctx.raw}")
+                                assert(calls.head.function == "result_tool", s"recorded as a result_tool call: ${calls.head}")
+                                assert(
+                                    calls.head.arguments.contains(text),
+                                    s"the call carries the streamed value so a later turn can read it: ${calls.head.arguments}"
+                                )
+                                val resultIds = ctx.raw.collect { case ToolMessage(id, _, _, _) => id }
+                                assert(resultIds == Chunk(calls.head.id), s"a matching synthetic result closes the call: ${ctx.raw}")
+                            }
+                        })
+                    })
+                }
+            }
+        }
+
+        "an abandoned stream records nothing" in {
+            val args = elementArgs(List(Answer("one"), Answer("two")))
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                // Split so taking one element stops the source part way: the fold never reaches its end,
+                // which is what abandonment means here.
+                val frags = Chunk(args.substring(0, 20), args.substring(20))
+                server.enqueueStream(frags.map(argDelta)).andThen {
+                    LLM.run(config)(AI.initWith { ai =>
+                        ai.stream[Answer].map(_.take(1).run.map { taken =>
+                            ai.context.map { ctx =>
+                                assert(taken.size <= 1, s"only the taken element is delivered: $taken")
+                                assert(
+                                    ctx.raw.isEmpty,
+                                    s"an abandoned stream must leave the conversation untouched: ${ctx.raw}"
+                                )
+                            }
+                        })
+                    })
+                }
+            }
+        }
+
+        "a stream that never yields a decodable value records nothing" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                // Argument bytes carrying no resultValue at all, so nothing ever decodes. A merely
+                // truncated value would not do: the partial-JSON completion closes it and it decodes.
+                server.enqueueStream(Chunk(argDelta("""{"somethingElse":"x\""""))).andThen {
+                    LLM.run(config)(AI.initWith { ai =>
+                        Abort.run[AIStreamException](ai.stream[String].map(_.run)).map { result =>
+                            ai.context.map { ctx =>
+                                assert(result.isFailure, s"a stream that never decodes fails: $result")
+                                assert(
+                                    ctx.raw.isEmpty,
+                                    s"a failed stream records no half turn: ${ctx.raw}"
+                                )
+                            }
+                        }
+                    })
+                }
+            }
+        }
+    }
+
     "the stream anchor captures the non-enriched sent view, so a later turn's occupancy counts the appended suffix and is not deferred by the prompt/reminder count" in {
         TestCompletionServer.runStreaming { server =>
             val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
@@ -906,14 +1200,33 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                                                         // occupancy drops lastUsageRawSize from compacted: the non-enriched anchor
                                                         // leaves every appended message in the suffix. An enriched anchor would size
                                                         // at prior.size + 2 (prompt + reminder), dropping two real appended messages.
+                                                        // Each streamed turn also records a synthetic result pair (assistant
+                                                        // result-tool call + tool result) into the conversation, so the suffix holds
+                                                        // the four appended messages plus the two recorded streamed-turn pairs; the
+                                                        // B-1 contract is that no appended message is deferred by the enrichment count.
                                                         val suffix = ctx.compacted.drop(ctx.compactionState.lastUsageRawSize)
+                                                        // Compared on content: the live suffix messages are stamped by the turn's
+                                                        // apportionment, so the stored copies differ from the freshly built appended
+                                                        // values only by their token stamp.
                                                         assert(
-                                                            suffix.size == appended.size,
-                                                            s"the occupancy suffix keeps all ${appended.size} appended messages, not fewer by the enrichment count; got ${suffix.size}"
+                                                            appended.forall(a => suffix.exists(_.content == a.content)),
+                                                            s"the non-enriched anchor keeps every appended message in the suffix, none deferred by the enrichment count; suffix: $suffix"
                                                         )
                                                         assert(
-                                                            Compactor.internal.occupancy(ctx) == 50056,
-                                                            s"occupancy is the anchored 50000 plus the four appended messages' offline estimate (50056); got ${Compactor.internal.occupancy(ctx)}"
+                                                            suffix.size == appended.size + 4,
+                                                            s"the suffix holds the ${appended.size} appended messages plus the two recorded streamed-turn pairs; got ${suffix.size}"
+                                                        )
+                                                        assert(
+                                                            ctx.compactionState.lastUsage == Present(50000),
+                                                            s"the anchor scalar is turn one's provider total, unchanged by turn two which reported no usage; got ${ctx.compactionState.lastUsage}"
+                                                        )
+                                                        assert(
+                                                            Compactor.internal.occupancy(ctx) == 50106,
+                                                            // 50000 anchored + the eight suffix messages: the turn-one recorded pair and
+                                                            // the four appended messages are stamped at 14 each (six times 14 = 84), and
+                                                            // the still-unstamped turn-two recorded pair falls to the offline estimate
+                                                            // (12 + 10), so 84 + 22 = 106.
+                                                            s"occupancy is the anchored 50000 plus the suffix estimate (50106); got ${Compactor.internal.occupancy(ctx)}"
                                                         )
                                                     }
                                                 }
@@ -1061,6 +1374,22 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                         )
                     }
                 }
+            }
+        }
+    }
+
+    "a keepalive between fragments does not fail the stream" in {
+        // A stream may hold the connection open with a payload-free event. It carries no chunk, and
+        // reading it as a malformed one fails a generation that was proceeding normally.
+        val text = "keepalive tolerated"
+        val full = prefixArgs(text)
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            val frags  = Chunk(argDelta(full.substring(0, 20)), "", argDelta(full.substring(20)))
+            server.enqueueStream(frags).andThen {
+                LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
+                    assert(collected.mkString == text, s"the keepalive must be skipped, not decoded: $collected")
+                }))
             }
         }
     }

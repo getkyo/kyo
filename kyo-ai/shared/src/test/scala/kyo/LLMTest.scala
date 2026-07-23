@@ -21,13 +21,28 @@ class LLMTest extends kyo.test.Test[Any]:
     def serverConfig(baseUrl: String): Config =
         Config.OpenAI.default
             .apiKey("test")
-            .model(Config.OpenAI, "gpt-4o", 128000)
+            .model(Config.OpenAI, "gpt-4o", 128000, Config.OutputMaximum.Verified(16384), Config.ReasoningEncoding.Unavailable, true, true)
+            .apiUrl(baseUrl)
+
+    /** A config pointing the Anthropic backend at the test server, with a dummy key so the backend
+      * proceeds to the HTTP call instead of aborting on a missing key.
+      */
+    def anthropicServerConfig(baseUrl: String): Config =
+        Config.Anthropic.default
+            .apiKey("test")
             .apiUrl(baseUrl)
 
     /** An OpenAI completion body whose assistant calls `result_tool` with the supplied envelope JSON. */
     def resultToolBody(envelopeJson: String): String =
         val escaped = Json.encode(envelopeJson)
         s"""{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"r1","type":"function","function":{"name":"result_tool","arguments":$escaped}}]}}]}"""
+
+    /** An Anthropic completion body whose assistant calls `result_tool` with the supplied envelope JSON
+      * object, embedded directly (Anthropic's `tool_use` block carries `input` as a JSON object, not a
+      * JSON-encoded string).
+      */
+    def anthropicResultToolBody(envelopeJson: String): String =
+        s"""{"id":"m1","content":[{"type":"tool_use","id":"r1","name":"result_tool","input":$envelopeJson}],"model":"claude-opus-4-8","role":"assistant","stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}"""
 
     /** An OpenAI completion body with a plain assistant reply and no tool call (the eval loop sees Absent). */
     def noResultBody: String =
@@ -38,12 +53,13 @@ class LLMTest extends kyo.test.Test[Any]:
         server.captured.map(_.head.body)
 
     /** The committed default-off golden: the enriched-request bytes for the fixed scripted turn in the
-      * "default-off matches committed pre-change golden bytes" test below, captured from the pre-seam
-      * eval (compactor Absent) and pinned as a source constant. A seam edit that leaked a byte onto the
+      * "default-off matches committed pre-change golden bytes" test below, captured with the compactor
+      * Absent and pinned as a source constant. The contract is that compaction off is byte-identical to
+      * the module's own request (no compactor involvement), so a seam edit that leaked a byte onto the
       * Absent path fails that test against this, not a self-derivation.
       */
     val goldenDefaultOffRequest: String =
-        """{"model":"gpt-4o","messages":[{"role":"system","content":"you are precise"},{"role":"user","content":"ping"},{"role":"system","content":"================== REMINDERS ==================\n\n1. Your response must contain ONLY the structured tool call\n2. The arguments must strictly follow the tool's json schema, including its semantics\n3. Always perform at least one tool call; it is the only agency you have\n4. Do not output regular text replies, especially empty ones\n5. Do not use a json code block; follow the tool-call format\n6. Generate valid json strictly following the json schema. Do NOT generate xml-like content"}],"tools":[{"function":{"description":"Call this tool with the result. Do not make parallel calls to this tool in the same completion. Only the first invocation will be considered.","name":"result_tool","strict":false,"parameters":{"type":"object","properties":{"resultValue":{"type":"string"}},"required":["resultValue"]}},"type":"function"}],"tool_choice":"required"}"""
+        """{"model":"gpt-4o","max_completion_tokens":16384,"messages":[{"role":"system","content":"you are precise"},{"role":"user","content":"ping"}],"tools":[{"function":{"description":"Use this tool to return your final response in the requested structured format. You MUST call this tool exactly once at the end of your response to provide the structured output. Do not make parallel calls to this tool in the same completion; only the first invocation will be considered.","name":"result_tool","strict":false,"parameters":{"type":"object","properties":{"resultValue":{"type":"string"}},"required":["resultValue"]}},"type":"function"}],"tool_choice":"required"}"""
 
     "run discharges LLM to Async leaving an Async value" in {
         LLM.run(
@@ -83,22 +99,254 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
-    "the eval loop fails with AIEvalExhaustedException at maxIterations * 2" in {
+    "a forced turn that never yields a result gets exactly one repair turn, then fails" in {
         TestCompletionServer.run { server =>
             val config = serverConfig(server.baseUrl).maxIterations(2)
-            // Enqueue one valid-but-no-result body per iteration the loop runs before the hard stop
-            // (maxIterations * 2 + 1 evals). Each keeps the loop climbing without populating the result tool;
-            // the empty-choices server default would otherwise abort the backend before the iteration cap.
-            Kyo.foreachDiscard(0 until (config.maxIterations * 2 + 1))(_ => server.enqueueBody(noResultBody)).andThen {
-                // Eval exhaustion is a typed AIGenException on run's residual (an AIEvalExhaustedException),
-                // observed by Abort.run[AIException] at the run boundary.
+            // No turn ever populates the result tool, simulating a backend that cannot force the call. The
+            // loop runs maxIterations tool turns, one forced turn, and one repair turn, then stops:
+            // maxIterations + 2 evals. Enqueue generously so the loop, not an empty-body default, ends it.
+            Kyo.foreachDiscard(0 until (config.maxIterations * 2 + 4))(_ => server.enqueueBody(noResultBody)).andThen {
                 Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
-                    assert(result.isFailure, s"expected a typed failure at the iteration cap, got: $result")
+                    server.captured.map { caps =>
+                        val exhausted = result match
+                            case Result.Failure(_: AIEvalExhaustedException) => true
+                            case _                                           => false
+                        assert(exhausted, s"expected AIEvalExhaustedException, got: $result")
+                        assert(
+                            caps.size == config.maxIterations + 2,
+                            s"expected ${config.maxIterations + 2} evals (tools + force + one repair), got ${caps.size}"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "a forced turn with no result converges on the informed repair turn" in {
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).maxIterations(2)
+            // maxIterations tool turns and the first forced turn yield no result; the repair turn returns one.
+            Kyo.foreachDiscard(0 until (config.maxIterations + 1))(_ => server.enqueueBody(noResultBody)).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":"recovered"}""")).andThen {
+                    LLM.run(config)(AI.gen[String]).map { result =>
+                        server.captured.map { caps =>
+                            assert(result == "recovered", s"expected the repair turn's result, got '$result'")
+                            // The repair turn carries the mechanism-neutral instruction fed back after the force.
+                            assert(
+                                caps.exists(_.body.contains("Produce your final result now")),
+                                s"expected the repair instruction in a request; bodies: ${caps.map(_.body).mkString("\n")}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "the forced turn carries the request-scoped finalize directive, trailing and unstored, on both HTTP backends" in {
+        // The converged forced-finalization signal: dropping the user tools is not an instruction the
+        // model can be trusted to read, and a backend that compels the result call (forced tool_choice
+        // with strict decoding) has no repair turn to recover in, so the directive must ride the forced
+        // request itself. It is request-scoped: the stored conversation never contains it.
+        val directive = "This is the instruction to finalize"
+        val reminder  = "keep the finalize-ordering probe reminder last"
+        def check(mkConfig: String => Config, noResult: String, result: String) =
+            TestCompletionServer.run { server =>
+                server.enqueueBody(noResult).andThen {
+                    server.enqueueBody(result).andThen {
+                        LLM.run(mkConfig(server.baseUrl).maxIterations(1)) {
+                            AI.enable(Prompt.init("finalize-ordering probe", reminder)) {
+                                AI.initWith { ai =>
+                                    ai.gen[String].map(r => ai.context.map(ctx => (r, ctx)))
+                                }
+                            }
+                        }.map { case (r, ctx) =>
+                            server.captured.map { caps =>
+                                assert(r == "done", s"expected the forced turn's result, got '$r'")
+                                assert(caps.size == 2, s"expected one tool turn and one forced turn, got ${caps.size}")
+                                assert(
+                                    !caps(0).body.contains(directive),
+                                    s"an un-forced turn must not carry the finalize directive: ${caps(0).body}"
+                                )
+                                val forced = caps(1).body
+                                assert(forced.contains(directive), s"the forced turn must carry the finalize directive: $forced")
+                                // Trailing: after the conversation, before the floating reminders.
+                                val reminderIdx = forced.indexOf(reminder)
+                                assert(
+                                    reminderIdx >= 0 && forced.indexOf(directive) < reminderIdx,
+                                    s"the directive must precede the floating reminders: $forced"
+                                )
+                                // Request-scoped: the stored conversation never contains it.
+                                assert(
+                                    !ctx.raw.exists {
+                                        case SystemMessage(content, _, _) => content.contains(directive)
+                                        case _                            => false
+                                    },
+                                    s"the directive must not persist in the conversation: ${ctx.raw}"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        val anthropicNoResultBody =
+            """{"id":"m1","content":[{"type":"text","text":"thinking"}],"model":"claude-opus-4-8","role":"assistant","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}"""
+        check(serverConfig, noResultBody, resultToolBody("""{"resultValue":"done"}""")).andThen(
+            check(anthropicServerConfig, anthropicNoResultBody, anthropicResultToolBody("""{"resultValue":"done"}"""))
+        )
+    }
+
+    "a present result that fails schema decode is repaired and retried, not aborted" in {
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            // Turn 1: the model produces a result_tool call whose resultValue is present and decodes to a
+            // Structure.Value, but does not match City's schema (a bare string where a {name} record is
+            // required), which also defeats the text-coercion fallback. Before the repair this aborted the
+            // whole generation with AIDecodeException. Turn 2: a corrected result the loop must accept.
+            server.enqueueBody(resultToolBody("""{"resultValue":"not-a-city-record"}""")).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":{"name":"Paris"}}""")).andThen {
+                    LLM.run(config)(AI.gen[City]).map { result =>
+                        server.captured.map { caps =>
+                            assert(result.name == "Paris", s"expected the repaired result City(Paris), got: $result")
+                            assert(caps.size == 2, s"a malformed result should trigger one repair turn (2 requests), got: ${caps.size}")
+                            assert(
+                                caps(1).body.contains("Before calling 'result_tool'"),
+                                s"the repair turn must carry the tool loop's decode feedback; body: ${caps(1).body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a rejected result is repaired through the tool channel, with no parallel system message" in {
+        // The result tool declares the actual result schema, so a mismatched payload fails the tool
+        // loop's own typed decode and the feedback rides the standard tool-error channel, exactly like
+        // any other tool. The old split design answered the same call with a success ToolMessage AND a
+        // separate schema-mismatch system message; that contradiction must be gone.
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueBody(resultToolBody("""{"resultValue":"not-a-city-record"}""")).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":{"name":"Paris"}}""")).andThen {
+                    LLM.run(config)(AI.gen[City]).map { result =>
+                        server.captured.map { caps =>
+                            assert(result.name == "Paris", s"expected the repaired City(Paris), got: $result")
+                            assert(caps.size == 2, s"one repair turn (2 requests), got: ${caps.size}")
+                            val second = caps(1).body
+                            assert(
+                                second.contains("Before calling 'result_tool'"),
+                                s"the rejection must ride the tool loop's own decode feedback; body: $second"
+                            )
+                            assert(
+                                !second.contains("did not match the required schema"),
+                                s"no parallel eval-side system message may coexist with the tool feedback; body: $second"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "exhaustion after repeated rejected results names the attempts and the last failure" in {
+        // The model calls result_tool every turn but every payload is rejected: the final error must say
+        // THAT, not "produced no result". The old message lied about rejected results.
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).maxIterations(1)
+            Kyo.foreachDiscard(0 until 4)(_ => server.enqueueBody(resultToolBody("""{"resultValue":"still-not-a-city"}"""))).andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[City])).map { result =>
                     result match
-                        case Result.Failure(ex: AIEvalExhaustedException) =>
-                            assert(ex.getMessage.contains("exceeded"), s"message: ${ex.getMessage}")
-                        case _ => assert(false, s"expected AIEvalExhaustedException, got: $result")
-                    end match
+                        case Result.Failure(e: AIEvalExhaustedException) =>
+                            assert(
+                                e.getMessage.contains("last failure"),
+                                s"exhaustion must carry the last rejection reason; got: ${e.getMessage}"
+                            )
+                            assert(
+                                !e.getMessage.contains("produced no result"),
+                                s"a called-and-rejected run must not be reported as result-less; got: ${e.getMessage}"
+                            )
+                        case other => fail(s"expected AIEvalExhaustedException, got: $other")
+                }
+            }
+        }
+    }
+
+    "an open-shape conformance violation is repaired through the tool channel" in {
+        // Same channel contract for the shape-dynamic case: the conformance check runs inside the result
+        // tool's dispatch, so its violation text arrives as the tool failure, not as a parallel system
+        // message.
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            given Schema[Structure.Value] = summon[Schema[Structure.Value]].withStructure(
+                Structure.Type.Product(
+                    "Answer",
+                    Tag[Any],
+                    Chunk.empty,
+                    Chunk(
+                        Structure.Field("note", summon[Schema[String]].structure),
+                        Structure.Field("answer", summon[Schema[String]].structure)
+                    )
+                )
+            )
+            server.enqueueBody(resultToolBody("""{"resultValue":{"note":"partial"}}""")).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":{"note":"full","answer":"42"}}""")).andThen {
+                    LLM.run(config)(AI.gen[Structure.Value]).map { result =>
+                        server.captured.map { caps =>
+                            assert(caps.size == 2, s"one repair turn (2 requests), got: ${caps.size}")
+                            val second = caps(1).body
+                            assert(
+                                second.contains("result_tool' failed"),
+                                s"the conformance violation must ride the tool-error channel; body: $second"
+                            )
+                            assert(
+                                second.contains("does not conform to the declared result schema"),
+                                s"the violation text must reach the model; body: $second"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "an open-shape result violating the declared structure is repaired and retried" in {
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            // A shape-dynamic schema: the open Schema[Structure.Value] with a runtime Product installed.
+            // Its passthrough codec decodes ANY record, so the missing required field can only be caught
+            // by conformance validation against the declared structure; the loop must repair it exactly
+            // like a decode failure, never accept a silent partial result.
+            given Schema[Structure.Value] = summon[Schema[Structure.Value]].withStructure(
+                Structure.Type.Product(
+                    "Answer",
+                    Tag[Any],
+                    Chunk.empty,
+                    Chunk(
+                        Structure.Field("note", summon[Schema[String]].structure),
+                        Structure.Field("answer", summon[Schema[String]].structure)
+                    )
+                )
+            )
+            server.enqueueBody(resultToolBody("""{"resultValue":{"note":"partial"}}""")).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":{"note":"full","answer":"42"}}""")).andThen {
+                    LLM.run(config)(AI.gen[Structure.Value]).map { result =>
+                        server.captured.map { caps =>
+                            val expected = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                                "note"   -> Structure.Value.Str("full"),
+                                "answer" -> Structure.Value.Str("42")
+                            ))
+                            assert(result == expected, s"expected the repaired conforming record, got: $result")
+                            assert(
+                                caps.size == 2,
+                                s"a non-conforming record should trigger one repair turn (2 requests), got: ${caps.size}"
+                            )
+                            assert(
+                                caps(1).body.contains("does not conform to the declared result schema"),
+                                s"the repair turn must carry the conformance violation; body: ${caps(1).body}"
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -194,6 +442,216 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a 401 auth failure halts fast without retry" in {
+        TestCompletionServer.run { server =>
+            val config = anthropicServerConfig(server.baseUrl).retrySchedule(Schedule.repeat(1))
+            server.enqueueStatus(401, """{"error":{"message":"invalid api key"}}""").andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                    server.captured.map { caps =>
+                        result match
+                            case Result.Failure(_: AIProviderAuthException) => ()
+                            case other                                      => fail(s"expected AIProviderAuthException, got: $other")
+                        assert(caps.size == 1, s"a 401 must halt without retry, expected 1 request, got: ${caps.size}")
+                    }
+                }
+            }
+        }
+    }
+
+    "a 429 rate limit retries then succeeds" in {
+        TestCompletionServer.run { server =>
+            val config = anthropicServerConfig(server.baseUrl).retrySchedule(Schedule.repeat(1))
+            server.enqueueStatus(429, """{"error":{"message":"rate limited"}}""").andThen {
+                server.enqueueBody(anthropicResultToolBody("""{"resultValue":"ok"}""")).andThen {
+                    LLM.run(config)(AI.gen[String]).map { result =>
+                        server.captured.map { caps =>
+                            assert(result == "ok", s"expected 'ok' after the retried attempt, got '$result'")
+                            assert(caps.size == 2, s"a 429 should retry exactly once, expected 2 requests, got: ${caps.size}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a tool payload trailed by content, not just brackets, is still rejected" in {
+        // The salvage is narrow on purpose. Surplus closing brackets are provider-shaped noise at the end
+        // of a long generation; anything else after a complete value says the model misunderstood the
+        // format, and that feedback is worth keeping rather than smoothing away.
+        TestCompletionServer.run { server =>
+            val config  = serverConfig(server.baseUrl).maxIterations(1)
+            val trailed = """{"resultValue":"ok"} and then some prose"""
+            server.enqueueBody(resultToolBody(trailed))
+                .andThen(server.enqueueBody(resultToolBody(trailed)))
+                .andThen {
+                    Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                        assert(
+                            result.isFailure,
+                            s"a value trailed by prose must not be accepted by dropping it, got: $result"
+                        )
+                    }
+                }
+        }
+    }
+
+    "a payload holding two values back to back is still rejected" in {
+        // The masking case the carve must not swallow: dropping the second value silently would
+        // discard something the model meant to say.
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).maxIterations(1)
+            val good   = """{"resultValue":"ok"}"""
+            server.enqueueBody(resultToolBody(good + good))
+                .andThen(server.enqueueBody(resultToolBody(good + good)))
+                .andThen {
+                    Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                        assert(
+                            result.isFailure,
+                            s"two values back to back must not be accepted by dropping one, got: $result"
+                        )
+                    }
+                }
+        }
+    }
+
+    "a turn cut off part way through its tool call fails as a ceiling stop, not as a bad payload" in {
+        // The shape that took five rounds to diagnose. The reply stops at the ceiling MID-ARGUMENTS,
+        // so the tool payload is unterminated JSON. Because a tool call is forced on every
+        // generation, this is the common way a ceiling stop arrives, and it used to slip past the
+        // check entirely: the truncated call went to the tool loop, failed to decode, was fed back
+        // and retried until the iterations ran out, and surfaced as a schema complaint naming
+        // neither the ceiling nor the setting that fixes it.
+        //
+        // Retrying cannot help either, since the next attempt spends the same ceiling to stop in the
+        // same place, so the request count is asserted too.
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).maxTokens(256).retrySchedule(Schedule.repeat(3))
+            val truncated =
+                """{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1",""" +
+                    """"type":"function","function":{"name":"result_tool","arguments":"{\"resultValue\": \"abc"}}]},""" +
+                    """"finish_reason":"length"}]}"""
+            server.enqueueBody(truncated).andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                    server.captured.map { caps =>
+                        assert(
+                            result.failure.exists(_.isInstanceOf[AIOutputLimitException]),
+                            s"a truncated tool call on a ceiling stop must fail as a ceiling stop, got: $result"
+                        )
+                        assert(caps.size == 1, s"and must not be retried into the same wall, got ${caps.size} requests")
+                    }
+                }
+            }
+        }
+    }
+
+    "stopping at the output ceiling fails the generation once, without retrying or iterating" in {
+        // Retrying is not merely useless here, it is expensive: the same request against the same
+        // ceiling stops in the same place, having spent the whole ceiling again. Iterating is worse,
+        // since the loop would do it once per allowed iteration. Exactly one request must be made.
+        TestCompletionServer.run { server =>
+            val config = anthropicServerConfig(server.baseUrl).retrySchedule(Schedule.repeat(3))
+            val ceilingStop =
+                """{"id":"m","content":[],"model":"m","role":"assistant","stop_reason":"max_tokens","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}"""
+            server.enqueueBody(ceilingStop).andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                    server.captured.map { caps =>
+                        assert(
+                            result.failure.exists(_.isInstanceOf[AIOutputLimitException]),
+                            s"expected the output-ceiling failure, got: $result"
+                        )
+                        assert(caps.size == 1, s"the ceiling stop must not be retried or iterated, got ${caps.size} requests")
+                    }
+                }
+            }
+        }
+    }
+
+    "a 400 rejected request halts fast without retry" in {
+        TestCompletionServer.run { server =>
+            val config = anthropicServerConfig(server.baseUrl).retrySchedule(Schedule.repeat(1))
+            server.enqueueStatus(400, """{"error":{"message":"malformed request"}}""").andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                    server.captured.map { caps =>
+                        result match
+                            case Result.Failure(_: AIRequestRejectedException) => ()
+                            case other                                         => fail(s"expected AIRequestRejectedException, got: $other")
+                        assert(caps.size == 1, s"a 400 must halt without retry, expected 1 request, got: ${caps.size}")
+                    }
+                }
+            }
+        }
+    }
+
+    "a client-side timeout halts fast as AICompletionTimeoutException" in {
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).timeout(100.millis).retrySchedule(Schedule.repeat(1))
+            server.enqueueNeverRespond.andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                    server.captured.map { caps =>
+                        result match
+                            case Result.Failure(_: AICompletionTimeoutException) => ()
+                            case other => fail(s"expected AICompletionTimeoutException, got: $other")
+                        assert(caps.size == 1, s"a per-call timeout must halt without retry, expected 1 request, got: ${caps.size}")
+                    }
+                }
+            }
+        }
+    }
+
+    "the configured timeout bounds a completion call and its retries, not one attempt" in {
+        TestCompletionServer.run { server =>
+            // Every attempt fails transiently and is retried on a schedule whose backoff outlasts the
+            // configured timeout. The deadline covers the retry clause, so the call surfaces the timeout;
+            // a deadline that covered only one attempt would let the schedule run to exhaustion and
+            // surface the throttle instead.
+            val config = serverConfig(server.baseUrl)
+                .timeout(300.millis)
+                .retrySchedule(Schedule.exponentialBackoff(initial = 200.millis, factor = 2, maxBackoff = 2.seconds).take(10))
+            def throttle(remaining: Int): Unit < Async =
+                if remaining == 0 then ()
+                else server.enqueueStatus(429, """{"error":{"message":"rate limited"}}""").andThen(throttle(remaining - 1))
+            throttle(12).andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                    result match
+                        case Result.Failure(_: AICompletionTimeoutException) => succeed
+                        case other =>
+                            fail(s"expected the call deadline to fire while retries were still pending, got: $other")
+                }
+            }
+        }
+    }
+
+    "a 429 rate limit retries then succeeds against the OpenAI-configured provider (classifyHttp parity)" in {
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).retrySchedule(Schedule.repeat(1))
+            server.enqueueStatus(429, """{"error":{"message":"rate limited"}}""").andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":"ok"}""")).andThen {
+                    LLM.run(config)(AI.gen[String]).map { result =>
+                        server.captured.map { caps =>
+                            assert(result == "ok", s"expected 'ok' after the retried attempt, got '$result'")
+                            assert(caps.size == 2, s"a 429 should retry exactly once, expected 2 requests, got: ${caps.size}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a 401 auth failure halts fast against the OpenAI-configured provider (classifyHttp parity)" in {
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).retrySchedule(Schedule.repeat(1))
+            server.enqueueStatus(401, """{"error":{"message":"invalid api key"}}""").andThen {
+                Abort.run[AIException](LLM.run(config)(AI.gen[String])).map { result =>
+                    server.captured.map { caps =>
+                        result match
+                            case Result.Failure(_: AIProviderAuthException) => ()
+                            case other                                      => fail(s"expected AIProviderAuthException, got: $other")
+                        assert(caps.size == 1, s"a 401 must halt without retry, expected 1 request, got: ${caps.size}")
+                    }
+                }
+            }
+        }
+    }
+
     "forget isolation survives a cancellation mid-generation" in {
         LLM.run {
             AI.initWith { ai =>
@@ -274,24 +732,6 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
-    "gen delivers the defaultGuidance reminder into the request body" in {
-        TestCompletionServer.run { server =>
-            val config = serverConfig(server.baseUrl)
-            server.enqueueBody(resultToolBody("""{"resultValue":"ok"}""")).andThen {
-                LLM.run(config)(AI.gen[String]).andThen {
-                    server.captured.map { caps =>
-                        assert(caps.nonEmpty, "expected at least one captured request")
-                        val body = caps.head.body
-                        assert(
-                            body.contains("Do NOT generate xml-like content"),
-                            s"gen should wrap the loop in AI.enable(defaultGuidance) so the reminder reaches the request: $body"
-                        )
-                    }
-                }
-            }
-        }
-    }
-
     "a tool call round-trips through the eval loop: the tool runs, its result feeds back, then result_tool" in {
         TestCompletionServer.run { server =>
             val config  = serverConfig(server.baseUrl)
@@ -308,6 +748,35 @@ class LLMTest extends kyo.test.Test[Any]:
                             assert(
                                 caps(1).body.contains("42"),
                                 s"turn-2 request must carry the doubled tool result 42, got: ${caps(1).body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a tool call's extra_content round-trips: it is written back verbatim on the next request" in {
+        // One endpoint refuses the follow-up request unless the token it issued with a call is returned
+        // with it. kyo carries that opaque payload on Call.providerExtra and writes it back as
+        // extra_content on the assistant message it replays. Regression here is otherwise invisible.
+        TestCompletionServer.run { server =>
+            val config  = serverConfig(server.baseUrl)
+            val doubler = Tool.init[Int]("double", "doubles its input")(n => n * 2)
+            // Turn 1: the model calls "double" with a tool call carrying extra_content.
+            val turn1 =
+                """{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function",""" +
+                    """"function":{"name":"double","arguments":"21"},"extra_content":{"echo_token":"round-trip-xyz"}}]}}]}"""
+            server.enqueueBody(turn1).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":42}""")).andThen {
+                    LLM.run(config)(AI.initWith(ai => ai.enable(doubler).andThen(ai.gen[Int]("compute")))).map { result =>
+                        server.captured.map { caps =>
+                            assert(result == 42, s"final result: $result")
+                            assert(caps.size == 2, s"tool turn + result turn: ${caps.size}")
+                            // The second request replays the assistant tool call, which must carry the token back.
+                            assert(
+                                caps(1).body.contains("round-trip-xyz"),
+                                s"the follow-up must write extra_content back verbatim: ${caps(1).body}"
                             )
                         }
                     }
@@ -475,8 +944,7 @@ class LLMTest extends kyo.test.Test[Any]:
     }
 
     "the LLM effect row does not include Async" in {
-        // LLM effect row must not include Async; operations composed with < LLM should not require Async.
-        // Compile-time assertion: NotGiven[LLM <:< Async] must be derivable.
+        // Compile-time assertion: NotGiven[LLM <:< Async] must be derivable, so < LLM never requires Async.
         val notAsync: NotGiven[LLM <:< Async] = summon[NotGiven[LLM <:< Async]]
         val x: Unit < LLM                     = AI.init.map(ai => ai.userMessage("a").andThen(ai.userMessage("b")))
         // x ascribed as Unit < LLM compiles, confirming no Async leak.
@@ -496,7 +964,6 @@ class LLMTest extends kyo.test.Test[Any]:
     }
 
     "gen's row is Int < LLM while run's residual adds Async & Abort[AIGenException]" in {
-        // gen's own row is Int < LLM (no Async); run's residual is Int < (Async & Abort[AIGenException]).
         // The two ascriptions are the compile-time proof; the run yields the scripted Int at runtime.
         TestCompletionServer.run { server =>
             val config                                   = serverConfig(server.baseUrl)
@@ -552,7 +1019,6 @@ class LLMTest extends kyo.test.Test[Any]:
     }
 
     "run threads State across init, two adds, and a read" in {
-        // AI.initWith + two messages + read: LLM.run threads State across Init, two Add, Read.
         LLM.run {
             AI.initWith { ai =>
                 ai.userMessage("a")
@@ -621,13 +1087,11 @@ class LLMTest extends kyo.test.Test[Any]:
         // Merge: (a) shared instance merges prefix-aware; (b) fork-born added as-is; (c) env stays parent.
         LLM.run {
             AI.init.map { shared =>
-                // seed parent with p1
                 shared.userMessage("p1").andThen {
                     AI.withConfig(_.temperature(0.2)) {
                         // spawn a parallel fork via Async.fill(1) which uses the LLM isolate
                         Async.fill(1) {
                             AI.init.map { born =>
-                                // in fork: append to shared + add to born + change config
                                 shared.userMessage("f1").andThen {
                                     born.userMessage("b1").andThen {
                                         AI.withConfig(_.temperature(0.9))(Kyo.unit)
@@ -635,7 +1099,6 @@ class LLMTest extends kyo.test.Test[Any]:
                                 }
                             }
                         }.andThen {
-                            // back in parent: read config (should still be 0.2) and shared context
                             AI.config.map { config =>
                                 shared.context.map { sharedCtx =>
                                     (config.temperature, sharedCtx.raw.map(_.content))
@@ -835,6 +1298,118 @@ class LLMTest extends kyo.test.Test[Any]:
         val p: Unit < LLM                     = AI.init.map(ai => ai.userMessage("a").andThen(ai.userMessage("b")))
         val _                                 = p
         assert(notAsync != null, "NotGiven[LLM <:< Async] is derivable and the < LLM ascription compiles")
+    }
+
+    "a wire that refuses the model's tool call gets a repair turn, not an outright failure" - {
+
+        // Config.Groq declares InvalidToolCalls.Rejected("tool_use_failed"); Config.OpenAI leaves it Returned. The entries
+        // are read for that declaration alone, which is the point: the loop never asks which wire it is.
+        def rejectingConfig(baseUrl: String): Config =
+            Config.Groq.default.apiKey("test").apiUrl(baseUrl)
+
+        "the rejection is fed back and the next turn's result is returned" in {
+            TestCompletionServer.run { server =>
+                // First turn refused the way such a wire reports an unreadable tool call; second succeeds.
+                server.enqueueStatus(
+                    400,
+                    """{"error":{"message":"Failed to parse tool call arguments as JSON","code":"tool_use_failed"}}"""
+                ).andThen {
+                    server.enqueueBody(resultToolBody("""{"resultValue":"recovered"}""")).andThen {
+                        LLM.run(rejectingConfig(server.baseUrl))(AI.gen[String]).map { result =>
+                            server.captured.map { caps =>
+                                assert(result == "recovered", s"the turn after the rejection produces the result: $result")
+                                assert(caps.size == 2, s"the rejection costs one turn and the loop continues: ${caps.size}")
+                                // The correction rides the second request, so the model is told what went
+                                // wrong rather than being resampled blind.
+                                // The repair quotes the endpoint's OWN reason forward, not a generic line.
+                                assert(
+                                    caps(1).body.contains("was rejected") &&
+                                        caps(1).body.contains("Failed to parse tool call arguments as JSON"),
+                                    s"the second turn carries the repair with the wire's reason: ${caps(1).body}"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "a wire that returns its malformed calls is unaffected: the rejection still fails outright" in {
+            TestCompletionServer.run { server =>
+                server.enqueueStatus(400, """{"error":{"message":"context length exceeded"}}""").andThen {
+                    Abort.run[AIException](LLM.run(serverConfig(server.baseUrl))(AI.gen[String])).map { result =>
+                        assert(result.isFailure, s"an entry declaring nothing keeps the fail-fast reading: $result")
+                        result match
+                            case Result.Failure(ex: AIRequestRejectedException) =>
+                                assert(ex.status == 400, s"and it stays a rejected request: $ex")
+                            case other =>
+                                assert(false, s"expected AIRequestRejectedException, got: $other")
+                        end match
+                    }
+                }
+            }
+        }
+
+        "on a rejecting wire a 400 whose code is not the declared one still fails outright" in {
+            // The core of the discriminator: a genuinely bad request (context overflow) arrives at the
+            // SAME rejecting wire as a 400, but its body carries a different code, so it must NOT be
+            // respun as a repairable tool-call rejection. Fail closed keeps it an ordinary rejection.
+            TestCompletionServer.run { server =>
+                server.enqueueStatus(400, """{"error":{"message":"context length exceeded","code":"context_length_exceeded"}}""").andThen {
+                    Abort.run[AIException](LLM.run(rejectingConfig(server.baseUrl).maxIterations(2))(AI.gen[String])).map { result =>
+                        assert(result.isFailure, s"a non-matching 400 fails: $result")
+                        result match
+                            case Result.Failure(ex: AIRequestRejectedException) =>
+                                assert(ex.status == 400, s"and stays a rejected request, not a repaired one: $ex")
+                            case other =>
+                                assert(false, s"expected AIRequestRejectedException, got: $other")
+                        end match
+                    }
+                }
+            }
+        }
+
+        "on a rejecting wire a 400 with an ABSENT body fails outright" in {
+            // Fail closed on an absent body: no code to match, so it stays an ordinary rejected request.
+            TestCompletionServer.run { server =>
+                server.enqueueStatus(400, "").andThen {
+                    Abort.run[AIException](LLM.run(rejectingConfig(server.baseUrl).maxIterations(2))(AI.gen[String])).map { result =>
+                        result match
+                            case Result.Failure(_: AIRequestRejectedException) => succeed("absent body stays a rejected request")
+                            case other => assert(false, s"expected AIRequestRejectedException, got: $other")
+                    }
+                }
+            }
+        }
+
+        "on a rejecting wire a 400 with no decodable body fails outright" in {
+            // Fail closed on an undecodable body: doubt is an ordinary rejection, never a repair.
+            TestCompletionServer.run { server =>
+                server.enqueueStatus(400, "not json at all").andThen {
+                    Abort.run[AIException](LLM.run(rejectingConfig(server.baseUrl).maxIterations(2))(AI.gen[String])).map { result =>
+                        result match
+                            case Result.Failure(_: AIRequestRejectedException) => succeed("undecodable body stays a rejected request")
+                            case other => assert(false, s"expected AIRequestRejectedException, got: $other")
+                    }
+                }
+            }
+        }
+
+        "a wire rejecting every attempt ends in exhaustion rather than looping" in {
+            TestCompletionServer.run { server =>
+                val refusal = """{"error":{"message":"Failed to parse tool call arguments as JSON","code":"tool_use_failed"}}"""
+                Kyo.foreachDiscard(Chunk.fill(6)(refusal))(body => server.enqueueStatus(400, body)).andThen {
+                    Abort.run[AIException] {
+                        LLM.run(rejectingConfig(server.baseUrl).maxIterations(2))(AI.gen[String])
+                    }.map { result =>
+                        assert(result.isFailure, s"the budget bounds it: $result")
+                        result match
+                            case Result.Failure(_: AIEvalExhaustedException) => succeed("bounded by maxIterations")
+                            case other => assert(false, s"expected AIEvalExhaustedException, got: $other")
+                    }
+                }
+            }
+        }
     }
 
 end LLMTest

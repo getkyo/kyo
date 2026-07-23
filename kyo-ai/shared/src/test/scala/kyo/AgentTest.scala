@@ -9,7 +9,7 @@ class AgentTest extends kyo.test.Test[Any]:
     def serverConfig(baseUrl: String): Config =
         Config.OpenAI.default
             .apiKey("test")
-            .model(Config.OpenAI, "gpt-4o", 128000)
+            .model(Config.OpenAI, "gpt-4o", 128000, Config.OutputMaximum.Verified(16384), Config.ReasoningEncoding.Unavailable, true, true)
             .apiUrl(baseUrl)
 
     def resultToolBody(envelopeJson: String): String =

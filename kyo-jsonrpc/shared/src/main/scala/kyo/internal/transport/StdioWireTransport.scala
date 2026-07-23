@@ -3,6 +3,13 @@ package kyo.internal.transport
 import java.io.EOFException
 import kyo.*
 
+/** Line-delimited stdio wire over the kyo [[Console]] effect, backing [[JsonRpcTransport.stdio]].
+  *
+  * Unlike the Content-Length and Unix-domain transports (which run on kyo-net `Connection`s), this one stays on `Console` deliberately:
+  * `Console.withIn`/`Console.withOut` redirection lets it be driven in-process by the tests and embedded under a redirected console by an
+  * application, which reading the real fds 0/1 through kyo-net's stdio would not allow. It carries no socket, fd, or byte pump, so kyo-net
+  * remains the single network stack.
+  */
 final private[kyo] class StdioWireTransport extends JsonRpcWireTransport:
 
     def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =

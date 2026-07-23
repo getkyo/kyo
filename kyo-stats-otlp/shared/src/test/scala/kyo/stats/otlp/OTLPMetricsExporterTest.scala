@@ -55,6 +55,30 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
             result <- test(config, metricCh)
         yield result
 
+    /** Takes exports until `name` appears, returning that `Metric`.
+      *
+      * `keepAlive` is the registered metric instance: the registry holds only a WeakReference to it, so a
+      * concurrent leaf's GC pressure can collect it mid-loop and it would then vanish from every export.
+      * Capturing it inside the loop closure keeps it strongly reachable, the same recipe the leaves above use.
+      */
+    def awaitMetric(
+        metricCh: Channel[ExportMetricsRequest],
+        name: String,
+        keepAlive: AnyRef
+    )(using Frame): Metric < (Async & Abort[Any]) =
+        Loop.indexed { i =>
+            discard(keepAlive)
+            metricCh.take.map { received =>
+                val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
+                allMetrics.find(_.name == name) match
+                    case Some(m)       => Loop.done(m)
+                    case None if i < 9 => Loop.continue
+                    case None          => throw new AssertionError(s"Metric $name not found after ${i + 1} exports")
+                end match
+            }
+        }
+    end awaitMetric
+
     "periodic export" - {
 
         "exports registered counter at interval".onlyJvm in {
@@ -141,6 +165,87 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                     assert(found.isDefined)
                     assert(found.get.gauge.isDefined)
                     assert(found.get.gauge.get.dataPoints.head.asDouble == Present(99.5))
+                end for
+            }
+        }
+
+        // Histograms never drain: their buckets, count, min, max and sum are lifetime values, so they are
+        // exported with CUMULATIVE temporality and a fixed series start. Counters DO drain on read
+        // (UnsafeCounter.get is adder.sumThenReset), so they keep DELTA temporality and a per-export start.
+        // These leaves pin both halves of that contract against the real exporter over two exports.
+
+        "a histogram data point carries CumulativeTemporality and a fixed series-start startTimeUnixNano".onlyJvm in {
+            withCollector { (config, metricCh) =>
+                val uniqueName = "test.export.cumulative." + java.util.UUID.randomUUID().toString.take(8)
+                val histogram  = Stat.initScope("test", "export").initHistogram(uniqueName, "cumulative histogram")
+                for
+                    _      <- histogram.observe(42.0)
+                    _      <- OTLPMetricsExporter.run(config)
+                    first  <- awaitMetric(metricCh, s"test.export.$uniqueName", histogram)
+                    second <- awaitMetric(metricCh, s"test.export.$uniqueName", histogram)
+                yield
+                    val firstHist  = first.histogram.get
+                    val secondHist = second.histogram.get
+                    assert(firstHist.aggregationTemporality == OTLPModel.CumulativeTemporality)
+                    assert(secondHist.aggregationTemporality == OTLPModel.CumulativeTemporality)
+                    val firstPoint  = firstHist.dataPoints.head
+                    val secondPoint = secondHist.dataPoints.head
+                    // The series start is fixed: a start that advanced with each export (the previous-export
+                    // instant a delta point carries) would differ here.
+                    assert(firstPoint.startTimeUnixNano == secondPoint.startTimeUnixNano)
+                    assert(secondPoint.timeUnixNano.toLong > firstPoint.timeUnixNano.toLong)
+                    assert(secondPoint.startTimeUnixNano.toLong < secondPoint.timeUnixNano.toLong)
+                end for
+            }
+        }
+
+        "a counter data point still carries DeltaTemporality with an advancing start".onlyJvm in {
+            withCollector { (config, metricCh) =>
+                val uniqueName = "test.export.delta." + java.util.UUID.randomUUID().toString.take(8)
+                val counter    = Stat.initScope("test", "export").initCounter(uniqueName, "delta counter")
+                for
+                    _     <- counter.add(10)
+                    _     <- OTLPMetricsExporter.run(config)
+                    first <- awaitMetric(metricCh, s"test.export.$uniqueName", counter)
+                    _     <- counter.add(20)
+                    // The counter drains on read, so it only reappears once it has new activity.
+                    second <- awaitMetric(metricCh, s"test.export.$uniqueName", counter)
+                yield
+                    val firstSum  = first.sum.get
+                    val secondSum = second.sum.get
+                    assert(firstSum.aggregationTemporality == OTLPModel.DeltaTemporality)
+                    assert(secondSum.aggregationTemporality == OTLPModel.DeltaTemporality)
+                    val firstPoint  = firstSum.dataPoints.head
+                    val secondPoint = secondSum.dataPoints.head
+                    assert(firstPoint.asInt == Present("10"))
+                    assert(secondPoint.asInt == Present("20"))
+                    // A delta point's start is the previous export, so it advances with every export. A fixed
+                    // series start (the histogram's shape) would report the same value on both.
+                    assert(secondPoint.startTimeUnixNano.toLong > firstPoint.startTimeUnixNano.toLong)
+                    assert(secondPoint.startTimeUnixNano.toLong >= firstPoint.timeUnixNano.toLong)
+                    assert(secondPoint.startTimeUnixNano.toLong < secondPoint.timeUnixNano.toLong)
+                end for
+            }
+        }
+
+        "the exported histogram sum is the cumulative total and is stable across two exports".onlyJvm in {
+            withCollector { (config, metricCh) =>
+                val uniqueName = "test.export.sum." + java.util.UUID.randomUUID().toString.take(8)
+                val histogram  = Stat.initScope("test", "export").initHistogram(uniqueName, "sum histogram")
+                for
+                    _      <- histogram.observe(100.0)
+                    _      <- histogram.observe(250.0)
+                    _      <- OTLPMetricsExporter.run(config)
+                    first  <- awaitMetric(metricCh, s"test.export.$uniqueName", histogram)
+                    second <- awaitMetric(metricCh, s"test.export.$uniqueName", histogram)
+                yield
+                    val firstPoint  = first.histogram.get.dataPoints.head
+                    val secondPoint = second.histogram.get.dataPoints.head
+                    // A draining implementation would report 350.0 then 0.0.
+                    assert(firstPoint.sum == 350.0)
+                    assert(secondPoint.sum == 350.0)
+                    assert(firstPoint.count == "2")
+                    assert(secondPoint.count == "2")
                 end for
             }
         }

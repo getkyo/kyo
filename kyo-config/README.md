@@ -96,7 +96,7 @@ Note: Validation runs at class-load time. A parse or validation failure throws a
 
 Built-in `Flag.Reader` instances cover `Int`, `Long`, `Double`, `Boolean`, `String`, and `Seq[A]` (comma-separated; the element type must be scalar). For any other type, supply your own `Flag.Reader`. There is no Schema-derived or multi-field reader in this module.
 
-> **Note:** When `kyo-data` is on the classpath, a flag value type can also be a kyo-data type. `Duration`, `Chunk`, `Span`, `Dict`, `Instant`, and a multi-field `Record` all have ready-made `Flag.Reader` instances shipped by kyo-data, so they parse from a system property or environment variable with no extra wiring. See [Reading values from configuration](../kyo-data/README.md#reading-values-from-configuration) in the kyo-data README for the accepted string formats and the compile-time-derived `Record` reader.
+> **Note:** When `kyo-data` is on the classpath, a flag value type can also be a kyo-data type. `Duration`, `Chunk`, `Span`, `Dict`, `OrderedDict`, `Instant`, and a multi-field `Record` all have ready-made `Flag.Reader` instances shipped by kyo-data, so they parse from a system property or environment variable with no extra wiring. See [Reading values from configuration](../kyo-data/README.md#reading-values-from-configuration) in the kyo-data README for the accepted string formats and the compile-time-derived `Record` reader.
 
 | Type | Example |
 |------|---------|
@@ -343,7 +343,7 @@ Increasing the percentage adds entities without removing existing ones. A typica
 | 4 | `true@75%;false` | 75% of users (buckets 0-74) |
 | 5 | `true` | 100% of users (terminal) |
 
-Bucketing is deterministic per key (via XXH32), so a user who was included at 5% stays included at 25%. The bucket range grows from the same starting point, making progressive rollouts additive.
+Bucketing is deterministic per key (via a stable string hash), so a user who was included at 5% stays included at 25%. The bucket range grows from the same starting point, making progressive rollouts additive.
 
 However, **decreasing** a percentage can remove entities: going from 75% back to 50% drops buckets 50-74, removing 25% of previously included users.
 

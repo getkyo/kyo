@@ -18,3 +18,5 @@ jmh-result.json
 test-output
 .DS_Store
 kyo-ai/reference-vocab/
+.jvmopts
+node_modules

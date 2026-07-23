@@ -133,6 +133,18 @@ case class TruncatedInputException(format: Codec, detail: String)(using Frame)
     extends SchemaException(s"Truncated input: $detail")
     with DecodeException
 
+/** Thrown when input remains after a complete value has been decoded.
+  *
+  * The mirror of [[TruncatedInputException]]: that one reports input ending before a value is whole,
+  * this one reports input continuing after it. Without it, a decoder that reads one value and stops
+  * reports success on input it only partly consumed, so a document holding two values back to back
+  * yields the first and drops the rest in silence, and a value with anything stuck to its end looks
+  * exactly like a clean parse.
+  */
+case class TrailingInputException(format: Codec, detail: String)(using Frame)
+    extends SchemaException(s"Unexpected trailing content: $detail")
+    with DecodeException
+
 /** Thrown when a configured safety limit is exceeded during decoding. */
 case class LimitExceededException(limit: String, actual: Int, maximum: Int)(using Frame)
     extends SchemaException(s"$limit $actual exceeds maximum $maximum")

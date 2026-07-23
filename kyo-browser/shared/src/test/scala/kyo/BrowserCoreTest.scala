@@ -980,7 +980,7 @@ class BrowserCoreTest extends BrowserTest:
       */
     private def withHtmlServer[A, S](routes: Map[String, String])(f: (String, Int) => A < (Browser & S))(using
         Frame
-    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Async & S) =
+    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
         val handlers = routes.toSeq.map { case (path, body) =>
             val bytes = Span.fromUnsafe(body.getBytes("UTF-8"))
             // Register both GET and POST so any browser-initiated request method is served.
@@ -997,7 +997,7 @@ class BrowserCoreTest extends BrowserTest:
     /** Server with a `/404` handler that always returns 404 for the nav-failure tests. */
     private def withStatusServer[A, S](f: (String, Int) => A < (Browser & S))(using
         Frame
-    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Async & S) =
+    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
         val body404 = Span.fromUnsafe("<html><body>not found</body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw("/404").response(_.bodyBinary).handler { _ =>
             HttpResponse(HttpStatus.NotFound)

@@ -26,7 +26,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "transport integration" - {
 
-        "HTTP GET over Unix socket".notNative in {
+        "HTTP GET over Unix socket" in {
             tempSocketPath().map { sockPath =>
                 val route   = HttpRoute.getRaw("test").response(_.bodyText)
                 val handler = route.handler(_ => HttpResponse.ok("hello"))
@@ -42,7 +42,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "HTTP POST with body over Unix socket".notNative in {
+        "HTTP POST with body over Unix socket" in {
             tempSocketPath().map { sockPath =>
                 val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
                 val handler = route.handler(req => HttpResponse.ok(req.fields.body))
@@ -58,7 +58,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "server address is Unix".notNative in {
+        "server address is Unix" in {
             tempSocketPath().map { sockPath =>
                 val route   = HttpRoute.getRaw("test").response(_.bodyText)
                 val handler = route.handler(_ => HttpResponse.ok("ok"))
@@ -73,16 +73,16 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "non-existent socket path fails with HttpConnectException".notNative in {
+        "non-existent socket path fails with HttpUnixConnectException" in {
             Abort.run[HttpException] {
                 HttpClient.getText("http+unix://%2Ftmp%2Fnonexistent_kyo_unix_test.sock/test")
             }.map { result =>
                 assert(result.isFailure)
-                assert(result.failure.exists(_.isInstanceOf[HttpConnectException]))
+                assert(result.failure.exists(_.isInstanceOf[HttpUnixConnectException]))
             }
         }
 
-        "error response (404) over Unix socket".notNative in {
+        "error response (404) over Unix socket" in {
             tempSocketPath().map { sockPath =>
                 val route   = HttpRoute.getRaw("exists").response(_.bodyText)
                 val handler = route.handler(_ => HttpResponse.ok("ok"))
@@ -112,7 +112,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "chunked streaming" - {
 
-        "chunked response over Unix socket".notNative in {
+        "chunked response over Unix socket" in {
             val route = HttpRoute.getRaw("stream").response(_.bodyStream)
             val handler = route.handler { _ =>
                 val chunks = Stream.init(Seq(
@@ -148,7 +148,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "streaming request body over Unix socket".notNative in {
+        "streaming request body over Unix socket" in {
             val route = HttpRoute.postRaw("upload")
                 .request(_.bodyStream)
                 .response(_.bodyText)
@@ -185,7 +185,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "large streaming body (100KB in 1KB chunks)".notNative in {
+        "large streaming body (100KB in 1KB chunks)" in {
             val route = HttpRoute.postRaw("big-upload")
                 .request(_.bodyStream)
                 .response(_.bodyText)
@@ -232,7 +232,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "SSE" - {
 
-        "SSE text events over Unix socket".notNative in {
+        "SSE text events over Unix socket" in {
             val route = HttpRoute.getRaw("events").response(_.bodySseText)
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
@@ -256,7 +256,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "SSE with event type and id".notNative in {
+        "SSE with event type and id" in {
             val route = HttpRoute.getRaw("typed-events").response(_.bodySseText)
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
@@ -282,7 +282,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "SSE JSON events over Unix socket".notNative in {
+        "SSE JSON events over Unix socket" in {
             val route = HttpRoute.getRaw("json-events").response(_.bodySseJson[Item])
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
@@ -309,7 +309,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "NDJSON" - {
 
-        "NDJSON streaming over Unix socket".notNative in {
+        "NDJSON streaming over Unix socket" in {
             val route = HttpRoute.getRaw("data").response(_.bodyNdjson[Item])
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
@@ -338,7 +338,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "edge cases" - {
 
-        "empty stream over Unix socket".notNative in {
+        "empty stream over Unix socket" in {
             val route = HttpRoute.getRaw("empty").response(_.bodyStream)
             val handler = route.handler { _ =>
                 val chunks: Stream[Span[Byte], Async] = Stream.init(Seq.empty[Span[Byte]])

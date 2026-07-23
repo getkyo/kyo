@@ -1222,14 +1222,9 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
         }
 
         "Schema Dict[K, V] encode/decode - non-string key" in {
-            // Non-string key Dict uses array-of-pairs encoding, which doesn't work well with JSON
-            // reader that expects string keys for maps. Use token-based round-trip instead.
-            val dictSchema = summon[Schema[Dict[Int, String]]]
-            val original   = Dict(1 -> "one", 2 -> "two")
-            val w          = new TestWriter
-            dictSchema.serializeWrite(original, w)
-            val r       = new TestReader(w.resultTokens)
-            val decoded = dictSchema.serializeRead(r)
+            val original = Dict(1 -> "one", 2 -> "two")
+            val encoded  = Json.encodeBytes(original)
+            val decoded  = Json.decodeBytes[Dict[Int, String]](encoded).getOrThrow
             assert(decoded.size == original.size)
             assert(decoded.get(1) == Maybe("one"))
             assert(decoded.get(2) == Maybe("two"))
@@ -1302,7 +1297,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             val encoded = Json.encode(bytes)
             // Raw bytes are encoded as base64 string, not as array of ints
             val decoded = Json.decode[kyo.Span[Byte]](encoded).getOrThrow
-            assert(decoded.toArray.toSeq == bytes.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(decoded, bytes))
         }
 
         "Span[Int] uses generic array schema" in {
@@ -2262,9 +2257,28 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             "Dict[Int, String] schema round-trip (non-string key)" in {
                 given schema: Schema[Dict[Int, String]] = Schema.dictSchema[Int, String]
                 val v                                   = Dict(1 -> "one", 2 -> "two")
-                val decoded                             = roundTrip(v)(using schema)
+                val encoded                             = Json.encodeBytes(v)
+                val decoded                             = Json.decodeBytes[Dict[Int, String]](encoded).getOrThrow
                 assert(decoded.get(1) == Maybe("one"))
                 assert(decoded.get(2) == Maybe("two"))
+            }
+
+            // OrderedDict codec
+
+            "stringOrderedDictSchema encode/decode preserves insertion order over the format-agnostic Writer/Reader contract" in {
+                given schema: Schema[OrderedDict[String, Int]] = Schema.stringOrderedDictSchema[Int]
+                val v       = OrderedDict("zeta" -> 10, "alpha" -> 20, "mike" -> 30, "bravo" -> 40, "yankee" -> 50, "delta" -> 60)
+                val decoded = roundTrip(v)(using schema)
+                assert(decoded.size == 6)
+                assert(decoded.get("zeta") == Maybe(10))
+                assert(decoded.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+            }
+
+            "orderedDictSchema round-trips non-String keys as OBJECT-form entries preserving insertion order, not sorted" in {
+                given schema: Schema[OrderedDict[Int, String]] = Schema.orderedDictSchema[Int, String]
+                val v       = OrderedDict(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron")
+                val decoded = roundTrip(v)(using schema)
+                assert(decoded.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))
             }
 
             // Regression tests for JSON comma-skipping in inner arrays

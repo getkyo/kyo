@@ -10,9 +10,10 @@ import scala.annotation.tailrec
 /** A fixed-bucket histogram for recording value distributions, inspired by the OTel SDK's ExplicitBucketHistogramAggregation and
   * Prometheus's fixed-bucket histogram.
   *
-  * Optimized for high-throughput observation: the hot path is a binary search followed by a single LongAdder.increment() plus an atomic CAS
-  * update for min/max. Count is derived at read time from a single-pass bucket snapshot. Sum is not provided since exact values are not
-  * retained and the OTLP histogram data model marks sum as optional. The snapshot is not fully atomic under concurrent writes but ensures
+  * Optimized for high-throughput observation: the hot path is a binary search followed by a single LongAdder.increment() plus two atomic
+  * CAS updates, one for the packed min/max and one for the running sum. Count is derived at read time from a single-pass bucket snapshot.
+  * Sum is the running total of every observed value, held as raw Double bits in one AtomicLong; like the buckets it is never drained, so
+  * count, buckets and sum all describe the same lifetime window. The snapshot is not fully atomic under concurrent writes but ensures
   * internal consistency by deriving count from the same snapshotted bucket counts. Bucket semantics use inclusive upper bounds (value <=
   * boundary), matching Prometheus and OTel conventions.
   *
@@ -56,6 +57,22 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
     // Min (upper 32 bits) and max (lower 32 bits) packed as floats in a single AtomicLong
     private val minMaxBits = new AtomicLong(pack(Float.MaxValue, Float.MinValue))
 
+    // Running total of every observed value, never reset, held as the raw Double bits in one AtomicLong
+    // and advanced with a single CAS per observation: the same cross-platform accumulator shape as
+    // minMaxBits above. A java.util.concurrent.atomic.DoubleAdder would carry the same value but is absent
+    // from the Scala.js javalib, so a shared histogram using it fails to link on the JS lane; a LongAdder
+    // would truncate every fractional observation. This bit-packed AtomicLong links on every platform and
+    // keeps full Double precision. The buckets are never drained either, so this total and the buckets
+    // describe the same lifetime window.
+    private val sumBits = new AtomicLong(java.lang.Double.doubleToRawLongBits(0.0))
+
+    @tailrec private def addToSum(v: Double): Unit = {
+        val cur  = sumBits.get()
+        val next = java.lang.Double.doubleToRawLongBits(java.lang.Double.longBitsToDouble(cur) + v)
+        if (!sumBits.compareAndSet(cur, next))
+            addToSum(v)
+    }
+
     private def pack(min: Float, max: Float): Long =
         (floatToIntBits(min).toLong << 32) | (floatToIntBits(max).toLong & 0xffffffffL)
 
@@ -74,6 +91,7 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
             }
         findBucket(0, boundaries.length)
         updateMinMax(v.toFloat)
+        addToSum(v)
     }
 
     private def updateMinMax(v: Float): Unit = {
@@ -111,7 +129,8 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
             bucketCounts = counts,
             count = total,
             min = min,
-            max = max
+            max = max,
+            sum = java.lang.Double.longBitsToDouble(sumBits.get())
         )
     }
 

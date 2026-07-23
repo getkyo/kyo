@@ -61,7 +61,7 @@ class ThoughtTest extends kyo.test.Test[Any]:
         assert(text.contains("\"description\":\"I followed all instructions\""), s"missing Boolean @doc in: $text")
     }
 
-    "process hook fires for opening AND closing thoughts on the decoded value" in {
+    "process hook fires for opening AND closing thought groups" in {
         LLM.run {
             AtomicRef.init(Maybe.empty[String]).map { aRef =>
                 AtomicRef.init(Maybe.empty[Boolean]).map { bRef =>
@@ -69,15 +69,13 @@ class ThoughtTest extends kyo.test.Test[Any]:
                         .asInstanceOf[Info[?, LLM]]
                     val closing = Info("B", Position.Closing, summon[Schema[Boolean]], (b: Boolean) => bRef.set(Present(b)))
                         .asInstanceOf[Info[?, LLM]]
-                    val record = Structure.Value.Record(Chunk(
-                        "openingThoughts" -> Structure.Value.Record(Chunk("A" -> Structure.Value.Str("hello"))),
-                        "resultValue"     -> Structure.Value.Str("the answer"),
-                        "closingThoughts" -> Structure.Value.Record(Chunk("B" -> Structure.Value.Bool(true)))
-                    ))
-                    Thought.internal.handle(Chunk(opening, closing), record, summon[Schema[String]]).map { result =>
+                    Thought.internal.handleThoughtGroups(
+                        Chunk(opening, closing),
+                        Present(Structure.Value.Record(Chunk("A" -> Structure.Value.Str("hello")))),
+                        Present(Structure.Value.Record(Chunk("B" -> Structure.Value.Bool(true))))
+                    ).andThen {
                         aRef.get.map { a =>
                             bRef.get.map { b =>
-                                assert(result == "the answer")
                                 assert(a == Present("hello"), s"opening hook: $a")
                                 assert(b == Present(true), s"closing hook: $b")
                             }
@@ -92,12 +90,11 @@ class ThoughtTest extends kyo.test.Test[Any]:
         LLM.run {
             Abort.run[AIException] {
                 val opening = Info("A", Position.Opening, summon[Schema[String]], (_: String) => ())
-                val record = Structure.Value.Record(Chunk(
-                    "openingThoughts" -> Structure.Value.Record(Chunk("Unknown" -> Structure.Value.Str("x"))),
-                    "resultValue"     -> Structure.Value.Str("the answer"),
-                    "closingThoughts" -> Structure.Value.Record(Chunk.empty)
-                ))
-                Thought.internal.handle(Chunk(opening), record, summon[Schema[String]])
+                Thought.internal.handleThoughtGroups(
+                    Chunk(opening),
+                    Present(Structure.Value.Record(Chunk("Unknown" -> Structure.Value.Str("x")))),
+                    Present(Structure.Value.Record(Chunk.empty))
+                )
             }
         }.map { result =>
             assert(result.isFailure, s"expected a typed failure, got: $result")
@@ -109,59 +106,33 @@ class ThoughtTest extends kyo.test.Test[Any]:
         }
     }
 
-    "handle iterates opening THEN closing (concatenated)" in {
+    "thought groups dispatch opening THEN closing (concatenated)" in {
         LLM.run {
             AtomicRef.init(Chunk.empty[String]).map { order =>
                 val opening = Info("A", Position.Opening, summon[Schema[String]], (_: String) => order.updateAndGet(_ :+ "A").unit)
                     .asInstanceOf[Info[?, LLM]]
                 val closing = Info("B", Position.Closing, summon[Schema[String]], (_: String) => order.updateAndGet(_ :+ "B").unit)
                     .asInstanceOf[Info[?, LLM]]
-                val record = Structure.Value.Record(Chunk(
-                    "openingThoughts" -> Structure.Value.Record(Chunk("A" -> Structure.Value.Str("o"))),
-                    "resultValue"     -> Structure.Value.Str("the answer"),
-                    "closingThoughts" -> Structure.Value.Record(Chunk("B" -> Structure.Value.Str("c")))
-                ))
-                Thought.internal.handle(Chunk(opening, closing), record, summon[Schema[String]]).andThen {
+                Thought.internal.handleThoughtGroups(
+                    Chunk(opening, closing),
+                    Present(Structure.Value.Record(Chunk("A" -> Structure.Value.Str("o")))),
+                    Present(Structure.Value.Record(Chunk("B" -> Structure.Value.Str("c"))))
+                ).andThen {
                     order.get.map(recorded => assert(recorded == Chunk("A", "B"), s"order: $recorded"))
                 }
             }
         }
     }
 
-    "a malformed resultValue fails with AIDecodeException" in {
-        LLM.run {
-            Abort.run[AIException] {
-                val record = Structure.Value.Record(Chunk("resultValue" -> Structure.Value.Str("not-an-int")))
-                Thought.internal.handle[Int](Chunk.empty, record, summon[Schema[Int]])
-            }
-        }.map { result =>
-            result match
-                case Result.Failure(_: AIDecodeException) => succeed
-                case _                                    => assert(false, s"expected AIDecodeException, got: $result")
-        }
-    }
-
-    "a missing resultValue fails with AIDecodeException" in {
-        LLM.run {
-            Abort.run[AIException] {
-                Thought.internal.handle[Int](Chunk.empty, Structure.Value.Record(Chunk.empty), summon[Schema[Int]])
-            }
-        }.map { result =>
-            result match
-                case Result.Failure(ex: AIDecodeException) => assert(ex.getMessage.contains("resultValue"), s"message: ${ex.getMessage}")
-                case _                                     => assert(false, s"expected AIDecodeException, got: $result")
-        }
-    }
-
     "an undecodable thought field fails with AIDecodeException naming the thought" in {
         val opening = Info("A", Position.Opening, summon[Schema[Int]], (_: Int) => ())
-        val record = Structure.Value.Record(Chunk(
-            "openingThoughts" -> Structure.Value.Record(Chunk("A" -> Structure.Value.Str("not-an-int"))),
-            "resultValue"     -> Structure.Value.Str("answer")
-        ))
         LLM.run {
             Abort.run[AIException] {
-                Thought.internal.handle[String](Chunk(opening), record, summon[Schema[String]])
+                Thought.internal.handleThoughtGroups(
+                    Chunk(opening),
+                    Present(Structure.Value.Record(Chunk("A" -> Structure.Value.Str("not-an-int")))),
+                    Absent
+                )
             }
         }.map { result =>
             result match

@@ -6,6 +6,7 @@ import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
+import scala.scalanative.build.NativeConfig
 
 val scala3Version    = "3.8.4"
 val scala3LTSVersion = "3.3.8"
@@ -131,6 +132,9 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // Exclude generated FFI binding impls (src_managed *BindingsImpl from the kyo-ffi codegen): measuring
+    // them tracks the generator, not hand-written code.
+    coverageExcludedFiles := ".*src_managed.*",
     // Compact object headers (JEP 519, a product flag in JDK 25 which the build requires) shrink the
     // per-object header from 12-16 to 8 bytes. The test forks allocate heavily (kyo-tasty decodes 80k
     // symbols), so this cuts heap pressure where the forks run closest to their cap.
@@ -164,6 +168,8 @@ lazy val `kyo-settings` = Seq(
 
 Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
+// coverageExcludedFiles is read only under `sbt coverage ...`; a plain build would lint it as unused.
+Global / excludeLintKeys += coverageExcludedFiles
 
 Global / onLoad := {
 
@@ -265,11 +271,13 @@ lazy val kyoJVM: Project = project
         `kyo-ffi-plugin`,
         `kyo-ffi-bench`,
         `kyo-ffi-it`.jvm,
+        `kyo-net`.jvm,
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-config`.jvm,
         `kyo-stats-otlp`.jvm,
+        `kyo-stats-machine`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
@@ -292,6 +300,7 @@ lazy val kyoJVM: Project = project
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
         `kyo-ui`.jvm,
+        `kyo-markdown`.jvm,
         `kyo-case-app`.jvm,
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
@@ -332,12 +341,14 @@ lazy val kyoJS = project
         `kyo-core`.js,
         `kyo-ffi`.js,
         `kyo-ffi-it`.js,
+        `kyo-net`.js,
         `kyo-direct`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
         `kyo-config`.js,
         `kyo-reactive-streams`.js,
         `kyo-stats-otlp`.js,
+        `kyo-stats-machine`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
@@ -357,6 +368,7 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
+        `kyo-markdown`.js,
         `kyo-website`.js,
         `kyo-website-bundle`.js,
         `kyo-pod`.js,
@@ -390,6 +402,7 @@ lazy val kyoNative = project
         `kyo-offheap`.native,
         `kyo-ffi`.native,
         `kyo-ffi-it`.native,
+        `kyo-net`.native,
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-case-app`.native,
@@ -410,9 +423,11 @@ lazy val kyoNative = project
         `kyo-zio-test`.native,
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
+        `kyo-stats-machine`.native,
         `kyo-browser`.native,
         `kyo-slack`.native,
         `kyo-ui`.native,
+        `kyo-markdown`.native,
         `kyo-pod`.native,
         `kyo-compat-future`.native,
         `kyo-compat-kyo`.native,
@@ -442,6 +457,7 @@ lazy val kyoWasm = project
         `kyo-schema`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
+        `kyo-ffi`.wasm,
         `kyo-direct`.wasm,
         `kyo-stm`.wasm,
         `kyo-combinators`.wasm,
@@ -454,7 +470,9 @@ lazy val kyoWasm = project
         `kyo-compat-kyo`.wasm,
         `kyo-compat-zio`.wasm,
         `kyo-http`.wasm,
+        `kyo-net`.wasm,
         `kyo-stats-otlp`.wasm,
+        `kyo-stats-machine`.wasm,
         `kyo-flow`.wasm,
         `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
@@ -465,6 +483,7 @@ lazy val kyoWasm = project
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
         `kyo-ui`.wasm,
+        `kyo-markdown`.wasm,
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
@@ -700,7 +719,7 @@ lazy val `kyo-offheap` =
         )
 
 lazy val `kyo-ffi` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
@@ -722,7 +741,16 @@ lazy val `kyo-ffi` =
                 CallbackShapesGen.generate((Compile / sourceManaged).value)
             }.taskValue
         )
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            // koffi and the node:fs mmap facade are @JSImport modules, so the JS backend needs a module kind
+            // (the default NoModule cannot link an @JSImport). Use ESModule to match the wasm backend: under a
+            // CommonJS module Node keeps `require` module-scoped, which the browser-gate reads (and its
+            // BrowserDetectionTest simulation) cannot observe, whereas ESModule has no `require` and the gate
+            // behaves identically to the wasm axis.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+        )
+        .wasmSettings(`wasm-settings`)
 
 // Declared at top level so the key resolves in the crossProject's native sub-project scope.
 lazy val buildKyoItBundled =
@@ -794,59 +822,38 @@ lazy val `kyo-ffi-it` =
             `js-settings`,
             // koffi is loaded via CommonJS `require` at runtime, so align the linker.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH.
+            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH. The os/arch/ext
+            // tags mirror the plugin's own CCompiler output name so the path matches the file ffiCompile
+            // wrote, including the linux-musl split and the empty (no `lib`) prefix on Windows.
             Test / jsEnv := {
-                val targetDir = target.value
-                val ffiOut    = targetDir / "ffi"
-                val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
-                    if (os.contains("mac")) "dylib"
-                    else if (os.contains("win")) "dll"
-                    else "so"
-                val arch =
-                    sys.props.getOrElse("os.arch", "") match {
-                        case "x86_64" | "amd64"  => "x86_64"
-                        case "aarch64" | "arm64" => "aarch64"
-                        case other               => other
-                    }
-                val osDetect =
-                    if (os.contains("mac")) "darwin"
-                    else if (os.contains("win")) "windows"
-                    else if (os.contains("linux")) "linux"
-                    else os
-                val bundled = ffiOut / s"libkyo_it_bundled-$osDetect-$arch.$ext"
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val bundled = ffiOut / s"${prefix}kyo_it_bundled-$osTag-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120"))
                         .withEnv(Map("KYO_FFI_KYO_IT_BUNDLED_PATH" -> bundled.getAbsolutePath))
                 )
             },
-            // Bootstrap koffi into Node's resolver before tests run. Hooked on Test / compile (not
-            // Test / test) so test, testOnly, and testQuick all trigger it, and it re-runs after a
-            // clean wipes node_modules. Idempotent on the marker file.
-            Test / compile := (Test / compile).dependsOn(Def.task {
-                val log        = streams.value.log
-                val targetBase = target.value
-                val nodeMods   = targetBase / "node_modules"
-                val marker     = nodeMods / "koffi" / "package.json"
-                // Must match `kyo.ffi.internal.FfiErrors.KoffiSupportedRange`.
-                val koffiRange = "^2.7"
-                val pjContent =
-                    s"""{"name":"kyo-ffi-it-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
-                val pj = targetBase / "package.json"
-                if (!pj.exists() || IO.read(pj) != pjContent) {
-                    IO.createDirectory(targetBase)
-                    IO.write(pj, pjContent)
-                }
-                if (!marker.exists()) {
-                    log.info(s"[kyo-ffi-it JS] installing koffi@$koffiRange into $targetBase ...")
-                    val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
-                        targetBase
-                    ).!
-                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
-                }
-            }).value
+            // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
+            ffiKoffiJsBootstrap("kyo-ffi-it-js-test")
         )
 
 lazy val `kyo-ffi-codegen` =
@@ -952,8 +959,6 @@ lazy val `kyo-ffi-bench` =
             foreignRelease,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            Test / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            run / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
             run / fork := true
         )
 
@@ -1112,8 +1117,157 @@ lazy val `kyo-config` =
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
+        .jsSettings(
+            `js-settings`,
+            // Rollout reads KYO_ROLLOUT_PATH once, when its object initializes, which can happen before any
+            // test body runs. RolloutEnvTest asserts a StaticFlag rollout expression resolves against the
+            // topology path Node reports, so the variable has to be in the test process environment from the
+            // start rather than written by a test.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
+            )
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            // Rollout reads KYO_ROLLOUT_PATH once, when its object initializes (see the .jsSettings note
+            // above); RolloutEnvTest runs on wasm too (the js-wasm shared test root), so the same variable
+            // must be in the wasm test process environment from the start. The wasm backend forces ESModule
+            // and needs --experimental-wasm-exnref to load the WasmGC module, so this Test / jsEnv override
+            // (which fully replaces wasm-settings' jsEnv) re-adds that flag alongside the env var.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
+            )
+        )
+
+lazy val `kyo-stats-machine` =
+    crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-stats-machine"))
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-ffi`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            // MacosBindings declares library = "machine_macos", which is not a system library id
+            // (ffiSystemLibraries), so it needs an explicit FfiLibrary entry naming its bundled C
+            // source; LinuxBindings' library = "c" resolves through the system allowlist and needs
+            // no entry here.
+            ffiLibraries := Seq(
+                FfiLibrary(
+                    id = "machine_macos",
+                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile)
+                )
+            )
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / javaOptions += "--enable-native-access=ALL-UNNAMED",
+            // The module auto-starts a background host sampler on first Stat touch. Disable it for the
+            // module's OWN test runs so the once-per-second sampler does not race the suites' destructive
+            // counter-drain assertions on the shared process-global machine.* handles; a test that needs a
+            // sampler starts and stops its own explicitly (MachineStatFactoryTest, MachineHandlesTest).
+            Test / javaOptions += "-Dkyo.machine.disabled=true"
+        )
+        .nativeSettings(
+            `native-settings`,
+            // Disable the auto-started sampler for the module's own Native test runs (see the JVM note).
+            Test / envVars += "KYO_MACHINE_DISABLED" -> "true"
+        )
+        .jsSettings(
+            `js-settings`,
+            // koffi is loaded via CommonJS `require` at runtime, so align the linker.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Disable the auto-started sampler for the module's own JS test runs (see the JVM note); the
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node. Also point the
+            // runtime at the plugin-compiled machine_macos shim through KYO_FFI_MACHINE_MACOS_PATH: the
+            // generated MacosBindings impl resolves the library through NativeLoader.jsResolve, whose first
+            // step is this env var. Without it the shim (produced by ffiCompile under <axis>/target/ffi) is
+            // unresolvable at Node runtime (@kyo/ffi-native is not installed), so koffi's load throws off
+            // macOS instead of the reader degrading. The os/arch/ext tags mirror the plugin's own
+            // CCompiler output name so the path matches the file it wrote, including the linux-musl split.
+            Test / jsEnv := {
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List("--max_old_space_size=5120"))
+                        .withEnv(Map(
+                            "KYO_MACHINE_DISABLED"       -> "true",
+                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
+                        ))
+                )
+            },
+            // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
+            // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
+            // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
+            ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            // Disable the auto-started sampler for the module's own wasm test runs (see the JVM note); the
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node, and point the
+            // runtime at the plugin-compiled machine_macos shim (see the .jsSettings note). The wasm backend
+            // forces ESModule, so the CommonJSModule linker line from .jsSettings is intentionally not
+            // repeated here; the Test / jsEnv override fully replaces wasm-settings' jsEnv, so it re-adds
+            // --experimental-wasm-exnref (the flag Node needs to load the WasmGC module).
+            Test / jsEnv := {
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List(
+                            "--max_old_space_size=5120",
+                            "--experimental-wasm-exnref"
+                        ))
+                        .withEnv(Map(
+                            "KYO_MACHINE_DISABLED"       -> "true",
+                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
+                        ))
+                )
+            },
+            ffiKoffiJsBootstrap("kyo-stats-machine-wasm-test")
+        )
 
 lazy val `kyo-stats-otlp` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
@@ -1151,6 +1305,295 @@ lazy val `kyo-reactive-streams` =
         )
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+// Host os-arch in the build-boringssl.sh / staged/<os-arch>/ naming (e.g. "darwin-aarch64").
+def boringSslHostOsArch: String = {
+    val osName = System.getProperty("os.name", "").toLowerCase
+    val os =
+        if (osName.contains("mac")) "darwin"
+        else if (osName.contains("win")) "windows"
+        else "linux"
+    val arch = System.getProperty("os.arch", "") match {
+        case "x86_64" | "amd64"  => "x86_64"
+        case "aarch64" | "arm64" => "aarch64"
+        case other               => other
+    }
+    s"$os-$arch"
+}
+
+// The staged BoringSSL tree for the host os-arch, present only after build-boringssl.sh ran.
+def boringSslStagedDir(baseDir: File): File =
+    baseDir / "build" / "boringssl" / "staged" / boringSslHostOsArch
+
+// True when libssl.a + libcrypto.a + the openssl headers are staged for the host os-arch.
+def boringSslStaged(baseDir: File): Boolean = {
+    val d = boringSslStagedDir(baseDir)
+    (d / "lib" / "libssl.a").exists() &&
+    (d / "lib" / "libcrypto.a").exists() &&
+    (d / "include" / "openssl" / "ssl.h").exists()
+}
+
+// BoringSSL is C++: link its runtime dynamically after the static archives (-lc++ on darwin, -lstdc++ on Linux).
+def boringSslCxxRuntimeFlags: Seq[String] = {
+    val osName = System.getProperty("os.name", "").toLowerCase
+    if (osName.contains("mac")) Seq("-lc++")
+    else Seq("-lstdc++")
+}
+
+// System-OpenSSL prefix: the brew openssl@3/openssl tree on macOS; None on Linux (default system path).
+def systemOpensslPrefix: Option[File] = {
+    val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
+    if (isMac) {
+        val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
+        val p1 = new java.io.File("/opt/homebrew/opt/openssl")
+        val p0 = new java.io.File("/usr/local/opt/openssl")
+        Some(if (p3.exists()) p3 else if (p1.exists()) p1 else p0)
+    } else None
+}
+
+// -I dirs for the system-OpenSSL probe/compile: brew include/ on macOS, /usr/include on Linux. The Native
+// codegen probe must find openssl/ssl.h here, or it emits a throwing stub instead of an @extern binding.
+def systemOpensslIncludeDirs: Seq[File] =
+    systemOpensslPrefix.map(p => Seq(p / "include")).getOrElse(Seq(new java.io.File("/usr/include")))
+
+// -L lib search dirs for the system-OpenSSL archives/dylibs. Empty on Linux (default link path).
+def systemOpensslLibDirs: Seq[File] =
+    systemOpensslPrefix.map(p => Seq(p / "lib")).getOrElse(Nil)
+
+// The exact flags `openssl-native-settings` appends for system OpenSSL; factored out so
+// `stripSystemOpensslForStagedBoringSsl` can undo them by exact subsequence match (a bare -lssl/-lcrypto
+// token filter would also strip BoringSSL's identically-spelled Linux flags).
+def systemOpensslNativeLinkOpts: Seq[String] =
+    systemOpensslPrefix.map(p => Seq(s"-L${(p / "lib").getAbsolutePath}", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
+
+def systemOpensslNativeCompileOpts: Seq[String] =
+    systemOpensslPrefix.map(p => Seq(s"-I${(p / "include").getAbsolutePath}")).getOrElse(Nil)
+
+// Removes every occurrence of `pattern` as a contiguous subsequence of `xs` (no-op if empty or absent).
+// The system-OpenSSL flags can appear more than once and not as the trailing slice (a transitively-folded
+// FFI manifest AND openssl-native-settings both append them), so removal must scan, not drop a tail.
+def removeSubsequence[A](xs: Seq[A], pattern: Seq[A]): Seq[A] =
+    if (pattern.isEmpty) xs
+    else {
+        @scala.annotation.tailrec
+        def loop(acc: Seq[A]): Seq[A] =
+            acc.indexOfSlice(pattern) match {
+                case -1  => acc
+                case idx => loop(acc.patch(idx, Nil, pattern.size))
+            }
+        loop(xs)
+    }
+
+// When BoringSSL is staged, strip `openssl-native-settings`'s system-OpenSSL flags and prepend the staged
+// BoringSSL include, so a bundled TLS shim resolves BoringSSL headers instead of the system-OpenSSL macros
+// (which segfault on a BoringSSL SSL* via ABI mismatch). `kyoNetBase` is kyo-net's own dir; no-op if unstaged.
+def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): NativeConfig =
+    if (!boringSslStaged(kyoNetBase)) base
+    else {
+        val stagedDir       = boringSslStagedDir(kyoNetBase)
+        val strippedLinking = removeSubsequence(base.linkingOptions, systemOpensslNativeLinkOpts)
+        val strippedCompile = removeSubsequence(base.compileOptions, systemOpensslNativeCompileOpts)
+        val bsslInc         = s"-I${(stagedDir / "include").getAbsolutePath}"
+        base.withLinkingOptions(strippedLinking).withCompileOptions(bsslInc +: strippedCompile)
+    }
+
+// kyo-net's staged-BoringSSL force-load link flags (whole-archive on Linux, -force_load on darwin) plus the
+// dynamic C++ runtime. Reconstructed here (not reused) because downstream kyo-http lacks the
+// `ffiNativeLinkingOptions` task yet also needs them. `kyoNetBase` is kyo-net's own dir; no-op if unstaged.
+def stagedBoringSslForceLoadLinkOpts(kyoNetBase: File): Seq[String] =
+    if (!boringSslStaged(kyoNetBase)) Nil
+    else {
+        val libDir = boringSslStagedDir(kyoNetBase) / "lib"
+        val isMac  = System.getProperty("os.name", "").toLowerCase.contains("mac")
+        val forceLoad =
+            if (isMac)
+                Seq("libssl.a", "libcrypto.a").map(a => s"-Wl,-force_load,${(libDir / a).getAbsolutePath}")
+            else
+                Seq(s"-L${libDir.getAbsolutePath}", "-Wl,--whole-archive", "-lssl", "-lcrypto", "-Wl,--no-whole-archive")
+        forceLoad ++ boringSslCxxRuntimeFlags
+    }
+
+lazy val `kyo-net` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-core`, `kyo-config`)
+        // FFI (Panama on JVM, Scala Native @extern) backs the posix transport on JVM and Native only; JS and
+        // Wasm use the Node backend. So KyoFfiPlugin, the kyo-ffi dependency, and the C-shim ffiLibraries are
+        // scoped here. ffiCodegenClasspath feeds the plugin the codegen classpath for in-build gen (mirrors
+        // kyo-ffi-it).
+        .jvmConfigure(
+            _.enablePlugins(KyoFfiPlugin)
+                .dependsOn(`kyo-ffi`.jvm)
+                .settings(ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data))
+        )
+        .nativeConfigure(
+            _.enablePlugins(KyoFfiPlugin)
+                .dependsOn(`kyo-ffi`.native)
+                .settings(ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data))
+        )
+        .in(file("kyo-net"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .platformsSettings(JVMPlatform, NativePlatform)(
+            // Only the io_uring shim needs a declared library (-luring, Linux only via linkLibsByOs; staticLink folds
+            // liburing in, RI-003); the socket/epoll/kqueue bindings resolve to system libc. On Native, IoUringBindings
+            // is nativeBundled: the plugin copies kyo_uring.c in; only -luring reaches the final link (Linux).
+            ffiLibraries := {
+                // baseDirectory is the per-platform dir (jvm/native/js); the C lives under ../shared/src/main.
+                val sharedBase = baseDirectory.value / ".." / "shared"
+                val kyoNetBase = baseDirectory.value / ".."
+                val isNative   = ffiTargetPlatform.value == "Native"
+                // BoringSSL (kyonet_boringssl): the kyo_net_boringssl.c shim insulates the raw SSL_* ABI (RI-006), linking
+                // the staged static archives (JVM: loadable lib via Panama; Native: archive-linked). When not staged, compile
+                // the stub instead (probe_available -> 0, so BoringSslProvider.isAvailable is false and TLS falls back).
+                val staged    = boringSslStaged(kyoNetBase)
+                val stagedDir = boringSslStagedDir(kyoNetBase)
+                val boringSsl =
+                    if (staged)
+                        FfiLibrary(
+                            id = "kyonet_boringssl",
+                            cSources = (sharedBase / "src" / "main" / "c-boringssl" ** "*.c").get,
+                            // Track the shared header as a compile input so a change to it invalidates the cached C compile.
+                            cHeaders = (sharedBase / "src" / "main" / "c-boringssl" ** "*.h").get,
+                            includeDirs = Seq(stagedDir / "include"),
+                            libDirs = Seq(stagedDir / "lib"),
+                            linkLibs = Seq("ssl", "crypto"),
+                            linkFlags = boringSslCxxRuntimeFlags,
+                            staticLink = true
+                        )
+                    else
+                        FfiLibrary(
+                            id = "kyonet_boringssl",
+                            cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get
+                        )
+                // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, the system-OpenSSL twin (macOS openssl@3,
+                // Linux libssl-dev). Its kyo_ossl_* prefix keeps it distinct from kyo_bssl_* in the one Native binary.
+                // includeDirs gate the Native probe; on Native the SSL_* are already linked by openssl-native-settings, so
+                // this adds no link flags. Absent headers -> the probe stubs the binding.
+                val openSsl =
+                    if (!systemOpensslIncludeDirs.exists(d => (d / "openssl" / "ssl.h").exists()))
+                        FfiLibrary(id = "kyonet_openssl", cSources = Nil)
+                    else if (isNative)
+                        FfiLibrary(
+                            id = "kyonet_openssl",
+                            cSources = (sharedBase / "src" / "main" / "c-openssl" ** "*.c").get,
+                            cHeaders = (sharedBase / "src" / "main" / "c-openssl" ** "*.h").get,
+                            includeDirs = systemOpensslIncludeDirs
+                        )
+                    else
+                        FfiLibrary(
+                            id = "kyonet_openssl",
+                            cSources = (sharedBase / "src" / "main" / "c-openssl" ** "*.c").get,
+                            cHeaders = (sharedBase / "src" / "main" / "c-openssl" ** "*.h").get,
+                            includeDirs = systemOpensslIncludeDirs,
+                            libDirs = systemOpensslLibDirs,
+                            linkLibs = Seq("ssl", "crypto"),
+                            staticLink = true
+                        )
+                Seq(
+                    FfiLibrary(
+                        id = "kyonet_posix_uring",
+                        cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        linkLibsByOs = Map("linux" -> Seq("uring")),
+                        staticLink = true
+                    ),
+                    boringSsl,
+                    openSsl
+                )
+            }
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`,
+            // KyoFfiPlugin bundles the C shims (kyo_uring.c, the TLS shims) into the Native binary and places their
+            // objects before the link libs, so -luring and the staged BoringSSL archives resolve at nativeLink.
+            // stripSystemOpensslForStagedBoringSsl (reused by kyo-http) swaps system OpenSSL for staged BoringSSL when
+            // staged; the ffiLinking append is kyo-net-specific since it owns the FFI libraries.
+            nativeConfig := {
+                val kyoNetBase = baseDirectory.value / ".."
+                val ffiLinking = ffiNativeLinkingOptions.value
+                val stripped   = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
+                stripped.withLinkingOptions(stripped.linkingOptions ++ ffiLinking)
+            },
+            // The plugin's Native flat-copy stages only the .c, so the TLS shims' quoted #include of kyo_ssl_common.h
+            // would not resolve; stage the co-located headers into the same flat dir. (JVM compiles .c in place.)
+            Compile / resourceGenerators += Def.task {
+                val sharedBase = baseDirectory.value / ".." / "shared" / "src" / "main"
+                val destDir    = (Compile / resourceManaged).value / "scala-native"
+                // The two co-located headers are byte-identical; on the flat Native dir they collapse to one.
+                val headers = Seq(
+                    sharedBase / "c-boringssl" / "kyo_ssl_common.h",
+                    sharedBase / "c-openssl" / "kyo_ssl_common.h"
+                ).filter(_.exists())
+                IO.createDirectory(destDir)
+                headers.map { src =>
+                    val dest = destDir / src.getName
+                    // Copy only when content differs, keeping the generated resource (and nativeLink's
+                    // classpath hash) stable across no-change builds.
+                    if (!dest.exists() || !IO.read(dest).equals(IO.read(src)))
+                        IO.copyFile(src, dest, preserveLastModified = true)
+                    dest
+                }.distinct
+            }.taskValue
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Point the JS runtime at the plugin-compiled io_uring shim via KYO_FFI_<LIBID>_PATH,
+            // and bootstrap koffi into Node's resolver before tests run (mirrors kyo-ffi-it).
+            Test / jsEnv := {
+                val targetDir = target.value
+                val ffiOut    = targetDir / "ffi"
+                val os        = sys.props.getOrElse("os.name", "").toLowerCase
+                val ext =
+                    if (os.contains("mac")) "dylib"
+                    else if (os.contains("win")) "dll"
+                    else "so"
+                val arch =
+                    sys.props.getOrElse("os.arch", "") match {
+                        case "x86_64" | "amd64"  => "x86_64"
+                        case "aarch64" | "arm64" => "aarch64"
+                        case other               => other
+                    }
+                val osDetect =
+                    if (os.contains("mac")) "darwin"
+                    else if (os.contains("win")) "windows"
+                    else if (os.contains("linux")) "linux"
+                    else os
+                val lib = ffiOut / s"libkyonet_posix_uring-$osDetect-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List("--max_old_space_size=5120"))
+                        .withEnv(Map("KYO_FFI_KYONET_POSIX_URING_PATH" -> lib.getAbsolutePath))
+                )
+            },
+            // Bootstrap koffi into Node's resolver. Hooked on Test / compile (not Test / test) so test,
+            // testOnly, and testQuick all trigger it, and it re-runs after a clean. Idempotent on the marker.
+            Test / compile := (Test / compile).dependsOn(Def.task {
+                val log        = streams.value.log
+                val targetBase = target.value
+                val nodeMods   = targetBase / "node_modules"
+                val marker     = nodeMods / "koffi" / "package.json"
+                val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
+                val pjContent =
+                    s"""{"name":"kyo-net-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+                val pj = targetBase / "package.json"
+                if (!pj.exists() || IO.read(pj) != pjContent) {
+                    IO.createDirectory(targetBase)
+                    IO.write(pj, pjContent)
+                }
+                if (!marker.exists()) {
+                    log.info(s"[kyo-net JS] installing koffi@$koffiRange into $targetBase ...")
+                    val rc = scala.sys.process.Process(
+                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        targetBase
+                    ).!
+                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+                }
+            }).value
+        )
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-aeron` =
@@ -1202,6 +1645,7 @@ lazy val `kyo-http` =
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema`)
+        .dependsOn(`kyo-net`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -1215,7 +1659,24 @@ lazy val `kyo-http` =
         )
         .nativeSettings(
             `native-settings`,
-            `openssl-native-settings`
+            `openssl-native-settings`,
+            // kyo-http does not own the FFI libraries (only kyo-net enables KyoFfiPlugin); it inherits the bundled TLS
+            // shim C transitively. When BoringSSL is staged, apply the same COMPILE strip/prepend as kyo-net
+            // (stripSystemOpensslForStagedBoringSsl) and re-append kyo-net's force-load LINK window. Linux only, since
+            // darwin force-loads by path (re-appending would duplicate symbols). Unstaged: both are no-ops.
+            nativeConfig := {
+                val kyoNetBase   = baseDirectory.value / ".." / ".." / "kyo-net"
+                val stripped     = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
+                val isMac        = System.getProperty("os.name", "").toLowerCase.contains("mac")
+                val bsslReappend = if (isMac) Nil else stagedBoringSslForceLoadLinkOpts(kyoNetBase)
+                if (bsslReappend.isEmpty) stripped
+                else stripped.withLinkingOptions(stripped.linkingOptions ++ bsslReappend)
+            },
+            // Scala Native resolves ServiceLoader.load at LINK time: a META-INF/services provider is linked
+            // only when also enlisted here. Enlist the shared test factory so the auto-filter tests exercise
+            // real discovery on Native. (The load site is a plain method, not a lazy val, to dodge a Scala
+            // Native 0.5.12 codegen crash (see loadFactories); plain string literal so the "$" does not interpolate.)
+            Test / nativeConfig ~= (_.withServiceProviders(Map("kyo.HttpFilter$Factory" -> Seq("kyo.HttpFilterTestFactory"))))
         )
         .wasmSettings(`wasm-settings`)
 
@@ -1273,13 +1734,18 @@ lazy val `kyo-jsonrpc` =
         .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-net`)
         .in(file("kyo-jsonrpc"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // kyo-net's Native FFI links the TLS shim unconditionally, so downstream Native modules need the SSL
+        // link flags (-lssl -lcrypto); io_uring's -luring propagates through the kyo-ffi plugin on Linux.
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
-        .jsSettings(`js-settings`)
+        // kyo-net's JS transports @JSImport Node built-ins, so the JS linker needs a module kind (default is
+        // NoModule); CommonJS matches kyo-net and kyo-jsonrpc-http.
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
 
 lazy val `kyo-jsonrpc-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
@@ -1833,6 +2299,24 @@ lazy val `kyo-slack` =
         )
         .wasmSettings(`wasm-settings`)
 
+lazy val `kyo-markdown` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-markdown"))
+        .dependsOn(`kyo-ui`)
+        .dependsOn(`kyo-parse`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            // kyo-ui links as a CommonJS module (its js-wasm sources import scalajs-dom); a
+            // downstream test link must match its module kind.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-ui` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -2110,27 +2594,39 @@ lazy val `kyo-test-readme` =
 
 lazy val `openssl-native-settings` = Seq(
     nativeConfig ~= { c =>
-        val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
-        val opensslPrefix =
-            if (isMac) {
-                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
-                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
-                val p0 = new java.io.File("/usr/local/opt/openssl")
-                Some(if (p3.exists()) p3.getAbsolutePath else if (p1.exists()) p1.getAbsolutePath else p0.getAbsolutePath)
-            } else None
-        val linkOpts    = opensslPrefix.map(p => Seq(s"-L$p/lib", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
-        val compileOpts = opensslPrefix.map(p => Seq(s"-I$p/include")).getOrElse(Nil)
-        c.withLinkingOptions(c.linkingOptions ++ linkOpts)
-            .withCompileOptions(c.compileOptions ++ compileOpts)
+        c.withLinkingOptions(c.linkingOptions ++ systemOpensslNativeLinkOpts)
+            .withCompileOptions(c.compileOptions ++ systemOpensslNativeCompileOpts)
     }
 )
+
+// Reads the FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one *.flags file per module
+// under `relDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a later system include.
+// A downstream Native module folds a dependency's flags in so the dep's bundled C compiles and links the way
+// it does in the owning module (see `native-settings`).
+def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String]): Seq[String] =
+    cp.flatMap { entry =>
+        val dir = relDir.foldLeft(entry.data)(_ / _)
+        if (dir.isDirectory) (dir * "*.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
+    }.map(_.trim).filter(_.nonEmpty).distinct
 
 lazy val `native-settings` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
-    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0"
+    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
+    // A dependency's nativeBundled FFI C (kyo-net's kyo_uring.c and TLS shims) is compiled into THIS Native binary
+    // (Scala Native scans every scala-native dir on the classpath), but nativeConfig does not propagate across a
+    // project dependency; so fold each dependency's plugin-written FFI compile/link flags off the classpath, else the
+    // link fails (SSL_CTX_ctrl macro / undefined io_uring_*). A module owning its FFI flags wires them directly.
+    nativeConfig := {
+        val base         = nativeConfig.value
+        val cp           = (Compile / dependencyClasspath).value
+        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir)
+        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir)
+        val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
+        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
+    }
 )
 
 lazy val `js-settings` = Seq(
@@ -2323,7 +2819,7 @@ lazy val `kyo-test-runner` =
         )
         .jvmSettings(
             mimaCheck(false),
-            mainClass                             := Some("kyo.test.runner.Cli"),
+            Compile / mainClass                   := Some("kyo.test.runner.Cli"),
             libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
             Compile / unmanagedClasspath ++=
                 (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,

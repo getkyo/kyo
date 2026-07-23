@@ -30,6 +30,10 @@ object Platform:
     val isWindows: Boolean = nodePlatform == "win32"
     val isMac: Boolean     = nodePlatform == "darwin"
     val isLinux: Boolean   = nodePlatform == "linux"
+    // Node reports "freebsd" and "openbsd"; a NetBSD build reports "netbsd". Darwin is reported as
+    // "darwin" and classifies as mac above, never as a BSD.
+    val isBsd: Boolean      = nodePlatform.contains("bsd")
+    val isMacOrBsd: Boolean = isMac || isBsd
 
     val fileSeparator: String = if isWindows then "\\" else "/"
     val pathSeparator: String = if isWindows then ";" else ":"

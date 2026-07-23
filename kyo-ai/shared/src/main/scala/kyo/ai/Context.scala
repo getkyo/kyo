@@ -205,8 +205,19 @@ object Context:
     /** The provider-assigned identifier of a tool call. */
     case class CallId(id: String) derives CanEqual, Schema
 
-    /** A single tool call requested by the assistant: the call id, the function name, the raw argument JSON. */
-    case class Call(id: CallId, function: String, arguments: String) derives Schema, CanEqual
+    /** A single tool call requested by the assistant: the call id, the function name, the raw argument JSON.
+      *
+      * `providerExtra` carries whatever the endpoint attached to the call and expects back verbatim on
+      * later turns. Opaque on purpose: one endpoint refuses the next request unless the token it issued
+      * with a call is returned with it, and the refusal names an internal field, not the tool. Nothing
+      * reads the contents, so it is preserved, not interpreted.
+      */
+    case class Call(
+        id: CallId,
+        function: String,
+        arguments: String,
+        providerExtra: Maybe[Structure.Value] = Absent
+    ) derives Schema, CanEqual
 
     /** A conversation message, tagged with its role. Each leaf carries two trailing defaulted
       * enrichment fields (tokens/origin): once-computed facts living on the message value that owns

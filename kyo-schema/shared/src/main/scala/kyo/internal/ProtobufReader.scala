@@ -14,6 +14,10 @@ import scala.annotation.tailrec
 final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reader:
     override def frame: Frame = _frame
 
+    private[kyo] def requireEndOfInput(): Unit =
+        if pos < data.length then
+            throw TrailingInputException(Protobuf(), s"${data.length - pos} byte(s) after the decoded value")(using frame)
+
     // Wire type constants
     private val Varint          = 0
     private val Fixed64         = 1
@@ -66,6 +70,12 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
         fieldIdOverrides = overrides
         this
+
+    /** The current field-id override map, read by a caller that is about to replace it with a
+      * nested schema's own overrides, so the prior value can be restored once that nested read
+      * completes.
+      */
+    private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
 
     def objectStart(): Int =
         checkDepth()

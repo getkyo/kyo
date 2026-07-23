@@ -149,6 +149,23 @@ final class Scheduler(
     def schedule(task: Task): Unit =
         schedule(task, null)
 
+    /** Schedules a task, preferring a worker other than the caller's current one.
+      *
+      * Intended for a task that parks its carrier in a blocking wait and re-arms itself each cycle, such as an I/O driver's readiness poll. The
+      * plain `schedule` would place the successor on the caller's own worker (the `Worker.current()` fast path), so the carrier that just
+      * finished a cycle would immediately park again with the completions it produced queued behind it. Excluding the caller lets that carrier
+      * drain those completions while a different one takes the next wait.
+      *
+      * Placement is best effort, not a guarantee: the stride search skips the caller and unavailable workers, but the random fallback used when
+      * that search finds no candidate does not. A task that lands on a parked worker is not stranded, because a worker attempts a steal whenever
+      * its own queue empties and only goes idle when that steal also comes back empty.
+      *
+      * @param task
+      *   The task to schedule for execution
+      */
+    def scheduleExcludingCurrent(task: Task): Unit =
+        schedule(task, Worker.current())
+
     /** Tests if a new task should be rejected based on current system conditions.
       *
       * The scheduler uses admission control to prevent system overload by selectively rejecting tasks when detecting signs of congestion.

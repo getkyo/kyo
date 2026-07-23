@@ -2,7 +2,7 @@
 
 kyo-stats-otlp wires kyo-core's existing `Stat` counters, gauges, histograms, and trace spans to any OpenTelemetry Protocol collector. There is no new API to learn at the call site: you keep writing `Stat.initScope(...).initCounter(...)` and `Stat.initScope(...).traceSpan(...)` in your application. Adding this module to the classpath and setting `OTEL_EXPORTER_OTLP_ENDPOINT` is the entire integration.
 
-Discovery happens through `META-INF/services` on JVM and Scala Native, and through an explicit `@JSExportTopLevel` registration on Scala.js. When the endpoint variable is unset, the factories return empty and the rest of the runtime sees the standard no-op exporter, so the module is safe to ship in builds that may or may not emit telemetry. Trace spans are buffered in a bounded channel and flushed in batches on a fixed schedule or when the batch-size threshold is hit; metrics are scraped from the global `StatsRegistry` on a separate periodic loop. W3C Trace Context propagation is layered as HTTP client/server filters discovered through the same service-loader path.
+Discovery happens through `META-INF/services` on the JVM, through an explicit `@JSExportTopLevel` registration on Scala.js, and through `META-INF/services` plus a link-time `nativeConfig.withServiceProviders` enlistment on Scala Native (see [Service-loader registration](#service-loader-registration)). When the endpoint variable is unset, the factories return empty and the rest of the runtime sees the standard no-op exporter, so the module is safe to ship in builds that may or may not emit telemetry. Trace spans are buffered in a bounded channel and flushed in batches on a fixed schedule or when the batch-size threshold is hit; metrics are scraped from the global `StatsRegistry` on a separate periodic loop. W3C Trace Context propagation is layered as HTTP client/server filters discovered through the same service-loader path.
 
 The module is published for JVM, Scala.js, and Scala Native. The wire encoding is OTLP-over-HTTP/JSON, not protobuf.
 
@@ -30,7 +30,17 @@ Add `kyo-stats-otlp` to the classpath of any module that already uses `kyo-core`
 
 ### Service-loader registration
 
-On JVM and Scala Native, kyo-stats-registry discovers exporter implementations through `META-INF/services/kyo.stats.internal.ExporterFactory`. The HTTP runtime independently discovers `META-INF/services/kyo.HttpFilter$Factory`. Both files ship in this module's jar, so dropping the jar on the classpath is enough.
+On the JVM, kyo-stats-registry discovers exporter implementations through `META-INF/services/kyo.stats.internal.ExporterFactory`, and the HTTP runtime independently discovers `META-INF/services/kyo.HttpFilter$Factory`. Both files ship in this module's jar, so dropping the jar on the classpath is enough.
+
+On Scala Native, `java.util.ServiceLoader` is resolved at LINK time: the same `META-INF/services` files ship in the jar, but a provider is linked into the binary ONLY when it is also enlisted in the final application's `nativeConfig`. Enlist both providers there, or OTLP export and the trace-propagation filters are silently inert:
+
+```scala doctest:expect=skipped
+// build.sbt, in the Scala Native application project
+nativeConfig ~= (_.withServiceProviders(Map(
+    "kyo.stats.internal.ExporterFactory" -> Seq("kyo.stats.otlp.OTLPExporterFactory"),
+    "kyo.HttpFilter$Factory"             -> Seq("kyo.stats.otlp.OTLPHttpFilterFactory")
+)))
+```
 
 On Scala.js, `META-INF/services` does not work. The module's JS-only `OTLPRegistration` object uses `@JSExportTopLevel("__kyo_otel_init")` to register both factories at module load time:
 
@@ -218,7 +228,7 @@ Counters and counter-gauges export as `OTLPSum` with `isMonotonic = true` and `a
 
 ### Histograms
 
-Histograms export as `OTLPHistogram` with explicit bucket boundaries from kyo-core's histogram summary, plus per-bucket counts, min, and max. Aggregation temporality is also DELTA.
+Histograms export as `OTLPHistogram` with explicit bucket boundaries from kyo-core's histogram summary, plus per-bucket counts, min, max, and the sum of every observed value. Aggregation temporality is CUMULATIVE, and every data point carries the same series-start `startTimeUnixNano`, captured at the first export. A histogram's buckets, count, min, max, and sum are lifetime values that never drain on read, so each export reports the totals for the whole series rather than the activity since the last export.
 
 ### Gauges
 
@@ -226,7 +236,7 @@ Gauges export as `OTLPGauge` containing a single `NumberDataPoint` with the curr
 
 ### Zero-activity intervals
 
-Metrics with `delta == 0` since the last export are skipped entirely. An export cycle with no traffic produces an empty payload, not zero-valued data points. Histograms with `count == 0` are also skipped. This keeps cardinality cost down on the collector side but means downstream dashboards see gaps, not zeros, for idle periods.
+Counters and counter-gauges with `delta == 0` since the last export are skipped entirely, so downstream dashboards see gaps, not zeros, for idle periods. A histogram is skipped only while its `count` is still 0: once it has been observed, every later export re-sends its cumulative data point, since that is what a cumulative series requires. A gauge is exported only once it has been registered, and a metric source registers a gauge on its first present observation, so a gauge for a value the host never produces registers no handle and is absent from the export entirely; this registration-absence is the gauge-side counterpart to the counter `delta == 0` and histogram `count == 0` skips, an idle or host-absent gauge yielding no data point rather than a fabricated zero. An export cycle with no traffic and no observed histogram produces an empty payload, not zero-valued data points.
 
 Weak-reference cleanup for collected metric instances runs inline during the export iteration. A second pass over the same Scala Native map would deadlock, so cleanup and read share one traversal.
 
@@ -390,12 +400,13 @@ val histPoint = HistogramDataPoint(
     explicitBounds = Seq(1.0, 5.0, 10.0),
     bucketCounts = Seq("1", "1", "1", "0"),
     min = 0.5,
-    max = 7.0
+    max = 7.0,
+    sum = 13.5
 )
 
 val hist = OTLPHistogram(
     dataPoints = Seq(histPoint),
-    aggregationTemporality = OTLPModel.DeltaTemporality
+    aggregationTemporality = OTLPModel.CumulativeTemporality
 )
 
 val counter = Metric(name = "http.server.requests", description = "Total requests", unit = "1", sum = Present(sum))

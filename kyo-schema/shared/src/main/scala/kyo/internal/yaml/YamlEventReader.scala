@@ -5,6 +5,9 @@ import kyo.Codec.Reader
 
 final private[kyo] class YamlEventReader private (private val inner: YamlReader)(using _frame: Frame) extends Reader:
 
+    // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
+    private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
+
     override def frame: Frame =
         _frame
 

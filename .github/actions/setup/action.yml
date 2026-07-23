@@ -41,6 +41,28 @@ runs:
         key: kyo-browser-${{ inputs.os }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}
         restore-keys: kyo-browser-${{ inputs.os }}-
 
+    - name: Add supplementary swap (Linux)
+      if: ${{ contains(inputs.os, 'linux') }}
+      shell: bash
+      run: |
+        # The Native link phase can overcommit the 16GB runner (a large sbt driver heap plus
+        # forked clang jobs), and the stock runner swap has been observed fully exhausted right
+        # before kernel OOM kills. Extra swap turns a marginal overcommit into slowdown instead
+        # of a SIGKILL. Best-effort: a runner that cannot host the file keeps its stock swap.
+        for dir in /mnt "${RUNNER_TEMP:-/tmp}"; do
+          swapfile="$dir/kyo-swapfile"
+          if sudo fallocate -l 8G "$swapfile" 2>/dev/null \
+             && sudo chmod 600 "$swapfile" \
+             && sudo mkswap "$swapfile" >/dev/null 2>&1 \
+             && sudo swapon "$swapfile" 2>/dev/null; then
+            echo "supplementary swap active at $swapfile"
+            free -m | awk 'NR==1 || /Swap/'
+            exit 0
+          fi
+          sudo rm -f "$swapfile" 2>/dev/null || true
+        done
+        echo "warning: could not add supplementary swap; continuing with stock swap only"
+
     - name: Install native dependencies (Linux)
       if: ${{ inputs.target == 'Native' && contains(inputs.os, 'linux') }}
       uses: nick-fields/retry@v4
@@ -51,6 +73,20 @@ runs:
         command: |
           sudo apt-get update
           sudo apt-get install -y -o Acquire::Retries=3 libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+
+    # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
+    # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
+    # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
+    - name: Install liburing (Linux)
+      if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
+      uses: nick-fields/retry@v4
+      with:
+        max_attempts: 3
+        timeout_minutes: 5
+        retry_wait_seconds: 15
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
 
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
@@ -108,3 +144,27 @@ runs:
       with:
         jvm: corretto:25
         apps: sbt
+
+    # Build and stage the vendored BoringSSL static archives (libssl.a, libcrypto.a) for the runner's
+    # os-arch, used by the kyo-net TLS data plane. build-boringssl.sh clones BoringSSL at the pinned commit
+    # and builds via CMake plus Go (pre-installed on GitHub-hosted runners; installed defensively if
+    # absent). The staged tree is gitignored, so it is produced on every JVM/Native runner; without it the
+    # kyonet_boringssl shim links a stub and the BoringSSL TLS tests cancel.
+    - name: Prepare BoringSSL
+      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' }}
+      shell: bash
+      run: |
+        case "${{ inputs.os }}" in
+          linux-x64)   OS_ARCH=linux-x86_64 ;;
+          linux-arm64) OS_ARCH=linux-aarch64 ;;
+          macos-arm64) OS_ARCH=darwin-aarch64 ;;
+          *) echo "BoringSSL not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+        esac
+        if [[ "${{ inputs.os }}" == linux-* ]]; then
+          command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
+          command -v go >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 golang-go; }
+        else
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+          command -v go >/dev/null 2>&1 || brew install go
+        fi
+        bash kyo-net/build/boringssl/build-boringssl.sh "$OS_ARCH"

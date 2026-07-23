@@ -1152,15 +1152,18 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         }
         "instantSchema" in {
             val s = summon[Schema[java.time.Instant]]
-            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
         }
         "durationSchema" in {
             val s = summon[Schema[java.time.Duration]]
-            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Duration].asInstanceOf[Tag[Any]]))
+            assert(s.structure == Structure.Type.Primitive(
+                Structure.PrimitiveKind.Duration,
+                Tag[java.time.Duration].asInstanceOf[Tag[Any]]
+            ))
         }
         "spanByteSchema" in {
             val s = summon[Schema[Span[Byte]]]
-            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]]))
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]))
         }
         "frameSchema" in {
             val s = summon[Schema[Frame]]
@@ -1490,6 +1493,46 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                         case other => fail(s"Expected Primitive(String) but got $other")
                     end match
                 case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringOrderedDictSchema produces Mapping structure with name OrderedDict and Primitive(String) key" in {
+            val schema = summon[Schema[OrderedDict[String, Boolean]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.name == "OrderedDict")
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "orderedDictSchema produces Mapping structure with name OrderedDict" in {
+            val schema = summon[Schema[OrderedDict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.name == "OrderedDict")
+                    assert(m.keyType eq summon[Schema[Int]].structure)
+                    assert(m.valueType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringOrderedDictSchema and orderedDictSchema with String key use different givens" in {
+            // stringOrderedDictSchema: keyType is Primitive(String)
+            // orderedDictSchema: keyType is Schema[String].structure (also Primitive(String) but distinct path)
+            val stringOrderedDictS = summon[Schema[OrderedDict[String, Int]]]
+            stringOrderedDictS.structure match
+                case m: Structure.Type.Mapping =>
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+            val orderedDictS = summon[Schema[OrderedDict[Int, Int]]]
+            orderedDictS.structure match
+                case m: Structure.Type.Mapping => assert(m.keyType eq summon[Schema[Int]].structure)
+                case other                     => fail(s"Expected Mapping but got $other")
             end match
         }
         "Schema[Map[String,Int]].structure returns same reference on repeated calls" in {

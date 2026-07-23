@@ -211,7 +211,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(default.compaction.summarizer.isEmpty, "the default summarizer knob is Absent (the warm route)")
         // Absent resolves to the warm route with provider.small as the degraded fallback.
         assert(default.provider.small.modelName.nonEmpty, "provider.small is the degraded fallback route")
-        val pinned = Config.OpenAI.gpt_4o_mini
+        val pinned = Config.OpenAI.gpt_5_4_mini
         val set    = default.compaction(_.summarizer(pinned))
         assert(set.compaction.summarizer.exists(_ eq pinned), "Present(pinnedConfig) resolves to the pinned fill model")
     }
@@ -874,7 +874,7 @@ class CompactorTest extends kyo.test.Test[Any]:
                             tool.decodeAndRun("""{"id":5}""").map { r5 =>
                                 assert(
                                     r2 match
-                                        case RunOutcome.Ran(Result.Success(o)) =>
+                                        case RunOutcome.Ran(Result.Success(o), _) =>
                                             o == Json.encode(
                                                 "region 2 was forgotten past the retention horizon and is no longer recallable"
                                             )
@@ -884,15 +884,15 @@ class CompactorTest extends kyo.test.Test[Any]:
                                 )
                                 assert(
                                     r3 match
-                                        case RunOutcome.Ran(Result.Success(o)) => o == Json.encode("no such recallable region: 3")
-                                        case _                                 => false
+                                        case RunOutcome.Ran(Result.Success(o), _) => o == Json.encode("no such recallable region: 3")
+                                        case _                                    => false
                                     ,
                                     s"recall of a forgotten interior ordinal (folded into the band) is not a distinct region, got: $r3"
                                 )
                                 assert(
                                     r5 match
-                                        case RunOutcome.Ran(Result.Success(o)) => o.contains("assistant: SURVIVOR PAYLOAD")
-                                        case _                                 => false
+                                        case RunOutcome.Ran(Result.Success(o), _) => o.contains("assistant: SURVIVOR PAYLOAD")
+                                        case _                                    => false
                                     ,
                                     s"recall of a still-live survivor returns its covered messages verbatim and role-tagged, got: $r5"
                                 )

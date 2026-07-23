@@ -34,10 +34,10 @@ end Yaml
   */
 object Yaml:
     /** Default maximum nesting depth for YAML schema decoding. */
-    val DefaultMaxDepth: Int = Json.DefaultMaxDepth
+    inline val DefaultMaxDepth = Json.DefaultMaxDepth
 
     /** Default maximum number of entries in a decoded YAML collection or mapping. */
-    val DefaultMaxCollectionSize: Int = Json.DefaultMaxCollectionSize
+    inline val DefaultMaxCollectionSize = Json.DefaultMaxCollectionSize
 
     /** Default YAML codec instance for generic schema encoding and decoding. */
     given Yaml = Yaml()
@@ -141,6 +141,9 @@ object Yaml:
       * documents. A present `documentIndex` always takes precedence over `documentMode`. The default configuration decodes exactly one YAML
       * 1.2 document with the standard limits.
       */
+    // Guarded against the Yaml class-initialization cycle documented at `pipeline`: these
+    // defaults are compile-time inline constants, so this constructor default carries no
+    // runtime reference to any config companion or to the Yaml object itself.
     case class ReaderConfig(
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize,
@@ -190,6 +193,9 @@ object Yaml:
       * IMPORTANT: `ScalarQuoting.WhenNeeded` can emit plain strings such as `true` or `0x3A` without quotes. Use the default
       * `QuoteAmbiguous` behavior when encoded YAML should decode back to strings under the YAML Core schema.
       */
+    // Guarded against the Yaml class-initialization cycle documented at `pipeline`: these
+    // defaults are literal values with no reference to the Yaml object or any other config
+    // companion.
     case class WriterConfig(
         collectionStyle: WriterConfig.CollectionStyle = WriterConfig.CollectionStyle.Block,
         sequenceMappingStyle: WriterConfig.SequenceMappingStyle = WriterConfig.SequenceMappingStyle.Indented,
@@ -1226,8 +1232,17 @@ object Yaml:
 
     end Pipeline
 
-    /** Default YAML pipeline using [[ReaderConfig.Default]] and [[WriterConfig.Default]]. */
-    val pipeline: Pipeline[Nothing] =
+    /** Default YAML pipeline using [[ReaderConfig.Default]] and [[WriterConfig.Default]].
+      *
+      * Lazy so that Yaml's own initializer never forces ReaderConfig's or WriterConfig's
+      * initialization. `ReaderConfig`'s limit defaults are compile-time inline constants,
+      * so its constructor carries no runtime reference to the Yaml object or any nested
+      * config companion; keeping this pipeline lazy in turn ensures Yaml's own initializer
+      * never forces a nested config companion's initialization eagerly. Either safeguard
+      * alone would prevent the cycle; both stay in place because either could otherwise
+      * reappear on its own.
+      */
+    lazy val pipeline: Pipeline[Nothing] =
         new Pipeline(ReaderConfig.Default, WriterConfig.Default, Absent)
 
     private def widenProcessor[Err1, Err2](processor: Events.Processor[Err2]): Events.Processor[Err1 | Err2] =

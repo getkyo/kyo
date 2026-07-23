@@ -72,6 +72,92 @@ object Structure:
     inline def typedValue[A](value: A)(using schema: Schema[A], frame: Frame): Structure.TypedValue =
         Structure.TypedValue(schema.structure, schema.toStructureValue(value))
 
+    /** Checks a wire value against a declared wire Type, returning the first violation as a
+      * human-readable path-prefixed message, or Absent when the value conforms.
+      *
+      * This is the enforcement companion of shape-dynamic schemas (`Schema#withStructure` over the open
+      * `Schema[Structure.Value]`): their passthrough codec accepts any shape, so a consumer that
+      * promised a wire structure to a producer validates the produced value here. Deliberately
+      * conservative: it enforces what it models and accepts the rest, so a check can never reject a
+      * value the codec would faithfully round-trip for reasons the model does not capture.
+      *
+      *   - Product: the value must be a Record carrying every non-optional, non-defaulted field;
+      *     present fields are checked recursively. Extra record fields are accepted (readers ignore
+      *     them).
+      *   - Collection: the value must be a Sequence; elements are checked recursively.
+      *   - Primitive: gross kind mismatches are rejected (a boolean where a string was declared);
+      *     numeric kinds accept any numeric value shape, Char accepts its string form, Unit accepts
+      *     anything.
+      *   - Optional: Null conforms; anything else is checked against the inner type.
+      *   - Sum, Mapping, Open: accepted without inspection (not modeled).
+      */
+    private[kyo] def conform(value: Structure.Value, tpe: Structure.Type): Maybe[String] =
+        tpe match
+            case p: Type.Product =>
+                value match
+                    case Value.Record(fields) =>
+                        // Keep-first on duplicate keys, matching reader behavior.
+                        val byName = fields.foldLeft(Map.empty[String, Value]) { (m, kv) =>
+                            if m.contains(kv._1) then m else m + kv
+                        }
+                        p.fields.foldLeft(Maybe.empty[String]) { (acc, f) =>
+                            if acc.nonEmpty then acc
+                            else
+                                byName.get(f.name) match
+                                    case Some(v) =>
+                                        if f.optional && v == Value.Null then Absent
+                                        else conform(v, f.fieldType).map(m => s"${f.name}: $m")
+                                    case None =>
+                                        if f.optional || f.default.nonEmpty then Absent
+                                        else Present(s"missing required field '${f.name}'")
+                        }
+                    case other => Present(s"expected an object for '${p.name}', got ${valueKind(other)}")
+            case c: Type.Collection =>
+                value match
+                    case Value.Sequence(elements) =>
+                        elements.zipWithIndex.foldLeft(Maybe.empty[String]) { (acc, ei) =>
+                            if acc.nonEmpty then acc
+                            else conform(ei._1, c.elementType).map(m => s"[${ei._2}]: $m")
+                        }
+                    case other => Present(s"expected an array for '${c.name}', got ${valueKind(other)}")
+            case pr: Type.Primitive =>
+                (pr.kind, value) match
+                    case (PrimitiveKind.String, _: Value.Str)                                        => Absent
+                    case (PrimitiveKind.Boolean, _: Value.Bool)                                      => Absent
+                    case (PrimitiveKind.Unit, _)                                                     => Absent
+                    case (PrimitiveKind.Char, _: Value.Str) | (PrimitiveKind.Char, _: Value.Integer) => Absent
+                    case (
+                            PrimitiveKind.Int | PrimitiveKind.Long | PrimitiveKind.Short | PrimitiveKind.Byte |
+                            PrimitiveKind.Float | PrimitiveKind.Double | PrimitiveKind.BigInt | PrimitiveKind.BigDecimal,
+                            _: Value.Integer | _: Value.Decimal | _: Value.BigNum
+                        ) => Absent
+                    case (PrimitiveKind.Bytes, _: Value.Bytes)       => Absent
+                    case (PrimitiveKind.Instant, _: Value.Instant)   => Absent
+                    case (PrimitiveKind.Duration, _: Value.Duration) => Absent
+                    case (kind, other)                               => Present(s"expected $kind, got ${valueKind(other)}")
+            case o: Type.Optional =>
+                value match
+                    case Value.Null => Absent
+                    case v          => conform(v, o.innerType)
+            case _ => Absent
+    end conform
+
+    private def valueKind(value: Structure.Value): String =
+        value match
+            case _: Value.Record      => "an object"
+            case _: Value.VariantCase => "a variant"
+            case _: Value.Sequence    => "an array"
+            case _: Value.MapEntries  => "a map"
+            case _: Value.Str         => "a string"
+            case _: Value.Bool        => "a boolean"
+            case _: Value.Integer     => "a number"
+            case _: Value.Decimal     => "a number"
+            case _: Value.BigNum      => "a number"
+            case _: Value.Bytes       => "bytes"
+            case _: Value.Instant     => "an instant"
+            case _: Value.Duration    => "a duration"
+            case Value.Null           => "null"
+
     // --- Type hierarchy ---
 
     /** Structural type descriptor for a Scala type.
@@ -91,6 +177,7 @@ object Structure:
         case Int, Long, Short, Byte, Char
         case Float, Double
         case BigInt, BigDecimal
+        case Bytes, Instant, Duration
         case String, Boolean, Unit
     end PrimitiveKind
 
@@ -746,7 +833,8 @@ object Structure:
     /** Untyped, format-neutral value tree produced by encoding a typed Scala value.
       *
       * Each variant corresponds to a structural category: Record for case classes, VariantCase for sealed trait instances, Sequence for
-      * collections, MapEntries for maps, and scalar variants (Str, Bool, Integer, Decimal, BigNum, Null) for primitives.
+      * collections, MapEntries for maps, and scalar variants (Str, Bool, Integer, Decimal, BigNum, Bytes, Instant, Duration, Null) for
+      * primitives.
       *
       * Values are produced by `Structure.encode` or `Schema.toStructureValue` and consumed by `Structure.decode` or navigation via `Path`.
       */
@@ -778,8 +866,77 @@ object Structure:
         /** An arbitrary-precision numeric scalar. */
         case BigNum(value: BigDecimal)
 
+        /** A byte sequence scalar. */
+        case Bytes(value: Span[Byte])
+
+        /** An instant scalar. */
+        case Instant(value: java.time.Instant)
+
+        /** A duration scalar. */
+        case Duration(value: java.time.Duration)
+
         /** Represents null or an absent optional. */
         case Null
+
+        override def equals(other: Any): Boolean =
+            def sameValue(a: Any, b: Any): Boolean =
+                if a.asInstanceOf[AnyRef] eq null then b.asInstanceOf[AnyRef] eq null
+                else a.equals(b)
+            end sameValue
+
+            other match
+                case that: Value if ordinal == that.ordinal =>
+                    val self = this.asInstanceOf[Product]
+                    val peer = that.asInstanceOf[Product]
+                    ordinal match
+                        case 0 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 1 => sameValue(self.productElement(0), peer.productElement(0)) && sameValue(
+                                self.productElement(1),
+                                peer.productElement(1)
+                            )
+                        case 2 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 3 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 4 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 5 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 6 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 7 =>
+                            self.productElement(0).asInstanceOf[Double] == peer.productElement(0).asInstanceOf[Double]
+                        case 8 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 9 =>
+                            java.util.Arrays.equals(
+                                self.productElement(0).asInstanceOf[Span[Byte]].toArray,
+                                peer.productElement(0).asInstanceOf[Span[Byte]].toArray
+                            )
+                        case 10 => self.productElement(0).equals(peer.productElement(0))
+                        case 11 => self.productElement(0).equals(peer.productElement(0))
+                        case 12 => true
+                        case _  => false
+                    end match
+                case _ => false
+            end match
+        end equals
+
+        override def hashCode(): Int =
+            val self = this.asInstanceOf[Product]
+            ordinal match
+                case 0 => 31 * "Record".hashCode + self.productElement(0).hashCode
+                case 1 => 31 * (31 * "VariantCase".hashCode + self.productElement(0).hashCode) + self.productElement(1).hashCode
+                case 2 => 31 * "Sequence".hashCode + self.productElement(0).hashCode
+                case 3 => 31 * "MapEntries".hashCode + self.productElement(0).hashCode
+                case 4 => 31 * "Str".hashCode + self.productElement(0).hashCode
+                case 5 => 31 * "Bool".hashCode + self.productElement(0).hashCode
+                case 6 => 31 * "Integer".hashCode + self.productElement(0).hashCode
+                case 7 =>
+                    val value = self.productElement(0).asInstanceOf[Double]
+                    31 * "Decimal".hashCode + (if value == 0.0 then 0 else java.lang.Double.hashCode(value))
+                case 8  => 31 * "BigNum".hashCode + self.productElement(0).hashCode
+                case 9  => 31 * "Bytes".hashCode + java.util.Arrays.hashCode(self.productElement(0).asInstanceOf[Span[Byte]].toArray)
+                case 10 => 31 * "Instant".hashCode + self.productElement(0).hashCode
+                case 11 => 31 * "Duration".hashCode + self.productElement(0).hashCode
+                case 12 => "Null".hashCode
+                case _  => 0
+            end match
+        end hashCode
     end Value
 
     object Value:
@@ -837,6 +994,9 @@ object Structure:
             else if tag =:= Tag[Float] then Decimal(value.asInstanceOf[Float].toDouble)
             else if tag =:= Tag[BigDecimal] then BigNum(value.asInstanceOf[BigDecimal])
             else if tag =:= Tag[BigInt] then BigNum(BigDecimal(value.asInstanceOf[BigInt]))
+            else if tag =:= Tag[Span[Byte]] then Bytes(value.asInstanceOf[Span[Byte]])
+            else if tag =:= Tag[java.time.Instant] then Instant(value.asInstanceOf[java.time.Instant])
+            else if tag =:= Tag[java.time.Duration] then Duration(value.asInstanceOf[java.time.Duration])
             else if tag =:= Tag[Char] then Str(value.asInstanceOf[Char].toString)
             else Str(value.toString)
 

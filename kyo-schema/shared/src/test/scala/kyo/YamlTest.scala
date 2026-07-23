@@ -35,6 +35,23 @@ final case class YamlMultiDocumentConfig(
     unit: SealedNoArgVariants
 ) derives CanEqual
 
+sealed trait YamlDiscSource derives CanEqual
+case class YamlRabbit(host: String, queue: Maybe[String]) extends YamlDiscSource derives CanEqual, Schema
+case class YamlKafka(broker: String)                      extends YamlDiscSource derives CanEqual, Schema
+given Schema[YamlDiscSource] = Schema.derived[YamlDiscSource].discriminator("type")
+case class YamlDiscTable(name: String, source: YamlDiscSource) derives CanEqual, Schema
+case class YamlDiscRoot(tables: List[YamlDiscTable]) derives CanEqual, Schema
+case class YamlDiscGroup(name: String, tables: List[YamlDiscTable]) derives CanEqual, Schema
+case class YamlDiscDeep(groups: List[YamlDiscGroup]) derives CanEqual, Schema
+
+sealed trait YamlAdjSource derives CanEqual
+case class YamlAdjRabbit(host: String) extends YamlAdjSource derives CanEqual, Schema
+given Schema[YamlAdjSource] = Schema.derived[YamlAdjSource].adjacent("type", "content")
+case class YamlAdjRoot(sources: List[YamlAdjSource]) derives CanEqual, Schema
+
+case class YamlBytesHolder(data: Span[Byte]) derives CanEqual, Schema
+case class YamlTimesHolder(at: java.time.Instant, span: java.time.Duration) derives CanEqual, Schema
+
 class YamlTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
@@ -1166,6 +1183,275 @@ class YamlTest extends kyo.test.Test[Any]:
                         Result.succeed(context + 1)
 
             assert(Yaml.Events.visit("x: &a 1\ny: *a\n", 0)(countingMappings) == Result.succeed(1))
+        }
+
+        "discriminated source in single-element list decodes to Success" in {
+            val yaml =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      type: YamlRabbit
+                  |      host: localhost
+                  |""".stripMargin
+            val result = Yaml.decode[YamlDiscRoot](yaml)
+            assert(result == Result.succeed(YamlDiscRoot(List(YamlDiscTable("t1", YamlRabbit("localhost", Absent))))))
+        }
+
+        // guards StringIndexOutOfBoundsException regression
+        "discriminated source decode in single-element list is not a Panic" in {
+            val yaml =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      type: YamlRabbit
+                  |      host: localhost
+                  |""".stripMargin
+            val result = Yaml.decode[YamlDiscRoot](yaml)
+            assert(!result.isPanic)
+            assert(result == Result.succeed(YamlDiscRoot(List(YamlDiscTable("t1", YamlRabbit("localhost", Absent))))))
+        }
+
+        "unknown discriminator variant in list element is typed failure not panic" in {
+            val yaml =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      type: Unknown
+                  |      host: localhost
+                  |""".stripMargin
+            val result = Yaml.decode[YamlDiscRoot](yaml)
+            assert(result.isFailure)
+            assert(!result.isPanic)
+        }
+
+        "multi-element list with discriminated source decodes all elements correctly" in {
+            val yaml =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      type: YamlRabbit
+                  |      host: h1
+                  |  - name: t2
+                  |    source:
+                  |      type: YamlKafka
+                  |      broker: b2
+                  |""".stripMargin
+            val result = Yaml.decode[YamlDiscRoot](yaml)
+            assert(result == Result.succeed(YamlDiscRoot(List(
+                YamlDiscTable("t1", YamlRabbit("h1", Absent)),
+                YamlDiscTable("t2", YamlKafka("b2"))
+            ))))
+        }
+
+        "depth: nested list with discriminated source, inner list exhausted at EOF" in {
+            val yaml =
+                """groups:
+                  |  - name: g1
+                  |    tables:
+                  |      - name: t1
+                  |        source:
+                  |          type: YamlRabbit
+                  |          host: h1
+                  |""".stripMargin
+            val result = Yaml.decode[YamlDiscDeep](yaml)
+            assert(result == Result.succeed(YamlDiscDeep(List(
+                YamlDiscGroup("g1", List(YamlDiscTable("t1", YamlRabbit("h1", Absent))))
+            ))))
+        }
+
+        "depth: nested list with outer sibling group after inner exhausted list" in {
+            val yaml =
+                """groups:
+                  |  - name: g1
+                  |    tables:
+                  |      - name: t1
+                  |        source:
+                  |          type: YamlRabbit
+                  |          host: h1
+                  |  - name: g2
+                  |    tables:
+                  |      - name: t2
+                  |        source:
+                  |          type: YamlKafka
+                  |          broker: b2
+                  |""".stripMargin
+            val result = Yaml.decode[YamlDiscDeep](yaml)
+            assert(result == Result.succeed(YamlDiscDeep(List(
+                YamlDiscGroup("g1", List(YamlDiscTable("t1", YamlRabbit("h1", Absent)))),
+                YamlDiscGroup("g2", List(YamlDiscTable("t2", YamlKafka("b2"))))
+            ))))
+        }
+
+        "flow-sequence: inline flow list and nested-flow decode to Success" in {
+            val yaml1    = "tables: [{name: t1, source: {type: YamlRabbit, host: localhost}}]"
+            val yaml2    = "{tables: [{name: t1, source: {type: YamlRabbit, host: localhost}}]}"
+            val expected = Result.succeed(YamlDiscRoot(List(YamlDiscTable("t1", YamlRabbit("localhost", Absent)))))
+            assert(Yaml.decode[YamlDiscRoot](yaml1) == expected)
+            assert(Yaml.decode[YamlDiscRoot](yaml2) == expected)
+        }
+
+        "EOF-adjacent: trailing blank lines and no trailing newline both decode to the same value" in {
+            val yamlNoTrail = "tables:\n  - name: t1\n    source:\n      type: YamlRabbit\n      host: localhost"
+            val yamlTrail =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      type: YamlRabbit
+                  |      host: localhost
+                  |
+                  |
+                  |""".stripMargin
+            val expected = Result.succeed(YamlDiscRoot(List(YamlDiscTable("t1", YamlRabbit("localhost", Absent)))))
+            assert(Yaml.decode[YamlDiscRoot](yamlNoTrail) == expected)
+            assert(Yaml.decode[YamlDiscRoot](yamlTrail) == expected)
+        }
+
+        "direct decode and list-nested decode of a discriminated source agree" in {
+            val directYaml =
+                """type: YamlRabbit
+                  |host: localhost
+                  |
+                  |""".stripMargin
+            val listYaml =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      type: YamlRabbit
+                  |      host: localhost
+                  |
+                  |""".stripMargin
+            val directResult = Yaml.decode[YamlDiscSource](directYaml)
+            val listResult   = Yaml.decode[YamlDiscRoot](listYaml).map(_.tables.head.source)
+            assert(directResult == listResult)
+            assert(directResult == Result.succeed(YamlRabbit("localhost", Absent)))
+        }
+
+        "sibling-key-after-block and comment-in-block both decode to Success" in {
+            val yamlSibling =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      type: YamlRabbit
+                  |      host: localhost
+                  |    extra: ignored
+                  |""".stripMargin
+            val yamlComment =
+                """tables:
+                  |  - name: t1
+                  |    source:
+                  |      # note
+                  |      type: YamlRabbit
+                  |      host: localhost
+                  |""".stripMargin
+            val expected = Result.succeed(YamlDiscRoot(List(YamlDiscTable("t1", YamlRabbit("localhost", Absent)))))
+            assert(Yaml.decode[YamlDiscRoot](yamlSibling) == expected)
+            assert(Yaml.decode[YamlDiscRoot](yamlComment) == expected)
+        }
+
+        "adjacent-tagged union in list element decodes correctly" in {
+            val yaml =
+                """sources:
+                  |  - type: YamlAdjRabbit
+                  |    content:
+                  |      host: localhost
+                  |""".stripMargin
+            val result = Yaml.decode[YamlAdjRoot](yaml)
+            assert(result == Result.succeed(YamlAdjRoot(List(YamlAdjRabbit("localhost")))))
+        }
+
+        "non-regression: direct YAML decode and JSON list decode still succeed" in {
+            val yamlDirect =
+                """type: YamlRabbit
+                  |host: localhost
+                  |queue: q1
+                  |""".stripMargin
+            val jsonList = """{"tables":[{"name":"t1","source":{"type":"YamlRabbit","host":"localhost"}}]}"""
+            assert(Yaml.decode[YamlDiscSource](yamlDirect) == Result.succeed(YamlRabbit("localhost", Present("q1"))))
+            assert(Json.decode[YamlDiscRoot](jsonList) == Result.succeed(YamlDiscRoot(List(YamlDiscTable(
+                "t1",
+                YamlRabbit("localhost", Absent)
+            )))))
+        }
+
+        "round trips Span[Byte] as a base64 scalar" in {
+            val value   = YamlBytesHolder(Span.from(Array[Byte](1, 2, 3)))
+            val yaml    = Yaml.encode(value)
+            val decoded = Yaml.decode[YamlBytesHolder](yaml)
+            assert(CodecTestSupport.sameBytes(decoded.getOrThrow.data, value.data))
+        }
+
+        "round trips Instant and Duration as quoted scalars" in {
+            val value = YamlTimesHolder(
+                java.time.Instant.parse("2026-07-09T12:00:00.500Z"),
+                java.time.Duration.ofSeconds(12, 345)
+            )
+            val yaml = Yaml.encode(value)
+            assert(Yaml.decode[YamlTimesHolder](yaml) == Result.succeed(value))
+        }
+
+    }
+
+    // Non-String-key Dict round-trips through the real codec. Each entry is a two-field
+    // {key, value} record.
+    "dictSchema non-String-key Dict" - {
+
+        "round-trips a non-String-key Dict" in {
+            val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
+            val encoded = Yaml.encode(holder)
+            val decoded = Yaml.decode[MTIntStringDict](encoded).getOrThrow
+            assert(decoded.d.get(1) == Maybe("one"))
+            assert(decoded.d.get(2) == Maybe("two"))
+            assert(decoded.d.get(3) == Maybe("three"))
+            assert(decoded.d.size == 3)
+        }
+
+        "round-trips a non-String-key Dict with non-empty collection values" in {
+            val holder  = MTIntChunkDict(Dict(1 -> Chunk("a", "b"), 2 -> Chunk("c")))
+            val encoded = Yaml.encode(holder)
+            val decoded = Yaml.decode[MTIntChunkDict](encoded).getOrThrow
+            assert(decoded.d.get(1) == Maybe(Chunk("a", "b")))
+            assert(decoded.d.get(2) == Maybe(Chunk("c")))
+        }
+
+    }
+
+    // OrderedDict Schema given: insertion-order round-trip.
+    "OrderedDict Schema given" - {
+
+        "OrderedDict[String, V] field preserves insertion order across encode/decode" in {
+            val holder =
+                MTOrderedDictConfig(OrderedDict("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+            val encoded = Yaml.encode(holder)
+            val decoded = Yaml.decode[MTOrderedDictConfig](encoded).getOrThrow
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
+    }
+
+    // omitEmptyCollections on OrderedDict/Dict fields: an empty field must be dropped from the
+    // wire and round-trip back to the empty value, matching Map/Chunk/List/Vector/Set/Seq behavior.
+    "omitEmptyCollections on OrderedDict/Dict fields" - {
+
+        "empty OrderedDict[String, V] field is omitted from the wire and round-trips" in {
+            val omit    = Schema[MTOrderedDictRecord].omitEmptyCollections
+            val value   = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
+            val encoded = omit.encodeString[Yaml](value)
+            assert(!encoded.contains("settings"), s"empty String-key OrderedDict must be dropped from the wire: $encoded")
+            assert(encoded.contains("alice") && encoded.contains("7"), s"the scalar fields around it must survive: $encoded")
+            val decoded = omit.decodeString[Yaml](encoded).getOrThrow
+            assert(decoded.name == value.name && decoded.count == value.count)
+            assert(decoded.settings.is(value.settings))
+        }
+
+        "empty Dict[Int, V] field (non-String key) is omitted from the wire and round-trips" in {
+            val omit    = Schema[MTIntStringDictRecord].omitEmptyCollections
+            val value   = MTIntStringDictRecord("alice", Dict.empty[Int, String], 7)
+            val encoded = omit.encodeString[Yaml](value)
+            assert(!encoded.contains("byId"), s"empty non-String-key Dict must be dropped from the wire: $encoded")
+            assert(encoded.contains("alice") && encoded.contains("7"), s"the scalar fields around it must survive: $encoded")
+            val decoded = omit.decodeString[Yaml](encoded).getOrThrow
+            assert(decoded.name == value.name && decoded.count == value.count)
+            assert(decoded.byId.is(value.byId))
         }
 
     }

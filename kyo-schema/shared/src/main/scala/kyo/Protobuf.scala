@@ -7,12 +7,16 @@ final class Protobuf(val config: Protobuf.Config) extends Codec:
     def newWriter(): Codec.Writer = new kyo.internal.ProtobufWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         new kyo.internal.ProtobufReader(input.toArray)
+
+    override private[kyo] def validate(structure: Structure.Type)(using Frame): Unit =
+        if config.conformance == Protobuf.Conformance.Strict then Protobuf.validateCanonical(structure)
 end Protobuf
 
 /** Entry point for Protocol Buffers binary serialization and schema generation.
   *
   * All methods are inline and require a `Schema[A]` instance in scope. Encoding produces proto3 wire-format bytes. Field numbers are
-  * derived from stable XXH32 hashes of field names, enabling schema evolution without breaking existing encoded data.
+  * derived from stable hashes of field names (XXH32 applied to the name's JLS string hash), enabling schema evolution without breaking
+  * existing encoded data.
   *
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
@@ -83,7 +87,7 @@ object Protobuf:
       *   the proto3 wire-format bytes
       */
     inline def encode[A](value: A)(using protobuf: Protobuf, schema: Schema[A], frame: Frame): Span[Byte] =
-        if protobuf.config.conformance == Conformance.Strict then validateCanonical(schema.structure)
+        protobuf.validate(schema.structure)
         val w         = protobuf.newWriter()
         val overrides = schema.fieldIdNameOverrides
         if overrides.nonEmpty then
@@ -96,14 +100,14 @@ object Protobuf:
     end encode
 
     /** True iff `key` is a type proto3 admits as a `map<K, V>` key: an integral, bool, or string scalar
-      * (BigInt / BigDecimal serialize as string, so they qualify). Float, double, and any non-primitive
-      * (message, enum, collection) are not valid proto3 map keys.
+      * (BigInt / BigDecimal serialize as string, and Instant / Duration serialize as sint64, so they qualify). Bytes, float, double, and
+      * any non-primitive (message, enum, collection) are not valid proto3 map keys.
       */
     private def isProto3MapKey(key: Structure.Type): Boolean =
         key match
             case p: Structure.Type.Primitive =>
                 p.kind match
-                    case Structure.PrimitiveKind.Double | Structure.PrimitiveKind.Float |
+                    case Structure.PrimitiveKind.Double | Structure.PrimitiveKind.Float | Structure.PrimitiveKind.Bytes |
                         Structure.PrimitiveKind.Unit => false
                     case _ => true
             case _ => false
@@ -230,8 +234,22 @@ object Protobuf:
     ) derives CanEqual
 
     private[kyo] def auditStructure(rt: Structure.Type, overrides: Map[String, Int], pinnedNames: Set[String]): Chunk[FieldNumberInfo] =
-        val buf                              = scala.collection.mutable.ArrayBuffer.empty[FieldNumberInfo]
-        def resolve(name: String): Int       = overrides.getOrElse(name, kyo.internal.CodecMacro.fieldId(name))
+        val buf = scala.collection.mutable.ArrayBuffer.empty[FieldNumberInfo]
+        // `overrides`/`pinnedNames` are the AUDITED schema's OWN map, so they resolve every field of
+        // that schema (top-level fields, and fields of a nested Product reached through a container).
+        // A field reached through a Structure.Sum's variant belongs to that VARIANT's OWN Schema,
+        // never the audited schema, so its own `@proto.fieldNumber` pin is invisible to `overrides`:
+        // fall back to the field's own captured annotation, which derivation threads onto
+        // Structure.Field regardless of nesting. A programmatic `.fieldId` override on the audited
+        // schema still takes precedence when present, matching Schema.fieldId's documented precedence.
+        def resolve(field: Structure.Field): (Int, Boolean) =
+            overrides.get(field.name) match
+                case Some(n) => (n, pinnedNames.contains(field.name))
+                case None =>
+                    field.annotations.collectFirst { case fn: kyo.schema.proto.fieldNumber => fn.number } match
+                        case Some(n) => (n, true)
+                        case None    => (kyo.internal.CodecMacro.fieldId(field.name), false)
+        end resolve
         def isReservedRange(n: Int): Boolean = n >= 19000 && n <= 19999
         // A traversal frame: the dotted-path prefix, the type to visit, and the ancestry (the set of
         // type names on the path from the root to this node). Ancestry-based recursion guard: a
@@ -253,10 +271,10 @@ object Protobuf:
                             val nextAncestry = ancestry + p.name
                             val children     = scala.collection.mutable.ListBuffer.empty[Frame]
                             p.fields.foreach { field =>
-                                val name   = field.name
-                                val path   = if prefix.isEmpty then name else s"$prefix.$name"
-                                val number = resolve(name)
-                                buf += FieldNumberInfo(path, name, number, pinnedNames.contains(name), isReservedRange(number))
+                                val name               = field.name
+                                val path               = if prefix.isEmpty then name else s"$prefix.$name"
+                                val (number, isPinned) = resolve(field)
+                                buf += FieldNumberInfo(path, name, number, isPinned, isReservedRange(number))
                                 field.fieldType match
                                     case np: Structure.Type.Product             => children += Frame(path, np, nextAncestry)
                                     case ns: Structure.Type.Sum                 => children += Frame(path, ns, nextAncestry)
@@ -481,7 +499,8 @@ object Protobuf:
             /** Protobuf type name for a primitive kind.
               *
               * Note: proto3 does not define an arbitrary-precision numeric type. BigInt and BigDecimal are serialized as `string` to
-              * preserve the exact value during round-trips. This is a deliberate mapping, not a silent default.
+              * preserve the exact value during round-trips. Bytes use proto3 `bytes`; Instant and Duration use signed 64-bit millisecond
+              * counters, matching the codec writer.
               *
               * Note: proto3 has no Unit (void) scalar type. Unit-typed fields are rejected with an IllegalArgumentException, consistent
               * with the rejection of other incompatible shapes (nested Optional, nested Collection, etc.).
@@ -496,6 +515,8 @@ object Protobuf:
                     case Structure.PrimitiveKind.String                                      => "string"
                     case Structure.PrimitiveKind.Boolean                                     => "bool"
                     case Structure.PrimitiveKind.BigInt | Structure.PrimitiveKind.BigDecimal => "string"
+                    case Structure.PrimitiveKind.Bytes                                       => "bytes"
+                    case Structure.PrimitiveKind.Instant | Structure.PrimitiveKind.Duration  => "sint64"
                     case Structure.PrimitiveKind.Unit =>
                         throw new IllegalArgumentException(
                             "Unit-typed fields are not supported in Protobuf; omit the field or wrap in Option[T]"

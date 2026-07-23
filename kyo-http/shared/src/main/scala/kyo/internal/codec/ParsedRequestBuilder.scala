@@ -2,6 +2,7 @@ package kyo.internal.codec
 
 import kyo.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 import scala.annotation.tailrec
 
 /** Mutable builder that constructs packed ParsedRequest byte arrays during HTTP/1.1 parsing.

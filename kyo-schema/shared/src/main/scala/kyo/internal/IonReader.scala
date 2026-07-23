@@ -41,6 +41,10 @@ final class IonReader private (
 ) extends Codec.IntrospectingReader:
     import IonValue.*
 
+    // Nothing is left to check here: this reader walks a document parsed up front, and that parse
+    // already refuses anything after the root value.
+    private[kyo] def requireEndOfInput(): Unit = ()
+
     private enum Context:
         case Obj(fields: Vector[(String, IonValue)], index: Int)
         case Arr(values: Vector[IonValue], index: Int)

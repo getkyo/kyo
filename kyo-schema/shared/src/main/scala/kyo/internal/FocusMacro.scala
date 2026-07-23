@@ -333,7 +333,7 @@ import scala.quoted.*
             if isMarker || policyAdmits(policy, fqn) then reifyAnnotation(term)
             else None
         }
-        '{ kyo.Chunk.from[Any](Array[Any](${ Varargs(kept) }*)) }
+        if kept.isEmpty then '{ kyo.Chunk.empty[Any] } else '{ kyo.Chunk.from[Any](Array[Any](${ Varargs(kept) }*)) }
     end captureAnnotations
 
     /** Captures the policy-surviving annotation instances for a case-class field as an
@@ -367,7 +367,7 @@ import scala.quoted.*
             if isMarker || policyAdmits(policy, fqn) then reifyAnnotation(term)
             else None
         }
-        '{ kyo.Chunk.from[Any](Array[Any](${ Varargs(kept) }*)) }
+        if kept.isEmpty then '{ kyo.Chunk.empty[Any] } else '{ kyo.Chunk.from[Any](Array[Any](${ Varargs(kept) }*)) }
     end captureFieldAnnotations
 
     /** Summons the in-scope `AnnotationPolicy`, falling back to the companion `given default`.
@@ -1555,6 +1555,14 @@ import scala.quoted.*
                 s
             }
 
+        // Hoist each field's UTF-8 name bytes to one val shared by the write and read bodies and
+        // materialized once per Schema instance, instead of a `_wnb`/`_nb` pair recomputed on every
+        // serialize call. Mirrors the hoisted field-schema mechanism above; referenced from both
+        // bodies via Ref, the same cross-body sharing the hoisted schemas already use.
+        val nameByteSyms: List[Symbol] = fields.zipWithIndex.map { (_, idx) =>
+            Symbol.newVal(hoistOwner, s"_nb${idx}", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol)
+        }
+
         val tagExpr = summonSchemaTag(tpe)
 
         // Per-field flag: is the effective inner type itself nullable (Maybe[T] / Option[T])?
@@ -1608,19 +1616,11 @@ import scala.quoted.*
 
         // WRITE: static per-field emission, no runtime field walk.
         def writeBody(v: Expr[A], w: Expr[Writer]): Expr[Unit] =
-            val owner = Symbol.spliceOwner
-            // Pre-encode each field's UTF-8 name bytes once per serialization, mirroring the read side's
-            // nameByteSyms and the sealed-variant write path. Schema field keys go through `fieldBytes`
-            // (the canonical schema-field key method: the JSON writer's ASCII fast path, the Protobuf
-            // field tag, and the MsgPack key-encoding switch). Dynamic `Map` keys and the hand-written
-            // sum discriminator keys stay on `field`, which carries the raw String for escaping.
-            val nameByteSyms: List[Symbol] = fields.zipWithIndex.map { (f, idx) =>
-                Symbol.newVal(owner, s"_wnb${idx}", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol)
-            }
-            val nameByteDefs: List[Statement] = fields.zipWithIndex.map { (f, idx) =>
-                val nameExpr = Expr(f.name)
-                ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
-            }
+            // Field name bytes are hoisted to one per-instance val shared with the read body (see
+            // nameByteSyms above). Schema field keys go through `fieldBytes` (the canonical schema-field
+            // key method: the JSON writer's ASCII fast path, the Protobuf field tag, and the MsgPack
+            // key-encoding switch). Dynamic `Map` keys and the hand-written sum discriminator keys stay
+            // on `field`, which carries the raw String for escaping.
             val header: Term = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n) }) }.asTerm
             val perField: List[Term] = fields.zipWithIndex.map { (f, idx) =>
                 // Field header tag MUST be the hash-based field ID (CodecMacro.fieldId), NOT the
@@ -1664,7 +1664,7 @@ import scala.quoted.*
                 end if
             }
             val trailer: Term = '{ $w.objectEnd() }.asTerm
-            Block(nameByteDefs ++ (header :: perField), trailer).asExprOf[Unit]
+            Block(header :: perField, trailer).asExprOf[Unit]
         end writeBody
 
         // READ: static per-field name-matched loop.
@@ -1747,15 +1747,7 @@ import scala.quoted.*
             // Dispatch via reader.matchField(nameBytes), NOT lastFieldName(). matchField is the
             // canonical name-bytes comparison that works on every wire format; lastFieldName() is a
             // human-readable surrogate only (a numeric field-ID under Protobuf, never the field name).
-            // Pre-encode each field's UTF-8 name bytes into a stable local; a `while j < n && matchedIdx < 0`
-            // chain then selects the matching field.
-            val nameByteSyms: List[Symbol] = fields.zipWithIndex.map { (f, idx) =>
-                Symbol.newVal(owner, s"_nb${idx}", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol)
-            }
-            val nameByteDefs: List[Statement] = fields.zipWithIndex.map { (f, idx) =>
-                val nameExpr = Expr(f.name)
-                ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
-            }
+            // The name bytes come from the hoisted per-instance nameByteSyms shared with the write body.
 
             // Per-field arm: assign the typed read result + OR-in the seen bit.
             def fieldArm(idx: Int): Term =
@@ -1816,7 +1808,7 @@ import scala.quoted.*
                             '{ kyo.discard($r.objectStart()) }.asTerm,
                             '{ kyo.discard($r.initFields($nExpr)) }.asTerm,
                             seenDef
-                        ) ++ localDefs ++ nameByteDefs ++
+                        ) ++ localDefs ++
                             List(whileLoop) ++
                             requiredCheckOpt.toList ++
                             List(
@@ -1911,10 +1903,17 @@ import scala.quoted.*
                     structure = ${ structureExpr }
                 )
             }.asTerm
-        val hoistedValDefs: List[Statement] = hoistedSchemas.toList.map { (t, sym) =>
+        val hoistedSchemaValDefs: List[Statement] = hoistedSchemas.toList.map { (t, sym) =>
             t.asType match
                 case '[tt] => ValDef(sym, Some('{ summonInline[Schema[tt]] }.asTerm))
         }
+        // Name-byte vals: one per field, materialized once per instance and shared by write and read
+        // (they replaced the former per-body `_wnb`/`_nb` locals).
+        val hoistedNameByteDefs: List[Statement] = fields.zipWithIndex.map { (f, idx) =>
+            val nameExpr = Expr(f.name)
+            ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
+        }
+        val hoistedValDefs: List[Statement] = hoistedSchemaValDefs ++ hoistedNameByteDefs
         if hoistedValDefs.isEmpty then schemaInitTerm.asExprOf[Schema[A]]
         else Block(hoistedValDefs, schemaInitTerm).asExprOf[Schema[A]]
     end emitProductSchemaStatic

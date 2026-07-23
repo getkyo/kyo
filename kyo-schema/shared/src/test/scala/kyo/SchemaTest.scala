@@ -2569,6 +2569,121 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
     }
 
+    // =========================================================================
+    // omitEmptyCollections / .omit(_.f).whenEmpty: OrderedDict and Dict fields.
+    // Both are opaque types whose Tag erases identically regardless of key/value
+    // type, unlike Map, so the omit gate and the decode-side synthetic zero must
+    // discriminate them by their declared structure instead of by Tag.
+    // Covers both wire shapes: a String key (object wire form) and a non-String
+    // key (array-of-{key,value} wire form).
+    // =========================================================================
+
+    // OrderedDict and Dict provide no CanEqual instance for `==` (their opaque, dual-representation
+    // shape has no meaningful universal equals; see OrderedDict.is / Dict.is), so a round-trip is
+    // asserted field-by-field: the scalars via `==`, the map field via `.is`, the established
+    // idiom for comparing these two types (matching OrderedDictTest.scala / DictTest.scala).
+
+    "empty OrderedDict[String, V] field is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTOrderedDictRecord].omitEmptyCollections
+        val value  = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty String-key OrderedDict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.settings.is(value.settings), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty OrderedDict[Int, V] field (non-String key) is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTOrderedDictLevelsRecord].omitEmptyCollections
+        val value  = MTOrderedDictLevelsRecord("alice", OrderedDict.empty[Int, String], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty non-String-key OrderedDict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.byLevel.is(value.byLevel), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty Dict[String, V] field is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTStringDictRecord].omitEmptyCollections
+        val value  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty String-key Dict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty Dict[Int, V] field (non-String key) is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTIntStringDictRecord].omitEmptyCollections
+        val value  = MTIntStringDictRecord("alice", Dict.empty[Int, String], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty non-String-key Dict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.byId.is(value.byId), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    // Boundary pinned by getkyo/kyo#1748: binding the array-form given for a String key (instead of
+    // the object-form default) omits on encode but fails to decode, because the injected empty value
+    // is chosen from the declared key type and the array-form reader expects the other shape. It
+    // fails loud, never silently. When #1748 is fixed this flips to a round-trip assertion.
+    "empty String-key Dict bound to the array-form given fails to decode under omitEmptyCollections" in {
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
+        val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
+        val out                                    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty field must still be omitted on encode: $out")
+        val decoded = schema.decodeString[Json](out)
+        assert(decoded.isFailure, s"decode must fail loud on the array-form String-key binding, got: $decoded")
+    }
+
+    "non-empty OrderedDict field is NOT omitted under omitEmptyCollections and keeps insertion order" in {
+        val schema = Schema[MTOrderedDictRecord].omitEmptyCollections
+        val value  = MTOrderedDictRecord("alice", OrderedDict("z" -> 1, "a" -> 2), 7)
+        val out    = schema.encodeString[Json](value)
+        assert(
+            out == """{"name":"alice","settings":{"z":1,"a":2},"count":7}""",
+            s"non-empty OrderedDict must be retained in insertion order: $out"
+        )
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.settings.toChunk == value.settings.toChunk, s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "non-empty Dict field is NOT omitted under omitEmptyCollections" in {
+        val schema = Schema[MTStringDictRecord].omitEmptyCollections
+        val value  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","tags":{"x":1},"count":7}""", s"non-empty Dict must be retained: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "per-field .omit(_.f).whenEmpty omits an empty OrderedDict[String, V] field and round-trips" in {
+        val schema = Schema[MTOrderedDictRecord].omit(_.settings).whenEmpty
+        val value  = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"per-field WhenEmpty must omit an empty OrderedDict: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.settings.is(value.settings), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "per-field .omit(_.f).whenEmpty omits an empty Dict[Int, V] field (non-String key) and round-trips" in {
+        val schema = Schema[MTIntStringDictRecord].omit(_.byId).whenEmpty
+        val value  = MTIntStringDictRecord("alice", Dict.empty[Int, String], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"per-field WhenEmpty must omit an empty non-String-key Dict: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.byId.is(value.byId), s"round-trip failed: $back (encoded: $out)")
+    }
+
     "omitNone schema-wide: absent Maybe field is omitted on encode and decodes back to Maybe.empty" in {
         // Cart has: items: Chunk[String], note: Maybe[String]
         val schema = Schema[Cart].omitNone
@@ -2890,6 +3005,417 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(s.decode[MsgPack](mpB) == Result.succeed(b), "CaseB MsgPack round-trip failed")
     }
 
+    // =========================================================================
+    // withStructure
+    // =========================================================================
+
+    "withStructure reports the overridden structure and keeps the generic codec" in {
+        // Overriding the open Schema[Structure.Value] with a runtime-built Product yields a
+        // shape-dynamic schema: the wire shape is the override, encode and decode stay the generic
+        // Structure.Value codec, with no hand-written reader or writer.
+        val payload =
+            Structure.Type.Product(
+                "Payload",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field("active", summon[Schema[Boolean]].structure),
+                    Structure.Field("tags", summon[Schema[List[String]]].structure)
+                )
+            )
+        val shape =
+            Structure.Type.Product(
+                "Dynamic",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field("note", summon[Schema[String]].structure),
+                    Structure.Field("payload", payload)
+                )
+            )
+        val schema = summon[Schema[Structure.Value]].withStructure(shape)
+        schema.structure match
+            case p: Structure.Type.Product =>
+                assert(p.name == "Dynamic", s"expected the overridden Product name; got ${p.name}")
+                assert(p.fields.map(_.name) == Chunk("note", "payload"), s"expected the overridden fields; got ${p.fields.map(_.name)}")
+            case other => fail(s"expected the overridden Product structure; got $other")
+        end match
+
+        val value = Structure.Value.Record(Chunk[(String, Structure.Value)](
+            "note" -> Structure.Value.Str("n"),
+            "payload" -> Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "active" -> Structure.Value.Bool(true),
+                "tags"   -> Structure.Value.Sequence(Chunk(Structure.Value.Str("a")))
+            ))
+        ))
+        val enc = schema.encodeString[Json](value)
+        assert(enc == """{"note":"n","payload":{"active":true,"tags":["a"]}}""", s"conforming record must encode plainly; got $enc")
+        assert(schema.decodeString[Json](enc) == Result.succeed(value), "conforming record must round-trip")
+    }
+
+    "withStructure leaves the base schema untouched" in {
+        val base = summon[Schema[Structure.Value]]
+        val shape =
+            Structure.Type.Product(
+                "Solo",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("text", summon[Schema[String]].structure))
+            )
+        val overridden = base.withStructure(shape)
+        overridden.structure match
+            case p: Structure.Type.Product => assert(p.name == "Solo", s"override must apply; got ${p.name}")
+            case other                     => fail(s"expected a Product structure; got $other")
+        assert(base.structure != overridden.structure, "the base Schema[Structure.Value] must keep its own structure")
+    }
+
+    "withStructure does not validate: a non-conforming record still round-trips" in {
+        // The override is reporting-only; the open codec is a passthrough. Enforcement is a consumer
+        // concern (Structure.conform), so this pins the actual codec behavior explicitly.
+        val shape =
+            Structure.Type.Product(
+                "Strict",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("required", summon[Schema[String]].structure))
+            )
+        val schema        = summon[Schema[Structure.Value]].withStructure(shape)
+        val nonConforming = Structure.Value.Record(Chunk[(String, Structure.Value)]("other" -> Structure.Value.Str("x")))
+        val enc           = schema.encodeString[Json](nonConforming)
+        assert(enc == """{"other":"x"}""", s"the codec must not reject or reshape a non-conforming record; got $enc")
+        assert(schema.decodeString[Json](enc) == Result.succeed(nonConforming), "decode is equally passthrough")
+        assert(Structure.conform(nonConforming, shape) == Present("missing required field 'required'"))
+    }
+
+    "withStructure composes with transform to expose a domain type" in {
+        case class Note(text: String)
+        val shape =
+            Structure.Type.Product(
+                "Note",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("text", summon[Schema[String]].structure))
+            )
+        def toNote(v: Structure.Value): Note =
+            v match
+                case Structure.Value.Record(fields) =>
+                    Note(fields.collectFirst { case ("text", Structure.Value.Str(s)) => s }.getOrElse(""))
+                case _ => Note("")
+        def fromNote(n: Note): Structure.Value =
+            Structure.Value.Record(Chunk[(String, Structure.Value)]("text" -> Structure.Value.Str(n.text)))
+        val schema = summon[Schema[Structure.Value]].withStructure(shape).transform(toNote)(fromNote)
+        val enc    = schema.encodeString[Json](Note("hi"))
+        assert(enc == """{"text":"hi"}""", s"domain value must encode through the swapped structure; got $enc")
+        assert(schema.decodeString[Json](enc) == Result.succeed(Note("hi")), "domain value must round-trip")
+    }
+
+    // enum derivation
+    // =========================================================================
+
+    private def roundTripString[C <: Codec, A](s: Schema[A], value: A)(using C, Frame, kyo.test.AssertScope): Unit =
+        val wire = s.encodeString[C](value)
+        assert(s.decodeString[C](wire) == Result.succeed(value), s"string round-trip failed for $value via $wire")
+    end roundTripString
+
+    private def roundTripBytes[C <: Codec, A](s: Schema[A], value: A)(using C, Frame, kyo.test.AssertScope): Unit =
+        val wire = s.encode[C](value)
+        assert(s.decode[C](wire) == Result.succeed(value), s"byte round-trip failed for $value")
+    end roundTripBytes
+
+    "enum derivation" - {
+
+        "simple no-param enum cases produce distinct name-keyed wire text through Json" in {
+            val schema = Schema[EDSimple]
+            val red    = schema.encodeString[Json](EDSimple.Red)
+            assert(red == """{"Red":{}}""", s"unexpected wire for Red: $red")
+            assert(schema.decodeString[Json](red) == Result.succeed(EDSimple.Red))
+            val green = schema.encodeString[Json](EDSimple.Green)
+            assert(green == """{"Green":{}}""", s"unexpected wire for Green: $green")
+            assert(schema.decodeString[Json](green) == Result.succeed(EDSimple.Green))
+        }
+
+        "simple no-param enum round-trips through every codec" in {
+            val schema = Schema[EDSimple]
+            val value  = EDSimple.Blue
+            roundTripString[Json, EDSimple](schema, value)
+            roundTripString[Yaml, EDSimple](schema, value)
+            roundTripString[Ion, EDSimple](schema, value)
+            roundTripBytes[MsgPack, EDSimple](schema, value)
+            roundTripBytes[Protobuf, EDSimple](schema, value)
+            roundTripBytes[Bson, EDSimple](schema, value)
+            roundTripBytes[IonBinary, EDSimple](schema, value)
+        }
+
+        "parameterized enum cases produce concrete wire text through Json" in {
+            val schema = Schema[EDParam]
+            val point  = schema.encodeString[Json](EDParam.Point(1, 2))
+            assert(point == """{"Point":{"x":1,"y":2}}""", s"unexpected wire for Point: $point")
+            assert(schema.decodeString[Json](point) == Result.succeed(EDParam.Point(1, 2)))
+        }
+
+        "parameterized enum round-trips through every codec" in {
+            val schema = Schema[EDParam]
+            val value  = EDParam.Line(1, 2, 3)
+            roundTripString[Json, EDParam](schema, value)
+            roundTripString[Yaml, EDParam](schema, value)
+            roundTripString[Ion, EDParam](schema, value)
+            roundTripBytes[MsgPack, EDParam](schema, value)
+            roundTripBytes[Protobuf, EDParam](schema, value)
+            roundTripBytes[Bson, EDParam](schema, value)
+            roundTripBytes[IonBinary, EDParam](schema, value)
+        }
+
+        "mixed parameterized and no-arg enum cases round-trip distinctly through every codec" in {
+            val schema        = Schema[EDMixed]
+            val named         = EDMixed.Named("x")
+            val anon: EDMixed = EDMixed.Anonymous
+            roundTripString[Json, EDMixed](schema, named)
+            roundTripString[Json, EDMixed](schema, anon)
+            roundTripString[Yaml, EDMixed](schema, named)
+            roundTripString[Yaml, EDMixed](schema, anon)
+            roundTripString[Ion, EDMixed](schema, named)
+            roundTripString[Ion, EDMixed](schema, anon)
+            roundTripBytes[MsgPack, EDMixed](schema, named)
+            roundTripBytes[MsgPack, EDMixed](schema, anon)
+            roundTripBytes[Protobuf, EDMixed](schema, named)
+            roundTripBytes[Protobuf, EDMixed](schema, anon)
+            roundTripBytes[Bson, EDMixed](schema, named)
+            roundTripBytes[Bson, EDMixed](schema, anon)
+            roundTripBytes[IonBinary, EDMixed](schema, named)
+            roundTripBytes[IonBinary, EDMixed](schema, anon)
+        }
+
+        "case with multiple params and defaults round-trips, with and without Scala-default-valued fields" in {
+            val schema            = Schema[EDDefaults]
+            val full              = EDDefaults.Full(1, "custom", false)
+            val defaultLike       = EDDefaults.Full(1, "def-b", true)
+            val empty: EDDefaults = EDDefaults.Empty
+            roundTripString[Json, EDDefaults](schema, full)
+            roundTripString[Json, EDDefaults](schema, defaultLike)
+            roundTripString[Json, EDDefaults](schema, empty)
+        }
+
+        "enum with methods and vals in the body derives and round-trips, ignoring the extra members" in {
+            val schema = Schema[EDWithBody]
+            val alpha  = EDWithBody.Alpha(5)
+            assert(alpha.describe == "alpha-5")
+            roundTripString[Json, EDWithBody](schema, alpha)
+            val beta: EDWithBody = EDWithBody.Beta
+            assert(beta.describe == "beta")
+            roundTripString[Json, EDWithBody](schema, beta)
+        }
+
+        "enum extending a trait derives and round-trips" in {
+            val schema = Schema[EDExtendsTrait]
+            val one    = EDExtendsTrait.One(3)
+            assert(one.kind == "labelled")
+            roundTripString[Json, EDExtendsTrait](schema, one)
+            val two: EDExtendsTrait = EDExtendsTrait.Two
+            roundTripString[Json, EDExtendsTrait](schema, two)
+        }
+
+        "enum declared inside an object (nested enum) derives and round-trips" in {
+            val schema = Schema[EDHolder.Nested]
+            roundTripString[Json, EDHolder.Nested](schema, EDHolder.Nested.X)
+            roundTripString[Json, EDHolder.Nested](schema, EDHolder.Nested.Y(9))
+        }
+
+        "enum case with a field typed as another enum (enum-in-enum) derives and round-trips" in {
+            val schema = Schema[EDOuter]
+            val wrap   = EDOuter.Wrap(EDInner.B(4))
+            roundTripString[Json, EDOuter](schema, wrap)
+            val plain: EDOuter = EDOuter.Plain
+            roundTripString[Json, EDOuter](schema, plain)
+        }
+
+        "enum companion with a custom apply factory does not disturb derived Schema" in {
+            val schema = Schema[EDCustomApply]
+            val made   = EDCustomApply.make("abc")
+            assert(made == EDCustomApply.Item("ABC"), s"custom apply factory must uppercase: $made")
+            roundTripString[Json, EDCustomApply](schema, made)
+            roundTripString[Json, EDCustomApply](schema, EDCustomApply.Blank)
+        }
+
+        "single-case enum derives and round-trips" in {
+            val schema = Schema[EDSingle]
+            roundTripString[Json, EDSingle](schema, EDSingle.Only(7))
+        }
+
+        "enum with 25 cases (an arity boundary) round-trips every case distinctly through Json and Protobuf" in {
+            val schema = Schema[EDMany]
+            val all = List(
+                EDMany.M0,
+                EDMany.M1,
+                EDMany.M2,
+                EDMany.M3,
+                EDMany.M4,
+                EDMany.M5,
+                EDMany.M6,
+                EDMany.M7,
+                EDMany.M8,
+                EDMany.M9,
+                EDMany.M10,
+                EDMany.M11,
+                EDMany.M12,
+                EDMany.M13,
+                EDMany.M14,
+                EDMany.M15,
+                EDMany.M16,
+                EDMany.M17,
+                EDMany.M18,
+                EDMany.M19,
+                EDMany.M20,
+                EDMany.M21,
+                EDMany.M22,
+                EDMany.M23,
+                EDMany.M24
+            )
+            val jsonWires = all.map(schema.encodeString[Json])
+            assert(jsonWires.distinct.size == 25, s"expected 25 distinct Json wire values, got ${jsonWires.distinct.size}")
+            all.zip(jsonWires).foreach { (value, wire) =>
+                assert(schema.decodeString[Json](wire) == Result.succeed(value), s"Json round-trip failed for $value via $wire")
+            }
+            val protoBytes = all.map(schema.encode[Protobuf])
+            assert(
+                protoBytes.map(_.toArray.toSeq).distinct.size == 25,
+                "Protobuf bytes must be distinct across all 25 cases"
+            )
+            all.zip(protoBytes).foreach { (value, bytes) =>
+                assert(schema.decode[Protobuf](bytes) == Result.succeed(value), s"Protobuf round-trip failed for $value")
+            }
+        }
+
+        "declared case ordinal never appears in the wire encoding; only the declared case name does" in {
+            // EDMany.M10 has ordinal 10; the wire must carry the NAME "M10", never a bare "10".
+            val schema = Schema[EDMany]
+            val wire   = schema.encodeString[Json](EDMany.M10)
+            assert(wire == """{"M10":{}}""", s"expected name-keyed wrapper, got: $wire")
+        }
+
+        "enum as a product field round-trips through every codec" in {
+            val schema = Schema[EDHolderProduct]
+            val value  = EDHolderProduct(1, EDMixed.Named("x"))
+            roundTripString[Json, EDHolderProduct](schema, value)
+            roundTripString[Yaml, EDHolderProduct](schema, value)
+            roundTripString[Ion, EDHolderProduct](schema, value)
+            roundTripBytes[MsgPack, EDHolderProduct](schema, value)
+            roundTripBytes[Protobuf, EDHolderProduct](schema, value)
+            roundTripBytes[Bson, EDHolderProduct](schema, value)
+            roundTripBytes[IonBinary, EDHolderProduct](schema, value)
+        }
+
+        "Option[enum] field round-trips present and absent through every codec" in {
+            val schema  = Schema[EDOptionHolder]
+            val present = EDOptionHolder(Some(EDMixed.Anonymous))
+            val absent  = EDOptionHolder(None)
+            roundTripString[Json, EDOptionHolder](schema, present)
+            roundTripString[Json, EDOptionHolder](schema, absent)
+            roundTripBytes[MsgPack, EDOptionHolder](schema, present)
+            roundTripBytes[MsgPack, EDOptionHolder](schema, absent)
+            roundTripBytes[Bson, EDOptionHolder](schema, present)
+            roundTripBytes[Bson, EDOptionHolder](schema, absent)
+        }
+
+        "List[enum] field round-trips through every codec" in {
+            val schema = Schema[EDListHolder]
+            val value  = EDListHolder(List(EDMixed.Named("a"), EDMixed.Anonymous, EDMixed.Named("b")))
+            roundTripString[Json, EDListHolder](schema, value)
+            roundTripString[Yaml, EDListHolder](schema, value)
+            roundTripBytes[MsgPack, EDListHolder](schema, value)
+            roundTripBytes[Protobuf, EDListHolder](schema, value)
+            roundTripBytes[Bson, EDListHolder](schema, value)
+        }
+
+        "Map[String, enum] (enum as a map VALUE) round-trips through every codec" in {
+            val schema = Schema[EDMapValueHolder]
+            val value  = EDMapValueHolder(Map("a" -> EDMixed.Named("x"), "b" -> EDMixed.Anonymous))
+            roundTripString[Json, EDMapValueHolder](schema, value)
+            roundTripBytes[MsgPack, EDMapValueHolder](schema, value)
+            roundTripBytes[Protobuf, EDMapValueHolder](schema, value)
+            roundTripBytes[Bson, EDMapValueHolder](schema, value)
+        }
+
+        "Map[enum, V] (enum as a map KEY) round-trips through self-describing and binary-document codecs; Protobuf rejects the non-scalar key" in {
+            val schema = Schema[EDMapKeyHolder]
+            val value  = EDMapKeyHolder(Map(EDMixed.Named("k") -> 1, EDMixed.Anonymous -> 2))
+            roundTripString[Json, EDMapKeyHolder](schema, value)
+            roundTripString[Yaml, EDMapKeyHolder](schema, value)
+            roundTripBytes[Bson, EDMapKeyHolder](schema, value)
+            roundTripBytes[IonBinary, EDMapKeyHolder](schema, value)
+            // proto3 admits only scalar map keys (Protobuf.isProto3MapKey); an enum (Sum) key is
+            // rejected with a typed SchemaNotSerializableException rather than silently mis-encoded.
+            val result = Result.catching[SchemaNotSerializableException](schema.encode[Protobuf](value))
+            assert(result.isFailure, s"expected Protobuf to reject an enum map key; got $result")
+        }
+
+        "Set[enum] field round-trips through Json" in {
+            val schema = Schema[EDSetHolder]
+            val value  = EDSetHolder(Set(EDSimple.Red, EDSimple.Blue))
+            roundTripString[Json, EDSetHolder](schema, value)
+        }
+
+        "explicitly summoned Schema.derived for an enum matches the derives-clause instance" in {
+            val derivesSchema                   = Schema[EDMixed]
+            val summonedSchema: Schema[EDMixed] = Schema.derived
+            val value                           = EDMixed.Named("z")
+            assert(derivesSchema.encodeString[Json](value) == summonedSchema.encodeString[Json](value))
+        }
+
+        "enum-typed product field survives sibling .rename and .drop transforms on the containing product" in {
+            val value = EDTransformHolder(EDMixed.Named("v"), "hidden")
+            val json  = edTransformHolderSchema.encodeString[Json](value)
+            assert(json.contains("\"type_of\""), s"renamed field name must appear: $json")
+            assert(!json.contains("\"secret\"") && !json.contains("hidden"), s"dropped field must not appear: $json")
+            assert(json.contains("\"Named\""), s"enum field's own internal representation must render unchanged: $json")
+            val decoded = edTransformHolderSchema.decodeString[Json](json).getOrThrow
+            assert(decoded.kind == EDMixed.Named("v"), s"enum field must survive rename+drop transform: $decoded")
+        }
+
+        "enum round-trips under discriminator, adjacent, and untagged UnionRepresentation" in {
+            val value: EDMixed = EDMixed.Named("z")
+
+            val discSchema = Schema[EDMixed].discriminator("type")
+            val discJson   = discSchema.encodeString[Json](value)
+            assert(discJson == """{"type":"Named","label":"z"}""", s"discriminator wire: $discJson")
+            assert(discSchema.decodeString[Json](discJson) == Result.succeed(value))
+
+            val adjSchema = Schema[EDMixed].adjacent("type", "content")
+            val adjJson   = adjSchema.encodeString[Json](value)
+            assert(adjJson == """{"type":"Named","content":{"label":"z"}}""", s"adjacent wire: $adjJson")
+            assert(adjSchema.decodeString[Json](adjJson) == Result.succeed(value))
+
+            val untaggedSchema = Schema[EDMixed].untagged
+            val untaggedJson   = untaggedSchema.encodeString[Json](value)
+            assert(untaggedSchema.decodeString[Json](untaggedJson) == Result.succeed(value), s"untagged round-trip: $untaggedJson")
+        }
+
+        "a @proto.fieldNumber pin on a parameterized enum case's own field affects Protobuf wire numbering, not Json field names" in {
+            val schema           = Schema[EDPinCase]
+            val value: EDPinCase = EDPinCase.Pinned(3, 4)
+            val json             = schema.encodeString[Json](value)
+            assert(json.contains("\"x\":3") && json.contains("\"y\":4"), s"Json must use plain field names regardless of the pin: $json")
+            val audit = Protobuf.fieldNumberAudit[EDPinCase]
+            val xRow  = audit.find(_.name == "x")
+            assert(xRow.exists(r => r.number == 99 && r.pinned), s"pinned field x must report wire number 99, pinned=true: $audit")
+            val bytes = schema.encode[Protobuf](value)
+            val back  = schema.decode[Protobuf](bytes)
+            assert(back == Result.succeed(value), s"Protobuf round-trip with a pinned variant field failed: $back")
+        }
+
+        "Protobuf Strict conformance rejects a non-scalar (enum) map key through the generic Schema.encode entry point, not only Protobuf.encode" in {
+            val schema     = Schema[EDMapKeyHolder]
+            val value      = EDMapKeyHolder(Map(EDMixed.Named("k") -> 1))
+            val viaGeneric = Result.catching[SchemaNotSerializableException](schema.encode[Protobuf](value))
+            val viaCompanion =
+                Result.catching[SchemaNotSerializableException](Protobuf.encode(value)(using summon[Protobuf], schema, summon[Frame]))
+            assert(
+                viaGeneric.isFailure,
+                s"Schema[A].encode[Protobuf] must reject an enum map key exactly like Protobuf.encode; got $viaGeneric"
+            )
+            assert(viaCompanion.isFailure, s"Protobuf.encode must reject an enum map key; got $viaCompanion")
+        }
+    }
+
 end SchemaTest
 
 case class UnionCaseA(label: String, value: Int) derives CanEqual, Schema
@@ -2945,3 +3471,98 @@ case class WhenDefaultInner(x: Int, y: Int) derives CanEqual, Schema
 case class WhenDefaultOuter(label: String, inner: WhenDefaultInner = WhenDefaultInner(1, 2)) derives CanEqual, Schema
 
 case class CrossFeaturePerson(firstName: String, score: Int = 0) derives CanEqual, Schema
+
+// --- Enum derivation fixtures ---
+
+enum EDSimple derives Schema, CanEqual:
+    case Red, Green, Blue
+end EDSimple
+
+enum EDParam derives Schema, CanEqual:
+    case Point(x: Int, y: Int)
+    case Line(a: Int, b: Int, c: Int)
+end EDParam
+
+enum EDMixed derives Schema, CanEqual:
+    case Named(label: String)
+    case Anonymous
+end EDMixed
+
+enum EDDefaults derives Schema, CanEqual:
+    case Full(a: Int, b: String = "def-b", c: Boolean = true)
+    case Empty
+end EDDefaults
+
+enum EDWithBody derives Schema, CanEqual:
+    case Alpha(x: Int)
+    case Beta
+
+    def describe: String = this match
+        case Alpha(x) => s"alpha-$x"
+        case Beta     => "beta"
+end EDWithBody
+
+trait EDLabelled:
+    def kind: String = "labelled"
+
+enum EDExtendsTrait extends EDLabelled derives Schema, CanEqual:
+    case One(x: Int)
+    case Two
+end EDExtendsTrait
+
+object EDHolder:
+    enum Nested derives Schema, CanEqual:
+        case X
+        case Y(v: Int)
+    end Nested
+end EDHolder
+
+enum EDInner derives Schema, CanEqual:
+    case A
+    case B(v: Int)
+end EDInner
+
+enum EDOuter derives Schema, CanEqual:
+    case Wrap(inner: EDInner)
+    case Plain
+end EDOuter
+
+enum EDCustomApply derives Schema, CanEqual:
+    case Item(code: String)
+    case Blank
+end EDCustomApply
+
+object EDCustomApply:
+    def make(code: String): EDCustomApply = Item(code.toUpperCase)
+end EDCustomApply
+
+enum EDSingle derives Schema, CanEqual:
+    case Only(x: Int)
+end EDSingle
+
+enum EDMany derives Schema, CanEqual:
+    case M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24
+end EDMany
+
+// A field-id pin on a parameterized enum case's own field. `@proto.fieldNumber` is the supported
+// per-variant field pin: it is captured directly off the case's field at derivation time and folded
+// into the enum's own derived Schema. A standalone `given Schema[EDPinCase.Pinned]` built with the
+// programmatic `.fieldId` builder is NOT an alternative for this: enum/sealed-trait derivation always
+// emits each variant's Schema fresh (for monomorphic dispatch and for safe self-recursion via the
+// parent-schema tie-knot), so a case's own pre-existing given is never consulted; only field-level
+// annotations (`@proto.fieldNumber`, `@rename`, `@alias`, `@doc`, `@omit`, `@transform`) are captured
+// from a variant's fields, per Schema.fieldId's scaladoc.
+enum EDPinCase derives Schema, CanEqual:
+    case Pinned(@kyo.schema.proto.fieldNumber(99) x: Int, y: Int)
+    case Other
+end EDPinCase
+
+case class EDHolderProduct(id: Int, kind: EDMixed) derives CanEqual, Schema
+case class EDOptionHolder(maybeKind: Option[EDMixed]) derives CanEqual, Schema
+case class EDListHolder(kinds: List[EDMixed]) derives CanEqual, Schema
+case class EDMapValueHolder(byName: Map[String, EDMixed]) derives CanEqual, Schema
+case class EDMapKeyHolder(byKind: Map[EDMixed, Int]) derives CanEqual, Schema
+case class EDSetHolder(kinds: Set[EDSimple]) derives CanEqual, Schema
+
+case class EDTransformHolder(kind: EDMixed, secret: String) derives CanEqual
+given edTransformHolderSchema: Schema[EDTransformHolder] = Schema[EDTransformHolder].rename("kind", "type_of").drop("secret")

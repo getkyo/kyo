@@ -9,7 +9,7 @@ import kyo.Codec.Writer
   * protocol. The resulting tree can then be inspected, diffed, or transformed without knowledge of the original type.
   *
   *   - Produces [[kyo.Structure.Value.Record]], [[kyo.Structure.Value.Sequence]], and typed primitive nodes (Str, Bool, Integer, Decimal,
-  *     BigNum)
+  *     BigNum, Bytes, Instant, Duration)
   *   - Maintains a stack of frames to track nested object/array construction
   *   - `result()` returns `Span.empty`; use `getResult` to obtain the built value tree
   *
@@ -89,11 +89,11 @@ final class StructureValueWriter extends Writer:
 
     def mapEnd(): Unit = objectEnd()
 
-    def bytes(value: Span[Byte]): Unit            = addValue(Structure.Value.Str(java.util.Base64.getEncoder.encodeToString(value.toArray)))
+    def bytes(value: Span[Byte]): Unit            = addValue(Structure.Value.Bytes(value))
     def bigInt(value: BigInt): Unit               = addValue(Structure.Value.BigNum(BigDecimal(value)))
     def bigDecimal(value: BigDecimal): Unit       = addValue(Structure.Value.BigNum(value))
-    def instant(value: java.time.Instant): Unit   = addValue(Structure.Value.Str(value.toString))
-    def duration(value: java.time.Duration): Unit = addValue(Structure.Value.Str(value.toString))
+    def instant(value: java.time.Instant): Unit   = addValue(Structure.Value.Instant(value))
+    def duration(value: java.time.Duration): Unit = addValue(Structure.Value.Duration(value))
 
     def getResult: Structure.Value = resultValue
 

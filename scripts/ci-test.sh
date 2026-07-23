@@ -17,9 +17,12 @@ set -uo pipefail
 # and mid-RPC errno-104 resets. The strategy is derived from the platform; no
 # caller selects it.
 #
-# Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, and JVM_OPTS from the environment; sets
-# none of them. The caller (a CI workflow, or build.sh --env podman-ci) owns the
-# environment, so this one runner is correct in every environment.
+# Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, and
+# NATIVE_LINK_CPUS from the environment; mutates none of them (the nativeLink
+# invocations append -XX:ActiveProcessorCount per invocation when
+# NATIVE_LINK_CPUS is set). The caller (a CI workflow, or build.sh --env
+# podman-ci) owns the environment, so this one runner is correct in every
+# environment.
 
 PLATFORMS="JVM JS Native Wasm"
 ACTIONS="test testDiff compile link"
@@ -44,8 +47,8 @@ contains_word() {
 # the RECORDED CALLS or the RECORDED HEAP, not just the exit code: the
 # JVM/JS/Wasm three-phase split (compile-main, compile-test, run) on full AND
 # diff; the Native single-process aggregate-link path with no --phase; the
-# platform-derived strategy; the exit-code mapping; and the JS-only 14G driver
-# heap bump against the shared 12G ceiling.
+# platform-derived strategy; the exit-code mapping; and the NATIVE_LINK_CPUS
+# cap reaching the nativeLink invocations but never the test run.
 if [ "${1:-}" = "--self-test" ]; then
     SELF="$0"
     PASS=0; FAIL=0; TOTAL=0
@@ -79,28 +82,13 @@ if [ "${1:-}" = "--self-test" ]; then
         CT_EXIT=$?
     }
 
-    # Same as run_runner but with the CI heap env the workflow exports (the
-    # shared 12G ceiling for JAVA_OPTS and JVM_OPTS), so the heap assertions
-    # observe the JS-only bump against the real inherited opts.
-    CI_OPTS='-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-    run_runner_ci() {
-        local platform="$1" action="$2" body="$3"
-        : > "$CALLS"; : > "$HEAP"
-        make_fake_sbt "$body"
-        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-            JAVA_OPTS="$CI_OPTS" JVM_OPTS="$CI_OPTS" \
-            "$SELF" "$platform" "$action" >/dev/null 2>&1
-        CT_EXIT=$?
-    }
-
     # Assertion helpers, evaluated against CT_EXIT and CALLS.
     exit_is()      { [ "$CT_EXIT" = "$1" ]; }
     calls_count()  { [ "$(wc -l < "$CALLS" | tr -d ' ')" = "$1" ]; }
     call_nth_is()  { [ "$(sed -n "${1}p" "$CALLS")" = "$2" ]; }
     calls_have()   { grep -qF -- "$1" "$CALLS"; }
     calls_lack()   { ! grep -qF -- "$1" "$CALLS"; }
-    heap_saw()     { grep -qF -- "$1" "$HEAP"; }
-    heap_never()   { ! grep -qF -- "$1" "$HEAP"; }
+    heap_nth_has() { sed -n "${1}p" "$HEAP" | grep -qF -- "$2"; }
 
     # Register a case: name + an assertion expression already evaluated by
     # the caller into $? . PASS when the caller passed 'true'.
@@ -171,6 +159,37 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "Native link failure exits 1 before any test runs"
     else record no "Native link failure exits 1 before any test runs"; fi
 
+    # 8a. NATIVE_HEAVY pre-links each heavy module in its own process before the aggregate link.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_HEAVY="kyo-schema" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if call_nth_is 1 "kyo-schemaNative/Test/nativeLink" && call_nth_is 2 "kyoNative/Test/nativeLink" \
+       && calls_have "testKyo --all Native" && exit_is 0
+    then record ok "NATIVE_HEAVY pre-links heavy modules before the aggregate link"
+    else record no "NATIVE_HEAVY pre-links heavy modules before the aggregate link"; fi
+
+    # 8a2. NATIVE_LINK_CPUS caps the two link invocations but never the test run.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_HEAVY="kyo-schema" NATIVE_LINK_CPUS=2 "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if heap_nth_has 1 "-XX:ActiveProcessorCount=2" && heap_nth_has 2 "-XX:ActiveProcessorCount=2" \
+       && ! heap_nth_has 3 "-XX:ActiveProcessorCount=2" && exit_is 0
+    then record ok "NATIVE_LINK_CPUS caps link invocations, never the test run"
+    else record no "NATIVE_LINK_CPUS caps link invocations, never the test run"; fi
+
+    # 8b. A heavy pre-link failure aborts before the aggregate link and before any tests.
+    : > "$CALLS"; : > "$HEAP"
+    make_fake_sbt 'if [ "$*" = "kyo-schemaNative/Test/nativeLink" ]; then exit 3; fi; echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_HEAVY="kyo-schema" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if calls_count 1 && call_nth_is 1 "kyo-schemaNative/Test/nativeLink" \
+       && calls_lack "kyoNative/Test/nativeLink" && calls_lack "testKyo" && exit_is 1
+    then record ok "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"
+    else record no "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"; fi
+
     # 9-20: Native crash-retry / check_log scenarios.
     # For these the fake sbt's link call must pass, so the body branches on $*.
     nat() {  # nat <name> <expected-exit> <run-body>
@@ -208,18 +227,6 @@ echo "Exception in thread \"main\" java.lang.RuntimeException: oops"; exit 1'
     if exit_is 2 && calls_count 0; then record ok "unknown action exits 2 before any sbt"
     else record no "unknown action exits 2 before any sbt"; fi
 
-    # 23. JS bumps the inherited 12G driver heap to 14G for every sbt call.
-    run_runner_ci JS test 'exit 0'
-    if heap_saw "-Xmx14G" && heap_never "-Xmx12G" && exit_is 0
-    then record ok "JS bumps the inherited driver heap to 14G"
-    else record no "JS bumps the inherited driver heap to 14G"; fi
-
-    # 24. JVM leaves the inherited 12G driver heap unchanged.
-    run_runner_ci JVM test 'exit 0'
-    if heap_saw "-Xmx12G" && heap_never "-Xmx14G" && exit_is 0
-    then record ok "JVM leaves the inherited driver heap at 12G"
-    else record no "JVM leaves the inherited driver heap at 12G"; fi
-
     # Negative control: a deliberately wrong expectation MUST flip FAIL,
     # proving the harness is not vacuous. Not counted in the scenario total.
     run_runner JVM test 'exit 0'
@@ -227,7 +234,7 @@ echo "Exception in thread \"main\" java.lang.RuntimeException: oops"; exit 1'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 24 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 25 ]
     exit $?
 fi
 
@@ -244,25 +251,39 @@ if ! contains_word "$ACTION" "$ACTIONS"; then
     echo "ci-test.sh: unknown action '$ACTION'" >&2; usage; exit 2
 fi
 
-# The Scala.js link runs in the sbt driver heap, and the full JS test-class
-# compile OOMs at the shared 12G ceiling. Raise the driver to 14G for JS only:
-# each platform runs on its own runner, so JVM/Wasm stay at 12G (green there)
-# and Native stays at 12G because its forked LLVM/podman/chrome alongside a 14G
-# heap would overcommit the 16G box (exit 143). This mutates the inherited opts
-# rather than hardcoding a second string, so the only ceiling is the caller's
-# 12G. When JAVA_OPTS is unset/empty (direct mode without the CI env) the
-# substitution is a no-op and the launcher's .jvmopts governs, which is correct
-# for the unconstrained dev box.
-if [ "$PLATFORM" = "JS" ]; then
-    export JAVA_OPTS="${JAVA_OPTS:-}"; export JAVA_OPTS="${JAVA_OPTS//-Xmx12G/-Xmx14G}"
-    export JVM_OPTS="${JVM_OPTS:-}"; export JVM_OPTS="${JVM_OPTS//-Xmx12G/-Xmx14G}"
-fi
-
 MAX_RETRIES=${MAX_RETRIES:-3}
 STALE_TIMEOUT=${STALE_TIMEOUT:-600}
 POLL_INTERVAL=${POLL_INTERVAL:-10}
 
+# Space-separated module names (e.g. "kyo-schema") whose SOLO native-link optimize peak needs an
+# isolated, fresh-heap sbt driver. Each is linked first in its own process, keeping its
+# whole-program optimize off the shared aggregate driver where the preceding modules have already
+# filled the 2G metaspace. Measured: kyo-schema alone peaks ~7.7G RSS in a clean process vs ~9.9G in
+# the accumulated aggregate (the delta is that accumulation), which OOM-killed the 8G-capped Native
+# driver. nativeLink is disk-cached per project, so the aggregate link below skips a module already
+# linked here. Empty by default; the CI workflow sets it for the Native target.
+NATIVE_HEAVY="${NATIVE_HEAVY:-}"
+
+# When non-empty, the nativeLink sbt invocations run with -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS.
+# The scala-native toolchain sizes its optimizer pool and its concurrent clang forks from
+# availableProcessors, and the fork fleet stacked on top of the driver heap is what overcommits the
+# 16GB CI runners. Scoped to the link invocations only; compile and the test run keep every CPU.
+NATIVE_LINK_CPUS="${NATIVE_LINK_CPUS:-}"
+
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
+
+# sbt for a nativeLink invocation: applies the NATIVE_LINK_CPUS cap when set. The flag is added
+# via the invocation's environment; .jvmopts only overrides flags it duplicates, so a flag that
+# appears only here always reaches the JVM.
+link_sbt() {
+    if [ -n "$NATIVE_LINK_CPUS" ]; then
+        JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
+        JVM_OPTS="${JVM_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
+            sbt "$@"
+    else
+        sbt "$@"
+    fi
+}
 
 # run-arg: full run sends --all, diff run sends nothing (testKyo diffs vs
 # origin/main). compile/link map to the dedicated phases below.
@@ -357,8 +378,15 @@ run_native() {
         sbt "testKyo --phase compile-test Native" || return $?
         return 0
     fi
+    # Isolate each heavy module's native link in its own sbt driver before the aggregate link, so its
+    # whole-program optimize runs against a fresh heap and empty metaspace. The aggregate below reuses
+    # the on-disk nativeLink cache and skips what was linked here.
+    for heavy in $NATIVE_HEAVY; do
+        log "pre-linking heavy native module in an isolated driver: sbt ${heavy}Native/Test/nativeLink"
+        link_sbt "${heavy}Native/Test/nativeLink" || { log "native pre-link of $heavy failed"; return 1; }
+    done
     log "linking native test binaries: sbt kyoNative/Test/nativeLink"
-    sbt "kyoNative/Test/nativeLink"
+    link_sbt "kyoNative/Test/nativeLink"
     link_exit=$?
     if [ "$link_exit" -ne 0 ]; then
         log "native linking failed (exit $link_exit)"; return 1

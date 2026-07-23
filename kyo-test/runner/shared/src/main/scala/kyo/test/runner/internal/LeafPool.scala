@@ -131,10 +131,39 @@ object LeafPool:
       */
     private val global = new LeafPool(globalK, 1024)
 
+    /** Serializes the leaves of every globally-sequential suite against each other, process-wide.
+      *
+      * `parallelism` orders a suite's own leaves but cannot protect a resource shared BETWEEN suites: every
+      * suite pushes into one pool, so several suites each ordering themselves still contend. A CLI, an
+      * account, or a fixed port is exactly that kind of resource, and the contention reads as a slow
+      * provider rather than as a race: leaves that pass alone in seconds sit until the timeout together.
+      *
+      * Held for the leaf's whole body rather than for one call inside it, since spawning a process and
+      * reaping it contend just as much as the call between them.
+      */
+    private val globalSequenceGate: kyo.Meter =
+        import kyo.AllowUnsafe.embrace.danger
+        given Frame = Frame.internal
+        // Unsafe: one process-wide gate has to exist before any suite submits, so it is built here, the same
+        // tier-3 initialization the channel and start guard above use.
+        kyo.Sync.Unsafe.evalOrThrow(kyo.Meter.initMutexUnscoped)
+    end globalSequenceGate
+
     /** Enqueue one leaf computation into the process-global pool; return a promise for its result. Delegates to the
       * global instance's `submit`.
+      *
+      * A globally-sequential leaf takes the shared gate for its whole body, so at most one such leaf runs in the
+      * process at a time. Leaves without the flag are untouched and keep running at the pool's full width.
       */
-    def submit[A](comp: A < Async)(using Frame): Promise[A, Any] < Async =
-        global.submit(comp)
+    def submit[A](comp: A < Async, globallySequential: Boolean = false)(using Frame): Promise[A, Any] < Async =
+        if globallySequential then
+            // The gate is never closed, so its Closed abort is unreachable; a panic on it would be a bug in
+            // this file rather than a test failure, and is reported as one instead of being silently swallowed.
+            global.submit(Abort.run[Closed](globalSequenceGate.run(comp)).map {
+                case Result.Success(a)         => a
+                case Result.Failure(_: Closed) => Abort.panic(LeafPoolPanic)
+                case Result.Panic(ex)          => Abort.panic(ex)
+            })
+        else global.submit(comp)
 
 end LeafPool

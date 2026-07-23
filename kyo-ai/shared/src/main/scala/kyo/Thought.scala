@@ -8,13 +8,12 @@ import scala.reflect.ClassTag
 
 /** Structured self-prompting woven into the model's required output schema.
   *
-  * A `Thought[A]` injects a typed reasoning field into the generation's result schema: an `opening`
-  * thought's field precedes `resultValue`, a `closing` thought's follows it, so the field ORDER frames
-  * the answer (opening reasoning, then answer, then closing checks) and drives autoregressive generation.
-  * Each thought carries a `process` hook that fires on the decoded typed value after generation, enabling
-  * verification, metrics, or follow-up generation. Thought name is the type's compile-time (unqualified)
-  * name via `Schema.structure.name`. No reasoning is woven in by default; enable a `Thought` (or the
-  * built-in `Thought.reflective`, a `Reflect` opening and a `Check` closing) when you want one.
+  * A `Thought[A]` injects a typed reasoning field into the result schema: an `opening` thought precedes
+  * `resultValue`, a `closing` thought follows it, so field ORDER frames the answer (opening reasoning, then
+  * answer, then closing checks) and drives autoregressive generation. Each thought's `process` hook fires on
+  * the decoded value after generation, for verification, metrics, or follow-up. Thought name is the type's
+  * unqualified name via `Schema.structure.name`. No reasoning is woven in by default; enable a `Thought` (or
+  * the built-in `Thought.reflective`, a `Reflect` opening and a `Check` closing) when you want one.
   *
   * @tparam S
   *   the capability set the process hook requires
@@ -99,10 +98,9 @@ object Thought:
                 thoughts.flatMap(_.infos)
             }
 
-        // Assemble the result-tool parameter schema as a JsonSchema.Obj directly from each thought's
-        // Json.jsonSchema, in opening -> resultValue -> closing property order. Assembling per-thought
-        // schemas directly preserves each field's @doc description, which a Structure.Type.Product
-        // round-trip through fromStructure would drop.
+        // Assemble the result-tool parameter schema as a JsonSchema.Obj from each thought's Json.jsonSchema,
+        // in opening -> resultValue -> closing order. Assembling per-thought schemas directly preserves each
+        // field's @doc description, which a Structure.Type.Product round-trip through fromStructure would drop.
         def resultJson[A](thoughts: Chunk[Info[?, ?]], resultSchema: JsonSchema): JsonSchema =
             val (opening, closing) = thoughts.partition(_.position == Position.Opening)
             def group(name: String, l: Chunk[Info[?, ?]]): JsonSchema =
@@ -111,7 +109,7 @@ object Thought:
                     required = l.toList.map(_.name)
                 )
             // Omit an empty thought group entirely: with no opening (or closing) thoughts the envelope drops
-            // that key, so a default no-thought generation carries no reasoning structure, just `resultValue`.
+            // that key, so a default no-thought generation carries just `resultValue`.
             val props =
                 (if opening.nonEmpty then List("openingThoughts" -> group("OpeningThoughts", opening)) else Nil) :::
                     List("resultValue" -> resultSchema) :::
@@ -119,38 +117,29 @@ object Thought:
             JsonSchema.Obj(properties = props, required = props.map(_._1))
         end resultJson
 
-        // Decode the raw tool-call arguments (a Structure.Value record) into the thought fields and the
-        // result, firing each thought's process hook by name; an unrecognized name is an
-        // AIInvalidThoughtException, an undecodable field or result an AIDecodeException.
-        def handle[A](thoughts: Chunk[Info[?, LLM]], record: Structure.Value, resultSchema: Schema[A])(using
-            Frame
-        ): A < (LLM & Sync & Abort[AIGenException]) =
-            val opening       = Structure.Path.field("openingThoughts").get(record).toMaybe.getOrElse(Chunk.empty)
-            val closing       = Structure.Path.field("closingThoughts").get(record).toMaybe.getOrElse(Chunk.empty)
-            val openingFields = opening.headMaybe.collect { case Structure.Value.Record(fs) => fs }.getOrElse(Chunk.empty)
-            val closingFields = closing.headMaybe.collect { case Structure.Value.Record(fs) => fs }.getOrElse(Chunk.empty)
-            Kyo.foreachDiscard(openingFields.concat(closingFields)) { (name, sub) =>
+        // Fire each opening/closing thought's process hook on its decoded group field; an unrecognized
+        // thought name is an AIInvalidThoughtException, an undecodable field an AIDecodeException, both
+        // aborting (a thought that will not decode is a reasoning-scaffold bug). Called from the result
+        // tool's run: the group objects are the one heterogeneous part of the envelope (per-thought names
+        // and schemas), so they ride as open values and are dispatched here; the result stays typed.
+        def handleThoughtGroups(
+            thoughts: Chunk[Info[?, ?]],
+            opening: Maybe[Structure.Value],
+            closing: Maybe[Structure.Value]
+        )(using Frame): Unit < (LLM & Sync & Abort[AIGenException]) =
+            def fieldsOf(group: Maybe[Structure.Value]): Chunk[(String, Structure.Value)] =
+                group.collect { case Structure.Value.Record(fs) => fs }.getOrElse(Chunk.empty)
+            Kyo.foreachDiscard(fieldsOf(opening).concat(fieldsOf(closing))) { (name, sub) =>
                 thoughts.filter(_.name == name).headMaybe match
                     case Absent =>
                         Abort.fail(AIInvalidThoughtException(name))
                     case Present(info) =>
-                        Abort.run[DecodeException](info.decodeAndProcess(sub)).map {
+                        Abort.run[DecodeException](info.asInstanceOf[Info[Any, Any]].decodeAndProcess(sub)).map {
                             case kyo.Result.Success(_) => Kyo.unit
                             case _                     => Abort.fail(AIDecodeException(s"failed to decode thought: $name"))
                         }
-            }.andThen {
-                val resultSub = Structure.Path.field("resultValue").get(record).toMaybe.flatMap(_.headMaybe)
-                resultSub match
-                    case Present(sv) =>
-                        Abort.run[DecodeException](Abort.get(Structure.decode(sv)(using resultSchema, summon))).map {
-                            case Result.Success(a) => a
-                            case Result.Failure(e) => Abort.fail(AIDecodeException(s"${e.getMessage}: ${Json.encode(sv)}"))
-                            case p: Result.Panic   => Abort.panic(p.exception)
-                        }
-                    case Absent => Abort.fail(AIDecodeException("result envelope has no resultValue"))
-                end match
             }
-        end handle
+        end handleThoughtGroups
 
     end internal
 

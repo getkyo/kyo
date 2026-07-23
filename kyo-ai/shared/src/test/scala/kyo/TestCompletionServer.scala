@@ -9,10 +9,12 @@ import kyo.ai.*
   * no blocking) and exposes its base URL so a test can point `Config.apiUrl` at it. It serves
   * `POST /v1/chat/completions` (OpenAI) and `POST /v1/messages` (Anthropic), each reading the raw request
   * JSON, capturing it (so a test can assert the outgoing request DTO shape end to end), and returning the
-  * next scripted response a test enqueued. A scripted response is either a non-streaming JSON body or an
-  * SSE sequence (each chunk emitted as `data: <chunk>`, terminated by `data: [DONE]`) when the request
-  * carries `"stream":true`. Scripting is deterministic and per-test: a test enqueues the exact response it
-  * wants before the client call.
+  * next scripted response a test enqueued. A scripted response is a non-streaming JSON body, an SSE
+  * sequence (each chunk emitted as `data: <chunk>`, terminated by `data: [DONE]`) when the request carries
+  * `"stream":true`, a non-2xx status with a body, an SSE sequence that stalls after its chunks with no
+  * terminator (the streaming deadline fixture), or a request the server never answers (a client-side
+  * timeout fixture). Scripting is deterministic and per-test: a test enqueues the exact response it wants
+  * before the client call.
   *
   * For an opt-in live path, `proxyToOpenAI` forwards to the real OpenAI endpoint when both
   * `KYO_LLM_LIVE_TESTS` and `OPENAI_API_KEY` are present (read via `kyo.System`); the live tests are
@@ -32,6 +34,24 @@ final class TestCompletionServer private (
     /** Enqueues an SSE response (the chunks emitted as `data: <chunk>`, terminated by `data: [DONE]`). */
     def enqueueStream(chunks: Chunk[String])(using Frame): Unit < Async =
         scripts.updateAndGet(_.append(TestCompletionServer.Scripted.Sse(chunks))).unit
+
+    /** Enqueues a non-2xx status response with the given body, returned by the next completion call (the
+      * non-streaming route only); drives the client-side status classification and retry paths.
+      */
+    def enqueueStatus(code: Int, body: String)(using Frame): Unit < Async =
+        scripts.updateAndGet(_.append(TestCompletionServer.Scripted.Status(code, body))).unit
+
+    /** Enqueues a request the server never answers: the handler blocks on a latch that is never released,
+      * so the connection stays open until the client's own timeout fires. Drives a client-side timeout.
+      */
+    def enqueueNeverRespond(using Frame): Unit < Async =
+        scripts.updateAndGet(_.append(TestCompletionServer.Scripted.Never)).unit
+
+    /** Enqueues a streaming response that emits `chunks` and then stalls with no terminator, so the
+      * connection stays open while production stops; drives the streaming deadline.
+      */
+    def enqueueStreamStall(chunks: Chunk[String])(using Frame): Unit < Async =
+        scripts.updateAndGet(_.append(TestCompletionServer.Scripted.SseStall(chunks))).unit
 
     /** The requests the server received, in order, for asserting the outgoing request DTO shape. */
     def captured(using Frame): Chunk[TestCompletionServer.Captured] < Async =
@@ -53,10 +73,18 @@ end TestCompletionServer
 
 object TestCompletionServer:
 
-    /** A scripted response: either a non-streaming JSON body or an SSE chunk sequence. */
+    /** A scripted response: a non-streaming JSON body, an SSE chunk sequence, a non-2xx status with a
+      * body, or a request that never gets answered.
+      */
     enum Scripted derives CanEqual:
         case Body(json: String)
         case Sse(chunks: Chunk[String])
+        case Status(code: Int, json: String)
+        case Never
+        // Emits its chunks and then stalls without a terminator, the shape of a provider that stops
+        // producing mid-stream while the connection stays open.
+        case SseStall(chunks: Chunk[String])
+    end Scripted
 
     /** A captured request: the path it hit and the raw request body. */
     case class Captured(path: String, body: String) derives CanEqual
@@ -91,17 +119,19 @@ object TestCompletionServer:
       * on an ephemeral port within the enclosing `Scope` and runs `f` with the handle. Used by the
       * non-streaming completion/eval/thought tests.
       */
-    def run[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope) =
+    def run[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
         bind(streaming = false)(f)
 
     /** Binds a STREAMING server (SSE completion responses on both `/v1/chat/completions` and `/v1/messages`,
       * read by the client's `sendWith` SSE path) on an ephemeral port within the enclosing `Scope`. Used by
       * the streaming test.
       */
-    def runStreaming[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope) =
+    def runStreaming[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
         bind(streaming = true)(f)
 
-    private def bind[A, S](streaming: Boolean)(f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope) =
+    private def bind[A, S](streaming: Boolean)(f: TestCompletionServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[Captured])
@@ -130,19 +160,10 @@ object TestCompletionServer:
     private def popNext(scripts: AtomicRef[Chunk[Scripted]])(using Frame): Maybe[Scripted] < Async =
         scripts.getAndUpdate(_.drop(1)).map(_.headMaybe)
 
-    // Pops the next scripted response as a plain body, or a path-appropriate no-script default (an
-    // empty-choices completion body, or an empty-data embeddings body).
-    private def nextBody(path: String, scripts: AtomicRef[Chunk[Scripted]])(using Frame): String < Async =
-        val noScriptDefault = if path.contains("embeddings") then """{"data":[]}""" else """{"choices":[]}"""
-        popNext(scripts).map {
-            case Present(Scripted.Body(b)) => b
-            case Present(Scripted.Sse(cs)) => cs.headMaybe.getOrElse(noScriptDefault)
-            case Absent                    => noScriptDefault
-        }
-    end nextBody
-
-    // The non-streaming endpoint: capture the request, return the next scripted JSON body as plain text
-    // (what the client's postText path reads).
+    // The non-streaming endpoint: capture the request, then respond per the next scripted entry. A Never
+    // entry blocks on a latch that is never released (an Async suspension, no thread blocked), driving a
+    // client-side timeout; with no script queued it defaults to an empty-choices OpenAI body (or an
+    // empty-data embeddings body on the embeddings path).
     private def jsonRoute(
         path: String,
         scripts: AtomicRef[Chunk[Scripted]],
@@ -150,11 +171,22 @@ object TestCompletionServer:
         arrivals: Channel[Captured]
     )(using Frame): HttpHandler[?, ?, ?] =
         HttpRoute.postRaw(path).request(_.bodyText).response(_.bodyText).handler { req =>
-            val cap = Captured(path, req.fields.body)
+            val cap             = Captured(path, req.fields.body)
+            val noScriptDefault = if path.contains("embeddings") then """{"data":[]}""" else """{"choices":[]}"""
             received.getAndUpdate(_.append(cap))
                 .andThen(Abort.run[Closed](arrivals.offerDiscard(cap)).unit)
-                .andThen(nextBody(path, scripts))
-                .map(HttpResponse.ok(_))
+                .andThen {
+                    popNext(scripts).map {
+                        case Present(Scripted.Status(code, body)) => HttpResponse(HttpStatus(code)).addField("body", body)
+                        // A stall script reaching the non-streaming route means the test bound the wrong server;
+                        // holding the connection surfaces that as the caller's timeout rather than a handler panic.
+                        case Present(Scripted.Never) | Present(Scripted.SseStall(_)) =>
+                            Latch.init(1).map(_.await).andThen(HttpResponse.ok(""))
+                        case Present(Scripted.Body(b)) => HttpResponse.ok(b)
+                        case Present(Scripted.Sse(cs)) => HttpResponse.ok(cs.headMaybe.getOrElse(noScriptDefault))
+                        case Absent                    => HttpResponse.ok(noScriptDefault)
+                    }
+                }
         }
 
     // The streaming endpoint: capture the request, emit the next scripted SSE chunks as `data: <chunk>`
@@ -171,13 +203,24 @@ object TestCompletionServer:
         HttpRoute.postRaw(path).request(_.bodyText).response(_.bodySseText).handler { req =>
             val cap = Captured(path, req.fields.body)
             received.getAndUpdate(_.append(cap)).andThen(Abort.run[Closed](arrivals.offerDiscard(cap)).unit).andThen {
-                popNext(scripts).map { scripted =>
-                    val chunks = scripted match
-                        case Present(Scripted.Sse(cs)) => cs.append(terminator)
-                        case Present(Scripted.Body(b)) => Chunk(b, terminator)
-                        case Absent                    => Chunk(terminator)
-                    val events = Stream.init(chunks).map(c => HttpSseEvent(c))
-                    HttpResponse.ok.addField("body", events)
+                popNext(scripts).map {
+                    case Present(Scripted.Status(code, body)) =>
+                        HttpResponse(HttpStatus(code)).addField("body", Stream.init(Chunk(body)).map(HttpSseEvent(_)))
+                    case Present(Scripted.Never) =>
+                        Latch.init(1).map(_.await).andThen(HttpResponse.ok.addField("body", Stream.empty[HttpSseEvent[String]]))
+                    case Present(Scripted.SseStall(cs)) =>
+                        // The chunks reach the client, then production stops with no terminator: the
+                        // stream stays open and the consumer waits forever without a deadline.
+                        val events = Stream.init(cs).map(HttpSseEvent(_)).concat(
+                            Stream.unwrap(Latch.init(1).map(_.await).andThen(Stream.empty[HttpSseEvent[String]]))
+                        )
+                        HttpResponse.ok.addField("body", events)
+                    case other =>
+                        val chunks = other match
+                            case Present(Scripted.Sse(cs)) => cs.append(terminator)
+                            case Present(Scripted.Body(b)) => Chunk(b, terminator)
+                            case _                         => Chunk(terminator)
+                        HttpResponse.ok.addField("body", Stream.init(chunks).map(HttpSseEvent(_)))
                 }
             }
         }

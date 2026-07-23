@@ -19,10 +19,10 @@ end Json
   */
 object Json:
     /** Default maximum nesting depth for objects/arrays in JSON decoding (DoS limit). */
-    val DefaultMaxDepth: Int = 512
+    inline val DefaultMaxDepth = 512
 
     /** Default maximum number of entries in any single collection or object in JSON decoding (DoS limit). */
-    val DefaultMaxCollectionSize: Int = 100000
+    inline val DefaultMaxCollectionSize = 100000
 
     given Json = Json()
 
@@ -64,9 +64,7 @@ object Json:
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        val reader = json.newReader(Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-        reader.resetLimits(maxDepth, maxCollectionSize)
-        Result.catching[DecodeException](schema.readFrom(reader))
+        json.decodeFully[A](Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)), maxDepth, maxCollectionSize)
     end decode
 
     /** Decodes raw UTF-8 JSON bytes into a value of type A.
@@ -85,9 +83,7 @@ object Json:
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        val reader = json.newReader(input)
-        reader.resetLimits(maxDepth, maxCollectionSize)
-        Result.catching[DecodeException](schema.readFrom(reader))
+        json.decodeFully[A](input, maxDepth, maxCollectionSize)
     end decodeBytes
 
     /** Generates a JSON Schema for type A, enriched with runtime Schema metadata.
@@ -627,8 +623,10 @@ object Json:
                             Structure.PrimitiveKind.BigInt => Integer()
                         case Structure.PrimitiveKind.Double | Structure.PrimitiveKind.Float |
                             Structure.PrimitiveKind.BigDecimal => Num()
-                        case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char => Str()
-                        case Structure.PrimitiveKind.Boolean                               => Bool()
+                        case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char |
+                            Structure.PrimitiveKind.Bytes | Structure.PrimitiveKind.Instant |
+                            Structure.PrimitiveKind.Duration => Str()
+                        case Structure.PrimitiveKind.Boolean => Bool()
                         // Unit maps to an empty object on the wire (see `Schema.unitSchema`). Describing it as
                         // `{"type":"null"}` here would mismatch the actual wire shape AND violate consumers
                         // that require an object-typed schema (e.g. MCP tool `inputSchema`).

@@ -393,6 +393,32 @@ The result tool has the reserved name `Completion.resultToolName` (`"result_tool
 
 `embed`'s successful result is `Chunk[Embedding]`, one vector per input in order, each tagged `(modelName, dim)` so two embeddings are comparable only within the same space; a `(model, dim)` mismatch is a no-edge, never a cross-space comparison ([`kyo/ai/Embedding.scala:23-46`]). As noted above, no in-tree caller invokes `embed` today: the shipped `Compactor`'s graph is structural (`Adj + Ref`) only. `embed` and `Message.embedding` exist as a matched pair for a richer compactor to populate and reuse an embedding without recomputing it.
 
+### Authoring a completion backend
+
+- **A backend returns messages and tool calls; it never processes tool-call payloads.** Map the provider reply to `Context.Message` values with every tool call's arguments passed through VERBATIM, exactly as `AnthropicCompletion.read` does (`Call(id, name, Json.encode(input))`) ([`AnthropicCompletion.scala:39-52`]). This includes the result tool: the backend identifies it by NAME (`Completion.resultToolName`, or a harness's native structured-output tool) or by structural position (a terminal result field), never by inspecting the payload, and forwards the arguments untouched. A backend must NOT decode, validate, reshape, envelope, or fail on a tool-call payload. The only decoding a backend does is the transport/wire format (the provider's response body or the harness's stream-json events) into typed `Message`/`Call` values. All result decoding, `resultValue`-envelope handling, thought extraction, and validation live in `LLM.eval` ([`LLM.scala:353-392`]); that is the ONLY place a result payload is decoded.
+- **A missing or unusable result is not a backend failure; it is the eval loop's repair signal.** When the model produced no result (only text or non-result tool calls), return the transcript with no `result_tool` call. `eval` then sees no result and re-queries, and on the forced iteration it passes zero user tools so the next request exposes only the result tool and the model must call it ([`LLM.scala`] eval loop, `forceResult`). This repair loop is the harness's substitute for the HTTP `tool_choice` force (`AnthropicCompletion` sets `tool_choice` to the result tool when it is the only tool; `OpenAICompletion` uses `tool_choice:"required"`), which command harnesses like the Claude Code CLI have no equivalent for. A backend that decodes/validates the payload and aborts (e.g. `AIDecodeException` on non-JSON result text) DEFEATS this loop and must not do so. NOTE: `CodexCompletion` currently violates the payload-faithfulness rule (it reshapes through `HarnessCompletion.resultOutput`); this is a known deviation to be fixed, not a pattern to copy.
+- Implement the full `Completion` contract. Do not add placeholder streaming methods, silent tool rejection, or partial support paths.
+- Kyo remains the tool runner for every backend. If a provider agent loop needs synchronous tool execution, use a private bridge that calls back into Kyo tool handlers and return the produced transcript as Kyo `Context.Message` values. Do not expose ambient user MCP servers, provider shell tools, plugins, or unrelated host tools through a completion backend.
+- Preserve structured context as far as the provider protocol allows. Use native message, image, function-call, and tool-result protocol items when they exist. If a provider has no supported native injection path for a piece of history, keep the workaround explicit in code and tests, and verify the public behavior it affects.
+- Command harnesses must live in `shared/src/main`, unless behavior is genuinely platform-specific. `Command`, `Path`, and the Kyo effects are cross-platform APIs.
+- Isolate provider config without losing auth. For command harnesses this means a temporary working directory and an isolated config home that copies only required auth material. Disable user plugins, shell tools, browser/computer tools, and other external provider tools unless they are the explicit backend under test.
+- Surface provider unavailability as typed failures, for example auth, quota, rate limit, and network failures should become provider-unavailable exceptions rather than string matching in tests.
+- Log backend dispatch through `kyo.Log`, not raw printing. The `LLM` boundary should name the provider, model, message count, tool count, and streaming mode without dumping prompts, API keys, auth files, or full transcripts.
+
+Backend tests must cover the same behavior a user can observe:
+
+- Unit tests for request and response conversion: context messages, images, assistant tool calls, tool results, and streaming fragments. For the result path, assert VERBATIM passthrough (the result-tool call carries the provider payload unchanged) and the repair paths: a non-JSON result surfaces as a raw result-tool call (no exception), and a turn with no result surfaces with no result-tool call so the eval loop repairs.
+- Shared live integration tests for command harnesses in `shared/src/test`. Use `assume` when the CLI, auth, quota, account, or network provider is unavailable, and fail on behavioral regressions after the provider is available.
+- Live tests must assert that the intended provider and completion backend are actually selected.
+- Live tests must exercise `ai.gen`, retained history via `AI.snapshot` and `AI.recover`, image input, Kyo tool calling, `ai.stream[String]`, and object streaming via `ai.stream[A]`.
+- Use `KYO_AI_PROVIDER=<provider>` for forked sbt demos; a `-Dkyo.ai.provider=...` argument before the sbt task configures the sbt JVM and may not reach the forked demo process. If a manual program needs visible backend selection, wrap it with `Log.withConsoleLogger(..., Log.Level.debug)` or another debug-enabled logger.
+
+Self-contained demo command shape:
+
+```sh
+JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=codex sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+```
+
 ## The exception hierarchy
 
 `AIException` is a `sealed abstract class ... extends KyoException`, organized by the two operations that produce failures ([`AIException.scala:18-19`]):
@@ -511,3 +537,23 @@ In addition to the root checklist:
 9. **`Compactor` internal-state change.** Does it stay `private[kyo]`? Is any new piece of bookkeeping genuinely underivable from `(raw, compacted)` (not something `group`/`deriveGraph`/`score`/`demotedOrigins` could recompute)? Does it avoid reintroducing a stored side table (a persisted `CompactorState`-shaped record, a per-instance cell, a `Memo`) the current design deliberately eliminated? [`Compactor.scala:70-716`, `kyo/ai/Context.scala:56-60`]
 10. **`Compactor` rendering/gating change.** Does the seam stay a literal no-op below the occupancy trigger (same `Context` value, not merely an equal one)? Is every normal-cut `Verbatim -> Reduced` demotion still routed through `cacheGatePasses`, never applied unconditionally? Does the forced path stay the sole ungated exemption, and does an unfittable transcript still abort with `AIContextOverflowException` rather than send? [`LLM.scala:485-501`, `Compactor.scala:407-468`, `CompactorTest.scala:68-75`, `CompactorTest.scala:466-482`]
 11. **New test.** Does it extend `kyo.test.Test[Any]`, use `TestCompletionServer` (not a live endpoint) for anything that reaches the wire, assert concrete values, place each `enqueueBody`/`enqueueStream` before the consuming client call, wait via `Latch`/`Channel`/`awaitCaptured` (never a sleep), and live in `shared/src/test`? [`TestCompletionServer.scala`, `LLMTest.scala`]
+
+## Model facts are data, never inference
+
+A completion implementation must not name a model, a model family, or a model version, and must not
+describe how a particular model behaves. This covers comments and scaladoc, not only code: if a reader
+can learn from a completion implementation that some named model differs from another, the rule is
+broken.
+
+Where models differ, the difference is declared on the catalog entry, alongside the model's name and
+its context window, and the implementation reads the declared field without knowing which model it
+came from. Adding a model means adding an entry that declares its facts; the constructors take those
+facts without defaults, so an undeclared model is a compile error rather than a silent guess.
+
+This replaced a set of predicates that parsed version digits out of model ids to infer what a wire
+would accept. That approach put unverifiable model knowledge in code, went stale on every rename, and
+sized an output ceiling from a reasoning budget on models whose wire refuses that budget, which stopped
+generations early and was diagnosed as a harness failure.
+
+Provider names remain legal in the implementations, which are named after providers, as does a
+provider's own wire vocabulary inside the single function that decodes it.

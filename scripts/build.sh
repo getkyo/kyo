@@ -163,27 +163,41 @@ ci_cmd() { "$SCRIPT_DIR/ci-test.sh" "$1" "$ACTION"; }
 # a shell prelude run inside the already-launched container, quiet and idempotent.
 container_provision() {
     local platform="$1"
-    local apt_pkgs="curl ca-certificates patch"
-    local node_pkgs="" native_pkgs=""
+    # liburing-dev + libssl-dev: the kyo-net JVM FFI shims link the io_uring (-luring) and OpenSSL TLS data planes; without them
+    # kyo-netJVM's ffiCompile fails (cannot find -luring). Small and always installed so any kyo-net command builds in the container.
+    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev"
+    local node_pkgs="" native_pkgs="" bssl_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
         JS|Wasm|all) node_pkgs="nodejs npm" ;;
     esac
     case "$platform" in
-        Native|all) native_pkgs="libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
+        # clang, cc (build-essential), and libssl-dev are preinstalled on GitHub runners,
+        # so the CI setup action never lists them; a bare container needs them explicitly
+        # (scala-native drives clang, kyo-ffi-it's bundled lib builds with cc, and the
+        # openssl-linked modules need -lssl -lcrypto).
+        Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
     esac
+    # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
+    # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
+    [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null
-    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs >/dev/null
+    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs >/dev/null
 fi
 export COURSIER_CACHE=/root/.cache/coursier
 if ! command -v cs >/dev/null 2>&1; then
-    arch=\$(uname -m); cs_arch=x86_64-pc-linux
-    [ "\$arch" = aarch64 ] && cs_arch=aarch64-pc-linux
-    curl -fsSL "https://github.com/coursier/coursier/releases/latest/download/cs-\$cs_arch.gz" \
-        | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
+    # Linux aarch64 launchers are published by VirtusLab's coursier-m1 releases, not
+    # by coursier/coursier (whose latest release has no aarch64-pc-linux asset).
+    arch=\$(uname -m)
+    if [ "\$arch" = aarch64 ]; then
+        cs_url="https://github.com/VirtusLab/coursier-m1/releases/latest/download/cs-aarch64-pc-linux.gz"
+    else
+        cs_url="https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz"
+    fi
+    curl -fsSL "\$cs_url" | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
 fi
 eval "\$(cs java --jvm corretto:25 --env)"
 command -v sbt >/dev/null 2>&1 || cs install sbt >/dev/null
@@ -200,9 +214,31 @@ run_in_container() {
     git -C "$PROJECT_DIR" archive HEAD --format=tar > "$snap/src.tar"
     git -C "$PROJECT_DIR" diff HEAD > "$snap/changes.patch" 2>/dev/null || true
 
-    local args=(run --rm --security-opt label=disable -v "$snap:/build-input:ro")
+    # --privileged + memlock: podman's default seccomp/limits block the io_uring syscalls and ring buffer locking that kyo-net's io_uring
+    # backend needs; without these the io_uring tests fail to init the ring and cancel. (GitHub runners allow them without privilege; this is a
+    # podman-sandbox concern only, so it does not change observed behavior.)
+    local args=(run --rm --security-opt label=disable --privileged --ulimit memlock=-1:-1 -v "$snap:/build-input:ro")
     [ -n "$platform_flag" ] && args+=(--platform "$platform_flag")
+    # Artifact extraction. The container is --rm, so its target/ (coverage reports, etc.) is discarded on exit. When KYO_BUILD_OUT names a host
+    # directory, mount it at /output; the inner script below copies the scoverage report/data dirs there after the run, so a coverage run's
+    # report survives the container. Unset by default, so a normal run is unaffected.
+    if [ -n "${KYO_BUILD_OUT:-}" ]; then
+        mkdir -p "$KYO_BUILD_OUT"
+        args+=(-v "$KYO_BUILD_OUT:/output")
+    fi
     local envs=()
+    # Forward the leak-debug flag so the forked test JVM (which inherits the container env) runs leaves serially and attributes each leaked
+    # descriptor to the test that opened it (see kyo.test.runner.internal.LeakDebug). Unset by default, so a normal run is unaffected.
+    [ -n "${KYO_TEST_LEAK_DEBUG:-}" ] && envs+=(-e "KYO_TEST_LEAK_DEBUG=$KYO_TEST_LEAK_DEBUG")
+    # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
+    # against real libssl/libcrypto instead of cancelling.
+    [ -n "${STAGE_BORINGSSL:-}" ] && envs+=(-e "STAGE_BORINGSSL=$STAGE_BORINGSSL")
+    # Forward the kyo-net per-backend test isolation flag (KYO_NET_ONLY=<backend>), the per-TLS-provider isolation flag
+    # (KYO_NET_TLS_ONLY=<provider>), and the success-leaves-only flag (KYO_NET_SUCCESS_ONLY=1) so a podman run can
+    # validate/sample a single (backend x provider) cell in isolation. Unset by default (all backends/providers), so a normal run is unaffected.
+    [ -n "${KYO_NET_ONLY:-}" ] && envs+=(-e "KYO_NET_ONLY=$KYO_NET_ONLY")
+    [ -n "${KYO_NET_TLS_ONLY:-}" ] && envs+=(-e "KYO_NET_TLS_ONLY=$KYO_NET_TLS_ONLY")
+    [ -n "${KYO_NET_SUCCESS_ONLY:-}" ] && envs+=(-e "KYO_NET_SUCCESS_ONLY=$KYO_NET_SUCCESS_ONLY")
     if [ "$ENV_KIND" = "podman-ci" ]; then
         args+=(--memory "$CI_MEMORY" --cpus "$CI_CPUS")
         envs+=(-e CI=true -e SBT_TASK_LIMIT=1
@@ -224,7 +260,10 @@ run_in_container() {
 $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
-    && $inner"
+    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh \"linux-\$(uname -m)\"; fi
+if $inner; then __rc=0; else __rc=\$?; fi
+if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi
+exit \${__rc:-1}"
     local rc=$?
     rm -rf "$snap"
     return $rc

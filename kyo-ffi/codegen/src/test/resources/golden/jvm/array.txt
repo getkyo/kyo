@@ -17,7 +17,7 @@ final class ArrayBindingsImpl extends ArrayBindings:
         val __kyoMark$ = __kyoScratch$.mark()
         try
             val xsSeg = MemorySegment.ofArray(xs)
-            val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.ArrayBindings", "sum")
+            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.ArrayBindings", "sum")
             val retVal: Int = sumMH.invokeExact(errnoSeg, xsSeg, n)
             retVal
         finally __kyoScratch$.reset(__kyoMark$)
@@ -28,6 +28,7 @@ object ArrayBindingsImpl:
     private val lib      = NativeLoader.load("kyo_arr")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
     private val hasCriticalApi: Boolean =
         try
             val _ = classOf[Linker.Option].getMethod("critical", classOf[Boolean])

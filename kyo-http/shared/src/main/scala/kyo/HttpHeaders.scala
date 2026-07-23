@@ -35,6 +35,10 @@ object HttpHeaders:
 
     private val ColonSpace = ": ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
     private val CrLf       = "\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+    private val Utf8       = java.nio.charset.StandardCharsets.UTF_8
+
+    /** The `tchar` symbols of RFC 9110 section 5.6.2, alongside DIGIT and ALPHA. */
+    private val TokenSymbols = "!#$%&'*+-.^_`|~"
 
     val empty: HttpHeaders = Chunk.empty[String]
 
@@ -283,9 +287,13 @@ object HttpHeaders:
         end foreach
 
         /** Writes all headers to a GrowableByteBuffer in HTTP/1.1 wire format (name: value\r\n per header). Zero allocation for packed
-          * headers. For chunk-backed headers, uses writeAscii.
+          * headers, which go out as the raw octets they were parsed from. A chunk-backed header has its name written char-by-char (a name is
+          * a token, so it is ASCII) and its value written as UTF-8 octets, since a field value may carry obs-text (RFC 9110 section 5.5).
+          *
+          * The caller tests [[invalidField]] first: a name that is not a token breaches `writeAscii`'s precondition, and a value carrying a
+          * control character would put a header line on the wire that a recipient could re-frame.
           */
-        def writeToBuffer(buf: kyo.internal.util.GrowableByteBuffer): Unit =
+        def writeToBuffer(buf: kyo.net.internal.util.GrowableByteBuffer): Unit =
             if isPacked(self) then
                 val packed = asPacked(self)
                 val count  = packedHeaderCount(packed)
@@ -308,11 +316,36 @@ object HttpHeaders:
                     if i < chunk.length then
                         buf.writeAscii(chunk(i))
                         buf.writeBytes(ColonSpace, 0, ColonSpace.length)
-                        buf.writeAscii(chunk(i + 1))
+                        val value = chunk(i + 1).getBytes(Utf8)
+                        buf.writeBytes(value, 0, value.length)
                         buf.writeBytes(CrLf, 0, CrLf.length)
                         loop(i + 2)
                 loop(0)
         end writeToBuffer
+
+        /** Names the first header `writeToBuffer` must refuse to write, or `Absent` when it can write them all.
+          *
+          * A field name must be a token and a field value must carry no control character other than HTAB, so that no header line this
+          * writes can be read as two. A value above 0x7F is legal obs-text (RFC 9110 section 5.5) and is never reported: it goes on the wire
+          * as its UTF-8 octets.
+          *
+          * Packed headers are not walked. They are written as the raw octets they were parsed from, and both parsers reject CR, LF and NUL
+          * and require a token name, so a packed header is writable by construction and its write path stays allocation-free.
+          *
+          * The returned description names the offending header but never its value, which can hold a credential. It quotes a name only after
+          * that name is known to be a token, so the description can carry no line break of its own into a log.
+          */
+        private[kyo] def invalidField: Maybe[String] =
+            if isPacked(self) then Absent
+            else
+                val chunk = asChunk(self)
+                @tailrec def loop(i: Int): Maybe[String] =
+                    if i >= chunk.length then Absent
+                    else if !HttpHeaders.isToken(chunk(i)) then Present(s"the name of the header at index ${i / 2}")
+                    else if !HttpHeaders.isControlFree(chunk(i + 1)) then Present(s"the value of header '${chunk(i)}'")
+                    else loop(i + 2)
+                loop(0)
+        end invalidField
 
         /** Folds over all headers as name-value pairs. */
         def foldLeft[A](init: A)(f: (A, String, String) => A): A =
@@ -399,6 +432,48 @@ object HttpHeaders:
             addCookie(name, HttpCookie(value))
 
     end extension
+
+    // --- Field syntax (RFC 9110 sections 5.1, 5.5, 5.6.2) ---
+
+    /** Whether `c` is a `tchar`: DIGIT, ALPHA, or one of the symbols RFC 9110 section 5.6.2 lists.
+      *
+      * Takes a char rather than a String so a parser can test raw bytes against it without decoding them.
+      */
+    private[kyo] def isTokenChar(c: Char): Boolean =
+        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || TokenSymbols.indexOf(c) >= 0
+
+    /** Whether `s` is a `token`, the grammar a field name must satisfy: `token = 1*tchar` (RFC 9110 sections 5.1 and 5.6.2).
+      *
+      * Strictly stronger than an ASCII test: SP, colon and CR are all ASCII, and a name carrying any of them
+      * puts a line on the wire that a recipient reads differently than the sender meant it ("X Foo: bar" parses as the name "X" with the
+      * value "Foo: bar"). An empty name is not a token either.
+      */
+    private[kyo] def isToken(s: String): Boolean =
+        @tailrec def loop(i: Int): Boolean =
+            if i >= s.length then true
+            else if isTokenChar(s.charAt(i)) then loop(i + 1)
+            else false
+        s.nonEmpty && loop(0)
+    end isToken
+
+    /** Whether `s` is free of the ASCII control characters an HTTP/1.1 message cannot carry inline: `%x00-%x1F` other than HTAB (`%x09`),
+      * and DEL (`%x7F`).
+      *
+      * This is the character rule a field value must satisfy. RFC 9110 section 5.5 admits SP, HTAB, visible characters and obs-text
+      * (`%x80-FF`) and nothing else, so a char above 0x7F passes: it is legal and is written as its UTF-8 octets. What the rule keeps out is
+      * a CR or an LF, which would end a header line or a request line early and let a recipient read one line as two. That is where response
+      * splitting and request smuggling both start (RFC 9112 section 11), and it is why an ASCII test is no substitute: CR, LF and NUL are
+      * themselves ASCII.
+      */
+    private[kyo] def isControlFree(s: String): Boolean =
+        @tailrec def loop(i: Int): Boolean =
+            if i >= s.length then true
+            else
+                val c = s.charAt(i)
+                if c == '\t' || (c >= 0x20 && c != 0x7f) then loop(i + 1)
+                else false
+        loop(0)
+    end isControlFree
 
     // --- Cookie parsing ---
 

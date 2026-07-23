@@ -26,6 +26,10 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
 
     override def frame: Frame = _frame
 
+    private[kyo] def requireEndOfInput(): Unit =
+        if pos < data.length then
+            throw TrailingInputException(MsgPack(), s"${data.length - pos} byte(s) after the decoded value")(using frame)
+
     private val self     = MsgPack(config)
     private var pos: Int = 0
 

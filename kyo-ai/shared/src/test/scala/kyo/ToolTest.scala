@@ -25,16 +25,23 @@ class ToolTest extends kyo.test.Test[Any]:
     }
 
     "result_tool uses the exact name and description string" in {
-        val info = Tool.internal.resultToolInfo.infos.head
+        val info = Tool.internal.resultToolDefinition.infos.head
         assert(info.name == "result_tool")
         assert(
             info.description ==
-                "Call this tool with the result. Do not make parallel calls to this tool in the same completion. " +
-                "Only the first invocation will be considered."
+                "Use this tool to return your final response in the requested structured format. You MUST " +
+                "call this tool exactly once at the end of your response to provide the structured " +
+                "output. Do not make parallel calls to this tool in the same completion; only the " +
+                "first invocation will be considered."
         )
     }
 
-    "decode-failure repair removes the call AND injects a corrective system message" in {
+    "decode-failure repair removes the call, corrects, and shows the model what it actually sent" in {
+        // The decode names a byte offset into a payload the model cannot count through, and the call is
+        // stripped from the conversation before the retry, so without the tail the model is asked to fix
+        // something it can no longer see. A real run rejected two complete results for one surplus
+        // bracket at the very end of each, regenerated from scratch both times, and the third attempt
+        // reached the output ceiling instead of converging.
         val callId   = CallId("decode-fail-id")
         val call     = Call(callId, "t", "not-valid-json-for-int{{{")
         val aTool    = Tool.init[Int]("t")(_ => 42)
@@ -66,6 +73,15 @@ class ToolTest extends kyo.test.Test[Any]:
                 case SystemMessage(content, _, _) => content.contains("carefully review its schema")
                 case _                            => false
             }
+            val corrective = msgs.collect { case SystemMessage(c, _, _) => c }.mkString("\n")
+            assert(
+                corrective.contains(s"${call.arguments.length} characters"),
+                s"the model must be told how much it sent: $corrective"
+            )
+            assert(
+                corrective.contains("not-valid-json-for-int{{{"),
+                s"and shown the end of its own payload, where a long generation's defect usually is: $corrective"
+            )
             assert(!hasProcessingMsg, "processingMessage should be removed on decode failure")
             assert(!assistantHasCall, "call should be removed from assistant message on decode failure")
             assert(hasCorrectiveMsg, "corrective system message should be injected")
@@ -82,8 +98,11 @@ class ToolTest extends kyo.test.Test[Any]:
             }
         ).map { ctx =>
             val found = ctx.raw.toList.exists {
-                case ToolMessage(cid, content, _, _) => cid == callId && content.contains("not found")
-                case _                               => false
+                case ToolMessage(cid, content, _, _) =>
+                    // Names the miss AND the tools that remain callable, which is the part that lets a
+                    // model recover rather than repeat the same unavailable call.
+                    cid == callId && content.contains("is not available") && content.contains("Available tools:")
+                case _ => false
             }
             assert(found)
         }

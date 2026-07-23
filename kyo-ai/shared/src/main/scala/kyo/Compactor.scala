@@ -453,7 +453,7 @@ object Compactor:
 
             def render(ctx: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =
                 AI.config.map { config =>
-                    val window   = config.modelMaxTokens
+                    val window   = config.modelContextWindow
                     val low      = config.effectiveLow
                     val hard     = config.hardLimitTokens
                     val occupied = occupancy(ctx)
@@ -775,7 +775,7 @@ object Compactor:
 
             // The cap when the user leaves rawRetentionCap Absent: several window-widths.
             def effectiveRawCap(config: Config): Int =
-                config.compaction.rawRetentionCap.getOrElse(rawRetentionWidths * config.modelMaxTokens)
+                config.compaction.rawRetentionCap.getOrElse(rawRetentionWidths * config.modelContextWindow)
 
             // The fixed head band: the system head plus the task-origin (first user) turn, never touched.
             // A live region stays verbatim (never demoted) and so is excluded by the demotion check below

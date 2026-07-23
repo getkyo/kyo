@@ -54,13 +54,14 @@ def useValue(value: Int): Unit   = ()
 
 # kyo-ffi
 
-Call C functions directly from Scala. kyo-ffi lets you define a Scala trait that mirrors a C API, and the build plugin generates all the platform-specific code to make the calls work on JVM, Scala Native, and Scala.js. The same Scala source compiles on all three platforms.
+Call C functions directly from Scala. kyo-ffi lets you define a Scala trait that mirrors a C API, and the build plugin generates all the platform-specific code to make the calls work on JVM, Scala Native, and Scala.js (both the JavaScript and the WebAssembly backends). The same Scala source compiles on all of them.
 
 | Platform | Mechanism |
 |----------|-----------|
 | JVM | [Java Panama](https://docs.oracle.com/en/java/javase/22/docs/api/java.base/java/lang/foreign/package-summary.html) (`java.lang.foreign`) |
 | Native | Scala Native [`@extern`](https://scala-native.org/en/stable/user/interop.html) |
 | JS | [koffi](https://koffi.dev) (Node only) |
+| Wasm | [koffi](https://koffi.dev) (Node only), the same Scala.js emitter path under `ModuleKind.ESModule` |
 
 The sbt plugin inspects your trait via TASTy, generates platform-specific implementations, compiles your C into a shared library, and packages everything into the JAR. No macros at call sites, no `MemorySegment` / `CString` / `Ptr` in user code. The only annotation is `@Ffi.blocking` for methods whose C implementation may block; everything else is expressed through types and structural patterns.
 
@@ -445,7 +446,7 @@ The buffer is allocated on entry and released on exit, even when the block throw
 | `Buffer.mmapReadOnly(path)` | memory-map a file as read-only `Buffer[Byte]` |
 | `Buffer.mmapReadWrite(path)` | memory-map a file as read-write `Buffer[Byte]` |
 
-A buffer instance exposes the pure accessors `size` (element count), `byteSize` (`size * sizeof(A)`), and `isClosed`, plus the unsafe operations `get(i)`, `set(i, v)`, and `close()` (the latter three take `(using AllowUnsafe)`). Backed by `java.lang.foreign.Arena` (JVM), `stdlib.malloc/free` (Native), and a `Uint8Array` + `DataView` pair (JS). Thread-safe by default.
+A buffer instance exposes the pure accessors `size` (element count), `byteSize` (`size * sizeof(A)`), and `isClosed`, plus the unsafe operations `get(i)`, `set(i, v)`, and `close()` (the latter three take `(using AllowUnsafe)`). `get`/`set` dispatch through the `UnsafeLayout[A]` typeclass, which boxes every primitive (JVM erasure); a hot read/compare loop that already knows its element type can bypass that dispatch with the non-generic accessor pairs `getLong`/`setLong`, `getInt`/`setInt`, `getShort`/`setShort`, `getDouble`/`setDouble`, `getFloat`/`setFloat`, and `getByte`/`setByte`, each gated by a compiler-checked `A =:= T` evidence parameter so it can never misread a differently-typed buffer's bytes. Backed by `java.lang.foreign.Arena` (JVM), `stdlib.malloc/free` (Native), and a `Uint8Array` + `DataView` pair (JS). Thread-safe by default.
 
 > **Caution:** `confinedUse` and `allocConfined` are single-thread only. On JVM they use `Arena.ofConfined`, so a cross-thread `get` / `set` throws; do not pass a confined buffer across threads or suspend a fiber inside a `confinedUse` block. On Native and JS they behave identically to `use` / `alloc`.
 
@@ -922,7 +923,7 @@ Behavior is uniform for: trait API, `Buffer` lifetime semantics, `Ffi.Guard` reg
 
 (The `@Ffi.blocking` mechanism also differs per platform; see "Calling code that blocks" for that table.)
 
-**64-bit hosts only.** 32-bit hosts are rejected at runtime on the first `Ffi.load` call; this is a runtime check, not a build-time one. Scala.js in a browser is unsupported (`Unsupported` at load); kyo-ffi targets Node. Wasm is not a supported target.
+**64-bit hosts only.** 32-bit hosts are rejected at runtime on the first `Ffi.load` call; this is a runtime check, not a build-time one. Scala.js in a browser is unsupported (`Unsupported` at load); kyo-ffi targets Node, on both the JavaScript and WebAssembly backends.
 
 Library resolution differs by platform in ways worth knowing when binding system libraries:
 

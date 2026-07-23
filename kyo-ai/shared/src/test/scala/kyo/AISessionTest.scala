@@ -7,10 +7,31 @@ class AISessionTest extends kyo.test.Test[Any]:
 
     "empty has no history, no config override, and no enablements" in {
         val s = AISession.empty
-        assert(s.context == Context.empty)
+        assert(s.rawContext == Context.empty)
         assert(s.env.config.isEmpty)
         assert(s.env.prompt eq Prompt.empty)
         assert(s.env.tools.isEmpty && s.env.thoughts.isEmpty && s.env.mode.isEmpty)
+    }
+
+    "context enriches rawContext with the session prompt: instructions first, reminders last" in {
+        val session = AISession.empty
+            .addPrompt(Prompt.init("INSTRUCTIONS", "REMINDER"))
+        val raw = Context.empty.userMessage("hello")
+        LLM.run {
+            session.copy(rawContext = raw).context.map { enriched =>
+                val msgs = enriched.compacted
+                assert(msgs.size == 3, s"expected system + user + reminder, got ${msgs.size}: $msgs")
+                msgs.head match
+                    case m: Context.SystemMessage => assert(m.content.contains("INSTRUCTIONS"))
+                    case other                    => assert(false, s"first message should be the instructions, got $other")
+                msgs(1) match
+                    case m: Context.UserMessage => assert(m.content == "hello")
+                    case other                  => assert(false, s"second message should be the exchange, got $other")
+                msgs.last match
+                    case m: Context.SystemMessage => assert(m.content.contains("REMINDER"))
+                    case other                    => assert(false, s"last message should be the reminder, got $other")
+            }
+        }
     }
 
     "config sets the instance config override" in {

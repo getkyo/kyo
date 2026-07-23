@@ -32,7 +32,7 @@ class CompactorRecallTest extends kyo.test.Test[Any]:
                     Default.recallTool(ai).infos.head.decodeAndRun("""{"id":14}""").map { r =>
                         assert(
                             r match
-                                case RunOutcome.Ran(Result.Success(o)) =>
+                                case RunOutcome.Ran(Result.Success(o), _) =>
                                     o.contains("assistant: ASSISTANT PAYLOAD") &&
                                     o.contains("tool: TOOL PAYLOAD") &&
                                     o.contains("user: USER PAYLOAD")

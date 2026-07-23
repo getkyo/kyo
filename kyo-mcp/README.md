@@ -576,7 +576,7 @@ val drainThenClose: Unit < (Async & Abort[McpException]) =
 
 kyo-mcp ships no transports of its own; it uses the `JsonRpcTransport` factories from `kyo-jsonrpc`. `stdio()` is the line-delimited stdin/stdout transport for a CLI server a host launches as a subprocess. `inMemory` returns a cross-wired pair, ideal for wiring a client and a server in one process (every example in this README that uses `inMemory` does exactly that). `fromWire(...)` lifts a byte-stream transport plus framer plus codec into the envelope seam for a custom wire.
 
-The full surface compiles and runs on JVM, JavaScript, and Scala Native. The single platform restriction is `JsonRpcTransport.unixDomain(path)`, which binds a Unix domain socket on the JVM and aborts `UnsupportedOperationException` on JS and Native, where the NIO Unix-domain-socket APIs are absent.
+The full surface compiles and runs on JVM, JavaScript, and Scala Native, with no platform restriction: `JsonRpcTransport.unixDomain(path)` works everywhere, running over the platform kyo-net transport (JVM posix/NIO, Native posix, JS/Wasm Node's `net` module). On JS/Wasm it needs a Node.js runtime, since a browser has no sockets.
 
 ## Putting it together
 
