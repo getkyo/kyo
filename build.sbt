@@ -285,6 +285,7 @@ lazy val kyoJVM: Project = project
         `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
         `kyo-schema-json`.jvm,
+        `kyo-schema-protobuf`.jvm,
         `kyo-schema-tests`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
@@ -361,6 +362,7 @@ lazy val kyoJS = project
         `kyo-tasty-fixtures-internal`.js,
         `kyo-schema`.js,
         `kyo-schema-json`.js,
+        `kyo-schema-protobuf`.js,
         `kyo-schema-tests`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -416,6 +418,7 @@ lazy val kyoNative = project
         `kyo-tasty-fixtures-internal`.native,
         `kyo-schema`.native,
         `kyo-schema-json`.native,
+        `kyo-schema-protobuf`.native,
         `kyo-schema-tests`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -462,6 +465,7 @@ lazy val kyoWasm = project
         `kyo-parse`.wasm,
         `kyo-schema`.wasm,
         `kyo-schema-json`.wasm,
+        `kyo-schema-protobuf`.wasm,
         `kyo-schema-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
@@ -708,10 +712,24 @@ lazy val `kyo-schema-tests` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-protobuf`)
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema-tests"))
         .withKyoTest
         .settings(`kyo-settings`, publish / skip := true)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-protobuf` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-protobuf"))
+        .withKyoTest
+        .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
@@ -1050,7 +1068,8 @@ lazy val `kyo-tasty` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
-        .dependsOn(`kyo-core`, `kyo-schema-json`)
+        .dependsOn(`kyo-core`, `kyo-schema`)
+        .dependsOn(`kyo-schema-json` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,

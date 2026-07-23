@@ -15,6 +15,10 @@ class JsonTest extends kyo.test.Test[Any]:
         schema.readFrom(r)
     end jsonRoundTrip
 
+    "writer does not claim annotation support" in {
+        assert(!Json().newWriter().canWriteAnnotations)
+    }
+
     // ===================================================================
     // encode/decode: from FormatTest (JSON-only tests)
     // ===================================================================

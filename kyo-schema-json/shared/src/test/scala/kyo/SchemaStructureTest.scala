@@ -6,8 +6,6 @@ import Schema.*
 import kyo.internal.CodecMacro
 import kyo.internal.JsonReader
 import kyo.internal.JsonWriter
-import kyo.internal.ProtobufReader
-import kyo.internal.ProtobufWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
 
@@ -122,7 +120,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                 UnknownVariantException(Nil, "V"),
                 ValidationFailedException(Nil, "msg"),
                 ParseException(Json(), "x", "Int"),
-                TruncatedInputException(Protobuf(), "eof")
+                TruncatedInputException(Json(), "eof")
             )
             assert(exceptions.size == 6)
             assert(exceptions.map(_.getClass).distinct.size == 6)

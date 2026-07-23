@@ -310,7 +310,6 @@ class IonTest extends kyo.test.Test[Any]:
             val emitting = Ion(Ion.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit))
             assert(emitting.newWriter().canWriteAnnotations)
             assert(!Ion().newWriter().canWriteAnnotations)
-            assert(!Json().newWriter().canWriteAnnotations)
         }
 
         "ion configured binary string helpers reject text-shaped calls" in {
