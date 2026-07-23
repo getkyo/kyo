@@ -73,7 +73,7 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
       * nested schema's own overrides, so the prior value can be restored once that nested read
       * completes.
       */
-    override private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
+    override def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
 
     def objectStart(): Int =
         checkDepth()

@@ -169,9 +169,15 @@ object Codec:
         def captureValue(): Reader
 
         /** Whether this codec addresses record fields by numeric id instead of (or in addition to)
-          * name, as Protobuf does. `SchemaSerializer` gates on this before computing a schema's
-          * field-id override map, which would otherwise pay rename-resolution cost at every nesting
-          * depth of every encode/decode on codecs that cannot use the result.
+          * name, as Protobuf does. The schema serialization engine gates on this before computing a
+          * schema's field-id override map, which would otherwise pay rename-resolution cost at every
+          * nesting depth of every encode/decode on codecs that cannot use the result.
+          *
+          * Returning `true` obliges overriding BOTH [[withFieldIdOverrides]] and
+          * [[fieldIdOverridesSnapshot]]: the engine saves the snapshot before installing a nested
+          * schema's overrides and restores it afterwards, so leaving either default in place would
+          * capture an empty map as the prior state and silently wipe an ancestor schema's overrides
+          * on restore.
           */
         def supportsFieldIdOverrides: Boolean = false
 
@@ -185,7 +191,7 @@ object Codec:
         /** The currently installed field-id override map, read by a caller that is about to replace
           * it with a nested schema's own overrides so the prior value can be restored afterwards.
           */
-        private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
+        def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
 
     end Reader
 
@@ -297,9 +303,15 @@ object Codec:
         def capabilities: Codec.Capabilities = Codec.Capabilities(canWriteTopLevelNonObject)
 
         /** Whether this codec addresses record fields by numeric id instead of (or in addition to)
-          * name, as Protobuf does. `SchemaSerializer` gates on this before computing a schema's
-          * field-id override map, which would otherwise pay rename-resolution cost at every nesting
-          * depth of every encode/decode on codecs that cannot use the result.
+          * name, as Protobuf does. The schema serialization engine gates on this before computing a
+          * schema's field-id override map, which would otherwise pay rename-resolution cost at every
+          * nesting depth of every encode/decode on codecs that cannot use the result.
+          *
+          * Returning `true` obliges overriding BOTH [[withFieldIdOverrides]] and
+          * [[fieldIdOverridesSnapshot]]: the engine saves the snapshot before installing a nested
+          * schema's overrides and restores it afterwards, so leaving either default in place would
+          * capture an empty map as the prior state and silently wipe an ancestor schema's overrides
+          * on restore.
           */
         def supportsFieldIdOverrides: Boolean = false
 
@@ -313,7 +325,7 @@ object Codec:
         /** The currently installed field-id override map, read by a caller that is about to replace
           * it with a nested schema's own overrides so the prior value can be restored afterwards.
           */
-        private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
+        def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
     end Writer
 
     /** Describes what wire shapes a codec can express, consulted by `Schema.representationFor`

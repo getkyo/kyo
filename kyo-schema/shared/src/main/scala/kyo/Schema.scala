@@ -1554,6 +1554,12 @@ object Schema:
         override def codecName: String                  = delegate.codecName
         override def capabilities: Codec.Capabilities   = delegate.capabilities
 
+        override def supportsFieldIdOverrides: Boolean = delegate.supportsFieldIdOverrides
+        override def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
+            val _ = delegate.withFieldIdOverrides(overrides)
+            this
+        override def fieldIdOverridesSnapshot: Map[String, Int] = delegate.fieldIdOverridesSnapshot
+
         override def annotations(values: Chunk[Any]): Unit =
             if values.nonEmpty then pendingAnnotations = pendingAnnotations ++ values
         end annotations
