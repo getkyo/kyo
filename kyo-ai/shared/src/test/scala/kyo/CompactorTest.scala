@@ -495,6 +495,24 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
+    "INV-005 a span with an at-or-above-keep member is pinned verbatim while an all-below-keep sibling demotes" in {
+        // two single-region spans; A has one member at/above the floored keep, B has every member below it.
+        val raw       = Chunk[Message](tok(am("span A hot member"), 2), tok(am("span B cold one"), 2))
+        val units     = Default.group(raw)
+        val spans     = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)))
+        val scores    = Dict[Int, Double]((0, 0.21), (1, 0.001))
+        val keepFloor = keep(1.0)
+        assert(Default.spanMaxLiveness(spans(0), scores) >= keepFloor, "span A's hottest member is at or above keep, so it pins verbatim")
+        assert(Default.spanMaxLiveness(spans(1), scores) < keepFloor, "span B has every member below keep, so it is demotable")
+        // occupied > low forces pass 2, but the pass-1 demotion of B already fits, so B holds at Summary.
+        val dem = Default.cut(Context(raw), units, spans, scores, 1.0, 200, 100, raw.size, Dict.empty)
+        assert(dem.get(1) == Present(Level.Summary), "the all-below-keep span is demoted to the summary level")
+        assert(
+            dem.get(0) == Absent,
+            "the span with an at-or-above-keep member never enters the demotions map: live content is never demoted"
+        )
+    }
+
     // ==== terse (descent only) ====
 
     "INV-033 terse renders the marker + a fixed prefix of the summary bytes (descent only)" in {
@@ -583,6 +601,74 @@ class CompactorTest extends kyo.test.Test[Any]:
                 ,
                 s"an unfittable request aborts AIContextOverflowException rather than sending, got: $r"
             )
+        }
+    }
+
+    "§5d:942-945 a forced-path pointer descriptor carries the compaction key" in {
+        // one demotable tool-call region (an assistant httpGet call fused with its result) with a large stamp,
+        // a keys map naming its compaction key, and a hard limit small enough that forced pointers the region.
+        val raw = Chunk[Message](
+            tok(sm("system prompt"), 2),
+            tok(um("first task"), 2),
+            tok(am("get metrics", call("c1", "httpGet", "{}")), 500),
+            tok(tm("c1", "connections: 5"), 500)
+        )
+        val units      = Default.group(raw)
+        val spans      = Chunk(Span(2, 4, Chunk(2)))
+        val scores     = Dict[Int, Double]((2, 0.001))
+        val keys       = Dict[Int, (String, Tool.Kind)]((2, ("metrics.connections", Tool.Kind.Read)))
+        val prevLevels = Dict.empty[Int, Context.Origin]
+        val view       = Default.forced(raw, units, spans, scores, 5.0, 100, raw.size, prevLevels, keys)
+        val marker     = view.filter(_.origin.exists(_.start == 2))
+        assert(marker.size == 1, s"the forced path renders exactly one pointer marker for the region, got ${marker.size}")
+        val content = marker.head.content
+        assert(content.contains("[region 2:"), s"the marker is the region descriptor, got: $content")
+        assert(content.contains("httpGet"), s"the descriptor carries the tool name, got: $content")
+        assert(content.contains(", key metrics.connections"), s"the forced-path descriptor carries the compaction key, got: $content")
+        assert(content.contains("recall(2)"), s"the descriptor carries the recall id, got: $content")
+    }
+
+    // ==== the summary output cap ====
+
+    "§10.4 the fill config caps summary output at the provisional summaryOutputCap over both the default and a user-summarizer path" in {
+        // default path: summarizer Absent, so resolveFillConfig falls to provider.small and then caps.
+        val defaultResolved = Default.resolveFillConfig(cfg())
+        assert(
+            defaultResolved.maxTokens == Present(summaryOutputCap),
+            s"the default fill config is capped at summaryOutputCap, got ${defaultResolved.maxTokens}"
+        )
+        assert(defaultResolved.maxTokens == Present(512), "the provisional cap is 512")
+        // user-summarizer path: an explicit summarizer with its own 2048 cap is overridden by the mechanism cap.
+        val userSummarizer = cfg().maxTokens(2048)
+        val userConfig     = cfg().compaction(_.summarizer(userSummarizer))
+        val userResolved   = Default.resolveFillConfig(userConfig)
+        assert(
+            userResolved.maxTokens == Present(summaryOutputCap),
+            s"the cap is applied unconditionally, overriding the user summarizer's own 2048, got ${userResolved.maxTokens}"
+        )
+        assert(userResolved.maxTokens == Present(512), "the resolved user-summarizer fill config caps at 512")
+    }
+
+    // ==== the view is held under the hard limit ====
+
+    "INV-006 the rendered view is held at or under the hard limit" in {
+        // occupancy well above effectiveLow (and above the hard limit) with several demotable spans; the
+        // demotion loop must drive the view under the hard limit. Served under the mock wire, never a live
+        // provider (render is model-free, so no completion is scripted and none is ever issued).
+        val ctx    = demotable()
+        val config = cfg(12288)
+        assert(occupancy(ctx) > config.effectiveLow, "the fixture occupancy sits well above effectiveLow so the demotion loop runs")
+        TestCompletionServer.run { server =>
+            LLM.run(config.apiUrl(server.baseUrl))(Default.render(ctx)).map { view =>
+                assert(
+                    Default.viewTokens(view) <= config.hardLimitTokens,
+                    s"the demotion loop holds the rendered view at or under the hard limit, got ${Default.viewTokens(view)} > ${config.hardLimitTokens}"
+                )
+                assert(
+                    Default.viewTokens(view) < Default.viewTokens(ctx.raw),
+                    "the demotion loop shrank the view below the raw occupancy (the demotion actually ran)"
+                )
+            }
         }
     }
 
@@ -806,8 +892,11 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "INV-053 the fixed head band and the tail band are never forgotten even under maximal pressure" in {
         // A tiny cap (20 -> high 18, low 10) drives eviction as deep as it can. The system head and the task
-        // turn (ordinals 0,1) carry demotion markers too, so ONLY headBand protects them; a tail region
-        // (ordinal 5) carries a marker so only tailUnits protects it.
+        // turn (ordinals 0,1) carry demotion markers too, so ONLY headBand protects them. Under this tiny cap
+        // the head tokens alone already reach the low watermark, so the owed guard shrinks the protected tail
+        // to just the newest region; the demoted tail ordinal 5 is no longer positionally protected and joins
+        // the evictable middle. The still-live tail ordinals 6..14 (no demotion marker) survive regardless of
+        // the shrunk tail band, since the evictable filter forgets nothing that is not currently demoted.
         val raw = retentionRaw(5, List(40, 40, 40), 3)
         val compacted = Chunk[Message](
             demotionMarker(0, 1, raw.size),
@@ -824,13 +913,89 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(evicted.raw(0) == ctx.raw(0), "the system head is never forgotten (headBand hard exclusion)")
         assert(evicted.raw(1) == ctx.raw(1), "the task-origin user turn is never forgotten (headBand hard exclusion)")
         assert(evicted.raw(0).origin.isEmpty && evicted.raw(1).origin.isEmpty, "no band covers the head band")
-        (5 until raw.size).foreach { i =>
-            assert(evicted.raw(i) == ctx.raw(i), s"tail-band ordinal $i is never forgotten (tailUnits hard exclusion)")
-            assert(evicted.raw(i).origin.isEmpty, s"no band covers tail-band ordinal $i")
+        assert(
+            evicted.raw(5) != ctx.raw(5),
+            "the demoted tail ordinal 5 loses its positional protection under the shrunk tail band and joins the forgotten run"
+        )
+        assert(evicted.raw(5).origin.isDefined, "ordinal 5 is a member of the forgotten run's band, not a live slot")
+        (6 until raw.size).foreach { i =>
+            assert(evicted.raw(i) == ctx.raw(i), s"the still-live tail ordinal $i (no demotion marker) is never forgotten")
+            assert(evicted.raw(i).origin.isEmpty, s"no band covers live tail ordinal $i")
         }
         val bandHeads = evicted.raw.filter(m => m.origin.isDefined && m.content.nonEmpty)
-        assert(bandHeads.size == 1, "only the frozen+demoted middle between the head and the tail is eligible")
-        assert(evicted.raw(2).origin.exists(_.start == 2), "the forgotten run is exactly the middle [2,5)")
+        assert(bandHeads.size == 1, "the demoted middle and the now-unprotected demoted ordinal 5 form one contiguous forgotten run")
+        assert(
+            evicted.raw(2).origin.exists(o => o.start == 2 && o.end == 6),
+            "the forgotten run is exactly [2,6): the demoted middle plus the demoted tail ordinal 5"
+        )
+    }
+
+    "§10.5 the owed guard lets eviction reach the low watermark when the head and tail bands crowd a small cap, and never forgets live content" in {
+        // cap 100 -> high 90, low 50. Head 10 tokens, five DEMOTED contiguous regions (2..6) with large
+        // stamps, then two LIVE newest regions (7,8). The unguarded fixed tail band would protect the demoted
+        // recent regions and stall eviction above low; the owed guard shrinks the tail so they become
+        // evictable and eviction reaches low, while the live regions survive.
+        val liveMid    = tok(am("LIVE MIDTAIL payload"), 2)
+        val liveNewest = tok(am("LIVE NEWEST payload"), 2)
+        val raw = Chunk[Message](
+            tok(sm("system prompt"), 5),     // 0 head
+            tok(um("first task"), 5),        // 1 head (task turn)
+            tok(am("demoted middle A"), 40), // 2 demoted
+            tok(am("demoted middle B"), 40), // 3 demoted
+            tok(am("demoted middle C"), 40), // 4 demoted
+            tok(am("demoted recent D"), 40), // 5 demoted (a recent region the fixed tail band would protect)
+            tok(am("demoted recent E"), 40), // 6 demoted (a recent region the fixed tail band would protect)
+            liveMid,                         // 7 LIVE
+            liveNewest                       // 8 LIVE
+        )
+        val compacted = Chunk[Message](
+            demotionMarker(2, 3, raw.size),
+            demotionMarker(3, 4, raw.size),
+            demotionMarker(4, 5, raw.size),
+            demotionMarker(5, 6, raw.size),
+            demotionMarker(6, 7, raw.size)
+        )
+        val ctx    = Context(raw, compacted)
+        val config = cfg().compaction(_.rawRetentionCap(100))
+        assert(rawSumOf(raw) > 90, s"the fixture sits above the high watermark 90, got ${rawSumOf(raw)}")
+        val evicted = Default.evict(ctx, config)
+        assert(
+            rawSumOf(evicted.raw) <= 50,
+            s"the guard trims the tail so eviction reaches the low watermark 50, got ${rawSumOf(evicted.raw)}"
+        )
+        assert(
+            evicted.raw(7) == ctx.raw(7) && evicted.raw(7).content.contains("LIVE MIDTAIL"),
+            "the live mid-tail region's content is intact"
+        )
+        assert(evicted.raw(8) == ctx.raw(8) && evicted.raw(8).content.contains("LIVE NEWEST"), "the live newest region's content is intact")
+        assert(
+            evicted.raw(7).origin.isEmpty && evicted.raw(8).origin.isEmpty,
+            "no band covers a live region: live content is never forgotten"
+        )
+        assert(
+            evicted.raw(6).origin.isDefined,
+            "the demoted recent region the fixed tail band would have protected is now evictable and forgotten"
+        )
+        val bandHeads = evicted.raw.filter(m => m.origin.isDefined && m.content.nonEmpty)
+        assert(bandHeads.size == 1, s"the demoted middle and recent regions fuse into one forgotten run, got ${bandHeads.size} bands")
+
+        // control: an all-live recent tail (no demoted recent regions) correctly stalls above low, because
+        // the frozen middle alone cannot reach the target and live content is never force-forgotten.
+        val liveTail = (0 until 5).map(i => tok(am(s"live tail $i payload"), 20))
+        val rawC = Chunk[Message](
+            tok(sm("system prompt"), 5),
+            tok(um("first task"), 5),
+            tok(am("demoted middle A"), 40),
+            tok(am("demoted middle B"), 40),
+            tok(am("demoted middle C"), 40)
+        ).concat(Chunk.from(liveTail))
+        val compactedC = Chunk[Message](demotionMarker(2, 3, rawC.size), demotionMarker(3, 4, rawC.size), demotionMarker(4, 5, rawC.size))
+        val ctxC       = Context(rawC, compactedC)
+        val evictedC   = Default.evict(ctxC, config)
+        assert(rawSumOf(evictedC.raw) > 50, s"an all-live tail correctly stalls above the low watermark 50, got ${rawSumOf(evictedC.raw)}")
+        (5 until rawC.size).foreach { i =>
+            assert(evictedC.raw(i) == rawC(i) && evictedC.raw(i).origin.isEmpty, s"the all-live tail ordinal $i is never forgotten")
+        }
     }
 
     "INV-053 contiguousRuns folds a sorted ordinal list into maximal half-open runs" in {

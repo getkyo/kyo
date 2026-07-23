@@ -156,7 +156,7 @@ class TokenizerTest extends kyo.test.Test[Any]:
 
     "INV-018 the pure-Scala tiktoken reproduces the reference count exactly on a sample" in {
         // fixed-sample exactness (0.0% error), deterministic across repeated calls; the cross-platform pin
-        // for tiktoken correctness (the jtokkit JVM-oracle parity leaf is deferred: no jtokkit dep).
+        // for tiktoken correctness (the jtokkit JVM-oracle parity gate lives in the JVM-only TokenizerJtokkitParityTest).
         val sample = "The quick brown fox."
         assert(o200kTokens(sample) == 5, "the o200k count equals the known reference count exactly")
         assert(o200kTokens(sample) == o200kTokens(sample), "the encoder is deterministic across repeated calls")

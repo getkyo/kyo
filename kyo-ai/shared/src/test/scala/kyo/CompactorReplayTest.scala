@@ -149,4 +149,59 @@ class CompactorReplayTest extends kyo.test.Test[Any]:
         }
     }
 
+    val noInfos: Chunk[Tool.internal.Info[?, ?, LLM]] = Chunk.empty
+
+    // Ten unique lowercase words per region, seeded off the index, so no two regions share a token.
+    def distinctWords(seed: Int): String =
+        val letters = "abcdefghijklmnopqrstuvwxyz"
+        Chunk.from((0 until 10).map { k =>
+            val n = seed * 31 + k * 7 + 3
+            List(letters((n) % 26), letters((n / 26 + 5) % 26), letters((n / 7 + 11) % 26), letters((n / 3 + 19) % 26))
+                .mkString
+        }).mkString(" ")
+    end distinctWords
+
+    // A long, vocab-disjoint transcript: a seeded head and recent tail, a deep middle band far enough from
+    // both that its regions fall below keep and form clean stale-verbatim spans. Each region is one message.
+    def driftRaw(): Chunk[Message] =
+        val head = Chunk[Message](
+            tok(sm("orientation preface for the working session"), 50),
+            tok(um("please assist with the primary objective outcome"), 50)
+        )
+        val middle = Chunk.from((0 until 30).map(i => tok(am(distinctWords(i)), 400)))
+        val recent = Chunk.from((0 until 10).map(i => tok(am(distinctWords(100 + i)), 400)))
+        val tail   = Chunk[Message](tok(am(distinctWords(900) + " closing recap"), 1400))
+        head.concat(middle).concat(recent).concat(tail)
+    end driftRaw
+
+    // A Context whose usage anchor pins occupancy to `occ` (compacted == raw, so the offline suffix is zero).
+    def atOccupancy(raw: Chunk[Message], occ: Int): Context =
+        Context(raw, raw, Present(CompactionState(lastUsage = Present(occ), lastUsageRawSize = raw.size)))
+
+    "INV-007 the drift stale set is empty after a SIZE-fired boundary (not only the drift-fire path)" in {
+        val raw    = driftRaw()
+        val config = cfg()
+        // occupancy above effectiveHigh (8192 at window 16384) so the next boundary fires by SIZE, not drift
+        // (driftPendingConfirm stays false). render is model-free; the mock wire is up so a live provider is
+        // never hit and no completion is scripted.
+        val ctx = atOccupancy(raw, 9000)
+        assert(occupancy(ctx) > config.effectiveHigh, "the fixture sits above effectiveHigh: the next boundary fires by SIZE")
+        assert(!ctx.compactionState.driftPendingConfirm, "the boundary is a SIZE fire, not a pending drift confirm")
+        val before = Default.driftSignal(ctx, config, noInfos, Chunk.empty)
+        assert(before > 0, "the fixture carries a stale-verbatim band before the boundary")
+        TestCompletionServer.run { server =>
+            LLM.run(config.apiUrl(server.baseUrl))(Default.render(ctx)).map { view =>
+                val after = Context(raw, view, ctx.compaction)
+                assert(
+                    view.exists(_.origin.isDefined),
+                    "the size-fired boundary demotes the stale spans (the view carries demotion markers)"
+                )
+                assert(
+                    Default.driftSignal(after, config, noInfos, Chunk.empty) == 0,
+                    "pass 1 demotes every stale-eligible span, so the drift stale set restarts at zero after the SIZE-fired boundary"
+                )
+            }
+        }
+    }
+
 end CompactorReplayTest

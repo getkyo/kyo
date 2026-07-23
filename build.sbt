@@ -1235,6 +1235,7 @@ lazy val `kyo-ai` =
         .settings(`kyo-settings`)
         .jvmSettings(
             mimaCheck(false),
+            libraryDependencies += "com.knuddels" % "jtokkit" % "1.1.0" % Test,
             genTiktokenVocab := TiktokenVocabGen.generate(
                 (ThisBuild / baseDirectory).value / "kyo-ai" / "reference-vocab",
                 (ThisBuild / baseDirectory).value / "kyo-ai" / "shared" / "src" / "main" / "scala" / "kyo" / "ai"

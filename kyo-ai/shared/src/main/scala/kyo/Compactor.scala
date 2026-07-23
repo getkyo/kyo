@@ -97,6 +97,9 @@ object Compactor:
         val substituteElisionChars: Int = 800   // fixed-size summary-level substitute (§5d role 1); provisional owner-confirm
         val generousElisionChars: Int   = 24000 // exact-surface pinned-oversized (§5d role 2); provisional owner-confirm
         val imageSurchargeChars: Int    = 6000  // ~2000-token vision surcharge, char units (§5a)
+        // the fill's summary output cap, token units; bounds summary size and its miss price in the
+        // demotion arithmetic, so a demoted summary never inflates the served view unboundedly
+        val summaryOutputCap: Int = 512 // provisional, replay-tunable, v4 §10.4, owner-confirm
         // drift (§5g), seated for P5
         val driftRefractory: Int = 4 // provisional, replay-tunable, v4 §5g, owner-confirm
         // raw-retention eviction hysteresis (§10.5), seated for P6
@@ -462,7 +465,7 @@ object Compactor:
                         val view       = project(ctx.raw, units, spans, demotions, since, prevLevels, state, keys)
                         if viewTokens(view) <= hard then view
                         else
-                            val forcedView = forced(ctx.raw, units, spans, scores, pressure, hard, since, prevLevels)
+                            val forcedView = forced(ctx.raw, units, spans, scores, pressure, hard, since, prevLevels, keys)
                             if viewTokens(forcedView) > hard then
                                 Abort.fail(AIContextOverflowException(viewTokens(forcedView), window))
                             else forcedView
@@ -746,6 +749,27 @@ object Compactor:
                 loop(ordered, 0, 0, Set.empty)
             end tailUnits
 
+            // The retention working-set tail band, trimmed at eviction time so the head and tail bands
+            // together leave room under the low watermark, letting eviction of the frozen demoted middle
+            // reach the target (§10.5). A runtime guard, not a config default, since the band is dynamic. It
+            // only shrinks the POSITIONAL tail protection; the evictable filter still forgets nothing that is
+            // not currently demoted, so live content is never forgotten.
+            def retentionTail(units: Chunk[Region], raw: Chunk[Message], headTokens: Int, low: Int): Set[Int] =
+                val ordered                     = units.toList.sortBy(_.id).reverse
+                def regionStamp(u: Region): Int = u.indices.foldLeft(0)((n, i) => n + stampedTokens(raw(i)))
+                @tailrec def loop(rem: List[Region], count: Int, tokens: Int, acc: Set[Int]): Set[Int] =
+                    rem match
+                        case Nil => acc
+                        case u :: rest =>
+                            val ut = regionStamp(u)
+                            if count >= seedTailTurns then acc
+                            else if tokens + ut > seedTailTokens && acc.nonEmpty then acc
+                            else if headTokens + tokens + ut > low && acc.nonEmpty then acc
+                            else loop(rest, count + 1, tokens + ut, acc + u.id)
+                            end if
+                loop(ordered, 0, 0, Set.empty)
+            end retentionTail
+
             // ---- region bookkeeping derived from compacted, no string parsing ----
             // A demoted unit/span is exactly one synthetic entry carrying Present(origin); origin.start is
             // the unit/span id, origin.since is the raw index at the boundary that demoted it. Promotion is
@@ -836,7 +860,9 @@ object Compactor:
                         val units   = group(ctx.raw)
                         val demoted = demotedOrigins(ctx.compacted)
                         val headIds = headBand(units, ctx.raw)
-                        val tailIds = tailUnits(units)
+                        val headTokens = units.toList.filter(u => headIds.contains(u.id))
+                            .foldLeft(0)((n, u) => n + u.indices.foldLeft(0)((s, i) => s + stampedTokens(ctx.raw(i))))
+                        val tailIds = retentionTail(units, ctx.raw, headTokens, low)
                         val evictable =
                             units.toList.sortBy(_.id).filter { u =>
                                 demoted.contains(u.id) && !headIds.contains(u.id) && !tailIds.contains(u.id) &&
@@ -1126,16 +1152,17 @@ object Compactor:
                 pressure: Double,
                 hard: Int,
                 since: Int,
-                prevLevels: Dict[Int, Context.Origin]
+                prevLevels: Dict[Int, Context.Origin],
+                keys: Dict[Int, (String, Tool.Kind)]
             )(using Frame): Chunk[Message] =
                 val ascending = spans.toList.sortBy(sp => spanLiveness(sp, scores))
                 @tailrec def pointerAll(rem: List[Span], dem: Dict[Int, Level]): Dict[Int, Level] =
-                    if viewTokens(project(raw, units, spans, dem, since, prevLevels)) <= hard then dem
+                    if viewTokens(project(raw, units, spans, dem, since, prevLevels, keys = keys)) <= hard then dem
                     else
                         rem match
                             case Nil        => dem
                             case sp :: rest => pointerAll(rest, dem.update(sp.start, Level.Pointer))
-                val view = project(raw, units, spans, pointerAll(ascending, Dict.empty), since, prevLevels)
+                val view = project(raw, units, spans, pointerAll(ascending, Dict.empty), since, prevLevels, keys = keys)
                 if viewTokens(view) <= hard then view
                 else elideOversizedTail(view, hard)
             end forced
@@ -1414,9 +1441,13 @@ object Compactor:
             // route runs here (the warm §10.3 prompt-cache route is owner-directed future work), so
             // Absent resolves to provider.small.
             def resolveFillConfig(config: Config): Config =
-                config.compaction.summarizer match
+                val base = config.compaction.summarizer match
                     case Present(cfg) => cfg
                     case Absent       => config.provider.small
+                // the fill caps its summary output at summaryOutputCap so summary size stays in the demotion
+                // arithmetic's output-cap class and a demoted summary never inflates the served view.
+                base.maxTokens(summaryOutputCap)
+            end resolveFillConfig
 
             // §5f :1289-1297 the degraded packing rule: the summarizer has its own (smaller) window, so the
             // input is BOUNDED and relevance-selected, never the whole history: the raw span, a
