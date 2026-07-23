@@ -940,6 +940,13 @@ final private[net] class IoUringDriver private[posix] (
     // socket stream into handle.readBuffer under load, fabricating a corrupt handshake record). The handshake reads exclusively through awaitRead.
     override def inlineRecvSafe: Boolean = false
 
+    /** Whether a backpressured `handle`'s peer has closed, for the ReadPump's grace poll. io_uring keeps no standing read registration (its recv
+      * SQEs are one-shot), so there is no edge-delivered latch to read; a non-blocking `poll(2)` off the ring (racing no reap-carrier SQE/CQE) asks
+      * the kernel directly. Skipped on a closing handle (its fd may be closed/recycled, and closeFn's CAS makes a stray reclaim a no-op regardless).
+      */
+    override def isPeerClosed(handle: PosixHandle)(using AllowUnsafe, Frame): Boolean =
+        !handle.isClosing() && uring.kyo_uring_poll_peer_closed(handle.readFd) == 1
+
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Mark the close as requested NOW (synchronously, before the deferred engine-FIFO close machinery), so a teardown that races the deferred
         // close can force-complete it and reclaim the fd. Removed in closeNow when the fd actually closes.

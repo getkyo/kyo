@@ -5,6 +5,7 @@ import java.net.StandardProtocolFamily
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import kyo.*
+import kyo.net.NetConfig
 import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
@@ -23,27 +24,46 @@ class NioTransportTest extends Test:
         privateKeyPath = Present(TlsTestCert.keyPath)
     )
 
-    /** Create a transport using the standard factory. Starts its own event loop driver. Process-lifetime: never closed. */
-    def mkTransport()(using Frame): NioTransport =
-        NioTransport.init()
+    /** Create a transport and register its driver to close at leaf-scope exit. An owned transport (unlike the process-shared one) must be closed,
+      * or its never-exiting selector poll loop keeps a scheduler worker busy and the suite fails the end-of-run leak check.
+      */
+    def mkTransport()(using Frame): NioTransport < (Sync & Scope) =
+        Sync.defer(NioTransport.init()).map { t =>
+            Scope.ensure(Sync.defer {
+                import AllowUnsafe.embrace.danger
+                t.pool.next().close()
+            }).andThen(t)
+        }
+
+    /** Poll a condition driven by a real FIN through the OS (the reclaim runs on the transport carrier, out of the test's reach). */
+    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
+        val deadline = java.lang.System.nanoTime() + bound.toNanos
+        Loop(()) { _ =>
+            if cond then Loop.done(true)
+            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
+            else Async.sleep(5.millis).andThen(Loop.continue(()))
+        }
+    end awaitCondition
 
     // -----------------------------------------------------------------------
     // Construction
     // -----------------------------------------------------------------------
 
     "init stores IoDriverPool" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
-        assert(transport.pool ne null)
-        succeed
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            assert(transport.pool ne null)
+            succeed
+        }
     }
 
     "init stores IoDriver in pool" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
-        val driver    = transport.pool.next()
-        assert(driver ne null)
-        succeed
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val driver = transport.pool.next()
+            assert(driver ne null)
+            succeed
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -51,52 +71,53 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "connect to loopback server returns open connection" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            // Use a latch so the server-side socket stays open until after we check isOpen
+            val latch      = new java.util.concurrent.CountDownLatch(1)
+            val serverSock = java.nio.channels.ServerSocketChannel.open()
+            serverSock.configureBlocking(true)
+            serverSock.bind(new InetSocketAddress("127.0.0.1", 0))
+            val port = serverSock.socket().getLocalPort
 
-        // Use a latch so the server-side socket stays open until after we check isOpen
-        val latch      = new java.util.concurrent.CountDownLatch(1)
-        val serverSock = java.nio.channels.ServerSocketChannel.open()
-        serverSock.configureBlocking(true)
-        serverSock.bind(new InetSocketAddress("127.0.0.1", 0))
-        val port = serverSock.socket().getLocalPort
+            // Accept in a background thread: hold the connection open until latch released
+            val acceptedRef = new java.util.concurrent.atomic.AtomicReference[java.nio.channels.SocketChannel](null)
+            val acceptThread = new Thread(() =>
+                try
+                    val accepted = serverSock.accept()
+                    acceptedRef.set(accepted)
+                    latch.await()
+                    accepted.close()
+                catch case _: Exception => ()
+            )
+            acceptThread.setDaemon(true)
+            acceptThread.start()
 
-        // Accept in a background thread: hold the connection open until latch released
-        val acceptedRef = new java.util.concurrent.atomic.AtomicReference[java.nio.channels.SocketChannel](null)
-        val acceptThread = new Thread(() =>
-            try
-                val accepted = serverSock.accept()
-                acceptedRef.set(accepted)
-                latch.await()
-                accepted.close()
-            catch case _: Exception => ()
-        )
-        acceptThread.setDaemon(true)
-        acceptThread.start()
-
-        transport.connect("127.0.0.1", port).safe.get.map { conn =>
-            try
-                assert(conn.isOpen)
-                succeed
-            finally
-                latch.countDown()
-                conn.close()
-                serverSock.close()
+            transport.connect("127.0.0.1", port).safe.get.map { conn =>
+                try
+                    assert(conn.isOpen)
+                    succeed
+                finally
+                    latch.countDown()
+                    conn.close()
+                    serverSock.close()
+            }
         }
     }
 
     "connect returns Closed failure for unreachable port" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
-        // Port 1: connection refused on loopback
-        Abort.run[NetException](transport.connect("127.0.0.1", 1).safe.get).map { result =>
-            // Either refused (Failure) or panicked; a success would be unusual but allowed
-            // OS-nondeterministic connect-refused-vs-reuse outcome covers all Result cases
-            result match
-                case Result.Success(conn) => conn.close()
-                case _                    => ()
-            assert(result.isFailure || result.isPanic || result.isSuccess)
-            succeed
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            // Port 1: connection refused on loopback
+            Abort.run[NetException](transport.connect("127.0.0.1", 1).safe.get).map { result =>
+                // Either refused (Failure) or panicked; a success would be unusual but allowed
+                // OS-nondeterministic connect-refused-vs-reuse outcome covers all Result cases
+                result match
+                    case Result.Success(conn) => conn.close()
+                    case _                    => ()
+                assert(result.isFailure || result.isPanic || result.isSuccess)
+                succeed
+            }
         }
     }
 
@@ -105,45 +126,47 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "listen binds and returns Listener with valid port" in {
-        given Frame     = Frame.internal
-        val transport   = mkTransport()
-        val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
-        listenFiber.safe.get.map { listener =>
-            try
-                assert(listener.port > 0)
-                assert(listener.port <= 65535)
-                succeed
-            finally
-                listener.close()
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
+            listenFiber.safe.get.map { listener =>
+                try
+                    assert(listener.port > 0)
+                    assert(listener.port <= 65535)
+                    succeed
+                finally
+                    listener.close()
+            }
         }
     }
 
     "listen binds to the given host" in {
-        given Frame     = Frame.internal
-        val transport   = mkTransport()
-        val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
-        listenFiber.safe.get.map { listener =>
-            try
-                assert(listener.host.nonEmpty)
-                succeed
-            finally
-                listener.close()
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
+            listenFiber.safe.get.map { listener =>
+                try
+                    assert(listener.host.nonEmpty)
+                    succeed
+                finally
+                    listener.close()
+            }
         }
     }
 
     "listen returns Closed failure for already-bound port" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
-
-        transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener1 =>
-            val port = listener1.port
-            Abort.run[NetException](transport.listen("127.0.0.1", port, 50)(_ => ()).safe.get).map { result2 =>
-                listener1.close()
-                result2 match
-                    case Result.Success(listener2) => listener2.close()
-                    case _                         => ()
-                assert(result2.isFailure)
-                succeed
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener1 =>
+                val port = listener1.port
+                Abort.run[NetException](transport.listen("127.0.0.1", port, 50)(_ => ()).safe.get).map { result2 =>
+                    listener1.close()
+                    result2 match
+                        case Result.Success(listener2) => listener2.close()
+                        case _                         => ()
+                    assert(result2.isFailure)
+                    succeed
+                }
             }
         }
     }
@@ -153,24 +176,24 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "listen accepts connecting clients" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            // Latch the handler completes the instant it runs, so the test proceeds on the actual accept event rather than a guessed delay.
+            val accepted = Promise.Unsafe.init[Unit, Any]()
+            val listenFiber = transport.listen("127.0.0.1", 0, 50) { conn =>
+                accepted.completeDiscard(Result.succeed(()))
+                conn.close()
+            }
 
-        // Latch the handler completes the instant it runs, so the test proceeds on the actual accept event rather than a guessed delay.
-        val accepted = Promise.Unsafe.init[Unit, Any]()
-        val listenFiber = transport.listen("127.0.0.1", 0, 50) { conn =>
-            accepted.completeDiscard(Result.succeed(()))
-            conn.close()
-        }
-
-        listenFiber.safe.get.map { listener =>
-            val port = listener.port
-            // Connect a plain Java socket to trigger the accept handler
-            val clientSock = new java.net.Socket("127.0.0.1", port)
-            accepted.safe.get.map { _ =>
-                clientSock.close()
-                listener.close()
-                succeed
+            listenFiber.safe.get.map { listener =>
+                val port = listener.port
+                // Connect a plain Java socket to trigger the accept handler
+                val clientSock = new java.net.Socket("127.0.0.1", port)
+                accepted.safe.get.map { _ =>
+                    clientSock.close()
+                    listener.close()
+                    succeed
+                }
             }
         }
     }
@@ -180,31 +203,31 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "connect + listen: both sides are open connections" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            // Use a latch to hold the server-side connection open until client checks isOpen
+            val latch = new java.util.concurrent.CountDownLatch(1)
 
-        // Use a latch to hold the server-side connection open until client checks isOpen
-        val latch = new java.util.concurrent.CountDownLatch(1)
-
-        transport
-            .listen("127.0.0.1", 0, 50) { serverConn =>
-                latch.await()
-                serverConn.close()
-            }
-            .safe
-            .get
-            .map { listener =>
-                val port = listener.port
-                transport.connect("127.0.0.1", port).safe.get.map { clientConn =>
-                    try
-                        assert(clientConn.isOpen)
-                        succeed
-                    finally
-                        latch.countDown()
-                        clientConn.close()
-                        listener.close()
+            transport
+                .listen("127.0.0.1", 0, 50) { serverConn =>
+                    latch.await()
+                    serverConn.close()
                 }
-            }
+                .safe
+                .get
+                .map { listener =>
+                    val port = listener.port
+                    transport.connect("127.0.0.1", port).safe.get.map { clientConn =>
+                        try
+                            assert(clientConn.isOpen)
+                            succeed
+                        finally
+                            latch.countDown()
+                            clientConn.close()
+                            listener.close()
+                    }
+                }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -212,27 +235,27 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "connect with TLS to loopback TLS server completes handshake" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val tlsConfig = serverTlsConfig
 
-        val tlsConfig = serverTlsConfig
-
-        transport.listenTls("127.0.0.1", 0, 50, tlsConfig) { conn =>
-            conn.close()
-        }.safe.get.map { listener =>
-            val port      = listener.port
-            val clientTls = NetTlsConfig(trustAll = true)
-            Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { result =>
-                listener.close()
-                result match
-                    case Result.Success(conn) =>
-                        conn.close()
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"TLS connect failed: $e")
-                    case Result.Panic(e) =>
-                        fail(s"TLS connect panicked: $e")
-                end match
+            transport.listenTls("127.0.0.1", 0, 50, tlsConfig) { conn =>
+                conn.close()
+            }.safe.get.map { listener =>
+                val port      = listener.port
+                val clientTls = NetTlsConfig(trustAll = true)
+                Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { result =>
+                    listener.close()
+                    result match
+                        case Result.Success(conn) =>
+                            conn.close()
+                            succeed
+                        case Result.Failure(e) =>
+                            fail(s"TLS connect failed: $e")
+                        case Result.Panic(e) =>
+                            fail(s"TLS connect panicked: $e")
+                    end match
+                }
             }
         }
     }
@@ -242,22 +265,22 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "listener.close marks listener as closed" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
-
-        transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener =>
-            val port = listener.port
-            assert(port > 0)
-            listener.close()
-            // After close, further connect attempts should fail or be refused
-            Abort.run[NetException](transport.connect("127.0.0.1", port).safe.get).map { result =>
-                // Either connection refused (failure) or the port was taken; either way listener is closed
-                // OS-nondeterministic listener-close outcome
-                result match
-                    case Result.Success(conn) => conn.close()
-                    case _                    => ()
-                assert(result.isFailure || result.isSuccess)
-                succeed
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener =>
+                val port = listener.port
+                assert(port > 0)
+                listener.close()
+                // After close, further connect attempts should fail or be refused
+                Abort.run[NetException](transport.connect("127.0.0.1", port).safe.get).map { result =>
+                    // Either connection refused (failure) or the port was taken; either way listener is closed
+                    // OS-nondeterministic listener-close outcome
+                    result match
+                        case Result.Success(conn) => conn.close()
+                        case _                    => ()
+                    assert(result.isFailure || result.isSuccess)
+                    succeed
+                }
             }
         }
     }
@@ -291,33 +314,34 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "connect with TLS: serverCertificateHash is Present after handshake" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
-        // The server handler keeps the connection open (does not close): closing it immediately sends a FIN that, under load, the client's read
-        // pump observes as EOF and tears the connection down (setting the connection's closed flag) before the client reads the cert hash, making
-        // serverCertificateHash Absent by the "Absent after close" contract. The shared TransportTlsIntrospectionTest uses the same open-handler
-        // shape for this reason; listener.close() below tears the server side down.
-        transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig) { _ =>
-            ()
-        }.safe.get.map { listener =>
-            val port      = listener.port
-            val clientTls = NetTlsConfig(trustAll = true)
-            Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { result =>
-                result match
-                    case Result.Success(conn) =>
-                        // Read the cert hash on the still-open connection (the server handler above does not close it).
-                        val hash = conn.serverCertificateHash
-                        conn.close()
-                        listener.close()
-                        assert(hash.isDefined, s"serverCertificateHash must be Present after TLS handshake, got Absent")
-                        succeed
-                    case Result.Failure(e) =>
-                        listener.close()
-                        fail(s"TLS connect failed: $e")
-                    case Result.Panic(e) =>
-                        listener.close()
-                        fail(s"TLS connect panicked: $e")
-                end match
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            // The server handler keeps the connection open (does not close): closing it immediately sends a FIN that, under load, the client's read
+            // pump observes as EOF and tears the connection down (setting the connection's closed flag) before the client reads the cert hash, making
+            // serverCertificateHash Absent by the "Absent after close" contract. The shared TransportTlsIntrospectionTest uses the same open-handler
+            // shape for this reason; listener.close() below tears the server side down.
+            transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig) { _ =>
+                ()
+            }.safe.get.map { listener =>
+                val port      = listener.port
+                val clientTls = NetTlsConfig(trustAll = true)
+                Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { result =>
+                    result match
+                        case Result.Success(conn) =>
+                            // Read the cert hash on the still-open connection (the server handler above does not close it).
+                            val hash = conn.serverCertificateHash
+                            conn.close()
+                            listener.close()
+                            assert(hash.isDefined, s"serverCertificateHash must be Present after TLS handshake, got Absent")
+                            succeed
+                        case Result.Failure(e) =>
+                            listener.close()
+                            fail(s"TLS connect failed: $e")
+                        case Result.Panic(e) =>
+                            listener.close()
+                            fail(s"TLS connect panicked: $e")
+                    end match
+                }
             }
         }
     }
@@ -327,32 +351,33 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "listen handler throw is logged, not propagated, and subsequent connections are accepted" in {
-        given Frame     = Frame.internal
-        val transport   = mkTransport()
-        val acceptCount = new java.util.concurrent.atomic.AtomicInteger(0)
-        // Latch each handler invocation signals (before throwing) so the test gates each step on the actual accept event, not a guessed delay.
-        Channel.init[Unit](2).map { handled =>
-            val listenFiber = transport.listen("127.0.0.1", 0, 50) { conn =>
-                acceptCount.incrementAndGet()
-                conn.close()
-                discard(handled.unsafe.offer(()))
-                throw new RuntimeException("deliberate handler throw")
-            }
-            listenFiber.safe.get.map { listener =>
-                val port = listener.port
-                // First client triggers the throwing handler.
-                val c1 = new java.net.Socket("127.0.0.1", port)
-                // Wait for the first handler invocation (the latch it signals before throwing) instead of guessing a recovery delay.
-                handled.take.map { _ =>
-                    // Second client connects after the throw: server must still be listening.
-                    val c2 = new java.net.Socket("127.0.0.1", port)
-                    // Wait for the second handler invocation, proving the accept loop survived the throw and accepted again.
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val acceptCount = new java.util.concurrent.atomic.AtomicInteger(0)
+            // Latch each handler invocation signals (before throwing) so the test gates each step on the actual accept event, not a guessed delay.
+            Channel.init[Unit](2).map { handled =>
+                val listenFiber = transport.listen("127.0.0.1", 0, 50) { conn =>
+                    acceptCount.incrementAndGet()
+                    conn.close()
+                    discard(handled.unsafe.offer(()))
+                    throw new RuntimeException("deliberate handler throw")
+                }
+                listenFiber.safe.get.map { listener =>
+                    val port = listener.port
+                    // First client triggers the throwing handler.
+                    val c1 = new java.net.Socket("127.0.0.1", port)
+                    // Wait for the first handler invocation (the latch it signals before throwing) instead of guessing a recovery delay.
                     handled.take.map { _ =>
-                        c1.close()
-                        c2.close()
-                        listener.close()
-                        assert(acceptCount.get() >= 2, s"expected at least 2 accepted connections, got ${acceptCount.get()}")
-                        succeed
+                        // Second client connects after the throw: server must still be listening.
+                        val c2 = new java.net.Socket("127.0.0.1", port)
+                        // Wait for the second handler invocation, proving the accept loop survived the throw and accepted again.
+                        handled.take.map { _ =>
+                            c1.close()
+                            c2.close()
+                            listener.close()
+                            assert(acceptCount.get() >= 2, s"expected at least 2 accepted connections, got ${acceptCount.get()}")
+                            succeed
+                        }
                     }
                 }
             }
@@ -364,15 +389,16 @@ class NioTransportTest extends Test:
     // -----------------------------------------------------------------------
 
     "connectUnix returns Closed for non-existent socket path" in {
-        given Frame   = Frame.internal
-        val transport = mkTransport()
-        val badPath   = "/tmp/kyo-nio-test-does-not-exist-" + java.util.UUID.randomUUID() + ".sock"
-        Abort.run[NetException](transport.connectUnix(badPath).safe.get).map { result =>
-            result match
-                case Result.Success(conn) => conn.close()
-                case _                    => ()
-            assert(result.isFailure)
-            succeed
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val badPath = "/tmp/kyo-nio-test-does-not-exist-" + java.util.UUID.randomUUID() + ".sock"
+            Abort.run[NetException](transport.connectUnix(badPath).safe.get).map { result =>
+                result match
+                    case Result.Success(conn) => conn.close()
+                    case _                    => ()
+                assert(result.isFailure)
+                succeed
+            }
         }
     }
 
@@ -393,50 +419,51 @@ class NioTransportTest extends Test:
             catch case _: Throwable => false
         if !udsSupported then cancel("Java NIO Unix domain sockets unsupported on this host (needs Java 16+ on a Unix-like OS)")
 
-        val transport = mkTransport()
-        // A unique short path under /tmp, mirroring PosixTransportSurfaceTest: /tmp keeps it under the 108-byte sun_path
-        // limit, and nanoTime makes it fresh per run, so no stale-file cleanup is needed before binding.
-        val path    = s"/tmp/kyo-nio-uds-${java.lang.System.nanoTime()}.sock"
-        val payload = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
+        mkTransport().map { transport =>
+            // A unique short path under /tmp, mirroring PosixTransportSurfaceTest: /tmp keeps it under the 108-byte sun_path
+            // limit, and nanoTime makes it fresh per run, so no stale-file cleanup is needed before binding.
+            val path    = s"/tmp/kyo-nio-uds-${java.lang.System.nanoTime()}.sock"
+            val payload = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
 
-        // Read exactly `target` bytes from a connection's inbound channel, concatenated. UDS can in principle fragment, so this
-        // loops on safe.take (each take blocks the calling fiber until the next echoed frame arrives: no sleep, no poll).
-        def collect(conn: kyo.net.Connection, target: Int): Array[Byte] < (Async & Abort[Closed]) =
-            Loop(Array.emptyByteArray) { acc =>
-                if acc.length >= target then Loop.done(acc)
-                else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
-            }
+            // Read exactly `target` bytes from a connection's inbound channel, concatenated. UDS can in principle fragment, so this
+            // loops on safe.take (each take blocks the calling fiber until the next echoed frame arrives: no sleep, no poll).
+            def collect(conn: kyo.net.Connection, target: Int): Array[Byte] < (Async & Abort[Closed]) =
+                Loop(Array.emptyByteArray) { acc =>
+                    if acc.length >= target then Loop.done(acc)
+                    else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
+                }
 
-        AtomicRef.init[Maybe[kyo.net.Connection]](Absent).map { serverConnRef =>
-            // Echo handler: capture the accepted connection (for cleanup), then echo each inbound frame back on outbound.
-            // The loop runs in a spawned fiber (the handler returns Unit); the test gates on the echoed bytes arriving, not a delay.
-            val listenFiber = transport.listenUnix(path, 16) { serverConn =>
-                serverConnRef.unsafe.set(Present(serverConn))
-                discard(Sync.Unsafe.evalOrThrow {
-                    Fiber.initUnscoped {
-                        Abort.run[Closed] {
-                            Loop.foreach {
-                                serverConn.inbound.safe.take.map { chunk =>
-                                    serverConn.outbound.safe.put(chunk).andThen(Loop.continue)
+            AtomicRef.init[Maybe[kyo.net.Connection]](Absent).map { serverConnRef =>
+                // Echo handler: capture the accepted connection (for cleanup), then echo each inbound frame back on outbound.
+                // The loop runs in a spawned fiber (the handler returns Unit); the test gates on the echoed bytes arriving, not a delay.
+                val listenFiber = transport.listenUnix(path, 16) { serverConn =>
+                    serverConnRef.unsafe.set(Present(serverConn))
+                    discard(Sync.Unsafe.evalOrThrow {
+                        Fiber.initUnscoped {
+                            Abort.run[Closed] {
+                                Loop.foreach {
+                                    serverConn.inbound.safe.take.map { chunk =>
+                                        serverConn.outbound.safe.put(chunk).andThen(Loop.continue)
+                                    }
                                 }
-                            }
-                        }.unit
-                    }
-                })
-            }
-            listenFiber.safe.get.map { listener =>
-                transport.connectUnix(path).safe.get.map { client =>
-                    // Write the known payload, then read it back: the take blocks head-of-line on this fiber until the echo arrives.
-                    client.outbound.safe.put(payload).andThen(collect(client, payload.size)).map { echoed =>
-                        try
-                            assert(echoed.sameElements(payload.toArray), s"UDS echo mismatch: got ${echoed.toList}")
-                            succeed
-                        finally
-                            client.close()
-                            serverConnRef.unsafe.get().foreach(_.close())
-                            listener.close()
-                            discard(new java.io.File(path).delete())
-                        end try
+                            }.unit
+                        }
+                    })
+                }
+                listenFiber.safe.get.map { listener =>
+                    transport.connectUnix(path).safe.get.map { client =>
+                        // Write the known payload, then read it back: the take blocks head-of-line on this fiber until the echo arrives.
+                        client.outbound.safe.put(payload).andThen(collect(client, payload.size)).map { echoed =>
+                            try
+                                assert(echoed.sameElements(payload.toArray), s"UDS echo mismatch: got ${echoed.toList}")
+                                succeed
+                            finally
+                                client.close()
+                                serverConnRef.unsafe.get().foreach(_.close())
+                                listener.close()
+                                discard(new java.io.File(path).delete())
+                            end try
+                        }
                     }
                 }
             }
@@ -454,70 +481,74 @@ class NioTransportTest extends Test:
     // macOS (the reason the connect leaf compares SO_SNDBUF instead), while a listening socket's reads back tracking the request.
     "socket receive buffer is applied to the listen socket, per listen" in {
         val transport = NioTransport.init()
-        val smallReq  = 16384
-        val largeReq  = 262144
-        def rcvOf(l: kyo.net.Listener): Int =
-            l.asInstanceOf[NioListener].serverChannel.getOption(java.net.StandardSocketOptions.SO_RCVBUF).intValue
-        Abort.run[NetException | Closed] {
-            val small = kyo.net.NetConfig.default.copy(soRcvBuf = Present(smallReq))
-            val large = kyo.net.NetConfig.default.copy(soRcvBuf = Present(largeReq))
-            transport.listen("127.0.0.1", 0, 4, config = small)(_ => ()).safe.get.map { smallListener =>
-                Scope.ensure(Sync.defer(smallListener.close())).andThen {
-                    transport.listen("127.0.0.1", 0, 4, config = large)(_ => ()).safe.get.map { largeListener =>
-                        Scope.ensure(Sync.defer(largeListener.close())).andThen {
-                            Sync.defer {
-                                val smallRcv = rcvOf(smallListener)
-                                val largeRcv = rcvOf(largeListener)
-                                assert(
-                                    largeRcv > smallRcv,
-                                    s"SO_RCVBUF on the listen socket: the listen asking for $largeReq got $largeRcv, the one asking for " +
-                                        s"$smallReq got $smallRcv; equal values mean the per-listen config never reached the server channel"
-                                )
-                                succeed
+        Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
+            val smallReq = 16384
+            val largeReq = 262144
+            def rcvOf(l: kyo.net.Listener): Int =
+                l.asInstanceOf[NioListener].serverChannel.getOption(java.net.StandardSocketOptions.SO_RCVBUF).intValue
+            Abort.run[NetException | Closed] {
+                val small = kyo.net.NetConfig.default.copy(soRcvBuf = Present(smallReq))
+                val large = kyo.net.NetConfig.default.copy(soRcvBuf = Present(largeReq))
+                transport.listen("127.0.0.1", 0, 4, config = small)(_ => ()).safe.get.map { smallListener =>
+                    Scope.ensure(Sync.defer(smallListener.close())).andThen {
+                        transport.listen("127.0.0.1", 0, 4, config = large)(_ => ()).safe.get.map { largeListener =>
+                            Scope.ensure(Sync.defer(largeListener.close())).andThen {
+                                Sync.defer {
+                                    val smallRcv = rcvOf(smallListener)
+                                    val largeRcv = rcvOf(largeListener)
+                                    assert(
+                                        largeRcv > smallRcv,
+                                        s"SO_RCVBUF on the listen socket: the listen asking for $largeReq got $largeRcv, the one asking for " +
+                                            s"$smallReq got $smallRcv; equal values mean the per-listen config never reached the server channel"
+                                    )
+                                    succeed
+                                }
                             }
                         }
                     }
                 }
-            }
-        }.map(Abort.get)
+            }.map(Abort.get)
+        }
     }
 
     "socket buffer sizes are applied per connect" in {
         val transport = NioTransport.init()
-        val smallReq  = 16384
-        val largeReq  = 262144
-        def sndOf(conn: kyo.net.Connection): Int =
-            conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle.channel
-                .getOption(java.net.StandardSocketOptions.SO_SNDBUF).intValue
-        Abort.run[NetException | Closed] {
-            transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    val small = kyo.net.NetConfig.default.copy(soRcvBuf = Present(smallReq), soSndBuf = Present(smallReq))
-                    val large = kyo.net.NetConfig.default.copy(soRcvBuf = Present(largeReq), soSndBuf = Present(largeReq))
-                    transport.connect("127.0.0.1", listener.port, config = small).safe.get.map { smallConn =>
-                        Scope.ensure(Sync.defer(smallConn.close())).andThen {
-                            transport.connect("127.0.0.1", listener.port, config = large).safe.get.map { largeConn =>
-                                Scope.ensure(Sync.defer(largeConn.close())).andThen {
-                                    Sync.defer {
-                                        val smallSnd = sndOf(smallConn)
-                                        val largeSnd = sndOf(largeConn)
-                                        smallConn.close()
-                                        largeConn.close()
-                                        listener.close()
-                                        assert(
-                                            largeSnd > smallSnd,
-                                            s"SO_SNDBUF: the connect asking for $largeReq got $largeSnd, the one asking for $smallReq got $smallSnd; " +
-                                                "equal values mean the per-connect config never reached the channel"
-                                        )
-                                        succeed
+        Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
+            val smallReq = 16384
+            val largeReq = 262144
+            def sndOf(conn: kyo.net.Connection): Int =
+                conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle.channel
+                    .getOption(java.net.StandardSocketOptions.SO_SNDBUF).intValue
+            Abort.run[NetException | Closed] {
+                transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        val small = kyo.net.NetConfig.default.copy(soRcvBuf = Present(smallReq), soSndBuf = Present(smallReq))
+                        val large = kyo.net.NetConfig.default.copy(soRcvBuf = Present(largeReq), soSndBuf = Present(largeReq))
+                        transport.connect("127.0.0.1", listener.port, config = small).safe.get.map { smallConn =>
+                            Scope.ensure(Sync.defer(smallConn.close())).andThen {
+                                transport.connect("127.0.0.1", listener.port, config = large).safe.get.map { largeConn =>
+                                    Scope.ensure(Sync.defer(largeConn.close())).andThen {
+                                        Sync.defer {
+                                            val smallSnd = sndOf(smallConn)
+                                            val largeSnd = sndOf(largeConn)
+                                            smallConn.close()
+                                            largeConn.close()
+                                            listener.close()
+                                            assert(
+                                                largeSnd > smallSnd,
+                                                s"SO_SNDBUF: the connect asking for $largeReq got $largeSnd, the one asking for $smallReq got $smallSnd; " +
+                                                    "equal values mean the per-connect config never reached the channel"
+                                            )
+                                            succeed
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-        }.map(Abort.get)
+            }.map(Abort.get)
+        }
     }
 
     // A connection accepted by listenTls but whose handshake has not completed has no Connection yet, so it is invisible to the registry
@@ -531,34 +562,36 @@ class NioTransportTest extends Test:
     "closing a listener reclaims the handshakes it accepted" in {
         val transport = NioTransport.init()
         val unbounded = serverTlsConfig.copy(handshakeTimeout = Duration.Infinity)
-        Abort.run[NetException | Closed] {
-            transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    // A plaintext client: it completes the TCP accept and never sends a ClientHello, so the server handshake registers and parks.
-                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                        Scope.ensure(Sync.defer(client.close())).andThen {
-                            // Barrier: wait until the handshake has actually registered. Without it this races the accept and could close a listener
-                            // with nothing to discharge, passing for the wrong reason.
-                            assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount > 0)).map { _ =>
-                                listener.close()
-                                assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount == 0)).map { _ =>
-                                    // The discharge fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
-                                    // which this still-connected client observes as its inbound terminating.
-                                    Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
-                                        outcome =>
-                                            client.close()
-                                            assert(
-                                                outcome.isSuccess,
-                                                s"the listener close must release its stalled handshake's channel, got $outcome"
-                                            )
+        Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
+            Abort.run[NetException | Closed] {
+                transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        // A plaintext client: it completes the TCP accept and never sends a ClientHello, so the server handshake registers and parks.
+                        transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                            Scope.ensure(Sync.defer(client.close())).andThen {
+                                // Barrier: wait until the handshake has actually registered. Without it this races the accept and could close a listener
+                                // with nothing to discharge, passing for the wrong reason.
+                                assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount > 0)).map { _ =>
+                                    listener.close()
+                                    assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount == 0)).map { _ =>
+                                        // The discharge fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
+                                        // which this still-connected client observes as its inbound terminating.
+                                        Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
+                                            outcome =>
+                                                client.close()
+                                                assert(
+                                                    outcome.isSuccess,
+                                                    s"the listener close must release its stalled handshake's channel, got $outcome"
+                                                )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-        }.map(Abort.get)
+            }.map(Abort.get)
+        }
     }
 
     // The companion to the leaf above, for the window it cannot reach. The registration runs on the selector carrier while
@@ -569,31 +602,67 @@ class NioTransportTest extends Test:
     "a handshake tracked after its listener already closed is reclaimed at registration" in {
         val transport = NioTransport.init()
         val unbounded = serverTlsConfig.copy(handshakeTimeout = Duration.Infinity)
-        Abort.run[NetException | Closed] {
-            transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
-                Sync.defer {
-                    listener.close()
-                    val connPromise = new IOPromise[NetException, Connection[NioHandle]]
-                    val reclaimed   = transport.trackAcceptHandshake(listener.asInstanceOf[NioListener], connPromise)
-                    assert(
-                        reclaimed,
-                        "a handshake tracked after its listener closed must be reclaimed at registration, or its channel and handle are held for the process lifetime"
-                    )
-                    assert(
-                        transport.pendingAcceptHandshakeCount == 0,
-                        s"the reclaimed entry must not stay in the registry, count=${transport.pendingAcceptHandshakeCount}"
-                    )
-                    connPromise.poll() match
-                        case Present(Result.Failure(_: NetConnectionClosedException)) =>
-                            succeed
-                        case other =>
-                            fail(
-                                s"the reclaim must fail the handshake promise so its teardown arm reaps the handle and channel, got $other"
-                            )
-                    end match
+        Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
+            Abort.run[NetException | Closed] {
+                transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
+                    Sync.defer {
+                        listener.close()
+                        val connPromise = new IOPromise[NetException, Connection[NioHandle]]
+                        val reclaimed   = transport.trackAcceptHandshake(listener.asInstanceOf[NioListener], connPromise)
+                        assert(
+                            reclaimed,
+                            "a handshake tracked after its listener closed must be reclaimed at registration, or its channel and handle are held for the process lifetime"
+                        )
+                        assert(
+                            transport.pendingAcceptHandshakeCount == 0,
+                            s"the reclaimed entry must not stay in the registry, count=${transport.pendingAcceptHandshakeCount}"
+                        )
+                        connPromise.poll() match
+                            case Present(Result.Failure(_: NetConnectionClosedException)) =>
+                                succeed
+                            case other =>
+                                fail(
+                                    s"the reclaim must fail the handshake promise so its teardown arm reaps the handle and channel, got $other"
+                                )
+                        end match
+                    }
                 }
-            }
-        }.map(Abort.get)
+            }.map(Abort.get)
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // peer-close grace wiring (the NIO twin of the JS transport wiring test)
+    // -----------------------------------------------------------------------
+
+    "threads peerCloseGrace end-to-end: an abandoned backpressured accepted connection is reclaimed after the client FIN" in {
+        given Frame = Frame.internal
+        // Cap-1 inbound + 64-byte read chunk so a 128-byte client write becomes two reads, the second overflowing the channel and parking the
+        // accepted-side ReadPump with no armed read. Short grace so the reclaim fires promptly. Without NioTransport threading config.peerCloseGrace
+        // into the handle and the Connection, the grace defaults to Infinity and the abandoned connection is never reclaimed (isOpen stays true).
+        val config    = NetConfig(channelCapacity = 1, readChunkSize = 64, peerCloseGrace = 200.millis)
+        val acceptedP = new IOPromise[Closed, kyo.net.Connection]
+        mkTransport().map { transport =>
+            for
+                listener <- transport.listen("127.0.0.1", 0, 50, config) { conn =>
+                    acceptedP.completeDiscard(Result.succeed(conn))
+                }.safe.get
+                client   <- Sync.defer(new java.net.Socket("127.0.0.1", listener.port))
+                accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
+                _ <- Sync.defer {
+                    client.getOutputStream.write(Array.fill[Byte](128)(1))
+                    client.getOutputStream.flush()
+                }
+                _         <- Async.sleep(300.millis)    // let the accepted-side pump read both chunks and park on the put
+                _         <- Sync.defer(client.close()) // FIN with the pump parked
+                reclaimed <- awaitCondition(5.seconds)(!accepted.isOpen)
+                _         <- Sync.defer(listener.close())
+            yield assert(
+                reclaimed,
+                "NioTransport must thread peerCloseGrace so an abandoned backpressured accepted connection is reclaimed after the client FIN"
+            )
+            end for
+        }
     }
 
 end NioTransportTest

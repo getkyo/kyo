@@ -151,6 +151,8 @@ class StubIoUringBindings extends IoUringBindings:
 
     override def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit = ()
 
+    override def kyo_uring_poll_peer_closed(fd: Int)(using AllowUnsafe): Int = 0
+
     // armWake calls set_data64(sqe, WakeKey=-1L); filter it so the raw-send key in lastDataKey
     // is not overwritten before the KICK test captures it.
     override def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit =

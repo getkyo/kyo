@@ -159,6 +159,10 @@ final private[net] class PollerIoDriver private[posix] (
     // fd -> current handle id. Used to discard stale poller events after fd reuse.
     private val activeFds = new IntLongMap()
 
+    // readFd -> handle, parallel to activeFds and maintained at the same register/deregister/clear sites. It exists so a FIN/error edge that lands
+    // on a PARKED fd (no pending-read entry to carry the handle) can still reach the handle to set its `peerClosed` latch. Poll-fiber-confined.
+    private val activeHandles = new IntRefMap[PosixHandle]()
+
     // readFd -> handle (read promise stored on handle.pendingReadPromise); writeFd -> writable entry (held on handle.pendingWritablePromise too,
     // so the cancel/close paths can fail the promise synchronously without touching this non-thread-safe map). The writable entry pairs the
     // promise with the arming handle's monotonic id so dispatchWritable can apply the same stale-fd-id equality guard the read/accept paths use
@@ -719,6 +723,13 @@ final private[net] class PollerIoDriver private[posix] (
             handle.pendingReadPromise = Absent
         end if
     end awaitRead
+
+    /** Whether the peer has closed (a FIN) or the connection hit a hard error (RST), read WITHOUT a syscall. The standing edge-triggered
+      * registration already delivers the FIN/error edge while the pump is backpressured (it lands in [[dispatchRead]] or [[dispatchError]], which
+      * latch `peerClosed`), so this is a pure volatile read. The `halfClose` disjunct covers a coalesced data+FIN read.
+      */
+    override def isPeerClosed(handle: PosixHandle)(using AllowUnsafe, Frame): Boolean =
+        handle.peerClosed || handle.halfClose == HalfCloseState.PeerHalfClosePending
 
     /** STARTTLS upgrade confinement: make the poll carrier the sole producer of the upgrade's ciphertext reads. The handshake parked a waiter on
       * [[PosixHandle.upgradeHandoff]] and calls this; we arm a read whose dispatch ([[dispatchReadPlain]], gated on [[PosixHandle.upgradeActive]])
@@ -1386,6 +1397,7 @@ final private[net] class PollerIoDriver private[posix] (
         }
         pendingAccepts.clear()
         activeFds.clear()
+        activeHandles.clear()
         missedReads.clear()
         missedEof.clear()
         // Drop any deregister-intake handles whose OpDeregister command never ran before the driver closed; their promises are failed above.
@@ -1404,9 +1416,11 @@ final private[net] class PollerIoDriver private[posix] (
             reg.kind match
                 case RegKind.Read =>
                     activeFds.put(handle.readFd, handle.id.packed)
+                    activeHandles.put(handle.readFd, handle)
                     pendingReads.put(handle.readFd, handle)
                 case RegKind.Accept =>
                     activeFds.put(handle.readFd, handle.id.packed)
+                    activeHandles.put(handle.readFd, handle)
                     pendingAccepts.put(handle.readFd, handle)
                 case RegKind.Write =>
                     activeFds.put(handle.writeFd, handle.id.packed)
@@ -1586,6 +1600,9 @@ final private[net] class PollerIoDriver private[posix] (
                 h.pendingReadPromise = Absent
             }
             Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
+            // Latch peer-closed on a hard error too: a peer RST fires EPOLLHUP/EV_ERROR, not the EOF edge, so it never reaches the EOF capture, and
+            // the SO_ERROR read below CLEARS the kernel's error, so without latching here the only evidence of the close would be destroyed.
+            Maybe(activeHandles.get(fd)).foreach(_.peerClosed = true)
         end if
     end dispatchError
 
@@ -1653,7 +1670,11 @@ final private[net] class PollerIoDriver private[posix] (
                     // Preserve the half-close bit of a dropped edge: a bare missedReads entry re-dispatches with eofPending=false, which would
                     // read the buffered bytes but never surface the EOF (the ET half-close edge does not re-fire). Record it so the next
                     // awaitRead advances halfClose to PeerHalfClosePending, ensuring the drain reaches recv == 0.
-                    if eofPending then discard(missedEof.add(fd))
+                    if eofPending then
+                        discard(missedEof.add(fd))
+                        // FIN edge with no pending read: latch peerClosed for the grace poll (handle via activeHandles; staleness already gated by drainReady).
+                        Maybe(activeHandles.get(fd)).foreach(_.peerClosed = true)
+                    end if
         end match
     end dispatchRead
 
@@ -2333,9 +2354,11 @@ final private[net] class PollerIoDriver private[posix] (
                     kind match
                         case RegKind.Read =>
                             activeFds.put(fd, handle.id.packed)
+                            activeHandles.put(fd, handle)
                             pendingReads.put(fd, handle)
                         case RegKind.Accept =>
                             activeFds.put(fd, handle.id.packed)
+                            activeHandles.put(fd, handle)
                             pendingAccepts.put(fd, handle)
                         case RegKind.Write =>
                             activeFds.put(fd, handle.id.packed)
@@ -2436,6 +2459,7 @@ final private[net] class PollerIoDriver private[posix] (
                     val current = activeFds.getOrElse(fd, -1L)
                     if current == h.id.packed || current == -1L then
                         activeFds.remove(fd)
+                        discard(activeHandles.remove(fd))
                         discard(pendingReads.remove(fd))
                         discard(pendingWritables.remove(fd))
                         discard(pendingAccepts.remove(fd))

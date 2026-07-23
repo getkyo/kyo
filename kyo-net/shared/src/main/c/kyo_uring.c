@@ -22,7 +22,11 @@
 
 #if defined(__linux__) && __has_include(<liburing.h>)
 
+/* POLLRDHUP (peer half-close) is a Linux extension gated behind _GNU_SOURCE; define it before any header so kyo_uring_poll_peer_closed sees it. */
+#define _GNU_SOURCE 1
+
 #include <liburing.h>
+#include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -150,6 +154,23 @@ int kyo_uring_submit_and_wait_timeout(struct io_uring* ring, void* cqePtr, long 
  * readable, the armed poll fires a CQE, and the parked submit_and_wait returns so the reap loop drains its queue. */
 void kyo_uring_prep_poll_multishot(struct io_uring_sqe* sqe, int fd, int poll_mask) {
     io_uring_prep_poll_multishot(sqe, fd, (unsigned)poll_mask);
+}
+
+/*
+ * Non-blocking poll(2) for a backpressured fd's peer-close state, off the io_uring ring (a parked ReadPump arms no recv, so a peer FIN/RST cannot
+ * surface through a completion; the grace poll asks the kernel directly). POLLRDHUP surfaces the peer half-close even when the receive buffer is
+ * FULL of undrained data (the FIN sits behind it, so a MSG_PEEK recv would return those bytes and never see the FIN). POLLHUP and POLLERR (e.g. RST)
+ * are always reported in revents regardless of the events mask, hence the wider revents check. Returns 1 peer gone, 0 open, -1 on a poll error.
+ */
+int kyo_uring_poll_peer_closed(int fd) {
+    struct pollfd pfd;
+    pfd.fd      = fd;
+    pfd.events  = POLLRDHUP;
+    pfd.revents = 0;
+    int r = poll(&pfd, 1, 0);
+    if (r < 0) return -1;
+    if (r == 0) return 0;
+    return (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR)) != 0 ? 1 : 0;
 }
 
 void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* addr, int addrlen) {

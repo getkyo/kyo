@@ -167,7 +167,7 @@ end startTls
 
 There is one transport for the whole process, and it takes no configuration. Settings belong to the connection or the operation, so they travel with the call: a caller wanting bigger buffers or a tighter deadline passes them to `connect` or `listen` and still shares the one I/O fabric rather than building a second one.
 
-Each setting sits where it can act. `NetConfig` shapes the connection and socket an operation produces, `connectTimeout` is a parameter of the connect operations, and the TLS handshake deadline is a field of `NetTlsConfig`, so it reaches every operation that handshakes and none that do not.
+Each setting sits where it can act. `NetConfig` shapes the connection and socket an operation produces (including `peerCloseGrace`, the window an idle backpressured connection is given before it is reclaimed once its peer has closed, `30.seconds` by default and `Duration.Infinity` to opt out), `connectTimeout` is a parameter of the connect operations, and the TLS handshake deadline is a field of `NetTlsConfig`, so it reaches every operation that handshakes and none that do not.
 
 ```scala
 import AllowUnsafe.embrace.danger

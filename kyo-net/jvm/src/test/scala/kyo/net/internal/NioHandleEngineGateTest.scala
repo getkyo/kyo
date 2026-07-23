@@ -217,7 +217,7 @@ class NioHandleEngineGateTest extends Test:
             try
                 val engine = javax.net.ssl.SSLContext.getDefault.createSSLEngine()
                 engine.setUseClientMode(true)
-                val handle = NioHandle.initTls(c, 4096, engine)
+                val handle = NioHandle.initTls(c, 4096, engine, Duration.Infinity)
 
                 assert(!handle.engineGate.get(), "gate must start false (unowned) before close")
 
