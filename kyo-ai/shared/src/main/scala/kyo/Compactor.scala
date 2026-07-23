@@ -44,7 +44,7 @@ trait Compactor[-S] extends AI.Enablement[S]:
     // through `render` alone, so the off switch forks no fiber and issues no model call.
     private[kyo] def isDefault: Boolean = false
 
-    // The sanctioned erased-carrier discharge every enablement kind uses (Mode.scala:24-26
+    // The sanctioned erased-carrier discharge every enablement kind uses (Mode.scala
     // this.asInstanceOf[Mode[Any]]); Compactor is contravariant in S, so widening to the
     // Compactor[Any] env slot needs this one cast, matching the sibling kinds exactly.
     final private[kyo] def enableIn(env: AIEnv)(using Frame): AIEnv =

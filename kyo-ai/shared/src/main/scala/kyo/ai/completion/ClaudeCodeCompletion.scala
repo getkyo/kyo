@@ -9,7 +9,7 @@ import kyo.ai.*
 import kyo.ai.Context.*
 
 /** Explicit opt-out of the subscription guarantee. Top-level in `kyo.ai.completion` (like the
-  * `kyo.ai.provider` flag at `Config.scala:83`), so the fully-qualified name is the property key:
+  * `kyo.ai.provider` flag at `Config.scala`), so the fully-qualified name is the property key:
   * `-Dkyo.ai.completion.inheritApiCredentials=true` lets a command harness inherit the ambient
   * `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_API_KEY` and bill through the API. Default `false`
   * strips them so the CLI uses its own OAuth subscription. The base URL is not a credential and rides
