@@ -121,11 +121,14 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             "hooks"
         )
 
+    // The usageSink is accepted for the trait contract but never written: a CLI harness reports no
+    // stream usage, so its anchor degrades exactly as its gen path does (§5a:372).
     override def streamFragments(
         config: Config,
         context: Context,
         resultSchema: JsonSchema,
-        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
+        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]],
+        usageSink: AtomicRef[Maybe[Completion.Usage]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         Kyo.lift(Stream[String, Async & Scope & Abort[AIStreamException]] {
             Abort.run[

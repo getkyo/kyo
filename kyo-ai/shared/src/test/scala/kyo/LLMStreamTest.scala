@@ -3,8 +3,35 @@ package kyo
 import kyo.*
 import kyo.ai.*
 import kyo.ai.Context.*
+import kyo.ai.completion.Completion
 
 class LLMStreamTest extends kyo.test.Test[Any]:
+
+    /** A deterministic tokenizer for the re-anchor leaves: every text counts as a fixed 10, so a
+      * suffix count and an apportioned share are stable across platforms with no live endpoint.
+      */
+    val fixedTok: Tokenizer = new Tokenizer:
+        def count(texts: Chunk[String])(using Frame): Chunk[Int] < (LLM & Async & Abort[HttpException | AIGenException]) =
+            Kyo.lift(texts.map(_ => 10))
+
+    /** A config with a large window so a re-anchored 50000/42000 stays below the compaction trigger and
+      * renderView re-serves the context unchanged (the re-anchor is the only rewrite under test).
+      */
+    def wideServerConfig(baseUrl: String): Config =
+        Config.OpenAI.default.apiKey("test").model(Config.OpenAI, "gpt-4o", 1000000).apiUrl(baseUrl)
+
+    def wideAnthropicConfig(baseUrl: String): Config =
+        Config.Anthropic.default.apiKey("test").model(Config.Anthropic, "claude-sonnet-4-5", 1000000).apiUrl(baseUrl)
+
+    /** The OpenAI include_usage final chunk: empty choices plus a top-level usage object, the shape that
+      * arrives before [DONE] on a stream_options.include_usage request.
+      */
+    def openAiUsageChunk(promptTokens: Int, completionTokens: Int): String =
+        s"""{"choices":[],"usage":{"prompt_tokens":$promptTokens,"completion_tokens":$completionTokens}}"""
+
+    /** The Anthropic message_start event carrying message.usage.input_tokens (no opt-in required). */
+    def anthropicMessageStart(inputTokens: Int): String =
+        s"""{"type":"message_start","message":{"usage":{"input_tokens":$inputTokens}}}"""
 
     case class Answer(text: String) derives Schema, CanEqual
     case class Nested(name: String, inner: Answer) derives Schema, CanEqual
@@ -783,6 +810,191 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         val asRec: Stream[Answer, Async & Scope & Abort[AIStreamException]] < LLM  = AI.stream[Answer]
         val _                                                                      = (asText, asRec)
         assert(true)
+    }
+
+    // --- streaming re-anchor (§5a:370) and the shared stamp-at-creation root ---
+
+    "§5a:370 an OpenAI streaming turn re-anchors occupancy to the reported total at the sent view's size" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(50000, 12)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.stream[String].map(_.run).andThen {
+                            LLM.session(ai).map { session =>
+                                session.streamAnchor match
+                                    case Present(anchor) =>
+                                        anchor.usageSink.get.map { u =>
+                                            assert(
+                                                u == Present(Completion.Usage(50000, 12, Absent)),
+                                                s"the seated sink holds the stream-end usage, got: $u"
+                                            )
+                                            val sentSize = anchor.sentView.size
+                                            ai.stream[String].map(_.run).andThen {
+                                                ai.context.map { ctx =>
+                                                    val st = ctx.compactionState
+                                                    assert(
+                                                        st.lastUsage == Present(50000),
+                                                        s"the next turn re-anchors on the reported 50000, got: ${st.lastUsage}"
+                                                    )
+                                                    assert(
+                                                        st.lastUsageRawSize == sentSize,
+                                                        s"the anchor size is the streamed sent-view size $sentSize, got ${st.lastUsageRawSize}"
+                                                    )
+                                                    assert(
+                                                        Compactor.internal.occupancy(ctx) >= 50000,
+                                                        s"occupancy anchors at or above the reported total, got ${Compactor.internal.occupancy(ctx)}"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    case Absent =>
+                                        Kyo.lift(assert(false, "a streaming turn must seat a StreamAnchor"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "§5a:370 an Anthropic streaming turn re-anchors from the message_start input_tokens" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideAnthropicConfig(server.baseUrl).tokenizer(fixedTok)
+            server.enqueueStream(Chunk(
+                anthropicMessageStart(42000),
+                anthropicArgDelta("{\"resultValue\":\"ok\"}")
+            )).andThen(server.enqueueStream(Chunk(anthropicArgDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.stream[String].map(_.run).andThen {
+                            LLM.session(ai).map { session =>
+                                session.streamAnchor match
+                                    case Present(anchor) =>
+                                        anchor.usageSink.get.map { u =>
+                                            assert(
+                                                u == Present(Completion.Usage(42000, 0, Absent)),
+                                                s"the seated sink holds the message_start usage, got: $u"
+                                            )
+                                            ai.stream[String].map(_.run).andThen {
+                                                ai.context.map { ctx =>
+                                                    assert(
+                                                        ctx.compactionState.lastUsage == Present(42000),
+                                                        s"the next turn re-anchors on the Anthropic 42000, got: ${ctx.compactionState.lastUsage}"
+                                                    )
+                                                    assert(
+                                                        Compactor.internal.occupancy(ctx) >= 42000,
+                                                        s"occupancy anchors on the Anthropic reported total, got ${Compactor.internal.occupancy(ctx)}"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    case Absent =>
+                                        Kyo.lift(assert(false, "an Anthropic streaming turn must seat a StreamAnchor"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "§5a:372 a streaming turn reporting NO usage leaves the anchor untouched (the no-usage / harness MUST-DEGRADE path)" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            val prior = Context(Chunk(SystemMessage("s"), UserMessage("hi", Absent)))
+                .withCompaction(CompactionState(lastUsage = Present(30000), lastUsageRawSize = 2))
+            server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"ok\"}"))).andThen(
+                server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))
+            ).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.setContext(prior).andThen(ai.stream[String].map(_.run)).andThen {
+                            LLM.session(ai).map { session =>
+                                session.streamAnchor match
+                                    case Present(anchor) =>
+                                        anchor.usageSink.get.map { u =>
+                                            assert(u.isEmpty, s"a no-usage stream leaves the sink Absent, got: $u")
+                                            ai.stream[String].map(_.run).andThen {
+                                                ai.context.map { ctx =>
+                                                    assert(
+                                                        ctx.compactionState.lastUsage == Present(30000),
+                                                        s"a no-usage stream must not re-anchor: the prior 30000 is unchanged, got: ${ctx.compactionState.lastUsage}"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    case Absent =>
+                                        Kyo.lift(assert(false, "a streaming turn must seat a StreamAnchor even when it reports no usage"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "§5a:389-391 the streaming re-anchor apportions the sent view: live twins and the synthetic marker stamped, nothing escapes its share (integration)" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            val marker = SystemMessage("[summary of earlier region]", Absent, Present(Origin(0, 2, 0)))
+            val live   = UserMessage("current question", Absent)
+            val seeded = Context(Chunk(live), Chunk(marker, live))
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(1000, 8)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.setContext(seeded).andThen(ai.stream[String].map(_.run)).andThen {
+                            ai.stream[String].map(_.run).andThen {
+                                ai.context.map { ctx =>
+                                    assert(
+                                        ctx.compactionState.lastUsage == Present(1000),
+                                        s"the re-anchor seats the reported total 1000, got: ${ctx.compactionState.lastUsage}"
+                                    )
+                                    val stampedMarker = ctx.compacted.find(_.origin == Present(Origin(0, 2, 0)))
+                                    assert(
+                                        stampedMarker.exists(_.tokens.isDefined),
+                                        s"the synthetic marker carries its apportioned stamp, not Absent, got: ${stampedMarker.map(_.tokens)}"
+                                    )
+                                    assert(
+                                        ctx.raw.exists(m => m.origin.isEmpty && m.tokens.isDefined),
+                                        s"a live raw twin the reported total covers carries an apportioned stamp, got: ${ctx.raw.map(_.tokens)}"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "the streaming re-anchor + stamp path is model-free (zero extra completions, no fiber)" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl)
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(1000, 8)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.stream[String].map(_.run).andThen(ai.stream[String].map(_.run))
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        assert(
+                            caps.size == 2,
+                            s"two stream turns issue exactly two completions; the re-anchor / apportion / suffix-stamp step adds none, got ${caps.size}"
+                        )
+                    }
+                }
+            }
+        }
     }
 
 end LLMStreamTest

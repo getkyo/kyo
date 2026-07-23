@@ -18,6 +18,13 @@ class CompactorTest extends kyo.test.Test[Any]:
     // Stamp a message with an apportioned token count so occupancy/regions/spans account deterministically.
     def tok(m: Message, n: Int): Message = stamp(m, TokenStamp("t", n))
 
+    // A deterministic tokenizer whose count of each text is a fixed lookup (0 for an unlisted text), with
+    // no per-message envelope, so a suffix stamp and an apportioned share are exact literals a leaf asserts.
+    def fixedTokenizer(counts: Map[String, Int]): Tokenizer = new Tokenizer:
+        def count(texts: Chunk[String])(using Frame): Chunk[Int] < (LLM & Async & Abort[HttpException | AIGenException]) =
+            Kyo.lift(texts.map(t => counts.getOrElse(t, 0)))
+        override private[kyo] def includesMessageEnvelope: Boolean = true
+
     // A region value for scoring/span unit tests (its own single index, resolved, stamped tokens).
     def reg(id: Int, tokens: Int = 1): Region = Region(id, Chunk(id), false, tokens)
 
@@ -835,6 +842,113 @@ class CompactorTest extends kyo.test.Test[Any]:
             Default.contiguousRuns(List(1, 2, 4, 7, 8, 9)) == List((1, 3), (4, 5), (7, 10)),
             "multiple gaps split into as many maximal runs, each half-open [start, endExcl)"
         )
+    }
+
+    // ==== the shared stamp-at-creation root (P7) ====
+
+    "§5a:389-391 synthetic summary/pointer markers carry an apportioned stamp after an anchor (nothing escapes its share)" in {
+        val summaryMarker = SystemMessage("summary A", Absent, Present(Origin(0, 3, 0)))
+        val pointerMarker = SystemMessage("pointer B", Absent, Present(Origin(3, 6, 3)))
+        val live1         = tok(um("live one"), 400)
+        val live2         = tok(am("live two"), 400)
+        val sentView      = Chunk[Message](summaryMarker, pointerMarker, live1, live2)
+        val ctx           = Context(Chunk[Message](live1, live2), sentView)
+        val tokr          = fixedTokenizer(Map("summary A" -> 100, "pointer B" -> 100, "live one" -> 400, "live two" -> 400))
+        LLM.run(cfg())(reanchor(ctx, sentView, 1000, tokr, "id")).map { out =>
+            val markers = out.compacted.filter(_.origin.isDefined)
+            assert(markers.forall(_.tokens.isDefined), "every marker carries an apportioned stamp, not Absent")
+            assert(
+                out.compacted.filter(_.origin == Present(Origin(0, 3, 0))).headMaybe.flatMap(_.tokens) == Present(TokenStamp("id", 100)),
+                "the summary marker carries its apportioned share (100), not the char/3 estimate"
+            )
+            assert(
+                out.compacted.filter(_.origin == Present(Origin(3, 6, 3))).headMaybe.flatMap(_.tokens) == Present(TokenStamp("id", 100)),
+                "the pointer marker carries its apportioned share (100)"
+            )
+            assert(Default.viewTokens(out.compacted) == 1000, "viewTokens sums the apportioned stamps, markers included")
+            val charThree = out.compacted.foldLeft(0)((n, m) => n + offlineEstimate(m))
+            assert(
+                Default.viewTokens(out.compacted) != charThree,
+                s"the priced view is the apportioned sum (1000), not the char/3 estimate ($charThree)"
+            )
+            val tokr2 = fixedTokenizer(Map("summary A" -> 100, "pointer B" -> 100, "live one" -> 400, "live two" -> 400))
+            LLM.run(cfg())(reanchor(out, out.compacted, 1000, tokr2, "id2")).map { out2 =>
+                assert(
+                    out2.compacted.filter(_.origin.isDefined).forall(_.tokens.exists(_.tokenizerId == "id2")),
+                    "a re-anchor in a DIFFERENT vocabulary re-stamps the markers in the new id, never mixing vocabularies"
+                )
+            }
+        }
+    }
+
+    "§5a:392,443 the pre-anchor suffix rides in tokenizer units, not char/3" in {
+        val marker = SystemMessage("region marker", Absent, Present(Origin(0, 1, 0)))
+        val s1     = um("a" * 118) // offlineEstimate == (118+2)/3 + 4 == 44
+        val s2     = um("b" * 85)  // offlineEstimate == (85+2)/3 + 4 == 33
+        val ctx = Context(Chunk[Message](marker, s1, s2))
+            .withCompaction(CompactionState(lastUsage = Present(50000), lastUsageRawSize = 1))
+        val tokr = fixedTokenizer(Map(("a" * 118) -> 30, ("b" * 85) -> 20, "region marker" -> 0))
+        LLM.run(cfg())(stampLiveSuffix(ctx, tokr, "id")).map { out =>
+            val cs1 = out.compacted.filter(_.content == "a" * 118).headMaybe.flatMap(_.tokens)
+            val cs2 = out.compacted.filter(_.content == "b" * 85).headMaybe.flatMap(_.tokens)
+            assert(cs1 == Present(TokenStamp("id", 30)), s"suffix message one stamped in tokenizer units, got $cs1")
+            assert(cs2 == Present(TokenStamp("id", 20)), s"suffix message two stamped in tokenizer units, got $cs2")
+            val rs1 = out.raw.filter(_.content == "a" * 118).headMaybe.flatMap(_.tokens)
+            val rs2 = out.raw.filter(_.content == "b" * 85).headMaybe.flatMap(_.tokens)
+            assert(rs1 == Present(TokenStamp("id", 30)) && rs2 == Present(TokenStamp("id", 20)), "the raw twins carry the identical stamps")
+            assert(occupancy(out) == 50000 + 30 + 20, s"occupancy == 50050 (tokenizer units), got ${occupancy(out)}")
+            assert(occupancy(out) != 50000 + 44 + 33, "occupancy is not the char/3 basis (50077) the doc rejects")
+            val markerTokens = out.compacted.filter(_.origin.isDefined).headMaybe.flatMap(_.tokens)
+            assert(markerTokens.isEmpty, "the synthetic marker is not stamped by the suffix pass (the anchor's share owns markers)")
+        }
+    }
+
+    "§5a:372 the no-usage path applies the distinct widened margin, the anchored path does not" in {
+        val m1       = tok(um("live one"), 20000)
+        val m2       = tok(am("live two"), 20000)
+        val noAnchor = Context(Chunk[Message](m1, m2))
+        val anchored = Context(Chunk[Message](m1, m2)).withCompaction(CompactionState(lastUsage = Present(40000), lastUsageRawSize = 2))
+        assert(
+            occupancy(noAnchor) == (40000 * noUsageMargin).toInt,
+            s"the wholly-offline occupancy is the stamped sum widened by the margin, got ${occupancy(noAnchor)}"
+        )
+        assert(occupancy(noAnchor) > 40000, "the widened margin adds the overflow headroom the never-corrected case gets")
+        assert(occupancy(anchored) == 40000, s"the anchored occupancy gets NO margin, got ${occupancy(anchored)}")
+        assert(
+            occupancy(anchored) < occupancy(noAnchor),
+            "the each-turn-corrected anchored path is tighter than the never-corrected offline path"
+        )
+    }
+
+    "the stamp-at-render pass is idempotent: an all-stamped context is returned by reference" in {
+        val marker = SystemMessage("region marker", Absent, Present(Origin(0, 1, 0)))
+        val live1  = tok(um("one"), 5)
+        val live2  = tok(am("two"), 7)
+        val ctx    = Context(Chunk[Message](marker, live1, live2))
+        val tokr   = fixedTokenizer(Map("three" -> 9))
+        LLM.run(cfg())(stampLiveSuffix(ctx, tokr, "id")).map { out =>
+            assert(
+                out eq ctx,
+                "an all-stamped context is returned by reference (eq), so a below-trigger re-serve stays reference-identical"
+            )
+            val fresh = um("three")
+            val grown = Context(Chunk[Message](marker, live1, live2, fresh))
+            LLM.run(cfg())(stampLiveSuffix(grown, tokr, "id")).map { out2 =>
+                assert(!(out2 eq grown), "adding one unstamped live message forces a genuine (allocating) pass")
+                assert(
+                    out2.compacted.filter(_.content == "three").headMaybe.flatMap(_.tokens) == Present(TokenStamp("id", 9)),
+                    "only the newly-added live message is stamped"
+                )
+                assert(
+                    out2.compacted.filter(_.content == "one").headMaybe.flatMap(_.tokens) == Present(TokenStamp("t", 5)),
+                    "a pre-existing stamp is left intact"
+                )
+                assert(
+                    out2.compacted.filter(_.content == "two").headMaybe.flatMap(_.tokens) == Present(TokenStamp("t", 7)),
+                    "a pre-existing stamp is left intact"
+                )
+            }
+        }
     }
 
 end CompactorTest

@@ -3,6 +3,7 @@ package kyo
 import kyo.Schema
 import kyo.ai.*
 import kyo.ai.Context.*
+import kyo.ai.completion.Completion
 import scala.annotation.tailrec
 
 /** Automatic context compaction as a swappable `AI.Enablement`: keeps what the model SEES small
@@ -227,10 +228,18 @@ object Compactor:
             val state = ctx.compactionState
             state.lastUsage match
                 case Present(total) =>
-                    val suffix = ctx.compacted.drop(state.lastUsageRawSize).foldLeft(0)((n, m) => n + offlineEstimate(m))
+                    // The suffix rides in tokenizer units (§5a:392,443): stampLiveSuffix stamps each live
+                    // appended message with its tokenizer count at the turn start, so stampedTokens reads
+                    // the tokenizer count, not the char/3 estimate the doc rejects; a still-unstamped
+                    // message falls back to offlineEstimate.
+                    val suffix = ctx.compacted.drop(state.lastUsageRawSize).foldLeft(0)((n, m) => n + stampedTokens(m))
                     total + suffix
                 case Absent =>
-                    ctx.compacted.foldLeft(0)((n, m) => n + stampedTokens(m))
+                    // The wholly-offline path (a provider that never reports usage): tokenizer-stamped sum
+                    // under a DISTINCT widened margin (v4 §5a:372, a provisional calibration seed), so the never-corrected whole-session
+                    // case carries extra overflow headroom the each-turn-corrected anchored suffix does not.
+                    val offline = ctx.compacted.foldLeft(0)((n, m) => n + stampedTokens(m))
+                    (offline * noUsageMargin).toInt
             end match
         end occupancy
 
@@ -292,7 +301,14 @@ object Compactor:
         ): Context < (LLM & Async & Abort[HttpException | AIGenException]) =
             apportion(sentView, reportedTotal, tokenizer, tokenizerId).map { stamped =>
                 val anchored = ctx.withCompaction(ctx.compactionState.withUsage(reportedTotal, sentView.size))
-                anchored.copy(raw = propagateStamps(anchored.raw, stamped))
+                // Live raw twins take their apportioned stamp through propagateStamps; synthetic markers
+                // (origin Present) have no raw twin, so their apportioned share is written back into the
+                // SERVED view here (§5a:389-391 nothing escapes its share), so viewTokens and demotion
+                // sizing price a marker by its share, never the char estimate.
+                anchored.copy(
+                    raw = propagateStamps(anchored.raw, stamped),
+                    compacted = propagateMarkerStamps(anchored.compacted, stamped)
+                )
             }
 
         // Propagate the sent view's apportioned stamps onto the identical raw entries by core identity
@@ -313,6 +329,105 @@ object Compactor:
                         case None => m
             }
         end propagateStamps
+
+        // Install each synthetic marker's apportioned stamp into the served view (§5a:389-391). A marker
+        // (origin Present) is matched by its Origin, unique to a marker; a live entry (origin Absent) is
+        // stamped through raw propagation + the suffix pass, never here.
+        def propagateMarkerStamps(compacted: Chunk[Message], stampedView: Chunk[Message]): Chunk[Message] =
+            val markers = stampedView.filter(_.origin.isDefined)
+            compacted.map { m =>
+                if m.origin.isEmpty then m
+                else
+                    markers.find(s => s.origin == m.origin) match
+                        case Some(s) =>
+                            s.tokens match
+                                case Present(t) => stamp(m, t)
+                                case Absent     => m
+                        case None => m
+            }
+        end propagateMarkerStamps
+
+        // The distinct widened margin for a provider that never reports usage (v4 §5a:372): the wholly
+        // offline occupancy carries extra overflow headroom the each-turn-corrected anchored suffix does
+        // not need.
+        val noUsageMargin: Double = 1.15 // provisional, replay-tunable, v4 §5a:372, owner-confirm
+
+        // The seated stream-usage carrier (§5a:370): a prior streaming turn's reported-usage SINK (written
+        // by the adapter SSE projection at stream end, OUTSIDE the LLM handler, hence an AtomicRef), plus
+        // the rendered sent view and the active tokenizer/id captured when the stream request was
+        // assembled. applyStreamMeasure consumes it at the next turn's start. Ephemeral, never serialized.
+        case class StreamAnchor(
+            usageSink: AtomicRef[Maybe[Completion.Usage]],
+            sentView: Chunk[Message],
+            tokenizer: Tokenizer,
+            tokenizerId: String
+        )
+
+        // §5a:392,443 the suffix in tokenizer units: tokenizer-count every LIVE message (origin Absent)
+        // with no stamp yet and stamp it in BOTH compacted and raw twins (by coreEq, mirroring
+        // propagateStamps). A raw un-normalized count the next anchor apportions and overwrites; a marker
+        // (origin Present) is owned by the anchor's apportioned share, never stamped here. Returns ctx by
+        // reference when nothing needs stamping, so a below-trigger re-serve stays reference-identical.
+        // Model-free: the offline tiktoken count is a pure local call.
+        def stampLiveSuffix(ctx: Context, tokenizer: Tokenizer, tokenizerId: String)(using
+            Frame
+        ): Context < (LLM & Async & Abort[HttpException | AIGenException]) =
+            val pending = ctx.compacted.filter(m => m.origin.isEmpty && m.tokens.isEmpty)
+            if pending.isEmpty then Kyo.lift(ctx)
+            else
+                Tokenizer.internal.countMessages(tokenizer, pending).map { counts =>
+                    val stampedPending = pending.zipWithIndex.map((m, i) => stamp(m, TokenStamp(tokenizerId, counts(i))))
+                    def restamp(m: Message): Message =
+                        if m.origin.isDefined || m.tokens.isDefined then m
+                        else
+                            stampedPending.find(s => Context.coreEq(s, m)) match
+                                case Some(s) =>
+                                    s.tokens match
+                                        case Present(t) => stamp(m, t)
+                                        case Absent     => m
+                                case None => m
+                    ctx.copy(compacted = ctx.compacted.map(restamp), raw = ctx.raw.map(restamp))
+                }
+            end if
+        end stampLiveSuffix
+
+        // §5a:370 + §5a:392,443 the turn-start measure step, shared by gen (eval) and stream
+        // (streamAgainst). FIRST apply a pending stream re-anchor (a prior streaming turn seated its
+        // reported-usage sink + sent view; the anchor updates HERE, the next turn's start, the only point
+        // the LLM handler is live, observationally equivalent to gen's post-response re-anchor since
+        // occupancy's sole consumer is this same turn). THEN stamp any live suffix in tokenizer units.
+        // Idempotent: no pending anchor + every live message already stamped makes no write, so a
+        // below-trigger re-serve is byte-identical. Model-free: zero completions,
+        // no fiber.
+        def applyStreamMeasure(ai: AI, config: Config)(using
+            Frame
+        ): Unit < (LLM & Async & Abort[HttpException | AIGenException]) =
+            ai.context.map { ctx =>
+                LLM.session(ai).map { session =>
+                    val anchored: (Context, Boolean) < (LLM & Async & Abort[HttpException | AIGenException]) =
+                        session.streamAnchor match
+                            case Present(anchor) =>
+                                anchor.usageSink.get.map {
+                                    case Present(u) =>
+                                        reanchor(ctx, anchor.sentView, u.inputTokens, anchor.tokenizer, anchor.tokenizerId)
+                                            .map(rc => (rc, true))
+                                    case Absent => Kyo.lift((ctx, false))
+                                }
+                            case Absent => Kyo.lift((ctx, false))
+                    anchored.map { (ctx1, reanchored) =>
+                        val (tokenizer, tokenizerId) = activeTokenizer(config)
+                        stampLiveSuffix(ctx1, tokenizer, tokenizerId).map { ctx2 =>
+                            val session1       = if reanchored then session.clearStreamAnchor else session
+                            val ctxChanged     = !(ctx2 eq ctx)
+                            val sessionChanged = !(session1 eq session)
+                            val writeSession   = if sessionChanged then LLM.setSession(ai, session1) else Kyo.unit
+                            val writeContext   = if ctxChanged then ai.setContext(ctx2) else Kyo.unit
+                            writeSession.andThen(writeContext)
+                        }
+                    }
+                }
+            }
+        end applyStreamMeasure
 
         // ---------------------------------------------------------------------------------------
         // The single shipped default. render returns only the rebuilt compacted Chunk[Message]; raw

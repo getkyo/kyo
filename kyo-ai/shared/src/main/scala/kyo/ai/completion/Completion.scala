@@ -37,7 +37,8 @@ trait Completion:
         config: Config,
         context: Context,
         resultSchema: JsonSchema,
-        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
+        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]],
+        usageSink: AtomicRef[Maybe[Completion.Usage]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException])
 
 end Completion
@@ -81,7 +82,9 @@ object Completion:
     private[completion] def sseFragments(
         config: Config,
         request: StreamRequest < Abort[AIStreamException],
-        parseDeltaArguments: String => Result[String, Maybe[String]]
+        parseDeltaArguments: String => Result[String, Maybe[String]],
+        parseUsage: String => Maybe[Completion.Usage],
+        usageSink: AtomicRef[Maybe[Completion.Usage]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < Async =
         given sseTag: Tag[Emit[Chunk[HttpSseEvent[String]]]] = Tag[Emit[Chunk[HttpSseEvent[String]]]]
         val route                                            = HttpRoute.postRaw("").request(_.bodyText).response(_.bodySseText)
@@ -101,10 +104,20 @@ object Completion:
                     yield sseStream
                 }
             yield sseStream.map { event =>
-                parseDeltaArguments(event.data) match
-                    case Result.Success(Present(fragment)) => fragment
-                    case Result.Success(Absent)            => ""
-                    case Result.Failure(err)               => Abort.fail(AIStreamDeltaException(err))
+                // Record the provider's stream-end usage into the sink (§5a:370): OpenAI's include_usage
+                // final chunk and Anthropic's message_start both carry it on a chunk that projects to no
+                // argument fragment, so recording is orthogonal to fragment projection. AtomicRef.set is
+                // Sync and Async <: Sync, so this adds nothing to the element effect row.
+                val record =
+                    parseUsage(event.data) match
+                        case Present(usage) => usageSink.set(Present(usage))
+                        case Absent         => Kyo.unit
+                record.andThen {
+                    parseDeltaArguments(event.data) match
+                        case Result.Success(Present(fragment)) => fragment
+                        case Result.Success(Absent)            => ""
+                        case Result.Failure(err)               => Abort.fail(AIStreamDeltaException(err))
+                }
             }.filterPure(_.nonEmpty)
         }
     end sseFragments

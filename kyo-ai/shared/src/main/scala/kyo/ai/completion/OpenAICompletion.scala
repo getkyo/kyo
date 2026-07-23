@@ -84,10 +84,36 @@ private[completion] object OpenAICompletion extends Completion:
         config: Config,
         context: Context,
         resultSchema: JsonSchema,
-        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
+        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]],
+        usageSink: AtomicRef[Maybe[Completion.Usage]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
-        Completion.sseFragments(config, streamRequest(config, context, resultSchema, resultTool), parseDeltaArguments)
+        Completion.sseFragments(
+            config,
+            streamRequest(config, context, resultSchema, resultTool),
+            parseDeltaArguments,
+            parseStreamUsage,
+            usageSink
+        )
     end streamFragments
+
+    // The include_usage final chunk (§5a:370) carries an empty choices array and a top-level usage
+    // object (prompt/completion/cached tokens) before the [DONE] sentinel. Decode it and convert the
+    // snake_case wire usage to the public Completion.Usage, the SAME conversion the gen read performs
+    // (read, :49-55); any non-usage chunk or the sentinel yields Absent. Appended after streamFragments
+    // (placement is immaterial; both are members of the OpenAICompletion object).
+    private[kyo] def parseStreamUsage(line: String)(using Frame): Maybe[Completion.Usage] =
+        import internal.*
+        if line.trim == "[DONE]" then Absent
+        else
+            Json.decode[StreamChunk](line).toMaybe.flatMap(_.usage).map(u =>
+                Completion.Usage(
+                    inputTokens = u.prompt_tokens,
+                    outputTokens = u.completion_tokens,
+                    cachedInputTokens = u.prompt_tokens_details.flatMap(_.cached_tokens)
+                )
+            )
+        end if
+    end parseStreamUsage
 
     private[kyo] def parseDeltaArguments(line: String)(using Frame): Result[String, Maybe[String]] =
         import internal.*
@@ -127,7 +153,10 @@ private[completion] object OpenAICompletion extends Completion:
         Completion.StreamRequest(
             s"${config.apiUrl}/chat/completions",
             headers,
-            Json.encode(Request(context, config, resultTool, Present(resultSchema)).copy(stream = Present(true)))
+            Json.encode(
+                Request(context, config, resultTool, Present(resultSchema))
+                    .copy(stream = Present(true), stream_options = Present(StreamOptions(true)))
+            )
         )
     end streamRequest
 
@@ -155,6 +184,9 @@ private[completion] object OpenAICompletion extends Completion:
             tool_call_id: Maybe[String] = Absent
         ) derives Schema
 
+        // Opt-in to usage on the streaming response (§5a:370): the final SSE chunk then carries a
+        // top-level usage object with empty choices before [DONE].
+        case class StreamOptions(include_usage: Boolean) derives Schema
         case class Request(
             model: String,
             temperature: Maybe[Double],
@@ -163,7 +195,8 @@ private[completion] object OpenAICompletion extends Completion:
             messages: List[MessageEntry],
             tools: Maybe[List[ToolDef]],
             tool_choice: String = "required",
-            stream: Maybe[Boolean] = Absent
+            stream: Maybe[Boolean] = Absent,
+            stream_options: Maybe[StreamOptions] = Absent
         ) derives Schema
         case class ResponseFunctionCall(arguments: String, name: String) derives Schema
         case class ResponseToolCall(id: String, function: ResponseFunctionCall) derives Schema
@@ -182,7 +215,7 @@ private[completion] object OpenAICompletion extends Completion:
         case class StreamToolCallDelta(function: Maybe[StreamFunctionDelta] = Absent) derives Schema
         case class StreamDelta(tool_calls: Maybe[List[StreamToolCallDelta]] = Absent) derives Schema
         case class StreamChoice(delta: Maybe[StreamDelta] = Absent) derives Schema
-        case class StreamChunk(choices: Maybe[List[StreamChoice]] = Absent) derives Schema
+        case class StreamChunk(choices: Maybe[List[StreamChoice]] = Absent, usage: Maybe[Usage] = Absent) derives Schema
 
         private def toEntry(msg: Message)(using Frame): MessageEntry =
             def text(s: String): Structure.Value = Structure.Value.Str(s)

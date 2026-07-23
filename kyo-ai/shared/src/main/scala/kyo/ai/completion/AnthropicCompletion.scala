@@ -78,10 +78,31 @@ private[completion] object AnthropicCompletion extends Completion:
         config: Config,
         context: Context,
         resultSchema: JsonSchema,
-        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
+        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]],
+        usageSink: AtomicRef[Maybe[Completion.Usage]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
-        Completion.sseFragments(config, streamRequest(config, context, resultSchema, resultTool), parseDeltaArguments)
+        Completion.sseFragments(
+            config,
+            streamRequest(config, context, resultSchema, resultTool),
+            parseDeltaArguments,
+            parseStreamUsage,
+            usageSink
+        )
     end streamFragments
+
+    // Anthropic reports usage with no opt-in (§5a:370): the message_start event carries
+    // message.usage.input_tokens (the request total the anchor needs); message_delta carries only a
+    // cumulative output_tokens. Decode the message_start usage and convert the snake_case wire usage to
+    // the public Completion.Usage (mirroring the gen conversion at :53-56, no cached tokens); any other
+    // event yields Absent. Appended after streamFragments (placement is immaterial).
+    private[kyo] def parseStreamUsage(line: String)(using Frame): Maybe[Completion.Usage] =
+        import internal.*
+        Json.decode[StreamEvent](line).toMaybe.flatMap(_.message).flatMap(_.usage).flatMap(u =>
+            u.input_tokens.map(inTok =>
+                Completion.Usage(inputTokens = inTok, outputTokens = u.output_tokens.getOrElse(0), cachedInputTokens = Absent)
+            )
+        )
+    end parseStreamUsage
 
     private[kyo] def streamRequest(
         config: Config,
@@ -149,7 +170,17 @@ private[completion] object AnthropicCompletion extends Completion:
         // is an `input_json_delta` carrying a `partial_json` fragment. Fields are Maybe to tolerate the other
         // event types (message_start, content_block_start, text_delta, message_delta, message_stop, ping).
         case class StreamDelta(`type`: Maybe[String] = Absent, partial_json: Maybe[String] = Absent) derives Schema
-        case class StreamEvent(`type`: Maybe[String] = Absent, delta: Maybe[StreamDelta] = Absent) derives Schema
+        // The streaming usage shape (§5a:370): message_start carries message.usage.input_tokens; fields
+        // are Maybe to tolerate every other event type. Distinct from the gen internal.Usage (required
+        // fields) so a partial streaming event decodes.
+        case class StreamUsage(input_tokens: Maybe[Int] = Absent, output_tokens: Maybe[Int] = Absent) derives Schema
+        case class StreamMessage(usage: Maybe[StreamUsage] = Absent) derives Schema
+        case class StreamEvent(
+            `type`: Maybe[String] = Absent,
+            delta: Maybe[StreamDelta] = Absent,
+            message: Maybe[StreamMessage] = Absent,
+            usage: Maybe[StreamUsage] = Absent
+        ) derives Schema
         case class Response(
             id: String,
             content: List[Content],

@@ -12,7 +12,8 @@ import kyo.ai.Context
 case class AISession(
     context: Context,
     env: AIEnv,
-    preparation: Maybe[Compactor.internal.Preparation] = Absent
+    preparation: Maybe[Compactor.internal.Preparation] = Absent,
+    streamAnchor: Maybe[Compactor.internal.StreamAnchor] = Absent
 ):
     /** Sets this instance's config override. */
     def config(config: Config): AISession = copy(env = env.config(config))
@@ -23,6 +24,18 @@ case class AISession(
       */
     private[kyo] def withPreparation(prep: Compactor.internal.Preparation): AISession =
         copy(preparation = Present(prep))
+
+    /** Seats this instance's pending stream re-anchor (§5a:370): the reported-usage sink written by
+      * the streaming SSE projection plus the rendered sent view and active tokenizer captured when the
+      * stream request was assembled, consumed at the next turn's start. Ephemeral (an AtomicRef sink),
+      * never serialized. private[kyo] carrier.
+      */
+    private[kyo] def withStreamAnchor(anchor: Compactor.internal.StreamAnchor): AISession =
+        copy(streamAnchor = Present(anchor))
+
+    /** Clears the pending stream re-anchor once applied. */
+    private[kyo] def clearStreamAnchor: AISession =
+        copy(streamAnchor = Absent)
 
     /** Layers a tool onto this instance. */
     def addTool(tool: Tool[Any]): AISession = copy(env = env.addTools(Chunk(tool)))

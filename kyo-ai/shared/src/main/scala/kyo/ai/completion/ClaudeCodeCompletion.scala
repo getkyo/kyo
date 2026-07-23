@@ -65,11 +65,15 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
         case Completed(out: Chunk[Byte], err: Chunk[Byte], code: Process.ExitCode)
         case TimedOut
 
+    // The usageSink is accepted for the trait contract but never written: a CLI harness reports no
+    // stream usage, so its anchor degrades exactly as its gen path does (Reply(msgs, Absent),
+    // HarnessCompletion:20; §5a:372).
     override def streamFragments(
         config: Config,
         context: Context,
         resultSchema: JsonSchema,
-        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
+        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]],
+        usageSink: AtomicRef[Maybe[Completion.Usage]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         turnInput(context).map { case (input, prompt) =>
             Stream[String, Async & Scope & Abort[AIStreamException]] {
