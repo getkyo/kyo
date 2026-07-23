@@ -477,35 +477,43 @@ object Container:
                     b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
                 }
             }.map { cid =>
-                // Register cleanup IMMEDIATELY after create, before start
-                Scope.ensure {
-                    def safeMessage(t: Throwable): String =
-                        try t.getMessage
-                        catch case scala.util.control.NonFatal(_) => "(failed to format)"
+                // Capture the HttpClient active at registration time so the Scope.ensure teardown block
+                // uses the same client that created the container. The runner discharges Scope OUTSIDE any
+                // caller-scoped `HttpClient.let`, so by finalizer time the fiber-local would have unwound
+                // back to the process-shared default client, whose pool would then hold the teardown
+                // connections open past end-of-run and trip the leak check.
+                HttpClient.use { boundClient =>
+                    Scope.ensure {
+                        HttpClient.let(boundClient) {
+                            def safeMessage(t: Throwable): String =
+                                try t.getMessage
+                                catch case scala.util.control.NonFatal(_) => "(failed to format)"
 
-                    def logFailure(op: String)(r: Result[Throwable, Unit])(using Frame): Unit < Sync = r match
-                        case Result.Success(_) => ()
-                        // The container being already absent is the desired end state — nothing to warn about.
-                        // Happens when the caller (or autoRemove) removed it before the Scope finalizer ran.
-                        case Result.Failure(_: ContainerMissingException) => ()
-                        case Result.Failure(e) => Log.warn(s"Container ${cid.value} $op failed: ${safeMessage(e)}")
-                        case Result.Panic(e)   => Log.warn(s"Container ${cid.value} $op panicked: ${safeMessage(e)}")
+                            def logFailure(op: String)(r: Result[Throwable, Unit])(using Frame): Unit < Sync = r match
+                                case Result.Success(_) => ()
+                                // The container being already absent is the desired end state, nothing to warn about.
+                                // Happens when the caller (or autoRemove) removed it before the Scope finalizer ran.
+                                case Result.Failure(_: ContainerMissingException) => ()
+                                case Result.Failure(e) => Log.warn(s"Container ${cid.value} $op failed: ${safeMessage(e)}")
+                                case Result.Panic(e)   => Log.warn(s"Container ${cid.value} $op panicked: ${safeMessage(e)}")
 
-                    val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
-                        case Present(signal) =>
-                            Abort.run[ContainerException](b.kill(cid, signal)).map(logFailure("kill")).andThen(
-                                Abort.run[ContainerException](b.waitForExit(cid, config.stopTimeout))
-                                    .map(r => logFailure("waitForExit")(r.map(_ => ())))
-                            )
-                        case Absent =>
-                            Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
+                            val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
+                                case Present(signal) =>
+                                    Abort.run[ContainerException](b.kill(cid, signal)).map(logFailure("kill")).andThen(
+                                        Abort.run[ContainerException](b.waitForExit(cid, config.stopTimeout))
+                                            .map(r => logFailure("waitForExit")(r.map(_ => ())))
+                                    )
+                                case Absent =>
+                                    Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
 
-                    shutdown.andThen {
-                        // `removeVolumes = true` reaps anonymous volumes attached to the container (e.g. the
-                        // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
-                        // suite of scope-managed containers leaks daemon-side state until inspect/start latency
-                        // exceeds the test wrapper. Named volumes are unaffected.
-                        Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
+                            shutdown.andThen {
+                                // `removeVolumes = true` reaps anonymous volumes attached to the container (e.g. the
+                                // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
+                                // suite of scope-managed containers leaks daemon-side state until inspect/start latency
+                                // exceeds the test wrapper. Named volumes are unaffected.
+                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
+                            }
+                        }
                     }
                 }.andThen {
                     b.start(cid).andThen {

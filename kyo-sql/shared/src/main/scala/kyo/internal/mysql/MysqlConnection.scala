@@ -445,30 +445,39 @@ object MysqlConnection:
             case Result.Panic(t) =>
                 Abort.fail(SqlConnectionConnectFailedException(host, port, t))
             case Result.Success(conn) =>
-                MysqlChannel(conn).flatMap { rawChannel =>
-                    HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, false).flatMap { result =>
-                        // result.channel is the TLS-wrapped channel (or the original if no TLS).
-                        val activeChannel = result.channel
-                        val ttl           = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                        for
-                            connIdRef  <- AtomicRef.init(result.connectionId)
-                            capsRef    <- AtomicRef.init(result.capabilities)
-                            versionRef <- AtomicRef.init(result.serverVersion)
-                            charsetRef <- AtomicRef.init(result.charset)
-                            statusRef  <- AtomicRef.init(result.statusFlags)
-                            closesRef  <- AtomicRef.init(Chunk.empty[String])
-                            stmtCache  <- MysqlConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
-                        yield new MysqlConnection(
-                            activeChannel,
-                            connIdRef,
-                            capsRef,
-                            versionRef,
-                            charsetRef,
-                            statusRef,
-                            stmtCache,
-                            closesRef
-                        )
-                        end for
+                // Bracket the handshake so an abort/interrupt closes the socket instead of leaking it.
+                // The successful path hands ownership to the returned MysqlConnection (its `quit` /
+                // `close` closes the underlying channel and hence the socket).
+                Sync.ensure { error =>
+                    if error.isDefined then
+                        Sync.Unsafe.defer(if conn.isOpen then conn.close() else ())
+                    else ()
+                } {
+                    MysqlChannel(conn).flatMap { rawChannel =>
+                        HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, false).flatMap { result =>
+                            // result.channel is the TLS-wrapped channel (or the original if no TLS).
+                            val activeChannel = result.channel
+                            val ttl           = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                            for
+                                connIdRef  <- AtomicRef.init(result.connectionId)
+                                capsRef    <- AtomicRef.init(result.capabilities)
+                                versionRef <- AtomicRef.init(result.serverVersion)
+                                charsetRef <- AtomicRef.init(result.charset)
+                                statusRef  <- AtomicRef.init(result.statusFlags)
+                                closesRef  <- AtomicRef.init(Chunk.empty[String])
+                                stmtCache  <- MysqlConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
+                            yield new MysqlConnection(
+                                activeChannel,
+                                connIdRef,
+                                capsRef,
+                                versionRef,
+                                charsetRef,
+                                statusRef,
+                                stmtCache,
+                                closesRef
+                            )
+                            end for
+                        }
                     }
                 }
         }
@@ -505,30 +514,36 @@ object MysqlConnection:
             case Result.Panic(t) =>
                 Abort.fail(SqlConnectionConnectFailedException(host, port, t))
             case Result.Success(conn) =>
-                MysqlChannel(conn).flatMap { rawChannel =>
-                    val preferFallback = tlsMode == TlsMode.Prefer
-                    val ttl            = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                    HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, preferFallback).flatMap { result =>
-                        val activeChannel = result.channel
-                        for
-                            connIdRef  <- AtomicRef.init(result.connectionId)
-                            capsRef    <- AtomicRef.init(result.capabilities)
-                            versionRef <- AtomicRef.init(result.serverVersion)
-                            charsetRef <- AtomicRef.init(result.charset)
-                            statusRef  <- AtomicRef.init(result.statusFlags)
-                            closesRef  <- AtomicRef.init(Chunk.empty[String])
-                            stmtCache  <- MysqlConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
-                        yield new MysqlConnection(
-                            activeChannel,
-                            connIdRef,
-                            capsRef,
-                            versionRef,
-                            charsetRef,
-                            statusRef,
-                            stmtCache,
-                            closesRef
-                        )
-                        end for
+                Sync.ensure { error =>
+                    if error.isDefined then
+                        Sync.Unsafe.defer(if conn.isOpen then conn.close() else ())
+                    else ()
+                } {
+                    MysqlChannel(conn).flatMap { rawChannel =>
+                        val preferFallback = tlsMode == TlsMode.Prefer
+                        val ttl            = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                        HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, preferFallback).flatMap { result =>
+                            val activeChannel = result.channel
+                            for
+                                connIdRef  <- AtomicRef.init(result.connectionId)
+                                capsRef    <- AtomicRef.init(result.capabilities)
+                                versionRef <- AtomicRef.init(result.serverVersion)
+                                charsetRef <- AtomicRef.init(result.charset)
+                                statusRef  <- AtomicRef.init(result.statusFlags)
+                                closesRef  <- AtomicRef.init(Chunk.empty[String])
+                                stmtCache  <- MysqlConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
+                            yield new MysqlConnection(
+                                activeChannel,
+                                connIdRef,
+                                capsRef,
+                                versionRef,
+                                charsetRef,
+                                statusRef,
+                                stmtCache,
+                                closesRef
+                            )
+                            end for
+                        }
                     }
                 }
         }

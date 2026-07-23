@@ -477,16 +477,27 @@ object PostgresConnection:
             case Result.Panic(t) =>
                 onConnectPanic(t, "connect", host, port).flatMap(Abort.fail(_))
             case Result.Success(rawConn) =>
-                // If TLS is requested, perform the SSLRequest dance and upgrade; otherwise use the raw connection.
-                val connEffect: Connection < (Async & Abort[SqlException]) = tls match
-                    case Absent             => rawConn
-                    case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
-                connEffect.flatMap { conn =>
-                    PostgresChannel(conn).flatMap { channel =>
-                        StartupExchange.run(channel, user, db, password, Absent, Absent).flatMap { result =>
-                            // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
-                            val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                            mkConnection(channel, result, preparedStmtCacheSize, ttl, encodingRegistry)
+                // Bracket: if the TLS upgrade, PostgresChannel wrap, or StartupExchange fails/aborts/is
+                // interrupted after we own `rawConn`, close the socket. The successful path hands
+                // ownership to the returned PostgresConnection (its `terminate` closes the channel and
+                // hence the socket) so we only close on the error path. Without this bracket the
+                // handshake sockets accumulate in /proc/self/fd until GC, and the end-of-run FD leak
+                // check trips (kyo-sql SqlClientPoolWarmupTest's interrupt-mid-handshake covers this).
+                Sync.ensure { error =>
+                    if error.isDefined then
+                        Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
+                    else ()
+                } {
+                    val connEffect: Connection < (Async & Abort[SqlException]) = tls match
+                        case Absent             => rawConn
+                        case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
+                    connEffect.flatMap { conn =>
+                        PostgresChannel(conn).flatMap { channel =>
+                            StartupExchange.run(channel, user, db, password, Absent, Absent).flatMap { result =>
+                                // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
+                                val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                                mkConnection(channel, result, preparedStmtCacheSize, ttl, encodingRegistry)
+                            }
                         }
                     }
                 }
@@ -541,21 +552,29 @@ object PostgresConnection:
             case Result.Panic(t) =>
                 onConnectPanic(t, "connectWithNegotiator", host, port).flatMap(Abort.fail(_))
             case Result.Success(rawConn) =>
-                // Step 1: apply negotiator (prefer/allow) or strict TLS upgrade (require/verify-*).
-                val connEffect: Connection < (Async & Abort[SqlException]) = negotiator match
-                    case Present(neg) =>
-                        // Opportunistic: the negotiator decides whether to upgrade.
-                        neg.negotiate(rawConn)
-                    case Absent =>
-                        // Strict: TLS required or plaintext.
-                        tls match
-                            case Absent             => rawConn
-                            case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
-                connEffect.flatMap { conn =>
-                    PostgresChannel(conn).flatMap { channel =>
-                        StartupExchange.run(channel, user, db, password, Absent, Absent).flatMap { result =>
-                            val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                            mkConnection(channel, result, preparedStmtCacheSize, ttl, encodingRegistry)
+                // Bracket the post-connect handshake so an abort/interrupt closes rawConn instead of
+                // leaking the socket. See `connect` above for the ownership rationale.
+                Sync.ensure { error =>
+                    if error.isDefined then
+                        Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
+                    else ()
+                } {
+                    // Step 1: apply negotiator (prefer/allow) or strict TLS upgrade (require/verify-*).
+                    val connEffect: Connection < (Async & Abort[SqlException]) = negotiator match
+                        case Present(neg) =>
+                            // Opportunistic: the negotiator decides whether to upgrade.
+                            neg.negotiate(rawConn)
+                        case Absent =>
+                            // Strict: TLS required or plaintext.
+                            tls match
+                                case Absent             => rawConn
+                                case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
+                    connEffect.flatMap { conn =>
+                        PostgresChannel(conn).flatMap { channel =>
+                            StartupExchange.run(channel, user, db, password, Absent, Absent).flatMap { result =>
+                                val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                                mkConnection(channel, result, preparedStmtCacheSize, ttl, encodingRegistry)
+                            }
                         }
                     }
                 }
@@ -594,14 +613,20 @@ object PostgresConnection:
             case Result.Panic(t) =>
                 onConnectPanic(t, "connectWithCertHashOverride", host, port).flatMap(Abort.fail(_))
             case Result.Success(rawConn) =>
-                val connEffect: Connection < (Async & Abort[SqlException]) = tls match
-                    case Absent             => rawConn
-                    case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
-                connEffect.flatMap { conn =>
-                    PostgresChannel(conn).flatMap { channel =>
-                        StartupExchange.run(channel, user, db, password, certHashOverride, mechanismCapture).flatMap { result =>
-                            // connectWithCertHashOverride is test-only; no TTL parameter, use Duration.Zero directly.
-                            mkConnection(channel, result, preparedStmtCacheSize, Duration.Zero, EncodingRegistry.builtin)
+                Sync.ensure { error =>
+                    if error.isDefined then
+                        Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
+                    else ()
+                } {
+                    val connEffect: Connection < (Async & Abort[SqlException]) = tls match
+                        case Absent             => rawConn
+                        case Present(tlsConfig) => InitSSLExchange.run(rawConn, host, port, tlsConfig)
+                    connEffect.flatMap { conn =>
+                        PostgresChannel(conn).flatMap { channel =>
+                            StartupExchange.run(channel, user, db, password, certHashOverride, mechanismCapture).flatMap { result =>
+                                // connectWithCertHashOverride is test-only; no TTL parameter, use Duration.Zero directly.
+                                mkConnection(channel, result, preparedStmtCacheSize, Duration.Zero, EncodingRegistry.builtin)
+                            }
                         }
                     }
                 }

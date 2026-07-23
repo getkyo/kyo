@@ -413,21 +413,27 @@ final private[kyo] class HttpContainerBackend(
         // The observer fiber uses Duration.Infinity: `timeout` is the daemon's grace window before
         // SIGKILL, not the client's overall deadline; the container may take longer than `timeout`
         // to reach the terminal state and its exit code must still be captured. The `/stop` HTTP
-        // response bounds the caller-visible wait; a hung daemon is handled by fiber cancellation.
+        // response bounds the caller-visible wait.
         Fiber.initUnscoped(waitForExit(id, Duration.Infinity)).map { waitFiber =>
-            // The daemon's `/stop?t=$seconds` waits up to `seconds` for graceful shutdown, then
-            // SIGKILLs the container; its HTTP response returns only once the container has
-            // actually stopped. The HTTP-client deadline must therefore cover the full grace
-            // period plus SIGKILL and API overhead: `timeout + 30s`. Clamping it down to
-            // `timeout` (the daemon's grace contract) guaranteed a spurious HttpTimeoutException
-            // whenever the daemon used most of its grace window. `c.timeout.max(...)` keeps any
-            // longer caller override.
-            HttpClient.withConfig(c => c.timeout(c.timeout.max(timeout + 30.seconds))) {
-                postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
-            }.andThen {
-                // Docker HTTP API returns before the container fully transitions to "exited".
-                // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
-                waitFiber.get.andThen(awaitTerminalState(id))
+            // Always interrupt the observer fiber on exit (success, failure, or abort), otherwise the
+            // long-poll /wait connection stays open indefinitely on the process-shared HttpClient's
+            // pool and leaks its unix socket past end-of-run. The interrupt is a no-op if the fiber
+            // already completed via the happy-path join below.
+            Sync.ensure(waitFiber.interrupt.unit) {
+                // The daemon's `/stop?t=$seconds` waits up to `seconds` for graceful shutdown, then
+                // SIGKILLs the container; its HTTP response returns only once the container has
+                // actually stopped. The HTTP-client deadline must therefore cover the full grace
+                // period plus SIGKILL and API overhead: `timeout + 30s`. Clamping it down to
+                // `timeout` (the daemon's grace contract) guaranteed a spurious HttpTimeoutException
+                // whenever the daemon used most of its grace window. `c.timeout.max(...)` keeps any
+                // longer caller override.
+                HttpClient.withConfig(c => c.timeout(c.timeout.max(timeout + 30.seconds))) {
+                    postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
+                }.andThen {
+                    // Docker HTTP API returns before the container fully transitions to "exited".
+                    // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
+                    waitFiber.get.andThen(awaitTerminalState(id))
+                }
             }
         }
     end stop
