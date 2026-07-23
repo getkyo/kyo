@@ -20,8 +20,13 @@ format-agnostic internals they share.
    the Ion binary codec, and the IonSchema describer.
 4. **Core tests keep using Json (no rewrite):** sbt rejects project-level
    dependency cycles even when scope-differentiated, so core's test scope
-   cannot depend on `kyo-schema-json`. Json-driven core suites therefore move
-   (file move only, no code changes) into `kyo-schema-json`'s test scope.
+   cannot depend on `kyo-schema-json`. Suites that use only Json move into
+   `kyo-schema-json`'s test scope. Suites that span multiple format families
+   (`SchemaTest` and friends use Json *and* Protobuf; `CodecInitTest` races
+   five codecs) move into a new unpublished `kyo-schema-tests` module that
+   depends on core and every format module — sbt cannot express mutual
+   test-scope dependencies between sibling format modules, so a single
+   downstream test module is the only clean home.
 5. **Protobuf decoupling:** `withFieldIdOverrides(Map[String, Int])` becomes an
    open method on core `Codec.Writer` and `Codec.Reader` with a no-op default;
    `ProtobufWriter`/`ProtobufReader` override it. All
@@ -40,6 +45,7 @@ format-agnostic internals they share.
 | `kyo-schema-ion` | `Ion.scala`, `IonBinary.scala`, `IonSchema.scala`, `internal/IonReader.scala`, `internal/IonWriter.scala`, `internal/ionbinary/*` (3 files) |
 | `kyo-schema-msgpack` | `MsgPack.scala`, `internal/msgpack/*` (3 files) |
 | `kyo-schema-protobuf` | `Protobuf.scala`, `internal/ProtobufReader.scala`, `internal/ProtobufWriter.scala` |
+| `kyo-schema-tests` (unpublished, `publish / skip := true`) | no main sources; hosts cross-format test suites and validates `kyo-schema/README.md` doctest blocks (which exercise every format) |
 
 Notes:
 
@@ -64,6 +70,19 @@ Notes:
    their `case pw: ProtobufWriter / pr: ProtobufReader` matches and call the
    hook unconditionally.
 3. **`Schema.scala`** drops its unused `import kyo.internal.JsonWriter`.
+3a. **Decode limits hoist:** `object Codec` gains
+   `inline val DefaultMaxDepth = 512` and
+   `inline val DefaultMaxCollectionSize = 100000`. Every format that today
+   defaults to `Json.DefaultMaxDepth` / `Json.DefaultMaxCollectionSize`
+   (Yaml, Bson, Ion, MsgPack, Protobuf) switches to the `Codec` constants;
+   `Json.DefaultMaxDepth` / `Json.DefaultMaxCollectionSize` remain as aliases
+   of the `Codec` constants for source compatibility.
+3b. The writer/reader hook is accompanied by
+   `def supportsFieldIdOverrides: Boolean = false` (Protobuf overrides to
+   `true`) so `SchemaSerializer` keeps its cheap gate before computing
+   `fieldIdNameOverrides` at every nesting depth, and
+   `private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty`
+   so save/restore threading stays format-agnostic.
 4. Core scaladoc references to `[[Json]]`, `[[Yaml]]`, `[[Protobuf]]`, etc.
    become plain-code mentions (`` `Json` ``) where the target type no longer
    resolves from core, so scaladoc builds stay warning-clean. Prose examples
@@ -87,10 +106,17 @@ lazy val `kyo-schema-json` =
         .wasmSettings(`wasm-settings`)
 ```
 
-(Only `kyo-schema-json` needs `CrossType.Full` for its platform sources; the
-other five are `shared/`-only and use `CrossType.Pure`. `CrossType.Full` is
-what auto-wires the `js-wasm/` partially-shared directory — required for
-`kyo-schema-json`.)
+(All new modules use `CrossType.Full` for uniformity with `kyo-schema` and
+because `CrossType.Full` is what auto-wires the `js-wasm/` partially-shared
+directory — required for `kyo-schema-json`'s `AsciiStringFactory` split; the
+other modules simply have empty platform directories. `kyo-schema-tests`
+additionally sets `publish / skip := true` and points `doctestSources` at
+`kyo-schema/README.md`, while `kyo-schema`'s own doctest is pointed away from
+that README, since its blocks exercise every format.)
+
+CI: `.github/workflows/build.yml` sets `NATIVE_HEAVY: kyo-schema` to pre-link
+the heavy native test binary; the heavy suites move to `kyo-schema-tests`, so
+that value follows them.
 
 - `kyo-schema` keeps its current `dependsOn(kyo-data, kyo-core % test)`
   wiring. It cannot gain a test-scope dependency on `kyo-schema-json` (sbt
@@ -120,37 +146,47 @@ Modules with a direct `dependsOn(`kyo-schema`)` today: `kyo-tasty`,
 
 ## Tests
 
-- Format-specific suites move to their module's `shared/src/test`:
-  - json: `JsonTest`, `JsonDocTest`
-  - yaml: `YamlTest`, `YamlWriterTest`, `YamlParserTest`, `YamlPipelineTest`,
-    `YamlCstTest`, `YamlEventsTest`, `internal/yaml/*Test` (6 files)
+Classification is by the formats a suite actually references (audited):
+
+- **Stay in `kyo-schema`** (no format references): `BuilderTest`,
+  `CompareTest`, `ConvertTest`, `DocTest`, `FocusTest`, `FocusAdvancedTest`,
+  `ModifyTest`, `RyuTest`, `SchemaBridgeTest`, `SchemaFieldTransformTest`,
+  `SchemaNamingTest`, `internal/FastFloat*Test` (3), `internal/NameCaseConversionTest`,
+  `externalcodec/CodecExtensionTest`, and the shared helpers
+  `CodecTestSupport.scala` / `SchemaTestData.scala` (neither references any
+  format; exported to the other modules via `"test->test"`).
+- **Move to `kyo-schema-json`** (Json only): `JsonTest`, `JsonDocTest`,
+  `ChangesetTest`, `FocusMacroDocTest`, `SchemaCustomContainerNestedTest`,
+  `SchemaStructureTest`, `externalschema/SchemaExternalPackageDerivationTest`.
+- **Move to the owning format module** (single non-Json family):
+  - yaml: `YamlWriterTest`, `YamlParserTest`, `YamlPipelineTest`,
+    `YamlCstTest`, `YamlEventsTest`, `internal/yaml/*Test` (6 files,
+    including `YamlDocumentsTest`)
   - bson: `BsonTest`, `BsonConformanceTest`
   - ion: `IonTest`, `IonCorpusTest`, `IonBinaryTest`,
-    `IonBinaryConformanceTest`, `IonSchemaTest`
+    `IonBinaryConformanceTest`, `IonSchemaTest`, `SchemaUnionRepresentationTest`
   - msgpack: `MsgPackTest`
-  - protobuf: `ProtobufTest`, `ProtobufConformanceTest`
-- Cross-format helpers `CodecTestSupport.scala` and `SchemaTestData.scala`:
-  stay in `kyo-schema`'s test scope, exported to format modules via the
-  existing `"test->test"` dependency each format module declares on core.
-  They must therefore not reference any format themselves (verify; strip Json
-  usage into a json-local helper if found).
-- Core suites that exercise Schema through Json (`SchemaTest`, `CodecTest`,
-  `SchemaCompositionTest`, doc tests, etc.) move unchanged to
-  `kyo-schema-json/shared/src/test` (decision 4).
-- Pure-core suites with no format dependency (`FocusTest`, `BuilderTest`,
-  `CompareTest`, `ConvertTest`, macro tests, `internal/FastFloat*Test`,
-  `NameCaseConversionTest`, etc.) stay in `kyo-schema`.
-- `kyo-schema/jvm/src/test/scala/kyo/CodecInitTest.scala`: audit; goes
-  wherever its subject lands.
+  - protobuf: `ProtobufConformanceTest`, `CodecTest`
+- **Move to `kyo-schema-tests`** (multiple format families): `SchemaTest`,
+  `SchemaCodecTest`, `SchemaAnnotationTest`, `SchemaCompositionTest`,
+  `NestedTransformTest`, `StructureTest`, `ProtobufTest` (asserts against
+  Json), `YamlTest` (asserts against Json), and (jvm-only)
+  `CodecInitTest` (races Yaml/Ion/Bson/Json/IonBinary class initialization —
+  kept whole rather than split because its cross-codec pairings are the
+  point).
 
 ## Docs and repo hygiene
 
-- `kyo-schema/CONTRIBUTING.md` (module map, platform-split notes) is updated
-  for the new layout; add a short CONTRIBUTING/README to each format module or
-  extend the core one with a module table — implementation picks the lighter
-  option consistent with other kyo modules.
-- `kyo-schema/README.md` updated; root `README.md` module list updated if it
-  enumerates modules.
+- `kyo-schema/README.md` (1815 lines, format sections included) stays a
+  single comprehensive document — its per-format sections are the product
+  documentation and splitting them would hurt readability. Its doctest
+  validation moves to `kyo-schema-tests` (which sees every format);
+  `kyo-schema` itself stops validating it. Each new format module gets a
+  short README (installation + pointer to the kyo-schema README section) so
+  Maven Central/GitHub browsing lands somewhere useful.
+- `kyo-schema/CONTRIBUTING.md` (module map, platform-split notes, file
+  inventory with line references) is updated for the new layout.
+- Root `README.md` module list updated if it enumerates modules.
 - Maven artifacts: new artifact ids `kyo-schema-json` etc.; `kyo-schema`
   artifact shrinks. Pre-1.0, mima is already `mimaCheck(false)` for schema —
   no compat shims. Release notes must call out the artifact split and that
