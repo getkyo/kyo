@@ -234,7 +234,7 @@ class IonCorpusTest extends kyo.test.Test[Any]:
 
     private def resource(name: String)(using Frame): String < (Sync & Abort[FileReadException]) =
         corpusRoot.map { root =>
-            (root / "kyo-schema" / "shared" / "src" / "test" / "resources" / name.stripPrefix("/"))
+            (root / "kyo-schema-ion" / "shared" / "src" / "test" / "resources" / name.stripPrefix("/"))
                 .read(StandardCharsets.UTF_8)
         }
 
