@@ -2914,6 +2914,8 @@ lazy val `kyo-test-snapshot` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-data`)
+        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-test-prop`)
         .dependsOn(`kyo-test-runner` % Test)
         .in(file("kyo-test/snapshot"))
         .settings(

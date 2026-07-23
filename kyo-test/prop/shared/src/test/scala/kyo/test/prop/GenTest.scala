@@ -237,4 +237,47 @@ class GenTest extends AsyncFreeSpec with NonImplicitAssertions:
         Future.successful(succeed)
     }
 
+    "derive resolves chunkGen for a Chunk-field case class (non-degenerate)" in {
+        case class Event(id: Int, kind: String, payload: Chunk[Byte]) derives CanEqual
+        val g       = Gen.derive[Event]
+        val samples = (0 until 100).map(i => g.sample(seed(i), size).value)
+        assert(samples.size == 100)
+        assert(samples.exists(_.payload.nonEmpty), "expected at least one non-empty payload Chunk across 100 draws")
+        Future.successful(succeed)
+    }
+
+    "byteGen samples a deterministic value and reaches the full Byte range via toByte truncation" in {
+        // A size at least Byte.MaxValue+1 puts the underlying Gen.int's producible range [-size, size] at or beyond
+        // the Byte bounds, so toByte truncation reaches both Byte.MinValue and Byte.MaxValue without relying on wraparound.
+        val byteSize = 200
+        val g        = Gen.byteGen
+        assert(
+            g.sample(seed(0), byteSize).value == g.sample(seed(0), byteSize).value,
+            "expected the same seed to draw the same value"
+        )
+        val samples = (0 until 3000).map(i => g.sample(seed(i), byteSize).value)
+        assert(samples.exists(_ == Byte.MinValue), "expected Byte.MinValue reachable across 3000 draws")
+        assert(samples.exists(_ == Byte.MaxValue), "expected Byte.MaxValue reachable across 3000 draws")
+        Future.successful(succeed)
+    }
+
+    "derive resolves optionGen for an Option-field case class covering Some and None" in {
+        case class Box(v: Option[Int]) derives CanEqual
+        val g       = Gen.derive[Box]
+        val samples = (0 until 100).map(i => g.sample(seed(i), size).value)
+        assert(samples.exists(_.v.isDefined), "expected at least one Some(_) across 100 draws")
+        assert(samples.exists(_.v.isEmpty), "expected at least one None across 100 draws")
+        Future.successful(succeed)
+    }
+
+    "optionGen draws are not all-Some and not all-None (coverage non-vacuity)" in {
+        case class Box(v: Option[Int]) derives CanEqual
+        val g         = Gen.derive[Box]
+        val samples   = (0 until 100).map(i => g.sample(seed(i), size).value)
+        val someCount = samples.count(_.v.isDefined)
+        val noneCount = samples.count(_.v.isEmpty)
+        assert(someCount > 0 && noneCount > 0, s"expected both Some and None; got someCount=$someCount noneCount=$noneCount")
+        Future.successful(succeed)
+    }
+
 end GenTest
