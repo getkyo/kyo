@@ -770,6 +770,15 @@ Expected: no output from either (string literals mentioning format names in erro
 
 - [ ] **Step 4: Verify the worktree is fully committed and summarize**
 
+---
+
+## Execution notes (added during execution — read before dispatching the named tasks)
+
+- **Task 7 (ion):** `IonTest.scala:313` contains `assert(!Json().newWriter().canWriteAnnotations)` — a cross-format assertion. Before moving `IonTest.scala` into `kyo-schema-ion`, relocate that single assertion into a suite in `kyo-schema-tests` (e.g. a new small `CodecCapabilityTest` or an existing cross-format suite); otherwise `kyo-schema-ion` fails to compile (no Json on its classpath).
+- **Task 9 (scaladoc):** widen the grep to the format modules too — format files carry dangling links after the split, e.g. `Bson.scala:35` (`[[Json]]`, plus stale prose "shared with Json" — reword to reference `Codec`), `Json.scala:18` (`[[kyo.Protobuf]]`), Bson's `@see [[kyo.Json]]`. Rewrite cross-module links as inline code.
+- **Task 10 (docs):** `kyo-schema/README.md:333` documents defaults as `Json.DefaultMaxDepth` — reword to `Codec.DefaultMaxDepth` (constants were hoisted in Task 1).
+- (Non-blocking) `ProtobufTest.scala` uses `Json.DefaultMax*` at 7 sites; it moves to `kyo-schema-tests` which sees Json, so it compiles — optional cleanup to `Codec.DefaultMax*` if touched anyway.
+
 ```bash
 git status --short && git log --oneline main..HEAD
 ```
