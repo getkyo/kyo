@@ -2,7 +2,7 @@ package kyo
 
 class UUIDTest extends kyo.test.Test[Any]:
     "value" - {
-        "UUID-VAL-001 exact 128 bits" in { assert(UUID.nil.bytes.length == 16) }
+        "UUID-VAL-001 exact 128 bits" in { assert(UUID.nil.bytes.size == 16) }
         "UUID-VAL-003 nil exists" in { assert(UUID.nil.show == "00000000-0000-0000-0000-000000000000") }
         "UUID-VAL-004 max exists" in { assert(UUID.max.show == "ffffffff-ffff-ffff-ffff-ffffffffffff") }
         "UUID-VAL-005 canonical lowercase show" in {
@@ -16,5 +16,19 @@ class UUIDTest extends kyo.test.Test[Any]:
         "UUID-PRS-004 reject braces" in { assert(UUID.parse("{550e8400-e29b-41d4-a716-446655440000}").isFailure) }
         "UUID-PRS-006 parse URN via parseUrn" in { assert(UUID.parseUrn("urn:uuid:550e8400-e29b-41d4-a716-446655440000").isSuccess) }
         "UUID-PRS-008 reject non-16-byte input" in { assert(UUID.fromBytes(Span.from(Array.fill[Byte](15)(0))).isFailure) }
+    }
+
+    "deterministic" - {
+        "UUID-DET-001 v5 RFC vector" in {
+            val ns   = UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").getOrThrow
+            val name = Span.from("www.example.com".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            assert(UUID.v5(ns, name).show == "2ed6657d-e927-568b-95e1-2665a8aea6a2")
+        }
+
+        "UUID-DET-003 v8Sha256 stable output" in {
+            val ns = UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").getOrThrow
+            val n  = Span.from("kyo".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            assert(UUID.v8Sha256(ns, n) == UUID.v8Sha256(ns, n))
+        }
     }
 end UUIDTest
