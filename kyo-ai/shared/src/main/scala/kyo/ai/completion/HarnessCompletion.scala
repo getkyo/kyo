@@ -20,14 +20,17 @@ abstract private[completion] class HarnessCompletion(providerName: String) exten
             // A command harness has no reply-level stop vocabulary: one learns it stopped at a ceiling only
             // from a failed invocation (raised directly on that path), the other cannot learn it at all. A
             // normal reply is reported as completed: whatever these harnesses hand back, they hand back whole.
-            case Present(schema) => run(config, context, tools, schema).map(Completion.Reply(_, Completion.StopReason.Completed))
+            case Present(schema) =>
+                run(config, context, tools, schema).map((messages, usage) =>
+                    Completion.Reply(messages, Completion.StopReason.Completed, usage)
+                )
 
     protected def run(
         config: Config,
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: JsonSchema
-    )(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException])
+    )(using Frame): (Chunk[Message], AIStats) < (LLM & Async & Abort[AIGenException])
 
     final protected def commandFailure(status: Maybe[Int], detail: String)(using Frame): AIGenException =
         HarnessCompletion.commandFailure(providerName, status, detail)

@@ -12,10 +12,10 @@ import kyo.ai.Context
 case class AISession(rawContext: Context, env: AIEnv):
 
     /** The env a generation for this session runs under: the ambient scope env with this session's
-      * enablements layered on top (instance config override wins; prompts, tools, thoughts, and modes
-      * append) and the default structured-output guidance last. The ONE construction shared by the eval loop
-      * and the faithful [[context]] enrichment, so transcript capture cannot drift from what generation
-      * assembles.
+      * enablements layered on top (instance config override wins; prompts, tools, thoughts, modes, and
+      * observers append) and the default structured-output guidance last. The ONE construction shared by the
+      * eval loop and the faithful [[context]] enrichment, so transcript capture cannot drift from what
+      * generation assembles.
       */
     private[kyo] def effectiveEnv(scope: AIEnv)(using Frame): AIEnv =
         scope
@@ -24,6 +24,7 @@ case class AISession(rawContext: Context, env: AIEnv):
             .addTools(env.tools)
             .addThoughts(env.thoughts)
             .addModes(env.mode)
+            .addObserves(env.observe)
 
     /** The conversation as the model actually receives it: `rawContext` enriched with the effective
       * generation env's prompt stack ([[effectiveEnv]]), instructions as system messages at the start,
@@ -57,6 +58,9 @@ case class AISession(rawContext: Context, env: AIEnv):
 
     /** Appends a mode onto this instance. */
     def addMode(mode: Mode[Any]): AISession = copy(env = env.addMode(mode))
+
+    /** Layers an observer onto this instance. */
+    def addObserve(observe: Observe[Any]): AISession = copy(env = env.addObserve(observe))
 end AISession
 
 object AISession:

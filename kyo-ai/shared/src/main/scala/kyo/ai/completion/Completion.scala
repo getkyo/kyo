@@ -35,7 +35,7 @@ trait Completion:
         context: Context,
         resultSchema: JsonSchema,
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
-    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException])
+    )(using Frame): Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException])
 
 end Completion
 
@@ -184,37 +184,52 @@ object Completion:
             exc
         }
 
-    /** What a turn produced, together with how the wire said it ended.
+    /** What a turn produced, together with how the wire said it ended and what it spent.
       *
       * The stop reason travels with the messages because deciding what a ceiling stop MEANS needs both
       * halves: a backend knows the wire said "stopped at the ceiling" but must not inspect a tool payload
       * (that belongs to the tool loop), and the loop cannot see the wire. Carrying the reason lets the policy
       * be decided once, with both facts in hand.
       *
-      * `reasoningTokens` travels for the same reason: at a ceiling stop, how much went to reasoning rather
-      * than the answer separates the two levers (a stop that spent most of its allowance reasoning needs less
-      * reasoning; one that barely reasoned needs a larger ceiling).
+      * `usage` travels for the same reason and is the record each enabled [[kyo.Observe]] receives: the
+      * wire is the only place the numbers exist, and at a ceiling stop the reasoning subset separates the
+      * two levers (a stop that spent most of its allowance reasoning needs less reasoning; one that barely
+      * reasoned needs a larger ceiling). A synthetic reply that reached no model carries [[AIStats.empty]].
+      * Fields may grow with the wire contract; consumers should read fields, not match exhaustively.
       */
-    case class Reply(messages: Chunk[Message], stopReason: StopReason, reasoningTokens: Maybe[Int] = Absent)
+    case class Reply(messages: Chunk[Message], stopReason: StopReason, usage: AIStats = AIStats.empty)
 
     /** Why a provider stopped a reply, decoded once at each wire boundary from that provider's own
       * vocabulary so no decision elsewhere reads a raw wire string.
       *
       * Only [[StopReason.MaxOutputTokens]] changes behavior. [[StopReason.Other]] keeps the
       * unrecognized value for diagnosis and behaves like [[StopReason.Completed]]: vocabulary a
-      * provider adds later must never fail a reply whose content is perfectly usable.
+      * provider adds later must never fail a reply whose content is perfectly usable, and any consumer
+      * (an [[kyo.Observe]] included) must treat it the same way.
       */
-    private[kyo] enum StopReason derives CanEqual:
+    enum StopReason derives CanEqual:
         case Completed
         case MaxOutputTokens
         case Other(raw: String)
     end StopReason
 
-    /** One parsed streaming event's contribution to the fragment stream: a fragment to emit, nothing
-      * to emit, or the provider reporting that it stopped at the output ceiling.
+    /** One element of a streaming completion: a fragment of the result envelope's argument JSON, or a
+      * usage report. Usage elements are PARTIAL and disjoint by construction (a wire may report the
+      * input and output sides in separate events); the consumers sum them, and the record site forces
+      * `turns = 1` on the sum, so a wire that emitted no usage element still reports the structural
+      * fact that a fully consumed stream is one turn.
+      */
+    enum StreamElement derives CanEqual:
+        case Fragment(value: String)
+        case Usage(stats: AIStats)
+    end StreamElement
+
+    /** One parsed streaming event's contribution to the element stream: a fragment to emit, a usage
+      * report, nothing to emit, or the provider reporting that it stopped at the output ceiling.
       */
     private[completion] enum Delta derives CanEqual:
         case Fragment(value: String)
+        case Usage(stats: AIStats)
         case Skip
         case OutputLimit
     end Delta
@@ -236,12 +251,12 @@ object Completion:
         request: StreamRequest < Abort[AIStreamException],
         parseDeltaArguments: String => Result[String, Delta],
         outputLimit: Maybe[Int]
-    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < Async =
+    )(using Frame): Stream[StreamElement, Async & Scope & Abort[AIStreamException]] < Async =
         given sseTag: Tag[Emit[Chunk[HttpSseEvent[String]]]] = Tag[Emit[Chunk[HttpSseEvent[String]]]]
         val route                                            = HttpRoute.postRaw("").request(_.bodyText).response(_.bodySseText)
         Stream.unwrap {
             for
-                channel <- Channel.init[Result[AIStreamException, Maybe[Chunk[String]]]](sseBufferSize)
+                channel <- Channel.init[Result[AIStreamException, Maybe[Chunk[StreamElement]]]](sseBufferSize)
                 // Releasing the consumer's scope interrupts the producer. The deadline's own inner fiber is
                 // unscoped, so an abandoned connection can linger until the remaining deadline elapses,
                 // bounded by config.timeout.
@@ -283,10 +298,10 @@ object Completion:
                                                 // forced tool choice, only reasoning/content deltas that leave
                                                 // the result buffer empty and fail the generation.
                                                 Log.trace(s"kyo-ai stream event ${config.provider.name} ${elideBody(event.data)}").andThen {
-                                                    // An empty event carries no chunk. A stream may hold the
+                                                    // An empty event carries no element. A stream may hold the
                                                     // connection open with a keepalive between fragments; handing
                                                     // that to a decoder expecting a chunk fails a healthy generation.
-                                                    if event.data.trim.isEmpty then ""
+                                                    if event.data.trim.isEmpty then Maybe.empty[StreamElement]
                                                     else
                                                         // A provider can end a 200 stream with an error event instead
                                                         // of an HTTP status; surface it typed rather than let the delta
@@ -299,8 +314,11 @@ object Completion:
                                                             case Present(exc) => Abort.fail(exc)
                                                             case Absent =>
                                                                 parseDeltaArguments(event.data) match
-                                                                    case Result.Success(Delta.Fragment(fragment)) => fragment
-                                                                    case Result.Success(Delta.Skip)               => ""
+                                                                    case Result.Success(Delta.Fragment(fragment)) =>
+                                                                        Present(StreamElement.Fragment(fragment))
+                                                                    case Result.Success(Delta.Usage(stats)) =>
+                                                                        Present(StreamElement.Usage(stats))
+                                                                    case Result.Success(Delta.Skip) => Maybe.empty[StreamElement]
                                                                     case Result.Success(Delta.OutputLimit) =>
                                                                         Abort.fail(AIOutputLimitException(
                                                                             config.provider.name,
@@ -310,7 +328,7 @@ object Completion:
                                                                     case Result.Failure(err) => Abort.fail(AIStreamDeltaException(err))
                                                         end match
                                                 }
-                                            }.filterPure(_.nonEmpty)
+                                            }.filterPure(_.nonEmpty).mapPure(_.get)
                                                 .foreachChunk(chunk => channel.put(Result.Success(Present(chunk))))
                                         }
                                     yield ()

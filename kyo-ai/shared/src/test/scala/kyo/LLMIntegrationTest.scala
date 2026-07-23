@@ -235,9 +235,9 @@ class LLMIntegrationTest extends BaseAITest:
                     cfg.provider.completion(cfg, ask, resultTools, Present(resultSchema))
                 ))
             }
-        def reasoningOf(result: Result[AIException, Result[HttpException, Completion.Reply]]): Maybe[Int] =
+        def reasoningOf(result: Result[AIException, Result[HttpException, Completion.Reply]]): Maybe[Long] =
             result match
-                case Result.Success(Result.Success(reply)) => reply.reasoningTokens
+                case Result.Success(Result.Success(reply)) => reply.usage.reasoningOutputTokens
                 case _                                     => Absent
         val off = config.disableReasoning
         for

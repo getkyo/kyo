@@ -70,15 +70,15 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
         context: Context,
         resultSchema: JsonSchema,
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
-    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+    )(using Frame): Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         // Streaming rides the SAME MCP result tool and kill-on-call as the completion path. No user tools
         // here, so the bridge threads no LLM.State (withResultBridge, the result-only variant of
         // withMcpBridge), which is what lets it run inside the Stream's element row (no LLM). The captured
-        // envelope is emitted as the single fragment; a resultless turn ends the stream with
-        // AIStreamIncompleteException (no eval-loop repair on this path). The AIGenException->AIStreamException
-        // mapping is in the recover below.
+        // envelope is emitted as the single fragment, followed by the turn's usage read from the flushed
+        // transcript; a resultless turn ends the stream with AIStreamIncompleteException (no eval-loop
+        // repair on this path). The AIGenException->AIStreamException mapping is in the recover below.
         turnInput(context).map { input =>
-            Stream[String, Async & Scope & Abort[AIStreamException]] {
+            Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] {
                 // Map bridge/runner AIGenException failures to AIStreamException. An AIStreamException (a
                 // resultless-turn AIStreamIncompleteException, or a classified provider leaf) is re-raised
                 // type-preserving; only a genuinely-unclassified AIGenException wraps as a harness malfunction
@@ -94,9 +94,17 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                                 .stdin(input + "\n"),
                             config.timeout,
                             bridge
-                        ).andThen(bridge.resultCapture.get).map {
-                            case Present(envelope) => Emit.value(Chunk(envelope))
-                            case Absent            => Abort.fail(AIStreamIncompleteException(""))
+                        ).map { raw =>
+                            bridge.resultCapture.get.map {
+                                case Present(envelope) =>
+                                    turnUsage(raw).map { usage =>
+                                        Emit.value(Chunk[Completion.StreamElement](
+                                            Completion.StreamElement.Fragment(envelope),
+                                            Completion.StreamElement.Usage(usage)
+                                        ))
+                                    }
+                                case Absent => Abort.fail(AIStreamIncompleteException(""))
+                            }
                         }
                     }
                 }
@@ -109,7 +117,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: JsonSchema
-    )(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =
+    )(using Frame): (Chunk[Message], AIStats) < (LLM & Async & Abort[AIGenException]) =
         Scope.run {
             withMcpBridge(config, tools, resultSchema) { bridge =>
                 for
@@ -131,7 +139,8 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     // carries duplicate tool_use ids across generations.
                     callIdSeed <- Random.nextStringAlphanumeric(12)
                     messages   <- readMessages(raw, executed, captured, callIdSeed)
-                yield messages
+                    usage      <- turnUsage(raw)
+                yield (messages, usage)
             }
         }
     end run

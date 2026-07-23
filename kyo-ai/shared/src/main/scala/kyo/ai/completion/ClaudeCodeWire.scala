@@ -36,7 +36,21 @@ private[completion] object ClaudeCodeWire:
         content: Maybe[String] = Absent,
         is_error: Maybe[Boolean] = Absent
     ) derives Schema
-    private case class OutputMessage(role: String, content: List[MessageContent]) derives Schema
+    // The API usage shape the CLI embeds on assistant events and the terminal result event
+    // (Anthropic-style fields; cache traffic reported beside input_tokens). Every field is Maybe:
+    // this decodes possibly-truncated output.
+    private[completion] case class Usage(
+        input_tokens: Maybe[Long] = Absent,
+        output_tokens: Maybe[Long] = Absent,
+        cache_read_input_tokens: Maybe[Long] = Absent,
+        cache_creation_input_tokens: Maybe[Long] = Absent
+    ) derives Schema
+    private case class OutputMessage(
+        role: String,
+        content: List[MessageContent],
+        id: Maybe[String] = Absent,
+        usage: Maybe[Usage] = Absent
+    ) derives Schema
     private case class OutputEvent(
         `type`: String,
         message: Maybe[OutputMessage] = Absent,
@@ -51,7 +65,9 @@ private[completion] object ClaudeCodeWire:
         api_error_status: Maybe[Int] = Absent,
         // Set when the CLI ends a turn for a structural reason of its own rather than an upstream
         // status, which is how stopping at the output ceiling is reported.
-        error: Maybe[String] = Absent
+        error: Maybe[String] = Absent,
+        // The terminal result event's aggregate usage across the invocation's internal iterations.
+        usage: Maybe[Usage] = Absent
     ) derives Schema
 
     /** True when the flattened stdout carries the CLI's own report that a turn stopped at the output ceiling.
@@ -412,5 +428,54 @@ private[completion] object ClaudeCodeWire:
             }
         }
     end failureStatus
+
+    /** The turn's token usage from the flattened stdout.
+      *
+      * The terminal `result` event's aggregate is authoritative and preferred: it sums the
+      * invocation's internal iterations (verified live). On the kill-on-capture path that event never
+      * arrives, so the fallback sums the assistant events' embedded usage, deduplicated by message id
+      * (the CLI re-emits an event per message): the input-side numbers are accurate there, while
+      * output tokens are the message-start count, a stated lower bound (verified live: 4 reported at
+      * message start against 38 on the aggregate). Parses leniently, since the kill can truncate the
+      * last line. Always reports `turns = 1`: the invocation is one kyo turn whether or not the CLI
+      * flushed its numbers.
+      */
+    def turnUsage(output: String)(using Frame): AIStats < Abort[AIGenException] =
+        readEvents(output, lenient = true).map { events =>
+            val resultUsage = events.foldLeft(Maybe.empty[Usage]) { (last, event) =>
+                if event.`type` == "result" then event.usage.orElse(last) else last
+            }
+            val base = resultUsage match
+                case Present(usage) => usageStats(usage)
+                case Absent         =>
+                    // Last event per message id wins (the CLI re-emits an event per message); an event
+                    // whose id was lost to truncation still counts once.
+                    val (byId, anonymous) =
+                        events.foldLeft((Dict.empty[String, Usage], Chunk.empty[Usage])) { case ((byId, anonymous), event) =>
+                            event.message match
+                                case Present(message) if message.role == Role.Assistant.name && message.usage.isDefined =>
+                                    val usage = message.usage.getOrElse(Usage())
+                                    message.id match
+                                        case Present(id) => (byId.update(id, usage), anonymous)
+                                        case Absent      => (byId, anonymous.append(usage))
+                                case _ => (byId, anonymous)
+                        }
+                    (Chunk.from(byId.toMap.values) ++ anonymous).foldLeft(AIStats.empty)((acc, u) => acc.add(usageStats(u)))
+            base.copy(turns = 1)
+        }
+    end turnUsage
+
+    // The Anthropic-wire mapping: cache traffic is reported beside input_tokens, so the input total
+    // sums all three; creation counts as read, not cached; reasoning is never broken out.
+    private def usageStats(usage: Usage): AIStats =
+        AIStats(
+            inputTokens = usage.input_tokens.getOrElse(0L) +
+                usage.cache_read_input_tokens.getOrElse(0L) +
+                usage.cache_creation_input_tokens.getOrElse(0L),
+            cachedInputTokens = usage.cache_read_input_tokens,
+            outputTokens = usage.output_tokens.getOrElse(0L),
+            reasoningOutputTokens = Absent,
+            turns = 0
+        )
 
 end ClaudeCodeWire

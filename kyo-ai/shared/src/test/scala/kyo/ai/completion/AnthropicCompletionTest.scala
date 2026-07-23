@@ -806,4 +806,22 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
         }
     }
 
+    "usage sums the cache fields into the input total: creation counts as read, not cached" in {
+        // This wire reports cache traffic BESIDE input_tokens: the input total is all three summed,
+        // cachedInputTokens is the cache_read side alone, and reasoning is never broken out.
+        TestCompletionServer.run { server =>
+            val config = keyedConfig(server.baseUrl)
+            val body =
+                """{"id":"msg-1","content":[{"type":"text","text":"ok"}],"model":"m","role":"assistant","stop_reason":"end_turn","stop_sequence":null,""" +
+                    """"usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":30,"cache_creation_input_tokens":5}}"""
+            server.enqueueBody(body).andThen {
+                LLM.run(config) {
+                    AnthropicCompletion(config, Context.empty.userMessage("hi"), Chunk.empty, Absent)
+                }.map { reply =>
+                    assert(reply.usage == AIStats(85L, Present(30L), 7L, Absent, 1), s"got ${reply.usage}")
+                }
+            }
+        }
+    }
+
 end AnthropicCompletionTest

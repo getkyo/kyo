@@ -98,6 +98,18 @@ private[completion] object OpenAICompletion extends Completion:
         end if
     end warnUndeclaredReasoning
 
+    /** This wire nests the cache subset inside prompt_tokens, so the fields map straight across; the
+      * subsets stay Maybe because the details objects are themselves optional on the wire.
+      */
+    private def usageStats(usage: Maybe[internal.Usage]): AIStats =
+        AIStats(
+            inputTokens = usage.flatMap(_.prompt_tokens).getOrElse(0L),
+            cachedInputTokens = usage.flatMap(_.prompt_tokens_details).flatMap(_.cached_tokens),
+            outputTokens = usage.flatMap(_.completion_tokens).fold(0L)(_.toLong),
+            reasoningOutputTokens = usage.flatMap(_.completion_tokens_details).flatMap(_.reasoning_tokens).map(_.toLong),
+            turns = 1
+        )
+
     private def read(config: Config, response: Response)(using Frame): Completion.Reply < (LLM & Sync & Abort[AIGenException]) =
         Maybe.fromOption(response.choices.headOption) match
             case Absent =>
@@ -121,7 +133,7 @@ private[completion] object OpenAICompletion extends Completion:
                         Completion.Reply(
                             Chunk(AssistantMessage(v.message.content.getOrElse(""), calls)),
                             stop,
-                            response.usage.flatMap(_.completion_tokens_details).flatMap(_.reasoning_tokens)
+                            usageStats(response.usage)
                         )
                     )
                 }
@@ -161,7 +173,7 @@ private[completion] object OpenAICompletion extends Completion:
         context: Context,
         resultSchema: JsonSchema,
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
-    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+    )(using Frame): Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         Completion.sseFragments(
             config,
             streamRequest(config, context, resultSchema, resultTool),
@@ -192,6 +204,10 @@ private[completion] object OpenAICompletion extends Completion:
                             case Absent =>
                                 if choice.exists(c => stopReason(c.finish_reason) == Completion.StopReason.MaxOutputTokens)
                                 then Completion.Delta.OutputLimit
+                                // The final usage chunk the request asked for via stream_options: empty
+                                // choices, usage only, arriving before the [DONE] terminator. One complete
+                                // report per stream, so the consumer's sum is exactly this turn's usage.
+                                else if chunk.usage.isDefined then Completion.Delta.Usage(usageStats(chunk.usage))
                                 else Completion.Delta.Skip
                     )
                 case _ =>
@@ -219,7 +235,10 @@ private[completion] object OpenAICompletion extends Completion:
                 Completion.StreamRequest(
                     s"${config.apiUrl.stripSuffix("/")}/chat/completions",
                     headers,
-                    Json.encode(Request(context, config, resultTool, Present(resultSchema)).copy(stream = Present(true)))
+                    Json.encode(
+                        Request(context, config, resultTool, Present(resultSchema))
+                            .copy(stream = Present(true), stream_options = Present(StreamOptions(include_usage = true)))
+                    )
                 )
         end match
     end streamRequest
@@ -273,8 +292,12 @@ private[completion] object OpenAICompletion extends Completion:
             reasoning_effort: Maybe[String] = Absent,
             // Exactly one of this and max_completion_tokens ever carries a value; which one is the
             // endpoint's declared fact. The unset one is omitted from the body entirely.
-            max_tokens: Maybe[Int] = Absent
+            max_tokens: Maybe[Int] = Absent,
+            // Streaming only: asks the endpoint to end the stream with a usage chunk. Without it the
+            // final usage report is never sent and a streamed turn cannot state what it spent.
+            stream_options: Maybe[StreamOptions] = Absent
         ) derives Schema
+        case class StreamOptions(include_usage: Boolean) derives Schema
         case class ResponseFunctionCall(arguments: String, name: String) derives Schema
         case class ResponseToolCall(
             id: String,
@@ -291,9 +314,12 @@ private[completion] object OpenAICompletion extends Completion:
         ) derives Schema
         case class Choice(message: ResponseMessage, finish_reason: Maybe[String] = Absent) derives Schema
         case class CompletionTokensDetails(reasoning_tokens: Maybe[Int] = Absent) derives Schema
+        case class PromptTokensDetails(cached_tokens: Maybe[Long] = Absent) derives Schema
         case class Usage(
             completion_tokens: Maybe[Int] = Absent,
-            completion_tokens_details: Maybe[CompletionTokensDetails] = Absent
+            completion_tokens_details: Maybe[CompletionTokensDetails] = Absent,
+            prompt_tokens: Maybe[Long] = Absent,
+            prompt_tokens_details: Maybe[PromptTokensDetails] = Absent
         ) derives Schema
         case class Response(choices: List[Choice], usage: Maybe[Usage] = Absent) derives Schema
 
@@ -304,7 +330,7 @@ private[completion] object OpenAICompletion extends Completion:
         case class StreamToolCallDelta(function: Maybe[StreamFunctionDelta] = Absent) derives Schema
         case class StreamDelta(tool_calls: Maybe[List[StreamToolCallDelta]] = Absent) derives Schema
         case class StreamChoice(delta: Maybe[StreamDelta] = Absent, finish_reason: Maybe[String] = Absent) derives Schema
-        case class StreamChunk(choices: Maybe[List[StreamChoice]] = Absent) derives Schema
+        case class StreamChunk(choices: Maybe[List[StreamChoice]] = Absent, usage: Maybe[Usage] = Absent) derives Schema
 
         private def toEntry(msg: Message)(using Frame): MessageEntry =
             def text(s: String): Structure.Value = Structure.Value.Str(s)

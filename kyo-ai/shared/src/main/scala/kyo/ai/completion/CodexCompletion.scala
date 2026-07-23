@@ -75,8 +75,8 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         context: Context,
         resultSchema: JsonSchema,
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
-    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
-        Kyo.lift(Stream[String, Async & Scope & Abort[AIStreamException]] {
+    )(using Frame): Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+        Kyo.lift(Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] {
             AtomicRef.init("").map { stderrTail =>
                 Abort.run[
                     CommandException | FileFsException | FileReadException | FileWriteException | JsonRpcError | AIGenException |
@@ -94,14 +94,18 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                                     workDir,
                                     dynamicToolSpecs(resultTool, resultSchema)
                                 )
-                                _ <- Async.timeoutWithError[AIGenException | Closed, Maybe[String], Any](
+                                (_, usage) <- Async.timeoutWithError[AIGenException | Closed, (Maybe[String], AIStats), Any](
                                     config.timeout,
                                     Result.Failure(AICompletionTimeoutException("Codex", config.timeout))
                                 )(collectTurn(handler, events, threadId, turnId, stderrTail, bridge))
                                 captured <- bridge.resultCapture.get
                                 _ <- captured match
-                                    case Present((_, arguments)) => Emit.value(Chunk(arguments))
-                                    case Absent                  => Abort.fail(AIStreamIncompleteException(""))
+                                    case Present((_, arguments)) =>
+                                        Emit.value(Chunk[Completion.StreamElement](
+                                            Completion.StreamElement.Fragment(arguments),
+                                            Completion.StreamElement.Usage(usage)
+                                        ))
+                                    case Absent => Abort.fail(AIStreamIncompleteException(""))
                             yield ()
                         }
                     yield ()
@@ -128,7 +132,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         resultSchema: JsonSchema
     )(using
         Frame
-    ): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =
+    ): (Chunk[Message], AIStats) < (LLM & Async & Abort[AIGenException]) =
         LLM.state.map { state =>
             Scope.run {
                 for
@@ -150,13 +154,13 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                                         workDir,
                                         dynamicToolSpecs(tools, resultSchema)
                                     )
-                                    finalText <- Async.timeoutWithError[AIGenException | Closed, Maybe[String], Any](
+                                    (finalText, usage) <- Async.timeoutWithError[AIGenException | Closed, (Maybe[String], AIStats), Any](
                                         config.timeout,
                                         Result.Failure(AICompletionTimeoutException("Codex", config.timeout))
                                     )(collectTurn(handler, events, threadId, turnId, stderrTail, bridge))
                                     executed <- bridge.executed.get
                                     captured <- bridge.resultCapture.get
-                                yield resultMessages(executed, captured, finalText)
+                                yield (resultMessages(executed, captured, finalText), usage)
                         }
                     }
                     next <- stateRef.get
@@ -477,21 +481,32 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         turnId: String,
         stderrTail: AtomicRef[String],
         bridge: ToolBridge
-    )(using Frame): Maybe[String] < (Async & Abort[AIGenException | Closed]) =
-        Loop((Absent: Maybe[String], "")) { (completed, delta) =>
+    )(using Frame): (Maybe[String], AIStats) < (Async & Abort[AIGenException | Closed]) =
+        Loop((Absent: Maybe[String], "", Maybe.empty[TokenCounts])) { (completed, delta, usage) =>
             events.take.map { event =>
                 trackFollowUp(bridge, event, threadId, turnId).andThen {
                     bridge.resultCapture.get.map { captured =>
                         bridge.deferred.get.map { deferred =>
                             if captured.isDefined || deferred then
-                                interruptTurn(handler, threadId, turnId).andThen(Loop.done(finalText(completed, delta)))
+                                interruptTurn(handler, threadId, turnId)
+                                    .andThen(Loop.done((finalText(completed, delta), turnStats(usage))))
                             else if isTurnCompleted(event, threadId, turnId) then
-                                Loop.done(finalText(completed, delta))
+                                Loop.done((finalText(completed, delta), turnStats(usage)))
+                            else if event.method == "thread/tokenUsage/updated" then
+                                // Keep the latest total: the ephemeral thread's aggregate IS this turn's
+                                // usage, already summed across the CLI turn's internal provider requests.
+                                // Tracked here rather than in eventText so the interrupt path (capture)
+                                // reports the totals that arrived before the kill.
+                                decodeEvent[TokenUsageNotification](event).map { notification =>
+                                    if notification.threadId == threadId && notification.turnId == turnId then
+                                        Loop.continue((completed, delta, notification.tokenUsage.total.orElse(usage)))
+                                    else Loop.continue((completed, delta, usage))
+                                }
                             else
                                 eventText(event, threadId, turnId, stderrTail).map {
-                                    case Present(OutputText.Completed(text)) => Loop.continue((Present(text), delta))
-                                    case Present(OutputText.Delta(text))     => Loop.continue((completed, delta + text))
-                                    case _                                   => Loop.continue((completed, delta))
+                                    case Present(OutputText.Completed(text)) => Loop.continue((Present(text), delta, usage))
+                                    case Present(OutputText.Delta(text))     => Loop.continue((completed, delta + text, usage))
+                                    case _                                   => Loop.continue((completed, delta, usage))
                                 }
                         }
                     }
@@ -499,6 +514,10 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             }
         }
     end collectTurn
+
+    // A turn that saw no usage notification still ran: one turn, no numbers.
+    private def turnStats(usage: Maybe[TokenCounts]): AIStats =
+        usage.fold(AIStats.empty.copy(turns = 1))(usageStats)
 
     private def finalText(completed: Maybe[String], delta: String): Maybe[String] =
         completed match
