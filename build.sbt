@@ -287,6 +287,7 @@ lazy val kyoJVM: Project = project
         `kyo-schema-json`.jvm,
         `kyo-schema-protobuf`.jvm,
         `kyo-schema-msgpack`.jvm,
+        `kyo-schema-bson`.jvm,
         `kyo-schema-tests`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
@@ -365,6 +366,7 @@ lazy val kyoJS = project
         `kyo-schema-json`.js,
         `kyo-schema-protobuf`.js,
         `kyo-schema-msgpack`.js,
+        `kyo-schema-bson`.js,
         `kyo-schema-tests`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -422,6 +424,7 @@ lazy val kyoNative = project
         `kyo-schema-json`.native,
         `kyo-schema-protobuf`.native,
         `kyo-schema-msgpack`.native,
+        `kyo-schema-bson`.native,
         `kyo-schema-tests`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -470,6 +473,7 @@ lazy val kyoWasm = project
         `kyo-schema-json`.wasm,
         `kyo-schema-protobuf`.wasm,
         `kyo-schema-msgpack`.wasm,
+        `kyo-schema-bson`.wasm,
         `kyo-schema-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
@@ -718,6 +722,7 @@ lazy val `kyo-schema-tests` =
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-schema-protobuf`)
         .dependsOn(`kyo-schema-msgpack`)
+        .dependsOn(`kyo-schema-bson`)
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema-tests"))
         .withKyoTest
@@ -746,6 +751,19 @@ lazy val `kyo-schema-msgpack` =
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema-msgpack"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-bson` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-bson"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
