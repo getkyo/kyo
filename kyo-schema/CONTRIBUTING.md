@@ -714,7 +714,7 @@ Every suite opens with `given CanEqual[Any, Any] = CanEqual.derived` so heteroge
 
 Internal-package tests under `shared/src/test/scala/kyo/internal/` follow the same base-class convention [kyo-schema/shared/src/test/scala/kyo/internal/FastFloatTest.scala:26].
 
-When two `Structure.Type` instances must be compared with `==` (tag equality), add a local `given CanEqual[Structure.Type, Structure.Type] = CanEqual.derived` alongside the baseline `Any` instance [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:62-63].
+When two `Structure.Type` instances must be compared with `==` (tag equality), add a local `given CanEqual[Structure.Type, Structure.Type] = CanEqual.derived` alongside the baseline `Any` instance [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:67-68].
 
 ### Assertion styles, by kind
 
@@ -727,7 +727,7 @@ val result = Json.decodeBytes[MTPerson](bytes).getOrThrow
 assert(result == person)
 ```
 
-`CodecTest` factors round-trip into a `CodecTestHelper.roundTrip[A]` that drives an in-memory `TestWriter` -> `TestReader` token stream through `schema.writeTo` / `schema.readFrom`, so primitive and case-class round-trips share one helper [kyo-schema-tests/shared/src/test/scala/kyo/CodecTest.scala:288-301].
+`CodecTest` factors round-trip into a `CodecTestHelper.roundTrip[A]` (in the core's test scope, shared via test->test) that drives an in-memory `TestWriter` -> `TestReader` token stream through `schema.writeTo` / `schema.readFrom`, so primitive and case-class round-trips share one helper [kyo-schema/shared/src/test/scala/kyo/CodecTestFixtures.scala:395-401].
 
 **Token-shape** assertions verify the exact ordered token stream the writer emits, pinning wire shape independently of decoder symmetry [kyo-schema-tests/shared/src/test/scala/kyo/CodecTest.scala:363-377].
 
@@ -760,7 +760,7 @@ assert(
 typeCheckFailure("Schema[kyo.MTPerson].focus(_.nonexistent)")("not found")
 ```
 
-**`derives`-clause failure tests**: when the failing snippet must include a `derives` clause that itself fails (so it cannot be lifted into `typeCheckFailure`'s context), drive `scala.compiletime.testing.typeChecks` / `typeCheckErrors` directly and assert on the head error's message [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:7239-7246]:
+**`derives`-clause failure tests**: when the failing snippet must include a `derives` clause that itself fails (so it cannot be lifted into `typeCheckFailure`'s context), drive `scala.compiletime.testing.typeChecks` / `typeCheckErrors` directly and assert on the head error's message [kyo-schema-json/shared/src/test/scala/kyo/SchemaStructureTest.scala:2137-2144]:
 
 ```
 val src      = "case class Bad(private val x: Int) derives kyo.Schema"
@@ -769,7 +769,7 @@ val compiles = scala.compiletime.testing.typeChecks(src)
 
 ### Recursive-ADT regression guards
 
-Recursive ADTs MUST be derivable without `StackOverflowError`; the regression test touches the full structure tree of a self-recursive `case class Tree(children: List[Tree])` to exercise the cycle-break path [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:7205-7220]:
+Recursive ADTs MUST be derivable without `StackOverflowError`; the regression test touches the full structure tree of a self-recursive `case class Tree(children: List[Tree])` to exercise the cycle-break path [kyo-schema-json/shared/src/test/scala/kyo/SchemaStructureTest.scala:2103-2118]:
 
 ```
 "Self-recursive case class derives Schema without StackOverflow" in { ... }
@@ -809,7 +809,7 @@ Per-test ad-hoc recursive case classes are declared inside the `in { ... }` bloc
 case class BoxedHolder(payload: Box[BoxedHolder]) derives CanEqual, Schema
 ```
 
-Structure-introspection helpers shared across a single suite are declared once as `private def` on the suite class (e.g. `toStructure` / `fromStructure` in `StructureTest`), not duplicated per leaf [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:65-74].
+Structure-introspection helpers shared across a single suite are declared once as `private def` on the suite class (e.g. `toStructure` / `fromStructure` in `StructureTest`), not duplicated per leaf [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:70-79].
 
 ### Cross-platform and timing
 
@@ -835,7 +835,7 @@ Run through this list before touching the derivation path or adding a new public
 10. **For a new exception leaf**, is it a `case class` mixing one of the four marker traits (`DecodeException`, `ValidationException`, `TransformException`, `NavigationException`) into `SchemaException`, with `(using Frame)` and the message inline? Does it derive `CanEqual` if it appears in a navigation path? [kyo-schema/shared/src/main/scala/kyo/SchemaException.scala:15-45].
 11. **For a new Codec**, is it a `final class extends Codec` with two factory methods delegating to `kyo.internal.<Format>Writer` / `kyo.internal.<Format>Reader`, plus a `given <Codec> = <Codec>()` in the companion? Does the Reader extend `Codec.IntrospectingReader` if (and only if) the format is self-describing? [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:3-27] [kyo-schema/shared/src/main/scala/kyo/Codec.scala:157-175].
 12. **For a derivation-touching change**, does the macro still emit ONE call into `SchemaCodecRuntime.buildProductSchema` / `buildSumSchema` per derived type, with all per-field metadata in one string literal? Per-field branching inside the emitted methods is what blows the JVM class-file limit on test classes with many derivations [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:7-37] [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:367-373].
-13. **For a regression on the recursive-derivation path**, have you added a test in `shared/src/test` that exercises the full structure tree (not just `schema.structure`, the children's children too)? Recursive ADT fixtures shared across suites belong in `SchemaTestData.scala` with `derives Schema`; per-leaf ad-hoc recursive types belong in the `in { ... }` block [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:7205-7220] [kyo-schema/shared/src/test/scala/kyo/SchemaTestData.scala:93].
+13. **For a regression on the recursive-derivation path**, have you added a test in `shared/src/test` that exercises the full structure tree (not just `schema.structure`, the children's children too)? Recursive ADT fixtures shared across suites belong in `SchemaTestData.scala` with `derives Schema`; per-leaf ad-hoc recursive types belong in the `in { ... }` block [kyo-schema-json/shared/src/test/scala/kyo/SchemaStructureTest.scala:2103-2118] [kyo-schema/shared/src/test/scala/kyo/SchemaTestData.scala:93].
 14. **For a new platform-specific file**, is the JVM/JS/Native/Wasm split genuinely required by a platform capability difference (like `AsciiStringFactory`'s LATIN1 trick)? If not, keep it in `shared/`. The family has exactly one platform-specific surface today, and it lives in kyo-schema-json [kyo-schema-json/jvm/src/main/scala/kyo/internal/AsciiStringFactory.scala:7-25].
 15. **For a new sum wire representation**, have you (a) added the case to `Schema.UnionRepresentation` and confirmed `nonDefault` returns `true` for it (so it reaches the transform-aware path through both `hasTransforms` and `hasReadTransforms`), (b) added the encode arm in `SchemaSerializer.writeWithTransforms` and the decode arm in `Schema.transformedRead`, (c) added a `DelegatingWrapperReader` subclass (for a tagged shape) or a capture/replay path (for an untagged shape), (d) gated any top-level-array / bare-scalar shape behind `requireTopLevelCapable` so it raises `RepresentationUnsupportedException` on a codec that has not opted in via `canWriteTopLevelNonObject`, and (e) updated `Schema.representationExpressibleBy` so chain selection knows whether the new case is expressible by a given capability profile? The macro does NOT change: variant Schemas stay inline and the representation is resolved at the `SchemaSerializer` layer [kyo-schema/shared/src/main/scala/kyo/Schema.scala:108-150] [kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:85-232] [kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:620-749].
 16. **For ANY new `Schema` slot** (representation, naming, omit, chain, ambiguity, or a new transform), have you (a) ORed it into `hasTransforms` and/or `hasReadTransforms` per the [dual-flag invariant](#the-dual-flag-invariant) (both for a write+read slot, `hasReadTransforms` only for a decode-only slot like `unionAmbiguityPolicy` / `denyUnknownFieldsEnabled` / `fieldDefaults`), (b) threaded it through ALL FOUR construction sites (`init`, `initFocused`, `createWithFocused`, `copyWith`) AND through `SchemaFactory.createFrom` (the de-facto fifth site: a `createFrom` that drops the slot resets it on the next `.drop` / path-affecting builder), (c) confirmed the inert default leaves both flags `false` so the default-byte-identity guarantee holds, and (d) done a HARD clean (`target/`, `.bloop/`, `.bsp/`, `project/`), not `sbt clean`, before trusting the build? A missed flag or construction site COMPILES and silently drops the feature [kyo-schema/shared/src/main/scala/kyo/Schema.scala:136-150].

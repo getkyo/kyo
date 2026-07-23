@@ -62,7 +62,7 @@ The functionality above ships as seven artifacts: a format-agnostic core plus on
 
 ## Installation
 
-Add the core plus the format modules you need to your `build.sbt`. Most projects start with JSON:
+Add the format modules you need to your `build.sbt`. Most projects start with JSON:
 
 ```scala doctest:expect=skipped
 libraryDependencies += "io.getkyo" %% "kyo-schema-json" % "<latest version>"
