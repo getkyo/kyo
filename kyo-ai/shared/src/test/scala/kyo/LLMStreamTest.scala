@@ -861,6 +861,74 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "§5a:370 the stream anchor captures the non-enriched sent view, so a later turn's occupancy counts the appended suffix and is not deferred by the prompt/reminder count" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            // Three live messages sent on the first turn; the prompt/reminder enrichment prepends one system
+            // prompt and appends one reminder, so the enriched request is five messages, strictly larger than
+            // the non-enriched view the anchor must record.
+            val prior = Context(Chunk(
+                UserMessage("q1", Absent),
+                UserMessage("q2", Absent),
+                UserMessage("q3", Absent)
+            ))
+            val prompt = Prompt.init("system instruction", "reminder text")
+            // Four live messages appended after the first turn seats its anchor: the second turn drops exactly
+            // the recorded sent-view size, so a correct anchor leaves all four in the suffix.
+            val appended = Chunk(
+                UserMessage("a1", Absent),
+                UserMessage("a2", Absent),
+                UserMessage("a3", Absent),
+                UserMessage("a4", Absent)
+            )
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(50000, 12)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        AI.enable(prompt) {
+                            ai.setContext(prior).andThen(ai.stream[String].map(_.run)).andThen {
+                                LLM.session(ai).map { session =>
+                                    session.streamAnchor match
+                                        case Present(anchor) =>
+                                            assert(
+                                                anchor.sentView.size == prior.compacted.size,
+                                                s"the anchor captures the non-enriched sent view (${prior.compacted.size}), not the prompt/reminder-enriched request; got ${anchor.sentView.size}"
+                                            )
+                                            ai.context.map(c => ai.setContext(appended.foldLeft(c)(_.add(_)))).andThen {
+                                                ai.stream[String].map(_.run).andThen {
+                                                    ai.context.map { ctx =>
+                                                        assert(
+                                                            ctx.compactionState.lastUsageRawSize == prior.compacted.size,
+                                                            s"the applied anchor sizes at the non-enriched sent view (${prior.compacted.size}), got ${ctx.compactionState.lastUsageRawSize}"
+                                                        )
+                                                        // occupancy drops lastUsageRawSize from compacted: the non-enriched anchor
+                                                        // leaves every appended message in the suffix. An enriched anchor would size
+                                                        // at prior.size + 2 (prompt + reminder), dropping two real appended messages.
+                                                        val suffix = ctx.compacted.drop(ctx.compactionState.lastUsageRawSize)
+                                                        assert(
+                                                            suffix.size == appended.size,
+                                                            s"the occupancy suffix keeps all ${appended.size} appended messages, not fewer by the enrichment count; got ${suffix.size}"
+                                                        )
+                                                        assert(
+                                                            Compactor.internal.occupancy(ctx) == 50056,
+                                                            s"occupancy is the anchored 50000 plus the four appended messages' offline estimate (50056); got ${Compactor.internal.occupancy(ctx)}"
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        case Absent =>
+                                            Kyo.lift(assert(false, "a streaming turn must seat a StreamAnchor"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "§5a:370 an Anthropic streaming turn re-anchors from the message_start input_tokens" in {
         TestCompletionServer.runStreaming { server =>
             val config = wideAnthropicConfig(server.baseUrl).tokenizer(fixedTok)

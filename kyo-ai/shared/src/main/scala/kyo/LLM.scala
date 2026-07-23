@@ -232,37 +232,41 @@ object LLM:
                             // below the occupancy trigger re-serve the context unchanged, at/above it render + install the
                             // rebuilt compacted list. The compactor is read from the merged env (instance-over-scope).
                             LLM.env.map(e => renderView(target, targetContext, config, e.compactor))
-                                .map(Prompt.internal.enrichedContext(_, toolInfos))
-                                .map { context =>
-                                    // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
-                                    // non-object schema is rejected by the providers, which require an object tool schema. The
-                                    // array schema is derived through kyo-schema's chunk Schema, not hand-built.
-                                    val resultValueSchema =
-                                        if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
-                                    val resultSchema             = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
-                                    val completion               = config.provider.completion
-                                    val (tokenizer, tokenizerId) = Compactor.internal.activeTokenizer(config)
-                                    // Seat the stream re-anchor (§5a:370): the usage sink is written by the adapter SSE projection at
-                                    // stream end (outside the LLM handler), so it is an AtomicRef; the sent view + active tokenizer are
-                                    // captured here (LLM live) for applyStreamMeasure to consume at the next turn's start.
-                                    AtomicRef.init(Maybe.empty[Completion.Usage]).map { usageSink =>
-                                        LLM.session(target).map { session =>
-                                            val anchor =
-                                                Compactor.internal.StreamAnchor(usageSink, context.compacted, tokenizer, tokenizerId)
-                                            LLM.setSession(target, session.withStreamAnchor(anchor)).andThen {
-                                                Log.debug(
-                                                    s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
-                                                        s"mode=${if stringMode then "prefix" else "elements"} messages=${context.compacted.size} tools=${toolInfos.size}"
-                                                ).andThen(completion.streamFragments(
-                                                    config,
-                                                    context,
-                                                    resultSchema,
-                                                    toolInfos,
-                                                    usageSink
-                                                )).map { fragments =>
-                                                    Stream[A, Async & Scope & Abort[AIStreamException]] {
-                                                        if stringMode then consumePrefixFragments(fragments, schema)
-                                                        else consumeElementFragments(fragments, schema)
+                                .map { view =>
+                                    Prompt.internal.enrichedContext(view, toolInfos).map { context =>
+                                        // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
+                                        // non-object schema is rejected by the providers, which require an object tool schema. The
+                                        // array schema is derived through kyo-schema's chunk Schema, not hand-built.
+                                        val resultValueSchema =
+                                            if stringMode then Json.jsonSchema[A]
+                                            else Json.jsonSchema(using Schema.chunkSchema(using schema))
+                                        val resultSchema             = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
+                                        val completion               = config.provider.completion
+                                        val (tokenizer, tokenizerId) = Compactor.internal.activeTokenizer(config)
+                                        // Seat the stream re-anchor (§5a:370): the usage sink is written by the adapter SSE projection at
+                                        // stream end (outside the LLM handler), so it is an AtomicRef; the sent view + active tokenizer are
+                                        // captured here (LLM live) for applyStreamMeasure to consume at the next turn's start. The anchor
+                                        // basis is the pre-enrichment view.compacted (not the prompt/reminder-enriched context), the same
+                                        // non-enriched list occupancy apportions via drop(lastUsageRawSize) on subsequent turns.
+                                        AtomicRef.init(Maybe.empty[Completion.Usage]).map { usageSink =>
+                                            LLM.session(target).map { session =>
+                                                val anchor =
+                                                    Compactor.internal.StreamAnchor(usageSink, view.compacted, tokenizer, tokenizerId)
+                                                LLM.setSession(target, session.withStreamAnchor(anchor)).andThen {
+                                                    Log.debug(
+                                                        s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
+                                                            s"mode=${if stringMode then "prefix" else "elements"} messages=${context.compacted.size} tools=${toolInfos.size}"
+                                                    ).andThen(completion.streamFragments(
+                                                        config,
+                                                        context,
+                                                        resultSchema,
+                                                        toolInfos,
+                                                        usageSink
+                                                    )).map { fragments =>
+                                                        Stream[A, Async & Scope & Abort[AIStreamException]] {
+                                                            if stringMode then consumePrefixFragments(fragments, schema)
+                                                            else consumeElementFragments(fragments, schema)
+                                                        }
                                                     }
                                                 }
                                             }
