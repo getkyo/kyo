@@ -44,6 +44,10 @@ final class IonBinaryReader private (
 ) extends IntrospectingReader:
     import IonBinaryValue.*
 
+    // Nothing is left to check here: this reader walks a value parsed up front, and that parse
+    // already refuses bytes after the root value.
+    private[kyo] def requireEndOfInput(): Unit = ()
+
     private enum Context:
         case Obj(fields: Vector[(String, IonBinaryValue)], index: Int)
         case Arr(values: Vector[IonBinaryValue], index: Int)

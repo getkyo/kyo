@@ -16,7 +16,7 @@ class AITest extends kyo.test.Test[Any]:
     def serverConfig(baseUrl: String): Config =
         Config.OpenAI.default
             .apiKey("test")
-            .model(Config.OpenAI, "gpt-4o", 128000)
+            .model(Config.OpenAI, "gpt-4o", 128000, Config.OutputMaximum.Verified(16384), Config.ReasoningEncoding.Unavailable, true, true)
             .apiUrl(baseUrl)
 
     /** An OpenAI completion body whose assistant calls `result_tool` with the supplied envelope JSON. */
@@ -225,6 +225,55 @@ class AITest extends kyo.test.Test[Any]:
         }
     }
 
+    "session context enriches with the ambient scope prompt, the instance prompt, and the default guidance" in {
+        // Generation merges scope ++ instance enablements and layers the default structured-output
+        // guidance (genLoop); the session's `context` is the faithful transcript-capture form, so it
+        // must enrich with the same stack. Enriching with the instance prompt alone silently drops
+        // every ambient prompt (an application's system framing, a task ambient) from captured
+        // transcripts.
+        LLM.run {
+            AI.enable(Prompt.init("scope-instruction", "scope-reminder")) {
+                AI.initWith { ai =>
+                    for
+                        _    <- ai.enable(Prompt.init("instance-instruction", "instance-reminder"))
+                        _    <- ai.userMessage("hello")
+                        snap <- ai.snapshot
+                        ctx  <- snap.context
+                    yield ctx.messages
+                }
+            }
+        }.map { messages =>
+            val systems    = messages.collect { case SystemMessage(content) => content }
+            val scopeAt    = systems.indexWhere(_.contains("scope-instruction"))
+            val instanceAt = systems.indexWhere(_.contains("instance-instruction"))
+            assert(scopeAt >= 0, s"the ambient scope instruction must be captured; systems: $systems")
+            assert(instanceAt >= 0, s"the instance instruction must be captured; systems: $systems")
+            assert(scopeAt < instanceAt, "the scope prompt precedes the instance prompt (generation layers instance on top)")
+            val reminders = systems.filter(_.contains("REMINDERS"))
+            assert(reminders.size == 1, s"one trailing reminders block; systems: $systems")
+            val block = reminders.head
+            assert(block.contains("scope-reminder") && block.contains("instance-reminder"), s"both reminders ride the block: $block")
+            assert(
+                block.indexOf("scope-reminder") < block.indexOf("instance-reminder"),
+                s"reminder order follows the prompt chain: $block"
+            )
+            // Exactly the caller's two reminders, in order, and nothing else: nothing is attached on
+            // their behalf, so the block is theirs alone.
+            val carried = block
+                .split("==================")
+                .last
+                .split("--------------------------------------------------")
+                .map(_.trim)
+                .filter(_.nonEmpty)
+                .toList
+            assert(
+                carried == List("scope-reminder", "instance-reminder"),
+                s"the block must carry the caller's reminders and nothing else, got $carried: $block"
+            )
+            assert(messages.exists { case UserMessage(c, _) => c.contains("hello"); case _ => false }, "the raw exchange stays")
+        }
+    }
+
     "AI.enable scopes a pure body without dispatching a generation" in {
         // AI.enable scopes a pure body without dispatching Gen (a placeholder Gen would panic).
         // The body's userMessage lands in ai's context, proving the binder threaded the body without suspending.
@@ -241,7 +290,6 @@ class AITest extends kyo.test.Test[Any]:
     }
 
     "AI.enable of a tool, prompt, thought, or mode adds LLM to the row" in {
-        // AI.enable of a thought, prompt, mode, or tool each produce a row containing LLM.
         val thought: Unit < LLM = AI.enable(Thought.reflective)(Kyo.unit)
         val prompt: Unit < LLM  = AI.enable(Prompt.empty)(Kyo.unit)
         val mode: Unit < LLM = AI.enable(new Mode[Any]:

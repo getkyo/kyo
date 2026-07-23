@@ -64,9 +64,7 @@ object Json:
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        val reader = json.newReader(Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-        reader.resetLimits(maxDepth, maxCollectionSize)
-        Result.catching[DecodeException](schema.readFrom(reader))
+        json.decodeFully[A](Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)), maxDepth, maxCollectionSize)
     end decode
 
     /** Decodes raw UTF-8 JSON bytes into a value of type A.
@@ -85,9 +83,7 @@ object Json:
         maxDepth: Int = DefaultMaxDepth,
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        val reader = json.newReader(input)
-        reader.resetLimits(maxDepth, maxCollectionSize)
-        Result.catching[DecodeException](schema.readFrom(reader))
+        json.decodeFully[A](input, maxDepth, maxCollectionSize)
     end decodeBytes
 
     /** Generates a JSON Schema for type A, enriched with runtime Schema metadata.

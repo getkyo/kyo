@@ -177,6 +177,9 @@ class TestWriter extends Writer:
 end TestWriter
 
 class TestReader(tokens: List[Token])(using _frame: Frame) extends Codec.IntrospectingReader:
+    // Reads a token list handed to it, so there is no input stream for anything to be left in.
+    private[kyo] def requireEndOfInput(): Unit = ()
+
     override def frame: Frame = _frame
     private var pos           = 0
     private var _lastField    = ""

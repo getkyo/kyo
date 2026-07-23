@@ -3006,6 +3006,109 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
+    // withStructure
+    // =========================================================================
+
+    "withStructure reports the overridden structure and keeps the generic codec" in {
+        // Overriding the open Schema[Structure.Value] with a runtime-built Product yields a
+        // shape-dynamic schema: the wire shape is the override, encode and decode stay the generic
+        // Structure.Value codec, with no hand-written reader or writer.
+        val payload =
+            Structure.Type.Product(
+                "Payload",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field("active", summon[Schema[Boolean]].structure),
+                    Structure.Field("tags", summon[Schema[List[String]]].structure)
+                )
+            )
+        val shape =
+            Structure.Type.Product(
+                "Dynamic",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field("note", summon[Schema[String]].structure),
+                    Structure.Field("payload", payload)
+                )
+            )
+        val schema = summon[Schema[Structure.Value]].withStructure(shape)
+        schema.structure match
+            case p: Structure.Type.Product =>
+                assert(p.name == "Dynamic", s"expected the overridden Product name; got ${p.name}")
+                assert(p.fields.map(_.name) == Chunk("note", "payload"), s"expected the overridden fields; got ${p.fields.map(_.name)}")
+            case other => fail(s"expected the overridden Product structure; got $other")
+        end match
+
+        val value = Structure.Value.Record(Chunk[(String, Structure.Value)](
+            "note" -> Structure.Value.Str("n"),
+            "payload" -> Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "active" -> Structure.Value.Bool(true),
+                "tags"   -> Structure.Value.Sequence(Chunk(Structure.Value.Str("a")))
+            ))
+        ))
+        val enc = schema.encodeString[Json](value)
+        assert(enc == """{"note":"n","payload":{"active":true,"tags":["a"]}}""", s"conforming record must encode plainly; got $enc")
+        assert(schema.decodeString[Json](enc) == Result.succeed(value), "conforming record must round-trip")
+    }
+
+    "withStructure leaves the base schema untouched" in {
+        val base = summon[Schema[Structure.Value]]
+        val shape =
+            Structure.Type.Product(
+                "Solo",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("text", summon[Schema[String]].structure))
+            )
+        val overridden = base.withStructure(shape)
+        overridden.structure match
+            case p: Structure.Type.Product => assert(p.name == "Solo", s"override must apply; got ${p.name}")
+            case other                     => fail(s"expected a Product structure; got $other")
+        assert(base.structure != overridden.structure, "the base Schema[Structure.Value] must keep its own structure")
+    }
+
+    "withStructure does not validate: a non-conforming record still round-trips" in {
+        // The override is reporting-only; the open codec is a passthrough. Enforcement is a consumer
+        // concern (Structure.conform), so this pins the actual codec behavior explicitly.
+        val shape =
+            Structure.Type.Product(
+                "Strict",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("required", summon[Schema[String]].structure))
+            )
+        val schema        = summon[Schema[Structure.Value]].withStructure(shape)
+        val nonConforming = Structure.Value.Record(Chunk[(String, Structure.Value)]("other" -> Structure.Value.Str("x")))
+        val enc           = schema.encodeString[Json](nonConforming)
+        assert(enc == """{"other":"x"}""", s"the codec must not reject or reshape a non-conforming record; got $enc")
+        assert(schema.decodeString[Json](enc) == Result.succeed(nonConforming), "decode is equally passthrough")
+        assert(Structure.conform(nonConforming, shape) == Present("missing required field 'required'"))
+    }
+
+    "withStructure composes with transform to expose a domain type" in {
+        case class Note(text: String)
+        val shape =
+            Structure.Type.Product(
+                "Note",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("text", summon[Schema[String]].structure))
+            )
+        def toNote(v: Structure.Value): Note =
+            v match
+                case Structure.Value.Record(fields) =>
+                    Note(fields.collectFirst { case ("text", Structure.Value.Str(s)) => s }.getOrElse(""))
+                case _ => Note("")
+        def fromNote(n: Note): Structure.Value =
+            Structure.Value.Record(Chunk[(String, Structure.Value)]("text" -> Structure.Value.Str(n.text)))
+        val schema = summon[Schema[Structure.Value]].withStructure(shape).transform(toNote)(fromNote)
+        val enc    = schema.encodeString[Json](Note("hi"))
+        assert(enc == """{"text":"hi"}""", s"domain value must encode through the swapped structure; got $enc")
+        assert(schema.decodeString[Json](enc) == Result.succeed(Note("hi")), "domain value must round-trip")
+    }
+
     // enum derivation
     // =========================================================================
 

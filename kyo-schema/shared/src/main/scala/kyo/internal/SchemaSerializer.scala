@@ -1320,6 +1320,9 @@ private[kyo] object SchemaSerializer:
 
         def frame: Frame = _frame
 
+        // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
+        private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
+
         protected var delegateReader: Maybe[Reader]   = Maybe.empty
         protected var delegateDepth: Int              = 0
         protected var phase: Int                      = 0
@@ -1956,6 +1959,9 @@ private[kyo] object SchemaSerializer:
     ) extends Reader:
 
         def frame: Frame = inner.frame
+
+        // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
+        private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
 
         // Pre-compute the dropped-field bitmask once per reader instance.
         // Bit i is set iff field index i is dropped. Indices >= 64 are clamped to 63 (see the 64-field macro limit).

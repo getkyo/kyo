@@ -214,6 +214,8 @@ The result tool has the reserved name `Completion.resultToolName` (`"result_tool
 
 Backend implementation rules:
 
+- **A backend returns messages and tool calls; it never processes tool-call payloads.** Map the provider reply to `Context.Message` values with every tool call's arguments passed through VERBATIM, exactly as `AnthropicCompletion.read` does (`Call(id, name, Json.encode(input))`) ([`AnthropicCompletion.scala:39-52`]). This includes the result tool: the backend identifies it by NAME (`Completion.resultToolName`, or a harness's native structured-output tool) or by structural position (a terminal result field), never by inspecting the payload, and forwards the arguments untouched. A backend must NOT decode, validate, reshape, envelope, or fail on a tool-call payload. The only decoding a backend does is the transport/wire format (the provider's response body or the harness's stream-json events) into typed `Message`/`Call` values. All result decoding, `resultValue`-envelope handling, thought extraction, and validation live in `LLM.eval` ([`LLM.scala:353-392`]); that is the ONLY place a result payload is decoded.
+- **A missing or unusable result is not a backend failure; it is the eval loop's repair signal.** When the model produced no result (only text or non-result tool calls), return the transcript with no `result_tool` call. `eval` then sees no result and re-queries, and on the forced iteration it passes zero user tools so the next request exposes only the result tool and the model must call it ([`LLM.scala`] eval loop, `forceResult`). This repair loop is the harness's substitute for the HTTP `tool_choice` force (`AnthropicCompletion` sets `tool_choice` to the result tool when it is the only tool; `OpenAICompletion` uses `tool_choice:"required"`), which command harnesses like the Claude Code CLI have no equivalent for. A backend that decodes/validates the payload and aborts (e.g. `AIDecodeException` on non-JSON result text) DEFEATS this loop and must not do so. NOTE: `CodexCompletion` currently violates the payload-faithfulness rule (it reshapes through `HarnessCompletion.resultOutput`); this is a known deviation to be fixed, not a pattern to copy.
 - Implement the full `Completion` contract. Do not add placeholder streaming methods, silent tool rejection, or partial support paths.
 - Kyo remains the tool runner for every backend. If a provider agent loop needs synchronous tool execution, use a private bridge that calls back into Kyo tool handlers and return the produced transcript as Kyo `Context.Message` values. Do not expose ambient user MCP servers, provider shell tools, plugins, or unrelated host tools through a completion backend.
 - Preserve structured context as far as the provider protocol allows. Use native message, image, function-call, and tool-result protocol items when they exist. If a provider has no supported native injection path for a piece of history, keep the workaround explicit in code and tests, and verify the public behavior it affects.
@@ -224,7 +226,7 @@ Backend implementation rules:
 
 Backend tests must cover the same behavior a user can observe:
 
-- Unit tests for request and response conversion: context messages, images, assistant tool calls, tool results, result tool envelopes, malformed provider output, and streaming fragments.
+- Unit tests for request and response conversion: context messages, images, assistant tool calls, tool results, and streaming fragments. For the result path, assert VERBATIM passthrough (the result-tool call carries the provider payload unchanged) and the repair paths: a non-JSON result surfaces as a raw result-tool call (no exception), and a turn with no result surfaces with no result-tool call so the eval loop repairs.
 - Shared live integration tests for command harnesses in `shared/src/test`. Use `assume` when the CLI, auth, quota, account, or network provider is unavailable, and fail on behavioral regressions after the provider is available.
 - Live tests must assert that the intended provider and completion backend are actually selected.
 - Live tests must exercise `ai.gen`, retained history via `AI.snapshot` and `AI.recover`, image input, Kyo tool calling, `ai.stream[String]`, and object streaming via `ai.stream[A]`.
@@ -330,3 +332,23 @@ In addition to the root checklist:
 7. **New completion backend.** Does it match the result tool by `Completion.resultToolName` and substitute `resultSchema` when `Present`? Does it surface transport failures as `Abort[HttpException]`, never `Abort[Throwable]`? If it is command-backed, does it use the harness's native input/output shape and map process or decode failures to `AIDecodeException`? Is it reached through a new `Config.Provider` in `Provider.all`? [`Completion.scala:65-74`, `Config.scala:96-98`]
 8. **New failure.** Is there a leaf in `AIException.scala` under the right operation trait(s), with its message on the leaf, mapped from any raw `HttpException` at the eval/stream boundary? Is a misuse/impossible-state panic kept off both rows? [`AIException.scala`, `LLM.scala:331`]
 9. **New test.** Does it extend `kyo.test.Test[Any]`, use `TestCompletionServer` (not a live endpoint), assert concrete values, place each `enqueueBody`/`enqueueStream` before the consuming client call, and live in `shared/src/test`? [`TestCompletionServer.scala`, `LLMTest.scala`]
+
+## Model facts are data, never inference
+
+A completion implementation must not name a model, a model family, or a model version, and must not
+describe how a particular model behaves. This covers comments and scaladoc, not only code: if a reader
+can learn from a completion implementation that some named model differs from another, the rule is
+broken.
+
+Where models differ, the difference is declared on the catalog entry, alongside the model's name and
+its context window, and the implementation reads the declared field without knowing which model it
+came from. Adding a model means adding an entry that declares its facts; the constructors take those
+facts without defaults, so an undeclared model is a compile error rather than a silent guess.
+
+This replaced a set of predicates that parsed version digits out of model ids to infer what a wire
+would accept. That approach put unverifiable model knowledge in code, went stale on every rename, and
+sized an output ceiling from a reasoning budget on models whose wire refuses that budget, which stopped
+generations early and was diagnosed as a harness failure.
+
+Provider names remain legal in the implementations, which are named after providers, as does a
+provider's own wire vocabulary inside the single function that decodes it.

@@ -20,6 +20,10 @@ final class BsonReader private (
 ) extends Codec.IntrospectingReader:
     import BsonValue.*
 
+    // Nothing is left to check here: this reader walks a document parsed up front, and that parse
+    // already refuses bytes after the root document.
+    private[kyo] def requireEndOfInput(): Unit = ()
+
     private val KindDocument: 1 = 1
     private val KindArray: 2    = 2
     private type FrameKind = KindDocument.type | KindArray.type

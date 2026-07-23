@@ -23,6 +23,26 @@ abstract class Codec:
     def newWriter(): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 
+    /** Reads one value of `A` from `input` and requires the whole of it to have been consumed.
+      *
+      * Every decode entry point routes through here so the end-of-input requirement cannot be
+      * forgotten by one format while another remembers it. Reading the value and checking what is
+      * left are one operation, not two that a caller is trusted to pair up.
+      */
+    final private[kyo] def decodeFully[A](
+        input: Span[Byte],
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        val reader = newReader(input)
+        reader.resetLimits(maxDepth, maxCollectionSize)
+        Result.catching[DecodeException] {
+            val value = schema.readFrom(reader)
+            reader.requireEndOfInput()
+            value
+        }
+    end decodeFully
+
     /** Validates that `structure` can be canonically represented by this codec before any bytes are written.
       *
       * The default accepts every shape. A built-in codec with format-specific canonicalization rules (Protobuf's proto3 conformance, which rejects
@@ -35,6 +55,26 @@ end Codec
 
 object Codec:
 
+    /** Reads one value of `A` from an already-built reader and requires the whole input to be consumed.
+      *
+      * The entry points that construct their own reader (a format with a config-dependent reader, or
+      * one decoding from a source other than a byte span) route through here, so reading the value and
+      * checking what is left stay one operation for every format rather than a pairing each decode is
+      * trusted to remember.
+      */
+    private[kyo] def readFully[A](
+        reader: Codec.Reader,
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        reader.resetLimits(maxDepth, maxCollectionSize)
+        Result.catching[DecodeException] {
+            val value = schema.readFrom(reader)
+            reader.requireEndOfInput()
+            value
+        }
+    end readFully
+
     abstract class Reader:
         /** The source location where this Reader was constructed.
           *
@@ -46,6 +86,20 @@ object Codec:
         private[kyo] var maxDepth: Int          = 512
         private[kyo] var maxCollectionSize: Int = 100000
         private var _depth: Int                 = 0
+
+        /** Fails unless everything left after the decoded root value is insignificant.
+          *
+          * Decoding a value is not the same as decoding the input. A reader that stops at the end of
+          * the first value and never looks further reports success on input it only partly consumed,
+          * so a document holding two values back to back yields the first and discards the rest
+          * without a word, and one trailed by anything else is indistinguishable from a clean parse.
+          *
+          * This is abstract rather than defaulted so that every format has to answer it. A default of
+          * "accept" would let a reader inherit silence, which is exactly the state this exists to end;
+          * a format where the question is meaningless, such as one reading an already-parsed value in
+          * memory, says so by implementing it as a no-op.
+          */
+        private[kyo] def requireEndOfInput(): Unit
 
         /** Reset limits and depth counter. Called on reader reuse. */
         private[kyo] def resetLimits(maxDepth: Int, maxCollectionSize: Int): Unit =

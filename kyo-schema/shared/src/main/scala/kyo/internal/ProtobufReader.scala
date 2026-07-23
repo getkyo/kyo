@@ -14,6 +14,10 @@ import scala.annotation.tailrec
 final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reader:
     override def frame: Frame = _frame
 
+    private[kyo] def requireEndOfInput(): Unit =
+        if pos < data.length then
+            throw TrailingInputException(Protobuf(), s"${data.length - pos} byte(s) after the decoded value")(using frame)
+
     // Wire type constants
     private val Varint          = 0
     private val Fixed64         = 1

@@ -1919,4 +1919,108 @@ class StructureTest extends kyo.test.Test[Any]:
 
     }
 
+    "conform" - {
+        def strType  = summon[Schema[String]].structure
+        def boolType = summon[Schema[Boolean]].structure
+        def listType = summon[Schema[List[String]]].structure
+
+        def payload = Structure.Type.Product(
+            "Payload",
+            Tag[Any],
+            Chunk.empty,
+            Chunk(
+                Structure.Field("active", boolType),
+                Structure.Field("tags", listType)
+            )
+        )
+        def shape = Structure.Type.Product(
+            "Dynamic",
+            Tag[Any],
+            Chunk.empty,
+            Chunk(
+                Structure.Field("note", strType),
+                Structure.Field("payload", payload)
+            )
+        )
+        def payloadRecord(active: Structure.Value, tags: Structure.Value) =
+            Structure.Value.Record(Chunk[(String, Structure.Value)]("active" -> active, "tags" -> tags))
+        def okTags = Structure.Value.Sequence(Chunk(Structure.Value.Str("a")))
+
+        "a conforming record passes" in {
+            val v = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "note"    -> Structure.Value.Str("n"),
+                "payload" -> payloadRecord(Structure.Value.Bool(true), okTags)
+            ))
+            assert(Structure.conform(v, shape) == Absent)
+        }
+
+        "a missing required field is the first violation" in {
+            val v = Structure.Value.Record(Chunk[(String, Structure.Value)]("note" -> Structure.Value.Str("n")))
+            assert(Structure.conform(v, shape) == Present("missing required field 'payload'"))
+        }
+
+        "a nested missing field carries the path" in {
+            val v = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "note"    -> Structure.Value.Str("n"),
+                "payload" -> Structure.Value.Record(Chunk[(String, Structure.Value)]("active" -> Structure.Value.Bool(true)))
+            ))
+            assert(Structure.conform(v, shape) == Present("payload: missing required field 'tags'"))
+        }
+
+        "a kind mismatch names the expectation" in {
+            val v = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "note"    -> Structure.Value.Str("n"),
+                "payload" -> payloadRecord(Structure.Value.Str("yes"), okTags)
+            ))
+            assert(Structure.conform(v, shape) == Present("payload: active: expected Boolean, got a string"))
+        }
+
+        "extra record fields are accepted" in {
+            val v = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "note"    -> Structure.Value.Str("n"),
+                "stray"   -> Structure.Value.Str("ignored"),
+                "payload" -> payloadRecord(Structure.Value.Bool(false), Structure.Value.Sequence(Chunk.empty))
+            ))
+            assert(Structure.conform(v, shape) == Absent)
+        }
+
+        "an optional or defaulted field may be absent, a required one may not" in {
+            val withOptional = Structure.Type.Product(
+                "Opt",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field("must", strType),
+                    Structure.Field("may", strType, optional = true),
+                    Structure.Field("has", strType, default = Present(Structure.Value.Str("d")))
+                )
+            )
+            val onlyMust = Structure.Value.Record(Chunk[(String, Structure.Value)]("must" -> Structure.Value.Str("x")))
+            assert(Structure.conform(onlyMust, withOptional) == Absent)
+            val empty = Structure.Value.Record(Chunk.empty)
+            assert(Structure.conform(empty, withOptional) == Present("missing required field 'must'"))
+        }
+
+        "a collection element violation is indexed" in {
+            val v = Structure.Value.Record(Chunk[(String, Structure.Value)](
+                "note" -> Structure.Value.Str("n"),
+                "payload" -> payloadRecord(
+                    Structure.Value.Bool(true),
+                    Structure.Value.Sequence(Chunk(Structure.Value.Str("ok"), Structure.Value.Bool(false)))
+                )
+            ))
+            assert(Structure.conform(v, shape) == Present("payload: tags: [1]: expected String, got a boolean"))
+        }
+
+        "a non-object against a Product is a violation" in {
+            assert(Structure.conform(Structure.Value.Str("free text"), shape)
+                == Present("expected an object for 'Dynamic', got a string"))
+        }
+
+        "the Open type accepts anything" in {
+            val open = summon[Schema[Structure.Value]].structure
+            assert(Structure.conform(Structure.Value.Str("anything"), open) == Absent)
+        }
+    }
+
 end StructureTest

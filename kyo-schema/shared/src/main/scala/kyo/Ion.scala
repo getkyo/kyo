@@ -210,8 +210,7 @@ object Ion:
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using ion: Ion, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         val reader = Ion(Config.Default).newReader(Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-        reader.resetLimits(maxDepth, maxCollectionSize)
-        Result.catching[DecodeException](schema.readFrom(reader))
+        Codec.readFully[A](reader, maxDepth, maxCollectionSize)
     end decodeText
 
     /** Decodes raw UTF-8 Ion text bytes into a value of type A. */
@@ -221,8 +220,7 @@ object Ion:
         maxCollectionSize: Int = DefaultMaxCollectionSize
     )(using ion: Ion, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         val reader = Ion(Config.Default).newReader(input)
-        reader.resetLimits(maxDepth, maxCollectionSize)
-        Result.catching[DecodeException](schema.readFrom(reader))
+        Codec.readFully[A](reader, maxDepth, maxCollectionSize)
     end decodeTextBytes
 
     /** Decodes a configured Ion string input. Binary format requires byte input and returns a typed decode failure. */
