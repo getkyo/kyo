@@ -110,6 +110,18 @@ private[completion] object CodexWire:
     ) derives Schema
     // Carried by both item/started and item/completed: {threadId, turnId, item}.
     case class ItemNotification(threadId: String, turnId: String, item: ThreadItem) derives Schema
+    // The thread/tokenUsage/updated notification (verified live against codex app-server): `total`
+    // aggregates the thread, `last` is the most recent provider request. The thread is ephemeral per
+    // completion call, so its final `total` IS the kyo turn's usage, already summed across the
+    // several provider requests one CLI turn can make. camelCase is the app-server's own vocabulary.
+    case class TokenCounts(
+        inputTokens: Maybe[Long] = Absent,
+        cachedInputTokens: Maybe[Long] = Absent,
+        outputTokens: Maybe[Long] = Absent,
+        reasoningOutputTokens: Maybe[Long] = Absent
+    ) derives Schema
+    case class ThreadTokenUsage(total: Maybe[TokenCounts] = Absent, last: Maybe[TokenCounts] = Absent) derives Schema
+    case class TokenUsageNotification(threadId: String, turnId: String, tokenUsage: ThreadTokenUsage) derives Schema
     case class ResponseItem(`type`: String, role: Maybe[String] = Absent, content: Maybe[List[ContentItem]] = Absent)
         derives Schema
     case class RawResponseItemCompletedNotification(threadId: String, turnId: String, item: ResponseItem) derives Schema
@@ -363,6 +375,18 @@ private[completion] object CodexWire:
                 finalText.filter(_.nonEmpty).fold(pairs)(text => pairs.append(AssistantMessage(text)))
         end match
     end resultMessages
+
+    /** This wire's counts already use the module's field vocabulary; the subsets stay their reported
+      * values (`Present(0)` is a reported zero, not an absence).
+      */
+    def usageStats(counts: TokenCounts): AIStats =
+        AIStats(
+            inputTokens = counts.inputTokens.getOrElse(0L),
+            cachedInputTokens = counts.cachedInputTokens,
+            outputTokens = counts.outputTokens.getOrElse(0L),
+            reasoningOutputTokens = counts.reasoningOutputTokens,
+            turns = 1
+        )
 
     def decodeEvent[A: Schema](event: RpcEvent)(using Frame): A < Abort[AIGenException] =
         Structure.decode[A](event.params) match

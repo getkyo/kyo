@@ -60,8 +60,22 @@ private[completion] object AnthropicCompletion extends Completion:
                 case Completion.StopReason.Other(raw) =>
                     Log.debug(s"kyo-ai ${config.provider.name} unrecognized stop reason: $raw")
                 case _ => Kyo.unit
-        surfaced.andThen(Completion.Reply(Chunk(AssistantMessage(textOf(response), calls)), stop))
+        val usage = response.usage.fold(AIStats(0L, Absent, 0L, Absent, 1))(usageStats)
+        surfaced.andThen(Completion.Reply(Chunk(AssistantMessage(textOf(response), calls)), stop, usage))
     end read
+
+    /** This wire reports cache traffic BESIDE input_tokens, so the input total sums all three;
+      * creation counts as read (a fresh read that populates the cache), not as cached. Reasoning is
+      * never broken out of output_tokens on this wire, so the subset stays Absent.
+      */
+    private def usageStats(u: internal.Usage): AIStats =
+        AIStats(
+            inputTokens = u.input_tokens + u.cache_read_input_tokens.getOrElse(0L) + u.cache_creation_input_tokens.getOrElse(0L),
+            cachedInputTokens = u.cache_read_input_tokens,
+            outputTokens = u.output_tokens,
+            reasoningOutputTokens = Absent,
+            turns = 1
+        )
 
     private def textOf(response: Response): String =
         response.content.collect { case c if c.`type` == "text" => c.text.getOrElse("") }.mkString("")
@@ -98,7 +112,7 @@ private[completion] object AnthropicCompletion extends Completion:
         context: Context,
         resultSchema: JsonSchema,
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
-    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+    )(using Frame): Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         Completion.sseFragments(
             config,
             streamRequest(config, context, resultSchema, resultTool),
@@ -149,7 +163,26 @@ private[completion] object AnthropicCompletion extends Completion:
                         Completion.Delta.Fragment(d.partial_json.getOrElse(""))
                     case Present(d) if stopReason(d.stop_reason) == Completion.StopReason.MaxOutputTokens =>
                         Completion.Delta.OutputLimit
-                    case _ => Completion.Delta.Skip)
+                    case _ =>
+                        // Usage arrives split: message_start embeds the input side, message_delta the final
+                        // output count. Each side is emitted as a DISJOINT partial (the input partial zeroes
+                        // output and carries the turn count; the output partial carries output alone), so the
+                        // consumer's sum is exact regardless of what extra fields either event carries.
+                        event.message.flatMap(_.usage).fold(
+                            event.usage.flatMap(_.output_tokens).fold(Completion.Delta.Skip)(outputTokens =>
+                                Completion.Delta.Usage(AIStats(0L, Absent, outputTokens, Absent, 0))
+                            )
+                        )(u =>
+                            Completion.Delta.Usage(AIStats(
+                                inputTokens = u.input_tokens.getOrElse(0L) +
+                                    u.cache_read_input_tokens.getOrElse(0L) +
+                                    u.cache_creation_input_tokens.getOrElse(0L),
+                                cachedInputTokens = u.cache_read_input_tokens,
+                                outputTokens = 0L,
+                                reasoningOutputTokens = Absent,
+                                turns = 1
+                            ))
+                        ))
             case _ =>
                 Result.Failure(s"Not a parseable Anthropic streaming event: $line")
         end match
@@ -196,7 +229,12 @@ private[completion] object AnthropicCompletion extends Completion:
             thinking: Maybe[Thinking] = Absent,
             stream: Maybe[Boolean] = Absent
         ) derives Schema
-        case class Usage(input_tokens: Int, output_tokens: Int) derives Schema
+        case class Usage(
+            input_tokens: Long,
+            output_tokens: Long,
+            cache_read_input_tokens: Maybe[Long] = Absent,
+            cache_creation_input_tokens: Maybe[Long] = Absent
+        ) derives Schema
 
         // Streaming SSE event DTOs. Fields are Maybe to tolerate the non-tool event types (message_start,
         // content_block_start, text_delta, message_delta, message_stop, ping).
@@ -205,7 +243,21 @@ private[completion] object AnthropicCompletion extends Completion:
             partial_json: Maybe[String] = Absent,
             stop_reason: Maybe[String] = Absent
         ) derives Schema
-        case class StreamEvent(`type`: Maybe[String] = Absent, delta: Maybe[StreamDelta] = Absent) derives Schema
+        // message_start embeds the message object whose usage carries the input side; message_delta
+        // carries an event-level usage with the final output count. Both are decoded tolerantly.
+        case class StreamMessage(usage: Maybe[StreamUsage] = Absent) derives Schema
+        case class StreamUsage(
+            input_tokens: Maybe[Long] = Absent,
+            output_tokens: Maybe[Long] = Absent,
+            cache_read_input_tokens: Maybe[Long] = Absent,
+            cache_creation_input_tokens: Maybe[Long] = Absent
+        ) derives Schema
+        case class StreamEvent(
+            `type`: Maybe[String] = Absent,
+            delta: Maybe[StreamDelta] = Absent,
+            message: Maybe[StreamMessage] = Absent,
+            usage: Maybe[StreamUsage] = Absent
+        ) derives Schema
         case class Response(
             id: String,
             content: List[Content],

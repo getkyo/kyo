@@ -1045,6 +1045,132 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a streamed turn reports its usage" - {
+
+        // OpenAI ends the stream with one complete usage chunk (empty choices), sent because the
+        // request asks for it; the fold sums the elements into the turn's stats.
+        val openAIUsageChunk =
+            """{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":7},"completion_tokens_details":{"reasoning_tokens":0}}}"""
+
+        "OpenAI: the final usage chunk lands on the observed reply" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                server.enqueueStream(Chunk(
+                    argDelta("{\"resultValue\":\"str"),
+                    argDelta("eamed\"}"),
+                    openAIUsageChunk
+                )).andThen {
+                    LLM.run(config) {
+                        Observe.withStats(AI.stream[String].map(_.fold("")(_ + _)))
+                    }.map { (stats, text) =>
+                        assert(text == "streamed")
+                        assert(stats == AIStats(100L, Present(7L), 20L, Present(0L), 1), s"stats: $stats")
+                    }
+                }
+            }
+        }
+
+        "OpenAI: the streaming request asks for the usage chunk" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"x\"}"), openAIUsageChunk)).andThen {
+                    LLM.run(config)(AI.stream[String].map(_.run)).andThen {
+                        server.captured.map { caps =>
+                            assert(caps.nonEmpty)
+                            assert(
+                                caps(0).body.contains("\"include_usage\":true"),
+                                s"the request must carry stream_options.include_usage, body: ${caps(0).body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        "Anthropic: the split input and output sides sum to the turn's usage" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = anthropicServerConfig(server.baseUrl)
+                val messageStart =
+                    """{"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":1,"cache_read_input_tokens":30,"cache_creation_input_tokens":5}}}"""
+                val messageDelta =
+                    """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":38}}"""
+                server.enqueueStream(Chunk(
+                    messageStart,
+                    anthropicArgDelta("{\"resultValue\":[{\"text\":\"hi\"}]}"),
+                    messageDelta
+                )).andThen {
+                    LLM.run(config) {
+                        Observe.withStats(AI.stream[Answer].map(_.run))
+                    }.map { (stats, collected) =>
+                        assert(collected == Chunk(Answer("hi")))
+                        // input = 50 + 30 cache-read + 5 cache-creation; output = the final count, not the
+                        // message_start snapshot; one turn.
+                        assert(stats == AIStats(85L, Present(30L), 38L, Absent, 1), s"stats: $stats")
+                    }
+                }
+            }
+        }
+
+        "the observed reply is the recorded synthetic result pair" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                AtomicRef.init(Chunk.empty[kyo.ai.completion.Completion.Reply]).map { seen =>
+                    val record = Observe.init((_, reply) => seen.getAndUpdate(_.append(reply)).unit)
+                    server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"ok\"}"), openAIUsageChunk)).andThen {
+                        LLM.run(config)(AI.enable(record)(AI.stream[String].map(_.run))).andThen {
+                            seen.get.map { replies =>
+                                assert(replies.size == 1, s"one streamed turn fires once, got ${replies.size}")
+                                val calls = replies(0).messages.collect { case m: AssistantMessage => m.calls }.flattenChunk
+                                assert(calls.map(_.function) == Chunk("result_tool"), s"calls: $calls")
+                                assert(replies(0).usage.totalTokens == 120L, s"usage: ${replies(0).usage}")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "an abandoned stream fires no observer" in {
+            TestCompletionServer.runStreaming { server =>
+                val config = serverConfig(server.baseUrl)
+                AtomicRef.init(0).map { fired =>
+                    val count = Observe.init((_, _) => fired.getAndUpdate(_ + 1).unit)
+                    server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"abandoned\"}"), openAIUsageChunk)).andThen {
+                        LLM.run(config) {
+                            AI.enable(count) {
+                                AI.stream[String].map(stream => Scope.run(stream.take(0).run))
+                            }
+                        }.andThen(fired.get.map(n => assert(n == 0, s"an abandoned stream must fire nothing, got $n")))
+                    }
+                }
+            }
+        }
+    }
+
+    "a named instance's config override applies to its stream" in {
+        // The regression guard for the streaming session-env fix: before it, ai.stream read the scope
+        // config and an instance's override was silently ignored (ai.gen honored it).
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"routed\"}"))).andThen {
+                LLM.run(config) {
+                    AI.init(config.modelName("overridden-model")).map { ai =>
+                        ai.stream[String].map(_.fold("")(_ + _))
+                    }
+                }.map { text =>
+                    server.captured.map { caps =>
+                        assert(text == "routed")
+                        assert(caps.nonEmpty)
+                        assert(
+                            caps(0).body.contains("\"model\":\"overridden-model\""),
+                            s"the instance override must reach the wire, body: ${caps(0).body}"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     "a keepalive between fragments does not fail the stream" in {
         // A stream may hold the connection open with a payload-free event. It carries no chunk, and
         // reading it as a malformed one fails a generation that was proceeding normally.

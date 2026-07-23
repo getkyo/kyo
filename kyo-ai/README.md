@@ -345,6 +345,55 @@ def answerAll(questions: Chunk[Question]) =
 
 The given is the asymmetric `isolate`: on join it merges each shared instance's conversation prefix-aware (so the shared history is never duplicated) and adds fork-born instances as-is. You do not manage threads or per-conversation state isolation across branches; the isolate does both.
 
+## Tracking usage
+
+Every completed model turn reports what it spent. `Observe.withStats` collects it over a scope, alongside the result:
+
+```scala
+def measured(question: String): (AIStats, String) < (LLM & Sync) =
+    Observe.withStats(AI.gen[String](question))
+```
+
+`AIStats` carries `inputTokens`, `outputTokens`, and `turns`, plus two subsets the wire may break out: `cachedInputTokens` (part of `inputTokens` served from the provider's cache) and `reasoningOutputTokens` (part of `outputTokens` spent reasoning). The subsets are `Maybe`, so a wire that reports zero stays distinguishable from one that reports nothing; `add` aggregates any two.
+
+The varargs form breaks the count down by named instances. Every named instance appears, `AIStats.empty` if it completed no turn; spend by any other instance stays out of the breakdown (wrap in the untargeted form for the scope total):
+
+```scala
+def perAgent(researcher: AI, writer: AI): (Dict[AI, AIStats], String) < (LLM & Sync) =
+    Observe.withStats(researcher, writer) {
+        researcher.gen[String]("Gather the facts.").map(facts => writer.gen[String](facts))
+    }
+```
+
+Counting is a side effect at the source: each turn is recorded on the fiber that ran it, at the moment the wire reply is read. So a rolled-back `AI.forget` block, a losing `Async.race` branch, and an `AI.gen` one-shot all count the turns they completed, and nothing can un-spend them. A turn interrupted before its reply arrives is uncounted (no number ever reached this side of the wire), and an abandoned stream records nothing. One placement rule for streams: a scope-enabled observer covers a streamed turn only when the stream is consumed inside the enabling bracket, while an instance-enabled observer covers its instance's streams wherever they are consumed.
+
+Underneath sits the fifth enablement kind: `Observe`, a wire-tier counterpart of `Mode` that cannot change control flow. Where a mode receives the generation as a value and returns what the caller sees, an observer receives each completed turn's reply (its messages and usage) and returns `Unit`. Enable one on a scope or an instance like any other enablement:
+
+```scala
+def logged[A, S](v: A < (LLM & S)): A < (LLM & S) =
+    val log = Observe.init { (ai, reply) =>
+        AI.config.map(c => Log.info(s"${c.modelName}: ${reply.usage.totalTokens} tokens"))
+    }
+    AI.enable(log)(v)
+end logged
+```
+
+`AI.config` inside the callback is the config the turn ran under, instance overrides included, and `ai.context` is the conversation up to (not including) the turn. An observer whose capability row carries `Abort[E]` is a typed guardrail: its failure fails the generation it fired in, visible in the row at the enable site.
+
+```scala
+case class BudgetExceeded(spent: Long)
+
+def capped[A, S](limit: Long)(v: A < (LLM & S)): A < (LLM & S & Abort[BudgetExceeded] & Sync) =
+    AtomicRef.init(0L).map { spent =>
+        val guard = Observe.init { (_, reply) =>
+            spent.updateAndGet(_ + reply.usage.totalTokens).map { total =>
+                Abort.when(total > limit)(BudgetExceeded(total))
+            }
+        }
+        AI.enable(guard)(v)
+    }
+```
+
 ## Controlling conversation state
 
 Once a conversation has history, you sometimes need to run something against it without changing it, or run a clean turn that ignores it. `AI.forget` and `AI.fresh` isolate state for a block; each has a whole-scope form and a per-instance form.

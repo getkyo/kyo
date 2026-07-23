@@ -161,7 +161,7 @@ case class AIOutputLimitException(
     // the number that picks the lever: a stop that spent nearly its whole allowance reasoning is not short
     // of ceiling, and raising the limit buys another expensive stop; one that barely reasoned is genuinely
     // short.
-    reasoningTokens: Maybe[Int] = Absent
+    reasoningTokens: Maybe[Long] = Absent
 )(using Frame)
     extends AIException(
         s"$provider stopped generating for model $model at the output-token ceiling" +

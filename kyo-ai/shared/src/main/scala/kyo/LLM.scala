@@ -20,7 +20,8 @@ import kyo.kernel.*
   * @see
   *   [[kyo.AIException]] for the module's failure hierarchy
   * @see
-  *   [[kyo.Tool]], [[kyo.Thought]], [[kyo.Prompt]], [[kyo.Mode]] for the composable generation surface
+  *   [[kyo.Tool]], [[kyo.Thought]], [[kyo.Prompt]], [[kyo.Mode]], [[kyo.Observe]] for the composable
+  *   generation surface
   */
 sealed trait LLM extends ArrowEffect[LLM.internal.Op, Id]
 
@@ -54,7 +55,7 @@ object LLM:
     private[kyo] object State:
         def empty(config: Config): State =
             // A fresh owner per run (object identity, no counter); every instance minted in this run carries it.
-            State(Dict.empty, 0L, new AnyRef, AIEnv(Present(config), Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty))
+            State(Dict.empty, 0L, new AnyRef, AIEnv(Present(config), Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty))
     end State
 
     // An op targeting an instance from a DIFFERENT run (owner differs) can't address this run's slots, so
@@ -174,6 +175,25 @@ object LLM:
         Frame,
         Tag[Emit[Chunk[A]]]
     ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+        // The instance's enablements are layered onto the scope env for the stream's CREATION (config,
+        // prompts, request assembly), then restored, exactly as genLoop does for a generation: without
+        // this an instance's config override and enablements were silently ignored on the streaming
+        // path. The failure path restores too, mirroring genLoop's recover.
+        LLM.session(target).map { session =>
+            LLM.env.map { scopeEnv =>
+                LLM.setEnv(session.effectiveEnv(scopeEnv)).map { prevEnv =>
+                    Abort.recover[AIGenException](e => LLM.setEnv(prevEnv).andThen(Abort.fail(e))) {
+                        streamUnder(target, schema)
+                    }.map(stream => LLM.setEnv(prevEnv).andThen(stream))
+                }
+            }
+        }
+    end streamAgainst
+
+    private def streamUnder[A](target: AI, schema: Schema[A])(using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
         AI.config.map { config =>
             if config.provider.usesApiKey && config.apiKey.isEmpty then
@@ -213,7 +233,7 @@ object LLM:
                                 val consumed =
                                     if stringMode then consumePrefixFragments(fragments, schema)
                                     else consumeElementFragments(fragments, schema)
-                                consumed.map { produced =>
+                                consumed.map { (produced, usage) =>
                                     // Recorded HERE, after the fold completes, so the turn joins the
                                     // conversation exactly as a generated one and a later turn can read it; an
                                     // abandoned or part-way-failed stream records nothing rather than half a
@@ -221,16 +241,30 @@ object LLM:
                                     // fragments ARE its arguments), closed by a synthetic result: recording it
                                     // as prose instead teaches a weaker model to answer in text on a later turn
                                     // and pull away from the forced tool call a streamed result requires.
+                                    // Observers fire BEFORE the append, matching the generation path: an
+                                    // observer reading ai.context sees the conversation up to this turn, and a
+                                    // guardrail abort keeps the turn out of the transcript on both paths. An
+                                    // abandoned or failed stream fires nothing.
                                     Kyo.when(produced.nonEmpty) {
                                         val envelope =
                                             if stringMode then s"""{"resultValue":${Json.encode(produced)}}"""
                                             else s"""{"resultValue":$produced}"""
                                         // The context grows with the conversation, so its size is a per-turn
                                         // unique seed matching call to result.
-                                        val callId = CallId(s"stream-result-${context.messages.size}")
-                                        val call   = Call(callId, Completion.resultToolName, envelope)
-                                        LLM.append(target, AssistantMessage("", Chunk(call)))
-                                            .andThen(LLM.append(target, ToolMessage(callId, Json.encode("Result received."))))
+                                        val callId        = CallId(s"stream-result-${context.messages.size}")
+                                        val call          = Call(callId, Completion.resultToolName, envelope)
+                                        val callMessage   = AssistantMessage("", Chunk(call))
+                                        val resultMessage = ToolMessage(callId, Json.encode("Result received."))
+                                        // The turn count is structural on this path, as it already is on every
+                                        // non-streaming path: a fully consumed stream IS one turn, even when the
+                                        // wire emitted no usage element (a provider ignoring the usage request).
+                                        val turnUsage = if usage.turns == 0 then usage.copy(turns = 1) else usage
+                                        fireStreamObservers(
+                                            target,
+                                            Completion.Reply(Chunk(callMessage, resultMessage), Completion.StopReason.Completed, turnUsage)
+                                        )
+                                            .andThen(LLM.append(target, callMessage))
+                                            .andThen(LLM.append(target, resultMessage))
                                     }.unit
                                 }
                             }
@@ -238,7 +272,41 @@ object LLM:
                     }
                 }
         }
-    end streamAgainst
+    end streamUnder
+
+    /** Fires the target's effective observers for a fully consumed streamed turn. Runs at CONSUMPTION
+      * time, where the ambient env is the scope's, so the session env is merged here explicitly (and
+      * installed for the callbacks' duration, so `AI.config` inside one reads the turn's config),
+      * mirroring what genLoop provides on the generation path. The prior env is restored on EVERY
+      * exit: unlike the generation path's fire site (handler frame, where an abort can only surface
+      * past `LLM.run` and the env dies with the run), this site runs in the consumer's frames, where
+      * a guardrail abort can be recovered inside the run, so a skipped restore would leak the merged
+      * env into the rest of the run.
+      */
+    private def fireStreamObservers(target: AI, reply: Completion.Reply)(using Frame): Unit < (LLM & Sync) =
+        LLM.session(target).map { session =>
+            LLM.env.map { scopeEnv =>
+                val effective = session.effectiveEnv(scopeEnv)
+                // Deduped by identity: a stream consumed inside a generation of the SAME instance runs
+                // under genLoop's already-merged env, and re-merging the session here would fire that
+                // instance's observers twice for one turn.
+                val observers = effective.observe.distinct.asInstanceOf[Chunk[Observe[LLM]]]
+                Kyo.when(observers.nonEmpty) {
+                    LLM.setEnv(effective).map { prev =>
+                        // The observer cast above already erases each callback's failure types, so this
+                        // catch-all tells no additional lie: capture ANY outcome (typed guardrail
+                        // failures and panics included), restore the prior env, then re-raise. Abort
+                        // matches a failure by the VALUE's type (ConcreteTag.accepts), so the re-raised
+                        // guardrail error stays catchable as its concrete type; the Abort[Any] the
+                        // re-raise adds statically is hidden behind the same erasure boundary the
+                        // enablement machinery established.
+                        Abort.run[Any](Kyo.foreachDiscard(observers)(_(target, reply)))
+                            .map(outcome => LLM.setEnv(prev).andThen(Abort.get(outcome)))
+                            .asInstanceOf[Unit < (LLM & Sync)]
+                    }
+                }.unit
+            }
+        }
 
     // Decodes the {resultValue: ...} envelope from a partial SSE buffer, completing it so the parsed-so-far
     // prefix decodes, and returns the resultValue sub-value (Absent if the prefix does not decode yet).
@@ -301,13 +369,13 @@ object LLM:
     // decoded suffix so callers receive normal text chunks and can concatenate them into the final answer.
     // Fails if the stream ends with buffered args that never decoded.
     private[kyo] def consumePrefixFragments[A](
-        fragments: Stream[String, Async & Scope & Abort[AIStreamException]],
+        fragments: Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]],
         schema: Schema[A]
     )(using
         Frame,
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[String]]]
-    ): String < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
+        Tag[Emit[Chunk[Completion.StreamElement]]]
+    ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
         given Schema[A] = schema
         def emitText(delta: String): Unit < (Emit[Chunk[A]] & Abort[AIStreamException]) =
             Structure.decode[A](Structure.Value.Str(delta)) match
@@ -316,35 +384,44 @@ object LLM:
                     Abort.fail(AIStreamDeltaException(s"stream[String] decoded text chunk failed schema validation: $err"))
                 case Result.Panic(ex) =>
                     Abort.panic(ex)
-        fragments.fold(("", Maybe.empty[String])) { (state, fragment) =>
-            val (argsBuf, lastText) = state
-            val newBuf              = argsBuf + fragment
-            resultValueOf(newBuf) match
-                case Present(Structure.Value.Str(text)) =>
-                    lastText match
-                        case Present(prev) if text == prev =>
-                            Kyo.lift((newBuf, lastText))
-                        case Present(prev) if text.startsWith(prev) =>
-                            emitText(text.drop(prev.length)).andThen((newBuf, Present(text)))
-                        case Present(prev) =>
-                            Abort.fail(AIStreamDeltaException(
-                                s"stream[String] decoded a non-monotonic text prefix. Previous: $prev, next: $text"
-                            ))
+        fragments.fold(("", Maybe.empty[String], AIStats.empty)) { (state, element) =>
+            val (argsBuf, lastText, usage) = state
+            element match
+                case Completion.StreamElement.Usage(stats) =>
+                    // Wires emit disjoint partials (see Completion.StreamElement), so plain addition is
+                    // the whole accumulation.
+                    Kyo.lift((argsBuf, lastText, usage.add(stats)))
+                case Completion.StreamElement.Fragment(fragment) =>
+                    val newBuf = argsBuf + fragment
+                    resultValueOf(newBuf) match
+                        case Present(Structure.Value.Str(text)) =>
+                            lastText match
+                                case Present(prev) if text == prev =>
+                                    Kyo.lift((newBuf, lastText, usage))
+                                case Present(prev) if text.startsWith(prev) =>
+                                    emitText(text.drop(prev.length)).andThen((newBuf, Present(text), usage))
+                                case Present(prev) =>
+                                    Abort.fail(AIStreamDeltaException(
+                                        s"stream[String] decoded a non-monotonic text prefix. Previous: $prev, next: $text"
+                                    ))
+                                case Absent =>
+                                    emitText(text).andThen((newBuf, Present(text), usage))
+                        case Present(other) =>
+                            Abort.fail(
+                                AIStreamDeltaException(s"stream[String] expected a JSON string resultValue, got: ${Json.encode(other)}")
+                            )
                         case Absent =>
-                            emitText(text).andThen((newBuf, Present(text)))
-                case Present(other) =>
-                    Abort.fail(AIStreamDeltaException(s"stream[String] expected a JSON string resultValue, got: ${Json.encode(other)}"))
-                case Absent =>
-                    Kyo.lift((newBuf, lastText))
+                            Kyo.lift((newBuf, lastText, usage))
+                    end match
             end match
-        }.map { case (argsBuf, lastText) =>
+        }.map { case (argsBuf, lastText, usage) =>
             // A stream that ends without decoding a value failed, whether it buffered unusable bytes or
             // none. The empty case is reachable: a request the wire does not compel can be answered in
             // prose, producing no tool-call fragments, and reading that as success would return nothing to
             // a caller who asked for a value.
             if lastText.isEmpty then Abort.fail(AIStreamIncompleteException(argsBuf))
             // The text the model produced, handed back so the turn can be recorded from it.
-            else Kyo.lift(lastText.getOrElse(""))
+            else Kyo.lift((lastText.getOrElse(""), usage))
         }
     end consumePrefixFragments
 
@@ -353,13 +430,13 @@ object LLM:
     // is emitted exactly once, fully formed; a truncated tail is dropped and a complete element before a trailing
     // comma is kept.
     private[kyo] def consumeElementFragments[A](
-        fragments: Stream[String, Async & Scope & Abort[AIStreamException]],
+        fragments: Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]],
         schema: Schema[A]
     )(using
         Frame,
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[String]]]
-    ): String < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
+        Tag[Emit[Chunk[Completion.StreamElement]]]
+    ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
         given Schema[A] = schema
         def decodeElement(raw: String): A < Abort[AIStreamException] =
             Json.decode[Structure.Value](raw) match
@@ -368,20 +445,27 @@ object LLM:
                         case Result.Success(a) => a
                         case _                 => Abort.fail(AIStreamIncompleteException(raw))
                 case _ => Abort.fail(AIStreamIncompleteException(raw))
-        fragments.fold(("", 0)) { (state, fragment) =>
-            val (argsBuf, emitted) = state
-            val newBuf             = argsBuf + fragment
-            val ready              = completeElements(newBuf)
-            if ready.size <= emitted then Kyo.lift((newBuf, emitted))
-            else Kyo.foreach(ready.drop(emitted))(decodeElement).map(as => Emit.value(as).andThen((newBuf, ready.size)))
-        }.map { case (argsBuf, emitted) =>
+        fragments.fold(("", 0, AIStats.empty)) { (state, element) =>
+            val (argsBuf, emitted, usage) = state
+            element match
+                case Completion.StreamElement.Usage(stats) =>
+                    // Wires emit disjoint partials (see Completion.StreamElement), so plain addition is
+                    // the whole accumulation.
+                    Kyo.lift((argsBuf, emitted, usage.add(stats)))
+                case Completion.StreamElement.Fragment(fragment) =>
+                    val newBuf = argsBuf + fragment
+                    val ready  = completeElements(newBuf)
+                    if ready.size <= emitted then Kyo.lift((newBuf, emitted, usage))
+                    else Kyo.foreach(ready.drop(emitted))(decodeElement).map(as => Emit.value(as).andThen((newBuf, ready.size, usage)))
+            end match
+        }.map { case (argsBuf, emitted, usage) =>
             // Everything complete was emitted during the fold. An EMPTY array is a legitimate empty stream,
             // so the test is whether a resultValue arrived at all, not whether it held anything. A buffer
             // that never produced one is incomplete, including the empty buffer a prose-answered turn leaves.
             if emitted == 0 && resultValueOf(argsBuf).isEmpty then
                 Abort.fail(AIStreamIncompleteException(argsBuf))
             // The elements the model produced, as the resultValue they arrived in.
-            else Kyo.lift(resultValueOf(argsBuf).fold("")(Json.encode(_)))
+            else Kyo.lift((resultValueOf(argsBuf).fold("")(Json.encode(_)), usage))
         }
     end consumeElementFragments
 
@@ -635,6 +719,12 @@ object LLM:
                 }
             (reply, rejectionRepaired) = replyAndRepaired
             messages                   = reply.messages
+            // Observers fire on the raw wire reply, BEFORE the ceiling adjudication below: a turn that
+            // stops at the ceiling and aborts still spent its tokens, and firing after would lose exactly
+            // the expensive turns. The env here is the merged scope-plus-instance env genLoop installed,
+            // so instance observers cover this turn and `AI.config` inside a callback reads this turn's
+            // config. The erasure cast is the enablement pattern modes and tools use.
+            _ <- LLM.env.map(env => Kyo.foreachDiscard(env.observe.asInstanceOf[Chunk[Observe[LLM]]])(_(ai, reply)))
             // A ceiling stop is reported by the backend and adjudicated here, because neither layer alone
             // can tell a usable turn from a truncated one. A reply that stopped at the ceiling may still
             // carry a complete call worth running; what makes it unusable is having nothing to act on, or
@@ -665,7 +755,7 @@ object LLM:
                             config.modelName,
                             Present(config.effectiveMaxOutputTokens),
                             prior,
-                            reply.reasoningTokens
+                            reply.usage.reasoningOutputTokens
                         ))
                     }
                 }

@@ -287,4 +287,25 @@ class CodexWireTest extends kyo.test.Test[Any]:
         assert(empty.isEmpty, s"a resultless empty turn produces no messages: $empty")
     }
 
+    "thread/tokenUsage/updated decodes and maps the thread total onto AIStats" in {
+        // The fixture is the RAW wire JSON captured from a live app-server run, not a round-trip of the
+        // DTO, so a drift in the camelCase field names fails here. reasoningOutputTokens is reported
+        // even when zero, which must stay Present(0), not Absent.
+        val params = Json.decode[Structure.Value](
+            """{"threadId":"t1","turnId":"u1","tokenUsage":{
+              |"total":{"totalTokens":5963,"inputTokens":5958,"cachedInputTokens":2432,"outputTokens":5,"reasoningOutputTokens":0},
+              |"last":{"totalTokens":5963,"inputTokens":5958,"cachedInputTokens":2432,"outputTokens":5,"reasoningOutputTokens":0},
+              |"modelContextWindow":258400}}""".stripMargin.replace("\n", "")
+        ).getOrThrow
+        val event = CodexWire.RpcEvent("thread/tokenUsage/updated", params)
+        Abort.run[AIGenException](CodexWire.decodeEvent[CodexWire.TokenUsageNotification](event)).map { decoded =>
+            assert(decoded.isSuccess, s"the notification must decode: $decoded")
+            val stats = decoded.map(n => n.tokenUsage.total.map(CodexWire.usageStats))
+            assert(
+                stats == Result.succeed(Present(AIStats(5958L, Present(2432L), 5L, Present(0L), 1))),
+                s"got $stats"
+            )
+        }
+    }
+
 end CodexWireTest

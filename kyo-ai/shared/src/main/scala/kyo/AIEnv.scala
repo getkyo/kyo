@@ -3,7 +3,7 @@ package kyo
 import kyo.ai.Config
 
 /** The generation environment: a config plus the enablements layered for a scope or instance (prompt, tools,
-  * thoughts, modes). The scope's active env is threaded in `LLM.State`, read via `AI.env` / `AI.config` and
+  * thoughts, modes, observers). The scope's active env is threaded in `LLM.State`, read via `AI.env` / `AI.config` and
   * scoped via `AI.withConfig` and the `enable` methods; each `AI.Session` carries one as its instance env.
   *
   * `config` is `Maybe[Config]`: the scope env always holds `Present` (set at `LLM.run`), while an instance env
@@ -14,7 +14,8 @@ case class AIEnv(
     prompt: Prompt[Any],
     tools: Chunk[Tool[Any]],
     thoughts: Chunk[Thought[Any]],
-    mode: Chunk[Mode[Any]]
+    mode: Chunk[Mode[Any]],
+    observe: Chunk[Observe[Any]]
 ):
     /** Sets the config (`Present`), overriding any inherited one. */
     def config(config: Config): AIEnv = copy(config = Present(config))
@@ -39,9 +40,15 @@ case class AIEnv(
 
     /** Appends modes to the pipeline. */
     def addModes(modes: Chunk[Mode[Any]]): AIEnv = copy(mode = mode ++ modes)
+
+    /** Appends an observer. */
+    def addObserve(observe: Observe[Any]): AIEnv = copy(observe = this.observe.append(observe))
+
+    /** Appends observers. */
+    def addObserves(observes: Chunk[Observe[Any]]): AIEnv = copy(observe = observe ++ observes)
 end AIEnv
 
 object AIEnv:
     /** The empty env: no config override, no enablements. */
-    val empty: AIEnv = AIEnv(Absent, Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty)
+    val empty: AIEnv = AIEnv(Absent, Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty)
 end AIEnv

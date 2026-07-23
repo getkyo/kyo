@@ -375,4 +375,40 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "turnUsage prefers the terminal result event's aggregate" in {
+        // The result event sums the invocation's internal iterations (verified live), so it wins over
+        // the per-message assistant events, whose output counts are message-start snapshots.
+        val output =
+            """{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":29065}}}
+              |{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":10,"output_tokens":38,"cache_read_input_tokens":5,"cache_creation_input_tokens":29065}}""".stripMargin
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+            assert(
+                result == Result.succeed(AIStats(29080L, Present(5L), 38L, Absent, 1)),
+                s"the aggregate must win: input 10+5+29065, cached 5, output 38, one turn; got $result"
+            )
+        }
+    }
+
+    "turnUsage falls back to assistant events deduplicated by message id" in {
+        // The kill-on-capture path never sees the result event, and the CLI re-emits an event per
+        // message (verified live): the same id must count once, distinct ids sum.
+        val output =
+            """{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":100}}}
+              |{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":100}}}
+              |{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[],"usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}""".stripMargin
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+            assert(
+                result == Result.succeed(AIStats(162L, Present(2L), 11L, Absent, 1)),
+                s"msg_1 counts once (112 in, 4 out) plus msg_2 (50 in, 7 out), one turn; got $result"
+            )
+        }
+    }
+
+    "turnUsage on output with no usage anywhere reports one turn of zeros" in {
+        val output = """{"type":"system","subtype":"init","session_id":"s"}"""
+        Abort.run[AIGenException](ClaudeCodeWire.turnUsage(output)).map { result =>
+            assert(result == Result.succeed(AIStats(0L, Absent, 0L, Absent, 1)), s"got $result")
+        }
+    }
+
 end ClaudeCodeWireTest
