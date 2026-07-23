@@ -51,17 +51,17 @@ final case class Config private (
 
     /** Replaces the provider's offline tiktoken default with a user token accountant. Occupancy
       * anchors on the provider's reported total either way; the tokenizer counts for
-      * apportionment (§5a), where exactness is a quality property, not a safety one.
+      * apportionment, where exactness is a quality property, not a safety one.
       */
     def tokenizer(tokenizer: Tokenizer): Config = copy(tokenizer = Present(tokenizer))
 
-    // The output reservation counted once, on the hard-limit side (§5a, §7): the user's maxTokens
+    // The output reservation counted once, on the hard-limit side: the user's maxTokens
     // when set, else a conservative default so window - reservation never over-reads what the
     // provider actually has left for input.
     private[kyo] def effectiveMaxOutput: Int =
         maxTokens.getOrElse(Config.defaultMaxOutputReservation)
 
-    // effectiveHigh = min(highWatermark * window, contextCeiling): the boundary trigger (§4, §6).
+    // effectiveHigh = min(highWatermark * window, contextCeiling): the boundary trigger.
     private[kyo] def effectiveHigh: Int =
         val frac = (compaction.highWatermark * modelMaxTokens).toInt
         compaction.contextCeiling match
@@ -69,17 +69,17 @@ final case class Config private (
             case Absent           => frac
     end effectiveHigh
 
-    // effectiveLow = lowWatermark * effectiveHigh: the render-down target pass 2 stops at (§4, §6).
+    // effectiveLow = lowWatermark * effectiveHigh: the render-down target pass 2 stops at.
     private[kyo] def effectiveLow: Int = (compaction.lowWatermark * effectiveHigh).toInt
 
-    // The prepare line: prepareWatermark * effectiveHigh, where speculative compaction arms (§5f).
+    // The prepare line: prepareWatermark * effectiveHigh, where speculative compaction arms.
     private[kyo] def prepareLine: Int = (compaction.prepareWatermark * effectiveHigh).toInt
 
-    // The overflow backstop: hardLimit * (window - maxOutputTokens), the reservation counted once (§7).
+    // The overflow backstop: hardLimit * (window - maxOutputTokens), the reservation counted once.
     private[kyo] def hardLimitTokens: Int =
         (compaction.hardLimit * (modelMaxTokens - effectiveMaxOutput)).toInt
 
-    // Construction-time axis validation (§6): the full ordering
+    // Construction-time axis validation: the full ordering
     //   effectiveLow < prepareWatermark*effectiveHigh <= effectiveHigh < hardLimit*(window-maxOutput)
     // (the middle collapsing to equality only at prepareWatermark == 1.0). A reordering override
     // fails here with the violated inequality named, never at a boundary; the override that would
@@ -112,12 +112,11 @@ private[kyo] object provider extends StaticFlag[String]("")
 
 object Config:
 
-    /** The grouped compaction knobs (§6). Every watermark is a fraction; the occupancy axis
+    /** The grouped compaction knobs. Every watermark is a fraction; the occupancy axis
       * they derive is validated at Config construction, never at a boundary. Per-field builders
       * clamp each knob to its own range; the cross-field ordering is enforced by
-      * Config.validatedAxis. The raw-eviction watermark pair (§10.5) rides rawRetentionCap
-      * internally and is NOT on this surface. Provisional starting values, replay-tunable
-      * (§4, §6, owner-confirm).
+      * Config.validatedAxis. The raw-eviction watermark pair rides rawRetentionCap
+      * internally and is NOT on this surface. Default starting values, tunable.
       */
     final case class Compaction(
         highWatermark: Double = 0.5,                   // boundary trigger: fraction of the window
@@ -127,14 +126,14 @@ object Config:
         hardLimit: Double = 0.9,                       // overflow backstop vs window - maxOutputTokens; clamped > 0
         driftThreshold: Maybe[Double] = Present(0.15), // relevance trigger fraction of effectiveLow; Absent = size-only
         summarizer: Maybe[Config] = Absent,            // Absent = warm route, provider.small degraded; Present = pinned fills
-        rawRetentionCap: Maybe[Int] = Absent           // Absent = several window-widths; raw-memory backstop (§10.5)
+        rawRetentionCap: Maybe[Int] = Absent           // Absent = several window-widths; raw-memory backstop
     ):
         def highWatermark(f: Double): Compaction    = copy(highWatermark = f.max(0.0).min(1.0))
         def contextCeiling(tokens: Int): Compaction = copy(contextCeiling = Present(tokens.max(1)))
         def noContextCeiling: Compaction            = copy(contextCeiling = Absent)
         def lowWatermark(f: Double): Compaction     = copy(lowWatermark = f.max(0.0).min(1.0))
         // prepareWatermark clamps to (lowWatermark, 1.0]: above lowWatermark so a boundary's
-        // render-down always disarms preparation, and 1.0 turns speculative compaction off (§6).
+        // render-down always disarms preparation, and 1.0 turns speculative compaction off.
         def prepareWatermark(f: Double): Compaction = copy(prepareWatermark = f.max(math.nextUp(lowWatermark)).min(1.0))
         def hardLimit(f: Double): Compaction        = copy(hardLimit = f.max(math.nextUp(0.0)).min(1.0))
         // driftThreshold Present clamps to (0.0, 1.0); Absent disables the relevance trigger.
@@ -148,9 +147,9 @@ object Config:
         val default: Compaction = Compaction()
 
     // The output reservation counted once on the hard-limit side when the user pins no
-    // maxTokens (§5a, §7). Small enough that the default axis stays valid for every shipped
+    // maxTokens. Small enough that the default axis stays valid for every shipped
     // catalog window (16,384 up).
-    private[kyo] val defaultMaxOutputReservation: Int = 4096 // provisional, replay-tunable, v4 §5a, owner-confirm
+    private[kyo] val defaultMaxOutputReservation: Int = 4096 // conservative default; tunable
 
     private[kyo] def read(key: String)(using Frame): Maybe[String] < Sync =
         for

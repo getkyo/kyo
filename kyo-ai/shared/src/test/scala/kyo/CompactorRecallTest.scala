@@ -5,7 +5,7 @@ import Tool.internal.RunOutcome
 import kyo.ai.*
 import kyo.ai.Context.*
 
-/** Recall aspect of the default Compactor (§5e): verbatim role-tagged restoration bound to the calling
+/** Recall aspect of the default Compactor: verbatim role-tagged restoration bound to the calling
   * instance, the decaying-seed reinstatement, its decay and re-demotion, and the conditional clearing of a
   * reinstated recall exchange.
   */
@@ -19,7 +19,7 @@ class CompactorRecallTest extends kyo.test.Test[Any]:
     def cfg: Config                                            = Config.OpenAI.default.apiKey("k").model(Config.OpenAI, "m", 200000)
     def eps(a: Double, b: Double, tol: Double = 1e-9): Boolean = math.abs(a - b) < tol
 
-    "INV-036 recall(id) restores the covered region verbatim, role-tagged, own instance only" in {
+    "recall(id) restores the covered region verbatim, role-tagged, own instance only" in {
         // The view carries a pointer marker for region 14 (origin start=14, end=17); raw holds the 3 originals.
         val head   = Chunk.from((0 until 14).map(i => am(s"m$i")))
         val region = Chunk[Message](am("ASSISTANT PAYLOAD"), tm("c1", "TOOL PAYLOAD"), um("USER PAYLOAD"))
@@ -46,7 +46,7 @@ class CompactorRecallTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-037 a fresh recall reinstates the region verbatim at the next boundary" in {
+    "a fresh recall reinstates the region verbatim at the next boundary" in {
         val raw   = Chunk.from((0 until 16).map(i => am(s"region $i")))
         val units = Default.group(raw)
         // recall(14) recorded stamped with the current boundary counter (5): decay exponent is 0 at this boundary.
@@ -60,7 +60,7 @@ class CompactorRecallTest extends kyo.test.Test[Any]:
         assert(contribution > keepBase, "the recall seed lifts region 14's liveness above the floored keep, reinstating it verbatim")
     }
 
-    "INV-037b the recall boost decays and the region re-demotes after interest cools" in {
+    "the recall boost decays and the region re-demotes after interest cools" in {
         val raw   = Chunk.from((0 until 16).map(i => am(s"region $i")))
         val units = Default.group(raw)
         def contribAt(n: Int): Double =
@@ -76,7 +76,7 @@ class CompactorRecallTest extends kyo.test.Test[Any]:
         assert(contribAt(4) < keepBase, "once it falls below the floored keep, the region re-demotes (the decay replaces a promotion flag)")
     }
 
-    "INV-038 the recall exchange is cleared when reinstated, kept when pressure prevents it" in {
+    "the recall exchange is cleared when reinstated, kept when pressure prevents it" in {
         // raw holds region 14 plus a tail recall exchange: an assistant recall call fused with its tool result.
         val head       = Chunk.from((0 until 14).map(i => am(s"m$i")))
         val region14   = am("REGION 14 CONTENT")

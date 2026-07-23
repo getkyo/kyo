@@ -90,7 +90,7 @@ private[completion] object AnthropicCompletion extends Completion:
         )
     end streamFragments
 
-    // Anthropic reports usage with no opt-in (§5a:370): the message_start event carries
+    // Anthropic reports usage with no opt-in: the message_start event carries
     // message.usage.input_tokens (the request total the anchor needs); message_delta carries only a
     // cumulative output_tokens. Decode the message_start usage and convert the snake_case wire usage to
     // the public Completion.Usage (mirroring the gen conversion at :53-56, no cached tokens); any other
@@ -170,7 +170,7 @@ private[completion] object AnthropicCompletion extends Completion:
         // is an `input_json_delta` carrying a `partial_json` fragment. Fields are Maybe to tolerate the other
         // event types (message_start, content_block_start, text_delta, message_delta, message_stop, ping).
         case class StreamDelta(`type`: Maybe[String] = Absent, partial_json: Maybe[String] = Absent) derives Schema
-        // The streaming usage shape (§5a:370): message_start carries message.usage.input_tokens; fields
+        // The streaming usage shape: message_start carries message.usage.input_tokens; fields
         // are Maybe to tolerate every other event type. Distinct from the gen internal.Usage (required
         // fields) so a partial streaming event decodes.
         case class StreamUsage(input_tokens: Maybe[Int] = Absent, output_tokens: Maybe[Int] = Absent) derives Schema

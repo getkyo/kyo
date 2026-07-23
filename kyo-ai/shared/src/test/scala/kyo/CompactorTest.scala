@@ -57,7 +57,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== byte-stability ====
 
-    "INV-004 the boundary render is a pure deterministic function of its frozen inputs" in {
+    "the boundary render is a pure deterministic function of its frozen inputs" in {
         val ctx = demotable()
         renderWith(ctx, cfg(16384)).map { a =>
             renderWith(ctx, cfg(16384)).map { b =>
@@ -66,7 +66,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-004-absence below the trigger the seam invokes NO render and re-serves the reference-identical Context" in {
+    "below the trigger the seam invokes NO render and re-serves the reference-identical Context" in {
         // A render-counting probe delegating to the default; two below-trigger requests pass through the seam.
         AtomicInt.init(0).map { renders =>
             val probe = new Compactor[Any]:
@@ -108,7 +108,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== write-once summary slot ====
 
-    "INV-021 the summary slot is write-once (a second write is discarded)" in {
+    "the summary slot is write-once (a second write is discarded)" in {
         val state = CompactionState().withSummary(3, 7, "first").withSummary(3, 7, "second")
         assert(state.summaryOf(3, 7) == Present("first"), "the first bytes written to a slot are permanent (SPAN-FREEZING ii)")
         assert(state.summaryOf(3, 8).isEmpty, "a different span range has its own empty slot")
@@ -116,7 +116,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the keep floor ====
 
-    "INV-031 the keep floor holds at pressure <= 1 (the drift-boundary case)" in {
+    "the keep floor holds at pressure <= 1 (the drift-boundary case)" in {
         assert(eps(keep(1.0), keepBase), "keep(1) == keepBase")
         assert(eps(keep(math.max(0.5, 1.0)), keepBase), "callers floor the pressure at 1, so keep never falls below its base")
         assert(keep(2.0) > keepBase, "keep is monotone increasing above pressure 1")
@@ -125,7 +125,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== Compactor.none ====
 
-    "INV-052 Compactor.none serves raw unchanged" in {
+    "Compactor.none serves raw unchanged" in {
         val ctx = demotable()
         renderWith(ctx, cfg(16384), Compactor.none).map { served =>
             assert(served == ctx.raw, "Compactor.none serves ctx.raw byte-for-byte (no demotion, no markers)")
@@ -135,10 +135,10 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the summarizer route knob ====
 
-    "INV-052b the summarizer route knob selects warm / provider.small / pinned" in {
+    "the summarizer route knob selects warm / provider.small / pinned" in {
         val default = cfg(200000)
         assert(default.compaction.summarizer.isEmpty, "the default summarizer knob is Absent (the warm route)")
-        // Absent resolves to the warm route with provider.small as the degraded fallback (fills land P3).
+        // Absent resolves to the warm route with provider.small as the degraded fallback.
         assert(default.provider.small.modelName.nonEmpty, "provider.small is the degraded fallback route")
         val pinned = Config.OpenAI.gpt_4o_mini
         val set    = default.compaction(_.summarizer(pinned))
@@ -147,7 +147,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the compaction path is embedding-free ====
 
-    "INV-014 the compaction path is embedding-free" in {
+    "the compaction path is embedding-free" in {
         // The render produces a valid view with no reference to any Embedding type, and the EdgeKind enum
         // carries no Semantic case (its analysis edges are Dependency/Relatedness, never an embedding edge).
         val kinds = EdgeKind.values.toList
@@ -158,19 +158,22 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-014 the main sources reference no Embedding / EdgeKind.Semantic / .embedding".onlyJvm in {
+    "the main sources reference no Embedding / EdgeKind.Semantic / .embedding".notJs in {
         val forbidden = List("Embedding", "EdgeKind.Semantic", ".embedding")
         List("Compactor.scala", "ai/Context.scala", "ai/Tokenizer.scala").foreach { name =>
             val text = readMainSource(name)
             forbidden.foreach(tokenName =>
-                assert(!text.contains(tokenName), s"$name unexpectedly references $tokenName (INV-014 / R-015)")
+                assert(!text.contains(tokenName), s"$name unexpectedly references $tokenName")
             )
         }
     }
 
+    // Throws when no candidate path resolves: this leaf is .notJs gated, so the source tree is always
+    // reachable on the platforms it runs on, and an unlocatable file is a test-setup failure surfaced
+    // loudly rather than a silent skip of the hygiene check.
     private def readMainSource(fileName: String): String =
         val relative   = s"shared/src/main/scala/kyo/$fileName"
-        val candidates = List(new java.io.File(relative), new java.io.File("kyo-ai", relative), new java.io.File(s"../$relative"))
+        val candidates = Chunk(new java.io.File(relative), new java.io.File("kyo-ai", relative), new java.io.File(s"../$relative"))
         candidates.find(_.exists()) match
             case Some(file) => scala.io.Source.fromFile(file, "UTF-8").mkString
             case None       => throw new java.io.FileNotFoundException(s"could not locate $fileName from ${sys.props("user.dir")}")
@@ -178,7 +181,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== usage-anchored occupancy ====
 
-    "INV-015 occupancy = last reported total + offline suffix estimate" in {
+    "occupancy = last reported total + offline suffix estimate" in {
         val msgs   = Chunk.from((0 until 10).map(i => sm(s"message number $i")))
         val ctx    = Context(msgs).withCompaction(CompactionState(lastUsage = Present(50000), lastUsageRawSize = 8))
         val suffix = msgs.drop(8).foldLeft(0)((n, m) => n + offlineEstimate(m))
@@ -186,7 +189,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(occupancy(ctx) > 50000, "the two messages appended since the anchor add their offline estimate")
     }
 
-    "INV-015b the next reported total replaces the suffix estimate" in {
+    "the next reported total replaces the suffix estimate" in {
         val msgs   = Chunk.from((0 until 12).map(i => sm(s"message number $i")))
         val first  = Context(msgs).withCompaction(CompactionState(lastUsage = Present(50000), lastUsageRawSize = 8))
         val occ1   = occupancy(first)
@@ -195,7 +198,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(occupancy(second) != occ1, "the estimate is replaced by the exact total, not accumulated on top of it")
     }
 
-    "INV-015c a mid-session provider switch re-anchors in the new provider's units" in {
+    "a mid-session provider switch re-anchors in the new provider's units" in {
         val msgs      = Chunk.from((0 until 10).map(i => sm(s"message number $i")))
         val anchoredA = Context(msgs).withCompaction(CompactionState(lastUsage = Present(50000), lastUsageRawSize = 8))
         val switchedB = anchoredA.withCompaction(anchoredA.compactionState.withUsage(42000, 10))
@@ -205,7 +208,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== output reservation counted once ====
 
-    "INV-017 maxOutputTokens is counted once, on the hard-limit side only" in {
+    "maxOutputTokens is counted once, on the hard-limit side only" in {
         val base = cfg(200000).maxTokens(10000)
         assert(base.hardLimitTokens == (0.9 * (200000 - 10000)).toInt, "hardLimit == 0.9*(window - maxTokens) == 171000")
         assert(base.hardLimitTokens == 171000, s"the hard-limit bound is 171000, got ${base.hardLimitTokens}")
@@ -220,7 +223,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== regions ====
 
-    "INV-019 regions fuse an assistant message with its answering tool results" in {
+    "regions fuse an assistant message with its answering tool results" in {
         val raw = Chunk[Message](
             sm("s"),
             um("u"),
@@ -242,7 +245,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-019b regions resolve by ordinal, not position (a gap survives)" in {
+    "regions resolve by ordinal, not position (a gap survives)" in {
         val raw =
             Chunk[Message](am("a", call("c1", "f", "{}")), tm("c1", "r1"), am("standalone"), am("b", call("c2", "g", "{}")), tm("c2", "r2"))
         val units = Default.group(raw)
@@ -257,7 +260,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== structural graph edges ====
 
-    "INV-023 adjacency + reference edges are deterministic, reference damped by document frequency" in {
+    "adjacency + reference edges are deterministic, reference damped by document frequency" in {
         val raw = Chunk[Message](
             am("the intro line"),
             am("the second line"),
@@ -280,7 +283,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(ref3.isEmpty, "no Reference edge is minted for the common word `the`")
     }
 
-    "INV-023b sentence-initial capitalized words never mint identifiers" in {
+    "sentence-initial capitalized words never mint identifiers" in {
         val toks = Default.extractTokens("The poolSize is 8").toSet
         assert(!toks.contains("The"), "`The` has no interior signal, so it is not extracted as an identifier")
         assert(toks.contains("poolSize"), "a camelCase token with interior signal is extracted")
@@ -292,7 +295,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== PPR transitivity ====
 
-    "INV-026 PPR transitive reachability keeps a depth-2 reference chain's far end" in {
+    "PPR transitive reachability keeps a depth-2 reference chain's far end" in {
         val units = Chunk(reg(1), reg(2), reg(3))
         val g     = graphOf((3, List(Edge(2, EdgeKind.Reference, 1.0))), (2, List(Edge(1, EdgeKind.Reference, 1.0))))
         val seed  = Dict[Int, Double]((3, 1.0))
@@ -303,7 +306,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== keyed supersession ====
 
-    "INV-027 keyed supersession penalizes the earlier region and repoints edges" in {
+    "keyed supersession penalizes the earlier region and repoints edges" in {
         val units = Chunk(reg(0), reg(1), reg(2))
         val keys  = Dict[Int, (String, Tool.Kind)]((0, ("db.yaml", Tool.Kind.Read)), (2, ("db.yaml", Tool.Kind.Write)))
         val sup   = Default.supersession(units, keys)
@@ -328,7 +331,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the seed set ====
 
-    "INV-028 the liveness seed set is exactly the specified nodes" in {
+    "the liveness seed set is exactly the specified nodes" in {
         val raw = Chunk[Message](
             sm("system head"),                            // 0 system head
             um("the first task"),                         // 1 first user (task)
@@ -357,7 +360,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     def spanShape(spans: Chunk[Span]): List[(Int, Int, List[Int])] =
         spans.toList.map(sp => (sp.start, sp.end, sp.regionIds.toList))
 
-    "INV-020 span identity is a deterministic model-free function of frozen content" in {
+    "span identity is a deterministic model-free function of frozen content" in {
         val ctx   = closedCtx(Chunk.from((0 until 4).map(i => tok(am(s"region $i " + ("x" * 50)), 500))))
         val units = Default.group(ctx.raw)
         val s1    = Default.formSpans(units, ctx.raw, cfg(16384))
@@ -369,7 +372,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-020b a span closes early at the formation cap (4000 tokens / 8 regions)" in {
+    "a span closes early at the formation cap (4000 tokens / 8 regions)" in {
         val ctx   = closedCtx(Chunk.from((0 until 10).map(i => tok(am(s"r$i " + ("x" * 50)), 600))))
         val units = Default.group(ctx.raw)
         val spans = Default.formSpans(units, ctx.raw, cfg(16384))
@@ -389,7 +392,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-020c a span splits at a user-turn boundary" in {
+    "a span splits at a user-turn boundary" in {
         val ctx = closedCtx(Chunk[Message](tok(um("user A"), 300), tok(am("asst 1"), 300), tok(um("user B"), 300), tok(am("asst 2"), 300)))
         val spans = Default.formSpans(Default.group(ctx.raw), ctx.raw, cfg(16384))
         assert(
@@ -400,7 +403,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(!spans.exists(sp => sp.start < 2 && sp.end > 2), "no span straddles the user-turn boundary")
     }
 
-    "INV-022 no span covers tail-band content" in {
+    "no span covers tail-band content" in {
         val prefix  = Chunk.from((0 until 5).map(i => tok(am(s"r$i " + ("x" * 50)), 600)))
         val ctx     = closedCtx(prefix)
         val spans   = Default.formSpans(Default.group(ctx.raw), ctx.raw, cfg(16384))
@@ -410,7 +413,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(spans.forall(sp => !(sp.start <= tailIdx && tailIdx < sp.end)), "no span range intersects the tail-band region index")
     }
 
-    "INV-022b a region with an unresolved tool call never ages into the closed prefix" in {
+    "a region with an unresolved tool call never ages into the closed prefix" in {
         val prefix  = Chunk[Message](tok(am("resolved a"), 400), tok(am("open call " + ("x" * 50), call("c1", "f", "{}")), 400))
         val ctx     = closedCtx(prefix)
         val ordered = Default.group(ctx.raw).toList.sortBy(_.id)
@@ -421,7 +424,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== project the three production detail levels ====
 
-    "INV-029 three production detail levels, verbatim/summary/pointer" in {
+    "three production detail levels, verbatim/summary/pointer" in {
         val raw       = Chunk[Message](am("region zero VERBATIM"), am("region one MID"), am("region two COLD A"), am("region three COLD B"))
         val units     = Default.group(raw)
         val spans     = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)), Span(2, 4, Chunk(2, 3)))
@@ -437,7 +440,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-029b the pointer descriptor carries the tool name, compaction key, snippet, tokens and recall id, never a bare byte count" in {
+    "the pointer descriptor carries the tool name, compaction key, snippet, tokens and recall id, never a bare byte count" in {
         val raw   = Chunk[Message](am("get metrics", call("c1", "httpGet", "{}")), tm("c1", "connections: 5"))
         val units = Default.group(raw)
         val keys  = Dict[Int, (String, Tool.Kind)]((0, ("metrics.connections", Tool.Kind.Read)))
@@ -456,7 +459,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the cut ====
 
-    "INV-030 pass 1 is unconditional and relevance-complete" in {
+    "pass 1 is unconditional and relevance-complete" in {
         val raw    = Chunk[Message](am("region a"), am("region b"))
         val units  = Default.group(raw)
         val spans  = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)))
@@ -466,7 +469,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(dem.get(1) == Present(Level.Summary), "pass 1 runs to exhaustion; pass 2 is inert at/under effectiveLow")
     }
 
-    "INV-030b pass 2 is conditional and stops at effectiveLow" in {
+    "pass 2 is conditional and stops at effectiveLow" in {
         val ctx = demotable()
         renderWith(ctx, cfg(16384)).map { tight =>
             renderWith(ctx, cfg(200000)).map { loose =>
@@ -478,7 +481,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== span pinning ====
 
-    "INV-032 any at-or-above-keep member pins the whole span verbatim" in {
+    "any at-or-above-keep member pins the whole span verbatim" in {
         val keepFloor = keep(1.3) // 0.03 + 0.06*0.3 == 0.048
         assert(eps(keepFloor, 0.048), s"the floored keep at pressure 1.3 is 0.048, got $keepFloor")
         val hot    = Span(0, 2, Chunk(0, 1))
@@ -495,7 +498,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-005 a span with an at-or-above-keep member is pinned verbatim while an all-below-keep sibling demotes" in {
+    "a span with an at-or-above-keep member is pinned verbatim while an all-below-keep sibling demotes" in {
         // two single-region spans; A has one member at/above the floored keep, B has every member below it.
         val raw       = Chunk[Message](tok(am("span A hot member"), 2), tok(am("span B cold one"), 2))
         val units     = Default.group(raw)
@@ -515,7 +518,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== terse (descent only) ====
 
-    "INV-033 terse renders the marker + a fixed prefix of the summary bytes (descent only)" in {
+    "terse renders the marker + a fixed prefix of the summary bytes (descent only)" in {
         val sp        = Span(3, 7, Chunk(3, 4, 5, 6))
         val raw       = Chunk.from((0 until 8).map(i => am(s"r$i " + ("y" * 20))))
         val units     = Default.group(raw)
@@ -531,7 +534,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(Default.tersePrefix(short) == short, "a summary at/under the terse budget renders whole (a zero-saving step)")
     }
 
-    "INV-033-blobless a blob-less span steps verbatim->pointer, never terse; no fill is bought" in {
+    "a blob-less span steps verbatim->pointer, never terse; no fill is bought" in {
         val raw    = Chunk.from((0 until 4).map(i => tok(am(s"r$i " + ("x" * 100)), 2000)))
         val units  = Default.group(raw)
         val spans  = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)), Span(2, 3, Chunk(2)), Span(3, 4, Chunk(3)))
@@ -547,7 +550,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the two elisions ====
 
-    "INV-034 role 1 the fixed-size substitute elision at the summary level" in {
+    "role 1 the fixed-size substitute elision at the summary level" in {
         val sp    = Span(0, 2, Chunk(0, 1))
         val raw   = Chunk[Message](am("region content alpha line one\nline two"), am("region content beta"))
         val units = Default.group(raw)
@@ -558,7 +561,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(m1.content.contains("summary unavailable"), "the summary level renders the fixed-size substitute elision (role 1)")
     }
 
-    "INV-034 role 2 the generous exact-surface elision of a pinned oversized unit" in {
+    "role 2 the generous exact-surface elision of a pinned oversized unit" in {
         val huge   = "H" * (generousElisionChars + 5000)
         val view   = Chunk[Message](am("small one"), tok(am(huge), 999999), am("small two"))
         val elided = Default.elideOversizedTail(view, 1000)
@@ -570,7 +573,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the forced path ====
 
-    "INV-035 the forced path pointers all then elides the oversized tail to fit" in {
+    "the forced path pointers all then elides the oversized tail to fit" in {
         val raw = Chunk.from((0 until 6).map(i => tok(am(s"r$i " + ("x" * 100)), 1500)))
             .append(um("q")).append(am("GIANT " + ("x" * 30000)))
         val config = cfg(16384)
@@ -586,7 +589,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-035b the forced path aborts AIContextOverflowException only when even that cannot fit" in {
+    "the forced path aborts AIContextOverflowException only when even that cannot fit" in {
         // Two unresolved regions (open tool calls) are never demotable and never pointered; the forced path
         // elides only the single largest, so the second oversized unit still breaks the hard limit -> abort.
         val raw = Chunk[Message](
@@ -604,7 +607,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "§5d:942-945 a forced-path pointer descriptor carries the compaction key" in {
+    "a forced-path pointer descriptor carries the compaction key" in {
         // one demotable tool-call region (an assistant httpGet call fused with its result) with a large stamp,
         // a keys map naming its compaction key, and a hard limit small enough that forced pointers the region.
         val raw = Chunk[Message](
@@ -630,14 +633,14 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the summary output cap ====
 
-    "§10.4 the fill config caps summary output at the provisional summaryOutputCap over both the default and a user-summarizer path" in {
+    "the fill config caps summary output at summaryOutputCap over both the default and a user-summarizer path" in {
         // default path: summarizer Absent, so resolveFillConfig falls to provider.small and then caps.
         val defaultResolved = Default.resolveFillConfig(cfg())
         assert(
             defaultResolved.maxTokens == Present(summaryOutputCap),
             s"the default fill config is capped at summaryOutputCap, got ${defaultResolved.maxTokens}"
         )
-        assert(defaultResolved.maxTokens == Present(512), "the provisional cap is 512")
+        assert(defaultResolved.maxTokens == Present(512), "the cap is 512")
         // user-summarizer path: an explicit summarizer with its own 2048 cap is overridden by the mechanism cap.
         val userSummarizer = cfg().maxTokens(2048)
         val userConfig     = cfg().compaction(_.summarizer(userSummarizer))
@@ -651,7 +654,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the view is held under the hard limit ====
 
-    "INV-006 the rendered view is held at or under the hard limit" in {
+    "the rendered view is held at or under the hard limit" in {
         // occupancy well above effectiveLow (and above the hard limit) with several demotable spans; the
         // demotion loop must drive the view under the hard limit. Served under the mock wire, never a live
         // provider (render is model-free, so no completion is scripted and none is ever issued).
@@ -674,7 +677,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== the completion path populates apportioned stamps the demotion loop reads ====
 
-    "INV-016c the completion path populates apportioned stamps the demotion loop reads (integration)" in {
+    "the completion path populates apportioned stamps the demotion loop reads (integration)" in {
         // A fixed test tokenizer (envelope-inclusive) counts each message; one scripted completion reports
         // usage.inputTokens=1000, so the fused reanchor apportions the sent view and propagates stamps onto raw.
         val fixed: Tokenizer = new Tokenizer:
@@ -731,7 +734,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     def rawSumOf(raw: Chunk[Message]): Int = raw.foldLeft(0)((n, m) => n + stampedTokens(m))
 
-    "INV-053 raw is append-only up to the cap: below the high watermark eviction is a no-op" in {
+    "raw is append-only up to the cap: below the high watermark eviction is a no-op" in {
         // head 10 + middle 40 + tail 30 = 80, under the high watermark 0.9*100 = 90.
         val raw       = retentionRaw(5, List(20, 20), 3)
         val compacted = Chunk[Message](demotionMarker(2, 3, raw.size), demotionMarker(3, 4, raw.size))
@@ -747,7 +750,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(evicted.compactionState == ctx.compactionState, "the compaction state is unchanged")
     }
 
-    "INV-053 wholesale forget: past the high watermark the oldest frozen+demoted middle is forgotten down to the low watermark, replaced by one coarse band with no recall id" in {
+    "wholesale forget: past the high watermark the oldest frozen+demoted middle is forgotten down to the low watermark, replaced by one coarse band with no recall id" in {
         // head 2 + middle 120 + tail 10 = 132, over the high watermark 90; low watermark is 0.5*100 = 50.
         val raw = retentionRaw(1, List(40, 40, 40), 1)
         val compacted =
@@ -777,7 +780,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(st.analyses.exists(_.ordinal == 5), "a survivor's analysis slot remains")
     }
 
-    "INV-053-forgotten recall of a forgotten id fails cleanly, and a still-reachable region is unaffected" in {
+    "recall of a forgotten id fails cleanly, and a still-reachable region is unaffected" in {
         // A hand-built post-eviction Context: raw holds a coarse band head at ordinal 2 spanning [2,5) with
         // two tombstones, and a live survivor region at ordinal 5; compacted carries the band marker plus a
         // demotion marker for the survivor so recall can resolve both.
@@ -830,7 +833,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-053 the backstop never forgets content the task is still using (live over dead)" in {
+    "the backstop never forgets content the task is still using (live over dead)" in {
         // head 10 + middle 120 + tail 10 = 140, over the high watermark 90. R3 (ordinal 2) is LIVE (no
         // demotion marker), R4 (3) and R5 (4) are frozen+demoted.
         val raw       = retentionRaw(5, List(40, 40, 40), 1)
@@ -849,7 +852,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(rawSumOf(evicted.raw) > 50, "forgetting only the demotable set cannot reach the low watermark, and that is accepted")
     }
 
-    "INV-053 survivors' ordinals are unchanged: the sequence gains a gap, never renumbers, and slot keys never alias" in {
+    "survivors' ordinals are unchanged: the sequence gains a gap, never renumbers, and slot keys never alias" in {
         val raw = retentionRaw(1, List(40, 40, 40), 1)
         val compacted = Chunk[Message](
             demotionMarker(2, 3, raw.size),
@@ -890,7 +893,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         assert(ids.contains(2) && ids.contains(5), "the band head (2) and the survivor (5) keep their ordinals")
     }
 
-    "INV-053 the fixed head band and the tail band are never forgotten even under maximal pressure" in {
+    "the fixed head band and the tail band are never forgotten even under maximal pressure" in {
         // A tiny cap (20 -> high 18, low 10) drives eviction as deep as it can. The system head and the task
         // turn (ordinals 0,1) carry demotion markers too, so ONLY headBand protects them. Under this tiny cap
         // the head tokens alone already reach the low watermark, so the owed guard shrinks the protected tail
@@ -930,7 +933,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
-    "§10.5 the owed guard lets eviction reach the low watermark when the head and tail bands crowd a small cap, and never forgets live content" in {
+    "the owed guard lets eviction reach the low watermark when the head and tail bands crowd a small cap, and never forgets live content" in {
         // cap 100 -> high 90, low 50. Head 10 tokens, five DEMOTED contiguous regions (2..6) with large
         // stamps, then two LIVE newest regions (7,8). The unguarded fixed tail band would protect the demoted
         // recent regions and stall eviction above low; the owed guard shrinks the tail so they become
@@ -998,7 +1001,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-053 contiguousRuns folds a sorted ordinal list into maximal half-open runs" in {
+    "contiguousRuns folds a sorted ordinal list into maximal half-open runs" in {
         assert(Default.contiguousRuns(Nil) == Nil, "the empty list yields no runs")
         assert(Default.contiguousRuns(List(5)) == List((5, 6)), "a singleton yields one unit-width run")
         assert(Default.contiguousRuns(List(2, 3, 4)) == List((2, 5)), "a contiguous block yields one maximal run")
@@ -1009,9 +1012,9 @@ class CompactorTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ==== the shared stamp-at-creation root (P7) ====
+    // ==== the shared stamp-at-creation root ====
 
-    "§5a:389-391 synthetic summary/pointer markers carry an apportioned stamp after an anchor (nothing escapes its share)" in {
+    "synthetic summary/pointer markers carry an apportioned stamp after an anchor (nothing escapes its share)" in {
         val summaryMarker = SystemMessage("summary A", Absent, Present(Origin(0, 3, 0)))
         val pointerMarker = SystemMessage("pointer B", Absent, Present(Origin(3, 6, 3)))
         val live1         = tok(um("live one"), 400)
@@ -1046,7 +1049,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "§5a:392,443 the pre-anchor suffix rides in tokenizer units, not char/3" in {
+    "the pre-anchor suffix rides in tokenizer units, not char/3" in {
         val marker = SystemMessage("region marker", Absent, Present(Origin(0, 1, 0)))
         val s1     = um("a" * 118) // offlineEstimate == (118+2)/3 + 4 == 44
         val s2     = um("b" * 85)  // offlineEstimate == (85+2)/3 + 4 == 33
@@ -1068,7 +1071,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "§5a:372 the no-usage path applies the distinct widened margin, the anchored path does not" in {
+    "the no-usage path applies the distinct widened margin, the anchored path does not" in {
         val m1       = tok(um("live one"), 20000)
         val m2       = tok(am("live two"), 20000)
         val noAnchor = Context(Chunk[Message](m1, m2))

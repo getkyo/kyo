@@ -4,7 +4,7 @@ import Compactor.internal.*
 import kyo.ai.*
 import kyo.ai.Context.*
 
-/** The §5c analysis pass mechanics: the typed decode and its five load-bearing properties
+/** The analysis pass mechanics: the typed decode and its five load-bearing properties
   * (backward-only, capped, reachable-target-only, no weights, no summary), the hostile-input
   * drop-not-throw pairing, the two semantic edge kinds, keyless supersession, the event-driven
   * low-water cadence, and the analysis-failure degrade. Deterministic throughout: the analysis wire is
@@ -47,7 +47,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
 
     // ==== the two semantic edge kinds ====
 
-    "INV-024 analyzedEdges maps DependsOn->Dependency(3.0), Relates->Relatedness(0.5), Supersedes->no edge, backward-only" in {
+    "analyzedEdges maps DependsOn->Dependency(3.0), Relates->Relatedness(0.5), Supersedes->no edge, backward-only" in {
         val analyses =
             Chunk(RegionAnalysis(
                 9,
@@ -74,7 +74,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
         assert(edges.forall((from, target, _) => target < from), "every analyzed edge points backward")
     }
 
-    "INV-024b parseAnalysis caps at relationCap, keeps only backward in-reach relations, drops out-of-reach members' relations" in {
+    "parseAnalysis caps at relationCap, keeps only backward in-reach relations, drops out-of-reach members' relations" in {
         // region 20: six backward relations (targets 1,2,3,4,5,6); target 3 is pointer-level (out of reach).
         // region 8: one FORWARD relation (target 12, target > ordinal).
         val a =
@@ -110,7 +110,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
 
     // ==== the typed decode + write-once staging ====
 
-    "INV-010 a well-formed Analysis decodes, stages write-once by ordinal, and round-trips through Schema" in {
+    "a well-formed Analysis decodes, stages write-once by ordinal, and round-trips through Schema" in {
         TestCompletionServer.run { server =>
             val ctx     = closedCtx()
             val config  = cfg().apiUrl(server.baseUrl)
@@ -147,7 +147,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-010-hostile every malformed shape yields a dropped artifact, never a throw (parameterized)" in {
+    "every malformed shape yields a dropped artifact, never a throw (parameterized)" in {
         val validEncoded = Json.encode(Analysis(Chunk(RegionAnalysis(9, Chunk(Relation(2, RelationKind.DependsOn))))))
         val valid        = Set(1, 2, 3, 4, 5, 6, 7, 8, 9, 20)
         // (a) malformed JSON, (e) unknown discriminator: whole-batch drop (decode failure).
@@ -185,7 +185,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
 
     // ==== keyless supersession ====
 
-    "INV-027-keyless a Supersedes relation penalizes the earlier region and repoints its edges (no compaction key)" in {
+    "a Supersedes relation penalizes the earlier region and repoints its edges (no compaction key)" in {
         val analyses = Chunk(RegionAnalysis(41, Chunk(Relation(14, RelationKind.Supersedes))))
         val keyless  = Default.analyzedSupersession(analyses)
         assert(keyless.get(14) == Present(41), "the keyless detector marks region 14 superseded by region 41")
@@ -216,7 +216,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
 
     // ==== event-driven cadence ====
 
-    "INV-044 event-driven: one analysis call per arming event covers every closed unanalyzed region; write-once tops up only the delta" in {
+    "event-driven: one analysis call per arming event covers every closed unanalyzed region; write-once tops up only the delta" in {
         TestCompletionServer.run { server =>
             val ctx     = closedCtx()
             val config  = cfg().apiUrl(server.baseUrl)
@@ -245,7 +245,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-044b a region newly closed since the last event participates through structural edges only" in {
+    "a region newly closed since the last event participates through structural edges only" in {
         val raw   = Chunk.from((0 to 9).map(i => am(s"turn $i tok$i")))
         val units = Default.group(raw)
         // state analyzed an earlier region 3 (Relates->1); the newly closed region 8 is absent from state.
@@ -263,7 +263,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
 
     // ==== the analysis-failure degrade + no blocking ====
 
-    "INV-011 an analysis-call failure leaves regions unanalyzed, the graph runs structural, gen never fails, no thread blocks (INV-008)" in {
+    "an analysis-call failure leaves regions unanalyzed, the graph runs structural, gen never fails, no thread blocks".notJs in {
         TestCompletionServer.run { server =>
             val ctx    = closedCtx()
             val config = cfg().apiUrl(server.baseUrl)
@@ -296,16 +296,16 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
         val banned = List("Thread.sleep", "synchronized", "CountDownLatch", "Future.await", ".await(", "Await.", "AllowUnsafe")
         List("Compactor.scala").foreach { name =>
             readMainSourceOpt(name).foreach { text =>
-                banned.foreach(b => assert(!text.contains(b), s"$name must carry no blocking construct: $b (INV-008/INV-002)"))
+                banned.foreach(b => assert(!text.contains(b), s"$name must carry no blocking construct: $b"))
             }
         }
     end noBlockingConstructs
 
-    def readMainSourceOpt(fileName: String): Option[String] =
+    def readMainSourceOpt(fileName: String): Maybe[String] =
         try
             val relative   = s"shared/src/main/scala/kyo/$fileName"
-            val candidates = List(new java.io.File(relative), new java.io.File("kyo-ai", relative), new java.io.File(s"../$relative"))
-            candidates.find(_.exists()).map(f => scala.io.Source.fromFile(f, "UTF-8").mkString)
-        catch case _: Throwable => None
+            val candidates = Chunk(new java.io.File(relative), new java.io.File("kyo-ai", relative), new java.io.File(s"../$relative"))
+            Maybe.fromOption(candidates.find(_.exists()).map(f => scala.io.Source.fromFile(f, "UTF-8").mkString))
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
 end CompactorAnalysisTest

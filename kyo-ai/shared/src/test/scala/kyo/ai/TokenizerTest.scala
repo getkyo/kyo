@@ -154,7 +154,7 @@ class TokenizerTest extends kyo.test.Test[Any]:
         assert(o200kTokens("東京都に住んでいます") != cl100kTokens("東京都に住んでいます"))
     }
 
-    "INV-018 the pure-Scala tiktoken reproduces the reference count exactly on a sample" in {
+    "the pure-Scala tiktoken reproduces the reference count exactly on a sample" in {
         // fixed-sample exactness (0.0% error), deterministic across repeated calls; the cross-platform pin
         // for tiktoken correctness (the jtokkit JVM-oracle parity gate lives in the JVM-only TokenizerJtokkitParityTest).
         val sample = "The quick brown fox."
@@ -162,7 +162,7 @@ class TokenizerTest extends kyo.test.Test[Any]:
         assert(o200kTokens(sample) == o200kTokens(sample), "the encoder is deterministic across repeated calls")
     }
 
-    "INV-016 apportionment normalizes tokenizer counts to sum to the exact reported total" in {
+    "apportionment normalizes tokenizer counts to sum to the exact reported total" in {
         // a fixed test tokenizer counting each message by content length * 100 (envelope-inclusive), so the
         // per-message counts are 100,200,300,200,100 summing to 900; apportion normalizes to 1000 exactly.
         val fixed: Tokenizer = new Tokenizer:
@@ -185,7 +185,7 @@ class TokenizerTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-016b each stamp carries (tokenizerId, count), never a bare count" in {
+    "each stamp carries (tokenizerId, count), never a bare count" in {
         val fixed: Tokenizer = new Tokenizer:
             def count(texts: Chunk[String])(using Frame): Chunk[Int] < Any = texts.map(_ => 10)
             override private[kyo] def includesMessageEnvelope: Boolean     = true
@@ -202,14 +202,14 @@ class TokenizerTest extends kyo.test.Test[Any]:
         }
     }
 
-    "no regex is constructed anywhere in the tiktoken source".onlyJvm in {
+    "no regex is constructed anywhere in the tiktoken source".notJs in {
         val pattern = "(\\.r\\b)|(Regex\\()|(\\.matches\\()".r
         tiktokenSources.foreach { (name, text) =>
             assert(pattern.findFirstIn(text).isEmpty, s"$name unexpectedly constructs a regex: ${pattern.findFirstIn(text)}")
         }
     }
 
-    "the rank table is an immutable embedded value, no AllowUnsafe".onlyJvm in {
+    "the rank table is an immutable embedded value, no AllowUnsafe".notJs in {
         val varPattern = "(?m)^\\s*var\\s+(o200k|cl100k|chunks)\\b".r
         tiktokenSources.foreach { (name, text) =>
             assert(!text.contains("AllowUnsafe"), s"$name unexpectedly references AllowUnsafe")
@@ -226,8 +226,9 @@ class TokenizerTest extends kyo.test.Test[Any]:
         assert(table(Tokenizer.internal.Ranks.Key(lastEntry, 0, lastEntry.length)) == 199997)
     }
 
-    /** The three tiktoken source files, read once for the source-hygiene leaves above (JVM-only:
-      * reading the module's own source tree is build-mechanics, not cross-platform behavior).
+    /** The three tiktoken source files, read once for the source-hygiene leaves above. Reading the
+      * module's own source tree goes through java.io.File, which JS does not link; JVM and Native both
+      * provide it, so the callers gate with .notJs.
       */
     private def tiktokenSources: Chunk[(String, String)] =
         val names = Chunk("Tokenizer.scala", "O200kRanks.scala", "Cl100kRanks.scala")

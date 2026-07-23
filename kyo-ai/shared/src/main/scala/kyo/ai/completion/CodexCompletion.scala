@@ -122,7 +122,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         )
 
     // The usageSink is accepted for the trait contract but never written: a CLI harness reports no
-    // stream usage, so its anchor degrades exactly as its gen path does (§5a:372).
+    // stream usage, so its anchor degrades exactly as its gen path does.
     override def streamFragments(
         config: Config,
         context: Context,

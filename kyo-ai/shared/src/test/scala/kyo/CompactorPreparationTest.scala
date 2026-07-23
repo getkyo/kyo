@@ -4,7 +4,7 @@ import Compactor.internal.*
 import kyo.ai.*
 import kyo.ai.Context.*
 
-/** The §5f background preparation model: the single-flight fiber (arming, disarm, one run per session),
+/** The background preparation model: the single-flight fiber (arming, disarm, one run per session),
   * need-shaped fills, the join in its invisible / running / huge-turn-synchronous forms, run-level
   * lifecycle leak-freedom, and the fill-failure degrade. Deterministic throughout: occupancy is pinned via
   * the usage anchor, fills are scripted through TestCompletionServer, and every wait is an async suspension
@@ -38,12 +38,13 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
 
     def sameFiber(a: Maybe[Fiber[Unit, Any]], b: Maybe[Fiber[Unit, Any]]): Boolean =
         (a, b) match
+            // cast: fiber-identity reference check, no Fiber identity API to compare on
             case (Present(x), Present(y)) => x.asInstanceOf[AnyRef] eq y.asInstanceOf[AnyRef]
             case _                        => false
 
     // ==== single-flight arming ====
 
-    "INV-039 single-flight: three arming passes share ONE run" in {
+    "single-flight: three arming passes share ONE run" in {
         val ctx    = forcedCtx(7000, sm("s"), um("u"), am("a"))
         val config = cfg()
         LLM.run(config) {
@@ -73,7 +74,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-039b re-arm tops up the delta only; write-once leaves already-filled spans untouched" in {
+    "re-arm tops up the delta only; write-once leaves already-filled spans untouched" in {
         val raw = Chunk[Message](am("r0 " + ("x" * 30)), am("r1 " + ("x" * 30)), am("r2 " + ("x" * 30)))
         TestCompletionServer.run { server =>
             server.enqueueBody(fillBody("newC")).andThen {
@@ -108,7 +109,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
 
     // ==== need-shaped fills ====
 
-    "INV-040 the fill set is exactly the summary-level spans of A_prep (skip pinned + pointer)" in {
+    "the fill set is exactly the summary-level spans of A_prep (skip pinned + pointer)" in {
         val spans = Chunk.from((0 until 8).map(i => Span(i, i + 1, Chunk(i))))
         // spans 0 and 7 pinned (absent from the assignment); 1..4 Summary; 5,6 Pointer.
         val assignment = Dict[Int, Level](
@@ -131,7 +132,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
     def closedCtx(prefix: Chunk[Message]): Context =
         Context(prefix.append(tok(am("tail region " + ("z" * 100)), 2000)))
 
-    "INV-040b the projected-summary set is a superset of the size boundary's consumed summary set" in {
+    "the projected-summary set is a superset of the size boundary's consumed summary set" in {
         val ctx      = closedCtx(Chunk.from((0 until 6).map(i => tok(am(s"region $i " + ("x" * 60)), 700))))
         val units    = Default.group(ctx.raw)
         val spans    = Default.formSpans(units, ctx.raw, cfg())
@@ -151,7 +152,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
 
     // ==== the join ====
 
-    "INV-042 the invisible case: an empty-need join returns instantly with no fill" in {
+    "the invisible case: an empty-need join returns instantly with no fill" in {
         TestCompletionServer.run { server =>
             Preparation.init.map { prep =>
                 prep.staged.set(Staged().withSummary(SpanKey(0, 1), "done")).andThen {
@@ -169,7 +170,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-042b the huge-turn synchronous case: no run armed, the boundary starts + joins the exact need" in {
+    "the huge-turn synchronous case: no run armed, the boundary starts + joins the exact need" in {
         val raw = Chunk[Message](am("r0 " + ("x" * 30)), am("r1 " + ("x" * 30)))
         TestCompletionServer.run { server =>
             server.enqueueBody(fillBody("s0")).andThen(server.enqueueBody(fillBody("s1"))).andThen {
@@ -198,7 +199,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
 
     // ==== lifecycle leak-freedom ====
 
-    "INV-043 lifecycle: run teardown interrupts the in-flight fiber; a staged summary is durable" in {
+    "lifecycle: run teardown interrupts the in-flight fiber; a staged summary is durable" in {
         Channel.initUnscoped[Unit](1).map { gate => // never put: the fiber parks on take until interrupted
             AtomicRef.init(Absent: Maybe[Fiber[Unit, Any]]).map { probe =>
                 AtomicRef.init(Staged()).map { stagedProbe =>
@@ -239,7 +240,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
 
     // ==== fill-failure degrade + no blocking ====
 
-    "INV-011 a failed fill degrades to the substitute elision; no auxiliary failure fails; no thread blocks (INV-008)" in {
+    "a failed fill degrades to the substitute elision; no auxiliary failure fails; no thread blocks".notJs in {
         val raw = Chunk[Message](am("r0 " + ("x" * 30)), am("r1 " + ("x" * 30)))
         TestCompletionServer.run { server =>
             // span (0,1): an empty-choices reply -> AIDecodeException -> recovered to an absent slot;
@@ -270,22 +271,22 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
         }
     }
 
-    // The no-blocking-construct grep gate over the touched main sources (jvm-only file scan; a no-op where the source
-    // is not reachable off the JVM). Every wait in the preparation path is a Fiber.get/Channel suspension.
+    // The no-blocking-construct grep gate over the touched main sources; the caller is .notJs gated since
+    // the file scan uses java.io.File. Every wait in the preparation path is a Fiber.get/Channel suspension.
     def noBlockingConstructs()(using kyo.test.AssertScope): Unit =
         val banned = List("Thread.sleep", "synchronized", "CountDownLatch", "Future.await", ".await(", "Await.", "AllowUnsafe")
         List("Compactor.scala", "LLM.scala").foreach { name =>
             readMainSourceOpt(name).foreach { text =>
-                banned.foreach(b => assert(!text.contains(b), s"$name must carry no blocking construct: $b (INV-008/INV-002)"))
+                banned.foreach(b => assert(!text.contains(b), s"$name must carry no blocking construct: $b"))
             }
         }
     end noBlockingConstructs
 
-    def readMainSourceOpt(fileName: String): Option[String] =
+    def readMainSourceOpt(fileName: String): Maybe[String] =
         try
             val relative   = s"shared/src/main/scala/kyo/$fileName"
-            val candidates = List(new java.io.File(relative), new java.io.File("kyo-ai", relative), new java.io.File(s"../$relative"))
-            candidates.find(_.exists()).map(f => scala.io.Source.fromFile(f, "UTF-8").mkString)
-        catch case _: Throwable => None
+            val candidates = Chunk(new java.io.File(relative), new java.io.File("kyo-ai", relative), new java.io.File(s"../$relative"))
+            Maybe.fromOption(candidates.find(_.exists()).map(f => scala.io.Source.fromFile(f, "UTF-8").mkString))
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
 end CompactorPreparationTest

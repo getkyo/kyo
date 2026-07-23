@@ -40,7 +40,7 @@ class AIExceptionTest extends kyo.test.Test[Any]:
             assert(e.getCause() eq http)
         }
     }
-    "INV-012 AIContextOverflowException is a typed leaf under AIGenException only, never a raw Throwable, and does not ride AIStreamException" in {
+    "AIContextOverflowException is a typed leaf under AIGenException only, never a raw Throwable, and does not ride AIStreamException" in {
         // The single user-observable compaction failure (the forced path's terminal abort). It rides the
         // gen row only; the 'stream path' clause is vacuous because renderView runs eagerly on the outer
         // Abort[AIGenException] row before the Stream's lazy Abort[AIStreamException] value is built.

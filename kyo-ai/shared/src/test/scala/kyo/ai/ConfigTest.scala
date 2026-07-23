@@ -171,8 +171,8 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.OpenAI.small.modelName != Config.OpenAI.default.modelName)
     }
 
-    "INV-050 a valid axis constructs and the ordering holds" in {
-        // default compaction on a 200000-token window with maxTokens 10000 (§6):
+    "a valid axis constructs and the ordering holds" in {
+        // default compaction on a 200000-token window with maxTokens 10000:
         //   effectiveHigh = min(0.5*200000, 128000) = 100000
         //   effectiveLow  = 0.6*100000 = 60000 ; prepareLine = 0.8*100000 = 80000
         //   hardLimitTokens = 0.9*(200000-10000) = 171000
@@ -190,7 +190,7 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(cfg.tokenizer == Absent, "tokenizer defaults to Absent (the provider's offline tiktoken default)")
     }
 
-    "INV-050-reorder a reordering override is rejected at construction, naming the inequality" in {
+    "a reordering override is rejected at construction, naming the inequality" in {
         // Pushing highWatermark to 1.0 with no ceiling makes effectiveHigh (200000) cross the hard-limit
         // line (0.9*(200000-4096)=176313), so validatedAxis fails at construction, never at a boundary.
         val base = Config.OpenAI.default.model(Config.OpenAI, "m", 200000)
@@ -206,7 +206,7 @@ class ConfigTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-051 per-field clamps and the Absent-is-off knobs" in {
+    "per-field clamps and the Absent-is-off knobs" in {
         val d = Config.Compaction.default
         assert(d.highWatermark(1.5).highWatermark == 1.0, "highWatermark clamps to 1.0")
         assert(d.hardLimit(0.0).hardLimit > 0.0, "hardLimit clamps to > 0 so it can never disable the forced-path guard")

@@ -66,8 +66,8 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
         case TimedOut
 
     // The usageSink is accepted for the trait contract but never written: a CLI harness reports no
-    // stream usage, so its anchor degrades exactly as its gen path does (Reply(msgs, Absent),
-    // HarnessCompletion:20; §5a:372).
+    // stream usage, so its anchor degrades exactly as its gen path does (Reply(msgs, Absent)), the
+    // same absent-usage degradation the other harness-backed completions take.
     override def streamFragments(
         config: Config,
         context: Context,

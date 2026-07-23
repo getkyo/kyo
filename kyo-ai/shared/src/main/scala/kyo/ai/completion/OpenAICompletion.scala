@@ -96,7 +96,7 @@ private[completion] object OpenAICompletion extends Completion:
         )
     end streamFragments
 
-    // The include_usage final chunk (§5a:370) carries an empty choices array and a top-level usage
+    // The include_usage final chunk carries an empty choices array and a top-level usage
     // object (prompt/completion/cached tokens) before the [DONE] sentinel. Decode it and convert the
     // snake_case wire usage to the public Completion.Usage, the SAME conversion the gen read performs
     // (read, :49-55); any non-usage chunk or the sentinel yields Absent. Appended after streamFragments
@@ -184,7 +184,7 @@ private[completion] object OpenAICompletion extends Completion:
             tool_call_id: Maybe[String] = Absent
         ) derives Schema
 
-        // Opt-in to usage on the streaming response (§5a:370): the final SSE chunk then carries a
+        // Opt-in to usage on the streaming response: the final SSE chunk then carries a
         // top-level usage object with empty choices before [DONE].
         case class StreamOptions(include_usage: Boolean) derives Schema
         case class Request(

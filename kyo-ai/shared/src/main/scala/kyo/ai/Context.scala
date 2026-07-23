@@ -55,9 +55,9 @@ case class Context(
         copy(raw = raw.concat(tail), compacted = compacted.concat(tail))
     end merge
 
-    /** The compaction state seat (U13), defaulting to a fresh empty state. The Compactor reads and
+    /** The compaction state seat, defaulting to a fresh empty state. The Compactor reads and
       * rewrites it through render; it carries the boundary counter, the usage anchor, recall
-      * records, and the write-once summary slots (§5e, §7). private[kyo]: not a lock symbol.
+      * records, and the write-once summary slots. private[kyo]: not a lock symbol.
       */
     private[kyo] def compactionState: Context.CompactionState =
         compaction.getOrElse(Context.CompactionState())
@@ -77,24 +77,23 @@ object Context:
 
     /** A per-message token stamp: the apportioned real token count paired with the id of the
       * tokenizer that produced it, so apportionment never mixes vocabularies across a provider
-      * switch (§5a, DG-01; owner-confirm for the Schema wire impact). private[kyo]: not a lock symbol.
+      * switch. private[kyo]: not a lock symbol.
       */
     private[kyo] case class TokenStamp(tokenizerId: String, count: Int) derives CanEqual, Schema
 
     /** One recall, recorded in compaction state stamped with the boundary counter at recall time;
-      * its seed contribution decays per boundary since (§5e). Lives in state, never inferred from
+      * its seed contribution decays per boundary since. Lives in state, never inferred from
       * the view, so clearing the exchange never drops the signal.
       */
     private[kyo] case class RecallRecord(region: Int, boundaryStamp: Int) derives CanEqual, Schema
 
-    /** One write-once span summary slot, keyed by the span's raw ordinal range [start, end) (§5d,
-      * §7). In P2 no fill route exists, so summaries stay empty and the summary level renders the
-      * fixed-size substitute elision; the slot and its write-once discipline are seated here and
-      * filled from P3.
+    /** One write-once span summary slot, keyed by the span's raw ordinal range [start, end). An
+      * empty slot renders the fixed-size substitute elision at the summary level; the fill route
+      * writes the slot once, so whichever bytes land first are permanent.
       */
     private[kyo] case class SpanSummary(start: Int, end: Int, bytes: String) derives CanEqual, Schema
 
-    /** The kind of a directed relation the analysis pass emits (§5c). `DependsOn` renders as the
+    /** The kind of a directed relation the analysis pass emits. `DependsOn` renders as the
       * Dependency edge (weight 3.0), `Relates` as the Relatedness edge (weight 0.5), `Supersedes`
       * as no edge (it feeds the supersession machinery). `derives Schema` is the wire contract the
       * hostile-input decode rests on: an unknown discriminator fails the whole typed decode and
@@ -103,28 +102,28 @@ object Context:
     private[kyo] enum RelationKind derives CanEqual, Schema:
         case DependsOn, Relates, Supersedes
 
-    /** One directed relation from an analyzed region to an EARLIER one (§5c). Backward-only:
+    /** One directed relation from an analyzed region to an EARLIER one. Backward-only:
       * `target < ordinal`, enforced at parse time by discarding violations.
       */
     private[kyo] case class Relation(target: Int, kind: RelationKind) derives CanEqual, Schema
 
-    /** The write-once analysis of one newly closed region (§5c): the region's `ordinal` and its
+    /** The write-once analysis of one newly closed region: the region's `ordinal` and its
       * backward relations, capped and no-weights/no-summary by construction. Frozen by ordinal into
       * compaction state exactly like a summary; a re-emission for an analyzed ordinal is discarded.
       */
     private[kyo] case class RegionAnalysis(ordinal: Int, relations: Chunk[Relation]) derives CanEqual, Schema
 
-    /** The typed batch one analysis generation emits, one `RegionAnalysis` per named region (§5c).
+    /** The typed batch one analysis generation emits, one `RegionAnalysis` per named region.
       * Decoded over model-controlled output through `Schema`; every malformed member, out-of-index
       * or backward-violating target, over-cap relation, and unknown discriminator routes to a typed
       * drop.
       */
     private[kyo] case class Analysis(regions: Chunk[RegionAnalysis]) derives CanEqual, Schema
 
-    /** The compaction state seat carried on Context (§7): the boundary counter (recall's decay
-      * clock), the usage anchor and the raw size it was taken at (§5a), the recall records (§5e),
-      * and the write-once span summary slots (§5d). The drift bookkeeping (pending-confirm flag,
-      * last-fire index) is seated for P5. Adopted and rewritten only through Compactor.render.
+    /** The compaction state seat carried on Context: the boundary counter (recall's decay
+      * clock), the usage anchor and the raw size it was taken at, the recall records,
+      * and the write-once span summary slots. The drift bookkeeping (pending-confirm flag,
+      * last-fire index) is carried here too. Adopted and rewritten only through Compactor.render.
       */
     private[kyo] case class CompactionState(
         boundaryCounter: Int = 0,
@@ -137,7 +136,7 @@ object Context:
         lastDriftFire: Int = -1
     ) derives CanEqual, Schema:
         // Write-once adoption: a summary lands only into an empty slot; a later write to a filled
-        // slot is discarded (SPAN-FREEZING ii, §5d), so whichever bytes land first are permanent.
+        // slot is discarded, so whichever bytes land first are permanent.
         def withSummary(start: Int, end: Int, bytes: String): CompactionState =
             if summaries.exists(s => s.start == start && s.end == end) then this
             else copy(summaries = summaries.append(SpanSummary(start, end, bytes)))
@@ -145,7 +144,7 @@ object Context:
         def summaryOf(start: Int, end: Int): Maybe[String] =
             summaries.filter(s => s.start == start && s.end == end).headMaybe.map(_.bytes)
 
-        // §5c write-once analysis adoption: a region's analysis freezes by ordinal exactly like a
+        // Write-once analysis adoption: a region's analysis freezes by ordinal exactly like a
         // summary; a re-emission for an already-analyzed ordinal (even from a disobedient pass) is
         // discarded, so incrementality needs no bookkeeping beyond the low-water ordinal.
         def withAnalysis(ra: RegionAnalysis): CompactionState =
@@ -155,21 +154,21 @@ object Context:
         def analysisOf(ordinal: Int): Maybe[RegionAnalysis] =
             analyses.filter(_.ordinal == ordinal).headMaybe
 
-        // Records a recall stamped with the current boundary counter (§5e).
+        // Records a recall stamped with the current boundary counter.
         def withRecall(region: Int): CompactionState =
             copy(recalls = recalls.append(RecallRecord(region, boundaryCounter)))
 
-        // Advances the boundary counter, ticked at every compaction boundary of either cause (§5e).
+        // Advances the boundary counter, ticked at every compaction boundary of either cause.
         def tickBoundary: CompactionState = copy(boundaryCounter = boundaryCounter + 1)
 
-        // Drift bookkeeping (§5g). armDrift latches the pending-confirm flag when a structural
+        // Drift bookkeeping. armDrift latches the pending-confirm flag when a structural
         // crossing arms; disarmDrift clears it when the served view falls back below the tripwire;
         // recordDriftFire stamps the fire at the post-tick boundary index and clears pending-confirm.
         def armDrift: CompactionState        = copy(driftPendingConfirm = true)
         def disarmDrift: CompactionState     = copy(driftPendingConfirm = false)
         def recordDriftFire: CompactionState = copy(lastDriftFire = boundaryCounter, driftPendingConfirm = false)
 
-        // Re-anchors occupancy on a provider-reported request total (§5a).
+        // Re-anchors occupancy on a provider-reported request total.
         def withUsage(total: Int, rawSize: Int): CompactionState =
             copy(lastUsage = Present(total), lastUsageRawSize = rawSize)
     end CompactionState
@@ -212,7 +211,7 @@ object Context:
     /** A conversation message, tagged with its role. Each leaf carries two trailing defaulted
       * enrichment fields (tokens/origin): once-computed facts living on the message value that owns
       * them with no separate cache structure. `tokens` is the apportioned token stamp the compaction
-      * seam writes once per message (§5a), carrying the tokenizer id alongside the count so
+      * seam writes once per message, carrying the tokenizer id alongside the count so
       * apportionment never mixes vocabularies; `origin` is set only on a synthetic entry a Compactor
       * builds to stand for a raw range.
       */

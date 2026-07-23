@@ -18,14 +18,14 @@ case class AISession(
     /** Sets this instance's config override. */
     def config(config: Config): AISession = copy(env = env.config(config))
 
-    /** Seats (or replaces) this instance's background-preparation cell (§5f). Ephemeral: it holds
+    /** Seats (or replaces) this instance's background-preparation cell. Ephemeral: it holds
       * AtomicRef staging + the single-flight fiber handle, never serialized, so a snapshot/recover
       * loses only in-flight preparation, never a surfaced failure. private[kyo] carrier.
       */
     private[kyo] def withPreparation(prep: Compactor.internal.Preparation): AISession =
         copy(preparation = Present(prep))
 
-    /** Seats this instance's pending stream re-anchor (§5a:370): the reported-usage sink written by
+    /** Seats this instance's pending stream re-anchor: the reported-usage sink written by
       * the streaming SSE projection plus the rendered sent view and active tokenizer captured when the
       * stream request was assembled, consumed at the next turn's start. Ephemeral (an AtomicRef sink),
       * never serialized. private[kyo] carrier.

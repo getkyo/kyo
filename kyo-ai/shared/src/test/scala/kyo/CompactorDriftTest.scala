@@ -4,7 +4,7 @@ import Compactor.internal.*
 import kyo.ai.*
 import kyo.ai.Context.*
 
-/** The §5g relevance-drift trigger: the model-free stale-verbatim mass S (measure + pinning complement +
+/** The relevance-drift trigger: the model-free stale-verbatim mass S (measure + pinning complement +
   * threshold), the structural over-arm upper bound, the arm-confirm-fire ordering with the refractory of
   * four, and the same-machinery fire that sheds no size and collapses S to zero. Deterministic throughout:
   * drift is driven by hand-built Contexts with a KNOWN stale set (never timing); occupancy is pinned via
@@ -99,7 +99,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
 
     // ==== the measure ====
 
-    "INV-045 the drift signal S = the stale-verbatim mass, the exact complement of the pinning clause" in {
+    "the drift signal S = the stale-verbatim mass, the exact complement of the pinning clause" in {
         val raw       = driftRaw()
         val config    = cfg()
         val ctx       = forced(raw, 4000)
@@ -144,7 +144,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-045b the fire condition fires iff S >= driftThreshold * effectiveLow; Absent disables drift" in {
+    "the fire condition fires iff S >= driftThreshold * effectiveLow; Absent disables drift" in {
         val raw = driftRaw()
         // a wider window so effectiveLow comfortably exceeds S: the threshold knob (clamped to (0,1)) can
         // then be tuned to either side of the fire line S >= threshold * effectiveLow without saturating.
@@ -177,7 +177,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-046 the drift measure is model-free: computing S and the decision issues ZERO completions" in {
+    "the drift measure is model-free: computing S and the decision issues ZERO completions" in {
         val raw = driftRaw()
         TestCompletionServer.run { server =>
             val config = cfg().apiUrl(server.baseUrl)
@@ -193,7 +193,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-047 structural-only S is an upper bound: it over-arms, never under-arms" in {
+    "structural-only S is an upper bound: it over-arms, never under-arms" in {
         val raw         = driftRaw()
         val config      = cfg()
         val ctx         = forced(raw, 4000)
@@ -224,7 +224,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
 
     // ==== arm, confirm, fire, refractory ====
 
-    "INV-048c the refractory of four blocks a re-fire within four boundary generations, allows at or beyond" in {
+    "the refractory of four blocks a re-fire within four boundary generations, allows at or beyond" in {
         val raw    = driftRaw()
         val config = cfg()
         val within = forced(raw, 4000, _.copy(boundaryCounter = 10, lastDriftFire = 9, driftPendingConfirm = true))
@@ -266,7 +266,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
         (Context(raw, raw, Present(extra(withSum))), stale)
     end driftSession
 
-    "INV-048 the arm: a first crossing arms the drift cause and serves the view unchanged" in {
+    "the arm: a first crossing arms the drift cause and serves the view unchanged" in {
         val (ctx, _) = driftSession(pending = false)
         val before   = ctx.compacted
         TestCompletionServer.run { server =>
@@ -288,7 +288,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-048b the confirm-fire: a second crossing with pending latched fires, demoting the stale set" in {
+    "the confirm-fire: a second crossing with pending latched fires, demoting the stale set" in {
         val (armed, stale) = driftSession(pending = true)
         val staleStarts    = stale.map(_.start).toSet
         val config         = cfg()
@@ -340,7 +340,7 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-049 the drift fire runs the same machinery and S collapses to zero afterward" in {
+    "the drift fire runs the same machinery and S collapses to zero afterward" in {
         val (armed, stale) = driftSession(pending = true)
         val config         = cfg()
         val staleStarts    = stale.map(_.start).toSet
@@ -370,9 +370,9 @@ class CompactorDriftTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-049b the drift fire sheds no size, and a one-turn aside re-lifts liveness and never fires" in {
+    "the drift fire sheds no size, and a one-turn aside re-lifts liveness and never fires" in {
         // sheds no size: at occupied <= effectiveLow the fire demotes ONLY the stale spans (pass 1 depth),
-        // leaving every pinned verbatim span byte-unchanged. Verified against the fire in INV-048b via the
+        // leaving every pinned verbatim span byte-unchanged. Verified against the fire via the
         // aside path here, which additionally proves the two-pass persistence.
         val raw          = driftRaw()
         val config       = cfg()

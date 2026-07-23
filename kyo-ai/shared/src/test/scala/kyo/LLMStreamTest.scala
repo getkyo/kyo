@@ -812,9 +812,9 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         assert(true)
     }
 
-    // --- streaming re-anchor (§5a:370) and the shared stamp-at-creation root ---
+    // --- streaming re-anchor and the shared stamp-at-creation root ---
 
-    "§5a:370 an OpenAI streaming turn re-anchors occupancy to the reported total at the sent view's size" in {
+    "an OpenAI streaming turn re-anchors occupancy to the reported total at the sent view's size" in {
         TestCompletionServer.runStreaming { server =>
             val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
             server.enqueueStream(Chunk(
@@ -861,7 +861,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "§5a:370 the stream anchor captures the non-enriched sent view, so a later turn's occupancy counts the appended suffix and is not deferred by the prompt/reminder count" in {
+    "the stream anchor captures the non-enriched sent view, so a later turn's occupancy counts the appended suffix and is not deferred by the prompt/reminder count" in {
         TestCompletionServer.runStreaming { server =>
             val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
             // Three live messages sent on the first turn; the prompt/reminder enrichment prepends one system
@@ -929,7 +929,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "§5a:370 an Anthropic streaming turn re-anchors from the message_start input_tokens" in {
+    "an Anthropic streaming turn re-anchors from the message_start input_tokens" in {
         TestCompletionServer.runStreaming { server =>
             val config = wideAnthropicConfig(server.baseUrl).tokenizer(fixedTok)
             server.enqueueStream(Chunk(
@@ -970,7 +970,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "§5a:372 a streaming turn reporting NO usage leaves the anchor untouched (the no-usage / harness MUST-DEGRADE path)" in {
+    "a streaming turn reporting NO usage leaves the anchor untouched (the no-usage / harness MUST-DEGRADE path)" in {
         TestCompletionServer.runStreaming { server =>
             val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
             val prior = Context(Chunk(SystemMessage("s"), UserMessage("hi", Absent)))
@@ -1005,7 +1005,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "§5a:389-391 the streaming re-anchor apportions the sent view: live twins and the synthetic marker stamped, nothing escapes its share (integration)" in {
+    "the streaming re-anchor apportions the sent view: live twins and the synthetic marker stamped, nothing escapes its share (integration)" in {
         TestCompletionServer.runStreaming { server =>
             val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
             val marker = SystemMessage("[summary of earlier region]", Absent, Present(Origin(0, 2, 0)))

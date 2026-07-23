@@ -6,7 +6,7 @@ import kyo.*
 import kyo.ai.Tokenizer.Encoding
 import kyo.ai.Tokenizer.internal.Tiktoken
 
-/** The jtokkit JVM-oracle parity build gate (§5a:406-410). The bundled pure-Scala tiktoken is held
+/** The jtokkit JVM-oracle parity build gate. The bundled pure-Scala tiktoken is held
   * token-for-token to the reference jtokkit encoder across a multi-sample corpus for both encodings. JVM-only
   * because the ORACLE (com.knuddels:jtokkit) is a JVM library; the cross-platform exactness pin stays in the
   * shared TokenizerTest. Pure count comparison: no LLM, no network, no fiber.
@@ -35,7 +35,7 @@ class TokenizerJtokkitParityTest extends kyo.test.Test[Any]:
 
     private val registry = Encodings.newDefaultEncodingRegistry()
 
-    "INV-018 the o200k tiktoken matches the jtokkit JVM oracle token count on every corpus sample" in {
+    "the o200k tiktoken matches the jtokkit JVM oracle token count on every corpus sample" in {
         val tiktoken = Tiktoken(Encoding.O200kBase)
         val oracle   = registry.getEncoding(EncodingType.O200K_BASE)
         corpus.foreach { s =>
@@ -46,7 +46,7 @@ class TokenizerJtokkitParityTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-018 the cl100k tiktoken matches the jtokkit JVM oracle token count on every corpus sample" in {
+    "the cl100k tiktoken matches the jtokkit JVM oracle token count on every corpus sample" in {
         val tiktoken = Tiktoken(Encoding.Cl100kBase)
         val oracle   = registry.getEncoding(EncodingType.CL100K_BASE)
         corpus.foreach { s =>

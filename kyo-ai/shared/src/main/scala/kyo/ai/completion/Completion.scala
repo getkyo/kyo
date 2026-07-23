@@ -104,7 +104,7 @@ object Completion:
                     yield sseStream
                 }
             yield sseStream.map { event =>
-                // Record the provider's stream-end usage into the sink (§5a:370): OpenAI's include_usage
+                // Record the provider's stream-end usage into the sink: OpenAI's include_usage
                 // final chunk and Anthropic's message_start both carry it on a chunk that projects to no
                 // argument fragment, so recording is orthogonal to fragment projection. AtomicRef.set is
                 // Sync and Async <: Sync, so this adds nothing to the element effect row.

@@ -110,7 +110,7 @@ object LLM:
                         case op: Op.SetEnv =>
                             Loop.continue(state.copy(env = op.env), cont(state.env))
                         case op: Op.Discard =>
-                            // §5f eager interrupt on instance discard: stop this instance's in-flight preparation run
+                            // Eager interrupt on instance discard: stop this instance's in-flight preparation run
                             // before dropping its slot; the run-level Sync.ensure is the backstop on other exits.
                             val eager = state.sessionOf(op.target).preparation match
                                 case Present(p) => p.inFlight.get.map { case Present(f) => f.interrupt; case Absent => false }
@@ -227,7 +227,7 @@ object LLM:
                         Abort.recover[HttpException](e => Abort.fail(AITransportException(e)))(
                             Compactor.internal.applyStreamMeasure(target, config)
                         ).andThen(context(target)).map { targetContext =>
-                            // Apply a pending stream re-anchor + the tokenizer-unit suffix stamp (§5a:370/392) at the turn
+                            // Apply a pending stream re-anchor + the tokenizer-unit suffix stamp at the turn
                             // start, then render. Compaction seam for the stream path, shared with gen via renderView:
                             // below the occupancy trigger re-serve the context unchanged, at/above it render + install the
                             // rebuilt compacted list. The compactor is read from the merged env (instance-over-scope).
@@ -243,7 +243,7 @@ object LLM:
                                         val resultSchema             = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
                                         val completion               = config.provider.completion
                                         val (tokenizer, tokenizerId) = Compactor.internal.activeTokenizer(config)
-                                        // Seat the stream re-anchor (§5a:370): the usage sink is written by the adapter SSE projection at
+                                        // Seat the stream re-anchor: the usage sink is written by the adapter SSE projection at
                                         // stream end (outside the LLM handler), so it is an AtomicRef; the sent view + active tokenizer are
                                         // captured here (LLM live) for applyStreamMeasure to consume at the next turn's start. The anchor
                                         // basis is the pre-enrichment view.compacted (not the prompt/reminder-enriched context), the same
@@ -436,7 +436,7 @@ object LLM:
     private[kyo] def runTuple[A, S](v: A < (LLM & S))(using Frame): (LLM.State, A) < (S & Async & Abort[AIGenException]) =
         Config.default.map(c => bracketed(State.empty(c))(v)((s, a) => (s, a)))
 
-    // §5f Lifecycle (:1449-1463): create the run-level preparation-interrupt registry, seat it in
+    // Lifecycle: create the run-level preparation-interrupt registry, seat it in
     // the run env, and bracket the run so Sync.ensure interrupts every in-flight preparation fiber
     // on ANY exit (normal, abort, panic, interrupt), so no fiber leaks past the run.
     private def bracketed[A, S, B, S2](state: State)(v: A < (LLM & S))(
@@ -528,16 +528,16 @@ object LLM:
     ): Context < (LLM & Async & Abort[AIGenException]) =
         compactor match
             case Present(c) =>
-                // Usage-anchored occupancy (§5a); the boundary trigger is the effective high
-                // watermark (§4, §6), min(highWatermark*window, contextCeiling). maxOutputTokens is
-                // NOT part of occupancy: it is counted once on the hard-limit side inside render (§7).
+                // Usage-anchored occupancy; the boundary trigger is the effective high
+                // watermark, min(highWatermark*window, contextCeiling). maxOutputTokens is
+                // NOT part of occupancy: it is counted once on the hard-limit side inside render.
                 val occupied = Compactor.internal.occupancy(ctx)
                 LLM.env.map { env =>
                     LLM.session(ai).map { session =>
                         if occupied >= config.effectiveHigh then
-                            // The §5f boundary: tick the recall-decay clock (§5e), then ADOPT staged
-                            // summaries and JOIN the fiber for this boundary's exact need (§5f
-                            // :1362-1418), then render + install the rebuilt compacted list from the
+                            // The boundary: tick the recall-decay clock, then ADOPT staged
+                            // summaries and JOIN the fiber for this boundary's exact need,
+                            // then render + install the rebuilt compacted list from the
                             // filled state. raw is never shrunk.
                             val ticked = ctx.withCompaction(ctx.compactionState.tickBoundary)
                             Compactor.internal.Default.boundaryPrepare(ai, ticked, config, session, env.preparations).map {
@@ -709,7 +709,7 @@ object LLM:
             resultTool   = Tool.internal.resultToolInfo
             allTools     = tools ++ recallInfos ++ resultTool.infos
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
-            // Apply a pending stream re-anchor + the tokenizer-unit suffix stamp (§5a:370/392) at the turn
+            // Apply a pending stream re-anchor + the tokenizer-unit suffix stamp at the turn
             // start (a prior streaming turn seated its usage sink; gen consumes it here, the next handler-live
             // point). Idempotent when nothing is pending, so byte-stability is preserved.
             _   <- Compactor.internal.applyStreamMeasure(ai, config)
@@ -744,7 +744,7 @@ object LLM:
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"
             )
             _ <- ai.updateContext(ctx => messages.foldLeft(ctx)(_.add(_)))
-            // Re-anchor occupancy on the provider's reported request total (§5a) through the ONE fused seam
+            // Re-anchor occupancy on the provider's reported request total through the ONE fused seam
             // helper every usage-consumption site shares, so the anchor scalar and the per-message stamps it
             // covers can never disagree: it records the exact input-token total at the sent view's size (so
             // the next pass sizes only the suffix appended since) AND apportions the exact sent view via the

@@ -4,7 +4,7 @@ import Compactor.internal.*
 import kyo.ai.*
 import kyo.ai.Context.*
 
-/** The §5f validity gate and adoption: the pinning-partition agreement test (both invalidation directions
+/** The validity gate and adoption: the pinning-partition agreement test (both invalidation directions
   * render fresh at zero new model calls), the adoption splice shape, write-once first-writer-wins across a
   * fiber/boundary race (and the absence case), and the terse-REAL render of a landed summary blob. The gate
   * and the write-once slot are pure structural data, so these are deterministic in-memory assertions; the
@@ -24,7 +24,7 @@ class CompactorGateTest extends kyo.test.Test[Any]:
 
     // ==== the validity gate (pinning partition) ====
 
-    "INV-041 adopt on pinning-partition agreement (depth may differ, the partition is equal)" in {
+    "adopt on pinning-partition agreement (depth may differ, the partition is equal)" in {
         val spans = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)), Span(2, 3, Chunk(2)))
         // Both assign the SAME pinned set {0} and the SAME demoted set {1,2}; only the pass-2 depth differs.
         val aPrep  = Dict[Int, Level]((1, Level.Summary), (2, Level.Summary))
@@ -38,7 +38,7 @@ class CompactorGateTest extends kyo.test.Test[Any]:
         assert(Default.validityGate(aPrep, allTerse, spans), "the gate compares definedness (pinned vs demoted), not the Level")
     }
 
-    "INV-041-invalidate both directions render fresh, and a false invalidation makes ZERO new model calls" in {
+    "both directions render fresh, and a false invalidation makes ZERO new model calls" in {
         val spans = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)))
         // (soundness) A_prep demotes span (1,2) but A_fresh PINS it (absent from the assignment).
         val aPrepSound  = Dict[Int, Level]((1, Level.Summary))
@@ -71,7 +71,7 @@ class CompactorGateTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-041 the adoption splice is prepared-prefix ++ fresh-remainder ++ verbatim-tail" in {
+    "the adoption splice is prepared-prefix ++ fresh-remainder ++ verbatim-tail" in {
         val raw   = Chunk.from((0 until 6).map(i => am(s"region $i CONTENT")))
         val units = Default.group(raw)
         // spans 0..3 are the closed prefix (demoted); regions 4,5 are the verbatim tail (no span demotes them).
@@ -97,7 +97,7 @@ class CompactorGateTest extends kyo.test.Test[Any]:
 
     // ==== write-once first-writer-wins ====
 
-    "INV-009 write-once first-writer-wins across a fiber/boundary race (either order)" in {
+    "write-once first-writer-wins across a fiber/boundary race (either order)" in {
         // background stages "bg" first, boundary "fg" second -> bg wins.
         val bgFirst = CompactionState().withSummary(3, 7, "bg").withSummary(3, 7, "fg")
         // boundary stages "fg" first, background "bg" second -> fg wins.
@@ -112,7 +112,7 @@ class CompactorGateTest extends kyo.test.Test[Any]:
         )
     }
 
-    "INV-009-absence a second write / re-emitted artifact to a filled slot is discarded" in {
+    "a second write / re-emitted artifact to a filled slot is discarded" in {
         val filled = CompactionState().withSummary(3, 7, "first")
         val second = filled.withSummary(3, 7, "second")
         assert(second.summaryOf(3, 7) == Present("first"), "a second write to a filled slot is discarded (state)")
@@ -144,7 +144,7 @@ class CompactorGateTest extends kyo.test.Test[Any]:
             "with a real slot filled, terse is a real prefix, not the blob-less substitute"
         )
         assert(terse.content.contains("recall(3)"), "terse carries the same recall id as the summary render")
-        // the P2 blob-less path is unchanged: an EMPTY slot at the summary level is still the substitute elision.
+        // the blob-less path is unchanged: an EMPTY slot at the summary level is still the substitute elision.
         val empty = Default.summaryMarker(sp, raw, units, Level.Summary, raw.size, Dict.empty, CompactionState())
         assert(empty.content.contains("summary unavailable"), "an empty slot renders the fixed-size substitute elision (P2 unchanged)")
     }

@@ -21,7 +21,7 @@ case class AIEnv(
     /** Sets the config (`Present`), overriding any inherited one. */
     def config(config: Config): AIEnv = copy(config = Present(config))
 
-    /** Seats the run-level interrupt registry (§5f Lifecycle): the set of in-flight preparation
+    /** Seats the run-level interrupt registry: the set of in-flight preparation
       * fibers LLM.run's Sync.ensure sweeps on any exit so none leaks past the run.
       * Set once at LLM.run; instance envs inherit it through the scope env.
       */

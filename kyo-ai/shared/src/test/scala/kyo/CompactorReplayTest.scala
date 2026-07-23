@@ -4,7 +4,7 @@ import Compactor.internal.*
 import kyo.ai.*
 import kyo.ai.Context.*
 
-/** The §5c analysis's effect on liveness under pressure: the worked-example semantic keep (a scripted
+/** The analysis's effect on liveness under pressure: the worked-example semantic keep (a scripted
   * Relates edge lifts the pool-sizing region and changes the keep decision) and the degradation order (a
   * failed or absent analysis degrades the graph to structural-only and compaction still works, the
   * analyzed layer strictly additive). Deterministic: the analysis wire is scripted through
@@ -26,7 +26,7 @@ class CompactorReplayTest extends kyo.test.Test[Any]:
         s"""{"choices":[{"message":{"role":"assistant","content":"$esc"}}]}"""
     end analysisReply
 
-    // The experiment-B/C fixture (§5c worked example), deliberately vocab-disjoint so m9 (region 8) and
+    // The experiment-B/C fixture, deliberately vocab-disjoint so m9 (region 8) and
     // the pool-sizing answer (region 2) share NO structural token: only a semantic Relates edge can link
     // them. One distractor (region 4) carries a shared hub token with regions 5,6 so it out-ranks the
     // pool answer under structural-only scoring. Tail seed lands on the recent region 8.
@@ -69,7 +69,7 @@ class CompactorReplayTest extends kyo.test.Test[Any]:
 
     // ==== the semantic keep ====
 
-    "INV-025 a scripted Relates edge lifts the pool-sizing region and changes the keep decision under pressure" in {
+    "a scripted Relates edge lifts the pool-sizing region and changes the keep decision under pressure" in {
         val raw = experimentRaw()
         // structural-only: no analyses.
         val structural = liveness(raw, Chunk.empty)
@@ -87,7 +87,7 @@ class CompactorReplayTest extends kyo.test.Test[Any]:
 
     // ==== the degradation order ====
 
-    "INV-013 a failed or absent analysis degrades the graph to structural-only; the analyzed layer is strictly additive" in {
+    "a failed or absent analysis degrades the graph to structural-only; the analyzed layer is strictly additive" in {
         val ctx = closedCtx()
         val raw = ctx.raw
         TestCompletionServer.run { server =>
@@ -178,7 +178,7 @@ class CompactorReplayTest extends kyo.test.Test[Any]:
     def atOccupancy(raw: Chunk[Message], occ: Int): Context =
         Context(raw, raw, Present(CompactionState(lastUsage = Present(occ), lastUsageRawSize = raw.size)))
 
-    "INV-007 the drift stale set is empty after a SIZE-fired boundary (not only the drift-fire path)" in {
+    "the drift stale set is empty after a SIZE-fired boundary (not only the drift-fire path)" in {
         val raw    = driftRaw()
         val config = cfg()
         // occupancy above effectiveHigh (8192 at window 16384) so the next boundary fires by SIZE, not drift
