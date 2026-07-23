@@ -50,15 +50,29 @@ private[kyo] object DomBackend:
             events <- Channel.init[Unit < Async](256)
             // runPartial captures only the Closed failure (the channel closed on page teardown -> stop draining); a
             // Panic propagates rather than being silently swallowed as a clean drain end.
-            _ <- Fiber.init(Loop.foreach(Abort.runPartial[Closed](events.take).map {
-                case Result.Success(eff) => eff.andThen(Loop.continue)
-                case Result.Failure(_)   => Loop.done
-            }))
+            // The drain carries the session's scroll sink: a handler calling UI.scrollIntoView scrolls the
+            // local document, the browser-mount counterpart of the server session's WebSocket op.
+            _ <- Fiber.init(UICommands.scrollSink.let(Present(scrollLocal)) {
+                Loop.foreach(Abort.runPartial[Closed](events.take).map {
+                    case Result.Success(eff) => eff.andThen(Loop.continue)
+                    case Result.Failure(_)   => Loop.done
+                })
+            })
             _ <- setupEventDelegation(dispatch.handle, events)
             _ <- Async.never
         yield ()
         end for
     end mountInto
+
+    // The local-document scroll sink installed on the mount's event-drain fiber; mirrors the embedded
+    // client's ScrollIntoView handling exactly (missing id = no-op, smooth scroll to the block start),
+    // so the same command behaves the same under either runner.
+    private def scrollLocal(id: String)(using Frame): Unit < Async =
+        Sync.defer {
+            val el = document.getElementById(id)
+            if el != null then
+                discard(el.asInstanceOf[js.Dynamic].scrollIntoView(js.Dynamic.literal(behavior = "smooth", block = "start")))
+        }
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:
