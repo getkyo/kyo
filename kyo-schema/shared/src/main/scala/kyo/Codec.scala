@@ -9,8 +9,8 @@ import java.nio.charset.StandardCharsets
   *
   *   - Pluggable: implement `newWriter` and `newReader` to support any binary or text format
   *   - Used by [[kyo.Schema]] encode/decode methods to select the target format at the call site
-  *   - Built-in implementations: [[Json]] (JSON), [[Ion]] (Amazon Ion text), [[Yaml]] (YAML), and [[Protobuf]] (Protocol Buffers wire
-  *     format)
+  *   - Built-in implementations: `Json` (JSON), `Ion` (Amazon Ion text), `Yaml` (YAML), and `Protobuf` (Protocol Buffers wire format),
+  *     each published in its own `kyo-schema-<format>` artifact
   *
   * @see
   *   [[Codec.Writer]] for the serialization side
@@ -55,6 +55,12 @@ end Codec
 
 object Codec:
 
+    /** Default maximum nesting depth for decoding (DoS limit), shared by every built-in codec. */
+    inline val DefaultMaxDepth = 512
+
+    /** Default maximum number of entries in any single collection or object during decoding (DoS limit), shared by every built-in codec. */
+    inline val DefaultMaxCollectionSize = 100000
+
     /** Reads one value of `A` from an already-built reader and requires the whole input to be consumed.
       *
       * The entry points that construct their own reader (a format with a config-dependent reader, or
@@ -83,8 +89,8 @@ object Codec:
           */
         def frame: Frame
 
-        private[kyo] var maxDepth: Int          = 512
-        private[kyo] var maxCollectionSize: Int = 100000
+        private[kyo] var maxDepth: Int          = DefaultMaxDepth
+        private[kyo] var maxCollectionSize: Int = DefaultMaxCollectionSize
         private var _depth: Int                 = 0
 
         /** Fails unless everything left after the decoded root value is insignificant.
@@ -216,6 +222,31 @@ object Codec:
           */
         def captureValue(): Reader
 
+        /** Whether this codec addresses record fields by numeric id instead of (or in addition to)
+          * name, as Protobuf does. The schema serialization engine gates on this before computing a
+          * schema's field-id override map, which would otherwise pay rename-resolution cost at every
+          * nesting depth of every encode/decode on codecs that cannot use the result.
+          *
+          * Returning `true` obliges overriding BOTH [[withFieldIdOverrides]] and
+          * [[fieldIdOverridesSnapshot]]: the engine saves the snapshot before installing a nested
+          * schema's overrides and restores it afterwards, so leaving either default in place would
+          * capture an empty map as the prior state and silently wipe an ancestor schema's overrides
+          * on restore.
+          */
+        def supportsFieldIdOverrides: Boolean = false
+
+        /** Installs field-name-to-numeric-id overrides for interoperability with wire formats that
+          * carry numeric field ids (e.g. existing `.proto` definitions). No-op by default; a codec
+          * that returns `true` from [[supportsFieldIdOverrides]] must override this mutably and
+          * return `this` for chaining.
+          */
+        def withFieldIdOverrides(overrides: Map[String, Int]): this.type = this
+
+        /** The currently installed field-id override map, read by a caller that is about to replace
+          * it with a nested schema's own overrides so the prior value can be restored afterwards.
+          */
+        def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
+
     end Reader
 
     /** Reader capability for self-describing wire formats that can materialize a value into [[Structure.Value]]
@@ -324,6 +355,31 @@ object Codec:
           * selection with no kyo-schema source change.
           */
         def capabilities: Codec.Capabilities = Codec.Capabilities(canWriteTopLevelNonObject)
+
+        /** Whether this codec addresses record fields by numeric id instead of (or in addition to)
+          * name, as Protobuf does. The schema serialization engine gates on this before computing a
+          * schema's field-id override map, which would otherwise pay rename-resolution cost at every
+          * nesting depth of every encode/decode on codecs that cannot use the result.
+          *
+          * Returning `true` obliges overriding BOTH [[withFieldIdOverrides]] and
+          * [[fieldIdOverridesSnapshot]]: the engine saves the snapshot before installing a nested
+          * schema's overrides and restores it afterwards, so leaving either default in place would
+          * capture an empty map as the prior state and silently wipe an ancestor schema's overrides
+          * on restore.
+          */
+        def supportsFieldIdOverrides: Boolean = false
+
+        /** Installs field-name-to-numeric-id overrides for interoperability with wire formats that
+          * carry numeric field ids (e.g. existing `.proto` definitions). No-op by default; a codec
+          * that returns `true` from [[supportsFieldIdOverrides]] must override this mutably and
+          * return `this` for chaining.
+          */
+        def withFieldIdOverrides(overrides: Map[String, Int]): this.type = this
+
+        /** The currently installed field-id override map, read by a caller that is about to replace
+          * it with a nested schema's own overrides so the prior value can be restored afterwards.
+          */
+        def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
     end Writer
 
     /** Describes what wire shapes a codec can express, consulted by `Schema.representationFor`

@@ -284,6 +284,13 @@ lazy val kyoJVM: Project = project
         `kyo-aeron`.jvm,
         `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
+        `kyo-schema-json`.jvm,
+        `kyo-schema-protobuf`.jvm,
+        `kyo-schema-msgpack`.jvm,
+        `kyo-schema-bson`.jvm,
+        `kyo-schema-ion`.jvm,
+        `kyo-schema-yaml`.jvm,
+        `kyo-schema-tests`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-ai`.jvm,
@@ -358,6 +365,13 @@ lazy val kyoJS = project
         `kyo-tasty`.js,
         `kyo-tasty-fixtures-internal`.js,
         `kyo-schema`.js,
+        `kyo-schema-json`.js,
+        `kyo-schema-protobuf`.js,
+        `kyo-schema-msgpack`.js,
+        `kyo-schema-bson`.js,
+        `kyo-schema-ion`.js,
+        `kyo-schema-yaml`.js,
+        `kyo-schema-tests`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
         `kyo-ai`.js,
@@ -411,6 +425,13 @@ lazy val kyoNative = project
         `kyo-tasty`.native,
         `kyo-tasty-fixtures-internal`.native,
         `kyo-schema`.native,
+        `kyo-schema-json`.native,
+        `kyo-schema-protobuf`.native,
+        `kyo-schema-msgpack`.native,
+        `kyo-schema-bson`.native,
+        `kyo-schema-ion`.native,
+        `kyo-schema-yaml`.native,
+        `kyo-schema-tests`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
         `kyo-ai`.native,
@@ -455,6 +476,13 @@ lazy val kyoWasm = project
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
         `kyo-schema`.wasm,
+        `kyo-schema-json`.wasm,
+        `kyo-schema-protobuf`.wasm,
+        `kyo-schema-msgpack`.wasm,
+        `kyo-schema-bson`.wasm,
+        `kyo-schema-ion`.wasm,
+        `kyo-schema-yaml`.wasm,
+        `kyo-schema-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
         `kyo-ffi`.wasm,
@@ -672,6 +700,114 @@ lazy val `kyo-schema` =
         .dependsOn(`kyo-data` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        // kyo-schema/README.md documents the whole module family (core + every format), so its
+        // blocks need classpaths the core does not have; kyo-schema-tests validates it instead.
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-json` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-json"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+// Unpublished home for suites that exercise multiple serialization formats at once
+// (sbt cannot express mutual test-scope dependencies between sibling format modules).
+// Also validates kyo-schema/README.md doctest blocks, which span every format.
+lazy val `kyo-schema-tests` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-protobuf`)
+        .dependsOn(`kyo-schema-msgpack`)
+        .dependsOn(`kyo-schema-bson`)
+        .dependsOn(`kyo-schema-ion`)
+        .dependsOn(`kyo-schema-yaml`)
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-tests"))
+        .withKyoTest
+        .settings(`kyo-settings`, publish / skip := true)
+        .jvmSettings(mimaCheck(false))
+        // The shared kyo-schema README exercises every format; only this project's Test
+        // classpath sees the core plus all six format modules, so it hosts the validation.
+        .jvmConfigure(_.settings(
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md")
+        ))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-protobuf` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-protobuf"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-msgpack` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-msgpack"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-bson` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-bson"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-ion` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-ion"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-yaml` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-yaml"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1013,6 +1149,7 @@ lazy val `kyo-tasty` =
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`)
+        .dependsOn(`kyo-schema-json` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1644,7 +1781,7 @@ lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema`)
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
         .dependsOn(`kyo-net`)
         .withKyoTest
         .settings(
@@ -1684,7 +1821,7 @@ lazy val `kyo-ai` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
-        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
+        .dependsOn(`kyo-core`, `kyo-schema-json`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1719,7 +1856,7 @@ lazy val `kyo-jsonrpc` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
         .in(file("kyo-jsonrpc"))
         .withKyoTest
@@ -2267,7 +2404,7 @@ lazy val `kyo-slack` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
-        .dependsOn(`kyo-http`, `kyo-schema`)
+        .dependsOn(`kyo-http`, `kyo-schema-json`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2414,7 +2551,7 @@ lazy val `kyo-examples` =
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
         .dependsOn(`kyo-http`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-actor`)
@@ -2440,7 +2577,8 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-http`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-yaml`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
@@ -2510,7 +2648,7 @@ lazy val `kyo-doctest` =
         .crossType(CrossType.Full)
         .in(file("kyo-doctest"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-direct` % Test)
         .withKyoTest
