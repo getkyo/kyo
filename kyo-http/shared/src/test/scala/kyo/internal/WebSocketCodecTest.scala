@@ -68,6 +68,41 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         header ++ payload
     end makeFrame
 
+    /** Build a masked WebSocket frame (client-to-server direction) with a fixed mask key, the framing a server-role
+      * reader requires (RFC 6455 section 5.1). Handles 7-bit, 16-bit, and 64-bit length encodings.
+      */
+    private def makeMaskedFrame(opcode: Int, fin: Boolean, payload: Array[Byte]): Array[Byte] =
+        val finBit  = if fin then 0x80 else 0
+        val b0      = ((finBit | opcode) & 0xff).toByte
+        val len     = payload.length
+        val maskKey = Array[Byte](0x12, 0x34, 0x56, 0x78)
+        val lenHeader =
+            if len < 126 then
+                Array[Byte](b0, (0x80 | len).toByte)
+            else if len < 65536 then
+                Array[Byte](b0, (0x80 | 126).toByte, ((len >> 8) & 0xff).toByte, (len & 0xff).toByte)
+            else
+                val ll = len.toLong
+                Array[Byte](
+                    b0,
+                    (0x80 | 127).toByte,
+                    ((ll >> 56) & 0xff).toByte,
+                    ((ll >> 48) & 0xff).toByte,
+                    ((ll >> 40) & 0xff).toByte,
+                    ((ll >> 32) & 0xff).toByte,
+                    ((ll >> 24) & 0xff).toByte,
+                    ((ll >> 16) & 0xff).toByte,
+                    ((ll >> 8) & 0xff).toByte,
+                    (ll & 0xff).toByte
+                )
+        val maskedPayload = new Array[Byte](len)
+        var i             = 0
+        while i < len do
+            maskedPayload(i) = (payload(i) ^ maskKey(i % 4)).toByte
+            i += 1
+        lenHeader ++ maskKey ++ maskedPayload
+    end makeMaskedFrame
+
     // ── Accept key ──────────────────────────────────────────────
 
     "computeAcceptKey" - {
@@ -242,7 +277,14 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             val writeConn = new MockConn(Array.empty[Byte])
             WebSocketCodec.writeFrame(writeConn, HttpWebSocket.Payload.Text("hello"), mask = false).andThen {
                 val readConn = new MockConn(writeConn.written)
-                Abort.run[Closed](WebSocketCodec.readFrameWith(readConn.read, readConn)((frame, _) => frame)).map { result =>
+                // The written frame is unmasked (a server-to-client frame), so it is read in the client role (mask =
+                // true), which expects unmasked incoming frames per RFC 6455 section 5.1.
+                Abort.run[Closed](WebSocketCodec.readFrameWith(readConn.read, readConn, Int.MaxValue, _ => Kyo.unit, mask = true)(
+                    (
+                        frame,
+                        _
+                    ) => frame
+                )).map { result =>
                     result match
                         case Result.Success(HttpWebSocket.Payload.Text(text)) =>
                             assert(text == "hello")
@@ -278,19 +320,88 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         }
 
         "rejects frame larger than maxFrameSize" in {
-            val payload = "hello".getBytes(Utf8)
-            val frame = Array[Byte](
-                (0x80 | 0x01).toByte,
-                payload.length.toByte
-            ) ++ payload
-            val conn = new MockConn(frame)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = false)((frame, _) => frame)).map {
+            // A 5-byte unmasked (server) frame read in the client role (mask = true, so the masking check passes) under
+            // a 4-byte cap, so the SIZE check is what fires.
+            val frame = makeFrame(0x1, fin = true, "hello".getBytes(Utf8))
+            val conn  = new MockConn(frame)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = true)((frame, _) => frame)).map {
                 result =>
                     assert(result.isFailure)
             }
         }
 
+        // RFC 6455 section 5.1: a server MUST close the connection on receiving a frame that is not masked. Masking is
+        // what stops an intermediary from being tricked into caching or misrouting attacker-chosen bytes, so a server
+        // that accepts an unmasked client frame loses that protection. The server-role reader (mask = false) applies no
+        // such check: it unmasks only when the mask bit is set and otherwise reads the frame as-is, whatever the role.
+        // This asserts the secure behavior and therefore FAILS until the server rejects an unmasked client frame.
+        //
+        // Origin: RFC 6455 section 5.1; Tomcat Bug 69844 (the mirror, a client accepting a masked server frame).
+        "rejects an unmasked client frame in the server role" in {
+            // A well-formed text frame with the mask bit CLEAR (a legal server-to-client frame, illegal client-to-server).
+            val unmasked = Array[Byte]((0x80 | 0x01).toByte, 0x05.toByte) ++ "hello".getBytes(Utf8)
+            val conn     = new MockConn(unmasked)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map { result =>
+                assert(result.isFailure, s"a server must reject an unmasked client frame, but it was accepted: $result")
+            }
+        }
+
+        // RFC 6455 section 5.5: all control frames (Close 0x8, Ping 0x9, Pong 0xA) MUST have a payload of 125 bytes or
+        // fewer. A decoder that reads a 126/127 extended length for a control frame lets a peer drive a large
+        // allocation from a frame that can carry none, the Tomcat CVE-2020-13935 class.
+        //
+        // A Ping is used, not a Close, so the assertion is discriminating: a Close would abort the reader regardless of
+        // length (a vacuous pass), whereas a Ping is auto-Ponged and the reader continues to the next frame. The stream
+        // is an oversized Ping followed by a valid text frame, so a decoder that ACCEPTS the bad Ping delivers "abc"
+        // (success), and one that REJECTS it fails. Refusal is the secure outcome.
+        "rejects a control frame with an extended payload length (CVE-2020-13935)" in {
+            // A MASKED Ping (so the masking check passes and the SIZE check is what fires) whose 200-byte payload forces
+            // the 126 extended-length form, which a control frame must never use. The following masked text frame would
+            // be delivered as "abc" if the bad Ping were wrongly accepted, keeping the assertion discriminating.
+            val ping = makeMaskedFrame(0x9, fin = true, new Array[Byte](200))
+            val text = makeMaskedFrame(0x1, fin = true, "abc".getBytes(Utf8))
+            val conn = new MockConn(ping ++ text)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((_, _) => "abc")).map { result =>
+                assert(
+                    result.isFailure,
+                    s"a control frame over 125 bytes must be refused, but the reader accepted it and continued: $result"
+                )
+            }
+        }
+
+        // RFC 6455 section 5.5: a control frame MUST NOT be fragmented (FIN must be 1). A Ping with FIN=0 is malformed
+        // and must be refused, not auto-Ponged as if complete. Same discriminating shape: fragmented Ping then a valid
+        // text frame; accepting the bad Ping delivers "abc".
+        "rejects a fragmented control frame (RFC 6455 section 5.5)" in {
+            // A MASKED Ping with FIN CLEAR (so the masking check passes and the FIN check is what fires), zero payload.
+            // The following masked text frame would be delivered as "abc" if the bad Ping were wrongly accepted.
+            val ping = makeMaskedFrame(0x9, fin = false, Array.empty[Byte])
+            val text = makeMaskedFrame(0x1, fin = true, "abc".getBytes(Utf8))
+            val conn = new MockConn(ping ++ text)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((_, _) => "abc")).map { result =>
+                assert(result.isFailure, s"a fragmented control frame must be refused, but the reader accepted it and continued: $result")
+            }
+        }
+
+        // The client-role mirror of the server masking check: a client MUST reject a MASKED frame, because a server
+        // must never mask (RFC 6455 section 5.1). Tomcat Bug 69844 is exactly this direction. The client-role reader is
+        // mask = true, so expectMasked is false.
+        "rejects a masked server frame in the client role (Tomcat Bug 69844)" in {
+            val masked = makeMaskedFrame(0x1, fin = true, "hello".getBytes(Utf8))
+            val conn   = new MockConn(masked)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)(
+                (
+                    frame,
+                    _
+                ) => frame
+            )).map { result =>
+                assert(result.isFailure, s"a client must reject a masked server frame, but it was accepted: $result")
+            }
+        }
+
         "rejects 64-bit frame lengths before integer overflow" in {
+            // An unmasked (server) attack frame read in the client role (mask = true), so the masking check passes and
+            // the 64-bit length check is what fires.
             val frame = Array[Byte](
                 (0x80 | 0x01).toByte,
                 127.toByte,
@@ -304,8 +415,90 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 0x00.toByte
             )
             val conn = new MockConn(frame)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map { result =>
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
+                frame
+            )).map { result =>
                 assert(result.isFailure)
+            }
+        }
+
+        // The 64-bit extended length is read into a Long, so every bit set reads as -1. A decoder that carries that
+        // straight to a read length asks for a negative count, which a bounds-tolerant reader answers with zero bytes:
+        // the frame then "succeeds" as empty, having consumed only the header, and every subsequent frame on the
+        // connection is read from the wrong offset. The pin is the SUCCESS side, not just any failure -- an unguarded
+        // decoder returns Text("") here rather than erroring, so a test asserting only "something went wrong" would
+        // pass either way.
+        "rejects a 64-bit frame length whose bits are all set (GHSA-3j86-pj9g-jchr)" in {
+            val frame = Array[Byte](
+                (0x80 | 0x01).toByte,
+                127.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte
+            )
+            val conn = new MockConn(frame)
+            // Client role (mask = true) so the unmasked attack frame passes the masking check and the length check fires.
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
+                frame
+            )).map {
+                case Result.Failure(_: Closed) => succeed("a negative declared length was rejected")
+                case other                     => fail(s"a negative declared length was accepted, got $other")
+            }
+        }
+
+        // A length that is positive as a Long but truncates to a small positive Int: 2^32 + 100 becomes exactly 100.
+        // An unguarded decoder returns a well-formed 100-byte frame while the peer believes it declared 4 GiB, so the
+        // two ends disagree about where the next frame starts. Same desync as the case above, reached from the other
+        // direction, and again the failure mode is a plausible SUCCESS rather than an error.
+        "rejects a 64-bit frame length that truncates to a valid Int (GHSA-3j86-pj9g-jchr)" in {
+            val payload = new Array[Byte](100)
+            val frame = Array[Byte](
+                (0x80 | 0x01).toByte,
+                127.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x01.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x64.toByte
+            ) ++ payload
+            val conn = new MockConn(frame)
+            // Client role (mask = true) so the unmasked attack frame passes the masking check and the length check fires.
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
+                frame
+            )).map {
+                case Result.Failure(_: Closed) => succeed("a length exceeding Int range was rejected")
+                case other                     => fail(s"a 2^32+100 length was truncated to 100 and accepted, got $other")
+            }
+        }
+
+        // The configured cap on the EXTENDED-length path. The existing cap test above drives the 7-bit path only, where
+        // the declared length cannot exceed 125 and the cap is never the thing under test.
+        "enforces maxFrameSize on the 64-bit length path (GHSA-3j86-pj9g-jchr)" in {
+            val frame = Array[Byte](
+                (0x80 | 0x01).toByte,
+                127.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x00.toByte,
+                0x01.toByte,
+                0x00.toByte,
+                0x00.toByte
+            )
+            val conn = new MockConn(frame)
+            // Client role (mask = true) so the unmasked attack frame passes the masking check and the cap is what fires.
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = true)((frame, _) => frame)).map {
+                case Result.Failure(_: Closed) => succeed("a 65536-byte frame was rejected against a 4-byte cap")
+                case other                     => fail(s"a 65536-byte frame passed a 4-byte cap, got $other")
             }
         }
     }
@@ -450,17 +643,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         val textPayload = "after-ping".getBytes(Utf8)
         val pingPayload = "pingdata".getBytes(Utf8)
 
-        // Ping frame: FIN=1, opcode=9, no mask
-        val pingFrame = Array[Byte](
-            (0x80 | 0x09).toByte, // FIN + Ping
-            pingPayload.length.toByte
-        ) ++ pingPayload
-
-        // Text frame: FIN=1, opcode=1, no mask
-        val textFrame = Array[Byte](
-            (0x80 | 0x01).toByte, // FIN + Text
-            textPayload.length.toByte
-        ) ++ textPayload
+        // Masked Ping and Text: a server-role reader requires client frames to be masked (RFC 6455 section 5.1).
+        val pingFrame = makeMaskedFrame(0x9, fin = true, pingPayload)
+        val textFrame = makeMaskedFrame(0x1, fin = true, textPayload)
 
         val conn = new MockConn(pingFrame ++ textFrame)
         // Default (server) mode: the auto-Pong is UNMASKED per RFC 6455 §5.1 (servers must not mask).
@@ -509,15 +694,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         val textPayload = "afterpong".getBytes(Utf8)
         val pongPayload = "pongdata".getBytes(Utf8)
 
-        val pongFrame = Array[Byte](
-            (0x80 | 0x0a).toByte, // FIN + Pong
-            pongPayload.length.toByte
-        ) ++ pongPayload
-
-        val textFrame = Array[Byte](
-            (0x80 | 0x01).toByte, // FIN + Text
-            textPayload.length.toByte
-        ) ++ textPayload
+        // Masked Pong and Text: a server-role reader requires client frames to be masked (RFC 6455 section 5.1).
+        val pongFrame = makeMaskedFrame(0xa, fin = true, pongPayload)
+        val textFrame = makeMaskedFrame(0x1, fin = true, textPayload)
 
         val conn = new MockConn(pongFrame ++ textFrame)
         Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map {

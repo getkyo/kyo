@@ -125,6 +125,21 @@ private[kyo] object UnsafeServerDispatch:
             }
         }
 
+        /** Tears the connection down now: flushes whatever is queued, completes onClosing so an in-flight handler is interrupted, and
+          * reclaims the fd. Used by every path that answers a request and then ends the connection, since none of them can rely on the
+          * idle timer, which is either cancelled by then or was never armed.
+          */
+        def closeConnectionNow(): Unit =
+            closeConnection match
+                case Present(closeFn) => closeFn()
+                case Absent           =>
+                    // Inbound only. These paths have just WRITTEN a response, and closing outbound here would discard it
+                    // before anything could read it: the peer would be refused with no explanation, which is the failure
+                    // this close was added to prevent. Closing inbound already ends the connection logically by stopping
+                    // any further read. The connection-backed branch above has no such tension because closeFn flushes
+                    // the queued tail through closeAwaitEmpty before reclaiming the fd.
+                    discard(inbound.close())
+
         def cancelIdleTimer(): Unit =
             idleTimerFiber match
                 case Present(fiber) =>
@@ -166,6 +181,25 @@ private[kyo] object UnsafeServerDispatch:
         // so this val is safe to allocate once and reuse across all requests on the connection.
         lazy val restartParserFn: () => Unit = () => restartParserKeepAlive(parser)
 
+        /** Answers a rejected request and then either keeps the connection alive or tears it down.
+          *
+          * A request answered with an error still has its declared body (Content-Length or chunked) on the wire, and
+          * the dispatch is not going to consume it. Reusing the connection would let those unconsumed bytes be parsed
+          * as the next request (RFC 9112 section 9.3, the unconsumed-body smuggling class, e.g. Undertow
+          * CVE-2020-10719). Keep-alive is preserved only when the request is keep-alive AND carries no body to strand;
+          * otherwise the answer carries `Connection: close` (RFC 9112 section 9.6) and the connection is closed. The
+          * `write` callback receives the connectionClose flag so it announces the close on the answer it writes.
+          */
+        def answerAndContinue(request: ParsedRequest, write: Boolean => Unit): Unit =
+            if request.isKeepAlive && !hasUnconsumedBody(request) then
+                write(false)
+                restartParserKeepAlive(parser)
+            else
+                write(true)
+                closeConnectionNow()
+            end if
+        end answerAndContinue
+
         // Note on re-entrancy: onRequestParsed fires inside parse(), which may call
         // parser.start() -> needMoreBytes(). This is correct (tail position) but worth
         // documenting for future maintainers.
@@ -183,10 +217,10 @@ private[kyo] object UnsafeServerDispatch:
                 // - Multiple Host headers -> 400
                 val hostInvalid = !request.hasHost || request.hasMultipleHost || request.hasEmptyHost
                 if hostInvalid then
-                    writeBadRequest(streamCtx)
-                    if request.isKeepAlive then
-                        restartParserKeepAlive(parser)
-                    end if
+                    // Answer 400 and continue per the shared rule: keep-alive only when there is no body to strand,
+                    // otherwise Connection: close and tear the connection down. A request with no headers is the
+                    // no-body, non-keep-alive case that used to leak the fd by answering without closing or rearming.
+                    answerAndContinue(request, close => writeBadRequest(streamCtx, connectionClose = close))
                 else
                     val cl  = request.contentLength
                     val max = config.maxContentLength
@@ -195,14 +229,15 @@ private[kyo] object UnsafeServerDispatch:
                     // Per RFC 9110 section 8.6, when both Content-Length and Transfer-Encoding
                     // are present, Transfer-Encoding wins and Content-Length is ignored.
                     if cl > max && !request.isChunked then
-                        if request.expectContinue then
-                            writeExpectationFailed(streamCtx)
-                        else
-                            writePayloadTooLarge(streamCtx)
-                        end if
-                        if request.isKeepAlive then
-                            restartParserKeepAlive(parser)
-                        end if
+                        // The over-limit body is never consumed (417 withholds it, 413 declined it), so the connection
+                        // cannot be reused: answerAndContinue closes it (RFC 9112 section 9.3). The 417-vs-413
+                        // selection on expectContinue is preserved.
+                        answerAndContinue(
+                            request,
+                            close =>
+                                if request.expectContinue then writeExpectationFailed(streamCtx, connectionClose = close)
+                                else writePayloadTooLarge(streamCtx, connectionClose = close)
+                        )
                     else
                         val method = request.method
                         router.findParsed(method, request, lookup) match
@@ -220,26 +255,40 @@ private[kyo] object UnsafeServerDispatch:
                                     parser,
                                     lookup,
                                     restartParserFn,
+                                    () => closeConnectionNow(),
                                     inflightHandler,
                                     onClosing
                                 )
                             case Result.Failure(error) =>
-                                writeErrorResponse(streamCtx, error)
-                                if request.isKeepAlive then
-                                    restartParserKeepAlive(parser)
-                                end if
+                                answerAndContinue(request, close => writeErrorResponse(streamCtx, error, connectionClose = close))
                             case Result.Panic(t) =>
                                 Log.live.unsafe.error("UnsafeServerDispatch: router panic", t)
-                                writeInternalError(streamCtx)
-                                if request.isKeepAlive then
-                                    restartParserKeepAlive(parser)
-                                end if
+                                answerAndContinue(request, close => writeInternalError(streamCtx, connectionClose = close))
                         end match
                     end if
                 end if
             ,
             onClosed = () =>
-                cancelIdleTimer()
+                cancelIdleTimer(),
+            // A request the parser refused (RFC 9112 section 6.3 framing it cannot determine, a malformed escape, a
+            // field that is not a token) is answered 400 before the connection goes away. The connection is not
+            // restarted for keep-alive afterwards, unlike the Host-header 400 above: there the message was framed and
+            // only its content was wrong, so the next request's boundary is known, whereas here the framing itself is
+            // in doubt and any remaining bytes cannot be trusted to start a request.
+            onInvalidRequest = () =>
+                // Answering is only half of it. Not restarting keep-alive is not the same as closing, and answering
+                // without closing is worse than staying silent: the peer sees a complete, well-framed 400, keeps a
+                // connection it believes is healthy, and sends its next request into a socket nothing is reading. So the
+                // answer carries Connection: close (RFC 9112 section 9.6) and the connection is actually torn down.
+                // Closing through closeFn also flushes the queued 400 rather than dropping it, and reclaims the fd,
+                // which the idle timer can no longer do for us because onClosed has just cancelled it.
+                writeBadRequest(streamCtx, connectionClose = true)
+                closeConnection match
+                    case Present(closeFn) => closeFn()
+                    case Absent =>
+                        discard(inbound.close())
+                        discard(outbound.close())
+                end match
         )
 
         // Inject any pre-read bytes into the parser
@@ -279,6 +328,7 @@ private[kyo] object UnsafeServerDispatch:
         parser: Http1Parser,
         routeLookup: RouteLookup,
         restartParser: () => Unit,
+        closeNow: () => Unit,
         inflightHandler: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Unit, Any]]],
         onClosing: Maybe[Fiber.Unsafe[Unit, Any]]
     )(using AllowUnsafe, Frame): Unit =
@@ -323,9 +373,16 @@ private[kyo] object UnsafeServerDispatch:
                 // for both, and interrupting an already-completed fiber is a harmless no-op.
                 if request.isKeepAlive then
                     fiber.onComplete { _ =>
-                        val leftover = streamCtx.takeLeftover()
-                        parser.injectLeftover(leftover)
-                        restartParser()
+                        if streamCtx.mustCloseConnection then
+                            // A handler-path rejection (e.g. a chunked body over maxContentLength answered 413) left
+                            // the declared body unconsumed; reusing the connection would reparse it (RFC 9112 section
+                            // 9.3), so close instead of restarting keep-alive.
+                            closeNow()
+                        else
+                            val leftover = streamCtx.takeLeftover()
+                            parser.injectLeftover(leftover)
+                            restartParser()
+                        end if
                     }
                 end if
         end match
@@ -513,12 +570,24 @@ private[kyo] object UnsafeServerDispatch:
             val initialBytes = streamCtx.takeBodySpan()
             Channel.initUnscopedWith[Span[Byte]](16) { decodedChan =>
                 Fiber.initUnscoped {
-                    Abort.run[Closed](
-                        ChunkedBodyDecoder.readStreaming(streamCtx.bodyChannel, initialBytes, decodedChan.unsafe)
+                    Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](
+                        ChunkedBodyDecoder.readStreaming(
+                            streamCtx.bodyChannel,
+                            initialBytes,
+                            decodedChan.unsafe,
+                            maxControlBytes = config.maxContentLength
+                        )
                     ).map { result =>
                         result match
                             case Result.Panic(t) =>
                                 Log.error("UnsafeServerDispatch: chunked decoder panic", t)
+                            case Result.Failure(malformed: HttpMalformedBodyException) =>
+                                // Malformed chunk framing mid-stream: the delivered body is truncated at the fault.
+                                // Closing the decoded channel ends the handler's stream; the framing is undeterminable.
+                                Log.warn(s"UnsafeServerDispatch: malformed chunked request body: ${malformed.getMessage}")
+                            case Result.Failure(tooLarge: HttpPayloadTooLargeException) =>
+                                // The chunk control plane (an unterminated size line or trailer) exceeded the bound.
+                                Log.warn(s"UnsafeServerDispatch: chunked control bytes over limit: ${tooLarge.getMessage}")
                             case Result.Failure(_: Closed) =>
                                 Log.warn("UnsafeServerDispatch: chunked decoder channel closed")
                             case Result.Success(_) => Kyo.unit
@@ -544,10 +613,30 @@ private[kyo] object UnsafeServerDispatch:
                 }
             }
         else
-            // Body bytes (for buffered requests).
-            // readBody accumulates from the inbound channel if Content-Length > initial body span.
-            // Uses channel.safe.take which suspends the Kyo fiber without blocking OS threads.
-            Abort.run[Closed](streamCtx.readBody()).map {
+            // Body bytes (for buffered requests). A chunked request body carries no Content-Length, so it is
+            // dechunked here bounded by maxContentLength (RFC 9112 section 6.1); a Content-Length body is read by
+            // readBody, which accumulates from the inbound channel. Both suspend the Kyo fiber (channel.safe.take)
+            // without blocking OS threads. readBuffered aborts HttpPayloadTooLargeException when the decoded body
+            // exceeds the limit.
+            val readBodyEffect: Span[Byte] < (Async & Abort[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException]) =
+                if request.isChunked then
+                    ChunkedBodyDecoder.readBuffered(streamCtx.bodyChannel, streamCtx.takeBodySpan(), config.maxContentLength)
+                else
+                    streamCtx.readBody()
+            Abort.run[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException](readBodyEffect).map {
+                case Result.Failure(_: HttpPayloadTooLargeException) =>
+                    // The chunked body exceeded maxContentLength. Answer 413 and close: the unread body tail cannot be
+                    // left on a reused connection (RFC 9112 section 9.3), so mark the connection for closure.
+                    Sync.Unsafe.defer {
+                        writePayloadTooLarge(streamCtx, connectionClose = true)
+                        streamCtx.requestConnectionClose()
+                    }
+                case Result.Failure(malformed: HttpMalformedBodyException) =>
+                    // The chunked framing is malformed (embedded CR, bare LF, invalid size, missing CRLF). Answer 400
+                    // and close: the body boundary is undeterminable, so the connection cannot be safely reused.
+                    writeDecodeError(streamCtx, HttpStatus(400), malformed).andThen(
+                        Sync.Unsafe.defer(streamCtx.requestConnectionClose())
+                    )
                 case Result.Failure(_: Closed) =>
                     // Channel closed before full body arrived -- connection lost, nothing to respond to
                     Log.error("UnsafeServerDispatch: inbound channel closed before body was fully read")
@@ -598,48 +687,54 @@ private[kyo] object UnsafeServerDispatch:
                 endpoint.encodeResponseUnchecked(response)(
                     onEmpty = (status, hdrs) =>
                         Sync.Unsafe.defer {
-                            val writer = streamCtx.respond(status, hdrs.add("Content-Length", "0"))
-                            writer.finish()
+                            // The Content-Length: 0 head fully frames the response: no body, and no chunked last-chunk
+                            // terminator (which belongs only to a chunked response and would desync the next response).
+                            discard(streamCtx.respond(status, hdrs.add("Content-Length", "0")))
                         },
                     onBuffered = (status, hdrs, responseBody) =>
                         Sync.Unsafe.defer {
                             val withLen = hdrs.add("Content-Length", responseBody.size)
-                            if isHead then
-                                val writer = streamCtx.respond(status, withLen)
-                                writer.finish()
-                            else
-                                val writer = streamCtx.respond(status, withLen)
-                                writer.writeBody(responseBody)
-                            end if
+                            val writer  = streamCtx.respond(status, withLen)
+                            // A HEAD response is bodyless (RFC 9112 section 6.3); the Content-Length head frames it, so
+                            // write the body only for a non-HEAD request and never a chunked terminator.
+                            if !isHead then writer.writeBody(responseBody)
                         },
                     onStreaming = (status, hdrs, responseStream) =>
-                        Sync.Unsafe.defer {
-                            val writer = streamCtx.respond(status, hdrs.add("Transfer-Encoding", "chunked"))
-                            Abort.run[Any](
-                                responseStream.foreach { chunk =>
-                                    // Use safe.put for backpressure instead of offer() which silently drops data when full.
-                                    // Closed is NOT swallowed here: it must propagate so a disconnected client aborts the
-                                    // foreach instead of the handler stream being pulled forever into a dead outbound.
-                                    val formatted = Http1StreamContext.formatChunkSpan(chunk)
-                                    streamCtx.outbound.safe.put(formatted)
-                                }
-                            ).map { result =>
-                                result match
-                                    case Result.Panic(t) =>
-                                        Log.error("UnsafeServerDispatch: streaming response error", t).andThen(
-                                            Sync.Unsafe.defer(writer.finish())
-                                        )
-                                    case Result.Failure(_: Closed) =>
-                                        // Routine peer disconnect mid-stream: not an error, so no log noise.
-                                        Sync.Unsafe.defer(writer.finish())
-                                    case Result.Failure(e) =>
-                                        Log.error(s"UnsafeServerDispatch: streaming response aborted: $e").andThen(
-                                            Sync.Unsafe.defer(writer.finish())
-                                        )
-                                    case Result.Success(_) =>
-                                        Sync.Unsafe.defer(writer.finish())
+                        if isHead then
+                            Sync.Unsafe.defer {
+                                // HEAD mirrors GET's chunked framing header but writes no body and no last-chunk
+                                // terminator; a HEAD response is terminated by the blank line after the head (RFC 9112
+                                // section 6.3, RFC 9110 section 9.3.2).
+                                discard(streamCtx.respond(status, hdrs.add("Transfer-Encoding", "chunked")))
                             }
-                        }
+                        else
+                            Sync.Unsafe.defer {
+                                val writer = streamCtx.respond(status, hdrs.add("Transfer-Encoding", "chunked"))
+                                Abort.run[Any](
+                                    responseStream.foreach { chunk =>
+                                        // Use safe.put for backpressure instead of offer() which silently drops data when full.
+                                        // Closed is NOT swallowed here: it must propagate so a disconnected client aborts the
+                                        // foreach instead of the handler stream being pulled forever into a dead outbound.
+                                        val formatted = Http1StreamContext.formatChunkSpan(chunk)
+                                        streamCtx.outbound.safe.put(formatted)
+                                    }
+                                ).map { result =>
+                                    result match
+                                        case Result.Panic(t) =>
+                                            Log.error("UnsafeServerDispatch: streaming response error", t).andThen(
+                                                Sync.Unsafe.defer(writer.finish())
+                                            )
+                                        case Result.Failure(_: Closed) =>
+                                            // Routine peer disconnect mid-stream: not an error, so no log noise.
+                                            Sync.Unsafe.defer(writer.finish())
+                                        case Result.Failure(e) =>
+                                            Log.error(s"UnsafeServerDispatch: streaming response aborted: $e").andThen(
+                                                Sync.Unsafe.defer(writer.finish())
+                                            )
+                                        case Result.Success(_) =>
+                                            Sync.Unsafe.defer(writer.finish())
+                                }
+                            }
                 )
             case Result.Failure(error) =>
                 error match
@@ -648,8 +743,9 @@ private[kyo] object UnsafeServerDispatch:
                             RouteUtil.encodeHalt(halt) { (status, hdrs, haltBody) =>
                                 val withLen = hdrs.add("Content-Length", haltBody.size)
                                 val writer  = streamCtx.respond(status, withLen)
+                                // Content-Length framed; write the body only for a non-HEAD response that has content.
+                                // An empty or HEAD response is framed by its head, with no chunked terminator.
                                 if !isHead && haltBody.size > 0 then writer.writeBody(haltBody)
-                                else writer.finish()
                             }
                         }
                     case other =>
@@ -659,7 +755,6 @@ private[kyo] object UnsafeServerDispatch:
                                     val withLen = hdrs.add("Content-Length", errorBody.size)
                                     val writer  = streamCtx.respond(status, withLen)
                                     if !isHead && errorBody.size > 0 then writer.writeBody(errorBody)
-                                    else writer.finish()
                                 }
                             case Absent =>
                                 Log.error(s"UnsafeServerDispatch: unhandled handler error: $other").andThen(
@@ -673,18 +768,31 @@ private[kyo] object UnsafeServerDispatch:
     end dispatchHandler
 
     /** Write a router-level error response (404, 405, OPTIONS). */
+    /** True when the request declared a body (Content-Length > 0 or Transfer-Encoding: chunked) that a rejecting
+      * dispatch is not going to consume, so the connection cannot be safely reused (RFC 9112 section 9.3).
+      */
+    private def hasUnconsumedBody(request: ParsedRequest): Boolean =
+        request.isChunked || request.contentLength > 0
+
     private def writeErrorResponse(
         streamCtx: Http1StreamContext,
-        error: HttpRouter.FindError
+        error: HttpRouter.FindError,
+        connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
+        // Announce a pending connection close (RFC 9112 section 9.6) so the peer can tell this error, after which the
+        // connection is gone, from an ordinary one after which it may reuse the connection.
+        def withClose(headers: HttpHeaders): HttpHeaders =
+            if connectionClose then headers.add("Connection", "close") else headers
         error match
             case HttpRouter.FindError.NotFound =>
                 val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(404))
                 val writer = streamCtx.respond(
                     HttpStatus(404),
-                    HttpHeaders.empty
-                        .add("Content-Type", "application/json")
-                        .add("Content-Length", bodyBytes.size)
+                    withClose(
+                        HttpHeaders.empty
+                            .add("Content-Type", "application/json")
+                            .add("Content-Length", bodyBytes.size)
+                    )
                 )
                 writer.writeBody(bodyBytes)
             case HttpRouter.FindError.MethodNotAllowed(methods) =>
@@ -697,15 +805,18 @@ private[kyo] object UnsafeServerDispatch:
                 val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(405))
                 val writer = streamCtx.respond(
                     HttpStatus(405),
-                    HttpHeaders.empty
-                        .add("Allow", allow)
-                        .add("Content-Type", "application/json")
-                        .add("Content-Length", bodyBytes.size)
+                    withClose(
+                        HttpHeaders.empty
+                            .add("Allow", allow)
+                            .add("Content-Type", "application/json")
+                            .add("Content-Length", bodyBytes.size)
+                    )
                 )
                 writer.writeBody(bodyBytes)
             case HttpRouter.FindError.Options(headers) =>
-                val writer = streamCtx.respond(HttpStatus(204), headers)
-                writer.finish()
+                // 204 head fully frames the response: no body and no chunked last-chunk terminator.
+                discard(streamCtx.respond(HttpStatus(204), withClose(headers)))
+        end match
     end writeErrorResponse
 
     /** Write a 404 Not Found response. */
@@ -722,30 +833,39 @@ private[kyo] object UnsafeServerDispatch:
         writer.writeBody(bodyBytes)
     end writeNotFound
 
-    /** Write a 400 Bad Request response (e.g. missing or invalid Host header per RFC 9110 section 7.2). */
+    /** Write a 400 Bad Request response (e.g. missing or invalid Host header per RFC 9110 section 7.2).
+      *
+      * `connectionClose` adds the `Connection: close` header, and must be set whenever the caller is about to tear the connection down.
+      * RFC 9112 section 9.6 requires a sender to announce it, and without it the peer has no way to tell this 400 (after which the
+      * connection is gone) from an ordinary one (after which it may reuse the connection).
+      */
     private def writeBadRequest(
-        streamCtx: Http1StreamContext
+        streamCtx: Http1StreamContext,
+        connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(400))
+        val baseHeaders = HttpHeaders.empty
+            .add("Content-Type", "application/json")
+            .add("Content-Length", bodyBytes.size)
         val writer = streamCtx.respond(
             HttpStatus(400),
-            HttpHeaders.empty
-                .add("Content-Type", "application/json")
-                .add("Content-Length", bodyBytes.size)
+            if connectionClose then baseHeaders.add("Connection", "close") else baseHeaders
         )
         writer.writeBody(bodyBytes)
     end writeBadRequest
 
     /** Write a 500 Internal Server Error. */
     private def writeInternalError(
-        streamCtx: Http1StreamContext
+        streamCtx: Http1StreamContext,
+        connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(500))
+        val baseHeaders = HttpHeaders.empty
+            .add("Content-Type", "application/json")
+            .add("Content-Length", bodyBytes.size)
         val writer = streamCtx.respond(
             HttpStatus(500),
-            HttpHeaders.empty
-                .add("Content-Type", "application/json")
-                .add("Content-Length", bodyBytes.size)
+            if connectionClose then baseHeaders.add("Connection", "close") else baseHeaders
         )
         writer.writeBody(bodyBytes)
     end writeInternalError
@@ -774,28 +894,32 @@ private[kyo] object UnsafeServerDispatch:
 
     /** Write a 413 Payload Too Large response. */
     private def writePayloadTooLarge(
-        streamCtx: Http1StreamContext
+        streamCtx: Http1StreamContext,
+        connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(413))
+        val baseHeaders = HttpHeaders.empty
+            .add("Content-Type", "application/json")
+            .add("Content-Length", bodyBytes.size)
         val writer = streamCtx.respond(
             HttpStatus(413),
-            HttpHeaders.empty
-                .add("Content-Type", "application/json")
-                .add("Content-Length", bodyBytes.size)
+            if connectionClose then baseHeaders.add("Connection", "close") else baseHeaders
         )
         writer.writeBody(bodyBytes)
     end writePayloadTooLarge
 
     /** Write a 417 Expectation Failed response. */
     private def writeExpectationFailed(
-        streamCtx: Http1StreamContext
+        streamCtx: Http1StreamContext,
+        connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(417))
+        val baseHeaders = HttpHeaders.empty
+            .add("Content-Type", "application/json")
+            .add("Content-Length", bodyBytes.size)
         val writer = streamCtx.respond(
             HttpStatus(417),
-            HttpHeaders.empty
-                .add("Content-Type", "application/json")
-                .add("Content-Length", bodyBytes.size)
+            if connectionClose then baseHeaders.add("Connection", "close") else baseHeaders
         )
         writer.writeBody(bodyBytes)
     end writeExpectationFailed
@@ -816,7 +940,7 @@ private[kyo] object UnsafeServerDispatch:
     /** Build path captures Dict from RouteLookup indices + ParsedRequest segments. URL-decodes capture values and reconstructs the full
       * remaining path for rest captures.
       */
-    private def buildCaptures(
+    private[internal] def buildCaptures(
         request: ParsedRequest,
         lookup: RouteLookup,
         captureNames: Span[String]
