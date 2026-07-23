@@ -17,3 +17,7 @@ Pulls in `kyo-schema` (the Schema/Codec core) transitively.
 
 See the [Protobuf section of the kyo-schema README](../kyo-schema/README.md#protobuf);
 everything there applies unchanged — only the artifact name is new.
+
+This module's test suites (ProtobufTest, ProtobufConformanceTest, CodecTest)
+live in the repo's unpublished `kyo-schema-tests` module because they assert
+against other formats' output and share fixtures with cross-format suites.
