@@ -9,16 +9,18 @@ import kyo.internal.postgres.*
   * The terminate message has no reply; the server closes the connection immediately upon receipt. We send it then close the connection from
   * our side to avoid waiting for TCP FIN.
   *
-  * `channel.conn.close()` fires in a `Sync.ensure` so the socket closes even when `send(Terminate)` aborts (e.g., server already dropped the
-  * connection, TLS bookkeeping error, fiber interrupt). Without the ensure the socket would leak on any send-failure path, and the
-  * end-of-run FD leak check on Linux CI would trip.
+  * `channel.conn.close()` runs as a `Scope.ensure` finalizer so the socket closes on every completion path (success, failure, abort,
+  * fiber interrupt). `Sync.ensure` alone was not enough: on the interrupt path the fiber can be torn down before the ensure evaluates,
+  * leaving the FD open past end-of-run and tripping the leak check on Linux CI.
   */
 object TerminatorExchange:
 
     def run(channel: PostgresChannel)(using Frame): Unit < (Async & Abort[SqlException]) =
         val m = channel.marshallers.terminate
-        kyo.Sync.ensure(kyo.Sync.Unsafe.defer(channel.conn.close())) {
-            channel.send(Terminate)(using m)
+        Scope.run {
+            Scope.ensure(kyo.Sync.Unsafe.defer(channel.conn.close())).andThen {
+                channel.send(Terminate)(using m)
+            }
         }
     end run
 
