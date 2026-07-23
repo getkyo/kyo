@@ -284,7 +284,13 @@ The vertical an application developer assembles: HTTP services and clients, deri
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
 | [kyo-http](kyo-http/README.md)               | ✅  | ✅  | ✅     | ✅   | HTTP/1.1 client and server with shared API across JVM/JS/Native/WASM, bidirectional OpenAPI                |
-| [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers JSON, Protobuf, validation, lenses, diffs, builders, and structural conversion |
+| [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
+| [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec for kyo-schema: `Json.encode`/`decode` text and bytes, safety limits, JSON Schema generation    |
+| [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |
+| [kyo-schema-msgpack](kyo-schema-msgpack/README.md) | ✅  | ✅  | ✅     | ✅   | MessagePack codec for kyo-schema: `MsgPack.encode`/`decode` compact binary                                 |
+| [kyo-schema-bson](kyo-schema-bson/README.md) | ✅  | ✅  | ✅     | ✅   | BSON codec for kyo-schema: `Bson.encode`/`decode` document bytes                                           |
+| [kyo-schema-ion](kyo-schema-ion/README.md)   | ✅  | ✅  | ✅     | ✅   | Amazon Ion codec for kyo-schema: `Ion` text/binary, standalone `IonBinary`, Ion Schema generation          |
+| [kyo-schema-yaml](kyo-schema-yaml/README.md) | ✅  | ✅  | ✅     | ✅   | YAML 1.2 codec for kyo-schema: `Yaml.encode`/`decode` plus CST and event-stream APIs                       |
 | [kyo-config](kyo-config/README.md)           | ✅  | ✅  | ✅     | ✅   | Type-safe config + feature flags with a percentage-rollout DSL, optional kyo-http admin and live sync      |
 | [kyo-flow](kyo-flow/README.md)               | ✅  | ✅  | ✅     | ✅   | Durable workflow engine (Temporal/Cadence/ZIO-Flow space); value-replay execution, auto-generated REST     |
 | [kyo-ui](kyo-ui/README.md)                   | ✅  | ✅  | ✅     | ✅   | Web UIs as pure values: Scala.js DOM app, server HTML-over-SSE or SSR stream with first-class reactivity   |

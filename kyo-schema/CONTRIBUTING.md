@@ -8,19 +8,22 @@ This guide complements the root [CONTRIBUTING.md](../CONTRIBUTING.md), which cov
 
 ## Architecture at a Glance
 
-kyo-schema's sbt module depends only on `kyo-data` (no `kyo-kernel`, no `kyo-prelude`, no effect runtime), so it is adoptable as a standalone serialization library [build.sbt:586-597].
+kyo-schema is an eight-module family: the format-agnostic core (`kyo-schema`: Schema, derivation, the `Codec` SPI, annotations, validation, optics, structural conversion), six published format modules that each contribute one wire-format entry point on top of it (`kyo-schema-json`, `kyo-schema-protobuf`, `kyo-schema-msgpack`, `kyo-schema-bson`, `kyo-schema-ion`, `kyo-schema-yaml`), and the unpublished `kyo-schema-tests`, which depends on the core plus all six formats and hosts the cross-format test suites and the `kyo-schema/README.md` doctest validation [build.sbt:697-816]. Everything in this guide applies across the family: a format module is just the core's `Codec` contract implemented in its own artifact.
+
+The core depends only on `kyo-data` (no `kyo-kernel`, no `kyo-prelude`, no effect runtime), so it is adoptable as a standalone serialization library; each format module adds only the core [build.sbt:697-708].
 
 Dependency direction is strictly downward: `internal/` may not import from outside `internal/` other than the public types it implements, and the public surface calls into `internal/` exclusively through named entry points; there is no cycle through `internal -> public -> internal` [kyo-schema/shared/src/main/scala/kyo/internal/SchemaDerivedMacro.scala:13-16].
 
 | Layer | Files | Role |
 |-------|-------|------|
-| Public surface | `Schema.scala`, `Codec.scala`, `Structure.scala`, `SchemaException.scala`, `Json.scala`, `Protobuf.scala`, `Yaml.scala`, `Focus.scala`, `Builder.scala`, `Compare.scala`, `Changeset.scala`, `Convert.scala`, `Modify.scala` | The four-slot Schema, the Codec abstraction, the exception hierarchy, the format entry points, the navigation/transform helpers. |
+| Public surface (core) | `Schema.scala`, `Codec.scala`, `Structure.scala`, `SchemaException.scala`, `Focus.scala`, `Builder.scala`, `Compare.scala`, `Changeset.scala`, `Convert.scala`, `Modify.scala` | The four-slot Schema, the Codec abstraction, the exception hierarchy, the navigation/transform helpers. |
+| Format entry points | `kyo-schema-json/.../kyo/Json.scala`, `kyo-schema-protobuf/.../kyo/Protobuf.scala`, `kyo-schema-msgpack/.../kyo/MsgPack.scala`, `kyo-schema-bson/.../kyo/Bson.scala`, `kyo-schema-ion/.../kyo/Ion.scala` + `IonBinary.scala` + `IonSchema.scala`, `kyo-schema-yaml/.../kyo/Yaml.scala` | One public codec entry point per format module, each a `Codec` implementation over the core's SPI. |
 | Annotation surface | `schema/SchemaAnnotation.scala` (package `kyo.schema`, the only file outside package `kyo`) | The marker base `SchemaAnnotation`, the capture-filtering `AnnotationPolicy`, the built-in annotation set (`@rename`, `@alias`, `@discriminator`, `@adjacent`, `@untagged`, `@transient`, `@transform`, `@omit`, `@doc`, and the scoped `@proto.fieldNumber`), and the `Transformer` / `OmitPredicate` object-reference families. See [Annotation-driven configuration](#annotation-driven-configuration). |
 | Macro boundary | `internal/SchemaDerivedMacro.scala` | Thin class-file boundary that immediately delegates to `FocusMacro.derivedImpl`; exists only to break the cyclic compile-time dependency the `inline given derived` call in `Schema.scala` would otherwise create [kyo-schema/shared/src/main/scala/kyo/internal/SchemaDerivedMacro.scala:6-22]. |
 | Macros | `internal/FocusMacro.scala`, `internal/SchemaTransformMacro.scala`, `internal/NavigationMacro.scala`, `internal/ExpandMacro.scala`, `internal/MacroUtils.scala`, `internal/CodecMacro.scala` | Derivation, transforms (drop/rename/add/select/flatten), navigation, structural-shape expansion, shared quote-reflection utilities, and the `fieldId` XXH32 helper. |
 | Runtime engine | `internal/SchemaCodecRuntime.scala`, `internal/SchemaSerializer.scala`, `internal/SchemaFactory.scala`, `internal/StructureValueWriter.scala`, `internal/StructureValueReader.scala` | The runtime walk fed by the macro-emitted metadata table; the transform-aware dispatcher; the path-key recomputation factory; the in-memory `Structure.Value` writer/reader. |
-| Wire formats | `internal/JsonWriter.scala`, `internal/JsonReader.scala`, `internal/ProtobufWriter.scala`, `internal/ProtobufReader.scala`, `internal/YamlWriter.scala`, `internal/YamlReader.scala`, `internal/YamlParser.scala`, `internal/YamlEventReader.scala`, `internal/JsonSchemaEnricher.scala` | Concrete `Codec.Writer` / `Codec.Reader` implementations; JSON math sublayers (`Ryu` for write, `FastFloat` for read). |
-| Platform split | `jvm/.../AsciiStringFactory.scala`, `js-wasm/.../AsciiStringFactory.scala`, `native/.../AsciiStringFactory.scala`, `jvm/.../tools/FastFloatPow10Gen.scala` | The single platform-specific surface plus a JVM-only build-time table generator. |
+| Wire formats | Each format module's `internal/`: e.g. `kyo-schema-json/.../internal/JsonWriter.scala` + `JsonReader.scala` + `JsonSchemaEnricher.scala`, `kyo-schema-protobuf/.../internal/ProtobufWriter.scala` + `ProtobufReader.scala`, `kyo-schema-yaml/.../internal/YamlWriter.scala` + `YamlReader.scala` + `YamlParser.scala` + `YamlEventReader.scala` | Concrete `Codec.Writer` / `Codec.Reader` implementations. The math sublayers they share (`Ryu` for float write, `FastFloat` for float read) stay in the core's `internal/`. |
+| Platform split | `kyo-schema-json/jvm/.../AsciiStringFactory.scala`, `kyo-schema-json/js-wasm/.../AsciiStringFactory.scala`, `kyo-schema-json/native/.../AsciiStringFactory.scala`, `kyo-schema/jvm/.../tools/FastFloatPow10Gen.scala` | The family's single platform-specific surface (in kyo-schema-json) plus the core's JVM-only build-time table generator. |
 
 ### Representative call flow
 
@@ -30,15 +33,15 @@ For `case class User(name: String, age: Int) derives Schema` and `Json.encode(us
 2. `SchemaDerivedMacro` delegates to `FocusMacro.derivedImpl` [kyo-schema/shared/src/main/scala/kyo/internal/SchemaDerivedMacro.scala:6-22].
 3. `FocusMacro.derivedImpl` walks `sym.caseFields`, emits one `summonInline[Schema[ft]]` thunk per field, and emits a single call to `SchemaCodecRuntime.buildProductSchema[User]` carrying the precomputed `ProductFieldsMeta` and the thunk array [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:11-22] [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:7-14].
 4. `buildProductSchema` constructs a fresh `new Schema[User] { ... }` whose `serializeWrite` / `serializeRead` each contain one call back into `writeProduct` / `readProduct` [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:84-118].
-5. At call time `Json.encode(user)` -> `summon[Json].newWriter()` -> `kyo.internal.JsonWriter()`, then `schema.writeTo(value, w)` -> `internal.SchemaSerializer.writeTo` -> `schema.serializeWrite` (direct branch, no transforms) -> `SchemaCodecRuntime.writeProduct`, which walks `meta.names` / `meta.fieldIds` / `meta.nameBytes` and calls `writer.fieldBytes(...)` followed by a recursive `SchemaSerializer.writeTo(schemas(i), raw, writer)` per field [kyo-schema/shared/src/main/scala/kyo/Json.scala:36-40] [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:121-150].
+5. At call time `Json.encode(user)` -> `summon[Json].newWriter()` -> `kyo.internal.JsonWriter()`, then `schema.writeTo(value, w)` -> `internal.SchemaSerializer.writeTo` -> `schema.serializeWrite` (direct branch, no transforms) -> `SchemaCodecRuntime.writeProduct`, which walks `meta.names` / `meta.fieldIds` / `meta.nameBytes` and calls `writer.fieldBytes(...)` followed by a recursive `SchemaSerializer.writeTo(schemas(i), raw, writer)` per field [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:36-40] [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:121-150].
 
 ### Cross-platform split
 
-`AsciiStringFactory` is the only platform-specific surface in the module. The JVM has a private LATIN1 `String(byte[], byte)` constructor that allows zero-copy adoption of an ASCII byte[] as the String backing; Scala.js and Scala Native have no equivalent and fall back to a copying `String(bytes, US_ASCII)` [kyo-schema/jvm/src/main/scala/kyo/internal/AsciiStringFactory.scala:7-25]. It is used only on the JSON-write hot path (string tail trim, ASCII fast-path) and lives in `private[internal]` [kyo-schema/shared/src/main/scala/kyo/internal/JsonWriter.scala:189-222].
+`AsciiStringFactory` (in kyo-schema-json, the only module with platform-split runtime sources) is the only platform-specific surface in the family. The JVM has a private LATIN1 `String(byte[], byte)` constructor that allows zero-copy adoption of an ASCII byte[] as the String backing; Scala.js and Scala Native have no equivalent and fall back to a copying `String(bytes, US_ASCII)` [kyo-schema-json/jvm/src/main/scala/kyo/internal/AsciiStringFactory.scala:7-25]. It is used only on the JSON-write hot path (string tail trim, ASCII fast-path) and lives in `private[internal]` [kyo-schema-json/shared/src/main/scala/kyo/internal/JsonWriter.scala:189-222].
 
 JS and WASM share a single source root: the build's `js-wasm/` partially-shared directory holds the Scala.js-common copy of `AsciiStringFactory`, so JS and WASM both pick it up without per-platform duplication [project/WasmPlatform.scala:8-16].
 
-`FastFloatPow10Gen` is a build-only tool in `jvm/src/main/scala/kyo/internal/tools/`, never linked into the runtime; it regenerates the checked-in `FastFloatPow10Table` for the Eisel-Lemire fast-path [kyo-schema/jvm/src/main/scala/kyo/internal/tools/FastFloatPow10Gen.scala:8-18].
+`FastFloatPow10Gen` is a build-only tool in the core's `jvm/src/main/scala/kyo/internal/tools/`, never linked into the runtime; it regenerates the checked-in `FastFloatPow10Table` for the Eisel-Lemire fast-path [kyo-schema/jvm/src/main/scala/kyo/internal/tools/FastFloatPow10Gen.scala:8-18].
 
 ## The Headline: Four-Slot Schema, Structural-Emit, Runtime-Walk
 
@@ -427,7 +430,7 @@ The boundary between "throw inside, catch at the public edge" and "return `Resul
 
 | Surface kind | Return shape | Pattern |
 |--------------|-------------|---------|
-| Public decode entry point (`Json.decode`, `Protobuf.decode`, `schema.decode`) | `Result[DecodeException, A]` | Wrap the throw-based reader call in `Result.catching[DecodeException]` [kyo-schema/shared/src/main/scala/kyo/Json.scala:62-70] [kyo-schema/shared/src/main/scala/kyo/Schema.scala:172-173]. |
+| Public decode entry point (`Json.decode`, `Protobuf.decode`, `schema.decode`) | `Result[DecodeException, A]` | Wrap the throw-based reader call in `Result.catching[DecodeException]` [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:62-70] [kyo-schema/shared/src/main/scala/kyo/Schema.scala:172-173]. |
 | Internal reader implementation | Throws | Macro-generated and hand-rolled readers throw `MissingFieldException` / `UnknownVariantException` `using reader.frame` [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:200-205]. |
 | Navigation on `Structure.Path` | `Result[NavigationException, _]` | Navigation never throws across the public boundary; caller branches on a typed result [kyo-schema/shared/src/main/scala/kyo/Structure.scala:603-607]. |
 
@@ -449,7 +452,7 @@ The two examples in one file: `Json.decode` returns `Result[DecodeException, A]`
 
 `Bytes`, `Instant`, and `Duration` are base-value `PrimitiveKind` cases (alongside the matching `Structure.Value.Bytes` / `Instant` / `Duration` cases) [kyo-schema/shared/src/main/scala/kyo/Structure.scala:90-96,784-793]. Every codec that can represent a byte span or a timestamp natively (JSON, YAML, Ion, Ion Binary, BSON, MsgPack, Protobuf) maps these three kinds onto its own closest wire type rather than falling back to a generic encoding: adding a fourth base-value kind means extending `PrimitiveKind`, `Structure.Value`, and every codec's exhaustive match over both, the same invariant as any other `PrimitiveKind` addition.
 
-A codec that cannot represent a base value at all raises a typed `DecodeException` (`ParseException`, or `SchemaNotSerializableException` for an encode-side rejection) naming the unsupported shape, rather than silently truncating or coercing it; `BsonReader.readStructure` and `IonBinaryReader.readStructure` are the worked precedent for mapping every wire value losslessly onto the shared `Structure.Value` vocabulary [kyo-schema/shared/src/main/scala/kyo/internal/bson/BsonReader.scala:307-317] [kyo-schema/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryReader.scala:252-262].
+A codec that cannot represent a base value at all raises a typed `DecodeException` (`ParseException`, or `SchemaNotSerializableException` for an encode-side rejection) naming the unsupported shape, rather than silently truncating or coercing it; `BsonReader.readStructure` and `IonBinaryReader.readStructure` are the worked precedent for mapping every wire value losslessly onto the shared `Structure.Value` vocabulary [kyo-schema-bson/shared/src/main/scala/kyo/internal/bson/BsonReader.scala:307-317] [kyo-schema-ion/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryReader.scala:252-262].
 
 The wire shape of `Structure.Type` itself is explicitly hand-pinned by `given Schema[Structure.Type] = Schema.derived` so that any change to the sum's variant set is gated by a code change to this given. Adding a new `Type` variant changes the wire shape; the explicit declaration is the review gate [kyo-schema/shared/src/main/scala/kyo/Structure.scala:255-261].
 
@@ -641,7 +644,7 @@ Two compile-time refusals to be aware of:
 
 ### Add a custom Schema for a user-defined container at a nested field position
 
-Write the data type plus a non-inline given (the container's Schema is summoned via `using`, not `summonInline`) [kyo-schema/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:13-35]:
+Write the data type plus a non-inline given (the container's Schema is summoned via `using`, not `summonInline`) [kyo-schema-json/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:13-35]:
 
 ```
 case class Box[A](item: A) derives CanEqual
@@ -651,9 +654,9 @@ given boxSchema[A](using inner: Schema[A], frame: Frame): Schema[Box[A]] =
 
 ### Add a new wire format (Codec)
 
-Extend `abstract class Codec` with `def newWriter(): Codec.Writer` and `def newReader(input: Span[Byte])(using Frame): Codec.Reader`, then provide concrete `Codec.Writer` / `Codec.Reader` subclasses for the format. Schema-derived traversal is format-agnostic; adding a new wire format does NOT touch `Schema` or `SchemaCodecRuntime` [kyo-schema/shared/src/main/scala/kyo/Codec.scala:5-24].
+A new format is a new `kyo-schema-<format>` sbt module depending on the core (mirror `kyo-schema-msgpack`, the smallest one, in build.sbt), never new files inside the core. Extend `abstract class Codec` with `def newWriter(): Codec.Writer` and `def newReader(input: Span[Byte])(using Frame): Codec.Reader`, then provide concrete `Codec.Writer` / `Codec.Reader` subclasses for the format. Schema-derived traversal is format-agnostic; adding a new wire format does NOT touch `Schema` or `SchemaCodecRuntime` [kyo-schema/shared/src/main/scala/kyo/Codec.scala:5-24].
 
-Minimum shape: a `final class` extending `Codec`, the two factory methods delegating to package-private `kyo.internal.<Format>Writer` / `kyo.internal.<Format>Reader` implementations of `Codec.Writer` / `Codec.Reader`. Mirror `Json` (the simplest one) when wiring a new format [kyo-schema/shared/src/main/scala/kyo/Json.scala:3-7]:
+Minimum shape: a `final class` extending `Codec`, the two factory methods delegating to package-private `kyo.internal.<Format>Writer` / `kyo.internal.<Format>Reader` implementations of `Codec.Writer` / `Codec.Reader`. Mirror `Json` (the simplest one) when wiring a new format [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:3-7]:
 
 ```
 final class Json extends Codec:
@@ -662,31 +665,31 @@ final class Json extends Codec:
         kyo.internal.JsonReader(input)
 ```
 
-Each codec's companion object provides a `given <Codec> = <Codec>()` so codec-polymorphic call sites (e.g. `summon[Json].newWriter()`) resolve without explicit codec construction [kyo-schema/shared/src/main/scala/kyo/Json.scala:27]:
+Each codec's companion object provides a `given <Codec> = <Codec>()` so codec-polymorphic call sites (e.g. `summon[Json].newWriter()`) resolve without explicit codec construction [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:27]:
 
 ```
 given Json = Json()
 ```
 
-A codec that carries configuration (Yaml's `writerConfig`) uses a default-argument constructor to keep the `given Yaml = Yaml()` form valid while letting callers construct configured instances [kyo-schema/shared/src/main/scala/kyo/Yaml.scala:16-23]:
+A codec that carries configuration (Yaml's `writerConfig`) uses a default-argument constructor to keep the `given Yaml = Yaml()` form valid while letting callers construct configured instances [kyo-schema-yaml/shared/src/main/scala/kyo/Yaml.scala:16-23]:
 
 ```
 final class Yaml(writerConfig: Yaml.WriterConfig = Yaml.WriterConfig.Default) extends Codec:
 ```
 
-If the new format is **self-describing** (can materialize an arbitrary wire value into `Structure.Value` without a schema), its Reader subclass should also extend `Codec.IntrospectingReader` and implement `readStructure(): Structure.Value`. Json and Yaml extend it; Protobuf does not [kyo-schema/shared/src/main/scala/kyo/Codec.scala:157-175]. Ion Binary and BSON are both self-describing binary formats and both implement `readStructure` this way [kyo-schema/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryReader.scala:252-262] [kyo-schema/shared/src/main/scala/kyo/internal/bson/BsonReader.scala:307-317].
+If the new format is **self-describing** (can materialize an arbitrary wire value into `Structure.Value` without a schema), its Reader subclass should also extend `Codec.IntrospectingReader` and implement `readStructure(): Structure.Value`. Json and Yaml extend it; Protobuf does not [kyo-schema/shared/src/main/scala/kyo/Codec.scala:157-175]. Ion Binary and BSON are both self-describing binary formats and both implement `readStructure` this way [kyo-schema-ion/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryReader.scala:252-262] [kyo-schema-bson/shared/src/main/scala/kyo/internal/bson/BsonReader.scala:307-317].
 
-**Private codec vocabulary policy.** A format's own wire vocabulary (BSON's element type bytes in `BsonFormat`, Ion Binary's type descriptor bytes in `IonBinaryFormat`) stays `private[kyo]`/internal to the codec package; it is never promoted to a public type. Every wire value a new codec can represent maps losslessly onto an EXISTING `Structure.Value` case (extending `PrimitiveKind` only when the value genuinely has no existing base-value home, per [`PrimitiveKind` is exhaustive](#primitivekind-is-exhaustive)); a wire value with no lossless mapping stays unsupported and is rejected with a typed exception rather than approximated. `BsonReader`/`IonBinaryReader`'s `readStructure` implementations are the worked precedent for both halves of this policy: map what has a home, reject what does not [kyo-schema/shared/src/main/scala/kyo/internal/bson/BsonFormat.scala:1-19] [kyo-schema/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryFormat.scala:7-20].
+**Private codec vocabulary policy.** A format's own wire vocabulary (BSON's element type bytes in `BsonFormat`, Ion Binary's type descriptor bytes in `IonBinaryFormat`) stays `private[kyo]`/internal to the codec package; it is never promoted to a public type. Every wire value a new codec can represent maps losslessly onto an EXISTING `Structure.Value` case (extending `PrimitiveKind` only when the value genuinely has no existing base-value home, per [`PrimitiveKind` is exhaustive](#primitivekind-is-exhaustive)); a wire value with no lossless mapping stays unsupported and is rejected with a typed exception rather than approximated. `BsonReader`/`IonBinaryReader`'s `readStructure` implementations are the worked precedent for both halves of this policy: map what has a home, reject what does not [kyo-schema-bson/shared/src/main/scala/kyo/internal/bson/BsonFormat.scala:1-19] [kyo-schema-ion/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryFormat.scala:7-20].
 
-**Ion config routing.** `Ion.Config(format = Ion.Format.Binary)` does not change `Ion`'s public surface; `Ion.newWriter`/`Ion.newReader` branch on `config.format` and delegate to the same internal Ion Binary writer/reader `IonBinary` uses directly, so the two entry points (the codec-polymorphic `Ion` value and the standalone `IonBinary` codec) share one implementation rather than diverging [kyo-schema/shared/src/main/scala/kyo/Ion.scala:12-28].
+**Ion config routing.** `Ion.Config(format = Ion.Format.Binary)` does not change `Ion`'s public surface; `Ion.newWriter`/`Ion.newReader` branch on `config.format` and delegate to the same internal Ion Binary writer/reader `IonBinary` uses directly, so the two entry points (the codec-polymorphic `Ion` value and the standalone `IonBinary` codec) share one implementation rather than diverging [kyo-schema-ion/shared/src/main/scala/kyo/Ion.scala:12-28].
 
 **Ion Binary and BSON authoring notes.** Both codecs eagerly materialize their reader state at construction (`IonBinaryReader` walks the binary stream into an in-memory value tree; `BsonReader` parses the whole document into a `BsonValue` tree), enforcing `maxDepth`/`maxCollectionSize` during that parse rather than lazily during traversal; a malformed wire value is rejected at construction, before any schema traversal begins. A new binary codec that wants the same fail-fast contract should follow this eager-parse shape rather than validating limits per-field during traversal.
 
-**BSON requires an object-shaped root.** BSON is a document format, so `BsonWriter` rejects any top-level value that is not a document: a top-level array is refused at `arrayStart`, and a non-document root value is refused in `result()` / `pushValue`, both raising `SchemaNotSerializableException` with the message `BSON requires a top-level document` before any bytes are returned [kyo-schema/shared/src/main/scala/kyo/internal/bson/BsonWriter.scala:39-42] [kyo-schema/shared/src/main/scala/kyo/internal/bson/BsonWriter.scala:107-133]. This is the encode-side companion to the positive `canWriteTopLevelNonObject` opt-in that BSON leaves `false`: the capability flag gates the `Tuple` / `TupleFlat` / `Untagged` sum representations (see [Codec capability for top-level non-object shapes](#codec-capability-for-top-level-non-object-shapes)), and the writer's own root guard rejects any other non-object root, such as a top-level scalar or array schema. A new document-oriented codec enforces the same shape at its writer root rather than emitting an invalid stream.
+**BSON requires an object-shaped root.** BSON is a document format, so `BsonWriter` rejects any top-level value that is not a document: a top-level array is refused at `arrayStart`, and a non-document root value is refused in `result()` / `pushValue`, both raising `SchemaNotSerializableException` with the message `BSON requires a top-level document` before any bytes are returned [kyo-schema-bson/shared/src/main/scala/kyo/internal/bson/BsonWriter.scala:39-42] [kyo-schema-bson/shared/src/main/scala/kyo/internal/bson/BsonWriter.scala:107-133]. This is the encode-side companion to the positive `canWriteTopLevelNonObject` opt-in that BSON leaves `false`: the capability flag gates the `Tuple` / `TupleFlat` / `Untagged` sum representations (see [Codec capability for top-level non-object shapes](#codec-capability-for-top-level-non-object-shapes)), and the writer's own root guard rejects any other non-object root, such as a top-level scalar or array schema. A new document-oriented codec enforces the same shape at its writer root rather than emitting an invalid stream.
 
-**Decode limits are copied from config onto the reader, never owned by it.** `Codec.Reader` carries its own `maxDepth` / `maxCollectionSize` fields seeded with the shared defaults (512 / 100000) [kyo-schema/shared/src/main/scala/kyo/Codec.scala:37-46]. A configured codec does not construct a reader that already knows those limits; it constructs the reader and then copies its config's limits onto it via `reader.resetLimits(config.maxDepth, config.maxCollectionSize)` [kyo-schema/shared/src/main/scala/kyo/Json.scala:62-70] [kyo-schema/shared/src/main/scala/kyo/Ion.scala:21-27]. Per-call `decode` overloads take explicit `maxDepth` / `maxCollectionSize` and call `resetLimits` again after construction, so a per-call override wins over the contextual instance's config [kyo-schema/shared/src/main/scala/kyo/IonBinary.scala:56-66]. BSON is the one exception: `BsonReader`'s constructor already knows its limits and self-seeds them from the passed `Bson.Config` [kyo-schema/shared/src/main/scala/kyo/internal/bson/BsonReader.scala:35], so `Bson.newReader` and `Bson.decode` construct the reader and read directly, with no follow-up `resetLimits` call [kyo-schema/shared/src/main/scala/kyo/Bson.scala:16-21]. A new codec that carries decode limits threads them the same way as Json/Ion/IonBinary: default on the reader base, copy from config in `newReader` or at the decode call site, allow a per-call override through `resetLimits`, never bake the limit into the reader constructor unless it follows BSON's self-seeding exception instead.
+**Decode limits are copied from config onto the reader, never owned by it.** `Codec.Reader` carries its own `maxDepth` / `maxCollectionSize` fields seeded with the shared defaults (512 / 100000) [kyo-schema/shared/src/main/scala/kyo/Codec.scala:37-46]. A configured codec does not construct a reader that already knows those limits; it constructs the reader and then copies its config's limits onto it via `reader.resetLimits(config.maxDepth, config.maxCollectionSize)` [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:62-70] [kyo-schema-ion/shared/src/main/scala/kyo/Ion.scala:21-27]. Per-call `decode` overloads take explicit `maxDepth` / `maxCollectionSize` and call `resetLimits` again after construction, so a per-call override wins over the contextual instance's config [kyo-schema-ion/shared/src/main/scala/kyo/IonBinary.scala:56-66]. BSON is the one exception: `BsonReader`'s constructor already knows its limits and self-seeds them from the passed `Bson.Config` [kyo-schema-bson/shared/src/main/scala/kyo/internal/bson/BsonReader.scala:35], so `Bson.newReader` and `Bson.decode` construct the reader and read directly, with no follow-up `resetLimits` call [kyo-schema-bson/shared/src/main/scala/kyo/Bson.scala:16-21]. A new codec that carries decode limits threads them the same way as Json/Ion/IonBinary: default on the reader base, copy from config in `newReader` or at the decode call site, allow a per-call override through `resetLimits`, never bake the limit into the reader constructor unless it follows BSON's self-seeding exception instead.
 
-**Annotation emission is an opt-in writer SPI whose default is a no-op.** `Codec.Writer.annotations(values)` defaults to `()` and `canWriteAnnotations` defaults to `false`, so a codec that cannot carry metadata ignores schema annotations and keeps its wire output unchanged [kyo-schema/shared/src/main/scala/kyo/Codec.scala:224-231]. The Ion codecs are the worked precedent for opting in: `IonBinaryWriter` overrides `canWriteAnnotations` to `config.annotationEmissionMode == Ion.AnnotationEmissionMode.Emit` and only then accumulates the captured annotations in its `annotations` override, so emission stays off unless the caller selects `Ion.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit)` [kyo-schema/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryWriter.scala:13] [kyo-schema/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryWriter.scala:41-44]. A new codec that can represent metadata overrides both members; one that cannot leaves the defaults and is unaffected.
+**Annotation emission is an opt-in writer SPI whose default is a no-op.** `Codec.Writer.annotations(values)` defaults to `()` and `canWriteAnnotations` defaults to `false`, so a codec that cannot carry metadata ignores schema annotations and keeps its wire output unchanged [kyo-schema/shared/src/main/scala/kyo/Codec.scala:224-231]. The Ion codecs are the worked precedent for opting in: `IonBinaryWriter` overrides `canWriteAnnotations` to `config.annotationEmissionMode == Ion.AnnotationEmissionMode.Emit` and only then accumulates the captured annotations in its `annotations` override, so emission stays off unless the caller selects `Ion.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit)` [kyo-schema-ion/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryWriter.scala:13] [kyo-schema-ion/shared/src/main/scala/kyo/internal/ionbinary/IonBinaryWriter.scala:41-44]. A new codec that can represent metadata overrides both members; one that cannot leaves the defaults and is unaffected.
 
 ### Add a new built-in annotation
 
@@ -701,19 +704,21 @@ A custom (non-built-in) marker needs only step 1: extend `SchemaAnnotation`, and
 
 ## Testing
 
+A test lives in the most specific module whose classpath covers it: core-only suites (Schema, Structure, Codec SPI, `internal/` math) in `kyo-schema`, single-format suites in that format's module (e.g. `JsonTest` in kyo-schema-json), and any suite exercising two or more formats at once in the unpublished `kyo-schema-tests` (sbt cannot express mutual test-scope dependencies between sibling format modules). `kyo-schema-tests` also hosts the doctest validation of `kyo-schema/README.md`, whose blocks span every format.
+
 ### Base trait and equality
 
-Every test suite extends `kyo.test.Test[Any]`, never ScalaTest directly [kyo-schema/shared/src/test/scala/kyo/SchemaTest.scala:14]. `Test[Any]` is the explicit Scala 3 spelling for the common case where leaves need only the baseline effects; kyo-schema suites never widen `S` [kyo-test/api/shared/src/main/scala/kyo/test/Test.scala:12].
+Every test suite extends `kyo.test.Test[Any]`, never ScalaTest directly [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:14]. `Test[Any]` is the explicit Scala 3 spelling for the common case where leaves need only the baseline effects; kyo-schema suites never widen `S` [kyo-test/api/shared/src/main/scala/kyo/test/Test.scala:12].
 
-Every suite opens with `given CanEqual[Any, Any] = CanEqual.derived` so heterogeneous `==` comparisons inside `assert` compile under strict equality [kyo-schema/shared/src/test/scala/kyo/SchemaTest.scala:16].
+Every suite opens with `given CanEqual[Any, Any] = CanEqual.derived` so heterogeneous `==` comparisons inside `assert` compile under strict equality [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:16].
 
 Internal-package tests under `shared/src/test/scala/kyo/internal/` follow the same base-class convention [kyo-schema/shared/src/test/scala/kyo/internal/FastFloatTest.scala:26].
 
-When two `Structure.Type` instances must be compared with `==` (tag equality), add a local `given CanEqual[Structure.Type, Structure.Type] = CanEqual.derived` alongside the baseline `Any` instance [kyo-schema/shared/src/test/scala/kyo/StructureTest.scala:62-63].
+When two `Structure.Type` instances must be compared with `==` (tag equality), add a local `given CanEqual[Structure.Type, Structure.Type] = CanEqual.derived` alongside the baseline `Any` instance [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:62-63].
 
 ### Assertion styles, by kind
 
-**Round-trip** is the canonical behavioral check: write with the format API, read back, assert equality with the original value [kyo-schema/shared/src/test/scala/kyo/JsonTest.scala:28-33]:
+**Round-trip** is the canonical behavioral check: write with the format API, read back, assert equality with the original value [kyo-schema-json/shared/src/test/scala/kyo/JsonTest.scala:28-33]:
 
 ```
 val person = MTPerson("Bob", 25)
@@ -722,17 +727,17 @@ val result = Json.decodeBytes[MTPerson](bytes).getOrThrow
 assert(result == person)
 ```
 
-`CodecTest` factors round-trip into a `CodecTestHelper.roundTrip[A]` that drives an in-memory `TestWriter` -> `TestReader` token stream through `schema.writeTo` / `schema.readFrom`, so primitive and case-class round-trips share one helper [kyo-schema/shared/src/test/scala/kyo/CodecTest.scala:288-301].
+`CodecTest` factors round-trip into a `CodecTestHelper.roundTrip[A]` that drives an in-memory `TestWriter` -> `TestReader` token stream through `schema.writeTo` / `schema.readFrom`, so primitive and case-class round-trips share one helper [kyo-schema-tests/shared/src/test/scala/kyo/CodecTest.scala:288-301].
 
-**Token-shape** assertions verify the exact ordered token stream the writer emits, pinning wire shape independently of decoder symmetry [kyo-schema/shared/src/test/scala/kyo/CodecTest.scala:363-377].
+**Token-shape** assertions verify the exact ordered token stream the writer emits, pinning wire shape independently of decoder symmetry [kyo-schema-tests/shared/src/test/scala/kyo/CodecTest.scala:363-377].
 
-**Structure-tree** assertions cast `Schema[A].structure` to the expected `Structure.Type.Product` / `Sum` / `Collection` / `Primitive` variant and assert on `.fields`, `.name`, `.elementType`, and `.typeParams` [kyo-schema/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:55-58]:
+**Structure-tree** assertions cast `Schema[A].structure` to the expected `Structure.Type.Product` / `Sum` / `Collection` / `Primitive` variant and assert on `.fields`, `.name`, `.elementType`, and `.typeParams` [kyo-schema-json/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:55-58]:
 
 ```
 val product = holder.structure.asInstanceOf[Structure.Type.Product]
 ```
 
-When two distinct summons of a polymorphic `given def` Schema cannot be compared by reference, use `Structure.Type.compatible` for structural equality and pattern-match the variant for shape [kyo-schema/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:59-74]:
+When two distinct summons of a polymorphic `given def` Schema cannot be compared by reference, use `Structure.Type.compatible` for structural equality and pattern-match the variant for shape [kyo-schema-json/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:59-74]:
 
 ```
 assert(
@@ -741,21 +746,21 @@ assert(
 )
 ```
 
-**Decode results** return `Result[A]`; tests assert success either by `.getOrThrow` followed by value equality, or by `assert(result == Result.succeed(expected))` [kyo-schema/shared/src/test/scala/kyo/JsonTest.scala:75-78]. Failure cases on `Json.decode` are asserted with `.isFailure`, never `try / catch` [kyo-schema/shared/src/test/scala/kyo/JsonTest.scala:81-85].
+**Decode results** return `Result[A]`; tests assert success either by `.getOrThrow` followed by value equality, or by `assert(result == Result.succeed(expected))` [kyo-schema-json/shared/src/test/scala/kyo/JsonTest.scala:75-78]. Failure cases on `Json.decode` are asserted with `.isFailure`, never `try / catch` [kyo-schema-json/shared/src/test/scala/kyo/JsonTest.scala:81-85].
 
-**Trap (cast without fallback)**: an `asInstanceOf[Structure.Type.Product]` (or any other variant) without a matching `case _ => fail(s"...")` arm produces a `ClassCastException` instead of a readable assertion message. Pair every cast with either a guard pattern-match plus `fail`, or `assert` right after the cast [kyo-schema/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:68-74].
+**Trap (cast without fallback)**: an `asInstanceOf[Structure.Type.Product]` (or any other variant) without a matching `case _ => fail(s"...")` arm produces a `ClassCastException` instead of a readable assertion message. Pair every cast with either a guard pattern-match plus `fail`, or `assert` right after the cast [kyo-schema-json/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:68-74].
 
 ### Compile-time tests
 
-**Type-resolution-only leaves** use a typed `val _: Schema[X] { type Focused = ... } = m` ascription and discharge with `succeed("type-resolution compile check: ...")`; there is no runtime equality to assert because the compile is the verification [kyo-schema/shared/src/test/scala/kyo/SchemaTest.scala:24-28].
+**Type-resolution-only leaves** use a typed `val _: Schema[X] { type Focused = ... } = m` ascription and discharge with `succeed("type-resolution compile check: ...")`; there is no runtime equality to assert because the compile is the verification [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:24-28].
 
-**Negative compile checks** (focus on a nonexistent field, defaults access on a field without a default) use `typeCheckFailure(src)(expectedSubstring)` from the kyo-test base, asserting both that the snippet does not compile and that the error mentions the right token [kyo-schema/shared/src/test/scala/kyo/SchemaTest.scala:137-139]:
+**Negative compile checks** (focus on a nonexistent field, defaults access on a field without a default) use `typeCheckFailure(src)(expectedSubstring)` from the kyo-test base, asserting both that the snippet does not compile and that the error mentions the right token [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:137-139]:
 
 ```
 typeCheckFailure("Schema[kyo.MTPerson].focus(_.nonexistent)")("not found")
 ```
 
-**`derives`-clause failure tests**: when the failing snippet must include a `derives` clause that itself fails (so it cannot be lifted into `typeCheckFailure`'s context), drive `scala.compiletime.testing.typeChecks` / `typeCheckErrors` directly and assert on the head error's message [kyo-schema/shared/src/test/scala/kyo/SchemaTest.scala:7239-7246]:
+**`derives`-clause failure tests**: when the failing snippet must include a `derives` clause that itself fails (so it cannot be lifted into `typeCheckFailure`'s context), drive `scala.compiletime.testing.typeChecks` / `typeCheckErrors` directly and assert on the head error's message [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:7239-7246]:
 
 ```
 val src      = "case class Bad(private val x: Int) derives kyo.Schema"
@@ -764,15 +769,15 @@ val compiles = scala.compiletime.testing.typeChecks(src)
 
 ### Recursive-ADT regression guards
 
-Recursive ADTs MUST be derivable without `StackOverflowError`; the regression test touches the full structure tree of a self-recursive `case class Tree(children: List[Tree])` to exercise the cycle-break path [kyo-schema/shared/src/test/scala/kyo/SchemaTest.scala:7205-7220]:
+Recursive ADTs MUST be derivable without `StackOverflowError`; the regression test touches the full structure tree of a self-recursive `case class Tree(children: List[Tree])` to exercise the cycle-break path [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:7205-7220]:
 
 ```
 "Self-recursive case class derives Schema without StackOverflow" in { ... }
 ```
 
-The `Box[Holder]` regression guard exercises a user-defined container at a recursive position; the cycle-break is purely structural (the outer Schema's `lazy val structure` plus the by-name `Structure.Field._fieldType`), and any failure surfaces as `StackOverflowError` [kyo-schema/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:98-120].
+The `Box[Holder]` regression guard exercises a user-defined container at a recursive position; the cycle-break is purely structural (the outer Schema's `lazy val structure` plus the by-name `Structure.Field._fieldType`), and any failure surfaces as `StackOverflowError` [kyo-schema-json/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:98-120].
 
-The generic-sealed-trait regression guards that `buildSumSchema` populates `Structure.Type.Sum.typeParams`; the test comment states what it pins [kyo-schema/shared/src/test/scala/kyo/StructureTest.scala:314-322]:
+The generic-sealed-trait regression guards that `buildSumSchema` populates `Structure.Type.Sum.typeParams`; the test comment states what it pins [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:314-322]:
 
 ```
 "derived generic sealed trait populates typeParams" in {
@@ -796,15 +801,15 @@ object RTDepartment:
     given Schema[RTDepartment] = Schema.derived[RTDepartment]
 ```
 
-Generic sealed-trait regression fixtures (`GenericSealed[A]`) live as top-level test types in the test source's package so they have a stable `typeParams` to inspect; variants are kept concrete to avoid forcing the macro to substitute the parent's type argument [kyo-schema/shared/src/test/scala/kyo/StructureTest.scala:44-49].
+Generic sealed-trait regression fixtures (`GenericSealed[A]`) live as top-level test types in the test source's package so they have a stable `typeParams` to inspect; variants are kept concrete to avoid forcing the macro to substitute the parent's type argument [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:44-49].
 
-Per-test ad-hoc recursive case classes are declared inside the `in { ... }` block when the regression is local to that leaf, never bled into the shared fixture file [kyo-schema/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:84]:
+Per-test ad-hoc recursive case classes are declared inside the `in { ... }` block when the regression is local to that leaf, never bled into the shared fixture file [kyo-schema-json/shared/src/test/scala/kyo/SchemaCustomContainerNestedTest.scala:84]:
 
 ```
 case class BoxedHolder(payload: Box[BoxedHolder]) derives CanEqual, Schema
 ```
 
-Structure-introspection helpers shared across a single suite are declared once as `private def` on the suite class (e.g. `toStructure` / `fromStructure` in `StructureTest`), not duplicated per leaf [kyo-schema/shared/src/test/scala/kyo/StructureTest.scala:65-74].
+Structure-introspection helpers shared across a single suite are declared once as `private def` on the suite class (e.g. `toStructure` / `fromStructure` in `StructureTest`), not duplicated per leaf [kyo-schema-tests/shared/src/test/scala/kyo/StructureTest.scala:65-74].
 
 ### Cross-platform and timing
 
@@ -826,12 +831,12 @@ Run through this list before touching the derivation path or adding a new public
 6. **For a hand-rolled Schema with custom `equals`**, does it force the by-name thunks before comparing structures? The default case-class `equals` compares `Function0` references and reports `false` for structurally identical instances [kyo-schema/shared/src/main/scala/kyo/Structure.scala:294-306].
 7. **For a new variant of `Structure.Type`**, have you updated the hand-pinned `given Schema[Structure.Type] = Schema.derived` and every exhaustive `PrimitiveKind` match in the codec backends? The wire shape is gated by code review at this given [kyo-schema/shared/src/main/scala/kyo/Structure.scala:255-261].
 8. **For a new decode throw site**, is it `using reader.frame` so the diagnostic points at the user's call-site, not the codec? [kyo-schema/shared/src/main/scala/kyo/Codec.scala:28-34].
-9. **For a new public decode entry point**, does it return `Result[DecodeException, A]` by wrapping a throw-based reader call in `Result.catching[DecodeException]`? Navigation surfaces return `Result[NavigationException, _]` directly [kyo-schema/shared/src/main/scala/kyo/Json.scala:62-70] [kyo-schema/shared/src/main/scala/kyo/Structure.scala:603-607].
+9. **For a new public decode entry point**, does it return `Result[DecodeException, A]` by wrapping a throw-based reader call in `Result.catching[DecodeException]`? Navigation surfaces return `Result[NavigationException, _]` directly [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:62-70] [kyo-schema/shared/src/main/scala/kyo/Structure.scala:603-607].
 10. **For a new exception leaf**, is it a `case class` mixing one of the four marker traits (`DecodeException`, `ValidationException`, `TransformException`, `NavigationException`) into `SchemaException`, with `(using Frame)` and the message inline? Does it derive `CanEqual` if it appears in a navigation path? [kyo-schema/shared/src/main/scala/kyo/SchemaException.scala:15-45].
-11. **For a new Codec**, is it a `final class extends Codec` with two factory methods delegating to `kyo.internal.<Format>Writer` / `kyo.internal.<Format>Reader`, plus a `given <Codec> = <Codec>()` in the companion? Does the Reader extend `Codec.IntrospectingReader` if (and only if) the format is self-describing? [kyo-schema/shared/src/main/scala/kyo/Json.scala:3-27] [kyo-schema/shared/src/main/scala/kyo/Codec.scala:157-175].
+11. **For a new Codec**, is it a `final class extends Codec` with two factory methods delegating to `kyo.internal.<Format>Writer` / `kyo.internal.<Format>Reader`, plus a `given <Codec> = <Codec>()` in the companion? Does the Reader extend `Codec.IntrospectingReader` if (and only if) the format is self-describing? [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:3-27] [kyo-schema/shared/src/main/scala/kyo/Codec.scala:157-175].
 12. **For a derivation-touching change**, does the macro still emit ONE call into `SchemaCodecRuntime.buildProductSchema` / `buildSumSchema` per derived type, with all per-field metadata in one string literal? Per-field branching inside the emitted methods is what blows the JVM class-file limit on test classes with many derivations [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:7-37] [kyo-schema/shared/src/main/scala/kyo/internal/FocusMacro.scala:367-373].
-13. **For a regression on the recursive-derivation path**, have you added a test in `shared/src/test` that exercises the full structure tree (not just `schema.structure`, the children's children too)? Recursive ADT fixtures shared across suites belong in `SchemaTestData.scala` with `derives Schema`; per-leaf ad-hoc recursive types belong in the `in { ... }` block [kyo-schema/shared/src/test/scala/kyo/SchemaTest.scala:7205-7220] [kyo-schema/shared/src/test/scala/kyo/SchemaTestData.scala:93].
-14. **For a new platform-specific file**, is the JVM/JS/Native/Wasm split genuinely required by a platform capability difference (like `AsciiStringFactory`'s LATIN1 trick)? If not, keep it in `shared/`. The module has exactly one platform-specific surface today [kyo-schema/jvm/src/main/scala/kyo/internal/AsciiStringFactory.scala:7-25].
+13. **For a regression on the recursive-derivation path**, have you added a test in `shared/src/test` that exercises the full structure tree (not just `schema.structure`, the children's children too)? Recursive ADT fixtures shared across suites belong in `SchemaTestData.scala` with `derives Schema`; per-leaf ad-hoc recursive types belong in the `in { ... }` block [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:7205-7220] [kyo-schema/shared/src/test/scala/kyo/SchemaTestData.scala:93].
+14. **For a new platform-specific file**, is the JVM/JS/Native/Wasm split genuinely required by a platform capability difference (like `AsciiStringFactory`'s LATIN1 trick)? If not, keep it in `shared/`. The family has exactly one platform-specific surface today, and it lives in kyo-schema-json [kyo-schema-json/jvm/src/main/scala/kyo/internal/AsciiStringFactory.scala:7-25].
 15. **For a new sum wire representation**, have you (a) added the case to `Schema.UnionRepresentation` and confirmed `nonDefault` returns `true` for it (so it reaches the transform-aware path through both `hasTransforms` and `hasReadTransforms`), (b) added the encode arm in `SchemaSerializer.writeWithTransforms` and the decode arm in `Schema.transformedRead`, (c) added a `DelegatingWrapperReader` subclass (for a tagged shape) or a capture/replay path (for an untagged shape), (d) gated any top-level-array / bare-scalar shape behind `requireTopLevelCapable` so it raises `RepresentationUnsupportedException` on a codec that has not opted in via `canWriteTopLevelNonObject`, and (e) updated `Schema.representationExpressibleBy` so chain selection knows whether the new case is expressible by a given capability profile? The macro does NOT change: variant Schemas stay inline and the representation is resolved at the `SchemaSerializer` layer [kyo-schema/shared/src/main/scala/kyo/Schema.scala:108-150] [kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:85-232] [kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:620-749].
 16. **For ANY new `Schema` slot** (representation, naming, omit, chain, ambiguity, or a new transform), have you (a) ORed it into `hasTransforms` and/or `hasReadTransforms` per the [dual-flag invariant](#the-dual-flag-invariant) (both for a write+read slot, `hasReadTransforms` only for a decode-only slot like `unionAmbiguityPolicy` / `denyUnknownFieldsEnabled` / `fieldDefaults`), (b) threaded it through ALL FOUR construction sites (`init`, `initFocused`, `createWithFocused`, `copyWith`) AND through `SchemaFactory.createFrom` (the de-facto fifth site: a `createFrom` that drops the slot resets it on the next `.drop` / path-affecting builder), (c) confirmed the inert default leaves both flags `false` so the default-byte-identity guarantee holds, and (d) done a HARD clean (`target/`, `.bloop/`, `.bsp/`, `project/`), not `sbt clean`, before trusting the build? A missed flag or construction site COMPILES and silently drops the feature [kyo-schema/shared/src/main/scala/kyo/Schema.scala:136-150].
 17. **For a representation fallback chain**, does the encode side select via `representationExpressibleBy` against `writer.capabilities` (emitting one representation, or `RepresentationUnsupportedException` if none is expressible) and the decode side try the chain in declared order over a fresh reader per attempt? Is the chain rejected for emptiness/duplicates at the builder call via `checkRepresentationChain` (`DuplicateRepresentationException`)? [kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:157-195] [kyo-schema/shared/src/main/scala/kyo/Schema.scala:1693-1695].

@@ -703,6 +703,9 @@ lazy val `kyo-schema` =
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
+        // kyo-schema/README.md documents the whole module family (core + every format), so its
+        // blocks need classpaths the core does not have; kyo-schema-tests validates it instead.
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
@@ -722,7 +725,7 @@ lazy val `kyo-schema-json` =
 
 // Unpublished home for suites that exercise multiple serialization formats at once
 // (sbt cannot express mutual test-scope dependencies between sibling format modules).
-// Also validates kyo-schema/README.md doctest blocks, which span every format (wired in a later change).
+// Also validates kyo-schema/README.md doctest blocks, which span every format.
 lazy val `kyo-schema-tests` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -738,6 +741,11 @@ lazy val `kyo-schema-tests` =
         .withKyoTest
         .settings(`kyo-settings`, publish / skip := true)
         .jvmSettings(mimaCheck(false))
+        // The shared kyo-schema README exercises every format; only this project's Test
+        // classpath sees the core plus all six format modules, so it hosts the validation.
+        .jvmConfigure(_.settings(
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md")
+        ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
