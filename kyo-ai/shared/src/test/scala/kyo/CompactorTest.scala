@@ -712,6 +712,17 @@ class CompactorTest extends kyo.test.Test[Any]:
             s"the default fill config is capped at summaryOutputCap, got ${defaultResolved.maxTokens}"
         )
         assert(defaultResolved.maxTokens == Present(512), "the cap is 512")
+        // reasoning is disabled on the internal fill: with it on (the module default), the reasoning
+        // budget is added to the wire ceiling (effectiveMaxOutputTokens = max(512, 12000 + 4096) = 16096
+        // for a TokenBudget entry), voiding the summaryOutputCap the demotion arithmetic relies on. Off,
+        // the effective ceiling resolves back to summaryOutputCap.
+        assert(!defaultResolved.reasoningEnabled, "the internal fill disables reasoning")
+        assert(
+            defaultResolved.effectiveMaxOutputTokens == summaryOutputCap,
+            s"reasoning-off means no budget is added: the fill's wire ceiling resolves to summaryOutputCap (512), " +
+                s"not the reasoning-inflated 16096, got ${defaultResolved.effectiveMaxOutputTokens}"
+        )
+        assert(defaultResolved.effectiveMaxOutputTokens == 512, "the fill's effective output ceiling is 512")
         // user-summarizer path: an explicit summarizer with its own 2048 cap is overridden by the mechanism cap.
         val userSummarizer = cfg().maxTokens(2048)
         val userConfig     = cfg().compaction(_.summarizer(userSummarizer))
@@ -721,6 +732,11 @@ class CompactorTest extends kyo.test.Test[Any]:
             s"the cap is applied unconditionally, overriding the user summarizer's own 2048, got ${userResolved.maxTokens}"
         )
         assert(userResolved.maxTokens == Present(512), "the resolved user-summarizer fill config caps at 512")
+        assert(!userResolved.reasoningEnabled, "the user-summarizer fill also disables reasoning")
+        assert(
+            userResolved.effectiveMaxOutputTokens == 512,
+            s"the user-summarizer fill's effective ceiling is summaryOutputCap, got ${userResolved.effectiveMaxOutputTokens}"
+        )
     }
 
     // ==== the view is held under the hard limit ====

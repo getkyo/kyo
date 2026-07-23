@@ -1078,6 +1078,78 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a streamed turn followed by a gen turn: the gen turn consumes the seated stream anchor, re-anchoring at the streamed sent-view size with the recorded streamed pair in the suffix" in {
+        // The gen path consumes a seated StreamAnchor through the SAME applyStreamMeasure the stream path
+        // uses, so a stream-then-gen sequence must compose: the streamed turn seats the anchor and records
+        // its pair, and the following gen turn re-anchors at the streamed sent-view size before its own
+        // request. The stream turn needs the SSE server; the gen turn needs the JSON server, so the gen
+        // turn re-aims apiUrl with AI.withConfig while keeping the same session (and its seated anchor).
+        TestCompletionServer.run { jsonServer =>
+            TestCompletionServer.runStreaming { sseServer =>
+                val config = wideServerConfig(sseServer.baseUrl).tokenizer(fixedTok)
+                val prior  = Context(Chunk(UserMessage("q1", Absent), UserMessage("q2", Absent)))
+                // the stream turn reports usage 50000/12 at stream end, seating the anchor
+                sseServer.enqueueStream(Chunk(
+                    argDelta("{\"resultValue\":\"streamed\"}"),
+                    openAiUsageChunk(50000, 12)
+                )).andThen {
+                    // the gen turn returns a result_tool call, no usage, so the anchor stays at the streamed total
+                    val genArgs = Json.encode("""{"resultValue":"gen"}""")
+                    val genBody =
+                        s"""{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g1","type":"function","function":{"name":"result_tool","arguments":$genArgs}}]}}]}"""
+                    jsonServer.enqueueBody(genBody).andThen {
+                        LLM.run(config) {
+                            AI.init.map { ai =>
+                                ai.setContext(prior).andThen(ai.stream[String].map(_.run)).andThen {
+                                    LLM.session(ai).map { session =>
+                                        session.streamAnchor match
+                                            case Absent =>
+                                                Kyo.lift(assert(false, "the streamed turn must seat a StreamAnchor"))
+                                            case Present(anchor) =>
+                                                val sentSize = anchor.sentView.size
+                                                assert(
+                                                    sentSize == prior.compacted.size,
+                                                    s"the anchor captures the non-enriched streamed sent view (${prior.compacted.size}), got $sentSize"
+                                                )
+                                                // the gen turn re-aims at the JSON server; applyStreamMeasure consumes the
+                                                // seated anchor at the turn start, before the gen completion
+                                                AI.withConfig(_.apiUrl(jsonServer.baseUrl)) {
+                                                    ai.gen[String]
+                                                }.map { genResult =>
+                                                    ai.context.map { ctx =>
+                                                        val st = ctx.compactionState
+                                                        assert(genResult == "gen", s"the gen turn returns its own result, got '$genResult'")
+                                                        assert(
+                                                            st.lastUsage == Present(50000),
+                                                            s"the gen turn re-anchors on the streamed turn's reported total (50000), got ${st.lastUsage}"
+                                                        )
+                                                        assert(
+                                                            st.lastUsageRawSize == sentSize,
+                                                            s"the applied anchor sizes at the streamed sent-view size ($sentSize), got ${st.lastUsageRawSize}"
+                                                        )
+                                                        // the streamed turn's recorded result_tool call survives into the
+                                                        // conversation the gen turn read and extended
+                                                        val calls = ctx.raw.collect { case AssistantMessage(_, cs, _, _) => cs }.flatten
+                                                        assert(
+                                                            calls.exists(_.arguments.contains("streamed")),
+                                                            s"the streamed turn's recorded call stays in the conversation: ${ctx.raw}"
+                                                        )
+                                                        assert(
+                                                            Compactor.internal.occupancy(ctx) >= 50000,
+                                                            s"occupancy anchors at or above the streamed total, got ${Compactor.internal.occupancy(ctx)}"
+                                                        )
+                                                    }
+                                                }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "a streamed turn joins the conversation" - {
 
         "a fully consumed stream records the result_tool call it made, so a later turn can read it" in {

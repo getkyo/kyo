@@ -147,6 +147,51 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
         }
     }
 
+    "the analysis call disables reasoning, so its wire output ceiling is not inflated by the reasoning budget" in {
+        // A reasoning-budgeted config whose explicit ceiling sits below the budget: with reasoning ON the
+        // wire ceiling would be raised to clear the budget (max(256, 12000 + 4096) = 16096); the analysis
+        // is internal compaction maintenance and must stay cheap, so runAnalysis disables reasoning and the
+        // ceiling resolves back to the explicit 256.
+        TestCompletionServer.run { server =>
+            val reasoningCfg =
+                Config.OpenAI.default.apiKey("k").model(
+                    Config.OpenAI,
+                    "m",
+                    200000,
+                    Config.OutputMaximum.Verified(64000),
+                    Config.ReasoningEncoding.TokenBudget,
+                    true,
+                    true
+                ).reasoningBudget(12000).maxTokens(256).apiUrl(server.baseUrl)
+            assert(reasoningCfg.effectiveMaxOutputTokens == 16096, "reasoning-on the ceiling clears the budget (baseline)")
+            assert(reasoningCfg.disableReasoning.effectiveMaxOutputTokens == 256, "reasoning-off the ceiling is the explicit 256")
+            val ctx     = closedCtx()
+            val pending = Default.analysisPending(ctx, reasoningCfg)
+            val units   = Default.group(ctx.raw)
+            val spans   = Default.formSpans(units, ctx.raw, reasoningCfg)
+            val reach   = Default.analysisReach(units, spans, Dict.empty, Default.tailUnits(units))
+            val reply   = Analysis(pending.map(u => RegionAnalysis(u.id, Chunk.empty)))
+            server.enqueueBody(analysisReply(reply)).andThen {
+                Preparation.init.map { prep =>
+                    Default.runAnalysis(ctx, pending, reasoningCfg, prep, reach).andThen {
+                        server.captured.map { cap =>
+                            assert(cap.size == 1, "exactly one analysis call fires")
+                            val body = cap.head.body
+                            assert(
+                                body.contains("\"max_completion_tokens\":256"),
+                                s"the analysis wire ceiling is the reasoning-off 256, got body: $body"
+                            )
+                            assert(
+                                !body.contains("16096"),
+                                s"the reasoning budget never inflates the analysis ceiling, got body: $body"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "every malformed shape yields a dropped artifact, never a throw (parameterized)" in {
         val validEncoded = Json.encode(Analysis(Chunk(RegionAnalysis(9, Chunk(Relation(2, RelationKind.DependsOn))))))
         val valid        = Set(1, 2, 3, 4, 5, 6, 7, 8, 9, 20)

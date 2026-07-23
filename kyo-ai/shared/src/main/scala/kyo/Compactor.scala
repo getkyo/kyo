@@ -1421,7 +1421,11 @@ object Compactor:
                     case Absent       => config.provider.small
                 // the fill caps its summary output at summaryOutputCap so summary size stays in the demotion
                 // arithmetic's output-cap class and a demoted summary never inflates the served view.
-                base.maxTokens(summaryOutputCap)
+                // Reasoning is disabled: with it on, the default reasoning budget is added to the ceiling
+                // (effectiveMaxOutputTokens raises summaryOutputCap past the cap the demotion arithmetic
+                // relies on), and internal maintenance fills must stay cheap. Off means the ceiling
+                // resolves back to summaryOutputCap.
+                base.maxTokens(summaryOutputCap).disableReasoning
             end resolveFillConfig
 
             // the degraded packing rule: the summarizer has its own (smaller) window, so the
@@ -1540,9 +1544,13 @@ object Compactor:
                     val valid       = reachable
                     val lowWater    = pending.headMaybe.map(_.id).getOrElse(-1)
                     val analysisCtx = buildAnalysisContext(ctx, pending, config, lowWater, reachable)
-                    LLM.run(config) {
+                    // Reasoning is disabled on the internal analysis call: like the summarizer fill, this
+                    // is compaction maintenance and must stay cheap, and the reasoning-on default would
+                    // otherwise inflate the output ceiling with the default reasoning budget.
+                    val analysisConfig = config.disableReasoning
+                    LLM.run(analysisConfig) {
                         Abort.recover[HttpException](e => Abort.fail(AITransportException(e))) {
-                            config.provider.completion(config, analysisCtx, Chunk.empty, Absent)
+                            analysisConfig.provider.completion(analysisConfig, analysisCtx, Chunk.empty, Absent)
                         }
                     }.map { reply =>
                         parseAnalysis(reply.messages.headMaybe.map(_.content).getOrElse(""), valid)

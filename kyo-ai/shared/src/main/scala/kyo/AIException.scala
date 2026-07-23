@@ -195,9 +195,9 @@ case class AIHarnessException(provider: String, detail: String)(using Frame)
   * rather than sending an over-limit request. The transcript loses nothing; only the view
   * omits. It surfaces on `Compactor.render`'s `Abort[AIGenException]` row.
   */
-case class AIContextOverflowException(viewTokens: Int, modelMaxTokens: Int)(using Frame)
+case class AIContextOverflowException(viewTokens: Int, modelContextWindow: Int)(using Frame)
     extends AIException(
-        s"projected view of $viewTokens tokens exceeds the model's hard window of $modelMaxTokens tokens " +
+        s"projected view of $viewTokens tokens exceeds the model's hard window of $modelContextWindow tokens " +
             "with no further demotable units"
     ) with AIGenException
 

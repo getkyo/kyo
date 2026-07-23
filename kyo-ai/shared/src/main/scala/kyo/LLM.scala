@@ -206,7 +206,7 @@ object LLM:
                         val stringMode = schema.structure match
                             case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
                             case _                                                           => false
-                        Abort.recover[HttpException](e => Abort.fail(AITransportException(e)))(
+                        Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(config, e)))(
                             Compactor.internal.applyStreamMeasure(target, config)
                         ).andThen(context(target)).map { targetContext =>
                             // Apply a pending stream re-anchor at the turn start, then render. Compaction seam for

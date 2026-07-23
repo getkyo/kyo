@@ -196,6 +196,63 @@ class LLMTest extends kyo.test.Test[Any]:
         )
     }
 
+    "the request-scoped forced directive leaves the served conversation prefix byte-stable across turns" in {
+        // The prompt-cache property: the per-request forced directive joins the enrichment-excluded anchor
+        // basis and rides TRAILING, so the served conversation's bytes keep their positions from the tool
+        // turn to the forced turn. A directive prepended or inserted mid-conversation would shift every
+        // later byte and defeat provider prefix caching. Below the trigger (compaction re-serves the
+        // context unchanged), so any byte movement here is the directive's alone.
+        val finalizeDirective = "This is the instruction to finalize"
+        def commonPrefixLen(a: String, b: String): Int =
+            val n = math.min(a.length, b.length)
+            var i = 0
+            while i < n && a.charAt(i) == b.charAt(i) do i += 1
+            i
+        end commonPrefixLen
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).maxIterations(1)
+            server.enqueueBody(noResultBody).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":"done"}""")).andThen {
+                    LLM.run(config) {
+                        AI.initWith { ai =>
+                            ai.systemMessage("you are precise").andThen(ai.userMessage("ping")).andThen(ai.gen[String])
+                        }
+                    }.map { r =>
+                        server.captured.map { caps =>
+                            assert(r == "done", s"expected the forced turn's result, got '$r'")
+                            assert(caps.size == 2, s"expected one tool turn and one forced turn, got ${caps.size}")
+                            val toolTurn   = caps(0).body
+                            val forcedTurn = caps(1).body
+                            assert(!toolTurn.contains(finalizeDirective), "the tool turn carries no directive")
+                            assert(forcedTurn.contains(finalizeDirective), "the forced turn carries the directive")
+                            val shared = commonPrefixLen(toolTurn, forcedTurn)
+                            val prefix = toolTurn.take(shared)
+                            // the byte-stable prefix carries the whole served conversation verbatim
+                            assert(
+                                prefix.contains("\"role\":\"system\",\"content\":\"you are precise\""),
+                                s"the byte-stable served prefix carries the system message verbatim, prefix: $prefix"
+                            )
+                            assert(
+                                prefix.contains("\"role\":\"user\",\"content\":\"ping\""),
+                                s"the byte-stable served prefix carries the user message verbatim, prefix: $prefix"
+                            )
+                            // the directive never appears within the stable prefix; it rides strictly after it
+                            assert(
+                                !prefix.contains(finalizeDirective),
+                                "the directive is not inside the byte-stable served prefix"
+                            )
+                            assert(
+                                forcedTurn.indexOf(finalizeDirective) >= shared,
+                                s"the request-scoped directive rides strictly after the byte-stable served prefix " +
+                                    s"(directive at ${forcedTurn.indexOf(finalizeDirective)}, prefix length $shared)"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "a present result that fails schema decode is repaired and retried, not aborted" in {
         TestCompletionServer.run { server =>
             val config = serverConfig(server.baseUrl)
