@@ -76,10 +76,10 @@ jobs:
       # because .jvmopts holds no conflicting duplicates for them.
       JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      # Link kyo-schema's native test binary in its own sbt driver before the aggregate link: its
+      # Link kyo-schema-tests' native test binary in its own sbt driver before the aggregate link: its
       # whole-program optimize runs against a fresh heap instead of a driver that has accumulated
       # ~10 prior modules of heap and metaspace. ci-test.sh honors this only for the Native target.
-      NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema' || '' }}"
+      NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema-tests' || '' }}"
       # Cap the Native link drivers to 2 CPUs (-XX:ActiveProcessorCount). The scala-native
       # toolchain sizes its optimizer pool and its concurrent clang forks from
       # availableProcessors, and the fork fleet stacked on the driver heap is what overcommits
