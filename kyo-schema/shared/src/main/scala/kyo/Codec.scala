@@ -49,8 +49,8 @@ object Codec:
           */
         def frame: Frame
 
-        private[kyo] var maxDepth: Int          = 512
-        private[kyo] var maxCollectionSize: Int = 100000
+        private[kyo] var maxDepth: Int          = DefaultMaxDepth
+        private[kyo] var maxCollectionSize: Int = DefaultMaxCollectionSize
         private var _depth: Int                 = 0
 
         /** Reset limits and depth counter. Called on reader reuse. */
