@@ -162,6 +162,13 @@ object Context:
         // Advances the boundary counter, ticked at every compaction boundary of either cause (§5e).
         def tickBoundary: CompactionState = copy(boundaryCounter = boundaryCounter + 1)
 
+        // Drift bookkeeping (§5g). armDrift latches the pending-confirm flag when a structural
+        // crossing arms; disarmDrift clears it when the served view falls back below the tripwire;
+        // recordDriftFire stamps the fire at the post-tick boundary index and clears pending-confirm.
+        def armDrift: CompactionState        = copy(driftPendingConfirm = true)
+        def disarmDrift: CompactionState     = copy(driftPendingConfirm = false)
+        def recordDriftFire: CompactionState = copy(lastDriftFire = boundaryCounter, driftPendingConfirm = false)
+
         // Re-anchors occupancy on a provider-reported request total (§5a).
         def withUsage(total: Int, rawSize: Int): CompactionState =
             copy(lastUsage = Present(total), lastUsageRawSize = rawSize)

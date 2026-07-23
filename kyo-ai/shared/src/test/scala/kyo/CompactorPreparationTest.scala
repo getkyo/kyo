@@ -50,10 +50,10 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
             AI.init.map { ai =>
                 Preparation.init.map { prep =>
                     val session = AISession.empty.withPreparation(prep)
-                    Default.armBelowBoundary(ai, ctx, config, session, Absent).map { s1 =>
+                    Default.armBelowBoundary(ai, ctx, config, session, Absent, driftArm = false).map { s1 =>
                         prep.inFlight.get.map { f1 =>
-                            Default.armBelowBoundary(ai, ctx, config, s1, Absent).map { s2 =>
-                                Default.armBelowBoundary(ai, ctx, config, s2, Absent).map { s3 =>
+                            Default.armBelowBoundary(ai, ctx, config, s1, Absent, driftArm = false).map { s2 =>
+                                Default.armBelowBoundary(ai, ctx, config, s2, Absent, driftArm = false).map { s3 =>
                                     prep.inFlight.get.map { f3 =>
                                         prep.armed.get.map { armed =>
                                             assert(f1.isDefined, "the first arming pass forks a single-flight fiber into inFlight")

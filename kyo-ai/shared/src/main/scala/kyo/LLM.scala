@@ -525,10 +525,91 @@ object LLM:
                                     }
                             }
                         else
-                            // Below the boundary: re-serve ctx unchanged (byte-stability) and ARM the
-                            // background preparation fiber for this seam pass (§5f :1242-1263).
-                            Compactor.internal.Default.armBelowBoundary(ai, ctx, config, session, env.preparations).map { session2 =>
-                                LLM.setSession(ai, session2).andThen(ctx)
+                            // Below the size boundary: measure relevance drift over the served
+                            // view (model-free, over adopted + staged analyses). A CONFIRMED drift
+                            // fires the SAME boundary machinery (occupied <= effectiveLow, so it sheds
+                            // no size, only stale detail); otherwise arm the background fiber (prepare
+                            // and/or drift causes) and serve the view unchanged (byte-stability).
+                            Compactor.internal.Default.ensurePreparation(session).map { (prep, session1) =>
+                                prep.staged.get.map { staged =>
+                                    Tool.internal.infos.map { infos =>
+                                        Compactor.internal.Default.driftDecision(
+                                            ctx,
+                                            config,
+                                            infos,
+                                            staged.analyses.toChunk.map(_._2)
+                                        ) match
+                                            case Compactor.internal.Default.DriftDecision.Fire =>
+                                                val fired = ctx.withCompaction(ctx.compactionState.tickBoundary.recordDriftFire)
+                                                Compactor.internal.Default.boundaryPrepare(
+                                                    ai,
+                                                    fired,
+                                                    config,
+                                                    session1,
+                                                    env.preparations
+                                                ).map {
+                                                    (prepared, session2) =>
+                                                        LLM.setSession(ai, session2).andThen {
+                                                            c.render(prepared).map { rebuilt =>
+                                                                val updated = prepared.copy(compacted = rebuilt)
+                                                                ai.setContext(updated).andThen(updated)
+                                                            }
+                                                        }
+                                                }
+                                            case Compactor.internal.Default.DriftDecision.Arm =>
+                                                // Latch pending and arm the drift cause, serving the view
+                                                // unchanged. setSession seats the preparation, then
+                                                // setContext installs the armed state last (setSession
+                                                // carries the pre-arm context, so the order matters).
+                                                val armedCtx = ctx.withCompaction(ctx.compactionState.armDrift)
+                                                Compactor.internal.Default.armBelowBoundary(
+                                                    ai,
+                                                    armedCtx,
+                                                    config,
+                                                    session1,
+                                                    env.preparations,
+                                                    driftArm = true
+                                                ).map {
+                                                    session2 =>
+                                                        LLM.setSession(ai, session2)
+                                                            .andThen(ai.setContext(armedCtx))
+                                                            .andThen(armedCtx)
+                                                }
+                                            case Compactor.internal.Default.DriftDecision.Idle =>
+                                                if ctx.compactionState.driftPendingConfirm then
+                                                    // A pending arm that no longer crosses (a return
+                                                    // below the line): disarm the drift cause and clear
+                                                    // pending, serving the view unchanged. setContext
+                                                    // installs the cleared state after setSession.
+                                                    val cleared = ctx.withCompaction(ctx.compactionState.disarmDrift)
+                                                    Compactor.internal.Default.armBelowBoundary(
+                                                        ai,
+                                                        cleared,
+                                                        config,
+                                                        session1,
+                                                        env.preparations,
+                                                        driftArm = false
+                                                    ).map {
+                                                        session2 =>
+                                                            LLM.setSession(ai, session2)
+                                                                .andThen(ai.setContext(cleared))
+                                                                .andThen(cleared)
+                                                    }
+                                                else
+                                                    Compactor.internal.Default.armBelowBoundary(
+                                                        ai,
+                                                        ctx,
+                                                        config,
+                                                        session1,
+                                                        env.preparations,
+                                                        driftArm = false
+                                                    ).map {
+                                                        session2 => LLM.setSession(ai, session2).andThen(ctx)
+                                                    }
+                                                end if
+                                        end match
+                                    }
+                                }
                             }
                         end if
                     }

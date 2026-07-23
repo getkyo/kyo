@@ -741,6 +741,71 @@ object Compactor:
             def analysisLowWater(ctx: Context, config: Config): Int =
                 analysisPending(ctx, config).headMaybe.map(_.id).getOrElse(-1)
 
+            // The relevance-drift decision (§5g): a model-free tripwire under the size boundary.
+            enum DriftDecision derives CanEqual:
+                case Fire, Arm, Idle
+
+            // Merges the adopted analyses with the fiber-staged ones, adopted taking precedence on a
+            // shared ordinal, so the drift measure reads every relation currently produced.
+            def mergeAnalyses(adopted: Chunk[RegionAnalysis], staged: Chunk[RegionAnalysis]): Chunk[RegionAnalysis] =
+                adopted ++ staged.filterNot(s => adopted.exists(_.ordinal == s.ordinal))
+
+            // The drift signal S (§5g): one graph derivation, one PPR, one sweep, relations read from
+            // state and never fetched. S sums the stamped token counts of the STALE SET, the literal
+            // complement of the cut's own demotable filter (a span whose max member liveness falls
+            // below the keep floor) minus any span already demoted in the served view.
+            def driftSignal(
+                ctx: Context,
+                config: Config,
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]],
+                analyses: Chunk[RegionAnalysis]
+            )(using Frame): Int =
+                val units = group(ctx.raw)
+                val spans = formSpans(units, ctx.raw, config)
+                val superseded =
+                    mergeSupersession(supersession(units, superKeysFrom(units, ctx.raw, infos)), analyzedSupersession(analyses))
+                val graph     = deriveGraph(units, ctx.raw, superseded, analyzedEdges(analyses))
+                val seed      = seedVector(units, ctx.raw, ctx.compactionState)
+                val scores    = score(units, graph, superseded, seed)
+                val occupied  = occupancy(ctx)
+                val low       = config.effectiveLow
+                val pressure  = if low <= 0 then 1.0 else occupied.toDouble / low.toDouble
+                val keepFloor = keep(math.max(pressure, 1.0))
+                val demoted   = demotedOrigins(ctx.compacted)
+                val byId      = units.foldLeft(Dict.empty[Int, Region])((m, u) => m.update(u.id, u))
+                val staleSet =
+                    spans.filter(sp => spanMaxLiveness(sp, scores) < keepFloor && !sp.regionIds.exists(id => demoted.contains(id)))
+                staleSet.foldLeft(0)((n, sp) => n + sp.regionIds.foldLeft(0)((t, id) => t + byId.get(id).map(_.tokens).getOrElse(0)))
+            end driftSignal
+
+            // The refractory guard (§5g): a fire is allowed only when none has fired yet (lastDriftFire
+            // < 0, the fresh-session escape hatch) or driftRefractory boundary generations have elapsed.
+            def refractoryAllows(state: Context.CompactionState): Boolean =
+                state.lastDriftFire < 0 || (state.boundaryCounter - state.lastDriftFire) >= driftRefractory
+
+            // The drift decision (§5g): structural-arm then analysis-confirm then fire. No model call
+            // runs here; S is recomputed over the adopted-plus-staged relations at the confirm. A
+            // crossing that clears the threshold and the refractory fires when already pending-confirm,
+            // arms otherwise; a sub-threshold or refractory-blocked crossing stays idle.
+            def driftDecision(
+                ctx: Context,
+                config: Config,
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]],
+                staged: Chunk[RegionAnalysis]
+            )(using Frame): DriftDecision =
+                config.compaction.driftThreshold match
+                    case Absent => DriftDecision.Idle
+                    case Present(threshold) =>
+                        val state   = ctx.compactionState
+                        val s       = driftSignal(ctx, config, infos, mergeAnalyses(state.analyses, staged))
+                        val crosses = s.toDouble >= threshold * config.effectiveLow.toDouble
+                        if !crosses then DriftDecision.Idle
+                        else if !refractoryAllows(state) then DriftDecision.Idle
+                        else if state.driftPendingConfirm then DriftDecision.Fire
+                        else DriftDecision.Arm
+                        end if
+            end driftDecision
+
             // ---- the cut: the unified DEMOTION RULE (§5d), one rule for size-fired and drift-fired
             // boundaries. Pinning: a span with any at-or-above-keep(max(pressure,1)) member stays verbatim.
             // Pass 1 (relevance, unconditional): every demotable span to its summary level, no stop
@@ -884,40 +949,65 @@ object Compactor:
                 fillNeed(spans, source).filter(sp => state.summaryOf(sp.start, sp.end).isEmpty)
             end boundaryNeed
 
-            // Per-pass arming below the boundary (§5f :1242-1263). Computes the prepare cause; the drift
-            // cause (§5g) shares the same single-flight run. A fresh cross into the armed band with no run in flight forks the
-            // single-flight run; a pass whose cause cleared eagerly interrupts the in-flight run. Returns
-            // the possibly-seated session so the seam threads it back through setSession.
+            // Per-pass arming below the boundary (§5f :1242-1263). Reconciles the prepare cause and the
+            // drift cause (§5g) against their wanted state; both share the same single-flight run. A
+            // fresh cross into an armed band with no run in flight forks the single-flight run; a pass
+            // whose last cause cleared eagerly interrupts the in-flight run. Returns the possibly-seated
+            // session so the seam threads it back through setSession.
             def armBelowBoundary(
                 ai: AI,
                 ctx: Context,
                 config: Config,
                 session: AISession,
-                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]]
+                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]],
+                driftArm: Boolean
             )(using Frame): AISession < (LLM & Async & Abort[AIGenException]) =
                 ensurePreparation(session).map { (prep, session2) =>
                     val occupied     = occupancy(ctx)
                     val prepareArmed = occupied >= config.prepareLine && occupied < config.effectiveHigh
-                    prep.armed.get.map { current =>
-                        if !prepareArmed && current.contains(ArmCause.Prepare) then
-                            prep.inFlight.getAndSet(Absent).map {
-                                case Present(f) => f.interrupt.andThen(deregister(registry, f))
-                                case Absent     => Kyo.unit
-                            }.andThen(prep.armed.getAndUpdate(_ - ArmCause.Prepare).unit).andThen(session2)
-                        else if prepareArmed && !current.contains(ArmCause.Prepare) then
-                            prep.inFlight.get.map {
-                                case Present(_) => prep.armed.getAndUpdate(_ + ArmCause.Prepare).unit.andThen(session2)
-                                case Absent =>
-                                    Tool.internal.infos.map { infos =>
-                                        forkPreparation(ctx, config, prep, infos, registry)
-                                            .andThen(prep.armed.getAndUpdate(_ + ArmCause.Prepare).unit)
-                                            .andThen(session2)
-                                    }
-                            }
-                        else Kyo.lift(session2)
+                    Tool.internal.infos.map { infos =>
+                        updateArm(prep, ArmCause.Prepare, prepareArmed, ctx, config, infos, registry, driftCause = false).andThen {
+                            updateArm(prep, ArmCause.Drift, driftArm, ctx, config, infos, registry, driftCause = true)
+                        }.andThen(session2)
                     }
                 }
             end armBelowBoundary
+
+            // Reconciles one arming cause against its wanted state over the shared single-flight run. On
+            // a fresh want it forks the run (or joins an in-flight one, latching the cause); on a cleared
+            // want it drops the cause and interrupts only when no cause remains armed. A no-op when the
+            // cause's wantedness is unchanged.
+            def updateArm(
+                prep: Preparation,
+                cause: ArmCause,
+                wanted: Boolean,
+                ctx: Context,
+                config: Config,
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]],
+                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]],
+                driftCause: Boolean
+            )(using Frame): Unit < Async =
+                prep.armed.get.map { current =>
+                    if wanted && !current.contains(cause) then
+                        prep.inFlight.get.map {
+                            case Present(_) => prep.armed.getAndUpdate(_ + cause).unit
+                            case Absent =>
+                                forkPreparation(ctx, config, prep, infos, registry, driftCause)
+                                    .andThen(prep.armed.getAndUpdate(_ + cause).unit)
+                        }
+                    else if !wanted && current.contains(cause) then
+                        val remaining = current - cause
+                        prep.armed.set(remaining).andThen {
+                            if remaining.isEmpty then
+                                prep.inFlight.getAndSet(Absent).map {
+                                    case Present(f) => f.interrupt.andThen(deregister(registry, f))
+                                    case Absent     => Kyo.unit
+                                }
+                            else Kyo.unit
+                        }
+                    else Kyo.unit
+                }
+            end updateArm
 
             // The boundary: (1) adopt staged -> ctx, (2) derive the exact need, (3) join the fiber for
             // that need, (4) adopt what the join wrote. Returns the ctx to render (with filled state) and
@@ -995,7 +1085,8 @@ object Compactor:
                 ctx: Context,
                 config: Config,
                 prep: Preparation,
-                infos: Chunk[Tool.internal.Info[?, ?, LLM]]
+                infos: Chunk[Tool.internal.Info[?, ?, LLM]],
+                driftCause: Boolean
             )(using Frame): Unit < Async =
                 val units    = group(ctx.raw)
                 val spans    = formSpans(units, ctx.raw, config)
@@ -1007,7 +1098,7 @@ object Compactor:
                 val scores     = score(units, graph, superseded, seed)
                 val prevLevels = demotedOrigins(ctx.compacted)
                 val since      = ctx.raw.size
-                val aPrep      = projectedAssignment(ctx, units, spans, scores, config, since, prevLevels, driftCause = false)
+                val aPrep      = projectedAssignment(ctx, units, spans, scores, config, since, prevLevels, driftCause)
                 val need       = fillNeed(spans, aPrep).filter(sp => ctx.compactionState.summaryOf(sp.start, sp.end).isEmpty)
                 // §5c/§5f the analysis rides THIS arming event: one typed call covers every closed
                 // not-yet-analyzed region (the low-water ordinal), targeting only the reachable
@@ -1042,9 +1133,10 @@ object Compactor:
                 config: Config,
                 prep: Preparation,
                 infos: Chunk[Tool.internal.Info[?, ?, LLM]],
-                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]]
+                registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]],
+                driftCause: Boolean
             )(using Frame): Unit < Async =
-                Fiber.initUnscoped(preparationRun(ctx, config, prep, infos)).map { fiber =>
+                Fiber.initUnscoped(preparationRun(ctx, config, prep, infos, driftCause)).map { fiber =>
                     prep.inFlight.set(Present(fiber))
                         .andThen(register(registry, fiber))
                         .andThen(fiber.onComplete(_ => deregister(registry, fiber)))

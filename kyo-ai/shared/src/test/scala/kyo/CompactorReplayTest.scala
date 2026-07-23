@@ -99,7 +99,7 @@ class CompactorReplayTest extends kyo.test.Test[Any]:
             // FAILS ("not json" -> HttpException), so nothing stages (equivalently, no analysis staged).
             server.enqueueBody(analysisReply(valid)).andThen(server.enqueueBody("not json")).andThen {
                 Preparation.init.map { prepA =>
-                    Default.preparationRun(ctx, config, prepA, Chunk.empty).andThen {
+                    Default.preparationRun(ctx, config, prepA, Chunk.empty, driftCause = false).andThen {
                         prepA.staged.get.map { stagedA =>
                             val stateA = Default.adopt(CompactionState(), stagedA)
                             val unitsR = Default.group(raw)
@@ -112,7 +112,7 @@ class CompactorReplayTest extends kyo.test.Test[Any]:
                             assert(stateA.analyses.nonEmpty, "route (i): the valid analysis is adopted into compaction state")
                             assert(hasSemanticA, "route (i): the analyzed Relatedness edge appears in the derived graph")
                             Preparation.init.map { prepB =>
-                                Default.preparationRun(ctx, config, prepB, Chunk.empty).andThen {
+                                Default.preparationRun(ctx, config, prepB, Chunk.empty, driftCause = false).andThen {
                                     prepB.staged.get.map { stagedB =>
                                         val stateB = Default.adopt(CompactionState(), stagedB)
                                         val gB =

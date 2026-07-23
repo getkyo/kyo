@@ -227,7 +227,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
             val reply = Analysis(pending.map(u => RegionAnalysis(u.id, Chunk.empty)))
             server.enqueueBody(analysisReply(reply)).andThen {
                 Preparation.init.map { prep =>
-                    Default.preparationRun(ctx, config, prep, Chunk.empty).andThen {
+                    Default.preparationRun(ctx, config, prep, Chunk.empty, driftCause = false).andThen {
                         server.captured.map { cap =>
                             assert(cap.size == 1, "EXACTLY ONE analysis call fires per arming event, not one per pending region")
                             prep.staged.get.map { staged =>
@@ -271,7 +271,7 @@ class CompactorAnalysisTest extends kyo.test.Test[Any]:
             // recovered inside runAnalysis. Occupancy is below the fill trigger, so only this call fires.
             server.enqueueBody("not json").andThen {
                 Preparation.init.map { prep =>
-                    Default.preparationRun(ctx, config, prep, Chunk.empty).andThen {
+                    Default.preparationRun(ctx, config, prep, Chunk.empty, driftCause = false).andThen {
                         prep.staged.get.map { staged =>
                             assert(staged.analyses.isEmpty, "a failed analysis stages nothing (a dropped artifact, not an error)")
                             val state = Default.adopt(CompactionState(), staged)
