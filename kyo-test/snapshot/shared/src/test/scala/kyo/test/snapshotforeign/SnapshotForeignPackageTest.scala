@@ -7,6 +7,7 @@ import kyo.Schema
 import kyo.Yaml
 import kyo.test.AssertScope
 import kyo.test.internal.TestContext
+import kyo.test.prop.Gen
 import kyo.test.snapshot.SnapshotTest
 import kyo.test.snapshot.internal.SnapshotStore
 import org.scalatest.NonImplicitAssertions
@@ -32,6 +33,8 @@ class SnapshotForeignPackageTest extends AnyFunSuite with NonImplicitAssertions:
 
     case class Rec(id: Int, ts: Long) derives Schema
 
+    given Gen[Rec] = Gen.derive[Rec]
+
     /** Minimal `SnapshotTest[Any]` subclass; the config-lambda call site lives here, in package `kyo.test.snapshotforeign`. */
     private class ForeignFixture(dir: String) extends SnapshotTest[Any]:
         override protected def snapshotDir: String         = dir
@@ -39,6 +42,9 @@ class SnapshotForeignPackageTest extends AnyFunSuite with NonImplicitAssertions:
 
         def storeRec(actual: Rec, name: String)(using AssertScope): Unit =
             assertSchemaSnapshot(actual, name, _.normalize(_.set(_.ts)(0L))): Unit
+
+        def storeGolden(name: String)(using AssertScope): Unit =
+            assertGoldenSnapshot[Rec](name, _.sampleCount(5).normalize(_.set(_.ts)(0L))): Unit
 
     end ForeignFixture
 
@@ -57,6 +63,18 @@ class SnapshotForeignPackageTest extends AnyFunSuite with NonImplicitAssertions:
             case Maybe.Absent =>
                 fail(s"expected the update-mode write to produce $path")
         end match
+    }
+
+    test("a foreign-package inline assertGoldenSnapshot resolves GoldenConfig's private[snapshot] fields via the compiler accessor") {
+        val dir = tmpDir()
+        installContexts()
+        val fixture = new ForeignFixture(dir)
+        fixture.storeGolden("rec-golden")
+
+        val path = s"$dir/ForeignFixture/rec-golden.golden.yaml"
+        SnapshotStore.read(path) match
+            case Maybe.Present(_) => succeed
+            case Maybe.Absent     => fail(s"expected the update-mode write to produce $path")
     }
 
 end SnapshotForeignPackageTest

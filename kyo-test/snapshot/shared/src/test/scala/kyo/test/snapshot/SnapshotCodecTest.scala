@@ -68,6 +68,16 @@ class SnapshotCodecTest extends AnyFunSuite with NonImplicitAssertions:
             !allExts.contains("snap"),
             s"Expected no preset extension to equal the plain Render assertSnapshot extension 'snap', got $allExts"
         )
+        val goldenExts = allExts.map(ext => s"golden.${ext.stripPrefix("snap.")}")
+        val combined   = allExts ++ goldenExts
+        assert(
+            combined.distinct.size == combined.size,
+            s"Expected all fourteen extensions (seven snap.* plus seven golden.*) pairwise distinct, got $combined"
+        )
+        assert(
+            !combined.contains("snap"),
+            s"Expected no golden extension to equal the plain Render assertSnapshot extension 'snap', got $combined"
+        )
     }
 
     test("the open Text and Binary constructors expose the given codec and extension") {
