@@ -137,15 +137,24 @@ object Compactor:
         // stable under the retention forget (§10.5), so keys never alias across a session.
         final case class SpanKey(start: Int, end: Int) derives CanEqual
 
-        // §5f staging cell (:1331-1345). Write-once summaries keyed by SpanKey; the analyses map
-        // keyed by region ordinal (§5c) is added alongside the typed analysis output.
-        final case class Staged(summaries: Dict[SpanKey, String] = Dict.empty[SpanKey, String]):
+        // §5f staging cell (:1331-1345). Write-once summaries keyed by SpanKey and write-once analyses
+        // keyed by region ordinal (§5c); the background fiber CAS-updates both as calls complete.
+        final case class Staged(
+            summaries: Dict[SpanKey, String] = Dict.empty[SpanKey, String],
+            analyses: Dict[Int, RegionAnalysis] = Dict.empty[Int, RegionAnalysis]
+        ):
             // First-writer-wins: a summary lands only into an EMPTY slot; a re-emission to a filled
             // slot is discarded, so whichever bytes reach the slot first are permanent.
             def withSummary(key: SpanKey, bytes: String): Staged =
                 if summaries.contains(key) then this
                 else copy(summaries = summaries.update(key, bytes))
             def summaryOf(key: SpanKey): Maybe[String] = summaries.get(key)
+            // §5c write-once analysis staging by region ordinal; a re-emission to a filled ordinal is
+            // discarded, so whichever analysis lands first is permanent (idempotent under re-arming).
+            def withAnalysis(ordinal: Int, ra: RegionAnalysis): Staged =
+                if analyses.contains(ordinal) then this
+                else copy(analyses = analyses.update(ordinal, ra))
+            def analysisOf(ordinal: Int): Maybe[RegionAnalysis] = analyses.get(ordinal)
         end Staged
 
         // The two arming causes (§5f :1242-1252), the prepare line and the drift tripwire (§5g):
@@ -321,11 +330,12 @@ object Compactor:
                     val occupied = occupancy(ctx)
                     val pressure = if low <= 0 then 1.0 else occupied.toDouble / low.toDouble
                     val state    = ctx.compactionState
+                    val analyses = state.analyses
                     val units    = group(ctx.raw)
                     val spans    = formSpans(units, ctx.raw, config)
                     superKeys(units, ctx.raw).map { keys =>
-                        val superseded = supersession(units, keys)
-                        val graph      = deriveGraph(units, ctx.raw, superseded)
+                        val superseded = mergeSupersession(supersession(units, keys), analyzedSupersession(analyses))
+                        val graph      = deriveGraph(units, ctx.raw, superseded, analyzedEdges(analyses))
                         val seed       = seedVector(units, ctx.raw, state)
                         val scores     = score(units, graph, superseded, seed)
                         val prevLevels = demotedOrigins(ctx.compacted)
@@ -680,6 +690,57 @@ object Compactor:
                 }
             end superKeysFrom
 
+            // §5c the per-region relation cap (proposed 4): bounds a disobedient pass and the output bill.
+            val relationCap: Int = 4 // provisional, replay-tunable, v4 §5c, owner-confirm
+
+            // §5c the analysis's directed relations become the graph's two SEMANTIC edge kinds: DependsOn
+            // -> Dependency (weight 3.0), Relates -> Relatedness (weight 0.5). Both point BACKWARD (parse
+            // enforces target < ordinal), matching every edge kind; Supersedes yields NO edge here.
+            // deriveGraph repoints each target through supersession, so semantic liveness also accrues to
+            // current content.
+            def analyzedEdges(analyses: Chunk[RegionAnalysis]): Chunk[(Int, Int, EdgeKind)] =
+                analyses.flatMap { ra =>
+                    ra.relations.collect {
+                        case Relation(t, RelationKind.DependsOn) => (ra.ordinal, t, EdgeKind.Dependency)
+                        case Relation(t, RelationKind.Relates)   => (ra.ordinal, t, EdgeKind.Relatedness)
+                    }
+                }
+
+            // §5c keyless supersession: a Supersedes relation marks the EARLIER region (the relation's
+            // target) superseded by the analyzed region (its ordinal), exactly as a compaction-key rewrite
+            // does. Returns superseded-region -> superseding-region, the shape `supersession` also produces.
+            def analyzedSupersession(analyses: Chunk[RegionAnalysis]): Dict[Int, Int] =
+                analyses.foldLeft(Dict.empty[Int, Int]) { (m, ra) =>
+                    ra.relations.foldLeft(m) { (mm, rel) =>
+                        rel.kind match
+                            case RelationKind.Supersedes => mm.update(rel.target, ra.ordinal)
+                            case _                       => mm
+                    }
+                }
+
+            // §5c "one belief, two detectors": union the keyed (deterministic, free) and keyless (analyzed)
+            // supersession maps. The keyed detector wins a same-target conflict, being deterministic; the
+            // keyless one extends the belief to prose decisions no key can carry.
+            def mergeSupersession(keyed: Dict[Int, Int], keyless: Dict[Int, Int]): Dict[Int, Int] =
+                keyless.foldLeft(keyed) { (m, target, superseder) =>
+                    if m.contains(target) then m else m.update(target, superseder)
+                }
+
+            // §5f :1306-1318 the closed, not-yet-analyzed regions the next arming event covers. Closed =
+            // below the tail band and resolved (an unresolved region never ages into the closed prefix,
+            // SPAN-FREEZING iii). Already-analyzed regions (by ordinal, in adopted state) are excluded:
+            // write-once needs no more. Sorted ascending, so the head is the low-water ordinal.
+            def analysisPending(ctx: Context, config: Config): Chunk[Region] =
+                val units    = group(ctx.raw)
+                val tail     = tailUnits(units)
+                val analyzed = ctx.compactionState.analyses.map(_.ordinal).toSet
+                units.filter(u => !tail.contains(u.id) && !u.unresolved && !analyzed.contains(u.id)).sortBy(_.id)
+            end analysisPending
+
+            // The low-water ordinal (§5f): the lowest closed unanalyzed region id, or -1 when none pend.
+            def analysisLowWater(ctx: Context, config: Config): Int =
+                analysisPending(ctx, config).headMaybe.map(_.id).getOrElse(-1)
+
             // ---- the cut: the unified DEMOTION RULE (§5d), one rule for size-fired and drift-fired
             // boundaries. Pinning: a span with any at-or-above-keep(max(pressure,1)) member stays verbatim.
             // Pass 1 (relevance, unconditional): every demotable span to its summary level, no stop
@@ -783,10 +844,12 @@ object Compactor:
                     case Present(prep) => Kyo.lift((prep, session))
                     case Absent        => Preparation.init.map(prep => (prep, session.withPreparation(prep)))
 
-            // §5f :1369-1373 ADOPT: move every staged summary into write-once compaction state; state
-            // wins, duplicates discarded, so a fiber/boundary race is idempotent by construction.
+            // §5f :1369-1373 / §5c ADOPT: move every staged summary AND analysis into write-once compaction
+            // state; state wins, duplicates discarded, so a fiber/boundary race is idempotent by
+            // construction. Analyses freeze by ordinal exactly like summaries freeze by span range.
             def adopt(state: Context.CompactionState, staged: Staged): Context.CompactionState =
-                staged.summaries.foldLeft(state)((s, key, bytes) => s.withSummary(key.start, key.end, bytes))
+                val withSummaries = staged.summaries.foldLeft(state)((s, key, bytes) => s.withSummary(key.start, key.end, bytes))
+                staged.analyses.foldLeft(withSummaries)((s, _, ra) => s.withAnalysis(ra))
 
             // §5f :1379-1403 the VALIDITY GATE (pinning partition). Agree iff, for every span in the
             // prepared domain, A_prep and A_fresh agree on pinned-verbatim (absent from the assignment)
@@ -801,10 +864,12 @@ object Compactor:
             // set of the gate-selected assignment (adopt -> A_prep, invalidate -> A_fresh) restricted to
             // spans whose write-once slot is still empty. LLM-free (infos captured in the foreground).
             def boundaryNeed(ctx: Context, config: Config, infos: Chunk[Tool.internal.Info[?, ?, LLM]])(using Frame): Chunk[Span] =
-                val units      = group(ctx.raw)
-                val spans      = formSpans(units, ctx.raw, config)
-                val superseded = supersession(units, superKeysFrom(units, ctx.raw, infos))
-                val graph      = deriveGraph(units, ctx.raw, superseded)
+                val units    = group(ctx.raw)
+                val spans    = formSpans(units, ctx.raw, config)
+                val analyses = ctx.compactionState.analyses
+                val superseded =
+                    mergeSupersession(supersession(units, superKeysFrom(units, ctx.raw, infos)), analyzedSupersession(analyses))
+                val graph      = deriveGraph(units, ctx.raw, superseded, analyzedEdges(analyses))
                 val seed       = seedVector(units, ctx.raw, ctx.compactionState)
                 val scores     = score(units, graph, superseded, seed)
                 val prevLevels = demotedOrigins(ctx.compacted)
@@ -932,34 +997,46 @@ object Compactor:
                 prep: Preparation,
                 infos: Chunk[Tool.internal.Info[?, ?, LLM]]
             )(using Frame): Unit < Async =
-                val units      = group(ctx.raw)
-                val spans      = formSpans(units, ctx.raw, config)
-                val superseded = supersession(units, superKeysFrom(units, ctx.raw, infos))
-                val graph      = deriveGraph(units, ctx.raw, superseded)
+                val units    = group(ctx.raw)
+                val spans    = formSpans(units, ctx.raw, config)
+                val analyses = ctx.compactionState.analyses
+                val superseded =
+                    mergeSupersession(supersession(units, superKeysFrom(units, ctx.raw, infos)), analyzedSupersession(analyses))
+                val graph      = deriveGraph(units, ctx.raw, superseded, analyzedEdges(analyses))
                 val seed       = seedVector(units, ctx.raw, ctx.compactionState)
                 val scores     = score(units, graph, superseded, seed)
                 val prevLevels = demotedOrigins(ctx.compacted)
                 val since      = ctx.raw.size
                 val aPrep      = projectedAssignment(ctx, units, spans, scores, config, since, prevLevels, driftCause = false)
                 val need       = fillNeed(spans, aPrep).filter(sp => ctx.compactionState.summaryOf(sp.start, sp.end).isEmpty)
-                Kyo.foreachDiscard(need.sortBy(_.start)) { sp =>
-                    val key = SpanKey(sp.start, sp.end)
-                    prep.staged.get.map { staged =>
-                        if staged.summaryOf(key).isDefined then Kyo.unit
-                        else
-                            runFill(sp, spans, ctx, config, prep).handle(Abort.run[AIGenException]).map {
-                                case Result.Success(bytes) => prep.staged.getAndUpdate(_.withSummary(key, bytes)).unit
-                                case _                     => Kyo.unit
-                            }
+                // §5c/§5f the analysis rides THIS arming event: one typed call covers every closed
+                // not-yet-analyzed region (the low-water ordinal), targeting only the reachable
+                // (summary-or-verbatim) region set (§5c, analysisReach), staged write-once. Every
+                // failure is recovered inside runAnalysis: a failed analysis leaves its regions
+                // unanalyzed, the graph degrades to structural-only, and gen never fails. Then the
+                // need-shaped fills, each staged write-once and incrementally.
+                val reachable = analysisReach(units, spans, aPrep, tailUnits(units))
+                val analysis  = runAnalysis(ctx, analysisPending(ctx, config), config, prep, reachable)
+                analysis.andThen {
+                    Kyo.foreachDiscard(need.sortBy(_.start)) { sp =>
+                        val key = SpanKey(sp.start, sp.end)
+                        prep.staged.get.map { staged =>
+                            if staged.summaryOf(key).isDefined then Kyo.unit
+                            else
+                                runFill(sp, spans, ctx, config, prep).handle(Abort.run[AIGenException]).map {
+                                    case Result.Success(bytes) => prep.staged.getAndUpdate(_.withSummary(key, bytes)).unit
+                                    case _                     => Kyo.unit
+                                }
+                        }
                     }
                 }
             end preparationRun
 
             // Forks the single-flight run from the snapshot via Fiber.initUnscoped (no Scope cascade into
             // the seam row); stores the handle in the per-session cell and the run-level registry (swept
-            // by LLM.run's Sync.ensure). LLM-free (infos already captured).
-            // plan: the run-level registry accumulates handles; a done-filter prune on the next fork keeps
-            // it bounded (interruptAll no-ops on a completed handle, so leak-freedom holds either way).
+            // by LLM.run's Sync.ensure). LLM-free (infos already captured). The fiber self-deregisters on
+            // completion (onComplete), so the registry holds only live handles and stays bounded across
+            // the many arming events of one LLM.run; interruptAll no-ops on a completed handle regardless.
             def forkPreparation(
                 ctx: Context,
                 config: Config,
@@ -968,7 +1045,9 @@ object Compactor:
                 registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]]
             )(using Frame): Unit < Async =
                 Fiber.initUnscoped(preparationRun(ctx, config, prep, infos)).map { fiber =>
-                    prep.inFlight.set(Present(fiber)).andThen(register(registry, fiber))
+                    prep.inFlight.set(Present(fiber))
+                        .andThen(register(registry, fiber))
+                        .andThen(fiber.onComplete(_ => deregister(registry, fiber)))
                 }
 
             def register(registry: Maybe[AtomicRef[Set[Fiber[Unit, Any]]]], fiber: Fiber[Unit, Any])(using Frame): Unit < Sync =
@@ -1036,6 +1115,102 @@ object Compactor:
                     }
                 }
             end runFill
+
+            // A marker-grade one-line descriptor of a region (§5c region index): the region's raw content
+            // flattened to one line and bounded. Names content without carrying it.
+            def descriptorLine(u: Region, raw: Chunk[Message]): String =
+                val c = unitContent(u, raw).replace('\n', ' ').trim
+                if c.length <= 80 then c else c.take(80)
+
+            // §5c the analysis input: the SERVED VIEW (the warm bytes the foreground request carried,
+            // ctx.compacted) plus a mechanical instruction suffix naming the low-water ordinal, the regions
+            // to analyze, and a compact region index (each REACHABLE region's ordinal beside its
+            // marker-grade descriptor). The reach is summary-or-verbatim only: a pointer-level region (its
+            // descriptor names content without carrying it) is out of the analysis's reach by design, so it
+            // is excluded from the index and can never be a relation target. The suffix adds not one byte to
+            // the view the foreground model sees. It asks for the typed Analysis JSON.
+            def buildAnalysisContext(ctx: Context, pending: Chunk[Region], config: Config, lowWater: Int, reachable: Set[Int])(using
+                Frame
+            ): Context =
+                val units   = group(ctx.raw)
+                val closed  = units.filter(u => reachable.contains(u.id)).sortBy(_.id)
+                val index   = closed.map(u => s"${u.id}: ${descriptorLine(u, ctx.raw)}").mkString("\n")
+                val targets = pending.map(_.id).mkString(", ")
+                val instruction: Message = SystemMessage(
+                    "Analyze how each listed region depends on, relates to, or supersedes an EARLIER region " +
+                        "in this conversation. Emit ONLY a JSON object of shape " +
+                        "{\"regions\":[{\"ordinal\":<int>,\"relations\":[{\"target\":<int>,\"kind\":\"DependsOn|Relates|Supersedes\"}]}]}. " +
+                        s"Every target MUST be an earlier ordinal (target < ordinal). Low-water ordinal: $lowWater. " +
+                        s"Analyze exactly these region ordinals: $targets. Region index:\n$index"
+                )
+                val body = ctx.compacted.append(instruction)
+                Context(body, body)
+            end buildAnalysisContext
+
+            // §5c the five load-bearing properties, enforced by DISCARDING, never throwing. Decode the
+            // typed Analysis over model-controlled output; a whole-batch decode failure (malformed JSON,
+            // unknown RelationKind discriminator) yields no analyses. Per member: drop a member whose
+            // ordinal is not a closed region in the suffix index; keep only relations that are backward-only
+            // (target < ordinal) AND name an in-index target AND carry a known kind; cap survivors at
+            // relationCap in emission order. The member survives with its first cap-many valid relations, or
+            // with none, never as a throw.
+            def parseAnalysis(text: String, validOrdinals: Set[Int])(using Frame): Chunk[RegionAnalysis] =
+                Json.decode[Analysis](text) match
+                    case Result.Success(a) =>
+                        a.regions.collect {
+                            case ra if validOrdinals.contains(ra.ordinal) =>
+                                val kept =
+                                    ra.relations.filter(r => r.target < ra.ordinal && validOrdinals.contains(r.target)).take(relationCap)
+                                RegionAnalysis(ra.ordinal, kept)
+                        }
+                    case _ => Chunk.empty
+            end parseAnalysis
+
+            // §5c/§5f the analysis pass: ONE typed generation on the conversation's OWN model (the main
+            // config), reading the served view warm (transparent prompt caching is §10.3 owner-directed
+            // future work; the pass is functional whether or not the completion impl caches). Runs a
+            // self-contained nested LLM.run over the snapshot so it never couples to the foreground
+            // handler-threaded LLM.State (LLM-free, §5f), decodes the typed Analysis, and stages each
+            // surviving region write-once by ordinal. EVERY failure is recovered here: a failed analysis
+            // leaves its regions unanalyzed, the graph runs on structural edges, and gen never fails;
+            // nothing ever waits for it (the boundary join is for fills only).
+            def runAnalysis(ctx: Context, pending: Chunk[Region], config: Config, prep: Preparation, reachable: Set[Int])(using
+                Frame
+            ): Unit < Async =
+                if pending.isEmpty then Kyo.unit
+                else
+                    // §5c the valid target set is the REACHABLE (summary-or-verbatim) region set: a relation
+                    // targeting a pointer-level region is dropped by parseAnalysis, so a semantic edge can
+                    // never lift pointer-level liveness (the coldest history stays out of reach).
+                    val valid       = reachable
+                    val lowWater    = pending.headMaybe.map(_.id).getOrElse(-1)
+                    val analysisCtx = buildAnalysisContext(ctx, pending, config, lowWater, reachable)
+                    LLM.run(config) {
+                        Abort.recover[HttpException](e => Abort.fail(AITransportException(e))) {
+                            config.provider.completion(config, analysisCtx, Chunk.empty, Absent)
+                        }
+                    }.map { reply =>
+                        parseAnalysis(reply.messages.headMaybe.map(_.content).getOrElse(""), valid)
+                    }.handle(Abort.run[AIGenException]).map {
+                        case Result.Success(regions) =>
+                            Kyo.foreachDiscard(regions)(ra => prep.staged.getAndUpdate(_.withAnalysis(ra.ordinal, ra)).unit)
+                        case _ => Kyo.unit
+                    }
+                end if
+            end runAnalysis
+
+            // §5c the analysis's reach: the closed, non-tail regions that are summary-or-verbatim at the
+            // projected boundary (levels = A_prep). A region a demoted span projects to Level.Pointer is out
+            // of reach (its descriptor names content without carrying it), so it is excluded from both the
+            // region index and the valid target set. Pure over the projected assignment the caller holds.
+            def analysisReach(units: Chunk[Region], spans: Chunk[Span], levels: Dict[Int, Level], tail: Set[Int]): Set[Int] =
+                val pointerRegions = spans.toList.flatMap { sp =>
+                    levels.get(sp.start) match
+                        case Present(Level.Pointer) => sp.regionIds.toList
+                        case _                      => Nil
+                }.toSet
+                units.filterNot(u => tail.contains(u.id) || pointerRegions.contains(u.id)).map(_.id).toSet
+            end analysisReach
 
             // A pinned unit rendered verbatim, with the role-2 within-verbatim elision applied when its own
             // content exceeds the generous budget (§5d); a smaller unit renders unchanged. The stamp is dropped

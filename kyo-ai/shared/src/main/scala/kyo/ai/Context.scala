@@ -94,6 +94,33 @@ object Context:
       */
     private[kyo] case class SpanSummary(start: Int, end: Int, bytes: String) derives CanEqual, Schema
 
+    /** The kind of a directed relation the analysis pass emits (§5c). `DependsOn` renders as the
+      * Dependency edge (weight 3.0), `Relates` as the Relatedness edge (weight 0.5), `Supersedes`
+      * as no edge (it feeds the supersession machinery). `derives Schema` is the wire contract the
+      * hostile-input decode rests on: an unknown discriminator fails the whole typed decode and
+      * yields a dropped artifact, never a throw.
+      */
+    private[kyo] enum RelationKind derives CanEqual, Schema:
+        case DependsOn, Relates, Supersedes
+
+    /** One directed relation from an analyzed region to an EARLIER one (§5c). Backward-only:
+      * `target < ordinal`, enforced at parse time by discarding violations.
+      */
+    private[kyo] case class Relation(target: Int, kind: RelationKind) derives CanEqual, Schema
+
+    /** The write-once analysis of one newly closed region (§5c): the region's `ordinal` and its
+      * backward relations, capped and no-weights/no-summary by construction. Frozen by ordinal into
+      * compaction state exactly like a summary; a re-emission for an analyzed ordinal is discarded.
+      */
+    private[kyo] case class RegionAnalysis(ordinal: Int, relations: Chunk[Relation]) derives CanEqual, Schema
+
+    /** The typed batch one analysis generation emits, one `RegionAnalysis` per named region (§5c).
+      * Decoded over model-controlled output through `Schema`; every malformed member, out-of-index
+      * or backward-violating target, over-cap relation, and unknown discriminator routes to a typed
+      * drop.
+      */
+    private[kyo] case class Analysis(regions: Chunk[RegionAnalysis]) derives CanEqual, Schema
+
     /** The compaction state seat carried on Context (§7): the boundary counter (recall's decay
       * clock), the usage anchor and the raw size it was taken at (§5a), the recall records (§5e),
       * and the write-once span summary slots (§5d). The drift bookkeeping (pending-confirm flag,
@@ -105,6 +132,7 @@ object Context:
         lastUsageRawSize: Int = 0,
         recalls: Chunk[RecallRecord] = Chunk.empty,
         summaries: Chunk[SpanSummary] = Chunk.empty,
+        analyses: Chunk[RegionAnalysis] = Chunk.empty,
         driftPendingConfirm: Boolean = false,
         lastDriftFire: Int = -1
     ) derives CanEqual, Schema:
@@ -116,6 +144,16 @@ object Context:
 
         def summaryOf(start: Int, end: Int): Maybe[String] =
             summaries.filter(s => s.start == start && s.end == end).headMaybe.map(_.bytes)
+
+        // §5c write-once analysis adoption: a region's analysis freezes by ordinal exactly like a
+        // summary; a re-emission for an already-analyzed ordinal (even from a disobedient pass) is
+        // discarded, so incrementality needs no bookkeeping beyond the low-water ordinal.
+        def withAnalysis(ra: RegionAnalysis): CompactionState =
+            if analyses.exists(_.ordinal == ra.ordinal) then this
+            else copy(analyses = analyses.append(ra))
+
+        def analysisOf(ordinal: Int): Maybe[RegionAnalysis] =
+            analyses.filter(_.ordinal == ordinal).headMaybe
 
         // Records a recall stamped with the current boundary counter (§5e).
         def withRecall(region: Int): CompactionState =

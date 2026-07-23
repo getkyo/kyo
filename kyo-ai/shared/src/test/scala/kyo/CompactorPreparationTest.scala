@@ -270,7 +270,7 @@ class CompactorPreparationTest extends kyo.test.Test[Any]:
         }
     }
 
-    // The INV-008 grep gate over the P3-touched main sources (jvm-only file scan; a no-op where the source
+    // The no-blocking-construct grep gate over the touched main sources (jvm-only file scan; a no-op where the source
     // is not reachable off the JVM). Every wait in the preparation path is a Fiber.get/Channel suspension.
     def noBlockingConstructs()(using kyo.test.AssertScope): Unit =
         val banned = List("Thread.sleep", "synchronized", "CountDownLatch", "Future.await", ".await(", "Await.", "AllowUnsafe")
