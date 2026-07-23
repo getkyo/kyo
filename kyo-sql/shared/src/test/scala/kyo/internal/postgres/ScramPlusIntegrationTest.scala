@@ -593,14 +593,21 @@ object ScramPlusIntegrationTest:
         // linker cannot tell that from sources alone.
         def tryProbe(): Boolean < Async =
             Abort.run[Throwable] {
-                Async.timeout(2.seconds) {
-                    Scope.run {
+                Scope.run {
+                    Async.timeout(2.seconds) {
                         Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe)
                             .flatMap(_.use(identity))
                             .flatMap { conn =>
-                                conn.outbound.safe.put(sslRequest).andThen {
-                                    conn.inbound.safe.take.map { firstChunk =>
-                                        firstChunk.head.exists(_ == 'S'.toByte)
+                                // Close the probe connection on every completion path (success, failure, abort,
+                                // interrupt). Without this the probe FD leaks: `Transport.connect` returns a bare
+                                // Fiber.Unsafe[Connection] with no automatic Scope tie-in, and the surrounding
+                                // Async.timeout can interrupt this fiber mid-take, leaving the socket ESTABLISHED
+                                // with a pending Read that never gets a close op submitted to the io_uring driver.
+                                Scope.ensure(Sync.Unsafe.defer(conn.close())).andThen {
+                                    conn.outbound.safe.put(sslRequest).andThen {
+                                        conn.inbound.safe.take.map { firstChunk =>
+                                            firstChunk.head.exists(_ == 'S'.toByte)
+                                        }
                                     }
                                 }
                             }
