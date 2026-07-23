@@ -63,15 +63,17 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     /** Configures leaf-name field-id overrides so matchField resolves a pinned field by its
       * override number, mirroring the writer's resolution (read/write symmetry).
       */
-    def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
+    override def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
         fieldIdOverrides = overrides
         this
+
+    override def supportsFieldIdOverrides: Boolean = true
 
     /** The current field-id override map, read by a caller that is about to replace it with a
       * nested schema's own overrides, so the prior value can be restored once that nested read
       * completes.
       */
-    private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
+    override private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
 
     def objectStart(): Int =
         checkDepth()

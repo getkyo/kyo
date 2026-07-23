@@ -71,15 +71,17 @@ final class ProtobufWriter extends Writer:
       * @return
       *   this writer for chaining
       */
-    def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
+    override def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
         fieldIdOverrides = overrides
         this
+
+    override def supportsFieldIdOverrides: Boolean = true
 
     /** The current field-id override map, read by a caller that is about to replace it with a
       * nested schema's own overrides, so the prior value can be restored once that nested write
       * completes.
       */
-    private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
+    override private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
 
     private def current: java.io.ByteArrayOutputStream = bufferStack.head
 

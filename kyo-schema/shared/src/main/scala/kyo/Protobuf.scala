@@ -91,10 +91,7 @@ object Protobuf:
         val w         = protobuf.newWriter()
         val overrides = schema.fieldIdNameOverrides
         if overrides.nonEmpty then
-            w match
-                case pw: kyo.internal.ProtobufWriter => val _ = pw.withFieldIdOverrides(overrides)
-                case _                               => ()
-        end if
+            val _ = w.withFieldIdOverrides(overrides)
         schema.writeTo(value, w)
         w.result()
     end encode
@@ -175,10 +172,7 @@ object Protobuf:
         reader.resetLimits(maxDepth, maxCollectionSize)
         val overrides = schema.fieldIdNameOverrides
         if overrides.nonEmpty then
-            reader match
-                case pr: kyo.internal.ProtobufReader => val _ = pr.withFieldIdOverrides(overrides)
-                case _                               => ()
-        end if
+            val _ = reader.withFieldIdOverrides(overrides)
         Result.catching[DecodeException](schema.readFrom(reader))
     end decode
 

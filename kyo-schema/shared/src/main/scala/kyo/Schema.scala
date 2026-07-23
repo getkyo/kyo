@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Codec.Reader
 import kyo.Codec.Writer
-import kyo.internal.JsonWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
 import scala.annotation.nowarn
