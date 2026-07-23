@@ -101,6 +101,9 @@ object Compactor:
         // raw-retention eviction hysteresis (§10.5), seated for P6
         val rawHighWatermark: Double = 0.9 // provisional, replay-tunable, v4 §10.5, owner-confirm
         val rawLowWatermark: Double  = 0.5 // provisional, replay-tunable, v4 §10.5, owner-confirm
+        // The raw cap when the user leaves rawRetentionCap Absent: several window-widths, since raw is
+        // only a verbatim cache behind the persisted summaries.
+        val rawRetentionWidths: Int = 4 // provisional, replay-tunable, owner-confirm
 
         // The four detail states (§5d). Verbatim is not "demoted": it never enters a demotions map,
         // so project only ever renders the three demoted states. Summary is span grain, Pointer is
@@ -379,11 +382,35 @@ object Compactor:
                                 case _ =>
                                     (units.updated(i, Building(i, Chunk(i), Set.empty)), owner)
                     }
-                Chunk.from(byId.values.toList.sortBy(_.id).map { b =>
+                val fused = Chunk.from(byId.values.toList.sortBy(_.id).map { b =>
                     val toks = b.indices.foldLeft(0)((n, idx) => n + stampedTokens(raw(idx)))
                     Region(b.id, b.indices, b.open.nonEmpty, toks)
                 })
+                foldForgottenBands(fused, raw)
             end group
+
+            // A forgotten retention band: eviction replaces a forgotten region run's raw messages IN
+            // PLACE with a coarse head at the run's first ordinal plus content-freed tombstones, ALL
+            // carrying the band's Origin. In raw a Present(origin) is unique to a band member (a live raw
+            // message always carries Absent), so consecutive members sharing an origin.start fuse into ONE
+            // region keyed by that start ordinal; survivors keep their ordinals (no renumber).
+            def foldForgottenBands(segs: Chunk[Region], raw: Chunk[Message]): Chunk[Region] =
+                def bandStart(seg: Region): Maybe[Int] =
+                    seg.indices.headMaybe.flatMap(i => if i >= 0 && i < raw.size then raw(i).origin.map(_.start) else Absent)
+                @tailrec def loop(rem: List[Region], acc: List[Region]): List[Region] =
+                    rem match
+                        case Nil => acc.reverse
+                        case u :: _ =>
+                            bandStart(u) match
+                                case Present(bs) =>
+                                    val run  = rem.takeWhile(s => bandStart(s).exists(_ == bs))
+                                    val idxs = Chunk.from(run.flatMap(_.indices.toList).sorted)
+                                    val toks = run.foldLeft(0)((n, s) => n + s.tokens)
+                                    loop(rem.drop(run.size), Region(bs, idxs, false, toks) :: acc)
+                                case Absent =>
+                                    loop(rem.tail, u :: acc)
+                Chunk.from(loop(segs.toList.sortBy(_.id), Nil))
+            end foldForgottenBands
 
             // ---- span formation (SPAN-FREEZING i, §5b): partition the CLOSED prefix into spans by a
             // deterministic model-free rule. Splits at user-turn boundaries; closes a pending run early
@@ -392,7 +419,9 @@ object Compactor:
             // (SPAN-FREEZING iii): only regions aged into the closed prefix are eligible.
             def formSpans(units: Chunk[Region], raw: Chunk[Message], config: Config): Chunk[Span] =
                 val ordered = units.toList.sortBy(_.id)
-                val closed  = closedRegions(ordered, config)
+                // A forgotten retention band is a terminal coarse marker, excluded from span formation
+                // like the tail band, so it is never re-demoted or re-summarized.
+                val closed = closedRegions(ordered, config).filterNot(u => u.indices.headOption.exists(i => raw(i).origin.isDefined))
                 def flush(members: List[Region], rest: List[Span]): List[Span] =
                     members match
                         case Nil => rest
@@ -613,6 +642,119 @@ object Compactor:
                         case Present(o) => m.update(o.start, o)
                         case Absent     => m
                 }
+
+            // ---- raw retention: a heap backstop for a pathological session length, orthogonal to the
+            // compacted view, the graph, and the boundary. raw is only a verbatim cache behind the
+            // persisted summaries, so it can be bounded. Tested only at a boundary against raw's running
+            // stamp sum, never on the hot path. Ordinals stay stable (a forgotten run is replaced IN
+            // PLACE), so survivors keep their positions and every stored Origin / recall id still resolves.
+            // ZERO model calls, no fiber.
+
+            // The cap when the user leaves rawRetentionCap Absent: several window-widths.
+            def effectiveRawCap(config: Config): Int =
+                config.compaction.rawRetentionCap.getOrElse(rawRetentionWidths * config.modelMaxTokens)
+
+            // The fixed head band: the system head plus the task-origin (first user) turn, never touched.
+            // A live region stays verbatim (never demoted) and so is excluded by the demotion check below
+            // without re-running the graph; the tail band / working set is tailUnits.
+            def headBand(units: Chunk[Region], raw: Chunk[Message]): Set[Int] =
+                val ordered = units.toList.sortBy(_.id)
+                val sys     = ordered.headOption.filter(u => isSystemHead(u, raw)).map(_.id).toSet
+                val taskId  = ordered.filter(u => hasUser(u, raw)).map(_.id).headOption.toSet
+                sys ++ taskId
+            end headBand
+
+            // Contiguous index runs from a sorted ordinal list: each maximal [start, endExcl) run becomes
+            // one coarse band.
+            def contiguousRuns(sorted: List[Int]): List[(Int, Int)] =
+                sorted match
+                    case Nil => Nil
+                    case first :: _ =>
+                        @tailrec def loop(rem: List[Int], start: Int, prev: Int, acc: List[(Int, Int)]): List[(Int, Int)] =
+                            rem match
+                                case Nil => ((start, prev + 1) :: acc).reverse
+                                case x :: rest =>
+                                    if x == prev + 1 then loop(rest, start, x, acc) else loop(rest, x, x, (start, prev + 1) :: acc)
+                        loop(sorted.tail, first, first, Nil)
+
+            // The coarse between-turns band head: one synthetic marker standing for the forgotten run
+            // [start, end), carrying an Origin and a stamp (Absent -> the small offline estimate) but NO
+            // recall id, so the model is never invited to recall forgotten content.
+            def coarseBand(start: Int, end: Int, regions: Int, since: Int): Message =
+                SystemMessage(
+                    s"[$regions region(s) from an earlier stretch forgotten past the retention horizon; no longer recallable]",
+                    origin = Present(Context.Origin(start, end, since))
+                )
+
+            // A content-freed tombstone for a non-first ordinal of a forgotten run: the large raw bytes
+            // are released (stamp 0), the slot is kept so survivors' ordinals never renumber, and the band
+            // Origin marks it a band member (folded into the band region by group, skipped by project).
+            def tombstone(origin: Context.Origin): Message =
+                SystemMessage("", tokens = Present(TokenStamp("<forgotten>", 0)), origin = Present(origin))
+
+            // Drop the forgotten regions' persisted state entries: the write-once summary slots, the
+            // analysis slots, and the recall records whose ordinal is forgotten. The coarse band replaces
+            // them; pruning the analysis slots alongside the summaries keeps a summary key and an analysis
+            // key from aliasing across a forget.
+            def dropForgottenState(state: Context.CompactionState, forgotten: Set[Int]): Context.CompactionState =
+                state.copy(
+                    summaries = state.summaries.filter(s => !forgotten.contains(s.start)),
+                    analyses = state.analyses.filter(a => !forgotten.contains(a.ordinal)),
+                    recalls = state.recalls.filter(r => !forgotten.contains(r.region))
+                )
+
+            // Evict at a boundary AFTER the view is rendered: if raw's running stamp sum crosses the high
+            // watermark, forget the oldest evictable regions wholesale down to the low watermark. A region
+            // is evictable iff it is CURRENTLY DEMOTED in the just-rendered view (a persisted marker, the
+            // one state-map lookup, so a still-live verbatim region is never evictable), outside the head
+            // and tail bands, and not already a forgotten band. Best-effort against dead history: if the
+            // middle is all live the sum may stay above low, which is correct.
+            def evict(ctx: Context, config: Config): Context =
+                val cap = effectiveRawCap(config)
+                if cap <= 0 then ctx
+                else
+                    val rawSum = ctx.raw.foldLeft(0)((n, m) => n + stampedTokens(m))
+                    val high   = (rawHighWatermark * cap).toInt
+                    if rawSum <= high then ctx
+                    else
+                        val low     = (rawLowWatermark * cap).toInt
+                        val units   = group(ctx.raw)
+                        val demoted = demotedOrigins(ctx.compacted)
+                        val headIds = headBand(units, ctx.raw)
+                        val tailIds = tailUnits(units)
+                        val evictable =
+                            units.toList.sortBy(_.id).filter { u =>
+                                demoted.contains(u.id) && !headIds.contains(u.id) && !tailIds.contains(u.id) &&
+                                !u.indices.headOption.exists(i => ctx.raw(i).origin.isDefined)
+                            }
+                        @tailrec def pick(rem: List[Region], freed: Int, acc: List[Region]): List[Region] =
+                            if rawSum - freed <= low then acc
+                            else
+                                rem match
+                                    case Nil => acc
+                                    case u :: rest =>
+                                        val save = u.indices.foldLeft(0)((n, i) => n + stampedTokens(ctx.raw(i)))
+                                        pick(rest, freed + save, u :: acc)
+                        val forget = pick(evictable, 0, Nil)
+                        if forget.isEmpty then ctx
+                        else
+                            val forgotten = forget.flatMap(_.indices.toList).toSet
+                            val runs      = contiguousRuns(forgotten.toList.sorted)
+                            val counts    = runs.map((a, b) => a -> forget.count(u => u.id >= a && u.id < b)).toMap
+                            val idxToRun  = Dict.from(runs.flatMap((a, b) => (a until b).toList.map(i => i -> ((a, b)))).toMap)
+                            val since     = ctx.raw.size
+                            val raw2 = ctx.raw.zipWithIndex.map { (m, i) =>
+                                idxToRun.get(i) match
+                                    case Present((a, b)) =>
+                                        if i == a then coarseBand(a, b, counts.getOrElse(a, 1), since)
+                                        else tombstone(Context.Origin(a, b, since))
+                                    case Absent => m
+                            }
+                            ctx.copy(raw = raw2).withCompaction(dropForgottenState(ctx.compactionState, forgotten))
+                        end if
+                    end if
+                end if
+            end evict
 
             // The coldest member liveness of a span (pass-2 ascending order) and its hottest member
             // (the pinning test): a span is demotable iff EVERY member is below the floored keep, i.e. its
@@ -1350,6 +1492,11 @@ object Compactor:
                             case ((acc, emitted), (m, i)) =>
                                 val segId = idxToSeg.getOrElse(i, i)
                                 spanFor.get(segId) match
+                                    // A forgotten retention band's tombstone: an empty raw slot carrying a
+                                    // band Origin, kept for ordinal stability, never emitted; the band head
+                                    // (its non-empty coarse text) renders verbatim as the one band marker
+                                    // for the run.
+                                    case None if m.content.isEmpty && m.origin.isDefined => (acc, emitted)
                                     case None =>
                                         if cleared.contains(i) then (acc, emitted)
                                         else (acc.append(keepVerbatim(m)), emitted)
@@ -1528,7 +1675,13 @@ object Compactor:
                     ai.context.map { ctx =>
                         val range = ctx.compacted.filter(_.origin.exists(_.start == arg.id)).headMaybe.flatMap(_.origin)
                         val restored = range match
-                            case Present(o) => roleTagged(ctx.raw.drop(o.start).take(o.end - o.start))
+                            case Present(o) =>
+                                // A forgotten retention band fails cleanly: raw's origin at o.start is
+                                // Present only for a band member, so a recall of forgotten content is
+                                // refused rather than returning the coarse band head or an empty tombstone.
+                                if o.start >= 0 && o.start < ctx.raw.size && ctx.raw(o.start).origin.isDefined then
+                                    s"region ${arg.id} was forgotten past the retention horizon and is no longer recallable"
+                                else roleTagged(ctx.raw.drop(o.start).take(o.end - o.start))
                             case Absent =>
                                 group(ctx.raw).filter(_.id == arg.id).headMaybe match
                                     case Present(u) => roleTagged(u.indices.map(ctx.raw.apply))

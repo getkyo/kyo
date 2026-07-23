@@ -619,4 +619,222 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
+    // ==== raw retention cap and the wholesale forget backstop ====
+
+    // A synthetic demotion marker for a region id (a compacted entry carrying Present(origin), the shape
+    // demotedOrigins reads to decide a region is currently demoted).
+    def demotionMarker(id: Int, end: Int, since: Int): SystemMessage =
+        SystemMessage(s"[region $id compacted]", origin = Present(Context.Origin(id, end, since)))
+
+    // A head (system + task user), a demotable middle, and a 10-region tail so tailUnits (the recent
+    // working set) protects only the tail and the middle ages out of it. Region ids: 0 system, 1 task,
+    // 2..(2+middle-1) middle, then the tail. Every message is stamped so occupancy is deterministic.
+    def retentionRaw(headStamp: Int, middleStamps: List[Int], tailStamp: Int): Chunk[Message] =
+        val head   = Chunk[Message](tok(sm("system prompt"), headStamp), tok(um("first task"), headStamp))
+        val middle = Chunk.from(middleStamps.zipWithIndex.map((s, i) => tok(am(s"middle region $i " + ("x" * 30)), s)))
+        val tail   = Chunk.from((0 until 10).map(i => tok(am(s"tail region $i"), tailStamp)))
+        head.concat(middle).concat(tail)
+    end retentionRaw
+
+    def rawSumOf(raw: Chunk[Message]): Int = raw.foldLeft(0)((n, m) => n + stampedTokens(m))
+
+    "INV-053 raw is append-only up to the cap: below the high watermark eviction is a no-op" in {
+        // head 10 + middle 40 + tail 30 = 80, under the high watermark 0.9*100 = 90.
+        val raw       = retentionRaw(5, List(20, 20), 3)
+        val compacted = Chunk[Message](demotionMarker(2, 3, raw.size), demotionMarker(3, 4, raw.size))
+        val state     = CompactionState().withSummary(2, 3, "s2").withAnalysis(RegionAnalysis(2, Chunk.empty[Context.Relation]))
+        val ctx       = Context(raw, compacted).withCompaction(state)
+        val config    = cfg().compaction(_.rawRetentionCap(100))
+        assert(rawSumOf(raw) == 80, s"the fixture's raw stamp sum is 80, below the high watermark 90, got ${rawSumOf(raw)}")
+        val evicted = Default.evict(ctx, config)
+        assert(evicted eq ctx, "below the high watermark evict returns the same Context reference, untouched")
+        assert(evicted.raw == ctx.raw, "raw is unchanged (append-only under the cap)")
+        assert(evicted.raw.size == ctx.raw.size, "raw.size is unchanged")
+        assert(evicted.raw.forall(_.origin.isEmpty), "no coarse band and no tombstone are introduced")
+        assert(evicted.compactionState == ctx.compactionState, "the compaction state is unchanged")
+    }
+
+    "INV-053 wholesale forget: past the high watermark the oldest frozen+demoted middle is forgotten down to the low watermark, replaced by one coarse band with no recall id" in {
+        // head 2 + middle 120 + tail 10 = 132, over the high watermark 90; low watermark is 0.5*100 = 50.
+        val raw = retentionRaw(1, List(40, 40, 40), 1)
+        val compacted =
+            Chunk[Message](demotionMarker(2, 3, raw.size), demotionMarker(3, 4, raw.size), demotionMarker(4, 5, raw.size))
+        val state = CompactionState()
+            .withSummary(2, 3, "s2").withSummary(3, 4, "s3").withSummary(4, 5, "s4")
+            .withAnalysis(RegionAnalysis(2, Chunk.empty[Context.Relation]))
+            .withAnalysis(RegionAnalysis(4, Chunk.empty[Context.Relation]))
+            .withAnalysis(RegionAnalysis(5, Chunk.empty[Context.Relation]))
+        val ctx     = Context(raw, compacted).withCompaction(state)
+        val config  = cfg().compaction(_.rawRetentionCap(100))
+        val evicted = Default.evict(ctx, config)
+        assert(evicted.raw.size == ctx.raw.size, "raw.size is unchanged: the forget is in place, ordinals never renumber")
+        val bandHeads  = evicted.raw.filter(m => m.origin.isDefined && m.content.nonEmpty)
+        val tombstones = evicted.raw.filter(m => m.origin.isDefined && m.content.isEmpty)
+        assert(bandHeads.size == 1, s"exactly one coarse band head stands for the contiguous forgotten run, got ${bandHeads.size}")
+        assert(tombstones.size == 2, s"the two non-first forgotten ordinals are content-freed tombstones, got ${tombstones.size}")
+        assert(!bandHeads.head.content.contains("recall("), "the coarse band text carries no recall id (no 'recall(' substring)")
+        val regrouped = Default.group(evicted.raw)
+        assert(regrouped.count(_.indices.toList == List(2, 3, 4)) == 1, "the forgotten run fuses back into one region on the next grouping")
+        val rawSum2 = rawSumOf(evicted.raw)
+        assert(rawSum2 <= 50, s"the raw stamp sum is driven at or below the low watermark 50, got $rawSum2")
+        val st = evicted.compactionState
+        assert(st.summaries.forall(s => !Set(2, 3, 4).contains(s.start)), "the forgotten regions' summary slots are dropped")
+        assert(!st.analyses.exists(_.ordinal == 2), "a forgotten ordinal's analysis slot is dropped")
+        assert(!st.analyses.exists(_.ordinal == 4), "the other forgotten ordinal's analysis slot is dropped")
+        assert(st.analyses.exists(_.ordinal == 5), "a survivor's analysis slot remains")
+    }
+
+    "INV-053-forgotten recall of a forgotten id fails cleanly, and a still-reachable region is unaffected" in {
+        // A hand-built post-eviction Context: raw holds a coarse band head at ordinal 2 spanning [2,5) with
+        // two tombstones, and a live survivor region at ordinal 5; compacted carries the band marker plus a
+        // demotion marker for the survivor so recall can resolve both.
+        val raw = Chunk[Message](
+            sm("system prompt"),
+            um("first task"),
+            Default.coarseBand(2, 5, 3, 6),
+            Default.tombstone(Context.Origin(2, 5, 6)),
+            Default.tombstone(Context.Origin(2, 5, 6)),
+            am("SURVIVOR PAYLOAD")
+        )
+        val compacted = Chunk[Message](Default.coarseBand(2, 5, 3, 6), demotionMarker(5, 6, 6))
+        val ctx       = Context(raw, compacted)
+        LLM.run(cfg()) {
+            AI.init.map { ai =>
+                ai.setContext(ctx).andThen {
+                    val tool = Default.recallTool(ai).infos.head
+                    tool.decodeAndRun("""{"id":2}""").map { r2 =>
+                        tool.decodeAndRun("""{"id":3}""").map { r3 =>
+                            tool.decodeAndRun("""{"id":5}""").map { r5 =>
+                                assert(
+                                    r2 match
+                                        case RunOutcome.Ran(Result.Success(o)) =>
+                                            o == Json.encode(
+                                                "region 2 was forgotten past the retention horizon and is no longer recallable"
+                                            )
+                                        case _ => false
+                                    ,
+                                    s"recall of a forgotten band head resolves to a clean refusal String, no throw, got: $r2"
+                                )
+                                assert(
+                                    r3 match
+                                        case RunOutcome.Ran(Result.Success(o)) => o == Json.encode("no such recallable region: 3")
+                                        case _                                 => false
+                                    ,
+                                    s"recall of a forgotten interior ordinal (folded into the band) is not a distinct region, got: $r3"
+                                )
+                                assert(
+                                    r5 match
+                                        case RunOutcome.Ran(Result.Success(o)) => o.contains("assistant: SURVIVOR PAYLOAD")
+                                        case _                                 => false
+                                    ,
+                                    s"recall of a still-live survivor returns its covered messages verbatim and role-tagged, got: $r5"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "INV-053 the backstop never forgets content the task is still using (live over dead)" in {
+        // head 10 + middle 120 + tail 10 = 140, over the high watermark 90. R3 (ordinal 2) is LIVE (no
+        // demotion marker), R4 (3) and R5 (4) are frozen+demoted.
+        val raw       = retentionRaw(5, List(40, 40, 40), 1)
+        val compacted = Chunk[Message](demotionMarker(3, 4, raw.size), demotionMarker(4, 5, raw.size))
+        val ctx       = Context(raw, compacted)
+        val config    = cfg().compaction(_.rawRetentionCap(100))
+        val evicted   = Default.evict(ctx, config)
+        assert(evicted.raw.size == ctx.raw.size, "raw.size is unchanged")
+        assert(evicted.raw(2) == ctx.raw(2), "the live region R3 is never forgotten: its raw bytes are intact")
+        assert(evicted.raw(2).origin.isEmpty, "no band covers the live region R3 (a demotion marker is required to be evictable)")
+        val bandHeads  = evicted.raw.filter(m => m.origin.isDefined && m.content.nonEmpty)
+        val tombstones = evicted.raw.filter(m => m.origin.isDefined && m.content.isEmpty)
+        assert(bandHeads.size == 1, s"only the demoted R4,R5 run is forgotten, one coarse band, got ${bandHeads.size}")
+        assert(tombstones.size == 1, s"one tombstone for the run's non-first ordinal, got ${tombstones.size}")
+        assert(evicted.raw(3).origin.exists(_.start == 3), "the forgotten run starts at ordinal 3 (R4), not the live R3")
+        assert(rawSumOf(evicted.raw) > 50, "forgetting only the demotable set cannot reach the low watermark, and that is accepted")
+    }
+
+    "INV-053 survivors' ordinals are unchanged: the sequence gains a gap, never renumbers, and slot keys never alias" in {
+        val raw = retentionRaw(1, List(40, 40, 40), 1)
+        val compacted = Chunk[Message](
+            demotionMarker(2, 3, raw.size),
+            demotionMarker(3, 4, raw.size),
+            demotionMarker(4, 5, raw.size),
+            demotionMarker(5, 6, raw.size) // a survivor in the tail band
+        )
+        val state = CompactionState()
+            .withSummary(
+                1,
+                2,
+                "below"
+            ).withSummary(2, 3, "s2").withSummary(3, 4, "s3").withSummary(4, 5, "s4").withSummary(5, 6, "survivor")
+            .withAnalysis(RegionAnalysis(1, Chunk.empty[Context.Relation]))
+            .withAnalysis(RegionAnalysis(2, Chunk.empty[Context.Relation]))
+            .withAnalysis(RegionAnalysis(4, Chunk.empty[Context.Relation]))
+            .withAnalysis(RegionAnalysis(5, Chunk.empty[Context.Relation]))
+        val ctx     = Context(raw, compacted).withCompaction(state)
+        val config  = cfg().compaction(_.rawRetentionCap(100))
+        val evicted = Default.evict(ctx, config)
+        assert(evicted.raw.size == ctx.raw.size, "raw.size is unchanged so the survivor keeps its index (no renumber)")
+        assert(
+            evicted.raw(5) == ctx.raw(5),
+            "the survivor at ordinal 5 sits at the same index with the same bytes (recall(s) resolves the same)"
+        )
+        assert(evicted.raw(5).origin.isEmpty, "the survivor's raw slot is live, never a band member")
+        val st = evicted.compactionState
+        assert(st.summaries.exists(s => s.start == 5 && s.end == 6), "the survivor's SpanSummary key (5,6) is unchanged")
+        assert(st.summaries.exists(_.start == 1), "a summary slot below the forgotten run is untouched")
+        assert(st.summaries.forall(s => !Set(2, 3, 4).contains(s.start)), "the forgotten run's summary slots are dropped, aliasing nothing")
+        assert(!st.analyses.exists(_.ordinal == 2), "a forgotten ordinal's analysis slot is dropped")
+        assert(!st.analyses.exists(_.ordinal == 4), "the other forgotten ordinal's analysis slot is dropped")
+        assert(st.analyses.exists(_.ordinal == 5), "the survivor's analysis slot remains")
+        assert(st.analyses.exists(_.ordinal == 1), "an analysis slot below the forgotten run is untouched")
+        assert(Default.contiguousRuns(List(2, 3, 4)) == List((2, 5)), "the forgotten ordinals form one maximal half-open run [2,5)")
+        val ids = Default.group(evicted.raw).map(_.id).toList.sorted
+        assert(!ids.contains(3) && !ids.contains(4), "ordinals 3 and 4 are absorbed into the band: the sequence gains a gap")
+        assert(ids.contains(2) && ids.contains(5), "the band head (2) and the survivor (5) keep their ordinals")
+    }
+
+    "INV-053 the fixed head band and the tail band are never forgotten even under maximal pressure" in {
+        // A tiny cap (20 -> high 18, low 10) drives eviction as deep as it can. The system head and the task
+        // turn (ordinals 0,1) carry demotion markers too, so ONLY headBand protects them; a tail region
+        // (ordinal 5) carries a marker so only tailUnits protects it.
+        val raw = retentionRaw(5, List(40, 40, 40), 3)
+        val compacted = Chunk[Message](
+            demotionMarker(0, 1, raw.size),
+            demotionMarker(1, 2, raw.size),
+            demotionMarker(2, 3, raw.size),
+            demotionMarker(3, 4, raw.size),
+            demotionMarker(4, 5, raw.size),
+            demotionMarker(5, 6, raw.size)
+        )
+        val ctx     = Context(raw, compacted)
+        val config  = cfg().compaction(_.rawRetentionCap(20))
+        val evicted = Default.evict(ctx, config)
+        assert(evicted.raw.size == ctx.raw.size, "raw.size is unchanged")
+        assert(evicted.raw(0) == ctx.raw(0), "the system head is never forgotten (headBand hard exclusion)")
+        assert(evicted.raw(1) == ctx.raw(1), "the task-origin user turn is never forgotten (headBand hard exclusion)")
+        assert(evicted.raw(0).origin.isEmpty && evicted.raw(1).origin.isEmpty, "no band covers the head band")
+        (5 until raw.size).foreach { i =>
+            assert(evicted.raw(i) == ctx.raw(i), s"tail-band ordinal $i is never forgotten (tailUnits hard exclusion)")
+            assert(evicted.raw(i).origin.isEmpty, s"no band covers tail-band ordinal $i")
+        }
+        val bandHeads = evicted.raw.filter(m => m.origin.isDefined && m.content.nonEmpty)
+        assert(bandHeads.size == 1, "only the frozen+demoted middle between the head and the tail is eligible")
+        assert(evicted.raw(2).origin.exists(_.start == 2), "the forgotten run is exactly the middle [2,5)")
+    }
+
+    "INV-053 contiguousRuns folds a sorted ordinal list into maximal half-open runs" in {
+        assert(Default.contiguousRuns(Nil) == Nil, "the empty list yields no runs")
+        assert(Default.contiguousRuns(List(5)) == List((5, 6)), "a singleton yields one unit-width run")
+        assert(Default.contiguousRuns(List(2, 3, 4)) == List((2, 5)), "a contiguous block yields one maximal run")
+        assert(Default.contiguousRuns(List(2, 4, 5)) == List((2, 3), (4, 6)), "a gap splits into two runs")
+        assert(
+            Default.contiguousRuns(List(1, 2, 4, 7, 8, 9)) == List((1, 3), (4, 5), (7, 10)),
+            "multiple gaps split into as many maximal runs, each half-open [start, endExcl)"
+        )
+    }
+
 end CompactorTest

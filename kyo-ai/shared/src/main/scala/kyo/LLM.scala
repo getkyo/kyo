@@ -519,8 +519,13 @@ object LLM:
                                 (prepared, session2) =>
                                     LLM.setSession(ai, session2).andThen {
                                         c.render(prepared).map { rebuilt =>
+                                            // The raw-retention boundary: after the view is rendered and
+                                            // installed, bound raw's heap by forgetting the oldest
+                                            // frozen+demoted middle wholesale. Pure; the compacted view is
+                                            // untouched, the coarse band appears at the next render.
                                             val updated = prepared.copy(compacted = rebuilt)
-                                            ai.setContext(updated).andThen(updated)
+                                            val evicted = Compactor.internal.Default.evict(updated, config)
+                                            ai.setContext(evicted).andThen(evicted)
                                         }
                                     }
                             }
@@ -551,8 +556,13 @@ object LLM:
                                                     (prepared, session2) =>
                                                         LLM.setSession(ai, session2).andThen {
                                                             c.render(prepared).map { rebuilt =>
+                                                                // The raw-retention backstop also runs
+                                                                // after a drift fire (a boundary of the
+                                                                // other cause), after the view is installed.
+                                                                // Pure; the compacted view is untouched.
                                                                 val updated = prepared.copy(compacted = rebuilt)
-                                                                ai.setContext(updated).andThen(updated)
+                                                                val evicted = Compactor.internal.Default.evict(updated, config)
+                                                                ai.setContext(evicted).andThen(evicted)
                                                             }
                                                         }
                                                 }
