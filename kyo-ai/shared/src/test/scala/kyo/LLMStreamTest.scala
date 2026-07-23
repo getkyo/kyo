@@ -228,7 +228,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         // named instance, stream against it, and assert the outbound stream request carries the compaction
         // marker (proving the seam consulted the instance compactor, not only the scope env).
         TestCompletionServer.runStreaming { server =>
-            val config = serverConfig(server.baseUrl).compactionBudget(1)
+            val config = serverConfig(server.baseUrl).compaction(_.contextCeiling(3))
             val marker = "[compacted region 0: stream seam marker]"
             val c = new Compactor[Any]:
                 def render(ctx: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =

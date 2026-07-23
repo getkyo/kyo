@@ -105,10 +105,9 @@ class ContextTest extends kyo.test.Test[Any]:
     "core-field comparison ignores enrichment fields" in {
         // Two messages identical on content/role but differing solely on enrichment compare as the same
         // under coreEq (merge/dedup/cache-gate path), while full-record == treats them as different.
-        val emb  = Embedding(Span(1.0f, 0.0f), "m", 2)
         val bare = um("same")
-        val rich = UserMessage("same", Absent, embedding = Present(emb), tokens = Present(7), origin = Present(Origin(0, 1, 0)))
-        assert(Context.coreEq(bare, rich), "coreEq ignores embedding/tokens/origin")
+        val rich = UserMessage("same", Absent, tokens = Present(TokenStamp("m", 7)), origin = Present(Origin(0, 1, 0)))
+        assert(Context.coreEq(bare, rich), "coreEq ignores tokens/origin")
         assert(bare != rich, "full-record == is NOT the comparison coreEq uses (enrichment differs)")
         // A genuine core difference is not equal under coreEq.
         assert(!Context.coreEq(bare, um("other")))
@@ -120,42 +119,32 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(merged.raw.map(_.content) == Chunk("same", "next"), s"enrichment-only diff is common prefix, got: ${merged.raw}")
     }
 
-    "embedding/tokens/origin default Absent on every ordinarily-added message" in {
+    "tokens/origin default Absent on every ordinarily-added message" in {
         val ctx = Context.empty.add(SystemMessage("s")).userMessage("u").assistantMessage("a").toolMessage(CallId("c"), "t")
         assert(
-            ctx.raw.forall(m => m.embedding.isEmpty && m.tokens.isEmpty && m.origin.isEmpty),
+            ctx.raw.forall(m => m.tokens.isEmpty && m.origin.isEmpty),
             "every appended message defaults to Absent enrichment"
         )
     }
 
     "Context Schema round-trips every message type, including image, tool calls, and enrichment fields" in {
         // The serializable slice behind ai.snapshot/AI.recover: a Schema regression here silently corrupts
-        // cross-run persistence. Exercise one of every variant PLUS Present embedding/tokens/origin, and a
-        // divergent compacted (a synthetic marker) so BOTH lists are checked.
-        val emb    = Embedding(Span(1.0f, 2.0f), "m", 2)
+        // cross-run persistence. Exercise one of every variant PLUS Present tokens/origin, and a divergent
+        // compacted (a synthetic marker) so BOTH lists are checked.
         val marker = SystemMessage("[compacted region 0: 12 bytes omitted]", origin = Present(Origin(0, 2, 4)))
         val ctx = Context(Chunk[Message](
             SystemMessage("sys"),
-            UserMessage("look", Present(Image.fromBase64("SGVsbG8=")), embedding = Present(emb)),
-            AssistantMessage("thinking", Chunk(Call(CallId("c1"), "fn", """{"x":1}""")), tokens = Present(42)),
+            UserMessage("look", Present(Image.fromBase64("SGVsbG8="))),
+            AssistantMessage("thinking", Chunk(Call(CallId("c1"), "fn", """{"x":1}""")), tokens = Present(TokenStamp("o200k", 42))),
             ToolMessage(CallId("c1"), "tool-out")
         )).copy(compacted = Chunk[Message](marker))
         Json.decode[Context](Json.encode(ctx)) match
             case Result.Success(decoded) =>
-                // Span[Float] equality is by array identity (the existing embed test compares via toArray.toSeq),
-                // so compare the embedding element-wise and the rest structurally.
                 assert(decoded.compacted == Chunk[Message](marker), "the compacted list (incl. origin) round-trips byte-for-byte")
                 assert(decoded.raw.size == ctx.raw.size)
                 assert(decoded.raw(0) == ctx.raw(0) && decoded.raw(3) == ctx.raw(3), "content-only messages round-trip structurally")
-                decoded.raw(1).embedding match
-                    case Present(e) =>
-                        assert(
-                            e.modelName == "m" && e.dim == 2 && e.vector.toArray.toSeq == Seq(1.0f, 2.0f),
-                            s"embedding round-trips element-wise: $e"
-                        )
-                    case Absent => assert(false, "embedding should be Present after the round-trip")
-                end match
-                assert(decoded.raw(2).tokens == Present(42), "tokens round-trips")
+                assert(decoded.raw(1) == ctx.raw(1), "an image-carrying message round-trips structurally")
+                assert(decoded.raw(2).tokens == Present(TokenStamp("o200k", 42)), "the TokenStamp round-trips (tokenizerId + count)")
             case other => assert(false, s"Context decode failed: $other")
         end match
     }
@@ -181,33 +170,38 @@ class ContextTest extends kyo.test.Test[Any]:
         )
     }
 
-    "the sealed trait exposes def tokens: Maybe[Int]" in {
-        val msg: Message       = SystemMessage("s")
-        val tokens: Maybe[Int] = msg.tokens
-        assert(tokens == Absent, "the trait accessor type-checks as Maybe[Int] and returns Absent by default")
+    "the sealed trait exposes def tokens: Maybe[TokenStamp]" in {
+        val msg: Message              = SystemMessage("s")
+        val tokens: Maybe[TokenStamp] = msg.tokens
+        assert(tokens == Absent, "the trait accessor type-checks as Maybe[TokenStamp] and returns Absent by default")
     }
 
     "coreEq ignores the tokens field" in {
         val a = SystemMessage("x")
-        val b = SystemMessage("x", tokens = Present(7))
+        val b = SystemMessage("x", tokens = Present(TokenStamp("o200k", 7)))
         assert(Context.coreEq(a, b), "coreEq compares content/role only, so a tokens-only difference compares equal")
     }
 
-    "tokens survives a copy and Schema round-trip" in {
-        val msg: AssistantMessage = AssistantMessage("thinking", tokens = Present(42))
+    "the TokenStamp round-trips through Message.tokens via copy and Schema" in {
+        val msg: AssistantMessage = AssistantMessage("thinking", tokens = Present(TokenStamp("o200k", 42)))
         val copied                = msg.copy()
-        assert(copied.tokens == Present(42), "copy preserves the stamped tokens field")
+        assert(copied.tokens == Present(TokenStamp("o200k", 42)), "copy preserves the stamped tokens field")
         Json.decode[Message](Json.encode(copied: Message)) match
-            case Result.Success(decoded) => assert(decoded.tokens == Present(42), "tokens round-trips through Schema encode/decode")
-            case other                   => assert(false, s"Message decode failed: $other")
+            case Result.Success(decoded) =>
+                assert(decoded.tokens == Present(TokenStamp("o200k", 42)), "the (tokenizerId, count) stamp round-trips through Schema")
+            case other => assert(false, s"Message decode failed: $other")
         end match
     }
 
-    "Context still has exactly two fields (raw, compacted)" in {
+    "Context carries the raw, compacted, and the compaction-state seat (default Absent)" in {
         val ctx = Context.empty
+        assert(ctx.compaction == Absent, "the compaction-state seat defaults to Absent on a fresh Context")
         ctx match
-            case Context(raw, compacted) =>
-                assert(raw == ctx.raw && compacted == ctx.compacted, "Context has exactly the raw and compacted fields, no third")
+            case Context(raw, compacted, compaction) =>
+                assert(
+                    raw == ctx.raw && compacted == ctx.compacted && compaction == ctx.compaction,
+                    "Context has the raw, compacted, and compaction fields"
+                )
         end match
     }
 

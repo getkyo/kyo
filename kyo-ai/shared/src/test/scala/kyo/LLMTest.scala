@@ -795,7 +795,7 @@ class LLMTest extends kyo.test.Test[Any]:
         // request is compacted, i.e. the INSTANCE compactor's rendering (instance-over-scope) reached the
         // wire, not merely that Maybe.orElse picks it in the test body.
         TestCompletionServer.run { server =>
-            val cfg         = serverConfig(server.baseUrl).compactionBudget(1)
+            val cfg         = serverConfig(server.baseUrl).compaction(_.contextCeiling(3))
             val scopeMarker = "SCOPE-COMPACTOR-MARKER"
             val instMarker  = "INSTANCE-COMPACTOR-MARKER"
             def tagging(tag: String): Compactor[Any] = new Compactor[Any]:

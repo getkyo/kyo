@@ -154,6 +154,54 @@ class TokenizerTest extends kyo.test.Test[Any]:
         assert(o200kTokens("東京都に住んでいます") != cl100kTokens("東京都に住んでいます"))
     }
 
+    "INV-018 the pure-Scala tiktoken reproduces the reference count exactly on a sample" in {
+        // fixed-sample exactness (0.0% error), deterministic across repeated calls; the cross-platform pin
+        // for tiktoken correctness (the jtokkit JVM-oracle parity leaf is deferred: no jtokkit dep).
+        val sample = "The quick brown fox."
+        assert(o200kTokens(sample) == 5, "the o200k count equals the known reference count exactly")
+        assert(o200kTokens(sample) == o200kTokens(sample), "the encoder is deterministic across repeated calls")
+    }
+
+    "INV-016 apportionment normalizes tokenizer counts to sum to the exact reported total" in {
+        // a fixed test tokenizer counting each message by content length * 100 (envelope-inclusive), so the
+        // per-message counts are 100,200,300,200,100 summing to 900; apportion normalizes to 1000 exactly.
+        val fixed: Tokenizer = new Tokenizer:
+            def count(texts: Chunk[String])(using Frame): Chunk[Int] < Any = texts.map(t => t.length * 100)
+            override private[kyo] def includesMessageEnvelope: Boolean     = true
+        val msgs = Chunk[Context.Message](
+            SystemMessage("a"),
+            SystemMessage("bb"),
+            SystemMessage("ccc"),
+            SystemMessage("dd"),
+            SystemMessage("e")
+        )
+        LLM.run(testConfig)(Compactor.internal.apportion(msgs, 1000, fixed, "o200k")).map { stamped =>
+            val counts = stamped.map(_.tokens).collect { case Present(s) => s.count }
+            assert(counts.foldLeft(0)(_ + _) == 1000, s"the stamped counts sum EXACTLY to the reported total, got: $counts")
+            assert(counts.size == 5, "every message is stamped")
+            // relative ordering preserved: the middle message (largest tokenizer count) keeps the largest share.
+            assert(counts(2) == counts.max, s"a message the tokenizer counts larger keeps a larger apportioned share, got: $counts")
+            assert(counts(0) == counts(4) && counts(0) < counts(1), "the largest-remainder distribution preserves the size ordering")
+        }
+    }
+
+    "INV-016b each stamp carries (tokenizerId, count), never a bare count" in {
+        val fixed: Tokenizer = new Tokenizer:
+            def count(texts: Chunk[String])(using Frame): Chunk[Int] < Any = texts.map(_ => 10)
+            override private[kyo] def includesMessageEnvelope: Boolean     = true
+        val msgs = Chunk[Context.Message](SystemMessage("x"), SystemMessage("y"))
+        LLM.run(testConfig)(Compactor.internal.apportion(msgs, 100, fixed, "o200k")).map { stamped =>
+            assert(
+                stamped.forall(m =>
+                    m.tokens match
+                        case Present(s) => s.tokenizerId == "o200k"
+                        case Absent     => false
+                ),
+                s"every stamp is Present(TokenStamp(\"o200k\", n)), the id tagging the count, got: ${stamped.map(_.tokens)}"
+            )
+        }
+    }
+
     "no regex is constructed anywhere in the tiktoken source".onlyJvm in {
         val pattern = "(\\.r\\b)|(Regex\\()|(\\.matches\\()".r
         tiktokenSources.foreach { (name, text) =>

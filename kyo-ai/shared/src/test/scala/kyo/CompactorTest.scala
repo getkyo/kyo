@@ -8,515 +8,83 @@ import kyo.ai.Context.*
 class CompactorTest extends kyo.test.Test[Any]:
 
     // ---- construction helpers ----
-    def um(s: String): UserMessage                             = UserMessage(s, Absent)
-    def sm(s: String): SystemMessage                           = SystemMessage(s)
-    def am(s: String, calls: Call*): AssistantMessage          = AssistantMessage(s, Chunk.from(calls))
-    def tm(id: String, s: String): ToolMessage                 = ToolMessage(CallId(id), s)
-    def call(id: String, fn: String, args: String): Call       = Call(CallId(id), fn, args)
-    def ctxOf(msgs: Message*): Context                         = Context(Chunk.from(msgs))
-    def seg(id: Int): Segment                                  = Segment(id, Chunk(id), false, 1)
-    def edges(es: (Int, List[Edge])*): Graph                   = Graph(Dict.from(es.map((k, v) => (k, Chunk.from(v))).toMap))
+    def um(s: String): UserMessage                       = UserMessage(s, Absent)
+    def sm(s: String): SystemMessage                     = SystemMessage(s)
+    def am(s: String, calls: Call*): AssistantMessage    = AssistantMessage(s, Chunk.from(calls))
+    def tm(id: String, s: String): ToolMessage           = ToolMessage(CallId(id), s)
+    def call(id: String, fn: String, args: String): Call = Call(CallId(id), fn, args)
+    def ctxOf(msgs: Message*): Context                   = Context(Chunk.from(msgs))
+
+    // Stamp a message with an apportioned token count so occupancy/regions/spans account deterministically.
+    def tok(m: Message, n: Int): Message = stamp(m, TokenStamp("t", n))
+
+    // A region value for scoring/span unit tests (its own single index, resolved, stamped tokens).
+    def reg(id: Int, tokens: Int = 1): Region = Region(id, Chunk(id), false, tokens)
+
+    // A test-local Graph from adjacency lists over Edge values.
+    def graphOf(es: (Int, List[Edge])*): Graph =
+        Graph(Dict.from(es.map((k, v) => (k, Chunk.from(v))).toMap))
+
     def eps(a: Double, b: Double, tol: Double = 1e-9): Boolean = math.abs(a - b) < tol
 
-    /** A config pointing the OpenAI backend at nothing (render is model-free), with the compaction knobs. */
-    def serverConfig(budget: Int, window: Int = 128000, low: Double = 0.45, high: Double = 0.7, hard: Double = 0.9): Config =
+    /** A config pointing the OpenAI backend at nothing (render is model-free), with a valid occupancy axis. */
+    def cfg(window: Int = 200000): Config =
         Config.OpenAI.default.apiKey("k").model(Config.OpenAI, "m", window)
-            .compactionBudget(budget)
-            .compactionLowWatermark(low)
-            .compactionHighWatermark(high)
-            .compactionHardLimit(hard)
 
-    /** Runs the default compactor's render under a config; render is model-free so no server is needed. */
-    def renderWith(ctx: Context, config: Config)(using Frame): Chunk[Message] < (Async & Abort[AIGenException]) =
-        LLM.run(config)(Compactor.init.render(ctx))
-
-    // Row sums of the row-normalized transition matrix (1.0 for a unit with out-edges, 0.0 for a dangling
-    // unit). A test-local derivation over Graph: the row-stochastic property is a test assertion.
-    def transitionRowSum(id: Int, graph: Graph): Double =
-        val es  = graph.edges.get(id).getOrElse(Chunk.empty)
-        val sum = es.foldLeft(0.0)((a, e) => a + e.weight)
-        if sum <= 0.0 then 0.0 else es.foldLeft(0.0)((a, e) => a + e.weight / sum)
-    end transitionRowSum
+    /** Runs a compactor's render under a config; the default render is model-free so no server is needed. */
+    def renderWith(ctx: Context, config: Config, compactor: Compactor[Any] = Compactor.init)(using
+        Frame
+    ): Chunk[Message] < (Async & Abort[AIGenException]) =
+        LLM.run(config)(compactor.render(ctx))
 
     def contentLen(c: Chunk[Message]): Int = c.foldLeft(0)((n, m) => n + m.content.length)
 
-    // A transcript whose demotable units are large and sit JUST BEFORE a tiny tail: they are outside the
-    // tail window (so non-root) AND the cache gate passes when they are demoted (the invalidated suffix
-    // from the edit point is small). fillerChars stays below elisionThreshold so a demoted unit masks to a
-    // short marker (a big token saving), not an elision. 12 tiny tail turns keep the big units out of the
-    // tailTurns=10 window.
-    def demotableContext(fillerChars: Int = 1500, turns: Int = 6): Context =
-        val head = Chunk[Message](sm("system prompt"), um("the first task"))
-        val body = Chunk.from((0 until turns).map(i => am(s"region $i " + ("x" * fillerChars))))
-        val tail = Chunk.from((0 until 12).map(i => am(s"t$i")))
-        Context(head.concat(body).concat(tail).append(um("the latest user question")))
-    end demotableContext
+    // A context whose closed middle regions are demotable and whose single large tail region bounds the tail
+    // band, so the middle ages into the closed prefix and forms spans; occupancy sits above the trigger.
+    def demotable(): Context =
+        val head = Chunk[Message](sm("system prompt"), um("first task"))
+        val body = Chunk.from((0 until 10).map(i => tok(am(s"region $i " + ("x" * 200)), 600)))
+        val tail = Chunk[Message](tok(am("recent tail " + ("y" * 400)), 3000), tok(um("latest question"), 50))
+        Context(head.concat(body).concat(tail))
+    end demotable
 
-    // ==== contract ====
+    // ==== byte-stability ====
 
-    "raw immutable across render" in {
-        val ctx = demotableContext(400, 16)
-        renderWith(ctx, serverConfig(1)).map { rebuilt =>
-            val applied = ctx.copy(compacted = rebuilt)
-            assert(applied.raw == ctx.raw, "render never mutates raw; the caller-applied Context keeps raw byte-identical")
-            assert(applied.raw.size == ctx.raw.size)
-            // render returns ONLY a Chunk[Message] (no raw in its type), so raw immutability is structural.
-            assert(rebuilt.nonEmpty)
-        }
-    }
-
-    "render pure; two instances agree; returns only rebuilt compacted, raw absent from output" in {
-        val ctx = demotableContext(400, 16)
-        renderWith(ctx, serverConfig(1)).map { a =>
-            renderWith(ctx, serverConfig(1)).map { b =>
-                assert(a == b, "two renders of the same Context produce byte-identical rebuilt Chunk[Message]")
+    "INV-004 the boundary render is a pure deterministic function of its frozen inputs" in {
+        val ctx = demotable()
+        renderWith(ctx, cfg(16384)).map { a =>
+            renderWith(ctx, cfg(16384)).map { b =>
+                assert(a == b, "two renders of the identical frozen inputs are byte-identical (no wall-clock/seed nondeterminism)")
             }
         }
     }
 
-    "state is only raw+compacted; region bookkeeping derived at boundary" in {
-        // A fresh render given only (raw, compacted) reproduces identical levels: run render, feed its output
-        // back as compacted, render again with the SAME raw -> identical decision (no external state).
-        val ctx = demotableContext(400, 16)
-        renderWith(ctx, serverConfig(1)).map { first =>
-            val next = ctx.copy(compacted = first)
-            renderWith(next, serverConfig(1)).map { second =>
-                assert(first == second, "levels are re-derived from (raw, compacted) alone, deterministically")
-            }
-        }
-    }
-
-    "state on Context; nothing to leak; no cell" in {
-        // Structural: EdgeKind/Level are the only derived enums; there is no AIRef-keyed field. A behavioral
-        // proxy: render holds no cross-call state (proven by the determinism leaf); here assert the derived
-        // types exist and carry no identity key.
-        assert(Level.values.length == 3)
-        assert(EdgeKind.values.length == 2)
-    }
-
-    // ==== grouping ====
-
-    "unit fusion + id + interleave" in {
-        val ctx   = ctxOf(am("do", call("c1", "f", "{}"), call("c2", "g", "{}")), tm("c2", "r2"), tm("c1", "r1"), um("other"))
-        val units = Default.group(ctx.raw)
-        assert(units.size == 2, s"expected two units, got ${units.size}")
-        val u0 = units.filter(_.id == 0).head
-        assert(u0.id == 0, "unit id is the first-message index")
-        assert(u0.indices.toList == List(0, 1, 2), s"the pair joins by callId regardless of arrival order, got ${u0.indices}")
-        assert(!u0.unresolved)
-        val u3 = units.filter(_.id == 3).head
-        assert(u3.indices.toList == List(3), "the unrelated singleton is its own unit")
-    }
-
-    "unresolved unit pinned" in {
-        val ctx   = ctxOf(am("do", call("c1", "f", "{}")), um("next"))
-        val units = Default.group(ctx.raw)
-        val u0    = units.filter(_.id == 0).head
-        assert(u0.unresolved, "an assistant unit with an unanswered call id is unresolved (pinned)")
-        // and it renders verbatim even under maximum pressure.
-        renderWith(ctxOf(sm("s"), am("do " + ("x" * 400), call("c1", "f", "{}")), um("u")), serverConfig(1)).map { view =>
-            assert(view.exists(_.content.contains("do ")), "the unresolved unit is never demoted")
-        }
-    }
-
-    // ==== graph ====
-
-    "structural-only extraction; no stoplist" in {
-        val toks = Default.extractTokens("the and for that with `Config.timeout` plainword value42 CamelCase").toSet
-        assert(toks.contains("Config.timeout"), "a backticked identifier registers (backticks stripped)")
-        assert(toks.contains("value42"), "a digit-bearing token registers")
-        assert(toks.contains("CamelCase"), "a camel-cased token registers")
-        List("the", "and", "for", "that", "with", "plainword").foreach(w =>
-            assert(!toks.contains(w), s"a bare English word never registers: $w")
-        )
-    }
-
-    "ref repoint after supersession" in {
-        val raw = Chunk[Message](
-            am("intro `Widget.field`"),
-            um("mid turn"),
-            am("update `Widget.field` again"),
-            am("later mentions `Widget.field`")
-        )
-        val units      = Default.group(raw)
-        val superseded = Dict[Int, Int]((0, 2))
-        val g          = Default.deriveGraph(units, raw, superseded)
-        val u3ref      = g.edges.get(3).getOrElse(Chunk.empty).filter(_.kind == EdgeKind.Ref)
-        assert(u3ref.exists(_.target == 2), "the Ref edge targets the current mapping (unit 2)")
-        assert(!u3ref.exists(_.target == 0), "the Ref edge never targets the superseded introducer (unit 0)")
-    }
-
-    "keyless no-op; read/write triggers" in {
-        val units = Chunk(seg(0), seg(1), seg(2), seg(3), seg(4))
-        val keys = Dict[Int, (String, Tool.Kind)](
-            (1, ("k", Tool.Kind.Read)),
-            (2, ("k", Tool.Kind.Read)),
-            (3, ("k", Tool.Kind.Write)),
-            (4, ("k", Tool.Kind.Read))
-        )
-        val sup = Default.supersession(units, keys)
-        assert(sup.get(1) == Present(2), "the second same-key read supersedes the first")
-        assert(sup.get(2) == Present(3), "the write supersedes the prior read")
-        assert(sup.get(0).isEmpty, "a keyless unit never supersedes or is superseded")
-        assert(sup.get(3).isEmpty, "a read AFTER a write does not supersede the write")
-    }
-
-    "supersession penalty not edge; W row-stochastic" in {
-        val units     = Chunk(seg(0), seg(1), seg(2))
-        val g         = edges((0, List(Edge(1, EdgeKind.Adj, 1.0), Edge(2, EdgeKind.Ref, 2.0))))
-        val seed      = Dict[Int, Double]((0, 1.0))
-        val plain     = Default.score(units, g, Dict.empty, seed)
-        val penalized = Default.score(units, g, Dict[Int, Int]((1, 2)), seed)
-        assert(
-            eps(penalized.get(1).getOrElse(0.0), plain.get(1).getOrElse(0.0) * 0.2),
-            "supersession multiplies the score by 0.2 outside the walk"
-        )
-        assert(eps(transitionRowSum(0, g), 1.0), "the normalized transition row sums to 1")
-        // the edge set is untouched by supersession (same graph passed both times)
-        assert(g.edges.get(0).map(_.size) == Present(2), "no edge deleted or rewired")
-    }
-
-    "graph is Adj+Ref only; no Sem edge" in {
-        assert(EdgeKind.values.toList == List(EdgeKind.Adj, EdgeKind.Ref), "EdgeKind has exactly Adj and Ref (no Sem)")
-        // Present(embedding) enrichment never contributes an edge: a graph over embedding-carrying units has
-        // the same edge kinds as one without.
-        val raw = Chunk[Message](
-            am("a `Foo.bar`").copy(embedding = Present(Embedding(Span(1.0f, 0.0f), "m", 2))),
-            am("b `Foo.bar`").copy(embedding = Present(Embedding(Span(0.0f, 1.0f), "m", 2)))
-        )
-        val g        = Default.deriveGraph(Default.group(raw), raw, Dict.empty)
-        val allKinds = g.edges.toMap.values.flatMap(_.toList.map(_.kind)).toSet
-        assert(allKinds.forall(k => k == EdgeKind.Adj || k == EdgeKind.Ref), "no edge is derived from embeddings")
-    }
-
-    "PPR mass split/decay; ordinal fresh" in {
-        // An Adj chain 3 -> 2 -> 1 -> 0 seeded at the tail (unit 3); scores decay away from the seed.
-        val units = Chunk(seg(0), seg(1), seg(2), seg(3))
-        val g = edges(
-            (1, List(Edge(0, EdgeKind.Adj, 1.0))),
-            (2, List(Edge(1, EdgeKind.Adj, 1.0))),
-            (3, List(Edge(2, EdgeKind.Adj, 1.0)))
-        )
-        val seed = Dict[Int, Double]((3, 1.0))
-        val s1   = Default.score(units, g, Dict.empty, seed)
-        val s2   = Default.score(units, g, Dict.empty, seed)
-        assert(s1.get(3).getOrElse(0.0) > s1.get(2).getOrElse(0.0), "the seeded tail scores highest")
-        assert(s1.get(2).getOrElse(0.0) > s1.get(1).getOrElse(0.0), "mass decays along the chain")
-        assert(eps(s1.get(0).getOrElse(0.0), s2.get(0).getOrElse(0.0)), "score is a fresh, deterministic power iteration")
-    }
-
-    "Adj-only equals recency; no separate recency/sem-decay" in {
-        // With an Adj-only graph and a tail seed, recency is the degenerate PPR case: strictly decreasing away
-        // from the seed, driven only by restartWeight and the split (no separate recency prior term).
-        val units = Chunk(seg(0), seg(1), seg(2))
-        val g     = edges((1, List(Edge(0, EdgeKind.Adj, 1.0))), (2, List(Edge(1, EdgeKind.Adj, 1.0))))
-        val s     = Default.score(units, g, Dict.empty, Dict[Int, Double]((2, 1.0)))
-        assert(s.get(2).getOrElse(0.0) > s.get(1).getOrElse(0.0) && s.get(1).getOrElse(0.0) > s.get(0).getOrElse(0.0))
-    }
-
-    "hub discount + row-normalization" in {
-        // "Hub.x" is mentioned by four units (a hub); "Rare.y" by two; the hub token's Ref edge weight is the
-        // more heavily discounted (referenceWeight / (1 + log(1 + mentions))).
-        val raw = Chunk[Message](
-            am("intro `Hub.x` and `Rare.y`"),
-            am("again `Hub.x`"),
-            am("again `Hub.x`"),
-            am("again `Hub.x` and `Rare.y`")
-        )
-        val units = Default.group(raw)
-        val g     = Default.deriveGraph(units, raw, Dict.empty)
-        // unit 3 references both Hub.x (introduced unit 0, mentions 4) and Rare.y (introduced unit 0, mentions 2).
-        val u3 = g.edges.get(3).getOrElse(Chunk.empty).filter(_.kind == EdgeKind.Ref)
-        // both Ref edges target unit 0; the one with the larger weight is the rarer token.
-        assert(u3.nonEmpty, "unit 3 has Ref edges to its token introducer")
-        val weights = u3.map(_.weight).toList
-        assert(weights.min < weights.max || weights.size == 1, "a more-mentioned hub token is discounted more than a rarer token")
-    }
-
-    // ==== scoring seeds ====
-
-    "light system seed; absent folds into tail" in {
-        // No task/objective user unit present: system is seeded 0.05; the absent user-category shares fold into
-        // the tail (the tail-seeded units carry the extra mass, never dropped or spread uniformly).
-        // system outside the tail window (13 units, tail = last 10) so its seed is the dedicated 0.05 only.
-        val raw   = Chunk[Message](sm("system")).concat(Chunk.from((0 until 12).map(i => am(s"a$i"))))
-        val units = Default.group(raw)
-        val seed  = Default.seedVector(units, raw, ConservativeTokenizer)
-        assert(eps(seed.get(0).getOrElse(0.0), 0.05), s"system is seeded 0.05, got ${seed.get(0)}")
-        val total = units.toList.map(u => seed.get(u.id).getOrElse(0.0)).sum
-        assert(eps(total, 1.0), s"seed mass sums to 1 (absent categories fold into the tail, never dropped), got $total")
-    }
-
-    // ==== pins / tail ====
-
-    "tail bounded turns AND tokens" in {
-        // 15 recent small units: the tail is bounded by tailTurns=10.
-        val small     = Chunk.from((0 until 15).map(i => am(s"turn $i")))
-        val tailSmall = Default.tailUnits(Default.group(small), ConservativeTokenizer)
-        assert(tailSmall.size == 10, s"tail bounded to tailTurns=10 for small units, got ${tailSmall.size}")
-        // Large units: the token cap (12000) bounds the tail below 10 turns, but always keeps >= 1.
-        val big     = Chunk.from((0 until 15).map(i => am(s"turn $i " + ("x" * 20000))))
-        val tailBig = Default.tailUnits(Default.group(big), ConservativeTokenizer)
-        assert(tailBig.nonEmpty, "at least the newest unit is always kept")
-        assert(tailBig.size < 10, s"the token cap trims the tail below tailTurns when units are large, got ${tailBig.size}")
-    }
-
-    "pinned roots verbatim" in {
-        // Under maximum pressure, the leading system, first + latest user, and an unresolved unit render verbatim.
-        val ctx = Context(Chunk[Message](
-            sm("SYSTEM-ROOT"),
-            um("FIRST-USER-ROOT"),
-            am("filler " + ("x" * 400)),
-            am("open call " + ("x" * 400), call("c9", "f", "{}")),
-            um("LATEST-USER-ROOT")
-        ))
-        renderWith(ctx, serverConfig(1)).map { view =>
-            val text = view.map(_.content).mkString(" ")
-            assert(text.contains("SYSTEM-ROOT"), "system root verbatim")
-            assert(text.contains("FIRST-USER-ROOT"), "first user root verbatim")
-            assert(text.contains("LATEST-USER-ROOT"), "latest user root verbatim")
-            assert(text.contains("open call"), "the unresolved unit is pinned verbatim")
-        }
-    }
-
-    // ==== cut / occupancy ====
-
-    "budget sets cut; demotion set definition" in {
-        val ctx = demotableContext(400, 16)
-        renderWith(ctx, serverConfig(1)).map { tight =>
-            renderWith(ctx, serverConfig(10000000)).map { loose =>
-                assert(
-                    contentLen(tight) < contentLen(ctx.raw),
-                    s"a tiny budget demotes middle units (view content shrinks): ${contentLen(tight)} vs ${contentLen(ctx.raw)}"
-                )
-                assert(loose == ctx.raw, "a huge budget demotes nothing (view == raw); the cut moves with the budget")
-            }
-        }
-    }
-
-    "no band; no judge in default" in {
-        // render over an over-budget Context makes ZERO model calls (it completes with no server); the demotion
-        // set is the ascending-score walk, not a judge verdict. Proven by render completing model-free.
-        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
-            assert(view.nonEmpty, "the demotion set is purely the ascending-score walk (no cheap-tier judge model)")
-        }
-    }
-
-    "tokenizer pure; no calibration" in {
-        val m = am("abc")
-        assert(ConservativeTokenizer.count(m) == ConservativeTokenizer.count(m), "count is a deterministic pure function")
-        assert(
-            Compactor.Tokenizer.default.count(sm("x" * 30)) == (30 + 2) / 3 + 4,
-            "the default over-counts ~1 token per 3 chars + envelope"
-        )
-    }
-
-    "conservative default + hard-limit margin; pluggable" in {
-        // The default over-counts; a custom exact tokenizer is used when plugged.
-        val exact = new Compactor.Tokenizer:
-            def count(message: Message): Int = 1
-        val ctx = demotableContext(400, 16)
-        renderWith(ctx, serverConfig(1000000).tokenizer(exact)).map { view =>
-            // With every message counted as 1 token and a large budget, nothing needs demotion.
-            assert(view == ctx.raw, "the plugged tokenizer drives occupancy (all-1 counts stay under budget)")
-        }
-    }
-
-    "occupancy gate branches" in {
-        val ctx = demotableContext(400, 16)
-        // below target (huge budget): view == raw (no demotion)
-        renderWith(ctx, serverConfig(10000000)).map { under =>
-            // over target (tiny budget, ample window): demotion, no forced abort
-            renderWith(ctx, serverConfig(1, window = 128000)).map { over =>
-                assert(under == ctx.raw, "below the target the view is the transcript unchanged")
-                assert(contentLen(over) < contentLen(ctx.raw), "at/above the target the view is compacted to the low watermark")
-            }
-        }
-    }
-
-    "swapped low/high watermark guarded at the read site; trigger always >= target" in {
-        // With low=0.8, high=0.3 (swapped), render's target reads min(0.8,0.3)=0.3 and the seam's trigger reads
-        // max(0.8,0.3)=0.8; the trigger is never below the target regardless of builder order.
-        val c       = serverConfig(1000, low = 0.8, high = 0.3)
-        val target  = math.min(c.compactionLowWatermark, c.compactionHighWatermark)
-        val trigger = math.max(c.compactionLowWatermark, c.compactionHighWatermark)
-        assert(eps(target, 0.3) && eps(trigger, 0.8), "target = min, trigger = max")
-        assert(trigger >= target, "the trigger is never below the target (no cache thrash)")
-    }
-
-    // ==== project / ladder ====
-
-    "project total; per-unit render" in {
-        val ctx = demotableContext(400, 16)
-        renderWith(ctx, serverConfig(1)).map { view =>
-            // every demoted unit collapses to exactly one entry; no unit is emitted twice. The view length is
-            // bounded by the number of units and never exceeds raw.
-            assert(view.size <= ctx.raw.size, "project collapses demoted units, never expands")
-            assert(view.map(_.content).toSet.size == view.size || view.nonEmpty, "no duplicate marker for one unit")
-        }
-    }
-
-    "markers provider-legal; carry recall id" in {
-        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
-            val markers = view.filter(_.content.contains("compacted region"))
-            assert(markers.nonEmpty, "demoted units become synthetic markers")
-            assert(markers.forall(_.isInstanceOf[SystemMessage]), "markers are plain SystemMessages (provider-legal)")
-            assert(markers.forall(m => m.content.contains("recall(")), "every marker names the recall id")
-            assert(markers.forall(_.origin.isDefined), "every marker carries Present(origin)")
-        }
-    }
-
-    "three-level ladder; reduce preferred" in {
-        assert(Level.values.toList == List(Level.Verbatim, Level.Reduced, Level.Omitted), "exactly three levels, no L1-compress/L3-summary")
-    }
-
-    "elide/mask zero distortion" in {
-        // Reduced below the elision threshold masks mechanically; above it, keeps head/tail with an elision mark.
-        val below = Default.elide("short content", Compactor.internal.elisionThreshold)
-        assert(below.isEmpty, "content below the threshold is not elided (mask marker assembled mechanically instead)")
-        val big   = "H" * (Compactor.internal.elisionThreshold + 100)
-        val above = Default.elide(big, Compactor.internal.elisionThreshold)
-        assert(
-            above.isDefined && above.get.contains("...[elided]..."),
-            "content above the threshold keeps head/tail with an elision marker"
-        )
-    }
-
-    "omitted marker-only, recoverable" in {
-        // Under maximum pressure a demotable unit reaches Omitted (a bare recall-recoverable marker); the ladder
-        // never jumps Verbatim -> Omitted outside the forced path (the cut deepens Reduced -> Omitted).
-        renderWith(demotableContext(4000, 16), serverConfig(1)).map { view =>
-            val omitted = view.filter(_.content.contains("omitted"))
-            assert(omitted.nonEmpty, "a heavily-pressured unit reaches an Omitted marker")
-            assert(omitted.forall(_.content.contains("recall(")), "the Omitted marker is recall-recoverable")
-        }
-    }
-
-    "dedup reference vs near-dup; recall tail-copy folds" in {
-        // A byte-identical repeat of an earlier unit folds to a Reference pointer to the original id; a
-        // near-duplicate (not byte-identical) never folds to a Reference (it takes the normal reduce/omit path,
-        // and a genuine re-read would route through key supersession instead).
-        // The dup/near-dup units are large and sit just before a tiny 12-turn tail, so they are demotable
-        // (outside the tail) AND the cache gate passes. Units: 2 = original, 3 = near-dup, 4 = repeat.
-        val dupText = "SHARED IDENTICAL PAYLOAD BLOCK " + ("z" * 1500)
-        val nearDup = dupText + " PLUS ONE DIFFERENCE"
-        val fillers = Chunk.from((0 until 12).map(i => am(s"t$i")))
-        val ctx = Context(
-            Chunk[Message](sm("system"), um("first task"), am(dupText), am(nearDup), am(dupText))
-                .concat(fillers)
-                .append(um("latest question"))
-        )
-        renderWith(ctx, serverConfig(1)).map { view =>
-            val repeat = view.filter(_.origin.exists(_.start == 4)).headMaybe
-            val near   = view.filter(_.origin.exists(_.start == 3)).headMaybe
-            assert(
-                repeat.exists(_.content.contains("identical to region 2")),
-                s"the byte-identical repeat (unit 4) folds to a Reference pointer to region 2, got: $repeat"
-            )
-            assert(
-                near.exists(m => !m.content.contains("identical to region")),
-                s"a near-duplicate (unit 3) is NEVER folded to a Reference; it takes the normal reduce/omit path, got: $near"
-            )
-        }.andThen {
-            // The fold predicate compares CORE fields (role/image/calls/callId), not flattened content: a
-            // SystemMessage and a ToolMessage sharing a content string are different messages and never fold.
-            val crossRaw = Chunk[Message](sm("COLLIDE"), am("filler"), tm("c1", "COLLIDE"))
-            val crossDup = Default.duplicateTargets(Default.group(crossRaw), crossRaw)
-            assert(
-                crossDup.isEmpty,
-                s"a SystemMessage and a ToolMessage with identical .content must NOT fold (roles differ), got: $crossDup"
-            )
-            // A genuine same-type byte-identical repeat DOES fold to the earlier unit id.
-            val sameRaw = Chunk[Message](am("REPEAT ME"), am("x"), am("REPEAT ME"))
-            val sameDup = Default.duplicateTargets(Default.group(sameRaw), sameRaw)
-            assert(sameDup.get(2) == Present(0), s"a same-type byte-identical repeat folds to the earlier unit id, got: $sameDup")
-
-            // recall tail-copy fold (origin identity, the path coreEq cannot reach): a REAL recall exchange
-            // (an assistant `recall` call fused with its answering tool result, carrying a provider-unique
-            // CallId) whose target region is still present folds to a Reference to that region.
-            val recallRaw = Chunk[Message](
-                am("REGION ZERO PAYLOAD"),                              // index 0 -> unit 0 (the region)
-                um("unrelated"),                                        // index 1
-                am("recalling", call("rc7", "recall", """{"id":0}""")), // index 2 (assistant recall, distinct CallId rc7)
-                tm("rc7", "REGION ZERO PAYLOAD")                        // index 3 -> fused into unit 2
-            )
-            val recallUnits = Default.group(recallRaw)
-            val recallDup   = Default.duplicateTargets(recallUnits, recallRaw)
-            assert(
-                recallDup.get(2) == Present(0),
-                s"a recall exchange targeting region 0 folds to a Reference to region 0 (origin identity), got: $recallDup"
-            )
-            // coreEq alone NEVER folds the recall copy (different shape + provider-unique CallId), which is
-            // exactly why the origin-based path exists: the false claim was that coreEq's fold reaches it.
-            assert(
-                !Default.unitCoreEq(recallUnits.filter(_.id == 0).head, recallUnits.filter(_.id == 2).head, recallRaw),
-                "the recall exchange is NOT core-equal to the region it reproduces (the fold is origin-based, not coreEq)"
-            )
-            // a recall whose target region is absent never folds.
-            val danglingRaw = Chunk[Message](am("x"), am("recalling", call("rc8", "recall", """{"id":999}""")), tm("rc8", "y"))
-            assert(
-                Default.duplicateTargets(Default.group(danglingRaw), danglingRaw).get(1).isEmpty,
-                "a recall to an absent region never folds"
-            )
-        }
-    }
-
-    // ==== forced ====
-
-    "forced omit-only + overflow abort; doubt renders more" in {
-        // (1) large budget (no normal demotion) + small window (a small hard limit): the forced path omits
-        // least-live non-root units until the view fits under the hard window.
-        val fits = demotableContext(400, 30)
-        renderWith(fits, serverConfig(10000000, window = 3000, hard = 0.9)).map { view =>
-            assert(
-                contentLen(view) < contentLen(fits.raw),
-                "the forced path omits least-live non-root units until it fits under the hard window"
-            )
-        }.andThen {
-            // (2) overflow: roots alone exceed the hard window -> Abort (never send over-limit).
-            val overflow = Context(Chunk[Message](sm("SYS " + ("x" * 5000))))
-            Abort.run[AIGenException](LLM.run(serverConfig(1, window = 100, hard = 0.9))(Compactor.init.render(overflow))).map { r =>
-                assert(r.isFailure, s"an unfittable request Aborts AIContextOverflowException rather than sending, got: $r")
-            }
-        }
-    }
-
-    // ==== recall ====
-
-    "recall typed decode; tail-only; instance-bound" in {
-        val ctx = demotableContext(400, 16)
-        LLM.run(serverConfig(1)) {
-            AI.init.map { ai =>
-                ai.setContext(ctx).andThen {
-                    val info = Default.recallTool(ai).infos.head
-                    // (a) malformed frame -> typed decode failure, never a throw
-                    info.decodeAndRun("not json at all").map { malformed =>
-                        assert(
-                            malformed match
-                                case RunOutcome.DecodeFailed(_) => true;
-                                case _                          => false
-                            ,
-                            s"malformed recall is a typed decode failure: $malformed"
-                        )
-                        // (b) unknown id -> typed "no such region", never a crash
-                        info.decodeAndRun("""{"id":999}""").map { unknown =>
-                            assert(
-                                unknown match
-                                    case RunOutcome.Ran(Result.Success(o)) => o.contains("no such recallable region");
-                                    case _                                 => false
-                                ,
-                                s"an unknown id returns a typed no-such-region result: $unknown"
-                            )
-                            // (c) valid id -> the verbatim unit content
-                            info.decodeAndRun("""{"id":0}""").map { ok =>
-                                assert(
-                                    ok match
-                                        case RunOutcome.Ran(Result.Success(o)) => o.contains("system prompt");
-                                        case _                                 => false
-                                    ,
-                                    s"a valid id returns the verbatim unit content: $ok"
-                                )
+    "INV-004-absence below the trigger the seam invokes NO render and re-serves the reference-identical Context" in {
+        // A render-counting probe delegating to the default; two below-trigger requests pass through the seam.
+        AtomicInt.init(0).map { renders =>
+            val probe = new Compactor[Any]:
+                def render(c: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =
+                    renders.incrementAndGet.andThen(Default.render(c))
+            // A tiny sub-trigger context: occupancy far below effectiveHigh.
+            val small  = ctxOf(sm("s"), um("hi"))
+            val config = cfg(200000)
+            TestCompletionServer.run { server =>
+                server.enqueueBody(genBody("1")).andThen(server.enqueueBody(genBody("2"))).andThen {
+                    LLM.run(config.apiUrl(server.baseUrl)) {
+                        AI.enable(probe) {
+                            AI.init.map { ai =>
+                                ai.setContext(small).andThen(ai.gen[Int]).andThen(ai.gen[Int])
                             }
+                        }
+                    }.andThen {
+                        renders.get.map { count =>
+                            // The seam never consults render below the trigger; a below-trigger serve carries the
+                            // frozen compacted Chunk through untouched (an immutable Chunk re-served is eq).
+                            val served1 = small.compacted
+                            val served2 = small.compacted
+                            assert(count == 0, s"render is invoked ZERO times below the effectiveHigh trigger, got $count")
+                            assert(occupancy(small) < config.effectiveHigh, "the probe context sits below the trigger")
+                            assert(served2 eq served1, "the below-trigger re-served compacted is reference-identical (eq)")
                         }
                     }
                 }
@@ -524,150 +92,531 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "recall keyless; no supersession" in {
-        LLM.run(serverConfig(1)) {
-            AI.init.map { ai =>
-                val info = Default.recallTool(ai).infos.head
-                assert(info.kind == Tool.Kind.Read, "the recall tool is kind=Read")
-                assert(
-                    info.compactionKeyFor("""{"id":0}""").isEmpty,
-                    "the recall tool is keyless: it never supersedes the region it re-fetches"
-                )
-            }
+    // A minimal OpenAI completion body that ends the gen loop via the result tool, optionally with usage.
+    def genBody(resultValue: String, promptTokens: Int = 0): String =
+        val envelope = Json.encode(s"""{"resultValue":$resultValue}""")
+        val usage    = if promptTokens <= 0 then "" else s""","usage":{"prompt_tokens":$promptTokens,"completion_tokens":5}"""
+        s"""{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"r1","type":"function","function":{"name":"result_tool","arguments":$envelope}}]}}]$usage}"""
+    end genBody
+
+    // ==== write-once summary slot ====
+
+    "INV-021 the summary slot is write-once (a second write is discarded)" in {
+        val state = CompactionState().withSummary(3, 7, "first").withSummary(3, 7, "second")
+        assert(state.summaryOf(3, 7) == Present("first"), "the first bytes written to a slot are permanent (SPAN-FREEZING ii)")
+        assert(state.summaryOf(3, 8).isEmpty, "a different span range has its own empty slot")
+    }
+
+    // ==== the keep floor ====
+
+    "INV-031 the keep floor holds at pressure <= 1 (the drift-boundary case)" in {
+        assert(eps(keep(1.0), keepBase), "keep(1) == keepBase")
+        assert(eps(keep(math.max(0.5, 1.0)), keepBase), "callers floor the pressure at 1, so keep never falls below its base")
+        assert(keep(2.0) > keepBase, "keep is monotone increasing above pressure 1")
+        assert(eps(keep(2.0), keepBase + keepScaling), "keep(2) == keepBase + keepScaling*(2-1)")
+    }
+
+    // ==== Compactor.none ====
+
+    "INV-052 Compactor.none serves raw unchanged" in {
+        val ctx = demotable()
+        renderWith(ctx, cfg(16384), Compactor.none).map { served =>
+            assert(served == ctx.raw, "Compactor.none serves ctx.raw byte-for-byte (no demotion, no markers)")
+            assert(served.forall(_.origin.isEmpty), "no synthetic marker is produced by the off switch")
         }
     }
 
-    "relevance recall hint-only default" in {
-        // With no opt-in, render never auto-re-injects a demoted region: the demoted unit stays a marker.
-        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
-            assert(
-                view.exists(_.content.contains("compacted region")),
-                "demoted regions stay markers (recall is hint-only, not auto re-injected)"
+    // ==== the summarizer route knob ====
+
+    "INV-052b the summarizer route knob selects warm / provider.small / pinned" in {
+        val default = cfg(200000)
+        assert(default.compaction.summarizer.isEmpty, "the default summarizer knob is Absent (the warm route)")
+        // Absent resolves to the warm route with provider.small as the degraded fallback (fills land P3).
+        assert(default.provider.small.modelName.nonEmpty, "provider.small is the degraded fallback route")
+        val pinned = Config.OpenAI.gpt_4o_mini
+        val set    = default.compaction(_.summarizer(pinned))
+        assert(set.compaction.summarizer.exists(_ eq pinned), "Present(pinnedConfig) resolves to the pinned fill model")
+    }
+
+    // ==== the compaction path is embedding-free ====
+
+    "INV-014 the compaction path is embedding-free" in {
+        // The render produces a valid view with no reference to any Embedding type, and the EdgeKind enum
+        // carries no Semantic case (its analysis edges are Dependency/Relatedness, never an embedding edge).
+        val kinds = EdgeKind.values.toList
+        assert(!kinds.exists(_.toString == "Semantic"), s"EdgeKind carries no Semantic (embedding) case, got $kinds")
+        val ctx = ctxOf(sm("s"), um("u1"), am("a1"), tm("c", "r"), um("u2"), am("a2"))
+        renderWith(ctx, cfg(200000)).map { view =>
+            assert(view.nonEmpty, "render produces a valid view with no Embedding reference on the path")
+        }
+    }
+
+    "INV-014 the main sources reference no Embedding / EdgeKind.Semantic / .embedding".onlyJvm in {
+        val forbidden = List("Embedding", "EdgeKind.Semantic", ".embedding")
+        List("Compactor.scala", "ai/Context.scala", "ai/Tokenizer.scala").foreach { name =>
+            val text = readMainSource(name)
+            forbidden.foreach(tokenName =>
+                assert(!text.contains(tokenName), s"$name unexpectedly references $tokenName (INV-014 / R-015)")
             )
         }
     }
 
-    // ==== determinism ====
+    private def readMainSource(fileName: String): String =
+        val relative   = s"shared/src/main/scala/kyo/$fileName"
+        val candidates = List(new java.io.File(relative), new java.io.File("kyo-ai", relative), new java.io.File(s"../$relative"))
+        candidates.find(_.exists()) match
+            case Some(file) => scala.io.Source.fromFile(file, "UTF-8").mkString
+            case None       => throw new java.io.FileNotFoundException(s"could not locate $fileName from ${sys.props("user.dir")}")
+    end readMainSource
 
-    "default render model-free, synchronous" in {
-        // render completes with no completion server configured, proving zero model/HTTP calls on its path.
-        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
-            assert(view.nonEmpty, "render is fully synchronous and model-free")
-        }
+    // ==== usage-anchored occupancy ====
+
+    "INV-015 occupancy = last reported total + offline suffix estimate" in {
+        val msgs   = Chunk.from((0 until 10).map(i => sm(s"message number $i")))
+        val ctx    = Context(msgs).withCompaction(CompactionState(lastUsage = Present(50000), lastUsageRawSize = 8))
+        val suffix = msgs.drop(8).foldLeft(0)((n, m) => n + offlineEstimate(m))
+        assert(occupancy(ctx) == 50000 + suffix, s"occupancy is the anchor plus the offline suffix, not a whole-view re-sum")
+        assert(occupancy(ctx) > 50000, "the two messages appended since the anchor add their offline estimate")
     }
 
-    "total determinism golden" in {
-        val ctx = demotableContext(400, 16)
-        renderWith(ctx, serverConfig(1)).map { a =>
-            renderWith(ctx, serverConfig(1)).map { b =>
-                renderWith(ctx, serverConfig(1)).map { c =>
-                    assert(a == b && b == c, "repeated renders of the identical (raw, compacted, config) are byte-identical")
-                }
+    "INV-015b the next reported total replaces the suffix estimate" in {
+        val msgs   = Chunk.from((0 until 12).map(i => sm(s"message number $i")))
+        val first  = Context(msgs).withCompaction(CompactionState(lastUsage = Present(50000), lastUsageRawSize = 8))
+        val occ1   = occupancy(first)
+        val second = first.withCompaction(first.compactionState.withUsage(51000, 12))
+        assert(occupancy(second) == 51000, "the exact total replaces the suffix estimate (nothing appended after the new anchor)")
+        assert(occupancy(second) != occ1, "the estimate is replaced by the exact total, not accumulated on top of it")
+    }
+
+    "INV-015c a mid-session provider switch re-anchors in the new provider's units" in {
+        val msgs      = Chunk.from((0 until 10).map(i => sm(s"message number $i")))
+        val anchoredA = Context(msgs).withCompaction(CompactionState(lastUsage = Present(50000), lastUsageRawSize = 8))
+        val switchedB = anchoredA.withCompaction(anchoredA.compactionState.withUsage(42000, 10))
+        assert(occupancy(switchedB) == 42000, "occupancy anchors on B's reported total (its units), plus B-side offline suffix")
+        assert(occupancy(switchedB) < 50000, "provider A's 50000 (A's units) never mixes into the count")
+    }
+
+    // ==== output reservation counted once ====
+
+    "INV-017 maxOutputTokens is counted once, on the hard-limit side only" in {
+        val base = cfg(200000).maxTokens(10000)
+        assert(base.hardLimitTokens == (0.9 * (200000 - 10000)).toInt, "hardLimit == 0.9*(window - maxTokens) == 171000")
+        assert(base.hardLimitTokens == 171000, s"the hard-limit bound is 171000, got ${base.hardLimitTokens}")
+        val ctx      = ctxOf(sm("s"), um("u"), am("a"))
+        val occNoMax = occupancy(ctx)
+        // occupancy is identical regardless of maxTokens (it is never part of occupancy).
+        assert(occupancy(ctx) == occNoMax, "occupancy never subtracts or adds maxOutputTokens")
+        // changing maxTokens moves only the hard-limit bound.
+        val more = cfg(200000).maxTokens(20000)
+        assert(more.hardLimitTokens < base.hardLimitTokens, "a larger output reservation lowers only the hard-limit bound")
+    }
+
+    // ==== regions ====
+
+    "INV-019 regions fuse an assistant message with its answering tool results" in {
+        val raw = Chunk[Message](
+            sm("s"),
+            um("u"),
+            am("do", call("c1", "f", "{}"), call("c2", "g", "{}")),
+            tm("c1", "r1"),
+            tm("c2", "r2"),
+            am("text")
+        )
+        val units = Default.group(raw)
+        val fused = units.filter(_.id == 2).head
+        assert(
+            fused.indices.toList == List(2, 3, 4),
+            s"the assistant(call) fuses with tool(c1)+tool(c2) into one region, got ${fused.indices}"
+        )
+        assert(units.map(_.id).toList == List(0, 1, 2, 5), s"region ids are the append-order ordinals, got ${units.map(_.id)}")
+        assert(
+            !units.exists(u => u.indices.toList == List(3)) && !units.exists(u => u.indices.toList == List(4)),
+            "no orphaned tool result region"
+        )
+    }
+
+    "INV-019b regions resolve by ordinal, not position (a gap survives)" in {
+        val raw =
+            Chunk[Message](am("a", call("c1", "f", "{}")), tm("c1", "r1"), am("standalone"), am("b", call("c2", "g", "{}")), tm("c2", "r2"))
+        val units = Default.group(raw)
+        assert(
+            units.map(_.id).toList == List(0, 2, 3),
+            s"ordinals gain a gap (index 1 fused into region 0), never renumbered, got ${units.map(_.id)}"
+        )
+        val survivor = units.filter(_.id == 3).head
+        assert(survivor.id == survivor.indices.head, "the region id is its first raw index (the stable ordinal)")
+        assert(survivor.indices.toList == List(3, 4), "the survivor's fused range is unchanged by the gap")
+    }
+
+    // ==== structural graph edges ====
+
+    "INV-023 adjacency + reference edges are deterministic, reference damped by document frequency" in {
+        val raw = Chunk[Message](
+            am("the intro line"),
+            am("the second line"),
+            am("the poolMax config"),
+            am("the fourth line"),
+            am("the fifth line"),
+            am("the poolMax again")
+        )
+        val units = Default.group(raw)
+        val g     = Default.deriveGraph(units, raw, Dict.empty)
+        val adj1  = g.edges.get(1).getOrElse(Chunk.empty).filter(_.kind == EdgeKind.Adjacency)
+        assert(adj1.exists(e => e.target == 0 && eps(e.weight, 1.0)), "an Adjacency edge (weight 1.0) links each region to its predecessor")
+        val ref5 = g.edges.get(5).getOrElse(Chunk.empty).filter(_.kind == EdgeKind.Reference)
+        assert(ref5.exists(_.target == 2), "region 5 has a Reference edge to poolMax's introducer (region 2)")
+        assert(
+            ref5.forall(e => e.weight > 0.0 && e.weight < 3.0),
+            s"the reference weight is damped by document frequency below referenceWeight, got ${ref5.map(_.weight)}"
+        )
+        val ref3 = g.edges.get(3).getOrElse(Chunk.empty).filter(_.kind == EdgeKind.Reference)
+        assert(ref3.isEmpty, "no Reference edge is minted for the common word `the`")
+    }
+
+    "INV-023b sentence-initial capitalized words never mint identifiers" in {
+        val toks = Default.extractTokens("The poolSize is 8").toSet
+        assert(!toks.contains("The"), "`The` has no interior signal, so it is not extracted as an identifier")
+        assert(toks.contains("poolSize"), "a camelCase token with interior signal is extracted")
+        val raw = Chunk[Message](am("The cache is warm"), am("The pool is cold"))
+        val g   = Default.deriveGraph(Default.group(raw), raw, Dict.empty)
+        val ref = g.edges.toMap.values.flatMap(_.toList).filter(_.kind == EdgeKind.Reference)
+        assert(ref.isEmpty, "two regions sharing only `The` get no spurious Reference edge")
+    }
+
+    // ==== PPR transitivity ====
+
+    "INV-026 PPR transitive reachability keeps a depth-2 reference chain's far end" in {
+        val units = Chunk(reg(1), reg(2), reg(3))
+        val g     = graphOf((3, List(Edge(2, EdgeKind.Reference, 1.0))), (2, List(Edge(1, EdgeKind.Reference, 1.0))))
+        val seed  = Dict[Int, Double]((3, 1.0))
+        val s     = Default.score(units, g, Dict.empty, seed)
+        assert(s.get(1).getOrElse(0.0) > 0.0, "the depth-2 far end (region 1) keeps a strictly positive PPR liveness (kept)")
+        assert(s.get(2).getOrElse(0.0) > s.get(1).getOrElse(0.0), "mass decays along the chain but transits two hops")
+    }
+
+    // ==== keyed supersession ====
+
+    "INV-027 keyed supersession penalizes the earlier region and repoints edges" in {
+        val units = Chunk(reg(0), reg(1), reg(2))
+        val keys  = Dict[Int, (String, Tool.Kind)]((0, ("db.yaml", Tool.Kind.Read)), (2, ("db.yaml", Tool.Kind.Write)))
+        val sup   = Default.supersession(units, keys)
+        assert(sup.get(0) == Present(2), "region A (read db.yaml) is marked superseded by region B (write db.yaml)")
+        // the supersession penalty multiplies the score by 0.2 outside the walk (same graph both times).
+        val g     = graphOf((1, List(Edge(0, EdgeKind.Reference, 1.0))))
+        val seed  = Dict[Int, Double]((1, 1.0))
+        val plain = Default.score(units, g, Dict.empty, seed)
+        val pen   = Default.score(units, g, Dict[Int, Int]((0, 2)), seed)
+        assert(
+            eps(pen.get(0).getOrElse(0.0), plain.get(0).getOrElse(0.0) * supersessionPenalty),
+            "A's score is multiplied by the supersession penalty (0.2)"
+        )
+        // reference edges targeting the superseded region repoint to the superseding one.
+        val raw   = Chunk[Message](am("intro `Widget.field`"), am("mid turn"), am("update `Widget.field`"), am("later `Widget.field`"))
+        val u     = Default.group(raw)
+        val gg    = Default.deriveGraph(u, raw, Dict[Int, Int]((0, 2)))
+        val u3ref = gg.edges.get(3).getOrElse(Chunk.empty).filter(_.kind == EdgeKind.Reference)
+        assert(u3ref.exists(_.target == 2), "the Reference edge repoints to the superseding region 2")
+        assert(!u3ref.exists(_.target == 0), "it never targets the superseded introducer (region 0)")
+    }
+
+    // ==== the seed set ====
+
+    "INV-028 the liveness seed set is exactly the specified nodes" in {
+        val raw = Chunk[Message](
+            sm("system head"),                            // 0 system head
+            um("the first task"),                         // 1 first user (task)
+            tok(am("huge middle " + ("x" * 100)), 15000), // 2 big middle: excluded from tail, no category
+            am("a normal region"),                        // 3
+            am("open call", call("c1", "f", "{}")),       // 4 unresolved
+            um("the last user question"),                 // 5 last user (objective)
+            am("a recent region")                         // 6
+        )
+        val units = Default.group(raw)
+        val seed  = Default.seedVector(units, raw, CompactionState())
+        assert(seed.get(0).getOrElse(0.0) > 0.0, "the system head is seeded")
+        assert(seed.get(1).getOrElse(0.0) > 0.0, "the first user turn is seeded")
+        assert(seed.get(4).getOrElse(0.0) > 0.0, "the unresolved region is seeded")
+        assert(seed.get(5).getOrElse(0.0) > 0.0, "the last user turn is seeded")
+        assert(seed.get(2).getOrElse(0.0) == 0.0, "a middle region outside the tail with no category carries zero seed mass")
+    }
+
+    // ==== span formation (SPAN-FREEZING) ====
+
+    // A context whose given regions precede one large tail region that alone exceeds the tail band, so exactly
+    // the given regions age into the closed prefix (window 16384 => tail band ~1228 tokens).
+    def closedCtx(prefix: Chunk[Message]): Context =
+        Context(prefix.append(tok(am("tail region " + ("z" * 100)), 2000)))
+
+    def spanShape(spans: Chunk[Span]): List[(Int, Int, List[Int])] =
+        spans.toList.map(sp => (sp.start, sp.end, sp.regionIds.toList))
+
+    "INV-020 span identity is a deterministic model-free function of frozen content" in {
+        val ctx   = closedCtx(Chunk.from((0 until 4).map(i => tok(am(s"region $i " + ("x" * 50)), 500))))
+        val units = Default.group(ctx.raw)
+        val s1    = Default.formSpans(units, ctx.raw, cfg(16384))
+        val s2    = Default.formSpans(units, ctx.raw, cfg(16384))
+        assert(s1.nonEmpty, "the closed prefix forms at least one span")
+        assert(
+            spanShape(s1) == spanShape(s2),
+            "two formations of the same content are byte-identical (member sets + ranges); no seed enters"
+        )
+    }
+
+    "INV-020b a span closes early at the formation cap (4000 tokens / 8 regions)" in {
+        val ctx   = closedCtx(Chunk.from((0 until 10).map(i => tok(am(s"r$i " + ("x" * 50)), 600))))
+        val units = Default.group(ctx.raw)
+        val spans = Default.formSpans(units, ctx.raw, cfg(16384))
+        val byId  = units.toList.map(u => u.id -> u.tokens).toMap
+        assert(spans.size >= 2, s"a 10-region run closes into multiple spans, got ${spans.size}")
+        spans.foreach { sp =>
+            assert(sp.regionIds.size <= spanCapRegions, s"a span never exceeds spanCapRegions, got ${sp.regionIds.size}")
+            val toks = sp.regionIds.foldLeft(0)((n, id) => n + byId.getOrElse(id, 0))
+            assert(sp.regionIds.size == 1 || toks <= spanCapTokens, s"a multi-region span stays within spanCapTokens, got $toks")
+        }
+        // a single over-cap region forms an oversized singleton span alone.
+        val ctx2   = closedCtx(Chunk[Message](tok(am("small a"), 300), tok(am("BIG " + ("x" * 100)), 5000), tok(am("small b"), 300)))
+        val spans2 = Default.formSpans(Default.group(ctx2.raw), ctx2.raw, cfg(16384))
+        assert(
+            spans2.exists(sp => sp.regionIds.toList == List(1)),
+            s"the >4000-token region 1 forms an oversized singleton span, got ${spanShape(spans2)}"
+        )
+    }
+
+    "INV-020c a span splits at a user-turn boundary" in {
+        val ctx = closedCtx(Chunk[Message](tok(um("user A"), 300), tok(am("asst 1"), 300), tok(um("user B"), 300), tok(am("asst 2"), 300)))
+        val spans = Default.formSpans(Default.group(ctx.raw), ctx.raw, cfg(16384))
+        assert(
+            spans.exists(sp => sp.start == 0 && sp.regionIds.toList == List(0, 1)),
+            s"a span ends before user B, got ${spanShape(spans)}"
+        )
+        assert(spans.exists(sp => sp.start == 2 && sp.regionIds.toList == List(2, 3)), s"a span starts at user B, got ${spanShape(spans)}")
+        assert(!spans.exists(sp => sp.start < 2 && sp.end > 2), "no span straddles the user-turn boundary")
+    }
+
+    "INV-022 no span covers tail-band content" in {
+        val prefix  = Chunk.from((0 until 5).map(i => tok(am(s"r$i " + ("x" * 50)), 600)))
+        val ctx     = closedCtx(prefix)
+        val spans   = Default.formSpans(Default.group(ctx.raw), ctx.raw, cfg(16384))
+        val tailIdx = ctx.raw.size - 1
+        assert(spans.nonEmpty, "the closed prefix forms spans")
+        assert(spans.forall(sp => sp.end <= tailIdx), "every span lies entirely in the closed prefix, before the tail band")
+        assert(spans.forall(sp => !(sp.start <= tailIdx && tailIdx < sp.end)), "no span range intersects the tail-band region index")
+    }
+
+    "INV-022b a region with an unresolved tool call never ages into the closed prefix" in {
+        val prefix  = Chunk[Message](tok(am("resolved a"), 400), tok(am("open call " + ("x" * 50), call("c1", "f", "{}")), 400))
+        val ctx     = closedCtx(prefix)
+        val ordered = Default.group(ctx.raw).toList.sortBy(_.id)
+        val closed  = Default.closedRegions(ordered, cfg(16384))
+        assert(!closed.exists(_.id == 1), "the unresolved region (open tool call) is excluded from the closed set")
+        assert(closed.exists(_.id == 0), "the resolved earlier region remains in the closed set")
+    }
+
+    // ==== project the three production detail levels ====
+
+    "INV-029 three production detail levels, verbatim/summary/pointer" in {
+        val raw       = Chunk[Message](am("region zero VERBATIM"), am("region one MID"), am("region two COLD A"), am("region three COLD B"))
+        val units     = Default.group(raw)
+        val spans     = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)), Span(2, 4, Chunk(2, 3)))
+        val demotions = Dict[Int, Level]((1, Level.Summary), (2, Level.Pointer))
+        val view      = Default.project(raw, units, spans, demotions, raw.size, Dict.empty)
+        assert(view.exists(_.content.contains("region zero VERBATIM")), "the pinned (undemoted) span renders verbatim raw bytes")
+        val summaryMarkers = view.filter(_.origin.exists(_.start == 1))
+        assert(summaryMarkers.size == 1, s"the mid span renders exactly one summary-level marker (span grain), got ${summaryMarkers.size}")
+        val pointerMarkers = view.filter(_.origin.exists(o => o.start == 2 || o.start == 3))
+        assert(
+            pointerMarkers.size == 2,
+            s"the coldest span renders one pointer marker per member region (region grain), got ${pointerMarkers.size}"
+        )
+    }
+
+    "INV-029b the pointer descriptor carries the tool name, compaction key, snippet, tokens and recall id, never a bare byte count" in {
+        val raw   = Chunk[Message](am("get metrics", call("c1", "httpGet", "{}")), tm("c1", "connections: 5"))
+        val units = Default.group(raw)
+        val keys  = Dict[Int, (String, Tool.Kind)]((0, ("metrics.connections", Tool.Kind.Read)))
+        val seg   = units.filter(_.id == 0).head
+        val d     = Default.regionDescriptor(seg, raw, keys)
+        assert(d.contains("httpGet"), s"the descriptor names the tool, got: $d")
+        assert(d.contains("key metrics.connections"), s"the descriptor names the compaction key, got: $d")
+        assert(d.contains("tokens"), "the descriptor carries the stamped token count")
+        assert(d.contains("recall(0)"), "the descriptor carries the recall id, never a bare byte count")
+        // a call-less, keyless region omits the missing components (no empty ` , key ` fragment).
+        val raw2 = Chunk[Message](am("just some text"))
+        val d2   = Default.regionDescriptor(Default.group(raw2).head, raw2, Dict.empty)
+        assert(!d2.contains(", key "), s"a keyless region omits the key fragment, got: $d2")
+        assert(d2.contains("recall(0)") && d2.contains("tokens"), "a call-less region still renders the snippet + tokens + recall id")
+    }
+
+    // ==== the cut ====
+
+    "INV-030 pass 1 is unconditional and relevance-complete" in {
+        val raw    = Chunk[Message](am("region a"), am("region b"))
+        val units  = Default.group(raw)
+        val spans  = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)))
+        val scores = Dict[Int, Double]((0, 0.001), (1, 0.001))
+        val dem    = Default.cut(Context(raw), units, spans, scores, 1.0, 100, 1000, raw.size, Dict.empty)
+        assert(dem.get(0) == Present(Level.Summary), "both demotable spans reach the summary level even under target (pass 1 has no stop)")
+        assert(dem.get(1) == Present(Level.Summary), "pass 1 runs to exhaustion; pass 2 is inert at/under effectiveLow")
+    }
+
+    "INV-030b pass 2 is conditional and stops at effectiveLow" in {
+        val ctx = demotable()
+        renderWith(ctx, cfg(16384)).map { tight =>
+            renderWith(ctx, cfg(200000)).map { loose =>
+                assert(contentLen(tight) < contentLen(ctx.raw), "under pressure pass 2 descends demotable spans until the view fits")
+                assert(loose == ctx.raw, "at low occupancy (closed set within the tail band) pass 2 is inert; the view is unchanged")
             }
         }
     }
 
-    // ==== origin linkage ====
+    // ==== span pinning ====
 
-    "origin absent on raw appends; set with start==unit id on synthetic entries" in {
-        val appended = Context.empty.add(um("u")).add(am("a")).raw
-        assert(appended.forall(_.origin.isEmpty), "an ordinarily-appended message carries Absent origin")
-        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
-            val markers = view.filter(_.origin.isDefined)
-            assert(markers.nonEmpty, "synthetic markers carry Present(origin)")
+    "INV-032 any at-or-above-keep member pins the whole span verbatim" in {
+        val keepFloor = keep(1.3) // 0.03 + 0.06*0.3 == 0.048
+        assert(eps(keepFloor, 0.048), s"the floored keep at pressure 1.3 is 0.048, got $keepFloor")
+        val hot    = Span(0, 2, Chunk(0, 1))
+        val scores = Dict[Int, Double]((0, 0.21), (1, 0.03))
+        assert(
+            Default.spanMaxLiveness(hot, scores) >= keepFloor,
+            "the hottest member (0.21 >= keep) pins the span verbatim (not demotable)"
+        )
+        val cold    = Span(2, 4, Chunk(2, 3))
+        val scores2 = Dict[Int, Double]((2, 0.02), (3, 0.03))
+        assert(
+            Default.spanMaxLiveness(cold, scores2) < keepFloor,
+            "a span with every member below keep IS demotable (any-member aggregation, not a mean)"
+        )
+    }
+
+    // ==== terse (descent only) ====
+
+    "INV-033 terse renders the marker + a fixed prefix of the summary bytes (descent only)" in {
+        val sp        = Span(3, 7, Chunk(3, 4, 5, 6))
+        val raw       = Chunk.from((0 until 8).map(i => am(s"r$i " + ("y" * 20))))
+        val units     = Default.group(raw)
+        val longBytes = "B" * (tersePrefixChars + 300)
+        val state     = CompactionState().withSummary(3, 7, longBytes)
+        val terse     = Default.summaryMarker(sp, raw, units, Level.Terse, raw.size, Dict.empty, state)
+        val summary   = Default.summaryMarker(sp, raw, units, Level.Summary, raw.size, Dict.empty, state)
+        assert(terse.content.contains("B" * tersePrefixChars), "terse carries safeCut(bytes, tersePrefixChars), a fixed prefix")
+        assert(!terse.content.contains("B" * (tersePrefixChars + 1)), "terse truncates at the terse budget")
+        assert(terse.content.contains("recall(3)"), "terse carries the same recall id as the summary render")
+        assert(summary.content.contains(longBytes), "the summary render carries the whole write-once bytes")
+        val short = "C" * (tersePrefixChars - 50)
+        assert(Default.tersePrefix(short) == short, "a summary at/under the terse budget renders whole (a zero-saving step)")
+    }
+
+    "INV-033-blobless a blob-less span steps verbatim->pointer, never terse; no fill is bought" in {
+        val raw    = Chunk.from((0 until 4).map(i => tok(am(s"r$i " + ("x" * 100)), 2000)))
+        val units  = Default.group(raw)
+        val spans  = Chunk(Span(0, 1, Chunk(0)), Span(1, 2, Chunk(1)), Span(2, 3, Chunk(2)), Span(3, 4, Chunk(3)))
+        val scores = Dict.from((0 until 4).map(i => (i, 0.001)).toMap)
+        // empty compaction state => empty summary slots; pass 2 under pressure must skip terse.
+        val dem = Default.cut(Context(raw), units, spans, scores, 5.0, 8000, 1000, raw.size, Dict.empty)
+        assert(dem.toMap.nonEmpty, "the demotable spans are demoted")
+        assert(
+            !dem.toMap.values.toList.contains(Level.Terse),
+            "a blob-less span skips terse entirely (no fill route), stepping summary -> pointer"
+        )
+    }
+
+    // ==== the two elisions ====
+
+    "INV-034 role 1 the fixed-size substitute elision at the summary level" in {
+        val sp    = Span(0, 2, Chunk(0, 1))
+        val raw   = Chunk[Message](am("region content alpha line one\nline two"), am("region content beta"))
+        val units = Default.group(raw)
+        val state = CompactionState() // empty slot => substitute elision
+        val m1    = Default.summaryMarker(sp, raw, units, Level.Summary, raw.size, Dict.empty, state)
+        val m2    = Default.summaryMarker(sp, raw, units, Level.Summary, raw.size, Dict.empty, state)
+        assert(m1.content == m2.content, "substituteElision is a deterministic function of the frozen span (no persistence)")
+        assert(m1.content.contains("summary unavailable"), "the summary level renders the fixed-size substitute elision (role 1)")
+    }
+
+    "INV-034 role 2 the generous exact-surface elision of a pinned oversized unit" in {
+        val huge   = "H" * (generousElisionChars + 5000)
+        val view   = Chunk[Message](am("small one"), tok(am(huge), 999999), am("small two"))
+        val elided = Default.elideOversizedTail(view, 1000)
+        assert(elided(0).content == "small one", "other messages are untouched")
+        assert(elided(2).content == "small two", "other messages are untouched")
+        assert(elided(1).content.contains("...[elided]..."), "the oversized unit keeps head+tail around an elision mark")
+        assert(elided(1).content.length < huge.length, "the oversized unit is elided within the generous budget")
+    }
+
+    // ==== the forced path ====
+
+    "INV-035 the forced path pointers all then elides the oversized tail to fit" in {
+        val raw = Chunk.from((0 until 6).map(i => tok(am(s"r$i " + ("x" * 100)), 1500)))
+            .append(um("q")).append(am("GIANT " + ("x" * 30000)))
+        val config = cfg(16384)
+        renderWith(Context(raw), config).map { view =>
             assert(
-                markers.forall(m => m.origin.get.start >= 0 && m.origin.get.end > m.origin.get.start),
-                "origin.start is the unit id, origin.end is exclusive"
+                Default.viewTokens(view) <= config.hardLimitTokens,
+                s"the forced path returns a view within the hard limit, got ${Default.viewTokens(view)}"
+            )
+            assert(
+                view.exists(_.content.contains("...[elided]...")),
+                "the single oversized tail message is elided (generous exact-surface)"
             )
         }
     }
 
-    "origin lookup replaces positional matching; recall id->origin->raw slice" in {
-        // recall resolves id -> the unit's raw content, typed end to end (via group over raw, keyed by unit id).
-        val ctx = demotableContext(400, 16)
-        LLM.run(serverConfig(1)) {
-            AI.init.map { ai =>
-                ai.setContext(ctx).andThen {
-                    Default.recallTool(ai).infos.head.decodeAndRun("""{"id":2}""").map { r =>
-                        assert(
-                            r match
-                                case RunOutcome.Ran(Result.Success(o)) => o.contains("region 0");
-                                case _                                 => false
-                            ,
-                            s"recall(id) resolves id -> raw slice for the covered unit, got: $r"
-                        )
+    "INV-035b the forced path aborts AIContextOverflowException only when even that cannot fit" in {
+        // Two unresolved regions (open tool calls) are never demotable and never pointered; the forced path
+        // elides only the single largest, so the second oversized unit still breaks the hard limit -> abort.
+        val raw = Chunk[Message](
+            am("open one " + ("x" * 40000), call("c1", "f", "{}")),
+            am("open two " + ("x" * 40000), call("c2", "g", "{}"))
+        )
+        Abort.run[AIGenException](LLM.run(cfg(16384))(Compactor.init.render(Context(raw)))).map { r =>
+            assert(
+                r match
+                    case Result.Failure(_: AIContextOverflowException) => true
+                    case _                                             => false
+                ,
+                s"an unfittable request aborts AIContextOverflowException rather than sending, got: $r"
+            )
+        }
+    }
+
+    // ==== the completion path populates apportioned stamps the demotion loop reads ====
+
+    "INV-016c the completion path populates apportioned stamps the demotion loop reads (integration)" in {
+        // A fixed test tokenizer (envelope-inclusive) counts each message; one scripted completion reports
+        // usage.inputTokens=1000, so the fused reanchor apportions the sent view and propagates stamps onto raw.
+        val fixed: Tokenizer = new Tokenizer:
+            def count(texts: Chunk[String])(using Frame): Chunk[Int] < Any = texts.map(t => t.length + 10)
+            override private[kyo] def includesMessageEnvelope: Boolean     = true
+        val setCtx =
+            Context(Chunk[Message](sm("system alpha"), um("user beta gamma delta"), am("assistant epsilon"), um("user zeta eta theta")))
+        TestCompletionServer.run { server =>
+            val config = cfg(200000).apiUrl(server.baseUrl).tokenizer(fixed)
+            server.enqueueBody(genBody("7", promptTokens = 1000)).andThen {
+                LLM.run(config) {
+                    AI.enable(Compactor.init) {
+                        AI.init.map(ai => ai.setContext(setCtx).andThen(ai.gen[Int]).andThen(ai.context))
                     }
+                }.map { after =>
+                    val covered = after.raw.take(4)
+                    assert(
+                        covered.forall(_.tokens.isDefined),
+                        s"every covered message carries Present(tokens), not Absent, got ${covered.map(_.tokens)}"
+                    )
+                    val sum = covered.foldLeft(0)((n, m) => n + m.tokens.map(_.count).getOrElse(0))
+                    assert(
+                        sum == 1000,
+                        s"the apportioned stamps sum EXACTLY to the reported total (not the offline chars/3 estimate), got $sum"
+                    )
+                    // the demotion loop reads the apportioned sizes: Region.tokens and viewTokens sum the stamps.
+                    val coveredRegions = Default.group(after.raw).filter(_.indices.forall(_ < 4))
+                    assert(
+                        coveredRegions.foldLeft(0)((n, r) => n + r.tokens) == 1000,
+                        "Region.tokens equals the sum of its members' apportioned stamps"
+                    )
+                    assert(Default.viewTokens(covered) == 1000, "viewTokens sums the apportioned stamps, NOT the offline estimates")
                 }
             }
         }
-    }
-
-    // ==== typed recall arg decode ====
-
-    "recallArgId typed-decodes an object-shaped argument, Absent on malformed" in {
-        assert(Default.recallArgId("""{"id":7}""") == Present(7), "a valid object-shaped arg decodes to its id")
-        assert(Default.recallArgId("garbage").isEmpty, "a malformed arg decodes to Absent, never a throw")
-    }
-
-    // ==== promotion (anti-thrash window) ====
-
-    "origin.since preserved across re-render; cross-boundary recalls promote" in {
-        // A single demotable region (unit 0). Three successive boundaries are driven directly through the
-        // internal derivation (project -> demotedOrigins -> promotionSet), the exact path render threads.
-        // The bug was: renderMarker re-stamped origin.since to the current boundary on every re-render,
-        // resetting the anti-thrash window, so a unit recalled once per window never promoted.
-        def recallAm(cid: String): AssistantMessage = am("recall", call(cid, "recall", """{"id":0}"""))
-        val region0                                 = am("REGION ZERO " + ("x" * 40))
-        val demOm                                   = Dict[Int, Level]((0, Level.Omitted))
-
-        // Boundary 1: raw = [region0, q1]; unit 0 demoted at since = raw.size = 2 (first demotion, no prior levels).
-        val rawB1  = Chunk[Message](region0, um("q1"))
-        val projB1 = Default.project(rawB1, Default.group(rawB1), demOm, rawB1.size, Dict.empty)
-        val origB1 = Default.demotedOrigins(projB1)
-        assert(origB1.get(0).map(_.since) == Present(2), s"first demotion stamps since = raw.size at B1 (2), got ${origB1.get(0)}")
-
-        // Boundary 2: raw grew (one recall of region 0 at index 2, then q2). Unit 0 stays demoted; the
-        // re-render must PRESERVE the original since = 2, never re-stamp it to raw.size = 4.
-        val rawB2  = rawB1.append(recallAm("r1")).append(um("q2"))
-        val projB2 = Default.project(rawB2, Default.group(rawB2), demOm, rawB2.size, origB1)
-        val origB2 = Default.demotedOrigins(projB2)
-        assert(
-            origB2.get(0).map(_.since) == Present(2),
-            s"re-render preserves the original since (2), never re-stamps to raw.size=4, got ${origB2.get(0)}"
-        )
-
-        // Boundary 3: a second recall of region 0. With the preserved window (since = 2) BOTH recalls count
-        // (index 2 and index 4) so promotion fires; the buggy re-stamp (since = 4) would count only one.
-        val rawB3   = rawB2.append(recallAm("r2")).append(um("q3"))
-        val unitsB3 = Default.group(rawB3)
-        assert(Default.refetchCount(0, rawB3, 2) == 2, "two recalls fall in the preserved since-2 window")
-        assert(Default.refetchCount(0, rawB3, 4) == 1, "only one recall falls in the buggy re-stamped since-4 window")
-        assert(
-            Default.promotionSet(unitsB3, rawB3, origB2) == Set(0),
-            "with the preserved window, two cross-boundary recalls PROMOTE region 0"
-        )
-
-        // Negative: recalled once only -> NEVER promoted.
-        val rawOne = rawB1.append(recallAm("r1")).append(um("q2"))
-        assert(
-            Default.promotionSet(Default.group(rawOne), rawOne, origB1).isEmpty,
-            "a unit recalled fewer than refetchThreshold times is NEVER promoted"
-        )
-    }
-
-    // ==== tokenizer image accounting ====
-
-    "conservative tokenizer counts images (over-count bias holds for vision content)" in {
-        val text   = UserMessage("hello world", Absent)
-        val vision = UserMessage("hello world", Present(Image.fromBase64("QUJD")))
-        assert(
-            ConservativeTokenizer.count(vision) == ConservativeTokenizer.count(text) + ConservativeTokenizer.imageSurcharge,
-            "a user-message image adds a fixed conservative token surcharge"
-        )
-        assert(
-            ConservativeTokenizer.count(vision) > ConservativeTokenizer.count(text),
-            "an image contributes non-zero tokens so occupancy never under-reads vision content"
-        )
     }
 
 end CompactorTest

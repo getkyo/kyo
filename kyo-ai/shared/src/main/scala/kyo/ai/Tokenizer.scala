@@ -71,7 +71,7 @@ object Tokenizer:
           */
         def messageText(message: Message): String =
             message match
-                case AssistantMessage(content, calls, _, _, _) =>
+                case AssistantMessage(content, calls, _, _) =>
                     if calls.isEmpty then content
                     else content + " " + calls.map(_.arguments).mkString(" ")
                 case other => other.content
@@ -91,8 +91,8 @@ object Tokenizer:
             tokenizer.count(messages.map(messageText)).map { base =>
                 messages.zip(base).map { (message, textTokens) =>
                     val imageTokens = message match
-                        case UserMessage(_, image, _, _, _) => if image.isDefined then imageSurcharge else 0
-                        case _                              => 0
+                        case UserMessage(_, image, _, _) => if image.isDefined then imageSurcharge else 0
+                        case _                           => 0
                     textTokens + envelope + imageTokens
                 }
             }

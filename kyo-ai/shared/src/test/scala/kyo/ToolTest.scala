@@ -55,16 +55,16 @@ class ToolTest extends kyo.test.Test[Any]:
         ).map { ctx =>
             val msgs = ctx.raw.toList
             val hasProcessingMsg = msgs.exists {
-                case ToolMessage(cid, content, _, _, _) => cid == callId && content.contains("Processing tool call")
-                case _                                  => false
+                case ToolMessage(cid, content, _, _) => cid == callId && content.contains("Processing tool call")
+                case _                               => false
             }
             val assistantHasCall = msgs.exists {
-                case AssistantMessage(_, calls, _, _, _) => calls.exists(_.id == callId)
-                case _                                   => false
+                case AssistantMessage(_, calls, _, _) => calls.exists(_.id == callId)
+                case _                                => false
             }
             val hasCorrectiveMsg = msgs.exists {
-                case SystemMessage(content, _, _, _) => content.contains("carefully review its schema")
-                case _                               => false
+                case SystemMessage(content, _, _) => content.contains("carefully review its schema")
+                case _                            => false
             }
             assert(!hasProcessingMsg, "processingMessage should be removed on decode failure")
             assert(!assistantHasCall, "call should be removed from assistant message on decode failure")
@@ -82,8 +82,8 @@ class ToolTest extends kyo.test.Test[Any]:
             }
         ).map { ctx =>
             val found = ctx.raw.toList.exists {
-                case ToolMessage(cid, content, _, _, _) => cid == callId && content.contains("not found")
-                case _                                  => false
+                case ToolMessage(cid, content, _, _) => cid == callId && content.contains("not found")
+                case _                               => false
             }
             assert(found)
         }
@@ -114,10 +114,10 @@ class ToolTest extends kyo.test.Test[Any]:
         ).map { ctx =>
             val msgs = ctx.raw.toList
             val failMsg = msgs.collect {
-                case ToolMessage(cid, content, _, _, _) if cid == failCallId => content
+                case ToolMessage(cid, content, _, _) if cid == failCallId => content
             }
             val successMsg = msgs.collect {
-                case ToolMessage(cid, content, _, _, _) if cid == successCallId => content
+                case ToolMessage(cid, content, _, _) if cid == successCallId => content
             }
             assert(failMsg.nonEmpty, "failing call should have a tool message")
             assert(failMsg.head.contains("expected run failure") || failMsg.head.contains("failed"), "failure text should appear")
@@ -146,11 +146,11 @@ class ToolTest extends kyo.test.Test[Any]:
         ).map { ctx =>
             val msgs = ctx.raw.toList
             val toolMsg = msgs.collectFirst {
-                case ToolMessage(cid, content, _, _, _) if cid == callId => content
+                case ToolMessage(cid, content, _, _) if cid == callId => content
             }
             val hasRepairMsg = msgs.exists {
-                case SystemMessage(content, _, _, _) => content.contains("carefully review its schema")
-                case _                               => false
+                case SystemMessage(content, _, _) => content.contains("carefully review its schema")
+                case _                            => false
             }
             assert(
                 toolMsg.exists(_.contains("Tool 'self-parsing' failed")),
@@ -181,12 +181,12 @@ class ToolTest extends kyo.test.Test[Any]:
         ).map { ctx =>
             val msgs = ctx.raw.toList
             val hasRepairMsg = msgs.exists {
-                case SystemMessage(content, _, _, _) => content.contains("carefully review its schema")
-                case _                               => false
+                case SystemMessage(content, _, _) => content.contains("carefully review its schema")
+                case _                            => false
             }
             val hasGenericFailure = msgs.exists {
-                case ToolMessage(_, content, _, _, _) => content.contains("Tool 'adder' failed")
-                case _                                => false
+                case ToolMessage(_, content, _, _) => content.contains("Tool 'adder' failed")
+                case _                             => false
             }
             assert(
                 hasRepairMsg,
@@ -283,7 +283,7 @@ class ToolTest extends kyo.test.Test[Any]:
             }
         ).map { ctx =>
             val result = ctx.raw.toList.collectFirst {
-                case ToolMessage(cid, content, _, _, _) if cid == callId => content
+                case ToolMessage(cid, content, _, _) if cid == callId => content
             }
             assert(result == Some(Json.encode(6)), s"expected the legacy tool's encoded run result, got: $result")
             assert(legacyInfo.kind == Tool.Kind.Read, "a no-metadata call site must default kind to Read")

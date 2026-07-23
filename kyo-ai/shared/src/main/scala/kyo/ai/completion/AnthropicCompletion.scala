@@ -172,11 +172,11 @@ private[completion] object AnthropicCompletion extends Completion:
                 // unconditionally discarded the opening user turn whenever there was no leading system message.
                 val (system, body) =
                     ctx.compacted.headMaybe match
-                        case Present(SystemMessage(c, _, _, _)) => (Present(c), ctx.compacted.drop(1))
-                        case _                                  => (Absent, ctx.compacted)
+                        case Present(SystemMessage(c, _, _)) => (Present(c), ctx.compacted.drop(1))
+                        case _                               => (Absent, ctx.compacted)
                 val mapped =
                     body.map {
-                        case UserMessage(content, Present(image), _, _, _) =>
+                        case UserMessage(content, Present(image), _, _) =>
                             Message(
                                 Role.User.name,
                                 List(
@@ -184,9 +184,9 @@ private[completion] object AnthropicCompletion extends Completion:
                                     Content("image", source = Present(Source("base64", "image/jpeg", image.base64)))
                                 )
                             )
-                        case UserMessage(content, _, _, _, _) =>
+                        case UserMessage(content, _, _, _) =>
                             Message(Role.User.name, List(Content("text", text = Present(content))))
-                        case AssistantMessage(content, calls, _, _, _) =>
+                        case AssistantMessage(content, calls, _, _) =>
                             Message(
                                 Role.Assistant.name,
                                 List(Content("text", text = Present(content))).filter(_.text.exists(_.nonEmpty))
@@ -199,12 +199,12 @@ private[completion] object AnthropicCompletion extends Completion:
                                         )
                                     ).toList
                             )
-                        case ToolMessage(callId, content, _, _, _) =>
+                        case ToolMessage(callId, content, _, _) =>
                             Message(
                                 Role.User.name,
                                 List(Content("tool_result", tool_use_id = Present(callId.id), content = Present(content)))
                             )
-                        case SystemMessage(content, _, _, _) =>
+                        case SystemMessage(content, _, _) =>
                             Message(Role.User.name, List(Content("text", text = Present(s"[INTERNAL SYSTEM INSTRUCTION] $content"))))
                     }.toList
                 // Anthropic rejects consecutive same-role messages, so merge adjacent ones (e.g. the separate user

@@ -28,59 +28,72 @@ final case class Config private (
     timeout: Duration = 2.minutes,
     maxIterations: Int = 5,
     retrySchedule: Schedule = Schedule.repeat(10),
-    compactionBudget: Maybe[Int] = Absent,
-    compactionHighWatermark: Double = 0.7,
-    compactionLowWatermark: Double = 0.45,
-    compactionHardLimit: Double = 0.9,
-    tokenizer: Compactor.Tokenizer = Compactor.Tokenizer.default
+    compaction: Config.Compaction = Config.Compaction.default,
+    tokenizer: Maybe[Tokenizer] = Absent
 ):
     def apiUrl(url: String): Config                    = copy(apiUrl = url)
     def apiKey(key: String): Config                    = copy(apiKey = Present(key))
     def apiOrg(org: String): Config                    = copy(apiOrg = Present(org))
     def temperature(temperature: Double): Config       = copy(temperature = Present(temperature.max(0).min(2)))
-    def maxTokens(maxTokens: Int): Config              = copy(maxTokens = Present(maxTokens))
+    def maxTokens(maxTokens: Int): Config              = copy(maxTokens = Present(maxTokens)).validatedAxis
     def seed(seed: Int): Config                        = copy(seed = Present(seed))
     def meter(meter: Meter): Config                    = copy(meter = meter)
     def timeout(timeout: Duration): Config             = copy(timeout = timeout)
     def maxIterations(max: Int): Config                = copy(maxIterations = max)
     def retrySchedule(retrySchedule: Schedule): Config = copy(retrySchedule = retrySchedule)
 
-    /** Pins the token budget the compacted view must fit within, scaled per model window when
-      * unset (default min(modelMaxTokens/2, 48000), read at render time via
-      * effectiveCompactionBudget). Floors at 1. The escape hatch for other mechanics is the
-      * Compactor trait.
+    /** Tunes the grouped compaction knobs (watermarks, ceiling, drift, summarizer, retention
+      * cap). The returned config is validated at construction: an override that reorders the
+      * occupancy axis fails here with the violated inequality named, never at a boundary.
       */
-    def compactionBudget(tokens: Int): Config = copy(compactionBudget = Present(tokens.max(1)))
+    def compaction(f: Config.Compaction => Config.Compaction): Config =
+        copy(compaction = f(compaction)).validatedAxis
 
-    /** Occupancy fraction of the effective budget at/above which the seam triggers a boundary
-      * render. Clamped to [0, 1]; the read site guards low/high ordering (the trigger is always
-      * max(compactionLowWatermark, compactionHighWatermark)).
+    /** Replaces the provider's offline tiktoken default with a user token accountant. Occupancy
+      * anchors on the provider's reported total either way; the tokenizer counts for
+      * apportionment (§5a), where exactness is a quality property, not a safety one.
       */
-    def compactionHighWatermark(fraction: Double): Config =
-        copy(compactionHighWatermark = fraction.max(0.0).min(1.0))
+    def tokenizer(tokenizer: Tokenizer): Config = copy(tokenizer = Present(tokenizer))
 
-    /** Occupancy fraction of the effective budget a boundary render targets. Clamped to [0, 1];
-      * the read site guards low/high ordering (the target is always
-      * min(compactionLowWatermark, compactionHighWatermark)).
-      */
-    def compactionLowWatermark(fraction: Double): Config =
-        copy(compactionLowWatermark = fraction.max(0.0).min(1.0))
+    // The output reservation counted once, on the hard-limit side (§5a, §7): the user's maxTokens
+    // when set, else a conservative default so window - reservation never over-reads what the
+    // provider actually has left for input.
+    private[kyo] def effectiveMaxOutput: Int =
+        maxTokens.getOrElse(Config.defaultMaxOutputReservation)
 
-    /** Fraction of the ACTUAL model window above which the forced path aborts rather than send.
-      * Clamped to [0, 1] so this can never disable the forced-path guard.
-      */
-    def compactionHardLimit(fraction: Double): Config =
-        copy(compactionHardLimit = fraction.max(0.0).min(1.0))
+    // effectiveHigh = min(highWatermark * window, contextCeiling): the boundary trigger (§4, §6).
+    private[kyo] def effectiveHigh: Int =
+        val frac = (compaction.highWatermark * modelMaxTokens).toInt
+        compaction.contextCeiling match
+            case Present(ceiling) => math.min(frac, ceiling)
+            case Absent           => frac
+    end effectiveHigh
 
-    /** The pluggable token accountant used for occupancy (default Compactor.Tokenizer.default). */
-    def tokenizer(tokenizer: Compactor.Tokenizer): Config = copy(tokenizer = tokenizer)
+    // effectiveLow = lowWatermark * effectiveHigh: the render-down target pass 2 stops at (§4, §6).
+    private[kyo] def effectiveLow: Int = (compaction.lowWatermark * effectiveHigh).toInt
 
-    /** The effective compaction budget: the user-pinned value if compactionBudget is Present,
-      * else derived from the ACTIVE modelMaxTokens, so a copy-based model switch (Config#model)
-      * re-derives it automatically rather than going stale.
-      */
-    private[kyo] def effectiveCompactionBudget: Int =
-        compactionBudget.getOrElse(math.min(modelMaxTokens / 2, 48000))
+    // The prepare line: prepareWatermark * effectiveHigh, where speculative compaction arms (§5f).
+    private[kyo] def prepareLine: Int = (compaction.prepareWatermark * effectiveHigh).toInt
+
+    // The overflow backstop: hardLimit * (window - maxOutputTokens), the reservation counted once (§7).
+    private[kyo] def hardLimitTokens: Int =
+        (compaction.hardLimit * (modelMaxTokens - effectiveMaxOutput)).toInt
+
+    // Construction-time axis validation (§6): the full ordering
+    //   effectiveLow < prepareWatermark*effectiveHigh <= effectiveHigh < hardLimit*(window-maxOutput)
+    // (the middle collapsing to equality only at prepareWatermark == 1.0). A reordering override
+    // fails here with the violated inequality named, never at a boundary; the override that would
+    // push the effective high above the hard-limit line is thus unconstructible.
+    private[kyo] def validatedAxis: Config =
+        val lo   = effectiveLow
+        val prep = prepareLine
+        val high = effectiveHigh
+        val hard = hardLimitTokens
+        require(lo < prep, s"compaction axis: effectiveLow ($lo) must be < prepareWatermark*effectiveHigh ($prep)")
+        require(prep <= high, s"compaction axis: prepareWatermark*effectiveHigh ($prep) must be <= effectiveHigh ($high)")
+        require(high < hard, s"compaction axis: effectiveHigh ($high) must be < hardLimit*(window-maxOutput) ($hard)")
+        this
+    end validatedAxis
 
     // Internal Maybe form for cross-run seed derivation, where the prior seed may be Absent.
     private[kyo] def seed(seed: Maybe[Int]): Config = copy(seed = seed)
@@ -91,13 +104,53 @@ final case class Config private (
             modelName = modelName,
             modelMaxTokens = modelMaxTokens,
             apiUrl = provider.baseUrl
-        )
+        ).validatedAxis
 
 end Config
 
 private[kyo] object provider extends StaticFlag[String]("")
 
 object Config:
+
+    /** The grouped compaction knobs (§6). Every watermark is a fraction; the occupancy axis
+      * they derive is validated at Config construction, never at a boundary. Per-field builders
+      * clamp each knob to its own range; the cross-field ordering is enforced by
+      * Config.validatedAxis. The raw-eviction watermark pair (§10.5) rides rawRetentionCap
+      * internally and is NOT on this surface. Provisional starting values, replay-tunable
+      * (§4, §6, owner-confirm).
+      */
+    final case class Compaction(
+        highWatermark: Double = 0.5,                   // boundary trigger: fraction of the window
+        contextCeiling: Maybe[Int] = Present(128_000), // absolute clamp on the trigger; Absent = pure fraction
+        lowWatermark: Double = 0.6,                    // render-down depth: fraction of the effective high
+        prepareWatermark: Double = 0.8,                // prepare line: fraction of effective high; 1.0 = no speculative compaction
+        hardLimit: Double = 0.9,                       // overflow backstop vs window - maxOutputTokens; clamped > 0
+        driftThreshold: Maybe[Double] = Present(0.15), // relevance trigger fraction of effectiveLow; Absent = size-only
+        summarizer: Maybe[Config] = Absent,            // Absent = warm route, provider.small degraded; Present = pinned fills
+        rawRetentionCap: Maybe[Int] = Absent           // Absent = several window-widths; raw-memory backstop (§10.5)
+    ):
+        def highWatermark(f: Double): Compaction    = copy(highWatermark = f.max(0.0).min(1.0))
+        def contextCeiling(tokens: Int): Compaction = copy(contextCeiling = Present(tokens.max(1)))
+        def noContextCeiling: Compaction            = copy(contextCeiling = Absent)
+        def lowWatermark(f: Double): Compaction     = copy(lowWatermark = f.max(0.0).min(1.0))
+        // prepareWatermark clamps to (lowWatermark, 1.0]: above lowWatermark so a boundary's
+        // render-down always disarms preparation, and 1.0 turns speculative compaction off (§6).
+        def prepareWatermark(f: Double): Compaction = copy(prepareWatermark = f.max(math.nextUp(lowWatermark)).min(1.0))
+        def hardLimit(f: Double): Compaction        = copy(hardLimit = f.max(math.nextUp(0.0)).min(1.0))
+        // driftThreshold Present clamps to (0.0, 1.0); Absent disables the relevance trigger.
+        def driftThreshold(f: Double): Compaction    = copy(driftThreshold = Present(f.max(math.nextUp(0.0)).min(math.nextDown(1.0))))
+        def noDriftThreshold: Compaction             = copy(driftThreshold = Absent)
+        def summarizer(config: Config): Compaction   = copy(summarizer = Present(config))
+        def rawRetentionCap(tokens: Int): Compaction = copy(rawRetentionCap = Present(tokens.max(1)))
+    end Compaction
+
+    object Compaction:
+        val default: Compaction = Compaction()
+
+    // The output reservation counted once on the hard-limit side when the user pins no
+    // maxTokens (§5a, §7). Small enough that the default axis stays valid for every shipped
+    // catalog window (16,384 up).
+    private[kyo] val defaultMaxOutputReservation: Int = 4096 // provisional, replay-tunable, v4 §5a, owner-confirm
 
     private[kyo] def read(key: String)(using Frame): Maybe[String] < Sync =
         for
@@ -129,15 +182,15 @@ object Config:
             for
                 key <- read(provider.keyName)
                 org <- read(provider.orgKey)
-            yield Config(provider.baseUrl, key, org, provider, modelName, modelMaxTokens)
+            yield Config(provider.baseUrl, key, org, provider, modelName, modelMaxTokens).validatedAxis
         else
-            Config(provider.baseUrl, Absent, Absent, provider, modelName, modelMaxTokens)
+            Config(provider.baseUrl, Absent, Absent, provider, modelName, modelMaxTokens).validatedAxis
 
     /** A purely-constructed config for a provider's catalog entry (key/org left absent; filled at use via
       * the provider default path). The catalog values use this so a model literal is pure.
       */
     private[kyo] def catalog(provider: Provider, modelName: String, modelMaxTokens: Int): Config =
-        Config(provider.baseUrl, Absent, Absent, provider, modelName, modelMaxTokens)
+        Config(provider.baseUrl, Absent, Absent, provider, modelName, modelMaxTokens).validatedAxis
 
     /** A provider: its display name, base URL, credential behavior, and completion backend. */
     abstract class Provider(

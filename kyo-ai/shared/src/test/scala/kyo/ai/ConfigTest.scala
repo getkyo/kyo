@@ -125,9 +125,9 @@ class ConfigTest extends kyo.test.Test[Any]:
     }
 
     "model resets apiUrl to the new provider's baseUrl" in {
-        val cfg = Config.OpenAI.default.apiUrl("http://override").model(Config.Anthropic, "claude-x", 1000)
+        val cfg = Config.OpenAI.default.apiUrl("http://override").model(Config.Anthropic, "claude-x", 200000)
         assert(cfg.apiUrl == Config.Anthropic.baseUrl, s"apiUrl: ${cfg.apiUrl}")
-        assert(cfg.modelName == "claude-x" && cfg.modelMaxTokens == 1000 && cfg.provider.name == "Anthropic")
+        assert(cfg.modelName == "claude-x" && cfg.modelMaxTokens == 200000 && cfg.provider.name == "Anthropic")
     }
 
     "every provider default is a pure catalog entry with positive cap, absent key, matching provider" in {
@@ -171,54 +171,60 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.OpenAI.small.modelName != Config.OpenAI.default.modelName)
     }
 
-    "compaction config is exactly five fields on kyo.ai.Config; init takes nothing" in {
-        val cfg = Config.Anthropic.default
-            .compactionBudget(1000)
-            .compactionHighWatermark(0.7)
-            .compactionLowWatermark(0.45)
-            .compactionHardLimit(0.9)
-        assert(cfg.compactionBudget == Present(1000))
-        assert(cfg.compactionHighWatermark == 0.7)
-        assert(cfg.compactionLowWatermark == 0.45)
-        assert(cfg.compactionHardLimit == 0.9)
-        val d = Config.Anthropic.default
-        assert(d.compactionBudget == Absent, s"compactionBudget defaults Absent (Maybe[Int]), got: ${d.compactionBudget}")
-        assert(d.compactionHighWatermark == 0.7 && d.compactionLowWatermark == 0.45 && d.compactionHardLimit == 0.9)
-        assert(d.tokenizer eq Compactor.Tokenizer.default, "tokenizer defaults to Compactor.Tokenizer.default")
+    "INV-050 a valid axis constructs and the ordering holds" in {
+        // default compaction on a 200000-token window with maxTokens 10000 (§6):
+        //   effectiveHigh = min(0.5*200000, 128000) = 100000
+        //   effectiveLow  = 0.6*100000 = 60000 ; prepareLine = 0.8*100000 = 80000
+        //   hardLimitTokens = 0.9*(200000-10000) = 171000
+        val cfg = Config.OpenAI.default.model(Config.OpenAI, "m", 200000).maxTokens(10000)
+        assert(cfg.effectiveHigh == 100000, s"effectiveHigh: ${cfg.effectiveHigh}")
+        assert(cfg.effectiveLow == 60000, s"effectiveLow: ${cfg.effectiveLow}")
+        assert(cfg.prepareLine == 80000, s"prepareLine: ${cfg.prepareLine}")
+        assert(cfg.hardLimitTokens == 171000, s"hardLimitTokens: ${cfg.hardLimitTokens}")
+        assert(
+            cfg.effectiveLow < cfg.prepareLine && cfg.prepareLine <= cfg.effectiveHigh && cfg.effectiveHigh < cfg.hardLimitTokens,
+            "the full occupancy axis holds exactly (the middle equality only at prepareWatermark 1.0)"
+        )
         val c: Compactor[Any] = Compactor.init
         assert(c eq Compactor.init, "Compactor.init takes no parameters and returns the shared default Compactor[Any]")
+        assert(cfg.tokenizer == Absent, "tokenizer defaults to Absent (the provider's offline tiktoken default)")
     }
 
-    "effectiveCompactionBudget scales with modelMaxTokens; a copy-based model switch re-derives it; Present pins survive the switch" in {
-        val base = Config.Anthropic.default.model(Config.Anthropic, "m", 200000)
-        assert(base.effectiveCompactionBudget == 48000, s"min(100000, 48000) = 48000, got: ${base.effectiveCompactionBudget}")
-        val big = base.model(Config.Anthropic, "m2", 1000000)
+    "INV-050-reorder a reordering override is rejected at construction, naming the inequality" in {
+        // Pushing highWatermark to 1.0 with no ceiling makes effectiveHigh (200000) cross the hard-limit
+        // line (0.9*(200000-4096)=176313), so validatedAxis fails at construction, never at a boundary.
+        val base = Config.OpenAI.default.model(Config.OpenAI, "m", 200000)
+        val thrown =
+            try
+                base.compaction(_.noContextCeiling.highWatermark(1.0))
+                None
+            catch case e: IllegalArgumentException => Some(e.getMessage)
+        assert(thrown.isDefined, "an axis-crossing override throws IllegalArgumentException at construction")
         assert(
-            big.effectiveCompactionBudget == 48000,
-            s"re-derived from the ACTIVE modelMaxTokens: min(500000, 48000) = 48000, got: ${big.effectiveCompactionBudget}"
-        )
-        val small = base.model(Config.Anthropic, "m3", 60000)
-        assert(
-            small.effectiveCompactionBudget == 30000,
-            s"a small-window model reads min(30000, 48000) = 30000, got: ${small.effectiveCompactionBudget}"
-        )
-        val pinned = base.compactionBudget(5000)
-        assert(pinned.effectiveCompactionBudget == 5000, "a user-pinned budget is used verbatim before a switch")
-        assert(
-            pinned.model(Config.Anthropic, "m4", 1000000).effectiveCompactionBudget == 5000,
-            "a user-pinned budget is never overridden by a model switch"
+            thrown.exists(m => m.contains("effectiveHigh") && m.contains("must be <")),
+            s"the message NAMES the violated inequality, got: $thrown"
         )
     }
 
-    "compaction builders clamp into [0,1]; compactionBudget floors at 1" in {
-        val c = Config.Anthropic.default
-        assert(c.compactionHighWatermark(1.3).compactionHighWatermark == 1.0)
-        assert(c.compactionLowWatermark(-0.2).compactionLowWatermark == 0.0)
+    "INV-051 per-field clamps and the Absent-is-off knobs" in {
+        val d = Config.Compaction.default
+        assert(d.highWatermark(1.5).highWatermark == 1.0, "highWatermark clamps to 1.0")
+        assert(d.hardLimit(0.0).hardLimit > 0.0, "hardLimit clamps to > 0 so it can never disable the forced-path guard")
+        val prep = d.prepareWatermark(0.1)
         assert(
-            c.compactionHardLimit(2.0).compactionHardLimit == 1.0,
-            "hardLimit clamps to 1.0 so it can never disable the forced-path guard"
+            prep.prepareWatermark > d.lowWatermark && prep.prepareWatermark <= 1.0,
+            s"prepareWatermark clamps into (lowWatermark, 1.0], got: ${prep.prepareWatermark}"
         )
-        assert(c.compactionBudget(-5).compactionBudget == Present(1), "compactionBudget floors at 1, never non-positive")
+        val drift = d.driftThreshold(2.0)
+        assert(
+            drift.driftThreshold match
+                case Present(v) => v > 0.0 && v < 1.0
+                case Absent     => false
+            ,
+            s"driftThreshold Present clamps into (0.0, 1.0), got: ${drift.driftThreshold}"
+        )
+        assert(d.noContextCeiling.contextCeiling == Absent, "noContextCeiling gives a pure-fraction trigger")
+        assert(d.noDriftThreshold.driftThreshold == Absent, "noDriftThreshold recovers size-only triggering exactly")
     }
 
     private class TestUnsafeSystem(

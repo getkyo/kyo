@@ -487,12 +487,16 @@ object LLM:
     ): Context < (LLM & Async & Abort[AIGenException]) =
         compactor match
             case Present(c) =>
-                val budget   = config.effectiveCompactionBudget
-                val trigger  = math.max(config.compactionLowWatermark, config.compactionHighWatermark)
-                val occupied = ctx.compacted.foldLeft(0)((n, m) => n + config.tokenizer.count(m))
-                if occupied >= (trigger * budget) then
-                    c.render(ctx).map { rebuilt =>
-                        val updated = ctx.copy(compacted = rebuilt)
+                // Usage-anchored occupancy (§5a); the boundary trigger is the effective high
+                // watermark (§4, §6), min(highWatermark*window, contextCeiling). maxOutputTokens is
+                // NOT part of occupancy: it is counted once on the hard-limit side inside render (§7).
+                val occupied = Compactor.internal.occupancy(ctx)
+                if occupied >= config.effectiveHigh then
+                    // A boundary of either cause ticks the recall-decay clock (§5e), then renders and
+                    // installs the rebuilt compacted list. raw is never shrunk.
+                    val ticked = ctx.withCompaction(ctx.compactionState.tickBoundary)
+                    c.render(ticked).map { rebuilt =>
+                        val updated = ticked.copy(compacted = rebuilt)
                         ai.setContext(updated).andThen(updated)
                     }
                 else Kyo.lift(ctx)
@@ -588,8 +592,23 @@ object LLM:
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"
             )
             _ <- ai.updateContext(ctx => messages.foldLeft(ctx)(_.add(_)))
+            // Re-anchor occupancy on the provider's reported request total (§5a) through the ONE fused seam
+            // helper every usage-consumption site shares, so the anchor scalar and the per-message stamps it
+            // covers can never disagree: it records the exact input-token total at the sent view's size (so
+            // the next pass sizes only the suffix appended since) AND apportions the exact sent view via the
+            // active tokenizer, propagating each stamp onto its raw twin for the demotion loop. The sent view
+            // is the pre-response request (view.compacted), never the just-appended response tail. Absent
+            // usage leaves the anchor untouched (offline-estimated).
+            _ <- completion.usage match
+                case Present(u) =>
+                    val (tokenizer, tokenizerId) = Compactor.internal.activeTokenizer(config)
+                    ai.context.map(c =>
+                        Compactor.internal.reanchor(c, view.compacted, u.inputTokens, tokenizer, tokenizerId)
+                            .map(ai.setContext)
+                    )
+                case Absent => Kyo.lift(())
             calls            = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
-            completedCallIds = messages.collect { case ToolMessage(callId, _, _, _, _) => callId }
+            completedCallIds = messages.collect { case ToolMessage(callId, _, _, _) => callId }
             _ <- Tool.internal.handle(ai, allTools, calls.filterNot(call => completedCallIds.contains(call.id)))
             // Extract the model's structured result directly from its result_tool call (no capturing run).
             raw = calls.filter(_.function == Completion.resultToolName).headMaybe

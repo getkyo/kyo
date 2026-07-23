@@ -359,7 +359,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 Return only JSON matching this result envelope schema:
                 ${Json.encode(resultSchema)}
             """
-        (context.compacted.collect { case SystemMessage(content, _, _, _) => content } :+ instruction).mkString("\n\n")
+        (context.compacted.collect { case SystemMessage(content, _, _) => content } :+ instruction).mkString("\n\n")
     end streamInstructions
 
     private def outputInstructions(context: Context, schema: Structure.Value, hasTools: Boolean)(using Frame): String =
@@ -379,7 +379,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     Return only JSON matching this result envelope schema:
                     ${Json.encode(schema)}
                 """
-        (context.compacted.collect { case SystemMessage(content, _, _, _) => content } :+ instruction).mkString("\n\n")
+        (context.compacted.collect { case SystemMessage(content, _, _) => content } :+ instruction).mkString("\n\n")
     end outputInstructions
 
     private[kyo] def inputJsonLines(messages: Chunk[Message])(using Frame): String < Abort[AIGenException] =
@@ -392,7 +392,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
 
     private def inputEventsForMessage(message: Message)(using Frame): Chunk[InputEvent] < Abort[AIGenException] =
         message match
-            case AssistantMessage(_, calls, _, _, _) if calls.exists(_.function == Completion.resultToolName) =>
+            case AssistantMessage(_, calls, _, _) if calls.exists(_.function == Completion.resultToolName) =>
                 Kyo.foreach(calls.filter(_.function == Completion.resultToolName)) { call =>
                     InputEvent(
                         "assistant",
@@ -414,7 +414,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     if nonResult.calls.isEmpty then resultEvents
                     else inputEvent(nonResult).map(event => resultEvents.prepended(event))
                 }
-            case ToolMessage(callId, _, _, _, _) if callId.id == "harness-result" =>
+            case ToolMessage(callId, _, _, _) if callId.id == "harness-result" =>
                 Chunk.empty[InputEvent]
             case _ =>
                 inputEvent(message).map(Chunk(_))
@@ -422,9 +422,9 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
 
     private def inputEvent(message: Message)(using Frame): InputEvent < Abort[AIGenException] =
         message match
-            case SystemMessage(content, _, _, _) =>
+            case SystemMessage(content, _, _) =>
                 Abort.fail(AIDecodeException(s"Claude Code system message was not routed to system prompt: $content"))
-            case UserMessage(content, Present(image), _, _, _) =>
+            case UserMessage(content, Present(image), _, _) =>
                 InputEvent(
                     "user",
                     InputMessage(
@@ -435,15 +435,15 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                         )
                     )
                 )
-            case UserMessage(content, _, _, _, _) =>
+            case UserMessage(content, _, _, _) =>
                 InputEvent("user", InputMessage(Role.User.name, List(InputContent("text", text = Present(content)))))
-            case AssistantMessage(content, calls, _, _, _) =>
+            case AssistantMessage(content, calls, _, _) =>
                 Kyo.foreach(calls)(inputToolCall).map { callBlocks =>
                     val contentBlocks =
                         (if content.nonEmpty then List(InputContent("text", text = Present(content))) else Nil) ++ callBlocks.toList
                     InputEvent("assistant", InputMessage(Role.Assistant.name, contentBlocks))
                 }
-            case ToolMessage(callId, content, _, _, _) =>
+            case ToolMessage(callId, content, _, _) =>
                 InputEvent(
                     "user",
                     InputMessage(

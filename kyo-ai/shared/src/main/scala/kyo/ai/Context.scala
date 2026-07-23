@@ -11,11 +11,17 @@ import kyo.*
   * tool call" placeholder in the tail of BOTH lists symmetrically (replacing it with the result, or
   * removing it and the failing call on a decode failure); no other path rewrites raw.
   */
-case class Context(raw: Chunk[Message], compacted: Chunk[Message]) derives CanEqual, Schema:
+case class Context(
+    raw: Chunk[Message],
+    compacted: Chunk[Message],
+    compaction: Maybe[Context.CompactionState] = Absent
+) derives CanEqual, Schema:
 
-    /** Appends a message to BOTH lists unconditionally (the pairing invariant). */
+    /** Appends a message to BOTH lists unconditionally (the pairing invariant), preserving the
+      * compaction state seat.
+      */
     def add(msg: Message): Context =
-        Context(raw.append(msg), compacted.append(msg))
+        copy(raw = raw.append(msg), compacted = compacted.append(msg))
 
     /** Appends a system message, skipping blank content. */
     def systemMessage(content: String): Context =
@@ -46,8 +52,18 @@ case class Context(raw: Chunk[Message], compacted: Chunk[Message]) derives CanEq
     def merge(that: Context): Context =
         val n    = raw.zip(that.raw).takeWhile((a, b) => Context.coreEq(a, b)).size
         val tail = that.raw.drop(n)
-        Context(raw.concat(tail), compacted.concat(tail))
+        copy(raw = raw.concat(tail), compacted = compacted.concat(tail))
     end merge
+
+    /** The compaction state seat (U13), defaulting to a fresh empty state. The Compactor reads and
+      * rewrites it through render; it carries the boundary counter, the usage anchor, recall
+      * records, and the write-once summary slots (§5e, §7). private[kyo]: not a lock symbol.
+      */
+    private[kyo] def compactionState: Context.CompactionState =
+        compaction.getOrElse(Context.CompactionState())
+
+    private[kyo] def withCompaction(state: Context.CompactionState): Context =
+        copy(compaction = Present(state))
 
 end Context
 
@@ -59,6 +75,60 @@ object Context:
       */
     case class Origin(start: Int, end: Int, since: Int) derives CanEqual, Schema
 
+    /** A per-message token stamp: the apportioned real token count paired with the id of the
+      * tokenizer that produced it, so apportionment never mixes vocabularies across a provider
+      * switch (§5a, DG-01; owner-confirm for the Schema wire impact). private[kyo]: not a lock symbol.
+      */
+    private[kyo] case class TokenStamp(tokenizerId: String, count: Int) derives CanEqual, Schema
+
+    /** One recall, recorded in compaction state stamped with the boundary counter at recall time;
+      * its seed contribution decays per boundary since (§5e). Lives in state, never inferred from
+      * the view, so clearing the exchange never drops the signal.
+      */
+    private[kyo] case class RecallRecord(region: Int, boundaryStamp: Int) derives CanEqual, Schema
+
+    /** One write-once span summary slot, keyed by the span's raw ordinal range [start, end) (§5d,
+      * §7). In P2 no fill route exists, so summaries stay empty and the summary level renders the
+      * fixed-size substitute elision; the slot and its write-once discipline are seated here and
+      * filled from P3.
+      */
+    private[kyo] case class SpanSummary(start: Int, end: Int, bytes: String) derives CanEqual, Schema
+
+    /** The compaction state seat carried on Context (§7): the boundary counter (recall's decay
+      * clock), the usage anchor and the raw size it was taken at (§5a), the recall records (§5e),
+      * and the write-once span summary slots (§5d). The drift bookkeeping (pending-confirm flag,
+      * last-fire index) is seated for P5. Adopted and rewritten only through Compactor.render.
+      */
+    private[kyo] case class CompactionState(
+        boundaryCounter: Int = 0,
+        lastUsage: Maybe[Int] = Absent,
+        lastUsageRawSize: Int = 0,
+        recalls: Chunk[RecallRecord] = Chunk.empty,
+        summaries: Chunk[SpanSummary] = Chunk.empty,
+        driftPendingConfirm: Boolean = false,
+        lastDriftFire: Int = -1
+    ) derives CanEqual, Schema:
+        // Write-once adoption: a summary lands only into an empty slot; a later write to a filled
+        // slot is discarded (SPAN-FREEZING ii, §5d), so whichever bytes land first are permanent.
+        def withSummary(start: Int, end: Int, bytes: String): CompactionState =
+            if summaries.exists(s => s.start == start && s.end == end) then this
+            else copy(summaries = summaries.append(SpanSummary(start, end, bytes)))
+
+        def summaryOf(start: Int, end: Int): Maybe[String] =
+            summaries.filter(s => s.start == start && s.end == end).headMaybe.map(_.bytes)
+
+        // Records a recall stamped with the current boundary counter (§5e).
+        def withRecall(region: Int): CompactionState =
+            copy(recalls = recalls.append(RecallRecord(region, boundaryCounter)))
+
+        // Advances the boundary counter, ticked at every compaction boundary of either cause (§5e).
+        def tickBoundary: CompactionState = copy(boundaryCounter = boundaryCounter + 1)
+
+        // Re-anchors occupancy on a provider-reported request total (§5a).
+        def withUsage(total: Int, rawSize: Int): CompactionState =
+            copy(lastUsage = Present(total), lastUsageRawSize = rawSize)
+    end CompactionState
+
     /** The empty conversation (both lists empty). */
     val empty: Context = Context(Chunk.empty, Chunk.empty)
 
@@ -67,18 +137,18 @@ object Context:
       */
     def apply(messages: Chunk[Message]): Context = Context(messages, messages)
 
-    /** CORE-field equality: content/role/image/calls/callId only, ignoring embedding/tokens/origin,
-      * so two content-identical messages differing solely in enrichment state compare as the same.
+    /** CORE-field equality: content/role/image/calls/callId only, ignoring tokens/origin, so two
+      * content-identical messages differing solely in enrichment state compare as the same.
       * INTERNAL: used by the default Compactor and Context.merge for deduplication; a custom
       * Compactor is not obligated to honor it, so this is not a lock symbol.
       */
     private[kyo] def coreEq(a: Message, b: Message): Boolean =
         (a, b) match
-            case (SystemMessage(c1, _, _, _), SystemMessage(c2, _, _, _))               => c1 == c2
-            case (UserMessage(c1, i1, _, _, _), UserMessage(c2, i2, _, _, _))           => c1 == c2 && i1 == i2
-            case (AssistantMessage(c1, k1, _, _, _), AssistantMessage(c2, k2, _, _, _)) => c1 == c2 && k1 == k2
-            case (ToolMessage(id1, c1, _, _, _), ToolMessage(id2, c2, _, _, _))         => id1 == id2 && c1 == c2
-            case _                                                                      => false
+            case (SystemMessage(c1, _, _), SystemMessage(c2, _, _))               => c1 == c2
+            case (UserMessage(c1, i1, _, _), UserMessage(c2, i2, _, _))           => c1 == c2 && i1 == i2
+            case (AssistantMessage(c1, k1, _, _), AssistantMessage(c2, k2, _, _)) => c1 == c2 && k1 == k2
+            case (ToolMessage(id1, c1, _, _), ToolMessage(id2, c2, _, _))         => id1 == id2 && c1 == c2
+            case _                                                                => false
 
     /** A message role carrying its exact lowercase provider wire-string. */
     enum Role(val name: String) derives CanEqual:
@@ -94,24 +164,23 @@ object Context:
     /** A single tool call requested by the assistant: the call id, the function name, the raw argument JSON. */
     case class Call(id: CallId, function: String, arguments: String) derives Schema, CanEqual
 
-    /** A conversation message, tagged with its role. Each leaf carries three trailing defaulted
-      * enrichment fields (embedding/tokens/origin): once-computed facts living on the message value that
-      * owns them with no separate cache structure. `tokens` is the real token count the compaction seam
-      * stamps once per message; `embedding` is the vector the seam stamps at a boundary when an embedding
-      * is configured; `origin` is set only on a synthetic entry a Compactor builds to stand for a raw range.
+    /** A conversation message, tagged with its role. Each leaf carries two trailing defaulted
+      * enrichment fields (tokens/origin): once-computed facts living on the message value that owns
+      * them with no separate cache structure. `tokens` is the apportioned token stamp the compaction
+      * seam writes once per message (§5a), carrying the tokenizer id alongside the count so
+      * apportionment never mixes vocabularies; `origin` is set only on a synthetic entry a Compactor
+      * builds to stand for a raw range.
       */
     sealed trait Message(val role: Role) derives CanEqual, Schema:
         def content: String
-        def embedding: Maybe[Embedding]
-        def tokens: Maybe[Int]
+        def tokens: Maybe[TokenStamp]
         def origin: Maybe[Context.Origin]
     end Message
 
     /** A system instruction message. */
     case class SystemMessage(
         content: String,
-        embedding: Maybe[Embedding] = Absent,
-        tokens: Maybe[Int] = Absent,
+        tokens: Maybe[TokenStamp] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.System)
 
@@ -119,8 +188,7 @@ object Context:
     case class UserMessage(
         content: String,
         image: Maybe[Image],
-        embedding: Maybe[Embedding] = Absent,
-        tokens: Maybe[Int] = Absent,
+        tokens: Maybe[TokenStamp] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.User)
 
@@ -128,8 +196,7 @@ object Context:
     case class AssistantMessage(
         content: String,
         calls: Chunk[Call] = Chunk.empty,
-        embedding: Maybe[Embedding] = Absent,
-        tokens: Maybe[Int] = Absent,
+        tokens: Maybe[TokenStamp] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.Assistant)
 
@@ -137,8 +204,7 @@ object Context:
     case class ToolMessage(
         callId: CallId,
         content: String,
-        embedding: Maybe[Embedding] = Absent,
-        tokens: Maybe[Int] = Absent,
+        tokens: Maybe[TokenStamp] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.Tool)
 
