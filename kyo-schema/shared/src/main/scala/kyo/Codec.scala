@@ -9,8 +9,8 @@ import java.nio.charset.StandardCharsets
   *
   *   - Pluggable: implement `newWriter` and `newReader` to support any binary or text format
   *   - Used by [[kyo.Schema]] encode/decode methods to select the target format at the call site
-  *   - Built-in implementations: [[Json]] (JSON), [[Ion]] (Amazon Ion text), [[Yaml]] (YAML), and [[Protobuf]] (Protocol Buffers wire
-  *     format)
+  *   - Built-in implementations: `Json` (JSON), `Ion` (Amazon Ion text), `Yaml` (YAML), and `Protobuf` (Protocol Buffers wire format),
+  *     each published in its own `kyo-schema-<format>` artifact
   *
   * @see
   *   [[Codec.Writer]] for the serialization side

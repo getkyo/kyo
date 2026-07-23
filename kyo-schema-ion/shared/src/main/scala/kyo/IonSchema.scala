@@ -16,7 +16,7 @@ import java.nio.charset.StandardCharsets
   * configured with [[Ion.AnnotationEmissionMode.Emit]], captured schema annotations are emitted as
   * ISL `annotations` constraints that describe the Ion type annotations written by the Ion codecs.
   *
-  * This is a schema-generation surface, like [[Json.JsonSchema]]. Runtime value validation remains
+  * This is a schema-generation surface, like `Json.JsonSchema` in the kyo-schema-json module. Runtime value validation remains
   * available through `Schema.decode` and `Schema.validate`; a general-purpose ISL evaluator is a
   * separate concern because Ion Schema validates the full Ion data model, including annotations and
   * typed null distinctions that ordinary Scala value decoding intentionally erases.

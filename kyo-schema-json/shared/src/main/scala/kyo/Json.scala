@@ -15,7 +15,7 @@ end Json
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
   * @see
-  *   [[kyo.Protobuf]] for binary Protocol Buffers serialization
+  *   `Protobuf` in the kyo-schema-protobuf module for binary Protocol Buffers serialization
   */
 object Json:
     /** Default maximum nesting depth for objects/arrays in JSON decoding (DoS limit). */

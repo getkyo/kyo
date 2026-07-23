@@ -32,14 +32,15 @@ end Bson
   * [[SchemaNotSerializableException]] rather than truncating or corrupting the value.
   *
   * The companion provides a default `given Bson` instance backed by `Bson.Config.Default`, and default decode-limit values
-  * (`DefaultMaxDepth`, `DefaultMaxCollectionSize`) shared with [[Json]]. `Config` carries `maxDepth` and `maxCollectionSize`, the
+  * (`DefaultMaxDepth`, `DefaultMaxCollectionSize`) shared with every built-in codec via [[Codec.DefaultMaxDepth]] and
+  * [[Codec.DefaultMaxCollectionSize]]. `Config` carries `maxDepth` and `maxCollectionSize`, the
   * traversal limits enforced while parsing or decoding; every `encode`/`decode` overload either takes an explicit `Config`, explicit
   * `maxDepth`/`maxCollectionSize` values, or falls back to the contextual `Bson` instance's own configured limits.
   *
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
   * @see
-  *   [[kyo.Json]] for JSON serialization
+  *   `Json` in the kyo-schema-json module for JSON serialization
   */
 object Bson:
     inline val DefaultMaxDepth = Codec.DefaultMaxDepth

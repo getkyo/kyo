@@ -28,7 +28,7 @@ end Yaml
   * uses a direct YAML [[Codec.Reader]] path, so ordinary decode does not require a YAML DOM, a whole-document event tape, or a JSON bridge.
   *
   * @see
-  *   [[kyo.Json]] for JSON serialization
+  *   `Json` in the kyo-schema-json module for JSON serialization
   * @see
   *   [[kyo.Schema]] for type-driven serialization
   */
@@ -134,7 +134,7 @@ object Yaml:
       *
       * `ReaderConfig` keeps parser limits and stream selection in one value so callers can choose a document from a multi-document stream
       * without losing access to safety limits. `yamlVersion` selects scalar resolution rules for schema decoding. `maxDepth` limits nested
-      * codec reads, and `maxCollectionSize` limits collection entries in the same way as [[Json]] decoding. `documentIndex` is empty for
+      * codec reads, and `maxCollectionSize` limits collection entries in the same way as `Json` decoding. `documentIndex` is empty for
       * single-document decoding and set to `DocumentIndex(n)` to decode the zero-based nth document from a stream. `documentMode` controls
       * how single-value decoding handles streams when no `documentIndex` is selected. `MergeTopLevelMappings` concatenates non-empty stream
       * documents as fragments of one top-level mapping, which can decode case classes and wrapped ADT variants whose fields are split across

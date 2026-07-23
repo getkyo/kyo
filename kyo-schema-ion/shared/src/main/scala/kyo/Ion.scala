@@ -40,7 +40,7 @@ end Ion
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
   * @see
-  *   [[kyo.Json]] for JSON serialization
+  *   `Json` in the kyo-schema-json module for JSON serialization
   */
 object Ion:
     /** Selects the Ion wire format used by configured byte helpers and codec-polymorphic `Ion` instances. */

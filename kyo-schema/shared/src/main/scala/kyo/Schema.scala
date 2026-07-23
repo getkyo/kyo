@@ -23,8 +23,8 @@ import scala.language.dynamics
   * methods return `Any` due to `transparent inline`, at runtime the result is always `Schema[A] { type Focused = F' }` where `F'` reflects
   * the new shape.
   *
-  * Serialization (JSON / Protobuf) is not on Schema itself. Use [[Json]] and [[Protobuf]] as entry points; they require a `Schema[A]` given
-  * to be in scope.
+  * Serialization (JSON / Protobuf) is not on Schema itself. Use `Json` (kyo-schema-json module) and `Protobuf` (kyo-schema-protobuf
+  * module) as entry points; they require a `Schema[A]` given to be in scope.
   *
   * {{{
   * val schema = Schema[User]
@@ -2531,7 +2531,7 @@ object Schema:
       * Unit serializes as an empty JSON object `{}`, not as `null`. The reasoning: Scala's `Unit` carries no
       * information, which in JSON wire vocabulary is the "empty object" rather than the "literal null value".
       * Using `null` for the canonical write form would conflate Unit with absent-Maybe / None-Option (both of
-      * which DO mean null on the wire) and would break JSON Schema describers like [[Json.JsonSchema]] that
+      * which DO mean null on the wire) and would break JSON Schema describers like `Json.JsonSchema` that
       * need a `type: "object"` shape for downstream consumers (MCP tool `inputSchema`, OpenAPI request bodies,
       * JSON Schema validators).
       *

@@ -3,7 +3,7 @@ package kyo
 /** A [[Codec]] for the MessagePack binary serialization format.
   *
   * MessagePack (https://msgpack.org) is a compact, self-describing binary format: every value carries a type tag on the wire, so a decoder
-  * can walk arbitrary data without a schema. This places MsgPack between [[Protobuf]] (compact but schema-required) and [[Json]]
+  * can walk arbitrary data without a schema. This places MsgPack between `Protobuf` (compact but schema-required) and `Json`
   * (self-describing but text). Because it is self-describing, [[kyo.internal.msgpack.MsgPackReader]] is a [[Codec.IntrospectingReader]],
   * so `Structure.Value` and open-shaped wire protocols (JSON-RPC style envelopes) round-trip through MsgPack.
   *
@@ -22,7 +22,7 @@ package kyo
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
   * @see
-  *   [[kyo.Protobuf]] for compact schema-required binary serialization
+  *   `Protobuf` in the kyo-schema-protobuf module for compact schema-required binary serialization
   */
 final class MsgPack(val config: MsgPack.Config = MsgPack.Config.Default) extends Codec:
     def newWriter(): Codec.Writer = kyo.internal.msgpack.MsgPackWriter(config)

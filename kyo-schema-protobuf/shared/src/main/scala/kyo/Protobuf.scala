@@ -21,7 +21,7 @@ end Protobuf
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
   * @see
-  *   [[kyo.Json]] for JSON serialization
+  *   `Json` in the kyo-schema-json module for JSON serialization
   */
 object Protobuf:
     /** Proto3 conformance mode for the Protobuf codec.
