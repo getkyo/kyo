@@ -7,6 +7,9 @@ import kyo.Schema.*
 // Shared format-agnostic codec test fixtures: local schema types, the token-based
 // TestWriter/TestReader pair, and the round-trip helper. Kept in kyo-schema test scope so
 // suites in the format modules and kyo-schema-tests can reuse them via test->test.
+// Because this file's name is outside the Frame macro's Test/Spec allowlist, top-level
+// givens must pass `Frame.internal` explicitly; helpers instead propagate the caller's
+// Frame via a using parameter.
 
 // --- Local test types ---
 
