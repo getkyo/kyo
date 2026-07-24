@@ -683,9 +683,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     )))
                 end if
             case Present(_) =>
+                // NoStackTrace: constructed on the driver carrier, whose stack crosses C poller
+                // frames the Scala Native unwinder cannot step through on arm64; the trace would
+                // record driver internals anyway, not the misusing caller on its own fiber.
                 promise.completeDiscard(Result.panic(new IllegalStateException(
                     s"$label duplicate awaitConnect for ${handleLabel(handle)}"
-                )))
+                ) with scala.util.control.NoStackTrace))
         end match
     end awaitConnect
 
