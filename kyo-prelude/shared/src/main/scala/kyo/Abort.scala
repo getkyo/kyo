@@ -427,6 +427,47 @@ object Abort:
     ): (A | B) < (S & reduce.SReduced & Abort[Nothing]) =
         runWith[E](v)(_.foldError(identity, onError))
 
+    /** Observes an Abort failure with a side effect, then re-raises it unchanged.
+      *
+      * This is the non-consuming sibling of [[recover]]: `onFail` runs when the computation fails with an E, and the failure is
+      * re-raised afterwards so enclosing handlers still see it. Success values and panics pass through without evaluating `onFail`
+      * (see [[tapError]] to observe panics too). Use it for intermediate observation such as logging or metrics, where the failure's
+      * fate is decided elsewhere.
+      *
+      * @param onFail
+      *   A function invoked with the failure value of type E; its result is discarded
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   The original computation, with `onFail` run on an E failure and that failure re-raised unchanged
+      */
+    def tap[E](
+        using Frame
+    )[A, S, S2, ER](onFail: E => Any < S2)(v: => A < (Abort[E | ER] & S))(
+        using ConcreteTag[E]
+    ): A < (Abort[E | ER] & S & S2) =
+        recover[E](e => onFail(e).andThen(Abort.fail(e)))(v)
+
+    /** Observes an Abort failure or panic with a side effect, then re-raises it unchanged.
+      *
+      * This is the non-consuming sibling of [[recoverError]]: `onError` receives the full [[Result.Error]] (`Failure(e)` or
+      * `Panic(t)`) and then the error is re-raised so enclosing handlers still see it. Success values pass through without
+      * evaluating `onError`.
+      *
+      * @param onError
+      *   A function invoked with the Error value (either Failure[E] or Panic); its result is discarded
+      * @param v
+      *   The original computation that may fail or panic
+      * @return
+      *   The original computation, with `onError` run on an error and that error re-raised unchanged
+      */
+    def tapError[E](
+        using Frame
+    )[A, S, S2, ER](onError: Error[E] => Any < S2)(v: => A < (Abort[E | ER] & S))(
+        using ConcreteTag[E]
+    ): A < (Abort[E | ER] & S & S2) =
+        recoverError[E](err => onError(err).andThen(Abort.error(err)))(v)
+
     /** Recovers from an Abort failure by applying the provided function.
       *
       * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
