@@ -259,7 +259,7 @@ One source tree, one Scala 3 LTS compiler, four published targets:
 
 Scala.js and the WebAssembly backend share a single-threaded, event-loop concurrency model; on the JVM, Kyo runs its multi-threaded work-stealing scheduler.
 
-WebAssembly uses the experimental Scala.js WebAssembly backend (WasmGC). It runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default; Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js with one exception: the cats-effect binding `kyo-compat-ce` is not built for WASM, because cats-effect does not yet support the backend ([cats-effect#4608](https://github.com/typelevel/cats-effect/issues/4608)).
+WebAssembly uses the experimental Scala.js WebAssembly backend (WasmGC). It runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default; Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js.
 
 ## Modules
 
@@ -358,15 +358,15 @@ In-process metrics and tracing registry, OTLP exporter that activates from `OTEL
 
 ### Interop
 
-Whatever you keep from your current stack, there is a bridge. Bidirectional bridges to neighbouring effect systems, plus `kyo-compat` for writing a library once and shipping it to six runtimes.
+Whatever you keep from your current stack, there is a bridge. Bidirectional bridges to neighbouring effect systems, plus `kyo-compat` for writing a library once and shipping it to five runtimes.
 
 | Module                                                   | JVM | JS  | Native | WASM | Identity                                                                                                  |
 | -------------------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-compat](kyo-compat/README.md)                       | ✅  | ✅* | ✅*    | ✅*  | Library-author API: write once against `kyo.compat.*`, ship to ZIO, CE, Kyo, Future, Twitter Future, Ox   |
+| [kyo-compat](kyo-compat/README.md)                       | ✅  | ✅* | ✅*    | ✅*  | Library-author API: write once against `kyo.compat.*`, ship to ZIO, Kyo, Future, Twitter Future, Ox       |
 | [kyo-reactive-streams](kyo-reactive-streams/README.md)   | ✅  | ✅  | ✅     | ✅   | Bidirectional bridge between Kyo `Stream` and `Publisher`/`Subscriber`; verified against the TCK          |
 | [kyo-zio](kyo-zio/README.md)                             | ✅  | ✅  | ✅     | ✅   | Three-object bridge: `ZIOs` (effects), `ZStreams` (streams), `ZLayers` (layers)                           |
 
-*kyo-compat platform support depends on the runtime binding (-kyo / -future / -zio: JVM+JS+Native+WASM; -ce: JVM+JS; -ox / -twitter-future: JVM).
+*kyo-compat platform support depends on the runtime binding (-kyo / -future / -zio: JVM+JS+Native+WASM; -ox / -twitter-future: JVM).
 
 ### Dev tools
 
@@ -408,14 +408,14 @@ What changes is the effect channel. Kyo's pending set generalizes what these lib
 | `Ref[IO, A]` / `zio.Ref`                                     | `AtomicRef`, `AtomicInt`, `AtomicLong`, `AtomicBoolean`                                                                                                                                        |
 | `Deferred[IO, A]` / `zio.Promise`                            | `Promise`                                                                                                                                                                                      |
 | `cats.effect.std.Queue` / `zio.Queue`                        | `Queue` with `Access` policy (MPMC / MPSC / SPMC / SPSC)                                                                                                                                       |
-| tagless final / `Sync[F]` typeclasses (library authors)      | [`kyo-compat`](kyo-compat/README.md): write once, ship to ZIO + Cats Effect + Kyo + Future + Twitter Future + Ox via inline lowering, no typeclass dispatch                                    |
+| tagless final / `Sync[F]` typeclasses (library authors)      | [`kyo-compat`](kyo-compat/README.md): write once, ship to ZIO + Kyo + Future + Twitter Future + Ox via inline lowering, no typeclass dispatch                                                  |
 | http4s / tapir / Play / sttp                                 | [`kyo-http`](kyo-http/README.md)                                                                                                                                                               |
 
 Three migration paths cover most adopters:
 
 - **Adopt Kyo end-to-end**: start at [Core](#core) and [Applications](#applications), then pick the other module groups you need.
 - **Add Kyo inside an existing ZIO app**: use [`kyo-zio`](kyo-zio/README.md) for bidirectional effect interop; optionally swap the runtime scheduler with [`kyo-scheduler-zio`](kyo-scheduler-zio/README.md).
-- **Write a runtime-portable library**: use [`kyo-compat`](kyo-compat/README.md) to target ZIO, Cats Effect, Kyo, `scala.concurrent.Future`, Twitter Future, and Ox from one source tree.
+- **Write a runtime-portable library**: use [`kyo-compat`](kyo-compat/README.md) to target ZIO, Kyo, `scala.concurrent.Future`, Twitter Future, and Ox from one source tree.
 
 ZIO migrants looking for fluent extension methods (`.race`, `.timeout`, `.retry`, `.provide`, etc.) over Kyo effects should also see [`kyo-combinators`](kyo-combinators/README.md), which is also where Cats Effect migrants find the cats-syntax-style operators (`*>`, `<*`, `>>`) and the `forAbort[E1]` failure-narrowing DSL. Migrants whose fs2 / ZStream code crosses into Kyo can route through the bidirectional `Stream` bridge in [`kyo-reactive-streams`](kyo-reactive-streams/README.md).
 

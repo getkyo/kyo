@@ -13,7 +13,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "0.1.0-TEST"
     )
-    .compatLibrary(KyoLib, ZioLib, CeLib, OxLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .compatLibrary(KyoLib, ZioLib, OxLib, TwitterFutureLib)(VirtualAxis.jvm)(Seq("3.3.4"))
 
 // Cross-backend aggregator. Should fan to all 5 backends' JVM cells.
 lazy val myLibAll = myLib.aggregate("my-lib-all")
@@ -35,7 +35,7 @@ checkProjects := {
     // so the JVM and Scala suffixes are suppressed in project ids — leaving
     // just the backend suffix (the plugin's own canonical-row id choice;
     // the root build's cross-projects carry explicit JVM suffixes).
-    val expected = Set("myLibFuture", "myLibKyo", "myLibZio", "myLibCe", "myLibOx")
+    val expected = Set("myLibFuture", "myLibKyo", "myLibZio", "myLibOx", "myLibTwitterFuture")
     val actual   = ext.structure.allProjectRefs.map(_.project).toSet
     val missing  = expected -- actual
     if (missing.nonEmpty)
@@ -51,11 +51,11 @@ checkDeps := {
     val s   = Keys.state.value
     val ext = sbt.Project.extract(s)
     val pairs = Seq(
-        myLib.future.jvm -> "kyo-compat-future",
-        myLib.kyo.jvm    -> "kyo-compat-kyo",
-        myLib.zio.jvm    -> "kyo-compat-zio",
-        myLib.ce.jvm     -> "kyo-compat-ce",
-        myLib.ox.jvm     -> "kyo-compat-ox"
+        myLib.future.jvm        -> "kyo-compat-future",
+        myLib.kyo.jvm           -> "kyo-compat-kyo",
+        myLib.zio.jvm           -> "kyo-compat-zio",
+        myLib.ox.jvm            -> "kyo-compat-ox",
+        myLib.twitterFuture.jvm -> "kyo-compat-twitter-future"
     )
     pairs.foreach { case (proj, expectedArtifact) =>
         val deps = ext.get(proj / Keys.libraryDependencies)
@@ -79,7 +79,7 @@ checkSharedSources := {
     val ext          = sbt.Project.extract(s)
     val sharedScala  = (file("my-lib") / "shared" / "src" / "main" / "scala").getCanonicalFile
     val sharedTest   = (file("my-lib") / "shared" / "src" / "test" / "scala").getCanonicalFile
-    val backendProjs = Seq(myLib.future.jvm, myLib.kyo.jvm, myLib.zio.jvm, myLib.ce.jvm, myLib.ox.jvm)
+    val backendProjs = Seq(myLib.future.jvm, myLib.kyo.jvm, myLib.zio.jvm, myLib.ox.jvm, myLib.twitterFuture.jvm)
     backendProjs.foreach { proj =>
         val mainDirs = ext.get(proj / Compile / Keys.unmanagedSourceDirectories)
             .map(_.getCanonicalFile)
@@ -104,11 +104,11 @@ checkBackendBaseDirs := {
     val ext = sbt.Project.extract(s)
     // compatLibrary pins baseDirectory to <matrixBase>/<backend.name>/<platform>/.
     val pairs = Seq(
-        myLib.future.jvm -> (file("my-lib") / "future" / "jvm"),
-        myLib.kyo.jvm    -> (file("my-lib") / "kyo"    / "jvm"),
-        myLib.zio.jvm    -> (file("my-lib") / "zio"    / "jvm"),
-        myLib.ce.jvm     -> (file("my-lib") / "ce"     / "jvm"),
-        myLib.ox.jvm     -> (file("my-lib") / "ox"     / "jvm")
+        myLib.future.jvm        -> (file("my-lib") / "future"         / "jvm"),
+        myLib.kyo.jvm           -> (file("my-lib") / "kyo"            / "jvm"),
+        myLib.zio.jvm           -> (file("my-lib") / "zio"            / "jvm"),
+        myLib.ox.jvm            -> (file("my-lib") / "ox"             / "jvm"),
+        myLib.twitterFuture.jvm -> (file("my-lib") / "twitter-future" / "jvm")
     )
     pairs.foreach { case (proj, expectedDir) =>
         val actual = ext.get(proj / Keys.baseDirectory).getCanonicalFile
@@ -125,11 +125,11 @@ checkArtifactNames := {
     // moduleName = name.value + backend.directorySuffix; name is `myLib`
     // (matrix's id) by default — projectMatrix sets `name := self.id`.
     val pairs = Seq(
-        myLib.future.jvm -> "myLib-future",
-        myLib.kyo.jvm    -> "myLib-kyo",
-        myLib.zio.jvm    -> "myLib-zio",
-        myLib.ce.jvm     -> "myLib-ce",
-        myLib.ox.jvm     -> "myLib-ox"
+        myLib.future.jvm        -> "myLib-future",
+        myLib.kyo.jvm           -> "myLib-kyo",
+        myLib.zio.jvm           -> "myLib-zio",
+        myLib.ox.jvm            -> "myLib-ox",
+        myLib.twitterFuture.jvm -> "myLib-twitter-future"
     )
     pairs.foreach { case (proj, expectedName) =>
         val actual = ext.get(proj / Keys.moduleName)

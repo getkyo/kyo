@@ -6,7 +6,7 @@ import com.twitter.concurrent.AsyncStream
   * and `lower` are identity since the carrier is already a native `AsyncStream`. Twitter Future has no `Frame` / `Trace` to propagate.
   * `unfold` is defined via recursion through `AsyncStream.mk(head, => tail)` since `AsyncStream` ships no native unfold. Effectful `tap`
   * and `filter` compose `AsyncStream.mapF` / `flatMap` with Future combinators (`Future.map`, `AsyncStream.fromFuture`) — the wraps are
-  * state-free, matching the shape of the Cats Effect binding's `Stream.eval(c.lower).flatMap(Stream.emits)`. Terminal `run` / `foldPure` /
+  * state-free. Terminal `run` / `foldPure` /
   * `foreach` / `discard` lower to `AsyncStream.toSeq()` / `foldLeft` / `foreachF` / `force` respectively, wrapped via `CIO.deferLift` so
   * each materialization re-runs the stream.
   */

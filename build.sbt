@@ -319,7 +319,6 @@ lazy val kyoJVM: Project = project
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
-        `kyo-compat-ce`.jvm,
         `kyo-compat-ox`.jvm,
         `kyo-compat-twitter-future`.jvm,
         `kyo-compat-plugin`,
@@ -390,7 +389,6 @@ lazy val kyoJS = project
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
         `kyo-compat-zio`.js,
-        `kyo-compat-ce`.js,
         `kyo-test-api`.js,
         `kyo-test-runner`.js,
         `kyo-test-prop`.js,
@@ -2057,38 +2055,6 @@ lazy val `kyo-compat-zio` =
         )
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .wasmSettings(`wasm-settings`)
-
-// TODO(wasm): re-enable with cats-effect WASM support (typelevel/cats-effect#4608).
-lazy val `kyo-compat-ce` =
-    crossProject(JSPlatform, JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-compat/bindings/ce"))
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
-            scalacOptions += "-Xmax-inlines:1024",
-            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
-            libraryDependencies += "co.fs2"        %%% "fs2-core"    % "3.13.0",
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
-            },
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
-            }
-        )
-        .jsSettings(`js-settings`)
-        .jvmSettings(
-            mimaCheck(false),
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
-            },
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
-            }
-        )
-        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
 
 lazy val `kyo-compat-ox` =
     crossProject(JVMPlatform)

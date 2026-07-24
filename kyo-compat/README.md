@@ -34,7 +34,7 @@ type QueryResult = String
 ```
 -->
 
-kyo-compat lets you write a library once against the `kyo.compat.*` surface and ship it to all 6 backends. Consumers pick the runtime at deploy time (ZIO, Cats Effect, scala.concurrent.Future, Ox, Twitter Future, or Kyo); each pulls only its own runtime's jar.
+kyo-compat lets you write a library once against the `kyo.compat.*` surface and ship it to all 5 backends. Consumers pick the runtime at deploy time (ZIO, scala.concurrent.Future, Ox, Twitter Future, or Kyo); each pulls only its own runtime's jar.
 
 - **Overhead-free.** Every method is `inline def` and lowers at the call site to the backend's primitive. No typeclass dispatch, no adapter layer.
 - **Runtime-free.** Each backend artifact depends only on its target runtime. No dependencies on other Kyo modules.
@@ -47,18 +47,17 @@ The cross-backend computation type, `CIO[+A]`, is an opaque alias whose definiti
 |----------------|--------------------------------------------------|----------------------------|
 | Kyo            | `A < (Abort[Throwable] & Async)`                 | `kyo-compat-kyo`           |
 | ZIO            | `zio.ZIO[Any, Throwable, A]`                     | `kyo-compat-zio`           |
-| Cats Effect    | `cats.effect.IO[A]`                              | `kyo-compat-ce`            |
 | Future         | `LocalCtx => scala.concurrent.Future[A]`         | `kyo-compat-future`        |
 | Ox             | `(Int, ox.Ox) => A`                                | `kyo-compat-ox`            |
 | Twitter Future | `() => com.twitter.util.Future[A]`               | `kyo-compat-twitter-future`|
 
 ## The error channel
 
-`CIO` has one portable failure lane: `Throwable`. That is the compatibility boundary. Backends with a first-class error channel still use it underneath, but the error type is fixed by `CIO`: the Kyo binding is `A < (Abort[Throwable] & Async)`, and the ZIO binding is `ZIO[Any, Throwable, A]`. Cats Effect, Future, Ox, and Twitter Future also surface failures as throwables, so the shared API can offer `CIO.fail`, `.recover`, `.fold`, `.mapError`, and `.liftToTry` uniformly across all six bindings.
+`CIO` has one portable failure lane: `Throwable`. That is the compatibility boundary. Backends with a first-class error channel still use it underneath, but the error type is fixed by `CIO`: the Kyo binding is `A < (Abort[Throwable] & Async)`, and the ZIO binding is `ZIO[Any, Throwable, A]`. Future, Ox, and Twitter Future also surface failures as throwables, so the shared API can offer `CIO.fail`, `.recover`, `.fold`, `.mapError`, and `.liftToTry` uniformly across all five bindings.
 
 This means `CIO[A]` is not the portable form of a backend-specific `A < Abort[E]` or `ZIO[R, E, A]` with an arbitrary typed error `E`. If a library needs typed domain errors in its public portable API, model them as values in the success type or translate them to `Throwable` at the `CIO` boundary. When backend-specific typed recovery, partial error elimination, or defect inspection matters, use `.lower` to work with the native carrier and wrap the result with `CIO.lift` afterward. The [error handling](#error-handling) section below lists the portable operations.
 
-Kyo, ZIO, and Cats Effect alias a backend effect type directly: `A < S`, `ZIO`, and `IO` are already lazy, referentially-transparent descriptions, so `CIO` inherits that. The other three carriers are functions because their runtimes are not lazy. `scala.concurrent.Future` and Twitter's `Future` are eager (constructing one starts the computation), and Ox is direct-style with no effect type. Wrapping the runtime in a cold function (`() => Future[A]`, `LocalCtx => Future[A]`, `(Int, Ox) => A`) keeps a `CIO` value a description: nothing runs until `unsafeRun` applies the function, and each application is a fresh run. So a `CIO[A]` is referentially transparent on every backend.
+Kyo and ZIO alias a backend effect type directly: `A < S` and `ZIO` are already lazy, referentially-transparent descriptions, so `CIO` inherits that. The other three carriers are functions because their runtimes are not lazy. `scala.concurrent.Future` and Twitter's `Future` are eager (constructing one starts the computation), and Ox is direct-style with no effect type. Wrapping the runtime in a cold function (`() => Future[A]`, `LocalCtx => Future[A]`, `(Int, Ox) => A`) keeps a `CIO` value a description: nothing runs until `unsafeRun` applies the function, and each application is a fresh run. So a `CIO[A]` is referentially transparent on every backend.
 
 `CIO` exposes `.map` and `.flatMap` directly, alongside `CIO.zip`, `CIO.foreach`, `.recover`, `.fold`, and the rest. The same source compiles against every backend. A single `import kyo.compat.*` is sufficient on every backend, including Kyo.
 
@@ -80,11 +79,11 @@ object Greeter:
 end Greeter
 ```
 
-`Greeter` compiles unchanged against every `kyo-compat-X` artifact. The consumer picks a backend at deploy time with one dependency. For Cats Effect:
+`Greeter` compiles unchanged against every `kyo-compat-X` artifact. The consumer picks a backend at deploy time with one dependency. For ZIO:
 
 ```scala doctest:expect=skipped
 // build.sbt
-libraryDependencies += "io.getkyo" %% "kyo-compat-ce" % "<latest version>"
+libraryDependencies += "io.getkyo" %% "kyo-compat-zio" % "<latest version>"
 ```
 
 `unsafeRun` then materializes the `CIO` into a `scala.concurrent.Future`:
@@ -96,7 +95,7 @@ val greeting: scala.concurrent.Future[String] = Greeter.greeting.unsafeRun
 // hello from kyo-compat 1.0
 ```
 
-Linking `kyo-compat-zio` instead runs the same `Greeter` on ZIO, `kyo-compat-future` on `scala.concurrent.Future`, and so on. `unsafeRun` returns `scala.concurrent.Future[A]` on every binding, with the backend's default global runtime (CE's `IORuntime`, ZIO's `Runtime`, etc.) bound inside it. The Ox binding's `unsafeRun` additionally needs a `given ExecutionContext` to bridge the Ox computation onto a `Future`; the Kyo binding's needs only a `Frame`, which the compiler synthesizes at the call site; the other four take no user-supplied implicit.
+Linking `kyo-compat-kyo` instead runs the same `Greeter` on Kyo, `kyo-compat-future` on `scala.concurrent.Future`, and so on. `unsafeRun` returns `scala.concurrent.Future[A]` on every binding, with the backend's default global runtime (ZIO's `Runtime`, etc.) bound inside it. The Ox binding's `unsafeRun` additionally needs a `given ExecutionContext` to bridge the Ox computation onto a `Future`; the Kyo binding's needs only a `Frame`, which the compiler synthesizes at the call site; the other three take no user-supplied implicit.
 
 For error recovery, use `.recover` anywhere in the chain:
 
@@ -126,10 +125,9 @@ An exception escaping the thunk is caught and surfaced through the failure chann
 
 The rule: never `lift` side-effecting code. `lift` is identity on an already-built, pure carrier. `deferLift` suspends code that produces a backend effect. `defer` suspends code that produces a plain value. `CIO.value(a)` wraps an already-evaluated value.
 
-`CIO.lift(effect)` wraps an already-constructed, pure backend effect value as a `CIO[A]` (a `cats.effect.IO`, a `zio.ZIO`, a Kyo `A < S`, or a finished `Future`). `CIO.deferLift { ... }` suspends side-effecting code that produces the backend effect, re-running it on every materialization; on Future the block receives an ambient `LocalCtx` and yields a `Future[A]`, on Ox an ambient `Ox` capability. `CIO.defer { thunk }` suspends code that produces a plain, non-effect value, re-running it on every materialization. `CIO.value(a)` wraps an already-evaluated value in a successful `CIO` without suspending anything. `c.lower` extracts the backend carrier back out.
+`CIO.lift(effect)` wraps an already-constructed, pure backend effect value as a `CIO[A]` (a `zio.ZIO`, a Kyo `A < S`, or a finished `Future`). `CIO.deferLift { ... }` suspends side-effecting code that produces the backend effect, re-running it on every materialization; on Future the block receives an ambient `LocalCtx` and yields a `Future[A]`, on Ox an ambient `Ox` capability. `CIO.defer { thunk }` suspends code that produces a plain, non-effect value, re-running it on every materialization. `CIO.value(a)` wraps an already-evaluated value in a successful `CIO` without suspending anything. `c.lower` extracts the backend carrier back out.
 
 ```scala doctest:expect=skipped
-val onCe: CIO[Int]  = CIO.lift(cats.effect.IO.pure(42))
 val onZio: CIO[Int] = CIO.lift(zio.ZIO.succeed(42))
 val onFut: CIO[Int] =
     CIO.deferLift { scala.concurrent.Future(42)(using scala.concurrent.ExecutionContext.parasitic) }
@@ -206,7 +204,7 @@ def loadProfile(id: String): CIO[Profile] =
     yield Profile(user, followers)
 ```
 
-Failures short-circuit through both: a failed `c` skips `f` and propagates. To run a `CIO` and obtain a `scala.concurrent.Future[A]`, call `c.unsafeRun`; CE / ZIO / Kyo / Future / Twitter Future bind their default global runtime internally, and only the Ox binding requires the caller to supply a `given ExecutionContext`.
+Failures short-circuit through both: a failed `c` skips `f` and propagates. To run a `CIO` and obtain a `scala.concurrent.Future[A]`, call `c.unsafeRun`; ZIO / Kyo / Future / Twitter Future bind their default global runtime internally, and only the Ox binding requires the caller to supply a `given ExecutionContext`.
 
 ### Resources
 
@@ -225,7 +223,7 @@ val readFile: CIO[String] =
     }
 ```
 
-`release` returns `CIO[Unit]`. When `use` succeeds, a failing `release` propagates as `acquireReleaseWith`'s failure on every backend except Kyo (which logs the release error via `kyo.logs` and lets `use`'s value win). When `use` fails, `use`'s throwable always wins; the release failure is handled differently by each backend. Ox attaches it as a suppressed exception on `use`'s throwable; Cats Effect propagates it through its native bracket reporter; ZIO reifies it as a defect on the cause channel (via `.orDie`); Future and Twitter Future silently drop it; Kyo logs via `kyo.logs`. See [Backends](#backends) for the per-binding contract.
+`release` returns `CIO[Unit]`. When `use` succeeds, a failing `release` propagates as `acquireReleaseWith`'s failure on every backend except Kyo (which logs the release error via `kyo.logs` and lets `use`'s value win). When `use` fails, `use`'s throwable always wins; the release failure is handled differently by each backend. Ox attaches it as a suppressed exception on `use`'s throwable; ZIO reifies it as a defect on the cause channel (via `.orDie`); Future and Twitter Future silently drop it; Kyo logs via `kyo.logs`. See [Backends](#backends) for the per-binding contract.
 
 ### Async callbacks
 
@@ -256,13 +254,13 @@ val mustComplete: CIO[User] =
 
 `CIO.sleep`, `CIO.delay`, `CIO.timeout`, and `CIO.timeoutWithError` all accept `scala.concurrent.duration.FiniteDuration`. `CIO.now` returns `java.time.Instant`. `CIO.nowMonotonic` returns `FiniteDuration` (a monotonic timestamp since some backend-defined origin). Duration literals (`500L.millis`, `1.second`, etc.) come from `import scala.concurrent.duration.*`.
 
-When a deadline expires, the returned `CIO` resolves to `None` (or fails with the supplied error). The CIO surface does not expose cancellation, so on the Future binding the inner computation keeps running orphaned even after the timeout fires. Bindings whose underlying runtime cancels naturally (Kyo, ZIO, Cats Effect, Ox) cancel internally; Twitter Future uses `raiseWithin`, which propagates an interrupt to the inner `Future`.
+When a deadline expires, the returned `CIO` resolves to `None` (or fails with the supplied error). The CIO surface does not expose cancellation, so on the Future binding the inner computation keeps running orphaned even after the timeout fires. Bindings whose underlying runtime cancels naturally (Kyo, ZIO, Ox) cancel internally; Twitter Future uses `raiseWithin`, which propagates an interrupt to the inner `Future`.
 
 ### Concurrency primitives
 
-`CIO.zip(a, b)` (and arities up to 7) runs computations in parallel and returns a tuple. A sibling failure surfaces as the zip's failure; whether the other legs are cancelled or run to completion is a binding-specific detail (Kyo / ZIO / Cats Effect / Ox cancel via their native runtimes; Future and Twitter Future do not, and Twitter's `zip` uses `Future.join` which fails fast without raising).
+`CIO.zip(a, b)` (and arities up to 7) runs computations in parallel and returns a tuple. A sibling failure surfaces as the zip's failure; whether the other legs are cancelled or run to completion is a binding-specific detail (Kyo / ZIO / Ox cancel via their native runtimes; Future and Twitter Future do not, and Twitter's `zip` uses `Future.join` which fails fast without raising).
 
-`CIO.race(a, b)` returns the first leg to complete successfully. Whether the losing leg is cancelled is a binding-specific detail (Kyo / ZIO / Cats Effect / Ox cancel via their native runtimes; Twitter Future raises a `CancellationException` on the loser via `raise`; only the Future binding lets the loser run to completion).
+`CIO.race(a, b)` returns the first leg to complete successfully. Whether the losing leg is cancelled is a binding-specific detail (Kyo / ZIO / Ox cancel via their native runtimes; Twitter Future raises a `CancellationException` on the loser via `raise`; only the Future binding lets the loser run to completion).
 
 The full sequencing family:
 
@@ -308,7 +306,7 @@ Available operations: `CFiber.init(c): CIO[CFiber[A]]`, `fiber.get: CIO[A]`, `fi
 
 Use `CPromise` when the producing callback may fire multiple times and you want first-wins semantics (subsequent completions are dropped), or when producer and consumer don't share a closure.
 
-Each backend maps `CPromise` to its native single-assignment cell: `kyo.Promise`, `zio.Promise`, `cats.effect.Deferred`, `scala.concurrent.Promise`, `java.util.concurrent.CompletableFuture`, or `com.twitter.util.Promise`. The `lift`/`lower` bridge is available on every backend.
+Each backend maps `CPromise` to its native single-assignment cell: `kyo.Promise`, `zio.Promise`, `scala.concurrent.Promise`, `java.util.concurrent.CompletableFuture`, or `com.twitter.util.Promise`. The `lift`/`lower` bridge is available on every backend.
 
 Available operations: `CPromise.init[A]`, `p.succeed(a): CIO[Boolean]`, `p.fail(e): CIO[Boolean]`, `p.get: CIO[A]`, `p.poll: CIO[Option[Try[A]]]`, `p.done: CIO[Boolean]`.
 
@@ -318,7 +316,7 @@ Available operations: `CPromise.init[A]`, `p.succeed(a): CIO[Boolean]`, `p.fail(
 
 Use a channel when two concurrent fibers need to hand off a stream of values, e.g. a producer/consumer pipeline or a work queue. `CIO.zip` combines exactly two concurrent results; channels scale to any number of producers and consumers and continue across many rounds of data.
 
-Kyo, ZIO, Cats Effect, and Ox map `CChannel` to a bounded queue: `kyo.Channel`, `zio.Queue`, `cats.effect.std.Queue`, or `java.util.concurrent.LinkedBlockingQueue` (Ox). The Future and Twitter Future bindings implement `CChannel` as a plain `final class`: Future holds three `ConcurrentLinkedQueue`s (items, takers, putters) plus an `AtomicInteger` size counter, so `put`/`take` suspension reuses the binding's `Promise`-based wait machinery; Twitter combines `com.twitter.concurrent.AsyncSemaphore` (capacity bound) with `com.twitter.concurrent.AsyncQueue` (FIFO buffer). Neither blocks a thread. The surface intentionally omits `close`, `closed`, `size`, and `offer`, because their semantics differ enough across backends that a portable abstraction would swallow real differences.
+Kyo, ZIO, and Ox map `CChannel` to a bounded queue: `kyo.Channel`, `zio.Queue`, or `java.util.concurrent.LinkedBlockingQueue` (Ox). The Future and Twitter Future bindings implement `CChannel` as a plain `final class`: Future holds three `ConcurrentLinkedQueue`s (items, takers, putters) plus an `AtomicInteger` size counter, so `put`/`take` suspension reuses the binding's `Promise`-based wait machinery; Twitter combines `com.twitter.concurrent.AsyncSemaphore` (capacity bound) with `com.twitter.concurrent.AsyncQueue` (FIFO buffer). Neither blocks a thread. The surface intentionally omits `close`, `closed`, `size`, and `offer`, because their semantics differ enough across backends that a portable abstraction would swallow real differences.
 
 ```scala
 val pipeline: CIO[Int] =
@@ -337,7 +335,7 @@ Available operations: `CChannel.init[A](capacity)`, `ch.put(a): CIO[Unit]`, `ch.
 
 Use atomics for shared counters, flags, or lightweight references that multiple fibers need to update without a full mutex. For richer consistency requirements (transactions across multiple cells, STM) reach for backend-specific facilities via `lower`.
 
-Each backend maps to its native atomic type: `kyo.AtomicRef/Int/Long/Boolean`, `zio.Ref` per type, `cats.effect.kernel.Ref[IO, T]`, or `java.util.concurrent.atomic.*` (Future, Ox, Twitter Future).
+Each backend maps to its native atomic type: `kyo.AtomicRef/Int/Long/Boolean`, `zio.Ref` per type, or `java.util.concurrent.atomic.*` (Future, Ox, Twitter Future).
 
 ```scala
 val total: CIO[Int] =
@@ -358,7 +356,7 @@ Available operations:
 
 Use `local.let(v)(body)` to install a value for the duration of `body`, then automatically revert. Use `local.get` to read the current fiber's value. The `update(f)` variant composes both: it reads the current value, applies `f`, and installs the result for the body.
 
-`CLocal.init(default)` returns `CIO[CLocal[A]]`. Construction is deferred to effect-evaluation time so each call allocates a fresh local. Each backend maps to a fiber-local mechanism: Kyo `Local`, ZIO `FiberRef`, CE `IOLocal`, Ox `ox.ForkLocal` (backed by JDK `ScopedValue`), Twitter Future's `com.twitter.util.Local`, or, on the Future binding, an immutable `LocalCtx` map threaded through the `LocalCtx => Future[A]` carrier.
+`CLocal.init(default)` returns `CIO[CLocal[A]]`. Construction is deferred to effect-evaluation time so each call allocates a fresh local. Each backend maps to a fiber-local mechanism: Kyo `Local`, ZIO `FiberRef`, Ox `ox.ForkLocal` (backed by JDK `ScopedValue`), Twitter Future's `com.twitter.util.Local`, or, on the Future binding, an immutable `LocalCtx` map threaded through the `LocalCtx => Future[A]` carrier.
 
 ```scala
 val program: CIO[Response] =
@@ -369,7 +367,7 @@ val program: CIO[Response] =
 
 Per-backend propagation notes:
 
-- **Kyo**, **ZIO**, **Cats Effect**: native fiber-local mechanism (`Local`, `FiberRef`, `IOLocal`).
+- **Kyo**, **ZIO**: native fiber-local mechanism (`Local`, `FiberRef`).
 - **Twitter Future**: `com.twitter.util.Local`; the Twitter scheduler propagates snapshots across async boundaries automatically. `CLocal` is a `(Local[A], A)` pair (the `Local` plus its configured default), and `lift`/`lower` operate on that pair.
 - **scala.concurrent.Future**: an immutable `LocalCtx` (a `Map[Any, Any]`) is the carrier of every `CIO`: `CIO[+A] = LocalCtx => Future[A]`. `let(v)(body)` constructs an updated `LocalCtx` keyed by the local's identity and runs `body` with it; `get` reads from the ctx. Because the ctx is threaded through the carrier rather than stored in a thread-local, propagation is independent of the `ExecutionContext` used for `Future` execution.
 - **Ox**: an `ox.ForkLocal[A]` backed by JDK `ScopedValue`. `let(v)(body)` opens a `scopedWhere` scope; all forks inside that scope inherit the value. After the scope exits, the value reverts to the default.
@@ -380,7 +378,7 @@ Available operations: `CLocal.init(default): CIO[CLocal[A]]`, `local.get: CIO[A]
 
 These are coordination primitives for multi-fiber rendezvous. Skip on first read; reach for them when several concurrent computations need to synchronise on a shared rendezvous point.
 
-`CLatch` is a count-down latch: a one-shot counter that starts at `n`, decrements on each `release`, and unblocks every `await` once the counter reaches zero. It is the right primitive for "wait until N concurrent jobs have all signalled completion." Kyo, ZIO, and Cats Effect map to a native countdown (`kyo.Latch`, `zio.concurrent.CountdownLatch`, `cats.effect.std.CountDownLatch`); Ox uses `java.util.concurrent.CountDownLatch`. The Future and Twitter Future bindings implement `CLatch` as a plain `final class` over a `Promise` (resolved when the counter hits zero), so `await` composes with the binding's future type without blocking a thread. `CLatch.init(n)` normalizes `n <= 0` to "already released"; `await` returns immediately and does not throw.
+`CLatch` is a count-down latch: a one-shot counter that starts at `n`, decrements on each `release`, and unblocks every `await` once the counter reaches zero. It is the right primitive for "wait until N concurrent jobs have all signalled completion." Kyo and ZIO map to a native countdown (`kyo.Latch`, `zio.concurrent.CountdownLatch`); Ox uses `java.util.concurrent.CountDownLatch`. The Future and Twitter Future bindings implement `CLatch` as a plain `final class` over a `Promise` (resolved when the counter hits zero), so `await` composes with the binding's future type without blocking a thread. `CLatch.init(n)` normalizes `n <= 0` to "already released"; `await` returns immediately and does not throw.
 
 ```scala
 def waitForAll(jobs: Seq[CIO[Unit]]): CIO[Unit] =
@@ -393,7 +391,7 @@ def waitForAll(jobs: Seq[CIO[Unit]]): CIO[Unit] =
 
 Available operations: `CLatch.init(n)`, `latch.release: CIO[Unit]`, `latch.await: CIO[Unit]`.
 
-`CMeter` is a counting semaphore: a pool of `n` permits used to cap the number of concurrent operations. `meter.run(c)` acquires one permit, runs `c`, and releases on completion (success or failure). Use it for bounded parallelism: `CIO.foreach(urls)(u => meter.run(fetch(u)))` caps in-flight fetches at `n` regardless of how many URLs are passed. Kyo, ZIO, and Cats Effect map to `kyo.Meter`, `zio.Semaphore`, `cats.effect.std.Semaphore`; Ox uses `java.util.concurrent.Semaphore`; Twitter Future uses `com.twitter.concurrent.AsyncSemaphore`. The Future binding implements `CMeter` as a plain `final class` (an `AtomicInteger` permit count plus a `Promise` waiter queue), so `run` never blocks a thread.
+`CMeter` is a counting semaphore: a pool of `n` permits used to cap the number of concurrent operations. `meter.run(c)` acquires one permit, runs `c`, and releases on completion (success or failure). Use it for bounded parallelism: `CIO.foreach(urls)(u => meter.run(fetch(u)))` caps in-flight fetches at `n` regardless of how many URLs are passed. Kyo and ZIO map to `kyo.Meter` and `zio.Semaphore`; Ox uses `java.util.concurrent.Semaphore`; Twitter Future uses `com.twitter.concurrent.AsyncSemaphore`. The Future binding implements `CMeter` as a plain `final class` (an `AtomicInteger` permit count plus a `Promise` waiter queue), so `run` never blocks a thread.
 
 ```scala
 def fetchBounded(urls: Seq[String]): CIO[CChunk[String]] =
@@ -410,16 +408,15 @@ Available operations: `CMeter.init(permits)`, `meter.run(c): CIO[A]`, `meter.try
 |----------------|------------------------------------------------------|
 | Kyo            | `kyo.Stream[A, Abort[Throwable] & Async]`            |
 | ZIO            | `zio.stream.ZStream[Any, Throwable, A]`              |
-| Cats Effect    | `fs2.Stream[cats.effect.IO, A]`                      |
 | Ox             | `ox.Ox ?=> ox.flow.Flow[A]`                          |
 | Twitter Future | `com.twitter.concurrent.AsyncStream[A]`              |
 | Future         | `LocalCtx => scala.concurrent.Future[Repr[A]]`       |
 
-Platform footprints match the existing CIO surface: Kyo and ZIO ship JVM / JS / Native; Cats Effect ships JVM / JS; Ox and Twitter Future are JVM-only; Future ships JVM / JS / Native.
+Platform footprints match the existing CIO surface: Kyo and ZIO ship JVM / JS / Native; Ox and Twitter Future are JVM-only; Future ships JVM / JS / Native.
 
 The kyo-named API tracks `kyo.Stream`: constructors `empty`, `init(seq)`, `init(c: CIO[Seq[A]])`, `range`, `unfold`; transforms `concat`, `mapPure` / `map`, `flatMap`, `tap`, `take`, `drop`, `takeWhilePure`, `filterPure` / `filter`, `collectPure`; and terminals `run: CIO[CChunk[A]]`, `foldPure`, `foreach`, `discard`. The pure/effectful split (`mapPure` vs. `map`, `filterPure` vs. `filter`, `foldPure`, `collectPure`, `takeWhilePure`) tracks the kyo convention; effectful variants take `A => CIO[B]`.
 
-On the four bindings that wrap a third-party stream library (Kyo, ZIO, Cats Effect, Ox), every method is an `inline def` that compiles to a single native call, with at most a trivial type adapter (`Option ⇆ Maybe`, `n.toLong` for fs2/ZIO long-arity takes/drops, `Function.unlift` for partial-function collects, `Stream.eval(c.lower).flatMap(Stream.emits)` for fs2 `init`). The Twitter binding's `unfold` is the only exception on those four: `AsyncStream` ships no native unfold, so the wrap is a small recursive helper built on `AsyncStream.mk(head, => tail)`. The Future binding is the only fully hand-rolled implementation: `scala.concurrent.Future` has no canonical async stream, so the binding supplies a cons-stream where `Repr[A]` is a binding-private ADT (`Empty | Cons(head, tail: LocalCtx => Future[Repr[A]])`) matching the `CIO` carrier shape. Transformations build cons cells with lazy tails; terminal walks use a nested `@tailrec def loop` so 100000-element sync-completed streams don't blow the stack.
+On the four bindings that wrap a native stream type (Kyo, ZIO, Ox, Twitter Future), every method is an `inline def` that compiles to a single native call, with at most a trivial type adapter (`Option ⇆ Maybe`, `n.toLong` for ZIO long-arity takes/drops, `Function.unlift` for partial-function collects). The Twitter binding's `unfold` is the only exception on those four: `AsyncStream` ships no native unfold, so the wrap is a small recursive helper built on `AsyncStream.mk(head, => tail)`. The Future binding is the only fully hand-rolled implementation: `scala.concurrent.Future` has no canonical async stream, so the binding supplies a cons-stream where `Repr[A]` is a binding-private ADT (`Empty | Cons(head, tail: LocalCtx => Future[Repr[A]])`) matching the `CIO` carrier shape. Transformations build cons cells with lazy tails; terminal walks use a nested `@tailrec def loop` so 100000-element sync-completed streams don't blow the stack.
 
 ```scala
 import kyo.compat.*
@@ -455,7 +452,7 @@ don't have. They are kept in the suite as the cross-binding contract; removing t
 
 ## Backends
 
-The Kyo, ZIO, and Cats Effect backends are predominantly thin redirects to their host runtime: each operation lowers to one or two calls into `Sync.defer`/`Abort.fail`/`Async.race` (Kyo), `ZIO.attempt`/`Promise.await`/`Fiber.Runtime` (ZIO), or `IO.delay`/`Ref[IO, _]`/`Queue[IO, _]` (Cats Effect). Fiber-locals, scoped resources, and tracing all work as they would in hand-written code.
+The Kyo and ZIO backends are predominantly thin redirects to their host runtime: each operation lowers to one or two calls into `Sync.defer`/`Abort.fail`/`Async.race` (Kyo) or `ZIO.attempt`/`Promise.await`/`Fiber.Runtime` (ZIO). Fiber-locals, scoped resources, and tracing all work as they would in hand-written code.
 
 ### Future
 
@@ -500,21 +497,17 @@ The carrier is `A < (Abort[Throwable] & Async)`. `CIO.acquireReleaseWith` wraps 
 
 The carrier is `ZIO[Any, Throwable, A]`. `CIO.defer` lowers to `ZIO.attempt`; escaped exceptions land in the typed `Throwable` error channel. `CIO.acquireReleaseWith` reifies a release Throwable as a defect via `.orDie` so it propagates through ZIO's cause channel. `fiber.onComplete(cb)` fires with `Failure(cause.squash)` for non-success exits; ZIO's `onComplete` matches `Exit.Failure` for every non-success outcome. `CIO.cede` is `ZIO.yieldNow`; `CIO.blocking { thunk }` is `ZIO.attemptBlocking`.
 
-### Cats Effect
-
-The carrier is `cats.effect.IO[A]`. `CIO.acquireReleaseWith` is `IO.bracket`; release errors propagate through the IO error channel. `fiber.onComplete(cb)` fires when the fiber completes; `Outcome.Canceled` is translated to a failure with `CancellationException` before invoking `cb`. `CIO.cede` is `IO.cede`; `CIO.blocking { thunk }` is `IO.blocking`.
-
 ### Native carrier types
 
-| Handle                                                            | Kyo                                          | ZIO                                  | Cats Effect                                       | Future                                            | Ox                                              | Twitter Future                          |
-|-------------------------------------------------------------------|----------------------------------------------|--------------------------------------|---------------------------------------------------|---------------------------------------------------|-------------------------------------------------|-----------------------------------------|
-| `CFiber[A]`                                                       | `kyo.Fiber[A, Abort[Throwable]]`             | `zio.Fiber.Runtime[Throwable, A]`    | `cats.effect.FiberIO[A]`                          | `scala.concurrent.Future[A]`                      | `ox.CancellableFork[A]`                         | `com.twitter.util.Future[A]`            |
-| `CPromise[A]`                                                     | `kyo.Promise[A, Abort[Throwable]]`           | `zio.Promise[Throwable, A]`          | `cats.effect.Deferred[IO, Try[A]]`                | `scala.concurrent.Promise[A]`                     | `java.util.concurrent.CompletableFuture[A]`     | `com.twitter.util.Promise[A]`           |
-| `CChannel[A]`                                                     | `kyo.Channel[A]`                             | `zio.Queue[A]`                       | `cats.effect.std.Queue[IO, A]`                    | `final class CChannel` (3 CLQs + AtomicInteger)    | `java.util.concurrent.LinkedBlockingQueue[A]`   | `final class CChannel` (`AsyncSemaphore` + `AsyncQueue`) |
-| `CAtomicRef[A]` / `CAtomicInt` / `CAtomicLong` / `CAtomicBoolean` | `kyo.AtomicRef[A]` / `AtomicInt` / `AtomicLong` / `AtomicBoolean` | `zio.Ref[T]` per type | `cats.effect.kernel.Ref[IO, T]` per type | `java.util.concurrent.atomic.*` per type          | same as Future                                  | same as Future                          |
-| `CLatch`                                                          | `kyo.Latch`                                  | `zio.concurrent.CountdownLatch`      | `cats.effect.std.CountDownLatch[IO]`              | `final class CLatch` (Promise-queue)              | `java.util.concurrent.CountDownLatch`           | `final class CLatch` (`Promise[Unit]` + `AtomicInteger`) |
-| `CMeter`                                                          | `kyo.Meter`                                  | `zio.Semaphore`                      | `cats.effect.std.Semaphore[IO]`                   | `final class CMeter` (permits + waiter queue)     | `java.util.concurrent.Semaphore`                | `com.twitter.concurrent.AsyncSemaphore`                  |
-| `CLocal[A]`                                                       | `kyo.Local[A]`                               | `zio.FiberRef[A]`                    | `cats.effect.IOLocal[A]`                          | identity-keyed lookup in the threaded `LocalCtx` map | `ox.ForkLocal[A]` (JDK `ScopedValue`) | `(com.twitter.util.Local[A], A)`        |
+| Handle                                                            | Kyo                                          | ZIO                                  | Future                                            | Ox                                              | Twitter Future                          |
+|-------------------------------------------------------------------|----------------------------------------------|--------------------------------------|---------------------------------------------------|-------------------------------------------------|-----------------------------------------|
+| `CFiber[A]`                                                       | `kyo.Fiber[A, Abort[Throwable]]`             | `zio.Fiber.Runtime[Throwable, A]`    | `scala.concurrent.Future[A]`                      | `ox.CancellableFork[A]`                         | `com.twitter.util.Future[A]`            |
+| `CPromise[A]`                                                     | `kyo.Promise[A, Abort[Throwable]]`           | `zio.Promise[Throwable, A]`          | `scala.concurrent.Promise[A]`                     | `java.util.concurrent.CompletableFuture[A]`     | `com.twitter.util.Promise[A]`           |
+| `CChannel[A]`                                                     | `kyo.Channel[A]`                             | `zio.Queue[A]`                       | `final class CChannel` (3 CLQs + AtomicInteger)    | `java.util.concurrent.LinkedBlockingQueue[A]`   | `final class CChannel` (`AsyncSemaphore` + `AsyncQueue`) |
+| `CAtomicRef[A]` / `CAtomicInt` / `CAtomicLong` / `CAtomicBoolean` | `kyo.AtomicRef[A]` / `AtomicInt` / `AtomicLong` / `AtomicBoolean` | `zio.Ref[T]` per type | `java.util.concurrent.atomic.*` per type          | same as Future                                  | same as Future                          |
+| `CLatch`                                                          | `kyo.Latch`                                  | `zio.concurrent.CountdownLatch`      | `final class CLatch` (Promise-queue)              | `java.util.concurrent.CountDownLatch`           | `final class CLatch` (`Promise[Unit]` + `AtomicInteger`) |
+| `CMeter`                                                          | `kyo.Meter`                                  | `zio.Semaphore`                      | `final class CMeter` (permits + waiter queue)     | `java.util.concurrent.Semaphore`                | `com.twitter.concurrent.AsyncSemaphore`                  |
+| `CLocal[A]`                                                       | `kyo.Local[A]`                               | `zio.FiberRef[A]`                    | identity-keyed lookup in the threaded `LocalCtx` map | `ox.ForkLocal[A]` (JDK `ScopedValue`) | `(com.twitter.util.Local[A], A)`        |
 
 ### `fromScalaFuture` / `fromCompletionStage`
 
@@ -526,7 +519,7 @@ The carrier is `cats.effect.IO[A]`. `CIO.acquireReleaseWith` is `IO.bracket`; re
 
 - **Partial error recovery.** `recover`, `fold`, `mapError`, `orElse` on `CIO` are total over `Throwable`. Backend-specific facilities (Kyo's `Abort.recover[A]` returning `Abort[B | C]` with a branch removed at the type level, ZIO's `catchSome`/`refineToOrDie`, Ox's `try`/`catch`) are reached via `lower`.
 - **Defect channels.** Only Kyo (`Abort.panic`, `Result.Panic`) and ZIO (`ZIO.die`, `Cause.Die`) separate defects from typed failures. The other backends collapse defects into the typed channel. To write or inspect a defect, use the native API per backend.
-- **Resource models.** `CIO.acquireReleaseWith` covers the lexical acquire-release case. Backend-specific resource types (Kyo's `Scope`, ZIO's `Scope`, Cats Effect's `Resource[IO, A]`, Ox's `useCloseableInScope`) have no cross-backend counterpart.
+- **Resource models.** `CIO.acquireReleaseWith` covers the lexical acquire-release case. Backend-specific resource types (Kyo's `Scope`, ZIO's `Scope`, Ox's `useCloseableInScope`) have no cross-backend counterpart.
 
 ## How to publish a kyo-compat library
 
@@ -542,7 +535,7 @@ libraryDependencies += "io.getkyo" %% "kyo-compat-future" % "<latest version>"
 import kyo.compat.*
 ```
 
-Write your library against `CIO`, `CFiber`, `CPromise`, and the rest of the `kyo.compat.*` surface. At dev time you compile against a single backend; the same source will compile against all six.
+Write your library against `CIO`, `CFiber`, `CPromise`, and the rest of the `kyo.compat.*` surface. At dev time you compile against a single backend; the same source will compile against all five.
 
 ### Cross-publishing with the sbt plugin
 
@@ -572,7 +565,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
         organization := "com.example",
         version      := "1.0.0"
     )
-    .compatLibrary(KyoLib, ZioLib, CeLib, OxLib)(
+    .compatLibrary(KyoLib, ZioLib, OxLib)(
         VirtualAxis.jvm,
         VirtualAxis.js,
         VirtualAxis.native
@@ -584,8 +577,8 @@ lazy val myLib = (projectMatrix in file("my-lib"))
 That single declaration is enough; sbt auto-discovers every per-(backend, platform) cell because `ProjectMatrix` is itself a `CompositeProject`. From the snippet above sbt sees these cells:
 
 ```
-myLibFuture          myLibKyo          myLibZio          myLibCe          myLibOx
-                     myLibKyoJS        myLibZioJS        myLibCeJS
+myLibFuture          myLibKyo          myLibZio          myLibOx
+                     myLibKyoJS        myLibZioJS
                      myLibKyoNative    myLibZioNative
 ```
 
@@ -601,8 +594,8 @@ Each cell's `baseDirectory` is the per-(backend, platform) source root (`my-lib/
 |------|--------------------|
 | `.compatLibrary()(VirtualAxis.jvm)(Seq("3.3.4"))` | Future only |
 | `.compatLibrary(KyoLib)(VirtualAxis.jvm)(Seq("3.3.4"))` | Future + Kyo |
-| `.compatLibrary(KyoLib, ZioLib, CeLib, OxLib)(...)` | Future + Kyo + ZIO + CE + Ox |
-| `.compatLibrary(KyoLib, ZioLib, CeLib, OxLib, TwitterFutureLib)(...)` | All six |
+| `.compatLibrary(KyoLib, ZioLib, OxLib)(...)` | Future + Kyo + ZIO + Ox |
+| `.compatLibrary(KyoLib, ZioLib, OxLib, TwitterFutureLib)(...)` | All five |
 
 Each backend's `supportedPlatforms` is intersected with the user-requested `platforms` list:
 
@@ -611,13 +604,12 @@ Each backend's `supportedPlatforms` is intersected with the user-requested `plat
 | `Future`         | ✅ | ❌ | ❌ |
 | `Kyo`            | ✅ | ✅ | ✅ |
 | `Zio`            | ✅ | ✅ | ✅ |
-| `Ce`             | ✅ | ✅ | ❌ |
 | `Ox`             | ✅ | ❌ | ❌ |
 | `TwitterFuture`  | ✅ | ❌ | ❌ |
 
 Cells the backend cannot support are silently skipped. An empty intersection for any explicitly-requested backend (e.g. `.compatLibrary(OxLib)(VirtualAxis.js)(Seq("3.3.4"))`) errors at build-load with a clear message: widen the requested `platforms` list or drop the backend from the `extras*` list.
 
-The five optional backends are exported from `CompatPlugin.autoImport` as `KyoLib`, `ZioLib`, `CeLib`, `OxLib`, `TwitterFutureLib`. Each is a `CompatBackendAxis` extending `VirtualAxis.WeakAxis`. The `Lib` suffix avoids collisions with `scala.concurrent.Future` and the `kyo` package object that consumers commonly have in scope. `FutureLib` exists too for explicit reference (used by `bindLocally(FutureLib, ...)`).
+The four optional backends are exported from `CompatPlugin.autoImport` as `KyoLib`, `ZioLib`, `OxLib`, `TwitterFutureLib`. Each is a `CompatBackendAxis` extending `VirtualAxis.WeakAxis`. The `Lib` suffix avoids collisions with `scala.concurrent.Future` and the `kyo` package object that consumers commonly have in scope. `FutureLib` exists too for explicit reference (used by `bindLocally(FutureLib, ...)`).
 
 #### Source layout and per-platform settings
 
@@ -629,13 +621,13 @@ Library code lives at `my-lib/shared/src/main/scala/...` and tests at `my-lib/sh
 | `my-lib/<backend>/src/{main,test}/scala` | Backend-specific code shared across all of that backend's platforms (e.g. Kyo helpers used by both `myLibKyo` and `myLibKyoJS`) |
 | `my-lib/<backend>/<platform>/src/{main,test}/scala` | One specific (backend, platform) cell |
 
-`<backend>` is `future` / `kyo` / `zio` / `ce` / `ox` / `twitter-future`; `<platform>` is `jvm` / `js` / `native`. Resources mirror the same layout under `src/{main,test}/resources`. Each cell pulls its own `kyo-compat-<backend>` artifact. Running `sbt myLibZio/Test/test` and `sbt myLibFuture/Test/test` exercises the same source against two runtimes.
+`<backend>` is `future` / `kyo` / `zio` / `ox` / `twitter-future`; `<platform>` is `jvm` / `js` / `native`. Resources mirror the same layout under `src/{main,test}/resources`. Each cell pulls its own `kyo-compat-<backend>` artifact. Running `sbt myLibZio/Test/test` and `sbt myLibFuture/Test/test` exercises the same source against two runtimes.
 
 For per-platform settings, `compatLibrary(...)` returns a matrix on which `.jvmSettings(...)`, `.jsSettings(...)`, and `.nativeSettings(...)` apply settings only to the rows of the corresponding platform. Useful for `nativeLinkStubs := true` on Native or JS-only test framework wiring. These mirror sbt-crossproject's same-named methods.
 
 #### Per-backend access
 
-`compatLibrary(...)` returns a `ProjectMatrix` extended with named accessors `.future` / `.kyo` / `.zio` / `.ce` / `.ox` / `.twitterFuture`, each yielding a view with `.jvm` / `.js` / `.native` for explicit cross-module wiring (`someProject.dependsOn(myLib.zio.jvm)`). Accessing a backend that was not opted in via the `extras*` list throws `NoSuchBackendException` at build-load. Use `.get(backend): Option[CompatBackendProjects]` for a safe lookup.
+`compatLibrary(...)` returns a `ProjectMatrix` extended with named accessors `.future` / `.kyo` / `.zio` / `.ox` / `.twitterFuture`, each yielding a view with `.jvm` / `.js` / `.native` for explicit cross-module wiring (`someProject.dependsOn(myLib.zio.jvm)`). Accessing a backend that was not opted in via the `extras*` list throws `NoSuchBackendException` at build-load. Use `.get(backend): Option[CompatBackendProjects]` for a safe lookup.
 
 `.bindLocally(backend, local)` (and `.bindAllLocally(map)`) swap the auto-injected `libraryDependencies += "io.getkyo" %%% s"kyo-compat-<id>"` for a project-level `dependsOn(local)`. Used by contributors testing local snapshots and by in-repo modules wiring against unpublished compat backends:
 

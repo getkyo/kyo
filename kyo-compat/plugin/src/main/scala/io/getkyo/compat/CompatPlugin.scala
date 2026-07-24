@@ -11,18 +11,18 @@ import sbtprojectmatrix.ProjectMatrixPlugin
   * The library author writes:
   * {{{
   * import _root_.io.getkyo.compat.given
-  * import _root_.io.getkyo.compat.{ KyoLib, ZioLib, CeLib, OxLib }
+  * import _root_.io.getkyo.compat.{ KyoLib, ZioLib, OxLib }
   * import sbt.VirtualAxis
   *
   * lazy val myLib = (projectMatrix in file("my-lib"))
-  *     .compatLibrary(KyoLib, ZioLib, CeLib, OxLib)(
+  *     .compatLibrary(KyoLib, ZioLib, OxLib)(
   *         VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native
   *     )(Seq("3.3.4"))
   *     .settings(/* common settings */)
   * }}}
   *
   * `compatLibrary` adds one `customRow` per (backend × platform-supported-by-backend × scalaVersion). `Future` is always implicit. Cells
-  * the backend cannot support (Ce/Native, Ox/JS, Ox/Native) are silently skipped; an empty intersection errors at build-load.
+  * the backend cannot support (Ox/JS, Ox/Native) are silently skipped; an empty intersection errors at build-load.
   */
 object CompatPlugin extends AutoPlugin {
 
@@ -56,8 +56,6 @@ object CompatPlugin extends AutoPlugin {
             _root_.io.getkyo.compat.CompatBackendAxis("kyo", "Kyo", "-kyo", Set("jvm", "js", "native"))
         val ZioLib: CompatBackendAxis =
             _root_.io.getkyo.compat.CompatBackendAxis("zio", "Zio", "-zio", Set("jvm", "js", "native"))
-        val CeLib: CompatBackendAxis =
-            _root_.io.getkyo.compat.CompatBackendAxis("ce", "Ce", "-ce", Set("jvm", "js", "native"))
         val OxLib: CompatBackendAxis =
             _root_.io.getkyo.compat.CompatBackendAxis("ox", "Ox", "-ox", Set("jvm"))
         val TwitterFutureLib: CompatBackendAxis =
@@ -161,9 +159,6 @@ object CompatPlugin extends AutoPlugin {
 
             /** Named accessor: returns a view onto every (Zio, *) row. */
             def zio: CompatBackendProjects = lookup(ZioLib)
-
-            /** Named accessor: returns a view onto every (Ce, *) row. */
-            def ce: CompatBackendProjects = lookup(CeLib)
 
             /** Named accessor: returns a view onto every (Ox, *) row. */
             def ox: CompatBackendProjects = lookup(OxLib)
