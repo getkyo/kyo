@@ -13,6 +13,16 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    private val highBitsUuidText = "fedcba98-7654-3210-89ab-cdef01234567"
+
+    private def parseUuid(value: String): UUID =
+        UUID.parse(value).getOrThrow
+
+    private def assertUuidTypedDecodeFailure(value: String)(using kyo.test.AssertScope): Unit =
+        Json.decode[UUID](s""""$value"""") match
+            case Result.Failure(_: DecodeException) => succeed
+            case other                              => fail(s"Expected Result.Failure(_: DecodeException), got: $other")
+
     "ordering" - {
 
         "ordering sorts by first field" in {
@@ -1185,13 +1195,66 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                 case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
                 case other                                                       => fail(s"Expected Primitive(String, _) but got $other")
         }
-        "uuidSchema" in {
+        "java UUID schema remains a string primitive tagged with java UUID" in {
             val s = summon[Schema[java.util.UUID]]
             assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.util.UUID].asInstanceOf[Tag[Any]]))
         }
         "unitSchema" in {
             val s = summon[Schema[Unit]]
             assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Unit, Tag[Unit].asInstanceOf[Tag[Any]]))
+        }
+    }
+
+    "UUID schema and JSON codec" - {
+        "kyo UUID schema is a string primitive tagged with kyo UUID" in {
+            val s = summon[Schema[UUID]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[UUID].asInstanceOf[Tag[Any]]))
+        }
+
+        "encodes kyo UUID as canonical lowercase JSON text" in {
+            val value = parseUuid("550E8400-E29B-41D4-A716-446655440000")
+            assert(Json.encode(value) == "\"550e8400-e29b-41d4-a716-446655440000\"")
+        }
+
+        "decodes lowercase canonical JSON text to the exact kyo UUID" in {
+            val expected = parseUuid("550e8400-e29b-41d4-a716-446655440000")
+            assert(Json.decode[UUID]("\"550e8400-e29b-41d4-a716-446655440000\"") == Result.succeed(expected))
+        }
+
+        "decodes uppercase canonical JSON text to the exact kyo UUID" in {
+            val expected = parseUuid("550e8400-e29b-41d4-a716-446655440000")
+            assert(Json.decode[UUID]("\"550E8400-E29B-41D4-A716-446655440000\"") == Result.succeed(expected))
+        }
+
+        "returns a typed decoding failure for malformed canonical JSON text" in {
+            assertUuidTypedDecodeFailure("550e8400-e29b-41d4-a716-44665544000g")
+        }
+
+        "returns a typed decoding failure for braced JSON text" in {
+            assertUuidTypedDecodeFailure("{550e8400-e29b-41d4-a716-446655440000}")
+        }
+
+        "returns a typed decoding failure for UUID URN JSON text" in {
+            assertUuidTypedDecodeFailure("urn:uuid:550e8400-e29b-41d4-a716-446655440000")
+        }
+
+        "returns a typed decoding failure for noncanonical unhyphenated JSON text" in {
+            assertUuidTypedDecodeFailure("550e8400e29b41d4a716446655440000")
+        }
+
+        "round-trips all 128 bits of a kyo UUID with high bits set through JSON" in {
+            val value   = parseUuid(highBitsUuidText)
+            val decoded = Json.decode[UUID](Json.encode(value)).getOrThrow
+            assert(decoded == value)
+            assert(decoded.show == highBitsUuidText)
+            assert(decoded.bytes.is(value.bytes))
+        }
+
+        "keeps java UUID canonical JSON behavior and round-trip compatibility" in {
+            val value   = java.util.UUID.fromString(highBitsUuidText)
+            val encoded = Json.encode(value)
+            assert(encoded == s""""$highBitsUuidText"""")
+            assert(Json.decode[java.util.UUID](encoded) == Result.succeed(value))
         }
     }
 
