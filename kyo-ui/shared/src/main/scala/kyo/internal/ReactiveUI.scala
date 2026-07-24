@@ -576,6 +576,13 @@ private[kyo] object ReactiveUI:
     private def isTargetSelect(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
         targetSatisfies(elem, myPath, targetPath, _.isInstanceOf[Select])
 
+    /** Bubble-continue value after an element handled `event`: `false` (consume) only when the element set
+      * `stopPropagation(true)` AND actually declared a handler for this event's type (`declared`). The result flows up the
+      * dispatch recursion, so a `false` makes every element ABOVE this one skip its own handler.
+      */
+    private def keepBubbling(elem: Element, declared: Boolean): Boolean =
+        !(declared && elem.attrs.stopPropagation.getOrElse(false))
+
     /** Dispatch event to element. isTarget=true when element is the click target, false on bubble. disabledTarget=true when the original
       * click target was disabled (prevents Form onSubmit on bubble).
       */
@@ -610,12 +617,15 @@ private[kyo] object ReactiveUI:
                                 invoke(f.onSubmit).andThen(invokeWith(f.onSubmitEvt, mouse))
                             case _ => Kyo.lift(())
                     else Kyo.lift(())
+                    // Self handlers only count as "declared" when they actually fired (isTarget).
+                    val declared = attrs.onClick.nonEmpty || attrs.onClickEvt.nonEmpty ||
+                        (isTarget && (attrs.onClickSelf.nonEmpty || attrs.onClickSelfEvt.nonEmpty))
                     self
                         .andThen(invokeWith(attrs.onClickEvt, mouse))
                         .andThen(invoke(attrs.onClick))
                         .andThen(activateToggle)
                         .andThen(formSubmit)
-                        .andThen(true)
+                        .andThen(keepBubbling(elem, declared))
             case ev: UIEvent.Focus =>
                 val isFocusable = elem.isInstanceOf[Focusable] || elem.attrs.tabIndex.nonEmpty
                 if isTarget && isFocusable then
@@ -672,14 +682,15 @@ private[kyo] object ReactiveUI:
                             case f: Form => invoke(f.onSubmit)
                             case _       => Kyo.lift(())
                     else Kyo.lift(())
-                    keyHandler.andThen(activateClick).andThen(activateToggle).andThen(selectCycle).andThen(formSubmit).andThen(true)
+                    keyHandler.andThen(activateClick).andThen(activateToggle).andThen(selectCycle).andThen(formSubmit)
+                        .andThen(keepBubbling(elem, attrs.onKeyDown.nonEmpty))
             case e: UIEvent.KeyUp =>
                 val kbEvent = UI.KeyboardEvent(
                     key = Keyboard.fromString(e.keyboard.key),
                     modifiers = e.keyboard.modifiers,
                     targetId = e.keyboard.targetId
                 )
-                invokeWith(attrs.onKeyUp, kbEvent).andThen(true)
+                invokeWith(attrs.onKeyUp, kbEvent).andThen(keepBubbling(elem, attrs.onKeyUp.nonEmpty))
             case e: UIEvent.Input =>
                 if isTarget && (isDisabled(elem) || isReadOnly(elem)) then true
                 else
@@ -744,13 +755,16 @@ private[kyo] object ReactiveUI:
                     case _ => true
             case ev: UIEvent.Hover =>
                 val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                invoke(attrs.onHover).andThen(invokeWith(attrs.onHoverEvt, mouse)).andThen(true)
+                invoke(attrs.onHover).andThen(invokeWith(attrs.onHoverEvt, mouse))
+                    .andThen(keepBubbling(elem, attrs.onHover.nonEmpty || attrs.onHoverEvt.nonEmpty))
             case ev: UIEvent.Unhover =>
                 val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                invoke(attrs.onUnhover).andThen(invokeWith(attrs.onUnhoverEvt, mouse)).andThen(true)
+                invoke(attrs.onUnhover).andThen(invokeWith(attrs.onUnhoverEvt, mouse))
+                    .andThen(keepBubbling(elem, attrs.onUnhover.nonEmpty || attrs.onUnhoverEvt.nonEmpty))
             case ev: UIEvent.Scroll =>
                 val wheel = UI.WheelEvent(ev.deltaX, ev.deltaY, ev.targetId, ev.modifiers)
-                invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel)).andThen(true)
+                invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel))
+                    .andThen(keepBubbling(elem, attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty))
             case _ => true
         end match
     end dispatchToElement

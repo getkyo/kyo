@@ -402,6 +402,8 @@ private[kyo] object HtmlRenderer:
         attrs.tabIndex.foreach(n => w(sb, s""" tabindex="$n""""))
         attrs.focusTrap.foreach(v => if v then w(sb, """ data-kyo-focus-trap="1""""))
         attrs.focusGroup.foreach(id => w(sb, s""" data-kyo-focus-group="${esc(id)}""""))
+        // Marker only: stop-propagation is decided server-side in ReactiveUI.dispatchToElement; the client never reads this.
+        attrs.stopPropagation.foreach(v => if v then w(sb, """ data-kyo-stop="1""""))
         // A generated pseudoClass already carries the base props in its own rule (see
         // registerPseudoClass); rendering them inline too would shadow the pseudo-state override.
         if pseudoClass.isEmpty then
