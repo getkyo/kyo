@@ -2759,7 +2759,15 @@ lazy val `js-settings` = Seq(
     bspEnabled                                  := false,
     Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
+    // CI links every module's test binary in one sbt process; retaining each module's incremental
+    // linker state overflows the 12G sbt heap now that the schema family links per-format
+    // binaries. Batch mode drops that state after each link: incremental relink speed is
+    // irrelevant in CI, footprint is what matters.
+    scalaJSLinkerConfig := {
+        val c = scalaJSLinkerConfig.value
+        if (insideCI.value) c.withBatchMode(true) else c
+    }
 )
 
 // WASM rows are Scala.js compilations: same scala-java-time stand-in for the JDK time APIs,
@@ -2779,7 +2787,12 @@ lazy val `wasm-settings` = Seq(
             "--experimental-wasm-exnref"
         ))
     ),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
+    // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
+    scalaJSLinkerConfig := {
+        val c = scalaJSLinkerConfig.value
+        if (insideCI.value) c.withBatchMode(true) else c
+    }
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
@@ -3053,6 +3066,14 @@ lazy val `kyo-test-snapshot` =
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-data`)
         .dependsOn(`kyo-schema`)
+        // SnapshotCodec's presets cover every codec kyo-schema ships, so this module needs
+        // all six per-format modules of the split schema family, like kyo-schema-tests.
+        .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-protobuf`)
+        .dependsOn(`kyo-schema-msgpack`)
+        .dependsOn(`kyo-schema-bson`)
+        .dependsOn(`kyo-schema-ion`)
+        .dependsOn(`kyo-schema-yaml`)
         .dependsOn(`kyo-test-prop`)
         .dependsOn(`kyo-test-runner` % Test)
         .in(file("kyo-test/snapshot"))
