@@ -1,10 +1,10 @@
 import WasmCrossProject.*
 import WithKyoTest._
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
-import org.scalajs.jsenv.nodejs.*
 import kyo.build.ScalacOption
 import kyo.build.ScalacOptions
 import kyo.build.ScalaVersion
+import org.scalajs.jsenv.nodejs.*
 import sbtdynver.DynVerPlugin.autoImport.*
 import scala.scalanative.build.NativeConfig
 
@@ -1156,11 +1156,11 @@ lazy val `kyo-tasty` =
             // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
             // loads only .tasty files in the jar; missing transitive deps produce
             // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
-            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20"  % Test intransitive (),
-            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"   % Test intransitive (),
-            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"   % Test intransitive (),
-            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"   % Test intransitive (),
-            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15"  % Test intransitive ()
+            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20" % Test intransitive (),
+            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"  % Test intransitive (),
+            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"  % Test intransitive (),
+            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"  % Test intransitive (),
+            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15" % Test intransitive ()
         )
         .nativeSettings(`native-settings`)
         .jsSettings(
@@ -2602,7 +2602,7 @@ lazy val `root-readme` =
             `kyo-direct`.jvm,
             `kyo-bench`.jvm,
             `kyo-zio`.jvm,
-                `kyo-caliban`.jvm,
+            `kyo-caliban`.jvm,
             `kyo-combinators`.jvm
         )
         .settings(

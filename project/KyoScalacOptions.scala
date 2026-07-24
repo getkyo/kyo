@@ -55,7 +55,7 @@ object ScalaVersion {
 }
 
 object ScalacOptions {
-    import ScalaVersion._
+    import ScalaVersion.*
 
     // `-release` needs a JDK 9+ javac backend; read the running JDK's major version once.
     private val javaMajorVersion: Long = {
