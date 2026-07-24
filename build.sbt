@@ -306,7 +306,6 @@ lazy val kyoJVM: Project = project
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
         `kyo-zio`.jvm,
-        `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
@@ -362,7 +361,6 @@ lazy val kyoJS = project
         `kyo-stats-machine`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
-        `kyo-cats`.js,
         `kyo-combinators`.js,
         `kyo-case-app`.js,
         `kyo-actor`.js,
@@ -1974,22 +1972,6 @@ lazy val `kyo-zio` =
         .jvmSettings(mimaCheck(false))
         .wasmSettings(`wasm-settings`)
 
-// TODO(wasm): re-enable once cats-effect supports WASM (typelevel/cats-effect#4608).
-lazy val `kyo-cats` =
-    crossProject(JSPlatform, JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-cats"))
-        .dependsOn(`kyo-core`)
-        .withKyoTest
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
-        )
-        .jsSettings(
-            `js-settings`
-        )
-        .jvmSettings(mimaCheck(false))
-
 lazy val `kyo-compat-future` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -2093,7 +2075,7 @@ lazy val `kyo-compat-zio` =
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .wasmSettings(`wasm-settings`)
 
-// TODO(wasm): re-enable with cats-effect WASM support; depends on cats-effect (see kyo-cats).
+// TODO(wasm): re-enable with cats-effect WASM support (typelevel/cats-effect#4608).
 lazy val `kyo-compat-ce` =
     crossProject(JSPlatform, JVMPlatform)
         .crossType(CrossType.Full)
@@ -2674,8 +2656,7 @@ lazy val `root-readme` =
             `kyo-direct`.jvm,
             `kyo-bench`.jvm,
             `kyo-zio`.jvm,
-            `kyo-cats`.jvm,
-            `kyo-caliban`.jvm,
+                `kyo-caliban`.jvm,
             `kyo-combinators`.jvm
         )
         .settings(
