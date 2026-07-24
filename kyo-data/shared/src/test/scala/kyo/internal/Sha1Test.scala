@@ -27,6 +27,29 @@ class Sha1Test extends kyo.test.Test[Any]:
             assert(hex(Sha1.hash(utf8("abc"))) == "a9993e364706816aba3e25717850c26c9cd0d89d")
         }
 
+        "matches additional published and padding digests" in {
+            val vectors = Seq(
+                Array('a'.toByte) ->
+                    "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8",
+                utf8("The quick brown fox jumps over the lazy dog") ->
+                    "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12",
+                Array.fill[Byte](55)('A'.toByte) ->
+                    "5021b3d42aa093bffc34eedd7a1455f3624bc552",
+                Array.fill[Byte](10)('B'.toByte) ->
+                    "2b88ae576b03a7c136ecca94de57f500973fee76",
+                Array.fill[Byte](60)('D'.toByte) ->
+                    "a288bd3300951e43722aa150d2e959ef871f24af",
+                utf8(
+                    "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno" +
+                        "ijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
+                ) ->
+                    "a49b2446a02c645bf419f995b67091253a04a259"
+            )
+            vectors.foreach { case (input, expected) =>
+                assert(hex(Sha1.hash(input)) == expected)
+            }
+        }
+
         "matches the published padding-boundary digest" in {
             val input = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
             assert(input.length == 56)
@@ -53,6 +76,18 @@ class Sha1Test extends kyo.test.Test[Any]:
             vectors.foreach { case (size, expected) =>
                 assert(hex(Sha1.hash(generated(size))) == expected)
             }
+        }
+
+        "matches one-shot hashing when input is split across chunks" in {
+            val input  = generated(257)
+            val chunks = Seq(input.take(55), input.slice(55, 64), Array.emptyByteArray, input.slice(64, 129), input.drop(129))
+            assert(Sha1.hashChunks(chunks).sameElements(Sha1.hash(input)))
+        }
+
+        "computes padding from logical lengths beyond the array limit" in {
+            assert(Sha1.paddingSize(Int.MaxValue.toLong) == 65)
+            assert(Sha1.paddingSize(Int.MaxValue.toLong + 16) == 49)
+            assert(Sha1.bitLength(Int.MaxValue.toLong + 45) == 17179869536L)
         }
 
         "returns the same digest for the same generated input" in {

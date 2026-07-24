@@ -58,6 +58,18 @@ class Sha256Test extends kyo.test.Test[Any]:
             }
         }
 
+        "matches one-shot hashing when input is split across chunks" in {
+            val input  = generated(257)
+            val chunks = Seq(input.take(55), input.slice(55, 64), Array.emptyByteArray, input.slice(64, 129), input.drop(129))
+            assert(Sha256.hashChunks(chunks).sameElements(Sha256.hash(input)))
+        }
+
+        "computes padding from logical lengths beyond the array limit" in {
+            assert(Sha256.paddingSize(Int.MaxValue.toLong) == 65)
+            assert(Sha256.paddingSize(Int.MaxValue.toLong + 16) == 49)
+            assert(Sha256.bitLength(Int.MaxValue.toLong + 45) == 17179869536L)
+        }
+
         "returns the same digest for the same generated input" in {
             val input = generated(257)
             assert(Sha256.hash(input).sameElements(Sha256.hash(input)))
