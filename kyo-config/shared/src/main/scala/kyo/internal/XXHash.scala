@@ -71,15 +71,17 @@ private[kyo] object XXHash {
         avalanche32(processTail32(h, bytes, i, end))
     }
 
-    /** Hashes a string as XXH32 of the four little-endian bytes of its `hashCode`.
+    /** Hashes a string as XXH32 of the four little-endian bytes of its JLS string hash.
       *
-      * This deliberately builds on the JLS-specified, platform-stable `String.hashCode` rather than streaming the string's UTF-8 content:
-      * the JVM memoizes `String.hashCode` per instance, so hashing a reused string is constant-time and allocation-free. This method may
-      * sit on hot paths, so that property is load-bearing; do not replace it with a per-call content hash. The XXH32 finalizer restores
-      * avalanche quality over the weakly-mixed JLS hash, while collision pairs remain exactly those of `String.hashCode`.
+      * This deliberately builds on the JLS-specified, platform-stable string hash rather than streaming the string's UTF-8 content: on the
+      * JVM and JS the memoized `String.hashCode` makes hashing a reused string constant-time and allocation-free. This method may sit on
+      * hot paths, so that property is load-bearing; do not replace it with a per-call content hash. On Native the hash is recomputed per
+      * call instead of calling `String.hashCode`, whose memoizing store faults for read-only interned literals with a zero hash (see
+      * `XXHashPlatform`). The XXH32 finalizer restores avalanche quality over the weakly-mixed JLS hash, while collision pairs remain
+      * exactly those of the JLS hash.
       */
     def hash32(input: String): Int =
-        hashInt(input.hashCode)
+        hashInt(XXHashPlatform.stringHash(input))
 
     /** Hashes an integer as its four little-endian bytes with XXH32 and seed `0`.
       */

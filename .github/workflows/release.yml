@@ -27,10 +27,20 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
       - uses: coursier/cache-action@v8.1.1
+      # liburing rides along with the other native build deps: the kyo-net io_uring shim (kyo_uring.c)
+      # statically links -luring, and publishing compiles it like any other build. This workflow does not
+      # use .github/actions/setup, so install it here too.
       - name: Install Dependencies
+        run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 liburing-dev
+      # Stage the vendored BoringSSL static archives before any build: without the staged tree,
+      # build.sbt silently compiles the c-boringssl-stub shim into kyo-net (probe_available -> 0,
+      # BoringSslProvider unavailable at runtime), so the published artifact would ship without
+      # BoringSSL TLS. Same staging as .github/actions/setup; this runner is always linux x64.
+      - name: Prepare BoringSSL
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
+          command -v go >/dev/null 2>&1 || bash scripts/apt-install.sh golang-go
+          bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
       - uses: coursier/setup-action@v3.0.0
         with:
           jvm: corretto:25
