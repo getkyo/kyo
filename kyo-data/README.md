@@ -1,10 +1,10 @@
 # kyo-data
 
-`kyo-data` is the foundational data layer that the rest of Kyo is built on. It supplies a small set of immutable, opaque-type-backed values that replace `Option`, `Either`, `Try`, `Map`, `IArray`, and `java.time` with versions that allocate less, encode richer information in types, and compose better across Kyo effects. The user's first call constructs one of these types directly (`Maybe(x)`, `Chunk.from(xs)`, `Result.succeed(v)`, `1.second`, `Dict("a" -> 1)`), so type names appear immediately in any code that uses the module.
+`kyo-data` is the foundational data layer that the rest of Kyo is built on. It supplies a small set of immutable, opaque-type-backed values that replace `Option`, `Either`, `Try`, `Map`, `IArray`, and `java.time` with versions that allocate less, encode richer information in types, and compose better across Kyo effects. The user's first call constructs one of these types directly (`Maybe(x)`, `Chunk.from(xs)`, `Result.succeed(v)`, `1.second`, `Dict("a" -> 1)`, `UUID.parse(text)`), so type names appear immediately in any code that uses the module.
 
-Three patterns run through the design. First, opaque types over existing values: `Maybe` is `Absent | Present[A]` with no wrapper allocation, `Result` is `Success[A] | Error[E]` unboxed, `Dict` is a `Span` for small sizes and a `HashMap` above the threshold, `Duration` is a `Long`, `Instant` is a `java.time.Instant`. Second, type-level encoding of structure: `Record[F]` encodes its schema as an intersection of `Name ~ Value` pairs in `F`, `TypeMap[+A]` keys by type via `Tag[A]`, `ConcreteTag[A]` represents unions and intersections that `ClassTag` cannot. Third, kyo-package conventions the rest of the ecosystem inherits: `Frame` carries call-site position implicitly, `KyoException` renders with frame context, `Render[A]` is the printable-text type class, `Tag[A]` is the cross-platform runtime type identity used by effect handlers.
+Three patterns run through the design. First, opaque types over existing values: `Maybe` is `Absent | Present[A]` with no wrapper allocation, `Result` is `Success[A] | Error[E]` unboxed, `Dict` is a `Span` for small sizes and a `HashMap` above the threshold, `Duration` is a `Long`, `Instant` is a `java.time.Instant`, and `UUID` is an opaque 128-bit identifier. Second, type-level encoding of structure: `Record[F]` encodes its schema as an intersection of `Name ~ Value` pairs in `F`, `TypeMap[+A]` keys by type via `Tag[A]`, `ConcreteTag[A]` represents unions and intersections that `ClassTag` cannot. Third, kyo-package conventions the rest of the ecosystem inherits: `Frame` carries call-site position implicitly, `KyoException` renders with frame context, `Render[A]` is the printable-text type class, `Tag[A]` is the cross-platform runtime type identity used by effect handlers.
 
-The module is cross-platform and ships identical public surface on JVM, Scala.js, and Scala Native.
+The module is cross-platform and ships identical public surface on JVM, Scala.js, Scala Native, and Wasm.
 
 One consequence worth noting upfront: several types deliberately avoid boxing or tuple allocation, so their APIs diverge from the standard-library shape. `Dict` iteration passes separate key and value arguments instead of a `(K, V)` tuple, and `Span` omits `zip` and similar operations that would force intermediate tuples or boxing.
 
@@ -62,7 +62,7 @@ val name: String          = found.fold("guest")(_.name)
 val list: List[User]      = found.toList
 ```
 
-In order to properly support nested values like `Maybe[Maybe[A]]`, the library automatically represents nestvalues via a internal wrapper so it roundtrips faithfully and complies with the monadic laws.
+Nested optional values such as `Maybe[Maybe[A]]` preserve both layers. `Present(Absent)` is distinct from plain `Absent`, and the implementation uses an internal wrapper only when that invariant is needed, so nested values round-trip faithfully while ordinary `Present(value)` remains unboxed.
 
 > **Note:** `value.show` for `Maybe` requires a `Render` instance for the inner type in scope; the underlying `toString` can produce wrong output. For example, `Present(Absent)` prints as `Absent` via `toString` but `Present(Absent)` via `Render`.
 
@@ -178,7 +178,7 @@ val s: String = r.foldPartial(
 val asEither: Either[NotFound, Int] = r.toEitherPartial
 ```
 
-## Sequences and maps
+## Sequences, maps, and identifiers
 
 Different collection cost models matter at different points in a program. Slicing a large buffer should not copy the buffer. Storing primitive bytes should not box every byte to `java.lang.Byte`. Small lookup tables should not pay the hashing overhead of a full hash map. `kyo-data` offers three sequence/map types tuned to those cost models and two builders for incremental construction.
 
@@ -327,6 +327,62 @@ ob.add("second", 9)
 val ordered: OrderedDict[String, Int] = ob.result() // "second" -> 9, then "first" -> 1
 ```
 
+### Binary-to-text encoding
+
+`Base64` is a cross-platform RFC 4648 encoder/decoder operating on `Span[Byte]`. It is pure Scala (no `java.util.Base64` dependency), so it runs identically on JVM, Scala.js, Native, and Wasm.
+
+```scala
+import kyo.*
+
+val bytes: Span[Byte] = Span.from(IArray[Byte](72, 101, 108, 108, 111))
+val encoded: String   = Base64.encode(bytes)
+
+val decoded: Result[IllegalArgumentException, Span[Byte]] =
+    Base64.decode(encoded)
+
+val unsafe: Span[Byte] = Base64.decodeOrThrow(encoded)
+```
+
+### Identifiers and UUIDs
+
+`UUID` is an RFC 9562 universally unique identifier (the standard that replaces RFC 4122). It is an opaque 128-bit value with pure operations for strict parsing, URN parsing, byte conversion, rendering, inspection, and deterministic name-based derivation.
+
+```scala
+import java.nio.charset.StandardCharsets
+import kyo.*
+
+val canonical: Result[UUID.InvalidUUID, UUID] =
+    UUID.parse("01890f5e-a410-7000-8000-000000000000")
+
+val fromUrn: Result[UUID.InvalidUUID, UUID] =
+    UUID.parseUrn("urn:uuid:01890f5e-a410-7000-8000-000000000000")
+
+val id: UUID = canonical.getOrThrow
+
+val roundTrip: Result[UUID.InvalidUUID, UUID] =
+    UUID.fromBytes(id.bytes)
+
+val text: String           = id.show
+val raw: Span[Byte]        = id.bytes
+val version: Int           = id.version
+val variant: UUID.Variant  = id.variant
+val timestamp: Maybe[Long] = id.unixTimestampMillis
+
+val empty: UUID = UUID.nil
+val full: UUID  = UUID.max
+val order: Int  = empty.compare(full)
+
+val dns: UUID        = UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").getOrThrow
+val name: Span[Byte] = Span.from("www.example.com".getBytes(StandardCharsets.UTF_8))
+
+val v5: UUID = UUID.v5(dns, name)
+val v8: UUID = UUID.v8Sha256(dns, name)
+```
+
+`UUID.parse` is strict about canonical `8-4-4-4-12` text: braces, URNs, missing separators, and other layout deviations fail. Use `UUID.parseUrn` for `urn:uuid:<canonical>` input. `UUID.InvalidUUID` is a `KyoException` returned by `UUID.parse`, `UUID.parseUrn`, and `UUID.fromBytes` through `Result`, carrying structured `UUID.InvalidProblem` in its `problem` field.
+
+`UUID.bytes` and `UUID.fromBytes` use exactly 16 bytes in big-endian network order. `uuid.compare(that)` compares the 128-bit value with unsigned bytewise ordering, and `Ordering[UUID]` delegates to that comparison so sorted collections match RFC 9562 ordering. `UUID.v5` is deterministic RFC version 5 derivation; SHA-1 is used internally because the standard requires it for v5. `UUID.v8Sha256` is Kyo's deterministic SHA-256 version 8 profile. `unixTimestampMillis` only inspects version 7 UUIDs, returning `Absent` for other versions, and `kyo-data` does not generate random or time-based UUIDs.
+
 ## Time and scheduling
 
 `kyo-data` provides one set of time primitives the rest of the ecosystem shares: a `Duration` for time spans, an `Instant` for points in time, and a `Schedule` for retry and periodic policies. Arithmetic on `Duration` and `Instant` saturates rather than wrapping or throwing.
@@ -374,11 +430,12 @@ val now: Instant     = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
 val later: Instant   = now + 1.hour
 val earlier: Instant = now - 30.minutes
 val gap: Duration    = later - earlier // 1 hour 30 minutes
+val hour: Instant    = now.truncatedTo(Duration.Units.Hours)
 ```
 
 > **Note:** `instant + Duration.Infinity` returns `Instant.Max` (saturating); the inverse subtraction returns `Instant.Min`. Arithmetic does not throw on overflow.
 
-`Instant` has an `Ordering`, so it works with sort/min/max from the standard library.
+`Instant` has an `Ordering`, so it works with sort/min/max from the standard library. `Instant.truncatedTo` accepts only `Duration.Units` marked with `Duration.Truncatable`, keeping larger calendar units out of truncation at compile time.
 
 ### Retry and periodic policies
 
@@ -620,7 +677,7 @@ val s: String = three.get[String]
 
 ## Rendering and formatting
 
-When code needs printable output (logs, error messages, diagnostic dumps), `toString` is rarely the right answer for opaque types and structural data. `kyo-data` provides `Render[A]` for customizable string representations, `Ansi` extensions for terminal formatting, and `Base64` for byte-to-string encoding.
+When code needs printable output (logs, error messages, diagnostic dumps), `toString` is rarely the right answer for opaque types and structural data. `kyo-data` provides `Render[A]` for customizable string representations and `Ansi` extensions for terminal formatting.
 
 ### Customizable rendering
 
@@ -671,22 +728,6 @@ val info: String  = "ready".green
 val clean: String = warn.stripAnsi
 ```
 
-### Binary-to-text encoding
-
-`Base64` is a cross-platform RFC 4648 encoder/decoder operating on `Span[Byte]`. It is pure Scala (no `java.util.Base64` dependency), so it runs identically on JVM, Scala.js, and Native.
-
-```scala
-import kyo.*
-
-val bytes: Span[Byte] = Span.from(IArray[Byte](72, 101, 108, 108, 111))
-val encoded: String   = Base64.encode(bytes)
-
-val decoded: Result[IllegalArgumentException, Span[Byte]] =
-    Base64.decode(encoded)
-
-val unsafe: Span[Byte] = Base64.decodeOrThrow(encoded)
-```
-
 ## Putting it together
 
 The types in this module are designed to be combined. A `Dict` stores values by key; lookups return `Maybe`; failed operations return `Result`; timestamps and deadlines use `Instant` and `Duration`; records hold structured fields.
@@ -694,16 +735,18 @@ The types in this module are designed to be combined. A `Dict` stores values by 
 ```scala
 import kyo.*
 
-case class User(id: Int, name: String, email: String, signedUpAt: Instant)
-case class Order(id: Int, userId: Int, total: Duration, items: Chunk[String])
+case class User(id: UUID, name: String, email: String, signedUpAt: Instant)
+case class Order(id: UUID, userId: UUID, total: Duration, items: Chunk[String])
 
 val signedUpAt = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
-val alice      = User(1, "Alice", "alice@example.com", signedUpAt)
-val order      = Order(101, 1, 5.minutes, Chunk("book", "pen"))
+val userId     = UUID.parse("01890f5e-a410-7000-8000-000000000001").getOrThrow
+val orderId    = UUID.parse("01890f5e-a410-7000-8000-000000000002").getOrThrow
+val alice      = User(userId, "Alice", "alice@example.com", signedUpAt)
+val order      = Order(orderId, userId, 5.minutes, Chunk("book", "pen"))
 
 // Optional values without wrapper allocation
-val byId: Dict[Int, User] = Dict(1 -> alice)
-val found: Maybe[User]    = byId.get(1)
+val byId: Dict[UUID, User] = Dict(userId -> alice)
+val found: Maybe[User]     = byId.get(userId)
 
 // Errors as data, distinguishing expected from unexpected
 val parsed: Result[Duration.InvalidDuration, Duration] = Duration.parse("30s")
@@ -786,6 +829,8 @@ val message: String = parsed match
     case Failure(e) => s"failed: ${e.getMessage}"
     case Panic(t)   => s"panic: ${t.getMessage}"
 ```
+
+`UUID.InvalidUUID` is returned by `UUID.parse`, `UUID.parseUrn`, and `UUID.fromBytes` through `Result`. It carries structured `UUID.InvalidProblem` in its `problem` field so callers can inspect the invalid input shape directly.
 
 > **Note:** `KyoException` strips ANSI colors and frame context in production (controlled by `kyo.internal.Environment`). Development mode produces detailed, syntax-highlighted error output for human readers.
 
