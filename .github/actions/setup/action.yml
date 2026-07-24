@@ -63,41 +63,26 @@ runs:
         done
         echo "warning: could not add supplementary swap; continuing with stock swap only"
 
+    # apt installs go through scripts/apt-install.sh (bounded retries under `sudo timeout`), not
+    # nick-fields/retry: that action's kill of a timed-out sudo-owned child dies with EPERM,
+    # turning an apt mirror hang into a hard job failure. See the script header.
     - name: Install native dependencies (Linux)
       if: ${{ inputs.target == 'Native' && contains(inputs.os, 'linux') }}
-      uses: nick-fields/retry@v4
-      with:
-        max_attempts: 3
-        timeout_minutes: 5
-        retry_wait_seconds: 15
-        command: |
-          sudo apt-get update
-          sudo apt-get install -y -o Acquire::Retries=3 libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+      shell: bash
+      run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
 
     # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
     # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
     # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
     - name: Install liburing (Linux)
       if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
-      uses: nick-fields/retry@v4
-      with:
-        max_attempts: 3
-        timeout_minutes: 5
-        retry_wait_seconds: 15
-        command: |
-          sudo apt-get update
-          sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
+      shell: bash
+      run: bash scripts/apt-install.sh liburing-dev
 
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
-      uses: nick-fields/retry@v4
-      with:
-        max_attempts: 3
-        timeout_minutes: 5
-        retry_wait_seconds: 15
-        command: |
-          sudo apt-get update
-          sudo apt-get install -y -o Acquire::Retries=3 podman uidmap
+      shell: bash
+      run: bash scripts/apt-install.sh podman uidmap
 
     - name: Start podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
