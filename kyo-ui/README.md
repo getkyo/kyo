@@ -341,6 +341,43 @@ If you need both a signal-driven attribute AND a chainable element method, set t
 
 When you pass either a constant `String` or a `SignalRef[String]` to `.value`, the framework wraps it in `UI.Bound[String]`: `Const(v)` or `Ref(ref)`. You normally never name this type; it surfaces in AST pattern matching (see [Pattern-matching on UI](#pattern-matching-on-ui-ast-access)).
 
+## Effectful component mounts
+
+The reactive boundaries above re-render pure `UI` values as signals change. A component that must run an *effect* to produce its UI — load data, open a subscription, read an ambient service — needs more: a node that runs `UI < (Async & Scope)`, shows something while it is pending, and gives a failure somewhere to land. `UI.mounted` is that node.
+
+`UI.mounted(effect)` lifts an effectful component into the tree as an ordinary child. The effect runs when the node attaches, inside a `Scope` tied to the node's lifetime (torn down on detach), so resources it acquires are released when the node goes away; an `Abort[Throwable]` failure is caught into the node's error state instead of propagating. The builder tunes the surrounding behavior:
+
+| Modifier | Effect |
+| --- | --- |
+| `.keyed(k)` | Continuity anchor: the live instance (its `Scope`, resources, published content) is kept across re-renders of the enclosing reactive region while an equal key is re-emitted, and torn down when the key changes or disappears. Any `CanEqual` value works; the idiomatic key is the component's singleton object, tupled with the non-`Signal` inputs the effect closed over. |
+| `.placeholder(ui)` | Content painted while the effect is pending on first mount. Defaults to an empty node. |
+| `.onError(f)` | Renders a failed mount (an `Abort` failure or a panic); the failure is also logged. The enclosing region stays alive, and a later key change re-mounts cleanly. |
+| `.pending(KeepLatest \| Placeholder)` | Re-mount policy for a keyed node: `KeepLatest` (the default) keeps the last rendered content visible as an inert frozen snapshot — its nested regions and handlers are already torn down — until the new instance publishes; `Placeholder` drops back to the placeholder, the honest choice for interactive content where a frozen-but-visible form would swallow input. |
+
+```scala
+import UI.*
+import kyo.*
+
+def profileCard(userId: Int): UI < (Async & Scope) =
+    for name <- Signal.initRef("...")
+    yield div(h2(name), p(s"user #$userId"))
+
+val card: UI =
+    UI.mounted(profileCard(42))
+        .keyed(42)
+        .placeholder(div("loading..."))
+        .onError(e => div(s"failed: ${e.getMessage}"))
+        .pending(PendingPolicy.KeepLatest)
+```
+
+A value input that should UPDATE a live instance belongs in a `Signal` parameter, not the key; a non-`Signal` value the effect captures belongs IN the key, or it is silently frozen at mount time. A duplicate key under one region renders an inline error node in the second slot rather than silently sharing one instance.
+
+### Failure after the first paint
+
+A mount can also fail *after* it has already published its UI — a background fiber it forked (a data feed, a subscription) terminates with an error. Node-scope supervision covers that window: the engine installs a failure observer around the mounted effect, so a non-interrupt failure of any fiber it forked via the scoped `Fiber.init` flips the already-published node into the same error routing as an up-front failure — its `.onError`, then the enclosing `UI.boundary` chain, then a default error node. At most one flip happens per instance (first failure wins), and the flip *replaces* the node's content; a component that would rather keep its content and surface the error elsewhere routes that failure to a value or side channel (a toast) instead of letting the fiber fail, and an `.onError` render can offer a retry by swapping the node's key. A clean interrupt — including the one that tears the node down on a key change — is never a failure, and `Fiber.initUnscoped` opts a fire-and-forget fiber out of supervision entirely.
+
+`UI.boundary.fallback(spinner).onError { case e: DataError => card(e) }(subtree*)` (experimental) aggregates the pending state of the mounted descendants beneath it and supplies a shared error branch for any that carry no node-local `.onError`.
+
 ## Inputs and forms
 
 > **Note:** All input element factories (`UI.input`, `UI.textarea`, `UI.passwordInput`, `UI.emailInput`, `UI.telInput`, `UI.urlInput`, `UI.searchInput`, `UI.numberInput`, `UI.dateInput`, `UI.timeInput`, `UI.colorInput`, `UI.rangeInput`, `UI.fileInput`, `UI.hiddenInput`, `UI.checkbox`, `UI.radio`, `UI.dropdown`) are `Void` elements. They do not accept children; calling `.apply(children*)` on them is a compile error. Configure them through their setter methods only.

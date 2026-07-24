@@ -239,6 +239,115 @@ object UI:
     def when[C <: UI](condition: Signal[Boolean])(body: => C)(using Frame): Reactive[C] =
         Reactive[C](condition.map(v => if v then body else UI.empty))
 
+    /** What an already-rendered mounted node shows while it re-mounts (key change): keep the last rendered content visible as a
+      * frozen snapshot until the new effect publishes (`KeepLatest`, the default — note the snapshot is inert: its nested regions
+      * and handlers are torn down with the old Scope), or drop back to the placeholder (`Placeholder` — the honest loading window,
+      * right for interactive content where a frozen-but-visible form would swallow input).
+      */
+    enum PendingPolicy derives CanEqual:
+        case KeepLatest, Placeholder
+
+    /** Embeds an effectful component mount in a pure render tree: `effect` runs when the node attaches, inside a node-lifetime
+      * `Scope` (torn down on detach), with `Abort[Throwable]` caught into the node's error state. See [[kyo.UI.Ast.Mounted]] for
+      * the lifecycle/identity contract and the [[kyo.UI.MountedOps]] extensions (`keyed`, `placeholder`, `onError`, `pending`).
+      *
+      * '''Node-scope supervision.''' The node's error state is not limited to the mount phase: every fiber the effect forks via
+      * the scoped `Fiber.init` (directly or transitively — a data feed forked by a library the effect calls) is SUPERVISED. A
+      * non-interrupt terminal failure of such a fiber retroactively flips the ALREADY-PUBLISHED node into the same error routing
+      * a failed mount takes: node-local `.onError` render, else the enclosing [[UI.boundary]] chain (typed selection), else the
+      * default inline error. First failure wins (at most one flip per instance, shared with the effect-failure path); teardown
+      * interrupts are exempt; the node `Scope` stays open on a flip (sibling fibers keep running, exactly like a pending-phase
+      * failure). The flip REPLACES the node's content — an app that wants "keep the content, surface the error elsewhere" routes
+      * that failure to a value/side channel (e.g. a toast) instead of failing the fiber; an `.onError` render may offer retry by
+      * swapping the node's key (a key change mounts a fresh instance). Escape hatches: `Fiber.initUnscoped` for fire-and-forget
+      * fibers whose failure must NOT flip the node — and note the sharp edge: a fiber whose failure the effect observes and
+      * handles itself (`Abort.run(f.getResult)`) still reports to supervision if forked with the scoped `Fiber.init`; use
+      * `Fiber.use`/`initUnscoped` for those.
+      *
+      * Effect typing: `S` must be dischargeable across a fork boundary — the same `Isolate[S, Sync, S]` gate `Fiber.init` uses.
+      * Context effects (`Env`, `Local`) derive silently and resolve at run time from the renderer fiber's inherited context
+      * (all renderer fibers descend from the `runMount`/`serveSession` caller, so an `Env.runAll` at the root reaches every
+      * mount); stateful effects (`Var`, `Emit`) do not derive and must be handled before the node is constructed. The node
+      * stores the effect with `S` erased: the `Isolate` evidence is the compile-time gate, not a runtime strategy — an
+      * explicitly provided stateful isolate is NOT applied, and such an effect fails loudly at run time (missing handler).
+      */
+    def mounted[S](effect: UI < (Abort[Throwable] & Async & Scope & S))(using
+        frame: Frame,
+        isolate: Isolate[S, Sync, S]
+    ): Mounted =
+        discard(isolate)
+        Mounted(
+            effect.asInstanceOf[UI < (Abort[Throwable] & Async & Scope)],
+            key = Absent,
+            placeholderUI = Absent,
+            errorRender = Absent,
+            pendingPolicy = PendingPolicy.KeepLatest
+        )
+    end mounted
+
+    /** Entry point for [[kyo.UI.Ast.Boundary]] (EXPERIMENTAL): `UI.boundary.fallback(spinner).onError { case e: DataError =>
+      * card(e) }(subtree...)`. See the Boundary scaladoc for aggregation/reveal/error semantics.
+      */
+    def boundary: BoundaryBuilder = BoundaryBuilder(Absent, Absent)
+
+    final case class BoundaryBuilder private[kyo] (
+        fallbackUI: Maybe[UI],
+        errorPf: Maybe[PartialFunction[Throwable, UI]]
+    ):
+        /** Painted while mounted descendants that started under this boundary are pending. Default: empty. */
+        def fallback(ui: UI): BoundaryBuilder = copy(fallbackUI = Present(ui))
+
+        /** Typed error selection: renders the first matching error of a mounted descendant that has no
+          * node-local `.onError`; non-matching errors bubble to the next enclosing boundary, then to the
+          * node-local default.
+          */
+        def onError(pf: PartialFunction[Throwable, UI]): BoundaryBuilder = copy(errorPf = Present(pf))
+
+        def apply(children: Ast.HtmlChildVal*)(using Frame): Ast.Boundary =
+            val child = children.toList match
+                case single :: Nil => single.value
+                case many          => Ast.Fragment[UI](Chunk.from(many.map(_.value)))
+            Ast.Boundary(child, fallbackUI, errorPf)
+        end apply
+    end BoundaryBuilder
+
+    /** Builder-style modifiers for [[kyo.UI.Ast.Mounted]], following the attrs-API idiom. */
+    object MountedOps:
+        extension (m: Mounted)
+            /** Continuity anchor: a mounted node with a key keeps its live instance (Scope, resources, published content)
+              * across re-renders of its immediately enclosing reactive region while an equal key is re-emitted; the instance
+              * is torn down (closed and awaited) when the key changes or disappears. Any `CanEqual`-comparable value works —
+              * the idiomatic key is the component's singleton object (`.keyed(ScoreboardView)`), tupled with value inputs the
+              * effect closed over when identity depends on them (`.keyed(EraPanel -> era)`): changing inputs that should
+              * UPDATE the live instance belong in `Signal` parameters, not the key; non-Signal inputs the effect captures
+              * belong IN the key, or they are silently frozen at mount time.
+              */
+            def keyed(key: Any): Mounted =
+                given Frame = m.frame
+                m.copy(key = Present(key))
+
+            /** Content rendered while the effect is pending on FIRST mount (and on re-mount under `PendingPolicy.Placeholder`).
+              * Defaults to an empty node.
+              */
+            def placeholder(ui: UI): Mounted =
+                given Frame = m.frame
+                m.copy(placeholderUI = Present(ui))
+
+            /** Renders a failed mount (`Abort` failure or panic of the effect). Defaults to a minimal inline error node; the
+              * failure is additionally logged. The enclosing region stays alive; a subsequent key change re-mounts cleanly.
+              */
+            def onError(f: Throwable => UI): Mounted =
+                given Frame = m.frame
+                m.copy(errorRender = Present(f))
+
+            /** Re-mount pending policy — see [[kyo.UI.PendingPolicy]]. Default: `KeepLatest`. */
+            def pending(p: PendingPolicy): Mounted =
+                given Frame = m.frame
+                m.copy(pendingPolicy = p)
+        end extension
+    end MountedOps
+    export MountedOps.*
+
     /** Server-push: returns HTTP handlers (SSR page GET and a WebSocket route) for this UI at the given path. Compose with other handlers
       * via HttpServer.init.
       *
@@ -676,49 +785,85 @@ object UI:
 
         // ---- Interactive trait (event handlers + tabIndex) ----
 
-        /** Capability trait for elements that accept event handlers (`onClick`, `onKeyDown`, ...) and `tabIndex`/focus-group settings. */
+        /** Handler storage erasure: the setter's `Isolate[S, Sync, S]` gate proved `S` fork-safe (context effects
+          * only, in practice); storage drops `S` because the Attrs slots are `Any < Async` and the run-time context
+          * comes from the event-drain fiber's inherited Context, not from the type. Mirrors [[kyo.UI.mounted]]'s
+          * erased storage.
+          */
+        private def eraseHandler[S](v: Any < (Abort[Throwable] & Async & S)): Any < Async =
+            v.asInstanceOf[Any < Async]
+
+        private def eraseHandlerFn[A, S](f: A => Any < (Abort[Throwable] & Async & S)): A => Any < Async =
+            f.asInstanceOf[A => Any < Async]
+
+        /** Capability trait for elements that accept event handlers (`onClick`, `onKeyDown`, ...) and `tabIndex`/focus-group settings.
+          *
+          * Handler effect typing: every setter is effect-polymorphic in `S` behind the same `Isolate[S, Sync, S]` gate as
+          * [[kyo.UI.mounted]] — context effects (`Env`, `Local`) derive silently, stateful effects get the curated compile
+          * error. Handlers are stored with `S` erased and resolve their context at run time from the fiber that drains
+          * events (the browser backend's event-drain fiber descends from the `runMount` caller, so a root `Env.runAll`
+          * reaches every handler). Pure `Any < Async` handlers infer `S = Any` — fully source-compatible. NOTE: in the
+          * server-push transport (`runHandlers`), event dispatch runs on kyo-http session fibers, which do not currently
+          * inherit the `runHandlers` caller's context — the same known gap as mounted effects there.
+          */
         sealed trait Interactive extends Element:
             def tabIndex(v: Int): Self       = withAttrs(attrs.copy(tabIndex = Present(v)))
             def focusTrap(v: Boolean): Self  = withAttrs(attrs.copy(focusTrap = Present(v)))
             def focusGroup(id: String): Self = withAttrs(attrs.copy(focusGroup = Present(id)))
 
             /** Runs `action` on click, ignoring the event payload. */
-            def onClick(action: => Any < Async): Self = withAttrs(attrs.copy(onClick = Present(Sync.defer(action)(using frame))))
+            def onClick[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onClick = Present(eraseHandler(Sync.defer(action)(using frame)))))
 
             /** Runs `f` on click, receiving the [[kyo.UI.MouseEvent]] payload (target id, modifier chord). */
-            def onClick(f: MouseEvent => Any < Async): Self = withAttrs(attrs.copy(onClickEvt = Present(f)))
+            def onClick[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onClickEvt = Present(eraseHandlerFn(f))))
 
             /** Runs `action` only when the click lands on this element itself, not on a descendant; ignores the event payload. */
-            def onClickSelf(action: => Any < Async): Self = withAttrs(attrs.copy(onClickSelf = Present(Sync.defer(action)(using frame))))
+            def onClickSelf[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onClickSelf = Present(eraseHandler(Sync.defer(action)(using frame)))))
 
             /** Runs `f` only when the click lands on this element itself, not on a descendant; receives the [[kyo.UI.MouseEvent]] payload. */
-            def onClickSelf(f: MouseEvent => Any < Async): Self = withAttrs(attrs.copy(onClickSelfEvt = Present(f)))
+            def onClickSelf[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onClickSelfEvt = Present(eraseHandlerFn(f))))
 
             /** Runs `f` on key-down, receiving the [[kyo.UI.KeyboardEvent]] payload (typed key, modifier chord, target id). */
-            def onKeyDown(f: KeyboardEvent => Any < Async): Self = withAttrs(attrs.copy(onKeyDown = Present(f)))
-            def onKeyUp(f: KeyboardEvent => Any < Async): Self   = withAttrs(attrs.copy(onKeyUp = Present(f)))
-            def onFocus(action: => Any < Async): Self            = withAttrs(attrs.copy(onFocus = Present(Sync.defer(action)(using frame))))
-            def onFocus(f: MouseEvent => Any < Async): Self      = withAttrs(attrs.copy(onFocusEvt = Present(f)))
-            def onBlur(action: => Any < Async): Self             = withAttrs(attrs.copy(onBlur = Present(Sync.defer(action)(using frame))))
-            def onBlur(f: MouseEvent => Any < Async): Self       = withAttrs(attrs.copy(onBlurEvt = Present(f)))
+            def onKeyDown[S](f: KeyboardEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onKeyDown = Present(eraseHandlerFn(f))))
+            def onKeyUp[S](f: KeyboardEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onKeyUp = Present(eraseHandlerFn(f))))
+            def onFocus[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onFocus = Present(eraseHandler(Sync.defer(action)(using frame)))))
+            def onFocus[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onFocusEvt = Present(eraseHandlerFn(f))))
+            def onBlur[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onBlur = Present(eraseHandler(Sync.defer(action)(using frame)))))
+            def onBlur[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onBlurEvt = Present(eraseHandlerFn(f))))
 
             /** Runs `action` when the pointer enters this element. */
-            def onHover(action: => Any < Async): Self = withAttrs(attrs.copy(onHover = Present(Sync.defer(action)(using frame))))
+            def onHover[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onHover = Present(eraseHandler(Sync.defer(action)(using frame)))))
 
             /** Runs `f` when the pointer enters this element, receiving the [[kyo.UI.MouseEvent]] payload. */
-            def onHover(f: MouseEvent => Any < Async): Self = withAttrs(attrs.copy(onHoverEvt = Present(f)))
+            def onHover[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onHoverEvt = Present(eraseHandlerFn(f))))
 
             /** Runs `action` when the pointer leaves this element. */
-            def onUnhover(action: => Any < Async): Self = withAttrs(attrs.copy(onUnhover = Present(Sync.defer(action)(using frame))))
+            def onUnhover[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onUnhover = Present(eraseHandler(Sync.defer(action)(using frame)))))
 
             /** Runs `f` when the pointer leaves this element, receiving the [[kyo.UI.MouseEvent]] payload. */
-            def onUnhover(f: MouseEvent => Any < Async): Self = withAttrs(attrs.copy(onUnhoverEvt = Present(f)))
+            def onUnhover[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onUnhoverEvt = Present(eraseHandlerFn(f))))
 
             /** Runs `action` when the mouse wheel is used over this element. */
-            def onScroll(action: => Any < Async): Self = withAttrs(attrs.copy(onScroll = Present(Sync.defer(action)(using frame))))
+            def onScroll[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onScroll = Present(eraseHandler(Sync.defer(action)(using frame)))))
 
             /** Runs `f` when the mouse wheel is used over this element, receiving the [[kyo.UI.WheelEvent]] payload. */
-            def onScroll(f: WheelEvent => Any < Async): Self = withAttrs(attrs.copy(onScrollEvt = Present(f)))
+            def onScroll[S](f: WheelEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onScrollEvt = Present(eraseHandlerFn(f))))
         end Interactive
 
         // ---- Layout traits ----
@@ -989,6 +1134,47 @@ object UI:
 
         private[kyo] case class KeyedChild[C <: UI](key: String, child: UI)(using val frame: Frame) extends UI
 
+        /** An effectful component mount: a first-class AST node whose content is produced by an effect.
+          *
+          * The renderer runs `effect` when the node attaches, inside a node-lifetime `Scope` that is torn down when the node
+          * detaches; `placeholderUI` renders while the effect is pending (first mount), and a `Failure`/`Panic` of the effect
+          * renders through `errorRender` while the enclosing region stays alive. The effect must follow the same prompt-return
+          * contract as reactive regions: allocate and fork, never park — the node's Scope owns anything long-lived it forks.
+          *
+          * Identity is explicit: a node without a key is remounted (Scope closed and awaited, effect re-run) whenever its
+          * enclosing reactive region re-renders; a node with [[kyo.UI.MountedOps.keyed]] keeps its live instance (Scope,
+          * resources, published content) across re-renders of the immediately enclosing region for as long as a re-render
+          * emits a mounted node with an equal key, and is torn down when the key disappears or changes. Extends `HtmlContent`
+          * so it is accepted anywhere an HTML child is (the content-model of the effect's RESULT is the caller's contract).
+          *
+          * Stored effect: `S` from [[kyo.UI.mounted]] is erased here after the `Isolate` gate — see the constructor's note.
+          */
+        case class Mounted(
+            effect: UI < (Abort[Throwable] & Async & Scope),
+            key: Maybe[Any],
+            placeholderUI: Maybe[UI],
+            errorRender: Maybe[Throwable => UI],
+            pendingPolicy: UI.PendingPolicy
+        )(using val frame: Frame) extends UI with HtmlContent
+
+        /** A pending/error boundary over a subtree (EXPERIMENTAL): while any mounted descendant that started
+          * under this boundary is still pending, the boundary paints `fallbackUI` instead of `child` — the
+          * subtree is subscribed EAGERLY behind the fallback (all mount effects start immediately, in
+          * parallel; no waterfalls), and the child content is painted from current signal values once the
+          * pending count reaches zero. Reveal is once-only (Suspense semantics for first load): mounts that
+          * start after the reveal use their node-local placeholders.
+          *
+          * `errorPf` is the boundary's typed error selection: a mounted descendant's failure WITHOUT a
+          * node-local `.onError` is offered to the nearest enclosing boundary chain; the first boundary whose
+          * partial function is defined at the error renders it (replacing the boundary's whole content). An
+          * unmatched error falls back to the node-local default rendering and counts as settled.
+          */
+        case class Boundary(
+            child: UI,
+            fallbackUI: Maybe[UI],
+            errorPf: Maybe[PartialFunction[Throwable, UI]]
+        )(using val frame: Frame) extends UI with HtmlContent
+
         // ====== Block containers ======
 
         final case class Div(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
@@ -1162,10 +1348,12 @@ object UI:
             def apply(cs: HtmlChildVal*): Form = copy(children = children ++ Chunk.from(cs.map(_.value)))
 
             /** Runs `action` on form submit, ignoring the event payload. */
-            def onSubmit(action: => Any < Async): Form = copy(onSubmit = Present(Sync.defer(action)(using frame)))
+            def onSubmit[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Form =
+                copy(onSubmit = Present(eraseHandler(Sync.defer(action)(using frame))))
 
             /** Runs `f` on form submit, receiving the [[kyo.UI.MouseEvent]] payload. */
-            def onSubmit(f: MouseEvent => Any < Async): Form = copy(onSubmitEvt = Present(f))
+            def onSubmit[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Form =
+                copy(onSubmitEvt = Present(eraseHandlerFn(f)))
         end Form
 
         final case class Textarea(
