@@ -1206,6 +1206,16 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
     }
 
     "UUID schema and JSON codec" - {
+        "exposes the approved uuidSchema name for kyo UUID values" in {
+            val schema: Schema[UUID] = Schema.uuidSchema
+            assert(schema eq summon[Schema[UUID]])
+        }
+
+        "exposes the explicit javaUuidSchema compatibility name for java UUID values" in {
+            val schema: Schema[java.util.UUID] = Schema.javaUuidSchema
+            assert(schema eq summon[Schema[java.util.UUID]])
+        }
+
         "kyo UUID schema is a string primitive tagged with kyo UUID" in {
             val s = summon[Schema[UUID]]
             assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[UUID].asInstanceOf[Tag[Any]]))

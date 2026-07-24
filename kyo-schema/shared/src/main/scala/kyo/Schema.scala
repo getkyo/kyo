@@ -2534,7 +2534,7 @@ object Schema:
         )
 
     /** Schema for java.util.UUID values. Serializes as string. */
-    given uuidSchema: Schema[java.util.UUID] =
+    given javaUuidSchema: Schema[java.util.UUID] =
         Schema.init[java.util.UUID](
             writeFn = (v, w) => w.string(v.toString),
             readFn = r => java.util.UUID.fromString(r.string()),
@@ -2542,7 +2542,7 @@ object Schema:
         )
 
     /** Schema for kyo.UUID values. Serializes as canonical string. */
-    given kyoUuidSchema: Schema[kyo.UUID] =
+    given uuidSchema: Schema[kyo.UUID] =
         Schema.init[kyo.UUID](
             writeFn = (v, w) => w.string(v.show),
             readFn = r =>

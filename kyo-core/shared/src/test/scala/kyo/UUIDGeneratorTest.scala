@@ -230,6 +230,16 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
     }
 
     "version 4" - {
+        "matches the published RFC 9562 version 4 example" in {
+            val generator = deterministic()(entropy(
+                0x91, 0x91, 0x08, 0xf7, 0x52, 0xd1, 0x43, 0x20,
+                0x9b, 0xac, 0xf8, 0x47, 0xdb, 0x41, 0x48, 0xa8
+            ))
+
+            generator.v4.map: generated =>
+                assert(generated.show == "919108f7-52d1-4320-9bac-f847db4148a8")
+        }
+
         "maps secure entropy exactly before stamping version and variant bits" in {
             val generator = deterministic()(entropy(
                 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0xa6, 0x77,
@@ -244,6 +254,16 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
     }
 
     "version 7" - {
+        "matches the published RFC 9562 version 7 example" in {
+            val generator = deterministic(0x017f22e279b0L)(entropy(
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0xc3,
+                0x18, 0xc4, 0xdc, 0x0c, 0x0c, 0x07, 0x39, 0x8f
+            ))
+
+            generator.v7.map: generated =>
+                assert(generated.show == "017f22e2-79b0-7cc3-98c4-dc0c0c07398f")
+        }
+
         "panics with the exact failure when the observed timestamp is negative" in {
             val generator = deterministic(-1L)(entropyWithLast(0))
 
