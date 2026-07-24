@@ -8,12 +8,10 @@ class QueueTest extends kyo.test.Test[Any]:
 
     val access = Access.values.toList
 
-    private def drainUntilClosed(queue: Queue[Int])(using Frame): Unit < Async =
-        Loop.foreach:
-            Async.sleep(1.millis).andThen(Abort.run(queue.drain)).map:
-                case Result.Success(_)         => Loop.continue
-                case Result.Failure(_: Closed) => Loop.done
-                case panic: Result.Panic       => Abort.error(panic)
+    private def drainAfterOffersComplete(queue: Queue[Int], offersComplete: Latch)(using Frame): Unit < Async =
+        offersComplete.await.andThen(Abort.run(queue.drain)).map:
+            case panic: Result.Panic => Abort.error(panic)
+            case _                   => ()
 
     "bounded" - {
         access.foreach { access =>
@@ -720,26 +718,27 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "two producers calling closeAwaitEmpty" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                latch <- Latch.init(1)
+                size           <- Choice.eval(0, 1, 2, 10, 100)
+                queue          <- Queue.init[Int](size)
+                latch          <- Latch.init(1)
+                offersComplete <- Latch.init(50)
 
                 producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
                 producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        drainUntilClosed(queue)
+                        drainAfterOffersComplete(queue, offersComplete)
                     )
                 )
 
@@ -759,26 +758,27 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "producer calling closeAwaitEmpty and another calling close" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                latch <- Latch.init(1)
+                size           <- Choice.eval(0, 1, 2, 10, 100)
+                queue          <- Queue.init[Int](size)
+                latch          <- Latch.init(1)
+                offersComplete <- Latch.init(50)
 
                 producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
                 producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
                             .andThen(queue.close)
                     )
                 )
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        drainUntilClosed(queue)
+                        drainAfterOffersComplete(queue, offersComplete)
                     )
                 )
 
