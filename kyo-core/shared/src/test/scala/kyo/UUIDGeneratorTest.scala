@@ -102,6 +102,16 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
             }
         }
 
+        "v4String delegates to the scoped generator and renders canonical text" in {
+            val generator = new RecordingGenerator(v4Fixed, v7Fixed)
+
+            UUID.let(generator)(UUID.v4String).map { generated =>
+                assert(generated == "00112233-4455-4677-a899-aabbccddeeff")
+                assert(generator.v4Calls == 1)
+                assert(generator.v7Calls == 0)
+            }
+        }
+
         "UUIDGenerator operations delegate to the scoped generator" in {
             val generator = new RecordingGenerator(v4Fixed, v7Fixed)
             UUIDGenerator.let(generator) {

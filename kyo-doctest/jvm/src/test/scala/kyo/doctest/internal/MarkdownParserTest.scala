@@ -6,7 +6,7 @@ import kyo.*
   *
   * Fixture files are used for most tests; inline strings are used where the content is simpler to express directly.
   */
-class MarkdownParserTest extends kyo.doctest.DoctestTest:
+class MarkdownParserTest extends kyo.test.Test[Any]:
 
     private val dummyFile: kyo.Path = kyo.Path("test.md")
 

@@ -979,6 +979,9 @@ val serviceId: Maybe[UUID] < (Sync & Abort[UUID.InvalidUUID]) =
 val randomId: UUID < Sync =
     UUID.v4
 
+val randomIdText: String < Sync =
+    UUID.v4String
+
 val timeOrderedId: UUID < Sync =
     UUID.v7
 
@@ -988,7 +991,7 @@ def withGenerator[A, S](generator: UUIDGenerator)(value: A < S): A < (S & Sync) 
 
 `UUIDGenerator.live`, the default generator, uses cryptographic platform entropy. Its version 7 implementation combines secure entropy with the Kyo clock and preserves strict monotonic ordering per generator instance when the clock repeats or moves backward. Entropy and clock failures remain `Sync` panics; the live generator never falls back to `Random`, timestamps alone, or process counters.
 
-`UUID.v4` and `UUID.v7` delegate to the currently scoped generator. The equivalent capability-first entry points are `UUIDGenerator.v4`, `UUIDGenerator.v7`, and `UUIDGenerator.let`.
+`UUID.v4`, `UUID.v4String`, and `UUID.v7` delegate to the currently scoped generator. `UUID.v4String` generates a version 4 value and renders its canonical lowercase text. The equivalent capability-first entry points are `UUIDGenerator.v4`, `UUIDGenerator.v7`, and `UUIDGenerator.let`.
 
 ### `Random`
 
@@ -1004,11 +1007,9 @@ val token: String < Sync =
     Random.nextStringAlphanumeric(length = 32)
 ```
 
-`Random` provides non-cryptographic random values, sampling, and shuffling. It exposes `nextInt`, `nextInt(bound)`, `nextLong`, `nextDouble`, `nextFloat`, `nextBoolean`, `nextGaussian`, `nextValue(seq)`, `nextValues(length, seq)`, `nextStringAlphanumeric(length)`, `nextString(length, chars)`, `nextBytes(length)`, and `shuffle(seq)`.
+`Random` provides non-cryptographic random values, sampling, shuffling, and UUID-formatted strings. It exposes `nextInt`, `nextInt(bound)`, `nextLong`, `nextDouble`, `nextFloat`, `nextBoolean`, `nextGaussian`, `nextValue(seq)`, `nextValues(length, seq)`, `nextStringAlphanumeric(length)`, `nextString(length, chars)`, `nextBytes(length)`, `shuffle(seq)`, and `uuid`.
 
 For deterministic tests: `Random.withSeed(seed)(v)` runs `v` with a seeded RNG; `Random.let(r)(v)` substitutes a custom `Random` instance for the scope.
-
-Code that previously used `Random.uuid` should use `UUID.v4` for random UUIDs. Tests and other callers that need repeatable UUID generation should install a deterministic `UUIDGenerator` with `UUID.let(generator)(value)`.
 
 ### `Log`
 

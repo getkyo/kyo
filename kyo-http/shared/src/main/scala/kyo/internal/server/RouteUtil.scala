@@ -47,8 +47,8 @@ private[kyo] object RouteUtil:
                 case Present(boundary) =>
                     encodeRequestWithBoundary(route, request, Present(boundary))(onEmpty, onBuffered, onStreaming)
                 case Absent =>
-                    UUID.v4.map { uuid =>
-                        encodeRequestWithBoundary(route, request, Present(uuid.show))(onEmpty, onBuffered, onStreaming)
+                    UUID.v4String.map { boundary =>
+                        encodeRequestWithBoundary(route, request, Present(boundary))(onEmpty, onBuffered, onStreaming)
                     }
         else
             encodeRequestWithBoundary(route, request, Absent)(onEmpty, onBuffered, onStreaming)
@@ -338,8 +338,8 @@ private[kyo] object RouteUtil:
                 case Present(boundary) =>
                     encodeResponseWithBoundary(route, response, Present(boundary))(onEmpty, onBuffered, onStreaming)
                 case Absent =>
-                    UUID.v4.map { uuid =>
-                        encodeResponseWithBoundary(route, response, Present(uuid.show))(onEmpty, onBuffered, onStreaming)
+                    UUID.v4String.map { boundary =>
+                        encodeResponseWithBoundary(route, response, Present(boundary))(onEmpty, onBuffered, onStreaming)
                     }
         else
             encodeResponseWithBoundary(route, response, Absent)(onEmpty, onBuffered, onStreaming)
@@ -768,7 +768,7 @@ private[kyo] object RouteUtil:
         if requiresMultipartBoundary(bodyField) then
             multipartBoundaryFromHeaders(headers) match
                 case boundary @ Present(_) => boundary
-                case Absent                => UUID.v4.map(uuid => Present(uuid.show))
+                case Absent                => UUID.v4String.map(Present(_))
         else Absent
     end multipartBoundary
 

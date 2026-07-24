@@ -4,7 +4,7 @@ import kyo.*
 import kyo.doctest.*
 
 /** Tests for ClasspathFingerprint covering hash stability, content-change detection, and ordering invariance. */
-class ClasspathFingerprintTest extends kyo.doctest.DoctestTest:
+class ClasspathFingerprintTest extends kyo.test.Test[Any]:
 
     // Create a temporary file with given contents and return it as a kyo.Path.
     private def makeTempFile(dir: kyo.Path, name: String, content: Array[Byte])(using Frame): kyo.Path < (Sync & Abort[Doctest.Error]) =
@@ -17,7 +17,7 @@ class ClasspathFingerprintTest extends kyo.doctest.DoctestTest:
     // Per-test temp directory, cleaned up via Scope.acquireRelease.
     private def withTempDir[A, S](f: kyo.Path => A < (Async & Sync & Scope & S))(using Frame): A < (Async & Sync & Scope & S) =
         for
-            id <- UUID.v4.map(_.show)
+            id <- Random.uuid
             dir = Path.basePaths.tmp / s"kyo-doctest-fp-test-$id"
             _   <- Abort.run[FileFsException](dir.mkDir).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)

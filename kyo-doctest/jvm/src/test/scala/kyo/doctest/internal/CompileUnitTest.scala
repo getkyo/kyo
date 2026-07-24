@@ -3,7 +3,7 @@ package kyo.doctest.internal
 import kyo.*
 
 /** Tests for CompileUnit covering Isolated, Inherited, Env, Nested, and setup block grouping. */
-class CompileUnitTest extends kyo.doctest.DoctestTest:
+class CompileUnitTest extends kyo.test.Test[Any]:
 
     private def makeBlock(
         body: String,

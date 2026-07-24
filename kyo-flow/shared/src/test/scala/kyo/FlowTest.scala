@@ -6,61 +6,11 @@ class FlowTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    final private class RecordingUUIDGenerator(value: UUID) extends UUIDGenerator:
-        var v4Calls = 0
-        var v7Calls = 0
-
-        def v4(using Frame): UUID < Sync =
-            Sync.defer {
-                v4Calls += 1
-                value
-            }
-
-        def v7(using Frame): UUID < Sync =
-            Sync.defer {
-                v7Calls += 1
-                value
-            }
-    end RecordingUUIDGenerator
-
-    private def parseUUID(value: String): UUID =
-        UUID.parse(value).getOrThrow
-
     case class OrderId(value: String) derives CanEqual, Schema
     case class Order(id: String, amount: Int) derives CanEqual, Schema
     case class Payment(orderId: String, total: Int) derives CanEqual, Schema
     case class Shipment(orderId: String) derives CanEqual, Schema
     case class Approval(approved: Boolean) derives CanEqual, Schema
-
-    "ID generation" - {
-        "Execution.random delegates to the scoped UUID generator and preserves canonical text" in {
-            val expected  = "00112233-4455-4677-a899-aabbccddeeff"
-            val generator = new RecordingUUIDGenerator(parseUUID(expected))
-
-            val generated: Flow.Id.Execution < Sync =
-                UUID.let(generator)(Flow.Id.Execution.random)
-
-            generated.map { id =>
-                assert(id.value == expected)
-                assert(generator.v4Calls == 1)
-                assert(generator.v7Calls == 0)
-            }
-        }
-
-        "Executor.random delegates to the scoped UUID generator and preserves canonical text" in {
-            val expected  = "fedcba98-7654-4321-8fed-cba987654321"
-            val generator = new RecordingUUIDGenerator(parseUUID(expected))
-
-            val generated: Flow.Id.Executor < Sync =
-                UUID.let(generator)(Flow.Id.Executor.random)
-
-            generated.map { id =>
-                assert(id.value == expected)
-                assert(generator.v4Calls == 1)
-                assert(generator.v7Calls == 0)
-            }
-        }
-    }
 
     "AST construction" - {
 

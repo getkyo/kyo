@@ -7,7 +7,7 @@ import kyo.doctest.*
   *
   * These tests use inline strings only (no fixture files).
   */
-class ModifierParserTest extends kyo.doctest.DoctestTest:
+class ModifierParserTest extends kyo.test.Test[Any]:
 
     private val dummyFile: kyo.Path = kyo.Path("test.md")
 
