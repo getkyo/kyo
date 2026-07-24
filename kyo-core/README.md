@@ -80,13 +80,14 @@ val infinite: Nothing < Async =
 ```scala
 import kyo.*
 
-val expensive: Int < Async = Sync.defer { Thread.sleep(1000); 42 }
+val expensive: Int < Async =
+    Async.sleep(1.second).andThen(42)
 
 val cached: Int < (Async & Sync) =
     Async.memoize(expensive).flatMap(memo => memo)
 ```
 
-> **Caution:** `Async.memoize` permanently blocks all callers if the initial computation hangs. Wrap with `Async.timeout` when the underlying computation might not complete.
+> **Caution:** `Async.memoize` leaves all callers waiting for completion if the initial computation hangs. Wrap with `Async.timeout` when the underlying computation might not complete.
 
 `Async.fromFuture(f)` lifts a `scala.concurrent.Future` into an `Async` computation, bridging existing Future-based code into the Kyo effect model.
 
@@ -927,7 +928,7 @@ val example: Unit < (Async & Sync & Scope & Abort[CommandException]) =
 
 > **Caution:** Reading `stdout` and `stderr` sequentially can deadlock when output exceeds the ~64KB pipe buffer (the producer blocks on the unread stream). Use `Process.collectOutput` to drain both concurrently.
 
-`CommandException` is the sealed hierarchy for pre-launch errors (executable not found, permission denied, etc.). `Process.ExitCode` is the typed exit-code value.
+`CommandException` is the sealed hierarchy for launch failures, before a process exists. Callers usually recover by fixing setup: `ProgramNotFoundException` means choose another executable or repair `PATH`, `PermissionDeniedException` means fix execute permissions or select an allowed binary, and `WorkingDirectoryNotFoundException` means create or choose a valid `cwd`. Once a process starts, failed program execution is reported through the typed `Process.ExitCode` value.
 
 ## Ambient services
 
@@ -962,9 +963,9 @@ val homeDir: Maybe[String] < Sync =
     System.env[String]("HOME")
 ```
 
-`System.env(name)` and `System.property(name)` are parameterised by a `Parser[E, A]` typeclass. Built-in `Parser` instances exist for primitive types, `String`, `Duration`, `java.net.URI`, `java.net.URL`, `java.util.UUID`, and the standard `java.time` types. Parse failures raise `Abort[E]` per the parser.
+`System.env(name)` and `System.property(name)` are parameterised by a `Parser[E, A]` typeclass. Built-in `Parser` instances exist for primitive types, `String`, `Duration`, `kyo.UUID`, `java.util.UUID` (the JVM type), `java.net.URI`, `java.net.URL`, and the standard `java.time` types. Parse failures raise `Abort[E]` per the parser.
 
-Canonical `kyo.UUID` values are also supported, with malformed input reported as `UUID.InvalidUUID`:
+Canonical `kyo.UUID` values report malformed input as `UUID.InvalidUUID`:
 
 ```scala
 val serviceId: Maybe[UUID] < (Sync & Abort[UUID.InvalidUUID]) =
@@ -985,8 +986,11 @@ val randomIdText: String < Sync =
 val timeOrderedId: UUID < Sync =
     UUID.v7
 
-def withGenerator[A, S](generator: UUIDGenerator)(value: A < S): A < (S & Sync) =
-    UUID.let(generator)(value)
+val generator: UUIDGenerator =
+    UUIDGenerator.live
+
+val scopedId: UUID < Sync =
+    UUID.let(generator)(UUID.v4)
 ```
 
 `UUIDGenerator.live`, the default generator, uses cryptographic platform entropy. Its version 7 implementation combines secure entropy with the Kyo clock and preserves strict monotonic ordering per generator instance when the clock repeats or moves backward. Entropy and clock failures remain `Sync` panics; the live generator never falls back to `Random`, timestamps alone, or process counters.
@@ -1007,7 +1011,7 @@ val token: String < Sync =
     Random.nextStringAlphanumeric(length = 32)
 ```
 
-`Random` provides non-cryptographic random values, sampling, shuffling, and UUID-formatted strings. It exposes `nextInt`, `nextInt(bound)`, `nextLong`, `nextDouble`, `nextFloat`, `nextBoolean`, `nextGaussian`, `nextValue(seq)`, `nextValues(length, seq)`, `nextStringAlphanumeric(length)`, `nextString(length, chars)`, `nextBytes(length)`, `shuffle(seq)`, and `uuid`.
+`Random` provides non-cryptographic random values, sampling, shuffling, and UUID-formatted strings. `Random.uuid` is non-cryptographic; use `UUID.v4` or `UUID.v7` for secure UUID generation. It exposes `nextInt`, `nextInt(bound)`, `nextLong`, `nextDouble`, `nextFloat`, `nextBoolean`, `nextGaussian`, `nextValue(seq)`, `nextValues(length, seq)`, `nextStringAlphanumeric(length)`, `nextString(length, chars)`, `nextBytes(length)`, `shuffle(seq)`, and `uuid`.
 
 For deterministic tests: `Random.withSeed(seed)(v)` runs `v` with a seeded RNG; `Random.let(r)(v)` substitutes a custom `Random` instance for the scope.
 

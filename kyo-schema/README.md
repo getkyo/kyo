@@ -1,6 +1,6 @@
 # kyo-schema
 
-Define a case class and get JSON/YAML serialization, Protobuf and MessagePack encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No required annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
+Define a case class and get JSON/YAML serialization, Protobuf and MessagePack encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No required annotations, no boilerplate. Works across JVM, JavaScript, Scala Native, and WASM. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
 
 <!-- doctest:setup
 ```scala
@@ -821,14 +821,15 @@ Schemas are provided for all common types out of the box:
 | Category | Types |
 |----------|-------|
 | Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt`, `Unit` |
-| Time | `java.time.Instant`, `java.time.Duration`, `kyo.Instant`, `kyo.Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
+| Time | `java.time.Instant`, `java.time.Duration`, `scala.concurrent.duration.Duration`, `scala.concurrent.duration.FiniteDuration`, `kyo.Instant`, `kyo.Duration`, `java.time.LocalDate`, `java.time.LocalTime`, `java.time.LocalDateTime` |
 | Identifiers | `kyo.UUID`, `java.util.UUID`, `Frame`, `Tag[A]` |
-| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]`, `OrderedDict[K, V]` |
+| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[K, V]`, `Dict[K, V]`, `OrderedDict[K, V]` |
 | Optional | `Option[A]`, `Maybe[A]` |
 | Sums | `Either[A, B]`, `Result[E, A]` |
+| Scheduling | `kyo.Schedule` |
 | Tuples | `(A, B)`, `(A, B, C)`, `(A, B, C, D)`, `(A, B, C, D, E)` |
 
-Prefer `kyo.UUID` in new schemas. Its primary built-in schema is `Schema.uuidSchema`; it writes canonical lowercase UUID text and reads through `UUID.parse`. `java.util.UUID` remains available for Java-facing compatibility through `Schema.javaUuidSchema`. Both use a string wire representation, but their runtime schema tags remain type-specific.
+Prefer `kyo.UUID` in new schemas. `Schema.uuidSchema` now names `Schema[kyo.UUID]`: it writes canonical lowercase UUID text through `UUID.show` and reads through `UUID.parse`. Explicit Java UUID schema references should use `Schema.javaUuidSchema`, while ordinary `summon[Schema[java.util.UUID]]` remains available. Both UUID types use a string wire representation, but their runtime schema tags remain type-specific.
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
@@ -1686,7 +1687,7 @@ The `Structure.Type` tree ships with a small set of operations for runtime inspe
 
 ## Custom Formats
 
-`Json`, `Ion`, `Yaml`, and `Protobuf` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
+`Json`, `Ion`, `Yaml`, `Bson`, `Protobuf`, and `MsgPack` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
 
 ### The Codec trait
 
@@ -1764,7 +1765,7 @@ When writing a custom schema for an opaque or wrapper type, you can also constru
 
 ## Exceptions
 
-All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. The most useful subtypes:
+Errors raised by the schema core and schema codecs extend the sealed `SchemaException` hierarchy. Format-specific helper APIs may define their own error types, for example YAML CST edit operations return `Yaml.Cst.EditException`. The most useful `SchemaException` subtypes:
 
 | Exception | Raised when |
 |-----------|-------------|
@@ -1781,6 +1782,7 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 | `AmbiguousVariantMatchException` | an untagged or type-union decode under the default `Strict` policy matches more than one member (lists the matched members) |
 | `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the builder call, not at encode time) |
 | `TruncatedInputException` | the input stream ends before decoding completes |
+| `TrailingInputException` | decode finishes one complete value but the input still contains extra content |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
 | `RangeException` | a numeric value overflows the target type |
 | `ValidationFailedException` | a `.check` / `checkMin` / ... predicate fails |
@@ -1826,8 +1828,8 @@ cs.applyTo(alice) // Result.Success(renamed)
 
 ## Cross-platform behavior
 
-kyo-schema runs on JVM, Scala.js, and Scala Native, but two areas behave differently across platforms:
+kyo-schema runs on JVM, Scala.js, Scala Native, and WASM, but two areas behave differently across platforms:
 
-- **ASCII bytes to String conversion**: the JVM uses a zero-copy path that constructs `String` directly from the underlying byte array via the private LATIN1 String constructor, sharing the array without copying. Scala.js and Scala Native copy the bytes via `new String(bytes, StandardCharsets.US_ASCII)`. This is an implementation detail that does not affect correctness, but may appear in allocations-per-request profiling on high-throughput JVM workloads.
+- **ASCII bytes to String conversion**: the JVM uses a zero-copy path that constructs `String` directly from the underlying byte array via the private LATIN1 String constructor, sharing the array without copying. Scala.js, Scala Native, and WASM copy the bytes via `new String(bytes, StandardCharsets.US_ASCII)`. This is an implementation detail that does not affect correctness, but may appear in allocations-per-request profiling on high-throughput JVM workloads.
 
-- **Regex support in `checkPattern`**: `checkPattern` uses `java.util.regex.Pattern`. Scala.js and Scala Native emulate this API but do not support all JVM regex features. Features unavailable off-JVM include possessive quantifiers (`a++`, `a*+`), atomic groups (`(?>...)`), some Unicode property classes (`\p{...}`), and lookbehind on older JS engines. For cross-platform constraints, stick to POSIX features: character classes, anchors, alternation, basic quantifiers, capture groups, backreferences, and simple lookahead.
+- **Regex support in `checkPattern`**: `checkPattern` uses `java.util.regex.Pattern`. Scala.js, Scala Native, and WASM emulate this API but do not support all JVM regex features. Features unavailable off-JVM include possessive quantifiers (`a++`, `a*+`), atomic groups (`(?>...)`), some Unicode property classes (`\p{...}`), and lookbehind on older JS engines. For cross-platform constraints, stick to POSIX features: character classes, anchors, alternation, basic quantifiers, capture groups, backreferences, and simple lookahead.
