@@ -121,6 +121,12 @@ object Fiber:
 
     /** Runs an asynchronous computation in a new Fiber guaranteeing eventual interruption via the [[Scope]] effect.
       *
+      * If a [[Fiber.Supervisor]] is installed in the current context (see [[Supervisor.let]]), the spawned fiber is additionally
+      * SUPERVISED: any non-interrupt terminal failure (an `Abort` failure or a panic that is not an [[Interrupted]]) is reported to the
+      * supervisor exactly once. Interruptions (including the scope-close interrupt this very method registers) are never reported.
+      * With no supervisor installed (the default), behavior is unchanged. [[initUnscoped]] and [[use]] never supervise: they are the
+      * escape hatches for fire-and-forget fibers and for fibers whose failure the caller observes itself.
+      *
       * @param v
       *   The computation to run
       * @return
@@ -135,7 +141,56 @@ object Fiber:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
-        Scope.acquireRelease(initUnscoped[E, A, S, S2](v))(_.interrupt)
+        Supervisor.local.use {
+            case Absent => Scope.acquireRelease(initUnscoped[E, A, S, S2](v))(_.interrupt)
+            case Present(sup) =>
+                Scope.acquireRelease(initUnscoped[E, A, S, S2](v))(_.interrupt).map { fiber =>
+                    Sync.defer {
+                        Supervisor.watch(fiber, sup)
+                        fiber
+                    }
+                }
+        }
+
+    /** Observes non-interrupt failures of fibers spawned via the scoped [[init]].
+      *
+      * A supervisor is carried in an inheritable [[Local]] ([[Supervisor.let]]), so it reaches every scoped `Fiber.init` in the
+      * wrapped computation AND in fibers it forks (context capture at spawn). This is the primitive behind kyo-ui's node-scope
+      * supervision: the UI engine installs a supervisor around a mounted node's effect so a background data feed failing AFTER the
+      * node published its UI can still flip the node into its error state.
+      *
+      * The callback runs on the completing fiber's thread with no effect context: it must be fast, non-blocking, and must not throw
+      * (typically it completes a promise or sets an atomic).
+      */
+    abstract private[kyo] class Supervisor:
+        /** Invoked at most once per supervised fiber, on any non-interrupt terminal failure. */
+        def onFailure(error: Result.Error[Any])(using AllowUnsafe): Unit
+
+    private[kyo] object Supervisor:
+        /** The ambient supervisor. Inheritable so supervised code's own forks stay supervised. */
+        private[kyo] val local: Local[Maybe[Supervisor]] = Local.init(Maybe.empty[Supervisor])
+
+        /** Runs `v` with `sup` installed as the ambient supervisor. */
+        private[kyo] def let[A, S](sup: Supervisor)(v: A < S)(using Frame): A < S =
+            local.let(Present(sup))(v)
+
+        /** Runs `v` with NO ambient supervisor: the subtree opt-out. */
+        private[kyo] def none[A, S](v: A < S)(using Frame): A < S =
+            local.let(Absent)(v)
+
+        /** Registers the failure watch on a just-spawned fiber. Safe to call after completion: `IOPromise.onComplete` on a settled
+          * promise invokes the callback immediately, so an instantly-failing fiber still reports.
+          */
+        private[kyo] def watch(fiber: IOPromiseBase[?, ?], sup: Supervisor): Unit =
+            fiber.asInstanceOf[IOPromise[Any, Any]].onComplete {
+                case Result.Panic(_: Interrupted)   => ()
+                case Result.Failure(_: Interrupted) => ()
+                case error: Result.Error[Any] =>
+                    import AllowUnsafe.embrace.danger
+                    sup.onFailure(error)
+                case _ => ()
+            }
+    end Supervisor
 
     /** Use an asynchronous computation running in a new Fiber, interrupting the fiber after usage.
       *
