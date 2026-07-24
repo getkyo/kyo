@@ -1,0 +1,132 @@
+package kyo.internal
+
+import java.io.EOFException
+import kyo.*
+import scala.collection.mutable.ArrayBuffer
+
+class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
+
+    final private class ScriptedSource(
+        payload: Array[Byte],
+        reads: Chunk[Int],
+        closeFailure: Maybe[Throwable] = Absent
+    ) extends UUIDEntropyPlatform.NativeSource:
+        val requests         = ArrayBuffer.empty[(Int, Int)]
+        var closeCalls       = 0
+        private var nextRead = 0
+
+        def read(target: Array[Byte], offset: Int, length: Int): Int =
+            requests += ((offset, length))
+            val result = reads(nextRead)
+            nextRead += 1
+            if result > 0 then
+                var i = 0
+                while i < result do
+                    target(offset + i) = payload(offset + i)
+                    i += 1
+            end if
+            result
+        end read
+
+        def close(): Unit =
+            closeCalls += 1
+            closeFailure match
+                case Present(failure) => throw failure
+                case Absent           => ()
+        end close
+    end ScriptedSource
+
+    final private class ThrowingSource(failure: Throwable) extends UUIDEntropyPlatform.NativeSource:
+        var readCalls  = 0
+        var closeCalls = 0
+
+        def read(target: Array[Byte], offset: Int, length: Int): Int =
+            readCalls += 1
+            throw failure
+
+        def close(): Unit =
+            closeCalls += 1
+    end ThrowingSource
+
+    "Native secure entropy adapter" - {
+        "live adapter returns exactly 16 bytes" in {
+            UUIDEntropyPlatform.live.next16.map: bytes =>
+                assert(bytes.size == 16)
+        }
+
+        "opens /dev/urandom and retries partial reads until exactly 16 bytes are filled" in {
+            val expected   = Array.tabulate[Byte](16)(i => (i * 17 + 5).toByte)
+            val source     = new ScriptedSource(expected, Chunk(3, 5, 8))
+            var openedPath = ""
+            val adapter = UUIDEntropyPlatform.fromNativeSource { path =>
+                openedPath = path
+                source
+            }
+
+            adapter.next16.map: actual =>
+                assert(openedPath == "/dev/urandom")
+                assert(actual.is(Span.from(expected)))
+                assert(Chunk.from(source.requests) == Chunk((0, 16), (3, 13), (8, 8)))
+                assert(source.closeCalls == 1)
+        }
+
+        "panics and closes the source when a read stops before 16 bytes" in {
+            val source  = new ScriptedSource(Array.fill[Byte](16)(1), Chunk(4, 0))
+            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+
+            Abort.run[Any](adapter.next16).map: result =>
+                result match
+                    case Result.Panic(actual: EOFException) =>
+                        assert(actual.getMessage == "Unexpected EOF from /dev/urandom after 4 of 16 bytes")
+                    case other => fail(s"expected /dev/urandom EOF panic, got $other")
+                end match
+                assert(Chunk.from(source.requests) == Chunk((0, 16), (4, 12)))
+                assert(source.closeCalls == 1)
+        }
+
+        "surfaces read failures as the exact panic and closes the source" in {
+            val failure = new RuntimeException("read failed")
+            val source  = new ThrowingSource(failure)
+            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+
+            Abort.run[Any](adapter.next16).map: result =>
+                result match
+                    case Result.Panic(actual) =>
+                        assert(actual eq failure)
+                    case other => fail(s"expected /dev/urandom read panic, got $other")
+                end match
+                assert(source.readCalls == 1)
+                assert(source.closeCalls == 1)
+        }
+
+        "surfaces a close failure after a successful read as the exact panic" in {
+            val failure = new RuntimeException("close failed")
+            val source = new ScriptedSource(
+                Array.tabulate[Byte](16)(_.toByte),
+                Chunk(16),
+                closeFailure = Maybe(failure)
+            )
+            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+
+            Abort.run[Any](adapter.next16).map: result =>
+                result match
+                    case Result.Panic(actual) =>
+                        assert(actual eq failure)
+                    case other => fail(s"expected /dev/urandom close panic, got $other")
+                end match
+                assert(Chunk.from(source.requests) == Chunk((0, 16)))
+                assert(source.closeCalls == 1)
+        }
+
+        "panics when /dev/urandom cannot be opened" in {
+            val failure = new RuntimeException("open failed")
+            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => throw failure)
+
+            Abort.run[Any](adapter.next16).map: result =>
+                result match
+                    case Result.Panic(actual) => assert(actual eq failure)
+                    case other                => fail(s"expected /dev/urandom open panic, got $other")
+        }
+    }
+
+end UUIDEntropyPlatformNativeTest
