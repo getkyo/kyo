@@ -526,7 +526,7 @@ object Flow:
         object Execution:
             def apply(s: String): Execution = s
             def random(using Frame): Execution < Sync =
-                Random.uuid
+                UUID.v4.map(_.show)
             given Schema[Execution]                     = summon[Schema[String]]
             given CanEqual[Execution, Execution]        = CanEqual.derived
             extension (id: Execution) def value: String = id
@@ -536,7 +536,7 @@ object Flow:
         object Executor:
             def apply(s: String): Executor = s
             def random(using Frame): Executor < Sync =
-                Random.uuid
+                UUID.v4.map(_.show)
             given Schema[Executor]                     = summon[Schema[String]]
             given CanEqual[Executor, Executor]         = CanEqual.derived
             extension (id: Executor) def value: String = id

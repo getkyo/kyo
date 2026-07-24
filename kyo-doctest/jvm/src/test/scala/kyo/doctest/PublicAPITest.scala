@@ -3,7 +3,7 @@ package kyo.doctest
 import kyo.*
 import kyo.doctest.internal.Block
 
-class PublicAPITest extends kyo.test.Test[Any]:
+class PublicAPITest extends DoctestTest:
 
     // Test 1: Doctest.Config.apply accepts the correct field types and constructs without throwing.
     "Doctest.Config.apply accepts Chunk[Path] sources, Chunk[Path] classpath, Chunk[String] scalaOpts, Path cache, Int parallel" in {
