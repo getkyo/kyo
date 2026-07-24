@@ -11,8 +11,53 @@ private[kyo] case class ReactiveUI(
     isConst: Boolean,
     children: Seq[ReactiveUI],
     handle: (Seq[String], UIEvent) => Boolean < Async,
-    svgContext: Boolean = false
+    svgContext: Boolean = false,
+    mountedSpec: Maybe[MountedSpec] = Absent,
+    mountDispatch: Maybe[MountDispatch] = Absent // set on the ROOT normalize product only; see subscribe
 )
+
+/** Session-level dispatch table for mounted nodes: path → live content cell.
+  *
+  * Event dispatch re-derives handler chains from `signal.current` on every event, re-running any `Signal.map`
+  * lambdas on the way, so the Mounted node value (and any state carried on it or its normalize product) is FRESH
+  * per dispatch and cannot hold the subscribe-time wiring. The table is the stable meeting point: created once per
+  * normalize root (one per mount session), closed over by every handler the normalization tree builds, written by
+  * subscribeMounted (registration is Scope-bound: the per-value scope that subscribed a node unregisters it, and
+  * observe's closed-and-awaited ordering makes unregister-then-reregister safe across region rebuilds), and read by
+  * the dispatch-time handler of whatever fresh Mounted node value occupies the same path.
+  */
+final private[kyo] class MountDispatch(cells: AtomicRef[Dict[Seq[String], Signal[UI]]]):
+    def register(path: Seq[String], cell: Signal[UI])(using Frame): Unit < Sync =
+        cells.getAndUpdate(_.update(path, cell)).unit
+
+    /** Unregister only if `cell` is still the registered one: a successor that already re-registered wins. */
+    def unregister(path: Seq[String], cell: Signal[UI])(using Frame): Unit < Sync =
+        cells.getAndUpdate(m => if m.get(path).exists(_ eq cell) then m.remove(path) else m).unit
+
+    def lookup(path: Seq[String])(using Frame): Maybe[Signal[UI]] < Sync =
+        cells.get.map(_.get(path))
+end MountDispatch
+
+private[kyo] object MountDispatch:
+    def init(using Frame): MountDispatch < Sync =
+        AtomicRef.init(Dict.empty[Seq[String], Signal[UI]]).map(new MountDispatch(_))
+
+/** Normalization-time companion of a [[kyo.UI.Ast.Mounted]] node: the node, the render path it was normalized at, and its
+  * rendering defaults.
+  */
+final private[kyo] case class MountedSpec(node: UI.Ast.Mounted, path: Seq[String]):
+    def placeholderUI(using Frame): UI = node.placeholderUI.getOrElse(UI.empty)
+
+    def errorUI(err: UI.MountError): UI =
+        node.errorRender match
+            case Present(f) => f(err)
+            case Absent =>
+                given Frame = node.frame
+                UI.span(UI.Ast.Text(err.message)).cssClass("kyo-mount-error")
+
+    def mountError(t: Throwable, source: UI.MountErrorSource): UI.MountError =
+        UI.MountError(t, source, Maybe(t.getMessage).getOrElse(t.toString), node.frame, path, node.key)
+end MountedSpec
 
 private[kyo] object ReactiveUI:
 
@@ -39,18 +84,31 @@ private[kyo] object ReactiveUI:
                 if acc.nonEmpty then acc else findNode(child, path)
             }
 
+    /** Root entry point: creates the session's MountDispatch table and stamps it on the returned root node
+      * (subscribe picks it up from there). All recursion goes through normalizeWith so every handler closure
+      * shares the one table.
+      */
     def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
+        given Frame = ui.frame
+        for
+            mountDispatch <- MountDispatch.init
+            root          <- normalizeWith(ui, path, svg, mountDispatch)
+        yield root.copy(mountDispatch = Present(mountDispatch))
+        end for
+    end normalize
+
+    private def normalizeWith(ui: UI, path: Seq[String], svg: Boolean, mountDispatch: MountDispatch): ReactiveUI < Sync =
         given Frame = ui.frame
         ui match
             case ui: Reactive[?] =>
                 for
                     current   <- ui.signal.current
-                    (kids, _) <- walkStatic(current, path, svg)
+                    (kids, _) <- walkStatic(current, path, svg, mountDispatch)
                 yield init(path, ui.signal, isConst = false, kids, svgContext = svg) {
                     (targetPath, event) =>
                         for
                             currentUI     <- ui.signal.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, mountDispatch)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
@@ -67,12 +125,12 @@ private[kyo] object ReactiveUI:
                     }
                 for
                     current   <- sig.current
-                    (kids, _) <- walkStatic(current, path, svg)
+                    (kids, _) <- walkStatic(current, path, svg, mountDispatch)
                 yield init(path, sig, isConst = false, kids, svgContext = svg) {
                     (targetPath, event) =>
                         for
                             currentUI     <- sig.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, mountDispatch)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
@@ -90,18 +148,43 @@ private[kyo] object ReactiveUI:
                 // re-renders without the value-dedup ever suppressing a real edit. An element with no bound ref is const.
                 val (elementSignal, isConstNode) =
                     collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
-                for (kids, hdl) <- walkStatic(ui, path, svg)
+                for (kids, hdl) <- walkStatic(ui, path, svg, mountDispatch)
                 yield ReactiveUI(path, elementSignal, isConst = isConstNode, kids, hdl, svgContext = svg)
+
+            case ui: Mounted =>
+                // The handler resolves through the MountDispatch TABLE (by path), not the node: dispatch re-normalizes
+                // a fresh node value per event, so no live wiring can ride the node. The stored signal is a placeholder
+                // constant the subscribe path never observes (subscribeScoped branches on mountedSpec first).
+                val spec = MountedSpec(ui, path)
+                val handle: Handler = (targetPath, event) =>
+                    mountDispatch.lookup(path).map {
+                        case Present(cell) =>
+                            for
+                                currentUI     <- cell.current
+                                (_, freshHdl) <- walkStatic(currentUI, path, svg, mountDispatch)
+                                result        <- freshHdl(targetPath, event)
+                            yield result
+                        case Absent => (true: Boolean) // not (or no longer) wired: bubble
+                    }
+                ReactiveUI(
+                    path,
+                    Signal.initConst(spec.placeholderUI),
+                    isConst = false,
+                    Seq.empty,
+                    handle,
+                    svgContext = svg,
+                    mountedSpec = Present(spec)
+                )
 
             case ui =>
                 // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
                 // All interactive types extend Element (handled above) and all reactive types are
-                // Reactive or Foreach (also handled above). If a new UI subtype is added, the
-                // exhaustiveness checker will NOT warn here; any new type that is interactive must
+                // Reactive, Foreach, or Mounted (also handled above). If a new UI subtype is added,
+                // the exhaustiveness checker will NOT warn here; any new type that is interactive must
                 // be added as an explicit case above before this catch-all.
                 ReactiveUI(path, Signal.initConst(ui), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
         end match
-    end normalize
+    end normalizeWith
 
     /** Returns the element's single SignalRef-bound attribute (its `.value` or `.checked`), if any, so the element can be made reactive over
       * it (its HTML re-renders when that signal changes). An element binds at most one such ref.
@@ -123,7 +206,9 @@ private[kyo] object ReactiveUI:
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
     /** Walk a static UI tree. Collect reactive children, build handle. */
-    private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false)(using Frame): (Seq[ReactiveUI], Handler) < Sync =
+    private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean, mountDispatch: MountDispatch)(using
+        Frame
+    ): (Seq[ReactiveUI], Handler) < Sync =
         ui match
             case elem: Element =>
                 // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be matched
@@ -135,16 +220,16 @@ private[kyo] object ReactiveUI:
                 for childWalks <- Kyo.foreach(elem.children.toSeq.zipWithIndex) { (child, i) =>
                         val childPath = basePath :+ i.toString
                         child match
-                            case _: Reactive[?] | _: Foreach[?, ?] =>
-                                for rui <- normalize(child, childPath, childSvg)
+                            case _: Reactive[?] | _: Foreach[?, ?] | _: Mounted =>
+                                for rui <- normalizeWith(child, childPath, childSvg, mountDispatch)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case childElem: Element if collectSignalRef(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
-                                for rui <- normalize(childElem, childPath, childSvg)
+                                for rui <- normalizeWith(childElem, childPath, childSvg, mountDispatch)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case _ =>
-                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg)
+                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg, mountDispatch)
                                 yield (innerKids, Seq((i, innerHandle)))
                         end match
                     }
@@ -164,7 +249,7 @@ private[kyo] object ReactiveUI:
                         val inner = child match
                             case kc: KeyedChild[?] => kc.child
                             case _                 => child
-                        walkStatic(inner, childPath, svg)
+                        walkStatic(inner, childPath, svg, mountDispatch)
                     }
                 yield
                     val allKids    = childWalks.flatMap(_._1)
@@ -181,12 +266,12 @@ private[kyo] object ReactiveUI:
                         else true
                     (allKids, handle)
 
-            case _: Reactive[?] | _: Foreach[?, ?] =>
-                // When walkStatic is called with a Reactive or Foreach as the top-level node
+            case _: Reactive[?] | _: Foreach[?, ?] | _: Mounted =>
+                // When walkStatic is called with a Reactive, Foreach, or Mounted as the top-level node
                 // (not as a child of an Element), normalize it at basePath so subscribeNode
                 // sets up a subscription for it. This handles the case where an outer reactive's
                 // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }).
-                for rui <- normalize(ui, basePath, svg)
+                for rui <- normalizeWith(ui, basePath, svg, mountDispatch)
                 yield (Seq(rui), rui.handle)
 
             case _ =>
@@ -206,13 +291,18 @@ private[kyo] object ReactiveUI:
             dispatchToElement(elem, event, isTarget = true)
         else if targetPath.startsWith(myPath) && targetPath.size > myPath.size then
             val childSegment = targetPath(myPath.size)
-            val childIdx     = childSegment.toIntOption
+            val childIdx     = Maybe.fromOption(childSegment.toIntOption)
 
             // Find the reactive child whose path is a prefix of (or equals) targetPath. Matching by
             // `lastOption.contains(childSegment)` is incorrect when reactive children are nested
             // multiple levels deep; their last segment may collide with a sibling's index at the
             // current level. Using prefix-match correctly routes only when the target lies inside.
-            val reactiveChild = reactiveChildren.find(rc => targetPath.startsWith(rc.path))
+            val reactiveChild = Maybe.fromOption(reactiveChildren.find(rc => targetPath.startsWith(rc.path)))
+            // STATIC descent takes precedence: route through the static child's handler chain so intermediate bubble
+            // handlers run. Jumping straight to a DEEP reactive child would skip them: a click on a reactive label
+            // inside a button (`button(labelSignal)`) would bypass the button's own onClick. Only a DIRECT reactive
+            // child (no staticHandlers entry at its index) takes the reactive jump.
+            val staticChild = childIdx.flatMap(i => Maybe.fromOption(staticHandlers.find(_._1 == i)).map(_._2))
 
             for
                 // Disabled-target (Form submit suppression), Button-target (only Button clicks submit
@@ -235,14 +325,13 @@ private[kyo] object ReactiveUI:
                     submitOrigin = targetIsButton,
                     selectTarget = targetIsSelect
                 )
-                result <- Maybe.fromOption(reactiveChild) match
-                    case Present(child) =>
-                        safeDispatch(child.handle, targetPath, event).map(keep => if keep then bubble else false)
+                result <- staticChild match
+                    case Present(childHandle) =>
+                        safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
                     case Absent =>
-                        Maybe.fromOption(childIdx).flatMap(i => Maybe.fromOption(staticHandlers.find(_._1 == i)).map(_._2))
-                            .fold(bubble)(childHandle =>
-                                safeDispatch(childHandle, targetPath, event).map(keep => if keep then bubble else false)
-                            )
+                        reactiveChild.fold(bubble)(child =>
+                            safeDispatch(child.handle, targetPath, event).map(keep => if keep then bubble else false)
+                        )
             yield result
             end for
         else
@@ -379,6 +468,10 @@ private[kyo] object ReactiveUI:
             // Text and RawHtml are leaf content with no kyo-addressable Element children, so no event
             // target can resolve through them: neither can satisfy an Element predicate.
             case _: Text | _: RawHtml => false
+            // Predicates do not resolve THROUGH a mount boundary: the content lives behind a subscribe-time cell this
+            // static resolver cannot reach (v1 limitation: a Button in a mounted subtree does not trigger an OUTER
+            // Form's submit-on-bubble refinement). Event dispatch still resolves via the node's handler indirection.
+            case _: Mounted => false
 
     private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
         targetSatisfies(elem, myPath, targetPath, isDisabled)
@@ -596,7 +689,13 @@ private[kyo] object ReactiveUI:
     def subscribe(rui: ReactiveUI, exchange: UIExchange)(using Frame): Subscription < (Async & Scope) =
         for
             signalChangeTime <- AtomicRef.init(Instant.Epoch)
-            _                <- subscribeScoped(rui, exchange, signalChangeTime)
+            rootMounts       <- MountRegistry.init
+            _                <- Scope.ensure(rootMounts.evictAll)
+            // Absent only for hand-built ReactiveUIs in tests; a normalize-produced root always carries the table.
+            mountDispatch <- rui.mountDispatch match
+                case Present(d) => Kyo.lift(d)
+                case Absent     => MountDispatch.init
+            _ <- subscribeScoped(rui, exchange, signalChangeTime, rootMounts, mountDispatch)
         yield Subscription(rui.handle, signalChangeTime)
 
     // Each reactive region forks a Fiber.init (scoped to the enclosing Scope) running observe. Each
@@ -606,42 +705,432 @@ private[kyo] object ReactiveUI:
     // interrupt-old bookkeeping (a ref of live child fibers, interrupted one level per change) is gone; the
     // per-value Scope does interrupt-old transitively (every descendant), fixing the climbing-waiters leak the
     // one-level interrupt left.
-    private def subscribeScoped(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
+    //
+    // `mounts` is the MountRegistry of the nearest enclosing region (or the subscribe root): keyed Mounted instances
+    // escape the per-value cascade by living on fibers the registry owns, so keyed continuity spans re-renders of the
+    // immediately enclosing region and ends with that region.
+    private def subscribeScoped(
+        rui: ReactiveUI,
+        exchange: UIExchange,
+        signalChangeTime: AtomicRef[Instant],
+        mounts: MountRegistry,
+        mountDispatch: MountDispatch
+    )(using
         Frame
     ): Unit < (Async & Scope) =
-        if rui.isConst then
-            Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime))
-        else
-            // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
-            // that scope, so the next value (or an interrupt) tears them down by cascade.
-            def renderValue(current: UI): Unit < (Async & Scope) =
-                for
-                    now          <- Clock.now
-                    _            <- signalChangeTime.set(now)
-                    _            <- exchange.onChange(rui.path, current)
-                    (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
-                    _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
-                yield ()
-            // Every region observes with observe: each value owns a fresh per-value Scope (renderValue forks its
-            // children into it), held open until the next change, then closed by cascade. SignalRef-bound element
-            // regions (normalize maps the bound leaf to the constant `ui`) ride the SignalRef's exact register-before-
-            // read observe: each ref edit is a distinct ref value that re-renders the region, with no deferred
-            // next-capture, no repair timer, and no idle re-render churn (an unchanged input never re-emits).
-            Fiber.init {
+        rui.mountedSpec match
+            case Present(spec) =>
+                subscribeMounted(rui, spec, exchange, signalChangeTime, mounts, mountDispatch)
+            case Absent =>
+                if rui.isConst then
+                    Kyo.foreachDiscard(rui.children)(
+                        subscribeScoped(_, exchange, signalChangeTime, mounts, mountDispatch)
+                    )
+                else
+                    subscribeRegion(
+                        rui.path,
+                        rui.signal,
+                        rui.svgContext,
+                        exchange,
+                        signalChangeTime,
+                        Absent,
+                        mountDispatch
+                    )
+
+    /** Fork one region fiber observing `signal`, with a per-value Scope per emission (see subscribeScoped's
+      * contract note). `presetMounts` supplies the region's MountRegistry when the caller owns it already (the
+      * content region of a KEYED mounted instance reuses the instance's registry so nested keyed mounts survive
+      * re-subscription); `Absent` creates a fresh registry owned by the current scope: the same scope that owns
+      * the region fiber, so registry and region die together.
+      *
+      * renderValue ordering is walk → evict → paint → subscribe: mount keys of the new value are known after the
+      * walk, so instances whose key vanished (or was swapped) are closed AND awaited BEFORE the new HTML paints
+      * and before any successor effect runs (the region-level closed-and-awaited guarantee, extended to the
+      * keyed instances that deliberately escape the per-value cascade).
+      */
+    private def subscribeRegion(
+        path: Seq[String],
+        signal: Signal[UI],
+        svg: Boolean,
+        exchange: UIExchange,
+        signalChangeTime: AtomicRef[Instant],
+        presetMounts: Maybe[MountRegistry],
+        mountDispatch: MountDispatch
+    )(using Frame): Unit < (Async & Scope) =
+        for
+            regionMounts <- presetMounts match
+                case Present(r) => Kyo.lift(r)
+                case Absent     => MountRegistry.init.map(r => Scope.ensure(r.evictAll).andThen(r))
+            _ <- Fiber.init {
+                def renderValue(current: UI): Unit < (Async & Scope) =
+                    for
+                        now          <- Clock.now
+                        _            <- signalChangeTime.set(now)
+                        (newKids, _) <- walkStatic(current, path, svg, mountDispatch)
+                        _            <- regionMounts.evictExcept(collectMountKeys(newKids))
+                        _            <- exchange.onChange(path, current)
+                        _ <- Kyo.foreachDiscard(newKids)(
+                            subscribeScoped(_, exchange, signalChangeTime, regionMounts, mountDispatch)
+                        )
+                    yield ()
                 Abort.run[Throwable] {
-                    rui.signal.observe(renderValue)
+                    signal.observe(renderValue)
                 }.map { result =>
                     result.fold(
                         _ => (),
-                        err => Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", err),
+                        err => Log.error(s"Reactive subscription fiber failed at path=${path.mkString(".")}", err),
                         panic =>
                             if panic.isInstanceOf[Interrupted] then ()
-                            else Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", panic)
+                            else Log.error(s"Reactive subscription fiber failed at path=${path.mkString(".")}", panic)
                     )
                 }
+            }
+        yield ()
+
+    /** The keys of the Mounted nodes among a walk's reactive children: the claims of the upcoming subscribe
+      * pass, computed up front so evictExcept can run before paint.
+      */
+    private def collectMountKeys(kids: Seq[ReactiveUI]): Set[Any] =
+        kids.flatMap(_.mountedSpec.flatMap(_.node.key).toChunk).toSet
+
+    /** Subscribe one Mounted node.
+      *
+      * KEYED: claim (or adopt) the live instance from the enclosing region's registry. The instance runner is an
+      * UNSCOPED fiber (it survives the per-value cascade; the registry's owner scope ends it) holding the node
+      * Scope open; then push one synchronous paint of the cell's current content (so an adopted instance's content
+      * replaces the placeholder the parent's wholesale re-render just painted, within the same task, with no visible
+      * placeholder blink), and finally subscribe the content region over the cell, reusing the instance's child
+      * registry so keyed mounts NESTED in the content survive as long as this instance does.
+      *
+      * KEYLESS: the instance lifetime IS the current scope (the enclosing region's per-value scope, or the
+      * session scope for a static position): the effect runs on a normally-scoped fiber and the next parent
+      * emission tears it down by cascade (remount semantics). A thrash note counts remounts per path and logs a
+      * dev hint when a keyless node keeps remounting inside a hot region.
+      */
+    private def subscribeMounted(
+        rui: ReactiveUI,
+        spec: MountedSpec,
+        exchange: UIExchange,
+        signalChangeTime: AtomicRef[Instant],
+        mounts: MountRegistry,
+        mountDispatch: MountDispatch
+    )(using Frame): Unit < (Async & Scope) =
+        spec.node.key match
+            case Present(key) =>
+                mounts.claim(key, rui.path, spec).map {
+                    case Present(inst) =>
+                        for
+                            _       <- mountDispatch.register(rui.path, inst.cell)
+                            _       <- Scope.ensure(mountDispatch.unregister(rui.path, inst.cell))
+                            current <- inst.cell.current
+                            _       <- exchange.onChange(rui.path, current)
+                            _ <- subscribeRegion(
+                                rui.path,
+                                inst.cell,
+                                rui.svgContext,
+                                exchange,
+                                signalChangeTime,
+                                Present(inst.childMounts),
+                                mountDispatch
+                            )
+                        yield ()
+                    case Absent =>
+                        // Duplicate key this render pass (claim already warned): paint a loud inline error instead of
+                        // silently sharing the first slot's instance. No cell or dispatch entry: a dead slot until the
+                        // caller gives distinct keys.
+                        given Frame = spec.node.frame
+                        exchange
+                            .onChange(
+                                rui.path,
+                                UI.span(UI.Ast.Text(s"kyo-ui: duplicate mounted key '$key'")).cssClass("kyo-mount-error")
+                            )
+                            .unit
+                }
+            case Absent =>
+                for
+                    _           <- mounts.noteKeylessRemount(rui.path)
+                    seed        <- mounts.keepLatestSeed(rui.path, spec)
+                    cell        <- Signal.initRef[UI](seed)
+                    _           <- mountDispatch.register(rui.path, cell)
+                    _           <- Scope.ensure(mountDispatch.unregister(rui.path, cell))
+                    supervision <- MountSupervision.init
+                    _ <- Fiber.init(runMountEffect(
+                        spec,
+                        cell,
+                        ui => mounts.recordContent(rui.path, ui),
+                        supervision
+                    ))
+                    _ <- subscribeRegion(rui.path, cell, rui.svgContext, exchange, signalChangeTime, Absent, mountDispatch)
+                yield ()
+
+    /** A supervised background fiber of a mounted node failed with a non-Throwable `Abort` value; the node's
+      * error rendering needs a Throwable, so the value is carried in this wrapper.
+      */
+    final private[kyo] case class MountFiberFailure(value: Any)(using Frame)
+        extends KyoException(s"Mounted background fiber failed: $value")
+
+    /** The node-scope supervision seam of one mount instance: collects the FIRST non-interrupt failure of any
+      * supervised background fiber (see [[kyo.UI.fork]]) and lets the node runner park on it AFTER the effect
+      * outcome, flipping an already-published node into its error rendering retroactively.
+      *
+      * Publish then flip is serialized on the node's own fiber (the park runs after [[runMountEffect]]'s
+      * outcome handling), so a supervised failure can never be overwritten by a late `cell.set(ui)` of the
+      * success path. The `routed` once-guard is shared between the effect-failure path and the park, so an
+      * effect failure racing a supervised failure routes exactly once.
+      */
+    final private[kyo] class MountSupervision(
+        firstFailure: Fiber.Promise.Unsafe[Throwable, Any],
+        routed: AtomicRef[Boolean]
+    ):
+        /** Fiber-completion callback registered by [[kyo.UI.fork]]: maps a non-interrupt terminal error to a
+          * Throwable and completes the once-only failure promise; later failures are dropped by the promise.
+          * Runs on the completing fiber's thread, so it must stay allocation-light and must not block.
+          */
+        def report[E, A](result: Result[E, A])(using Frame): Unit < Sync =
+            result match
+                case Result.Panic(_: Interrupted)   => Kyo.lift(())
+                case Result.Failure(_: Interrupted) => Kyo.lift(())
+                case Result.Panic(exception)        => recordFailure(exception)
+                case Result.Failure(failure) =>
+                    failure match
+                        case t: Throwable => recordFailure(t)
+                        case other        => recordFailure(MountFiberFailure(other))
+                case _ => Kyo.lift(())
+
+        private def recordFailure(t: Throwable)(using Frame): Unit < Sync =
+            Sync.Unsafe.defer(discard(firstFailure.complete(Result.succeed(t))))
+
+        /** Route a failure through `route` at most once across effect-fail and supervised-fail paths. */
+        def routeOnce(t: Throwable)(route: Throwable => Unit < Async)(using Frame): Unit < Async =
+            routed.getAndSet(true).map(was => if was then () else route(t))
+
+        /** Park the node fiber until a supervised failure arrives, then log + route it. Never returns: the
+          * park (interrupted on teardown) is what holds the node Scope open for the instance's lifetime.
+          */
+        def park(spec: MountedSpec, route: Throwable => Unit < Async)(using Frame): Nothing < Async =
+            firstFailure.safe.get.map { t =>
+                Log.error(s"Mounted background fiber failed (frame=${spec.node.frame.position.show})", t)
+                    .andThen(routeOnce(t)(route))
+            }.andThen(Async.never)
+    end MountSupervision
+
+    private[kyo] object MountSupervision:
+        def init(using Frame): MountSupervision < Sync =
+            AtomicRef.init(false).map { routed =>
+                Sync.Unsafe.defer {
+                    new MountSupervision(Fiber.Promise.Unsafe.init[Throwable, Any](), routed)
+                }
+            }
+
+        /** The mount instance a computation runs under, read by [[kyo.UI.fork]]. Inheritable, so a `UI.fork`
+          * inside an already forked fiber still reports to the node that started the chain. Installed around
+          * the USER effect only: engine fibers run outside it and are never supervised.
+          */
+        private[kyo] val local: Local[Maybe[MountSupervision]] = Local.init(Maybe.empty[MountSupervision])
+
+        private[kyo] def let[A, S](sup: MountSupervision)(v: A < S)(using Frame): A < S =
+            local.let(Present(sup))(v)
+    end MountSupervision
+
+    /** Run a Mounted node's effect, publish the outcome into its content cell, then PARK on `supervision` for
+      * the instance's lifetime (this method never returns; the park is interrupted by the node's teardown).
+      * Failure routing (shared by the effect outcome and a later supervised background-fiber failure, at most
+      * once per instance): a node-local `.onError` wins, otherwise the node's default error rendering applies.
+      * The enclosing region stays alive either way (a flip keeps the node Scope open, like a pending-phase
+      * failure always has); failures are additionally logged out-of-band.
+      */
+    private def runMountEffect(
+        spec: MountedSpec,
+        cell: SignalRef[UI],
+        record: UI => Unit < Sync,
+        supervision: MountSupervision
+    )(using Frame): Nothing < (Async & Scope) =
+        def failed(source: UI.MountErrorSource)(t: Throwable): Unit < Async =
+            cell.set(spec.errorUI(spec.mountError(t, source))).unit
+        Abort.run[Throwable](MountSupervision.let(supervision)(spec.node.effect)).map {
+            case Result.Success(ui) => cell.set(ui).andThen(record(ui))
+            case Result.Failure(t) =>
+                Log.error(s"Mounted effect failed (frame=${spec.node.frame.position.show})", t)
+                    .andThen(supervision.routeOnce(t)(failed(UI.MountErrorSource.Effect)))
+            case Result.Panic(t) =>
+                if t.isInstanceOf[Interrupted] then ()
+                else
+                    Log.error(s"Mounted effect panicked (frame=${spec.node.frame.position.show})", t)
+                        .andThen(supervision.routeOnce(t)(failed(UI.MountErrorSource.Panic)))
+        }.map(_ => supervision.park(spec, failed(UI.MountErrorSource.Fork)))
+    end runMountEffect
+
+    /** A live keyed mount: the content cell, the unscoped runner fiber that owns the node Scope, and the child
+      * registry that carries keyed mounts nested in this instance's content across re-subscriptions.
+      */
+    final private[kyo] class MountInstance(
+        val key: Any,
+        val cell: SignalRef[UI],
+        val fiber: Fiber[Nothing, Any],
+        val childMounts: MountRegistry
+    )
+
+    /** Per-region ownership of keyed mount instances (plus keep-latest seeds and the keyless thrash counter).
+      * All mutation happens from the owning region's sequential observe loop (or once, at static subscribe), so
+      * the AtomicRefs guard memory visibility across fiber steps, not concurrent writers.
+      */
+    final private[kyo] class MountRegistry(
+        instances: AtomicRef[Dict[Any, MountInstance]],
+        lastContent: AtomicRef[Dict[Seq[String], UI]],
+        keylessRemounts: AtomicRef[Dict[Seq[String], Int]],
+        claimedThisWalk: AtomicRef[Set[Any]],
+        lastKeyByPath: AtomicRef[Dict[Seq[String], (Any, Int)]]
+    ):
+
+        /** Content last published at a path, the KeepLatest seed: a re-mounting node at this slot starts from the
+          * previous content instead of the placeholder (frozen snapshot; its regions re-attach when the new effect
+          * publishes). Placeholder policy, or a slot that never published, starts from the placeholder.
+          */
+        def keepLatestSeed(path: Seq[String], spec: MountedSpec)(using Frame): UI < Sync =
+            spec.node.pendingPolicy match
+                case UI.PendingPolicy.Placeholder => spec.placeholderUI
+                case UI.PendingPolicy.KeepLatest =>
+                    lastContent.get.map(_.getOrElse(path, spec.placeholderUI))
+
+        def recordContent(path: Seq[String], ui: UI)(using Frame): Unit < Sync =
+            lastContent.getAndUpdate(_.update(path, ui)).unit
+
+        /** Reuse the live instance under `key`, or create one: seed the cell (keep-latest by slot), fork the
+          * UNSCOPED runner (it must survive the caller's per-value scope; this registry's owner ends it), which
+          * holds the node Scope open until interrupted and evicts nested keyed mounts on the way out. Two claims
+          * of one key within a single walk (evictExcept resets the claim set per walk) are a caller bug: the
+          * duplicate claim returns `Absent` (the caller paints a loud inline error card in that slot instead of
+          * silently sharing the first slot's instance), and the warning names key and path (Laminar's
+          * duplicate-split-key discipline, made visible in the page).
+          */
+        def claim(key: Any, path: Seq[String], spec: MountedSpec)(using
+            Frame
+        ): Maybe[MountInstance] < (Async & Scope) =
+            claimedThisWalk.getAndUpdate(_ + key).map(_.contains(key)).map {
+                case true =>
+                    Log.warn(
+                        s"kyo-ui: duplicate mounted key '$key' claimed at ${path.mkString(".")} within one render pass: " +
+                            "the duplicate slot renders an inline error card; use distinct keys (e.g. .keyed(Component -> id))"
+                    ).andThen(Absent: Maybe[MountInstance])
+                case false =>
+                    for
+                        _ <- noteKeyAt(path, key)
+                        m <- instances.get
+                        inst <- m.get(key) match
+                            case Present(inst) => Kyo.lift(inst)
+                            case Absent =>
+                                for
+                                    seed        <- keepLatestSeed(path, spec)
+                                    cell        <- Signal.initRef[UI](seed)
+                                    childMounts <- MountRegistry.init
+                                    supervision <- MountSupervision.init
+                                    fiber <- Fiber.initUnscoped {
+                                        Scope.run {
+                                            // runMountEffect never returns (it parks on `supervision`), which holds this
+                                            // node Scope open until teardown.
+                                            Scope.ensure(childMounts.evictAll)
+                                                .andThen(runMountEffect(
+                                                    spec,
+                                                    cell,
+                                                    ui => recordContent(path, ui),
+                                                    supervision
+                                                ))
+                                        }
+                                    }
+                                    inst = new MountInstance(key, cell, fiber, childMounts)
+                                    _ <- instances.getAndUpdate(_.update(key, inst))
+                                yield inst
+                    yield Present(inst)
+            }
+
+        /** Dev hint against the unstable-key anti-pattern: a key that is REBUILT per render (a fresh tuple or
+          * object identity, an inline-derived `Signal` inside the key) evicts and re-creates the instance on
+          * every enclosing re-render: keyed continuity silently degrades to remount semantics. A key that
+          * changes ONCE (`.keyed(EraPanel -> era)` on an era switch) is the intended re-creation and resets the
+          * streak; only consecutive-change streaks of COMPOSITE keys are flagged: simple value keys
+          * (String/primitive) are exempt, since a location-driven region (route node keyed by path) re-renders
+          * exclusively on key changes and would otherwise be flagged after three navigations.
+          */
+        private def noteKeyAt(path: Seq[String], key: Any)(using Frame): Unit < Sync =
+            if simpleValueKey(key) then lastKeyByPath.getAndUpdate(_.remove(path)).unit
+            else noteCompositeKeyAt(path, key)
+
+        /** String / primitive / boxed-primitive keys: value equality, no identity risk. */
+        private def simpleValueKey(key: Any): Boolean = key match
+            case _: String | _: Int | _: Long | _: Boolean | _: Double | _: Float | _: Short |
+                _: Byte | _: Char =>
+                true
+            case _ => false
+
+        private def noteCompositeKeyAt(path: Seq[String], key: Any)(using Frame): Unit < Sync =
+            lastKeyByPath.getAndUpdate { m =>
+                m.get(path) match
+                    case Present((prev, streak)) if !prev.equals(key) => m.update(path, (key, streak + 1))
+                    case _                                            => m.update(path, (key, 0))
+            }.map { prev =>
+                prev.get(path) match
+                    case Present((prevKey, streak)) if !prevKey.equals(key) =>
+                        val n = streak + 1
+                        if n == 3 || n == 10 || n == 100 then
+                            Log.warn(
+                                s"kyo-ui: mounted key at ${path.mkString(".")} changed in $n consecutive render passes " +
+                                    s"(now '$key'): the key value is likely rebuilt per render (unstable tuple/object/" +
+                                    "Signal identity), so the instance is evicted and re-created every pass. Derive keys " +
+                                    "from stable data if the instance should live across re-renders."
+                            )
+                        else Kyo.unit
+                        end if
+                    case _ => Kyo.unit
             }.unit
-        end if
-    end subscribeScoped
+
+        /** Close-and-await every instance whose key is not in `keep`: run BEFORE the new value paints, so a
+          * vanished or swapped key's resources are fully released while the OLD content is still on screen
+          * (break-before-make; under KeepLatest the successor then seeds from the recorded content). Also opens
+          * the next claim generation for duplicate detection.
+          */
+        def evictExcept(keep: Set[Any])(using Frame): Unit < Async =
+            for
+                _   <- claimedThisWalk.set(Set.empty)
+                old <- instances.getAndUpdate(_.filter((k, _) => keep.contains(k)))
+                evicted = old.foldLeft(Chunk.empty[MountInstance])((acc, k, inst) =>
+                    if keep.contains(k) then acc else acc.append(inst)
+                )
+                _ <- Kyo.foreachDiscard(evicted)(teardown)
+            yield ()
+
+        def evictAll(using Frame): Unit < Async =
+            evictExcept(Set.empty)
+
+        private def teardown(inst: MountInstance)(using Frame): Unit < Async =
+            inst.fiber.interrupt.andThen(inst.fiber.getResult.unit)
+
+        /** Dev hint against the keyless-node-in-hot-region anti-pattern: a keyless Mounted re-runs its effect on
+          * every enclosing region re-render; keys are the opt-in continuity mechanism.
+          */
+        def noteKeylessRemount(path: Seq[String])(using Frame): Unit < Sync =
+            keylessRemounts.getAndUpdate(m => m.update(path, m.getOrElse(path, 0) + 1)).map { prev =>
+                val n = prev.getOrElse(path, 0) + 1
+                if n == 10 || n == 100 || n == 1000 then
+                    Log.warn(
+                        s"kyo-ui: keyless UI.mounted at ${path.mkString(".")} remounted $n times: its effect re-runs on " +
+                            "every enclosing region re-render. Give it a stable identity with .keyed(...) if the instance " +
+                            "should live across re-renders, or move it out of the hot region."
+                    )
+                else Kyo.unit
+                end if
+            }
+    end MountRegistry
+
+    private[kyo] object MountRegistry:
+        def init(using Frame): MountRegistry < Sync =
+            for
+                instances       <- AtomicRef.init(Dict.empty[Any, MountInstance])
+                lastContent     <- AtomicRef.init(Dict.empty[Seq[String], UI])
+                keylessRemounts <- AtomicRef.init(Dict.empty[Seq[String], Int])
+                claimedThisWalk <- AtomicRef.init(Set.empty[Any])
+                lastKeyByPath   <- AtomicRef.init(Dict.empty[Seq[String], (Any, Int)])
+            yield new MountRegistry(instances, lastContent, keylessRemounts, claimedThisWalk, lastKeyByPath)
+    end MountRegistry
 
     // ---- Shared UI tree utilities (used by both backends) ----
 
@@ -679,6 +1168,9 @@ private[kyo] object ReactiveUI:
                 Kyo.foreach(children.toSeq)(resolveReactives).map(r => Fragment[UI](Chunk.from(r)))
             case KeyedChild(key, child) =>
                 resolveReactives(child).map(r => KeyedChild[UI](key, r))
+            case m: Mounted =>
+                // A static snapshot cannot run the mount effect; the node's static projection is its placeholder.
+                m.placeholderUI.getOrElse(UI.empty(using m.frame))
             case _ => ui
 
     private[kyo] def rebuildElement(elem: Element, newChildren: Chunk[UI]): UI =

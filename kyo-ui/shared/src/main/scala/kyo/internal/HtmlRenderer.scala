@@ -209,6 +209,14 @@ private[kyo] object HtmlRenderer:
                             }.andThen(w(sb, s"</$tag>"))
                             end for
                 }
+
+            case m: Mounted =>
+                // Static/SSG projection of a mount is its placeholder; live, ReactiveUI.subscribeMounted patches
+                // the region when the node's cell publishes (synchronously, before paint, for an adopted keyed instance).
+                val tag = if svg then "g" else "span"
+                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
+                renderTo(sb, m.placeholderUI.getOrElse(UI.empty(using m.frame)), path, svg)
+                    .andThen(w(sb, s"</$tag>"))
     end renderTo
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
