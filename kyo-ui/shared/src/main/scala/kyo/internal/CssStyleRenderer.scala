@@ -49,6 +49,44 @@ private[kyo] object CssStyleRenderer:
         sb.toString
     end render
 
+    /** Derives a stable class name and CSS rule text for a [[kyo.Style]] that carries a pseudo-state
+      * (hover/focus/active/disabled), for renderers that have no inline-style channel for
+      * pseudo-states: an inline `style="..."` attribute cannot express `:hover` etc., so the
+      * server-push runtime (see `kyo.internal.HtmlRenderer`/`kyo.internal.UIServer`) carries them as a
+      * real stylesheet rule instead. The class name is a content hash of the rendered CSS, so two
+      * elements with identical styles collapse onto the same class and rule.
+      *
+      * The BASE (non-pseudo-state) props are folded into the class's own plain rule (`.cls { ... }`)
+      * rather than left for an inline `style="..."` attribute: an inline style always wins the
+      * cascade over any selector-based rule (including `.cls:hover`), so a base prop set inline would
+      * permanently shadow the pseudo-state's override of that same property and the pseudo-state
+      * would never visibly apply. Keeping base and pseudo-state declarations in the same class keeps
+      * them in the same cascade tier, so the later-declared `:hover`/`:focus`/`:active`/`:disabled`
+      * rule wins as CSS source order intends. Mirrors `DomStyleSheet`'s client-side class generation.
+      *
+      * Returns `Absent` when `style` carries no pseudo-state prop, or every pseudo-state prop AND the
+      * base props all render to no declarations.
+      */
+    private[kyo] def pseudoStateClass(style: Style): Maybe[(String, String)] =
+        val hoverCss    = style.find[HoverProp].map(p => render(p.style)).getOrElse("")
+        val focusCss    = style.find[FocusProp].map(p => render(p.style)).getOrElse("")
+        val activeCss   = style.find[ActiveProp].map(p => render(p.style)).getOrElse("")
+        val disabledCss = style.find[DisabledProp].map(p => render(p.style)).getOrElse("")
+        if hoverCss.isEmpty && focusCss.isEmpty && activeCss.isEmpty && disabledCss.isEmpty then Absent
+        else
+            val baseCss = render(style)
+            val key     = s"b{$baseCss}h{$hoverCss}f{$focusCss}a{$activeCss}d{$disabledCss}"
+            val cls     = s"kyo-s-${Integer.toHexString(key.##)}"
+            val sb      = new StringBuilder
+            if baseCss.nonEmpty then sb.append(s".$cls { $baseCss }\n")
+            if hoverCss.nonEmpty then sb.append(s".$cls:hover { $hoverCss }\n")
+            if focusCss.nonEmpty then sb.append(s".$cls:focus { $focusCss }\n")
+            if activeCss.nonEmpty then sb.append(s".$cls:active { $activeCss }\n")
+            if disabledCss.nonEmpty then sb.append(s".$cls:disabled { $disabledCss }\n")
+            Present((cls, sb.toString))
+        end if
+    end pseudoStateClass
+
     /** Present(fragment) for a CSS filter prop, Absent for any non-filter prop. */
     private def renderFilterFragment(prop: Prop): Maybe[String] = prop match
         case BrightnessProp(v) => Present(s"brightness(${fmt(v)})")
@@ -139,6 +177,13 @@ private[kyo] object CssStyleRenderer:
         case TextOverflow.clip     => "clip"
         case TextOverflow.ellipsis => "ellipsis"
 
+    private def whiteSpaceCss(v: WhiteSpace): String = v match
+        case WhiteSpace.normal  => "normal"
+        case WhiteSpace.noWrap  => "nowrap"
+        case WhiteSpace.pre     => "pre"
+        case WhiteSpace.preWrap => "pre-wrap"
+        case WhiteSpace.preLine => "pre-line"
+
     private def borderStyle(v: BorderStyle): String = v match
         case BorderStyle.none   => "none"
         case BorderStyle.solid  => "solid"
@@ -176,6 +221,7 @@ private[kyo] object CssStyleRenderer:
     private def renderProp(prop: Prop): String = prop match
         case BgColor(c)          => s"background-color: ${color(c)};"
         case TextColor(c)        => s"color: ${color(c)};"
+        case AccentColorProp(c)  => s"accent-color: ${color(c)};"
         case Padding(t, r, b, l) => s"padding: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case Margin(t, r, b, l)  => s"margin: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case Gap(v)              => s"gap: ${size(v)};"
@@ -225,6 +271,7 @@ private[kyo] object CssStyleRenderer:
                 case TextWrap.ellipsis => "overflow-wrap: normal; text-overflow: ellipsis;"
                 case TextWrap.balance  => "text-wrap: balance;"
                 case TextWrap.pretty   => "text-wrap: pretty;"
+        case WhiteSpaceProp(v)                => s"white-space: ${whiteSpaceCss(v)};"
         case BorderColorProp(t, r, b, l)      => s"border-color: ${color(t)} ${color(r)} ${color(b)} ${color(l)};"
         case BorderWidthProp(t, r, b, l)      => s"border-width: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case BorderStyleProp(v)               => s"border-style: ${borderStyle(v)};"

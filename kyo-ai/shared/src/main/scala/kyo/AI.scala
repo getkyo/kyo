@@ -5,24 +5,22 @@ import kyo.ai.Context
 import kyo.ai.Context.*
 import kyo.ai.Image
 
-/** First-class identity for one conversation slot. A reference object so the threaded `State` can hold its
-  * slot through a `WeakReference` (`LLM.internal.AIRef`): once the surrounding computation no longer
-  * references an `AI`, GC reclaims it and the eval loop sweeps its now-dead slot, so instances never
-  * accumulate in a long-lived run. Minted by the `init` op, each id drawn from the run's threaded `State`
-  * counter, so identity is scoped to one `LLM.run` with no global mutable state. An instance also remembers
-  * the run that created it (`owner`), so using it inside a different `LLM.run` fails fast with a clear error
-  * instead of silently addressing that run's same-id slot.
+/** First-class identity for one conversation slot. A reference object, so the threaded `State` holds its
+  * slot through a `WeakReference` (`LLM.internal.AIRef`): once nothing references an `AI`, GC reclaims it and
+  * the eval loop sweeps its dead slot, so instances never accumulate in a long-lived run. Minted by `init`
+  * with an id from the run's threaded counter, so identity is scoped to one `LLM.run` with no global state.
+  * It also remembers its creating run (`owner`), so use inside a different `LLM.run` fails fast rather than
+  * silently addressing that run's same-id slot.
   */
 final class AI private[kyo] (private[kyo] val id: Long, private[kyo] val owner: AnyRef):
     private[kyo] val ref: LLM.internal.AIRef = new LLM.internal.AIRef(this)
 
 /** The first-class instance API. `AI` is both the identity value (`ai`) and the namespace of operations.
   *
-  * `AI.gen` is a one-shot: it mints a fresh, isolated ephemeral instance, generates against it, and drops
-  * it, so two one-shots never share state. `ai.gen` on a named instance (from `AI.init`) runs against a
-  * persistent slot whose conversation, enablements, and config survive across turns within a single
-  * `LLM.run`. Every method is a thin value over the `LLM` effect surface: `AI` summons no `ArrowEffect` op
-  * directly, only `LLM`'s `private[kyo]` interface.
+  * `AI.gen` is a one-shot: it mints a fresh ephemeral instance, generates against it, and drops it, so two
+  * one-shots never share state. `ai.gen` on a named instance (from `AI.init`) runs against a persistent slot
+  * whose conversation, enablements, and config survive across turns within a single `LLM.run`. Every method
+  * is a thin value over `LLM`'s `private[kyo]` interface; `AI` summons no `ArrowEffect` op directly.
   */
 object AI:
 
@@ -38,7 +36,7 @@ object AI:
     export kyo.ai.Image
 
     /** A composable element of the generation surface that can be enabled on an `AI`: a [[kyo.Tool]], a
-      * [[kyo.Prompt]], a [[kyo.Thought]], or a [[kyo.Mode]].
+      * [[kyo.Prompt]], a [[kyo.Thought]], a [[kyo.Mode]], or an [[kyo.Observe]].
       *
       * `AI.enable` layers enablements over a scoped computation; `ai.enable` layers them onto a single
       * instance. Both take varargs or a `Seq` and accept a mix of kinds in one call. `S` is the capability an
@@ -47,7 +45,7 @@ object AI:
       */
     trait Enablement[-S]:
         // How this enablement layers itself onto the scope env (AI.enable) or one instance's session
-        // (ai.enable). private[kyo] so only the module's four kinds implement it; users compose, never extend.
+        // (ai.enable). private[kyo] so only the module's five kinds implement it; users compose, never extend.
         private[kyo] def enableIn(env: AIEnv)(using Frame): AIEnv
         private[kyo] def enableIn(session: AISession)(using Frame): AISession
     end Enablement
@@ -92,16 +90,19 @@ object AI:
     def gen[A: Schema](using Frame)[B: Schema, C: Schema, D: Schema, E: Schema](input1: B, input2: C, input3: D, input4: E): A < LLM =
         gen[A]((input1, input2, input3, input4))
 
-    /** Projects a generation as a `Stream`, in one of two forms inferred from `A`. For a `String` the stream
-      * is incremental text chunks whose concatenation is the final answer (the chat-UI, token-by-token case).
-      * For any other type the stream is object by object: the model produces a sequence of `A` and each element
-      * is emitted once it is complete, never a half-filled value (the iterable case, for extracting or generating
-      * multiple records). Mints a fresh ephemeral instance to stream against.
+    /** Projects a generation as a `Stream`, in one of two forms inferred from `A`. A `String` streams
+      * incremental text chunks whose concatenation is the final answer (the token-by-token chat-UI case).
+      * Any other type streams object by object: each `A` is emitted once complete, never half-filled (the
+      * iterable case, for extracting or generating multiple records). Mints a fresh ephemeral instance.
+      *
+      * A fully consumed stream joins the conversation, recorded once the element fold completes, so a later
+      * turn can read it; the `LLM` in the element row is why (consumption happens inside `LLM.run`). An
+      * abandoned or failed stream records nothing.
       */
-    def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, Async & Scope & Abort[AIStreamException]] < LLM =
+    def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
         init.map(ai => ai.stream[A])
 
-    /** Reads the current scope `AIEnv`: the active config plus the scope's enablements (prompt, tools, thoughts, modes). */
+    /** Reads the current scope `AIEnv`: the active config plus the scope's enablements (prompt, tools, thoughts, modes, observers). */
     def env(using Frame): AIEnv < LLM = LLM.env
 
     /** Reads the active config. The active env (the scope env, or the scope merged with an instance during a
@@ -117,7 +118,7 @@ object AI:
     def withConfig[A, S](config: Config)(v: A < (LLM & S))(using Frame): A < (LLM & S) =
         withConfig(_ => config)(v)
 
-    /** Layers enablements (tools, prompts, thoughts, modes, in any mix) over a scoped computation, on top of
+    /** Layers enablements (tools, prompts, thoughts, modes, observers, in any mix) over a scoped computation, on top of
       * the scope's current enablements. Each enablement's capability `S` rides the row, unified across the
       * varargs to their intersection, so the requirements stay visible until discharged at the run boundary.
       */
@@ -150,7 +151,7 @@ object AI:
       */
     def fresh[A, S](v: A < (LLM & S))(using Frame): A < (LLM & S) =
         LLM.state.map { snapshot =>
-            val blanked = snapshot.copy(instances = snapshot.instances.map((ref, s) => (ref, s.copy(context = Context.empty))))
+            val blanked = snapshot.copy(instances = snapshot.instances.map((ref, s) => (ref, s.copy(rawContext = Context.empty))))
             LLM.setState(blanked).andThen(v).map(a => LLM.setState(snapshot).andThen(a))
         }
 
@@ -160,7 +161,7 @@ object AI:
     def fresh[A, S](ais: AI*)(v: A < (LLM & S))(using Frame): A < (LLM & S) =
         LLM.state.map { before =>
             val blanked = before.copy(instances =
-                ais.foldLeft(before.instances)((d, ai) => d.update(ai.ref, before.sessionOf(ai).copy(context = Context.empty)))
+                ais.foldLeft(before.instances)((d, ai) => d.update(ai.ref, before.sessionOf(ai).copy(rawContext = Context.empty)))
             )
             LLM.setState(blanked).andThen(v).map(a =>
                 LLM.state.map(after => LLM.setState(restoreInstances(before, after, ais)).andThen(a))
@@ -191,7 +192,7 @@ object AI:
         ): A < LLM =
             ai.gen[A]((input1, input2, input3, input4))
 
-        def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, Async & Scope & Abort[AIStreamException]] < LLM =
+        def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
             LLM.stream(ai, summon[Schema[A]])
 
         def systemMessage(content: String)(using Frame): Unit < LLM =
@@ -220,7 +221,7 @@ object AI:
         def updateContext(f: Context => Context)(using Frame): Unit < LLM =
             ai.context.map(c => ai.setContext(f(c)))
 
-        /** Layers enablements (tools, prompts, thoughts, modes, in any mix) onto this instance, on top of the
+        /** Layers enablements (tools, prompts, thoughts, modes, observers, in any mix) onto this instance, on top of the
           * scope's enablements. Each enablement's capability `S` rides the row, unified across the varargs to
           * their intersection, so a tool/prompt/thought/mode needing more than `LLM` keeps that requirement
           * visible at this instance's generations.

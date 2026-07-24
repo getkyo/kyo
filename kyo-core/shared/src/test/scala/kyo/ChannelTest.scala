@@ -1632,6 +1632,93 @@ class ChannelTest extends kyo.test.Test[Any]:
             yield assert(result && !closed1 && !closed2 && closed3)
         }
 
+        "with a parked put: a consumer poll does not livelock and the parked put fails Closed".timeout(15.seconds) in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.offer(1))
+                discard(c.offer(2))
+                val p3    = c.putFiber(3)       // parks: channel full
+                val drain = c.closeAwaitEmpty() // HalfOpen: queue non-empty, further offers now fail Closed
+                // pre-fix: the put-transfer branch re-enqueued the parked put after a Closed offer and looped forever
+                val v1  = c.poll()
+                val p3r = p3.poll()    // the parked put must be settled here, with a Closed failure
+                val v2  = c.poll()
+                val v3  = c.poll()
+                val dr  = drain.poll() // closeAwaitEmpty settles true once the buffered elements have drained
+                assert(v1.contains(Maybe.Present(1)), s"v1=$v1")
+                assert(p3r.exists { case Result.Failure(_: Closed) => true; case _ => false }, s"parked put settled=$p3r")
+                assert(v2.contains(Maybe.Present(2)), s"v2=$v2")
+                assert(v3.isFailure, s"v3=$v3") // fully closed once drained
+                assert(dr.exists { case Result.Success(b) => b.eval; case _ => false }, s"closeAwaitEmpty drain=$dr")
+                succeed
+            }
+        }
+
+        "close() escalates a HalfOpen channel and fails a parked put instead of hanging it" in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.offer(1))
+                discard(c.offer(2))
+                val p3    = c.putFiber(3)       // parks: channel full
+                val drain = c.closeAwaitEmpty() // HalfOpen: queue non-empty, put parked
+                // pre-fix: close() only transitioned from Open, so it no-oped on a HalfOpen queue and both promises hung forever
+                val backlog = c.close()
+                val p3r     = p3.poll()    // the parked put must be settled Closed, not left hanging
+                val dr      = drain.poll() // the await-empty must settle (aborted), not left pending
+                assert(backlog.contains(Seq(1, 2)), s"the closer must receive the undrained backlog=$backlog")
+                assert(p3r.exists { case Result.Failure(_: Closed) => true; case _ => false }, s"parked put settled=$p3r")
+                assert(dr.exists { case Result.Success(b) => !b.eval; case _ => false }, s"await-empty settled=$dr")
+                assert(c.closed(), "channel fully closed after the hard close")
+                succeed
+            }
+        }
+
+        "with a parked batch put: a consumer poll does not livelock and the parked batch fails Closed".timeout(15.seconds) in {
+            import AllowUnsafe.embrace.danger
+            Sync.defer {
+                val c = Channel.Unsafe.init[Int](2)
+                discard(c.offer(1))
+                discard(c.offer(2))
+                val pb    = c.putBatchFiber(Chunk(3, 4)) // parks: channel full, batch queued
+                val drain = c.closeAwaitEmpty()          // HalfOpen: queue non-empty, offers now fail Closed
+                // pre-fix: the batch transfer arm re-enqueued the parked batch after a Closed offer and looped forever
+                val v1  = c.poll()
+                val pbr = pb.poll()    // the parked batch must be settled Closed
+                val v2  = c.poll()
+                val v3  = c.poll()
+                val dr  = drain.poll() // closeAwaitEmpty settles true once the buffered elements have drained
+                assert(v1.contains(Maybe.Present(1)), s"v1=$v1")
+                assert(pbr.exists { case Result.Failure(_: Closed) => true; case _ => false }, s"parked batch settled=$pbr")
+                assert(v2.contains(Maybe.Present(2)), s"v2=$v2")
+                assert(v3.isFailure, s"v3=$v3") // fully closed once drained
+                assert(dr.exists { case Result.Success(b) => b.eval; case _ => false }, s"closeAwaitEmpty drain=$dr")
+                succeed
+            }
+        }
+
+        "close() racing the final drain settles the closeAwaitEmpty exactly once and never hangs".timeout(30.seconds) in {
+            Kyo.foreach(1 to 200) { _ =>
+                for
+                    c <- Channel.init[Int](2)
+                    _ <- c.put(1)
+                    // Park a closeAwaitEmpty (queue non-empty -> HalfOpen), then race the final drain (a poll empties the queue, so
+                    // handleHalfOpen settles the await true) against a hard close (escalates HalfOpen -> FullyClosed, settles it false).
+                    // Both CAS the same HalfOpen instance: exactly one wins, the await settles once, and neither side hangs.
+                    awaitF <- Fiber.initUnscoped(c.closeAwaitEmpty)
+                    pollF  <- Fiber.initUnscoped(Abort.run(c.poll))
+                    closeF <- Fiber.initUnscoped(c.close)
+                    _      <- awaitF.get
+                    _      <- pollF.get
+                    _      <- closeF.get
+                yield ()
+            }.map { results =>
+                assert(results.size == 200, s"every race iteration must settle without hanging; got ${results.size}")
+                succeed
+            }
+        }
+
         "returns false if channel is already closed" in {
             for
                 c      <- Channel.init[Int](10)

@@ -10,18 +10,18 @@ import kyo.kernel.*
 
 /** A typed effect representing first-class conversations with a large language model.
   *
-  * `LLM` is a custom `ArrowEffect` whose ops carry data: a program typed `< LLM` is a composed tree of
-  * virtual operations with no `Async` in its row. The ops read and append to per-instance conversation
-  * histories held in one threaded `State`. The single op that reaches the world is `Gen`, whose handler
-  * interpretation runs the eval loop; that is where `Async` and `Abort[AIGenException]` enter, riding out
-  * on `run`'s residual. `AI` is the first-class instance value: an identity for one conversation slot.
+  * `LLM` is a custom `ArrowEffect` whose ops carry data and read/append per-instance conversation histories
+  * held in one threaded `State`; a program typed `< LLM` has no `Async` in its row. The one op that reaches
+  * the world is `Gen`, whose handler runs the eval loop: that is where `Async` and `Abort[AIGenException]`
+  * enter, riding out on `run`'s residual. `AI` identifies one conversation slot.
   *
   * @see
   *   [[kyo.ai.Context]] for the conversation history
   * @see
   *   [[kyo.AIException]] for the module's failure hierarchy
   * @see
-  *   [[kyo.Tool]], [[kyo.Thought]], [[kyo.Prompt]], [[kyo.Mode]] for the composable generation surface
+  *   [[kyo.Tool]], [[kyo.Thought]], [[kyo.Prompt]], [[kyo.Mode]], [[kyo.Observe]] for the composable
+  *   generation surface
   */
 sealed trait LLM extends ArrowEffect[LLM.internal.Op, Id]
 
@@ -32,10 +32,9 @@ object LLM:
 
     private given Tag[LLM] = Tag.derive[LLM]
 
-    /** The one threaded record: per-instance histories and enablements (keyed by a `WeakReference` to the
-      * `AI`, so dropped instances are reclaimable), the monotonic id counter the `Init` op draws from, an
-      * `owner` token identifying this run (every instance is stamped with it, so a cross-run use is detectable),
-      * and the scope env bundle.
+    /** The one threaded record: per-instance histories/enablements keyed by a `WeakReference` to the `AI`
+      * (so dropped instances are reclaimable), the monotonic id counter `Init` draws from, an `owner` token
+      * stamped on every instance (so a cross-run use is detectable), and the scope env.
       */
     final case class State private[kyo] (
         instances: Dict[internal.AIRef, AISession],
@@ -44,24 +43,23 @@ object LLM:
         env: AIEnv
     ):
         private[kyo] def sessionOf(ai: AI): AISession             = instances.get(ai.ref).getOrElse(AISession.empty)
-        private[kyo] def contextOf(ai: AI): Context               = sessionOf(ai).context
+        private[kyo] def contextOf(ai: AI): Context               = sessionOf(ai).rawContext
         private[kyo] def withSession(ai: AI, s: AISession): State = copy(instances = instances.update(ai.ref, s))
-        private[kyo] def withContext(ai: AI, ctx: Context): State = withSession(ai, sessionOf(ai).copy(context = ctx))
+        private[kyo] def withContext(ai: AI, ctx: Context): State = withSession(ai, sessionOf(ai).copy(rawContext = ctx))
         private[kyo] def without(ai: AI): State                   = copy(instances = instances.remove(ai.ref))
-        // Drops every slot whose AI has been GC'd; run when minting a new instance so an unbounded mint
-        // stream never accumulates dead slots.
+        // Drops slots whose AI has been GC'd; run at each mint so an unbounded mint stream never
+        // accumulates dead slots.
         private[kyo] def pruned: State = copy(instances = instances.filter((ref, _) => ref.isValid))
     end State
 
     private[kyo] object State:
         def empty(config: Config): State =
             // A fresh owner per run (object identity, no counter); every instance minted in this run carries it.
-            State(Dict.empty, 0L, new AnyRef, AIEnv(Present(config), Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty))
+            State(Dict.empty, 0L, new AnyRef, AIEnv(Present(config), Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty))
     end State
 
-    // If an op targets an instance created by a DIFFERENT run (its owner differs from this run's), the
-    // failure to raise: that instance can't address this run's slots, so fail loud (pointing at
-    // snapshot/recover) instead of silently reading or writing a same-id but wrong entry.
+    // An op targeting an instance from a DIFFERENT run (owner differs) can't address this run's slots, so
+    // fail loud instead of silently reading/writing a same-id but wrong entry.
     private def crossRunFailure(op: Op[?], state: State)(using Frame): Maybe[AICrossRunException] =
         val target: Maybe[AI] = op match
             case o: Op.Read       => Present(o.target)
@@ -87,10 +85,8 @@ object LLM:
             handle = [C] =>
                 (input: Op[C], state: State, cont) =>
                     input match
-                        // An instance from a different LLM.run fails loud here (crossRunFailure) instead of
-                        // silently addressing this run's same-id slot. The panic is the arm's result so it
-                        // rides runWith's residual Abort row (not the LLM continuation), aborting the whole
-                        // computation.
+                        // The panic is the arm's result, so it rides runWith's residual Abort row (not the
+                        // LLM continuation), aborting the whole computation.
                         case _ if crossRunFailure(input, state).nonEmpty =>
                             Abort.panic(crossRunFailure(input, state).get)
                         case op: Op.Read =>
@@ -100,9 +96,8 @@ object LLM:
                         case op: Op.Set =>
                             Loop.continue(state.withContext(op.target, op.context), cont(()))
                         case _: Op.Init.type =>
-                            // Mint the instance with the next id from the threaded State (no global counter)
-                            // and stamp it with this run's owner; bump the counter, and prune GC'd slots so an
-                            // unbounded mint stream never accumulates.
+                            // Mint with the next id from the threaded State (no global counter), stamped with
+                            // this run's owner; prune GC'd slots on the way.
                             val ai = new AI(state.nextId, state.owner)
                             Loop.continue(state.pruned.copy(nextId = state.nextId + 1).withContext(ai, Context.empty), cont(ai))
                         case _: Op.Env.type =>
@@ -114,29 +109,26 @@ object LLM:
                         case _: Op.GetState.type =>
                             Loop.continue(state, cont(state))
                         case op: Op.SetState =>
-                            // Restoring a snapshot must never lower the id counter: ids stay monotonic within a
-                            // run so a slot key is never reused (a forget/fresh that rolls instances back keeps
-                            // the high-water id).
+                            // Restoring a snapshot must never lower the id counter: ids stay monotonic so a
+                            // slot key is never reused (a rollback keeps the high-water id).
                             Loop.continue(op.state.copy(nextId = math.max(state.nextId, op.state.nextId)), cont(()))
                         case op: Op.GetSession =>
                             Loop.continue(state, cont(state.sessionOf(op.target)))
                         case op: Op.SetSession =>
                             Loop.continue(state.withSession(op.target, op.session), cont(()))
                         case op: Op.Gen[C] @unchecked =>
-                            // Gen interpretation: the one op that reaches the world, runs the eval loop. The
-                            // eval loop is itself an LLM computation (it reads config, appends replies, runs
-                            // tools), so a nested runWith against the live state discharges those LLM ops and
-                            // threads the updated state back; Async & Abort[HttpException] enter here and ride
-                            // out on run's residual.
+                            // The eval loop is itself an LLM computation (reads config, appends replies, runs
+                            // tools), so a nested runWith against the live state discharges those ops and
+                            // threads the updated state back; Async & Abort enter here and ride out on run's
+                            // residual.
                             runWith(state)(genLoop(op.target, op.schema))((s, c) => (s, c))
                                 .map((s, c) => Loop.continue(s, cont(c)))
                         case op: Op.Stream[C] @unchecked =>
-                            // Stream interpretation: the SSE projection is itself an LLM computation (it reads
-                            // config and assembles the result-tool/context), so a nested runWith against the live
-                            // state discharges those LLM ops; the projection is read-only (no instance Context
-                            // write-back), so the threaded state passes through unchanged. The op carries the
-                            // element-emit Tag captured at the suspend site (the handler's C is abstract, so the
-                            // Tag cannot be re-derived here).
+                            // The SSE projection is itself an LLM computation (reads config, assembles the
+                            // result-tool/context), so a nested runWith discharges those ops; on full
+                            // consumption it records the turn through the same state. The op carries the
+                            // element-emit Tag captured at the suspend site, since the handler's C is abstract
+                            // and the Tag cannot be re-derived here.
                             runWith(state)(streamAgainst(op.target, op.schema)(using summon[Frame], op.emitTag))((s, c) => (s, c))
                                 .map((s, c) => Loop.continue(s, cont(c)))
             ,
@@ -144,22 +136,9 @@ object LLM:
         )
     end runWith
 
-    /** Projects the conversation as a streaming completion: posts the SSE request, parses each delta as an
-      * OpenAI streaming chunk, accumulates the tool-call argument fragments, and emits decoded values. For
-      * `String`, emitted chunks concatenate to the final text. For every other type, emitted values are complete
-      * array elements. The result_tool rides every request so the model has a tool to call. Config and the
-      * result-tool/context assembly are read on the `LLM` row; the returned `Stream` value carries the I/O
-      * effects in its element row, with the
-      * SSE connection scoped so it closes on stream termination or error. The returned `Stream` carries its
-      * failures typed in its row (`Abort[AIStreamException]`): a malformed delta is an
-      * `AIStreamDeltaException`, a stream that ends without a decodable value an `AIStreamIncompleteException`,
-      * a transport failure an `AITransportException` wrapping the `HttpException`. A missing API key is the
-      * one failure raised eagerly (before the `Stream` value), so it rides the run boundary as an
-      * `AIMissingApiKeyException` (an `AIGenException`).
-      */
     /** Closes the open string (if any) and balances open brackets in a partial JSON buffer, so a streaming
       * prefix decodes into the value parsed so far. A prefix that ends mid-token (mid-number, mid-keyword)
-      * still fails the subsequent decode and is retried as more data arrives.
+      * fails the subsequent decode and is retried as more data arrives.
       */
     private[kyo] def completePartialJson(buf: String): String =
         @scala.annotation.tailrec
@@ -185,32 +164,63 @@ object LLM:
         loop(0, false, false, Nil)
     end completePartialJson
 
+    /** Projects the conversation as a streaming completion: posts the SSE request, accumulates the
+      * result_tool's argument fragments, and emits decoded values. `String` emits text chunks that
+      * concatenate; every other type emits complete array elements. The returned `Stream` carries its I/O in
+      * the element row (the SSE connection scoped to close on termination or error) and its failures typed as
+      * `Abort[AIStreamException]`. A missing API key is the one failure raised eagerly, before the `Stream`
+      * value, so it rides the run boundary as an `AIMissingApiKeyException` (an `AIGenException`).
+      */
     private[kyo] def streamAgainst[A](target: AI, schema: Schema[A])(using
         Frame,
         Tag[Emit[Chunk[A]]]
-    ): Stream[A, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+    ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+        // The instance's enablements are layered onto the scope env for the stream's CREATION (config,
+        // prompts, request assembly), then restored, exactly as genLoop does for a generation: without
+        // this an instance's config override and enablements were silently ignored on the streaming
+        // path. The failure path restores too, mirroring genLoop's recover.
+        LLM.session(target).map { session =>
+            LLM.env.map { scopeEnv =>
+                LLM.setEnv(session.effectiveEnv(scopeEnv)).map { prevEnv =>
+                    Abort.recover[AIGenException](e => LLM.setEnv(prevEnv).andThen(Abort.fail(e))) {
+                        streamUnder(target, schema)
+                    }.map(stream => LLM.setEnv(prevEnv).andThen(stream))
+                }
+            }
+        }
+    end streamAgainst
+
+    private def streamUnder[A](target: AI, schema: Schema[A])(using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
         AI.config.map { config =>
             if config.provider.usesApiKey && config.apiKey.isEmpty then
                 Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
             else
-                // assemble the streaming request with the result_tool in every request:
-                // resultToolInfo supplies the tool definition; enrichedContext includes its prompt and
-                // the tool definition in the request body.
-                val toolInfos = Tool.internal.resultToolInfo.infos
-                // Two streaming modes, inferred from A. A String result streams incrementally: each emitted
-                // element is the next decoded text chunk. Any other type streams object by object: the model
-                // returns an array of A and each element is emitted once it is complete (never a half-filled A).
-                // A bare partial scalar has no meaning, so only String takes the incremental text path;
-                // everything else, scalars included, takes the complete-element path.
+                // The result_tool rides every request: its definition plus prompt go into the request body
+                // via enrichedContext.
+                val toolInfos = Tool.internal.resultToolDefinition.infos
+                // Mode inferred from A: String streams incrementally (each element the next decoded text
+                // chunk), every other type streams complete array elements. A bare partial scalar has no
+                // meaning, so only String takes the incremental path; everything else takes complete-element.
                 val stringMode = schema.structure match
                     case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
                     case _                                                           => false
                 context(target).map { targetContext =>
-                    Prompt.internal.enrichedContext(targetContext, toolInfos).map { context =>
-                        // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
-                        // non-object schema is rejected by the providers, which require an object tool schema. The
-                        // array schema is derived through kyo-schema's chunk Schema, not hand-built.
+                    // Streaming has no eval loop and no repair turn: the result must arrive as a result_tool
+                    // call on THIS turn. HTTP backends compel it by protocol (forced tool_choice); command
+                    // harnesses have no forcing knob, so the request carries an explicit result directive,
+                    // request-scoped and riding every backend identically.
+                    val requestCtx = targetContext.systemMessage(
+                        s"Deliver the result by calling the '${Completion.resultToolName}' tool: only " +
+                            "the tool call's arguments reach the caller, so do not reply in plain text."
+                    )
+                    Prompt.internal.enrichedContext(requestCtx, toolInfos).map { context =>
+                        // Wrap in the {resultValue: A} object envelope (array of A in element mode): providers
+                        // require an object tool schema, so a bare non-object schema is rejected. The array
+                        // schema comes from kyo-schema's chunk Schema, not hand-built.
                         val resultValueSchema =
                             if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
                         val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
@@ -219,15 +229,84 @@ object LLM:
                             s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
                                 s"mode=${if stringMode then "prefix" else "elements"} messages=${context.messages.size} tools=${toolInfos.size}"
                         ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
-                            Stream[A, Async & Scope & Abort[AIStreamException]] {
-                                if stringMode then consumePrefixFragments(fragments, schema)
-                                else consumeElementFragments(fragments, schema)
+                            Stream[A, LLM & Async & Scope & Abort[AIStreamException]] {
+                                val consumed =
+                                    if stringMode then consumePrefixFragments(fragments, schema)
+                                    else consumeElementFragments(fragments, schema)
+                                consumed.map { (produced, usage) =>
+                                    // Recorded HERE, after the fold completes, so the turn joins the
+                                    // conversation exactly as a generated one and a later turn can read it; an
+                                    // abandoned or part-way-failed stream records nothing rather than half a
+                                    // turn. Recorded as the result_tool call the model made (the streamed
+                                    // fragments ARE its arguments), closed by a synthetic result: recording it
+                                    // as prose instead teaches a weaker model to answer in text on a later turn
+                                    // and pull away from the forced tool call a streamed result requires.
+                                    // Observers fire BEFORE the append, matching the generation path: an
+                                    // observer reading ai.context sees the conversation up to this turn, and a
+                                    // guardrail abort keeps the turn out of the transcript on both paths. An
+                                    // abandoned or failed stream fires nothing.
+                                    Kyo.when(produced.nonEmpty) {
+                                        val envelope =
+                                            if stringMode then s"""{"resultValue":${Json.encode(produced)}}"""
+                                            else s"""{"resultValue":$produced}"""
+                                        // The context grows with the conversation, so its size is a per-turn
+                                        // unique seed matching call to result.
+                                        val callId        = CallId(s"stream-result-${context.messages.size}")
+                                        val call          = Call(callId, Completion.resultToolName, envelope)
+                                        val callMessage   = AssistantMessage("", Chunk(call))
+                                        val resultMessage = ToolMessage(callId, Json.encode("Result received."))
+                                        // The turn count is structural on this path, as it already is on every
+                                        // non-streaming path: a fully consumed stream IS one turn, even when the
+                                        // wire emitted no usage element (a provider ignoring the usage request).
+                                        val turnUsage = if usage.turns == 0 then usage.copy(turns = 1) else usage
+                                        fireStreamObservers(
+                                            target,
+                                            Completion.Reply(Chunk(callMessage, resultMessage), Completion.StopReason.Completed, turnUsage)
+                                        )
+                                            .andThen(LLM.append(target, callMessage))
+                                            .andThen(LLM.append(target, resultMessage))
+                                    }.unit
+                                }
                             }
                         }
                     }
                 }
         }
-    end streamAgainst
+    end streamUnder
+
+    /** Fires the target's effective observers for a fully consumed streamed turn. Runs at CONSUMPTION
+      * time, where the ambient env is the scope's, so the session env is merged here explicitly (and
+      * installed for the callbacks' duration, so `AI.config` inside one reads the turn's config),
+      * mirroring what genLoop provides on the generation path. The prior env is restored on EVERY
+      * exit: unlike the generation path's fire site (handler frame, where an abort can only surface
+      * past `LLM.run` and the env dies with the run), this site runs in the consumer's frames, where
+      * a guardrail abort can be recovered inside the run, so a skipped restore would leak the merged
+      * env into the rest of the run.
+      */
+    private def fireStreamObservers(target: AI, reply: Completion.Reply)(using Frame): Unit < (LLM & Sync) =
+        LLM.session(target).map { session =>
+            LLM.env.map { scopeEnv =>
+                val effective = session.effectiveEnv(scopeEnv)
+                // Deduped by identity: a stream consumed inside a generation of the SAME instance runs
+                // under genLoop's already-merged env, and re-merging the session here would fire that
+                // instance's observers twice for one turn.
+                val observers = effective.observe.distinct.asInstanceOf[Chunk[Observe[LLM]]]
+                Kyo.when(observers.nonEmpty) {
+                    LLM.setEnv(effective).map { prev =>
+                        // The observer cast above already erases each callback's failure types, so this
+                        // catch-all tells no additional lie: capture ANY outcome (typed guardrail
+                        // failures and panics included), restore the prior env, then re-raise. Abort
+                        // matches a failure by the VALUE's type (ConcreteTag.accepts), so the re-raised
+                        // guardrail error stays catchable as its concrete type; the Abort[Any] the
+                        // re-raise adds statically is hidden behind the same erasure boundary the
+                        // enablement machinery established.
+                        Abort.run[Any](Kyo.foreachDiscard(observers)(_(target, reply)))
+                            .map(outcome => LLM.setEnv(prev).andThen(Abort.get(outcome)))
+                            .asInstanceOf[Unit < (LLM & Sync)]
+                    }
+                }.unit
+            }
+        }
 
     // Decodes the {resultValue: ...} envelope from a partial SSE buffer, completing it so the parsed-so-far
     // prefix decodes, and returns the resultValue sub-value (Absent if the prefix does not decode yet).
@@ -237,10 +316,9 @@ object LLM:
         }
 
     // Extracts the raw JSON substrings of the COMPLETE elements of the resultValue array from a partial SSE
-    // buffer, walking it with string and bracket tracking. An element is complete only when it is followed by a
-    // comma or the array's closing bracket; an in-progress final element (no delimiter yet) is excluded. This
-    // never emits a truncated tail and never drops a complete element sitting before a trailing comma, both of
-    // which a force-close-then-decode-the-whole-array approach gets wrong.
+    // buffer, tracking strings and brackets. An element is complete only when followed by a comma or the
+    // array's closing bracket; an in-progress final element (no delimiter yet) is excluded. Never emits a
+    // truncated tail and never drops a complete element before a trailing comma.
     private def completeElements(buf: String): Chunk[String] =
         @scala.annotation.tailrec
         def loop(i: Int, inString: Boolean, escaped: Boolean, depth: Int, arrayDepth: Int, elemStart: Int, acc: Chunk[String])
@@ -291,13 +369,13 @@ object LLM:
     // decoded suffix so callers receive normal text chunks and can concatenate them into the final answer.
     // Fails if the stream ends with buffered args that never decoded.
     private[kyo] def consumePrefixFragments[A](
-        fragments: Stream[String, Async & Scope & Abort[AIStreamException]],
+        fragments: Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]],
         schema: Schema[A]
     )(using
         Frame,
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[String]]]
-    ): Unit < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
+        Tag[Emit[Chunk[Completion.StreamElement]]]
+    ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
         given Schema[A] = schema
         def emitText(delta: String): Unit < (Emit[Chunk[A]] & Abort[AIStreamException]) =
             Structure.decode[A](Structure.Value.Str(delta)) match
@@ -306,32 +384,44 @@ object LLM:
                     Abort.fail(AIStreamDeltaException(s"stream[String] decoded text chunk failed schema validation: $err"))
                 case Result.Panic(ex) =>
                     Abort.panic(ex)
-        fragments.fold(("", Maybe.empty[String])) { (state, fragment) =>
-            val (argsBuf, lastText) = state
-            val newBuf              = argsBuf + fragment
-            resultValueOf(newBuf) match
-                case Present(Structure.Value.Str(text)) =>
-                    lastText match
-                        case Present(prev) if text == prev =>
-                            Kyo.lift((newBuf, lastText))
-                        case Present(prev) if text.startsWith(prev) =>
-                            emitText(text.drop(prev.length)).andThen((newBuf, Present(text)))
-                        case Present(prev) =>
-                            Abort.fail(AIStreamDeltaException(
-                                s"stream[String] decoded a non-monotonic text prefix. Previous: $prev, next: $text"
-                            ))
+        fragments.fold(("", Maybe.empty[String], AIStats.empty)) { (state, element) =>
+            val (argsBuf, lastText, usage) = state
+            element match
+                case Completion.StreamElement.Usage(stats) =>
+                    // Wires emit disjoint partials (see Completion.StreamElement), so plain addition is
+                    // the whole accumulation.
+                    Kyo.lift((argsBuf, lastText, usage.add(stats)))
+                case Completion.StreamElement.Fragment(fragment) =>
+                    val newBuf = argsBuf + fragment
+                    resultValueOf(newBuf) match
+                        case Present(Structure.Value.Str(text)) =>
+                            lastText match
+                                case Present(prev) if text == prev =>
+                                    Kyo.lift((newBuf, lastText, usage))
+                                case Present(prev) if text.startsWith(prev) =>
+                                    emitText(text.drop(prev.length)).andThen((newBuf, Present(text), usage))
+                                case Present(prev) =>
+                                    Abort.fail(AIStreamDeltaException(
+                                        s"stream[String] decoded a non-monotonic text prefix. Previous: $prev, next: $text"
+                                    ))
+                                case Absent =>
+                                    emitText(text).andThen((newBuf, Present(text), usage))
+                        case Present(other) =>
+                            Abort.fail(
+                                AIStreamDeltaException(s"stream[String] expected a JSON string resultValue, got: ${Json.encode(other)}")
+                            )
                         case Absent =>
-                            emitText(text).andThen((newBuf, Present(text)))
-                case Present(other) =>
-                    Abort.fail(AIStreamDeltaException(s"stream[String] expected a JSON string resultValue, got: ${Json.encode(other)}"))
-                case Absent =>
-                    Kyo.lift((newBuf, lastText))
+                            Kyo.lift((newBuf, lastText, usage))
+                    end match
             end match
-        }.map { case (argsBuf, lastText) =>
-            // No provider terminator is required: if the SSE stream ends having buffered argument JSON but
-            // never emitted a decodable A, the generation failed.
-            if lastText.isEmpty && argsBuf.nonEmpty then Abort.fail(AIStreamIncompleteException(argsBuf))
-            else Kyo.lift(())
+        }.map { case (argsBuf, lastText, usage) =>
+            // A stream that ends without decoding a value failed, whether it buffered unusable bytes or
+            // none. The empty case is reachable: a request the wire does not compel can be answered in
+            // prose, producing no tool-call fragments, and reading that as success would return nothing to
+            // a caller who asked for a value.
+            if lastText.isEmpty then Abort.fail(AIStreamIncompleteException(argsBuf))
+            // The text the model produced, handed back so the turn can be recorded from it.
+            else Kyo.lift((lastText.getOrElse(""), usage))
         }
     end consumePrefixFragments
 
@@ -340,13 +430,13 @@ object LLM:
     // is emitted exactly once, fully formed; a truncated tail is dropped and a complete element before a trailing
     // comma is kept.
     private[kyo] def consumeElementFragments[A](
-        fragments: Stream[String, Async & Scope & Abort[AIStreamException]],
+        fragments: Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]],
         schema: Schema[A]
     )(using
         Frame,
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[String]]]
-    ): Unit < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
+        Tag[Emit[Chunk[Completion.StreamElement]]]
+    ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
         given Schema[A] = schema
         def decodeElement(raw: String): A < Abort[AIStreamException] =
             Json.decode[Structure.Value](raw) match
@@ -355,18 +445,27 @@ object LLM:
                         case Result.Success(a) => a
                         case _                 => Abort.fail(AIStreamIncompleteException(raw))
                 case _ => Abort.fail(AIStreamIncompleteException(raw))
-        fragments.fold(("", 0)) { (state, fragment) =>
-            val (argsBuf, emitted) = state
-            val newBuf             = argsBuf + fragment
-            val ready              = completeElements(newBuf)
-            if ready.size <= emitted then Kyo.lift((newBuf, emitted))
-            else Kyo.foreach(ready.drop(emitted))(decodeElement).map(as => Emit.value(as).andThen((newBuf, ready.size)))
-        }.map { case (argsBuf, emitted) =>
-            // Everything complete was emitted during the fold. An empty or in-progress-only array yields an empty
-            // stream; only a buffer that never produced a resultValue array at all is incomplete.
-            if emitted == 0 && argsBuf.nonEmpty && resultValueOf(argsBuf).isEmpty then
+        fragments.fold(("", 0, AIStats.empty)) { (state, element) =>
+            val (argsBuf, emitted, usage) = state
+            element match
+                case Completion.StreamElement.Usage(stats) =>
+                    // Wires emit disjoint partials (see Completion.StreamElement), so plain addition is
+                    // the whole accumulation.
+                    Kyo.lift((argsBuf, emitted, usage.add(stats)))
+                case Completion.StreamElement.Fragment(fragment) =>
+                    val newBuf = argsBuf + fragment
+                    val ready  = completeElements(newBuf)
+                    if ready.size <= emitted then Kyo.lift((newBuf, emitted, usage))
+                    else Kyo.foreach(ready.drop(emitted))(decodeElement).map(as => Emit.value(as).andThen((newBuf, ready.size, usage)))
+            end match
+        }.map { case (argsBuf, emitted, usage) =>
+            // Everything complete was emitted during the fold. An EMPTY array is a legitimate empty stream,
+            // so the test is whether a resultValue arrived at all, not whether it held anything. A buffer
+            // that never produced one is incomplete, including the empty buffer a prose-answered turn leaves.
+            if emitted == 0 && resultValueOf(argsBuf).isEmpty then
                 Abort.fail(AIStreamIncompleteException(argsBuf))
-            else Kyo.unit
+            // The elements the model produced, as the resultValue they arrived in.
+            else Kyo.lift((resultValueOf(argsBuf).fold("")(Json.encode(_)), usage))
         }
     end consumeElementFragments
 
@@ -405,15 +504,14 @@ object LLM:
     private[kyo] def stream[A](target: AI, schema: Schema[A])(using
         Frame,
         Tag[Emit[Chunk[A]]]
-    ): Stream[A, Async & Scope & Abort[AIStreamException]] < LLM =
+    ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
         suspend(Op.Stream[A](target, schema, summon[Tag[Emit[Chunk[A]]]]))
 
     private[kyo] def env(using Frame): AIEnv < LLM                  = suspend(Op.Env)
     private[kyo] def setEnv(value: AIEnv)(using Frame): AIEnv < LLM = suspend(Op.SetEnv(value))
 
-    /** Brackets a transform of the scope `AIEnv` over `v`: applies `f` to the current env, runs `v`, then
-      * restores the prior env on exit (mirrors `Local.update`). The `enable` methods and `AI.withConfig`
-      * build on it, so the get/modify/set/restore is written once.
+    /** Brackets a transform of the scope `AIEnv` over `v`: apply `f`, run `v`, restore the prior env on exit
+      * (mirrors `Local.update`). The `enable` methods and `AI.withConfig` build on it.
       */
     private[kyo] def updateEnv[A, S](f: AIEnv => AIEnv)(v: A < (LLM & S))(using Frame): A < (LLM & S) =
         env.map(prev => setEnv(f(prev)).andThen(v).map(a => setEnv(prev).andThen(a)))
@@ -421,12 +519,11 @@ object LLM:
     private[kyo] def setState(value: State)(using Frame): Unit < LLM = suspend(Op.SetState(value))
 
     /** The asymmetric isolate: per-key Context.merge on instances (fork-born added as-is), env keep-parent.
-      * Keep = Async is the only Keep that satisfies the in-tree parallel sites over a raw LLM row:
-      * Async.fill/foreach/race require Isolate[LLM, Abort[E] & Async, LLM], and for the E=Nothing body
-      * (a parallel sampling mode's gen, whose transport errors the eval loop already recovers) that reduces to
-      * Isolate[LLM, Async, LLM], which a wider Keep (Abort[Any] & Async) cannot satisfy by Keep
+      * Keep = Async is the only Keep satisfying the in-tree parallel sites over a raw LLM row:
+      * Async.fill/foreach/race require Isolate[LLM, Abort[E] & Async, LLM], and for the E=Nothing body it
+      * reduces to Isolate[LLM, Async, LLM], which a wider Keep (Abort[Any] & Async) cannot satisfy by Keep
       * contravariance. runWith's residual Abort[AIGenException] is discharged inside isolate; an unrecovered
-      * fork failure surfaces as a fiber panic on any unrecovered fork.
+      * fork failure surfaces as a fiber panic.
       */
     given isolate: Isolate[LLM, Async, LLM] =
         new Isolate[LLM, Async, LLM]:
@@ -436,17 +533,16 @@ object LLM:
                 // GetState fires within the runWith handler loop, which answers with the live State.
                 LLM.state.map(f)
             def isolate[A, S](state: State, v: A < (S & LLM))(using Frame): Transform[A] < (Async & S) =
-                // runWith's residual is < (S & Async & Abort[AIGenException]); Keep = Async carries Async, so
-                // the fork's Abort[AIGenException] is discharged here. A fork that does not recover its own
-                // generation failure surfaces it as a fiber panic via getOrThrow, consistent with an
-                // unrecoverable concurrent branch failure.
+                // Keep = Async carries Async, so the fork's Abort[AIGenException] is discharged here; a fork
+                // that does not recover its own generation failure surfaces it as a fiber panic via
+                // getOrThrow.
                 Abort.run[AIGenException](LLM.runWith(state)(v)((s, a) => (s, a))).map(_.getOrThrow)
             def restore[A, S](v: Transform[A] < S)(using Frame): A < (LLM & S) =
                 v.map { (forked, a) =>
                     Kyo.foreachDiscard(forked.instances.toMap.toSeq) { (ref, session) =>
-                        // The instance may have been GC'd meanwhile; only merge slots whose AI is still live.
+                        // The instance may have been GC'd meanwhile; only merge slots whose AI is live.
                         val ai = ref.get()
-                        if ai eq null then Kyo.unit else LLM.mergeInstance(ai, session.context)
+                        if ai eq null then Kyo.unit else LLM.mergeInstance(ai, session.rawContext)
                     }.andThen(a)
                 }
 
@@ -458,37 +554,57 @@ object LLM:
 
     private def genLoop[A](ai: AI, schema: Schema[A])(using Frame): A < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
-        // The instance's own enablements (added via ai.enable) are layered onto the scope env for the
-        // duration of the eval, then restored, so the effective surface is `scope ++ instance`. The eval
-        // threads `ai` explicitly (reads ai.context, appends to ai), so no ambient current is needed.
+        // The instance's enablements are layered onto the scope env for the eval, then restored. The
+        // effective surface is the session's effectiveEnv (scope ++ instance ++ default guidance): ONE
+        // construction shared with the faithful AISession.context enrichment, so transcript capture cannot
+        // drift from generation. The eval threads `ai` explicitly, so no ambient current is needed.
         LLM.session(ai).map { session =>
             LLM.env.map { scopeEnv =>
-                val merged = scopeEnv
-                    .copy(config = session.env.config.orElse(scopeEnv.config))
-                    .addPrompt(session.env.prompt)
-                    .addTools(session.env.tools)
-                    .addThoughts(session.env.thoughts)
-                    .addModes(session.env.mode)
+                val merged = session.effectiveEnv(scopeEnv)
                 LLM.setEnv(merged).map { prevEnv =>
-                    AI.enable(Prompt.internal.defaultGuidance) {
-                        AI.config.map { config =>
-                            def loop(iterations: Int): A < (LLM & Async & Abort[AIGenException]) =
-                                val step =
-                                    Abort.recover[HttpException](e => Abort.fail(AITransportException(e)))(
-                                        eval[A](ai, iterations >= config.maxIterations)
-                                    )
-                                Mode.internal.handle(ai, step).map {
-                                    case Present(r) => r
-                                    case Absent =>
-                                        if iterations >= config.maxIterations * 2 then
-                                            Abort.fail(AIEvalExhaustedException(config.maxIterations))
-                                        else
-                                            AI.withConfig(c => c.seed(c.seed.map(_ * 31))) {
-                                                loop(iterations + 1)
-                                            }
-                                }
-                            end loop
-                            loop(0)
+                    AI.config.map { config =>
+                        // One result tool + capture per generation: the capture accumulates the accepted
+                        // value and rejection bookkeeping across iterations, so the exhaustion error can say
+                        // what happened.
+                        Thought.internal.infos.map { thoughts =>
+                            Tool.internal.resultTool[A](thoughts).map { (resultToolInfos, capture) =>
+                                def loop(iterations: Int): A < (LLM & Async & Abort[AIGenException]) =
+                                    val forceResult = iterations >= config.maxIterations
+                                    val step        = eval[A](ai, forceResult, resultToolInfos, capture)
+                                    Mode.internal.handle(ai, step).map {
+                                        case Present(r) => r
+                                        case Absent     =>
+                                            // A turn without a result is normal tool use below the iteration cap, so
+                                            // the loop continues. Both backend families reach this: a command harness
+                                            // can always answer without the result tool, and an HTTP backend does too
+                                            // when it OFFERS rather than forces it. Once the result tool has been
+                                            // forced (dropping user tools) and the turn STILL yields no result, eval
+                                            // fed the failure back, so genLoop grants one informed repair turn past
+                                            // maxIterations, then stops.
+                                            if forceResult && iterations >= config.maxIterations + 1 then
+                                                capture.rejections.map { (attempts, lastFailure) =>
+                                                    val detail =
+                                                        if attempts == 0 then Absent
+                                                        else
+                                                            Present(
+                                                                s"the result tool was called and rejected $attempts time(s); " +
+                                                                    s"last failure: ${lastFailure.getOrElse("see the conversation feedback")}"
+                                                            )
+                                                    Abort.fail(AIEvalExhaustedException(config.maxIterations, detail))
+                                                }
+                                            else
+                                                AI.withConfig(c => c.seed(c.seed.map(_ * 31))) {
+                                                    loop(iterations + 1)
+                                                }
+                                    }
+                                end loop
+                                // Restore the scope env on the failure path (the success path restores it
+                                // below): otherwise the merged session enablements leak into every later
+                                // generation of the same run.
+                                Abort.recover[AIGenException] { e =>
+                                    LLM.setEnv(prevEnv).andThen(Abort.fail(e))
+                                }(loop(0))
+                            }
                         }
                     }.map(a => LLM.setEnv(prevEnv).andThen(a))
                 }
@@ -496,37 +612,154 @@ object LLM:
         }
     end genLoop
 
-    private def eval[A: Schema](ai: AI, forceResult: Boolean)(using
+    private def eval[A: Schema](
+        ai: AI,
+        forceResult: Boolean,
+        resultToolInfos: Chunk[Tool.internal.Info[?, ?, LLM]],
+        capture: Tool.internal.ResultCapture[A]
+    )(using
         Frame
-    ): Maybe[A] < (LLM & Async & Abort[HttpException | AIGenException]) =
+    ): Maybe[A] < (LLM & Async & Abort[AIGenException]) =
         for
             config   <- AI.config
             thoughts <- Thought.internal.infos
             tools    <- if !forceResult then Tool.internal.infos else Kyo.lift(Chunk.empty)
-            resultTool   = Tool.internal.resultToolInfo
-            allTools     = tools ++ resultTool.infos
+            allTools     = tools ++ resultToolInfos
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
-            ctx     <- ai.context
-            context <- Prompt.internal.enrichedContext(ctx, allTools)
+            ctx <- ai.context
+            // The forced turn carries an explicit finalize directive, request-scoped (never stored). On a
+            // backend that compels the call (forced tool_choice with grammar-constrained decoding), the
+            // model must emit a schema-valid envelope even when it believes it was told to keep working, and
+            // without an explicit instruction it sometimes encodes that withholding INTO the envelope (a
+            // progress note or empty string in place of the value). The eval loop accepts any schema-valid
+            // result, so a compelled backend has no repair turn; the directive closes that gap at the source.
+            // It also names itself as the instruction to finalize and retires any standing "keep working"
+            // order the caller left, which costs nothing on a backend already going to comply.
+            requestCtx =
+                if forceResult then
+                    ctx.systemMessage(
+                        s"This is the instruction to finalize. Every other tool has been REMOVED for this " +
+                            s"turn: '${Completion.resultToolName}' is the only tool available, and a call to any " +
+                            "other tool will fail. Any earlier instruction to keep working, wait, or withhold the " +
+                            s"result no longer applies. Produce your final result now by calling " +
+                            s"'${Completion.resultToolName}'. Base every field on the conversation above, copying " +
+                            "exact values from prior tool results; do not report progress, interim state, or " +
+                            "placeholder values."
+                    )
+                else ctx
+            context <- Prompt.internal.enrichedContext(requestCtx, allTools)
             _ <- Log.debug(
+                // Carries the facts that DECIDE this request's shape, not just its size: the reasoning state,
+                // resolved amount, and ceiling are each derived from a declaration, so a turn that behaved
+                // unexpectedly can't be diagnosed from the call alone without this.
                 s"kyo-ai gen backend=${config.provider.name} model=${config.modelName} " +
-                    s"messages=${context.messages.size} tools=${allTools.size} thoughts=${thoughts.size} forceResult=$forceResult"
+                    s"messages=${context.messages.size} tools=${allTools.size} thoughts=${thoughts.size} " +
+                    s"forceResult=$forceResult reasoning=${config.reasoningEnabled} encoding=${config.modelReasoning} " +
+                    s"amount=${config.resolvedAmount} ceiling=${config.effectiveMaxOutputTokens}"
             )
-            messages <-
-                HttpClient.withConfig(_.timeout(config.timeout)) {
-                    Abort.run[Closed] {
-                        config.provider
-                            .completion(config, context, allTools, Present(resultSchema))
-                            .handle(
-                                config.meter.run,
-                                Retry[HttpException](config.retrySchedule)(_)
-                            )
-                    }.map {
-                        case Result.Success(msgs) => msgs
-                        case Result.Failure(_)    => Abort.panic(AIMeterClosedException())
-                        case Result.Panic(ex)     => Abort.panic(ex)
+            // A reasoning statement the entry's wire cannot express is reported once per generation, then
+            // dropped. It belongs here, not in the four backends: the mismatch is between what the caller
+            // stated and what the entry declares, which every backend would otherwise detect identically.
+            _                <- config.reasoningMismatch.fold(Kyo.unit)(warning => Log.warn(s"kyo-ai $warning"))
+            replyAndRepaired <-
+                // The configured timeout is this call's deadline and covers its retries, so a slow transient
+                // that retries cannot carry the call past it. The transport install below keeps an attempt's
+                // own deadline, matching kyo-http's total-operation timeout semantics.
+                Async.timeoutWithError[AIGenException, Result[AIGenException, Completion.Reply], LLM](
+                    config.timeout,
+                    Result.Failure(AICompletionTimeoutException(config.provider.name, config.timeout))
+                ) {
+                    // The completion's own failure rides the value channel as a Result across the deadline's
+                    // fiber boundary and is re-raised below, so a typed leaf stays typed and only the deadline
+                    // itself uses the error channel.
+                    Abort.run[AIGenException] {
+                        HttpClient.withConfig(_.timeout(config.timeout)) {
+                            Abort.run[Closed] {
+                                config.provider
+                                    .completion(config, context, allTools, Present(resultSchema))
+                                    .handle(
+                                        // One retry policy for both backend families. A raw HttpException is
+                                        // classified into the module's typed leaves BEFORE the retry clause
+                                        // sees it, so the clause names AITransientException alone: transport
+                                        // blips, transient outages, and throttles retry; auth failures,
+                                        // timeouts, and rejected requests surface without retry. Command
+                                        // harnesses classify into the same leaves.
+                                        Abort.recover[HttpException](e =>
+                                            Abort.fail(Completion.classifyHttp(config, e))
+                                        )(_),
+                                        config.meter.run,
+                                        Retry[AITransientException](config.retrySchedule)(_)
+                                    )
+                            }.map {
+                                case Result.Success(r) => r
+                                case Result.Failure(_) => Abort.panic(AIMeterClosedException())
+                                case Result.Panic(ex)  => Abort.panic(ex)
+                            }
+                        }
+                    }
+                }.map {
+                    // A wire that refuses the model's tool call rather than returning it never lets the turn
+                    // reach the loop, so one bad sample would fail a well-formed ask outright. Feeding an
+                    // empty turn forward puts it back on the loop's path: the model is told what went wrong
+                    // and maxIterations bounds the attempts, so a wire rejecting every one ends in the same
+                    // exhaustion any unproductive loop reaches. The detail is logged rather than dropped,
+                    // since the exhaustion further down cannot say a rejection was really a bad request.
+                    case Result.Failure(rejected: AIToolCallRejectedException) =>
+                        // Feed the ENDPOINT's own reason forward, not a generic line: telling the model why
+                        // ("Failed to parse tool call arguments as JSON") is the point of the repair turn.
+                        // `rejectionRepaired` guards the forced-turn finalize message below so one failure
+                        // gets one feedback message, not two.
+                        Log.warn(s"kyo-ai ${rejected.getMessage}").andThen {
+                            ai.updateContext(_.systemMessage(
+                                s"Your previous tool call was rejected: ${rejected.detail}. Produce a valid " +
+                                    "tool call whose arguments are well-formed JSON matching the schema exactly."
+                            )).andThen((Completion.Reply(Chunk.empty, Completion.StopReason.Completed), true))
+                        }
+                    case other => Abort.get(other).map(r => (r, false))
+                }
+            (reply, rejectionRepaired) = replyAndRepaired
+            messages                   = reply.messages
+            // Observers fire on the raw wire reply, BEFORE the ceiling adjudication below: a turn that
+            // stops at the ceiling and aborts still spent its tokens, and firing after would lose exactly
+            // the expensive turns. The env here is the merged scope-plus-instance env genLoop installed,
+            // so instance observers cover this turn and `AI.config` inside a callback reads this turn's
+            // config. The erasure cast is the enablement pattern modes and tools use.
+            _ <- LLM.env.map(env => Kyo.foreachDiscard(env.observe.asInstanceOf[Chunk[Observe[LLM]]])(_(ai, reply)))
+            // A ceiling stop is reported by the backend and adjudicated here, because neither layer alone
+            // can tell a usable turn from a truncated one. A reply that stopped at the ceiling may still
+            // carry a complete call worth running; what makes it unusable is having nothing to act on, or
+            // its LAST call cut off mid-argument. Only the last call can be cut (nothing follows a
+            // truncation); an earlier call that fails to decode is the model's error, not the ceiling's.
+            // This sits here, not in a backend, because reading the payload is the tool loop's job: a wire
+            // decode guessing at usability would fail working turns, or let a truncated call through to be
+            // reported as a schema problem many rejections later.
+            _ <- Kyo.when(reply.stopReason == Completion.StopReason.MaxOutputTokens) {
+                val stopped = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
+                val unusable =
+                    stopped.isEmpty ||
+                        stopped.lastOption.exists(call => Json.decode[Structure.Value](call.arguments).isFailure)
+                Kyo.when(unusable) {
+                    // Carry what came before: a run seen producing two complete results this loop rejected
+                    // (regenerating each time) only reached the ceiling on the third attempt. Reporting the
+                    // ceiling alone would hide that cause.
+                    capture.rejections.map { (attempts, lastFailure) =>
+                        val prior =
+                            if attempts == 0 then Absent
+                            else
+                                Present(
+                                    s"the result tool was called and rejected $attempts time(s); " +
+                                        s"last failure: ${lastFailure.getOrElse("see the conversation feedback")}"
+                                )
+                        Abort.fail(AIOutputLimitException(
+                            config.provider.name,
+                            config.modelName,
+                            Present(config.effectiveMaxOutputTokens),
+                            prior,
+                            reply.usage.reasoningOutputTokens
+                        ))
                     }
                 }
+            }
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} returned messages=${messages.size} " +
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"
@@ -534,15 +767,42 @@ object LLM:
             _ <- ai.updateContext(ctx => messages.foldLeft(ctx)(_.add(_)))
             calls            = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
             completedCallIds = messages.collect { case ToolMessage(callId, _) => callId }
-            _ <- Tool.internal.handle(ai, allTools, calls.filterNot(call => completedCallIds.contains(call.id)))
-            // Extract the model's structured result directly from its result_tool call (no capturing run).
-            raw = calls.filter(_.function == Completion.resultToolName).headMaybe
-                .flatMap(call => Json.decode[Structure.Value](call.arguments).toMaybe)
-            r <- raw match
-                case Present(record) =>
-                    Thought.internal.handle[A](thoughts, record, summon[Schema[A]]).map(Present(_))
+            // The payload is decoded ONCE by the tool loop against the result tool's typed schema, like any
+            // other tool; the capturing run interprets the decoded envelope (thought hooks, open-shape
+            // conformance) and stores the value. Rejections ride the tool loop's feedback, so eval never
+            // touches the payload or adds a parallel repair channel.
+            preRejections <- capture.rejections
+            _             <- Tool.internal.handle(ai, allTools, calls.filterNot(call => completedCallIds.contains(call.id)))
+            r <- capture.value.map {
+                case present @ Present(_) => Kyo.lift(present)
                 case Absent =>
-                    Kyo.lift(Maybe.empty[A])
+                    val calledResult = calls.exists(_.function == Completion.resultToolName)
+                    val repair =
+                        if calledResult then
+                            // The call was dispatched and rejected; the tool loop already fed the reason
+                            // back. Record the rejection for the exhaustion report when a decode-stage
+                            // rejection never reached the capturing run.
+                            capture.rejections.map { (attempts, _) =>
+                                Kyo.when(attempts == preRejections._1)(
+                                    capture.rejected("the result payload did not decode against the required schema")
+                                ).unit
+                            }
+                        else if forceResult && !rejectionRepaired then
+                            // No result call at all on a forced turn: the model dodged the tool. Feed the
+                            // failure back so genLoop's one repair turn is informed rather than blind. This
+                            // is the fallback for any backend that cannot compel the call (HTTP backends
+                            // forcing it never reach here; a command harness does). Skipped when the turn was
+                            // already a rejection repair, so one failure gets one feedback message, and this
+                            // schema message would be wrong there since user tools still ride that turn.
+                            ai.updateContext(_.systemMessage(
+                                "You have not produced a result. This is the instruction to finalize, and any " +
+                                    "earlier instruction to keep working or withhold the result no longer applies. " +
+                                    "Produce your final result now; it must match this schema exactly: " +
+                                    s"${Json.encode(resultSchema)}"
+                            )).unit
+                        else Kyo.unit
+                    repair.andThen(Kyo.lift(Maybe.empty[A]))
+            }
         yield r
         end for
     end eval
@@ -561,7 +821,7 @@ object LLM:
             case object Env                                  extends Op[AIEnv]
             case class Gen[A](target: AI, schema: Schema[A]) extends Op[A]
             case class Stream[A](target: AI, schema: Schema[A], emitTag: Tag[Emit[Chunk[A]]])
-                extends Op[kyo.Stream[A, Async & Scope & Abort[AIStreamException]]]
+                extends Op[kyo.Stream[A, LLM & Async & Scope & Abort[AIStreamException]]]
             case class SetEnv(env: AIEnv)                         extends Op[AIEnv]
             case class Discard(target: AI)                        extends Op[Unit]
             case object GetState                                  extends Op[LLM.State]
@@ -571,7 +831,7 @@ object LLM:
         end Op
 
         /** A `WeakReference` to an `AI`, used as the `State` map key so a dropped `AI` becomes reclaimable.
-          * Equality and hash are by the AI's stable `id`, so a slot still matches its key after the referent is
+          * Equality and hash are by the AI's stable `id`, so a slot matches its key even after the referent is
           * GC'd, letting the sweep (`State.pruned`) find and drop it. `isValid` is false once collected.
           */
         final class AIRef(ai: AI) extends WeakReference[AI](ai):

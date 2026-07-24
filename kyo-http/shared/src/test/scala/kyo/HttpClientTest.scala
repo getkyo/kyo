@@ -1020,6 +1020,165 @@ class HttpClientTest extends BaseHttpTest:
                 }.andThen(assert(called))
             }
         }
+
+        // RFC 9110 section 15.4.4: a 303 changes the method to GET, and a GET carries no body. The follow-up request is
+        // built by copying the original, whose body still sits in its fields, so the guarantee rests on the encoder
+        // filtering the body by method rather than on the redirect logic dropping it. There was no 303 coverage at all,
+        // which left that filtering unpinned: a change to it would send the POST body to the redirect target as a GET.
+        "303 See Other becomes a GET and sends no body (RFC 9110 section 15.4.4)" - {
+            val startRoute = HttpRoute.postRaw("start").request(_.bodyText).response(_.bodyText)
+            val seenRoute  = HttpRoute.getRaw("seen").response(_.bodyText)
+            val seenEp = seenRoute.handler { req =>
+                val method = req.method.name
+                val len    = req.headers.get("Content-Length").getOrElse("absent")
+                HttpResponse.ok(s"method=$method contentLength=$len")
+            }
+            val redirectEp = startRoute.handler { _ =>
+                HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/seen"))
+            }
+            runServer(seenEp, redirectEp) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val request = HttpRequest
+                            .postRaw(HttpUrl(url.scheme, url.host, url.port, "/start", Absent))
+                            .addField("body", "this body must not be forwarded")
+                        client.sendWith(startRoute, request) { resp =>
+                            // Either spelling of "no body" is correct: an absent Content-Length, or an explicit zero,
+                            // which RFC 9110 section 8.6 makes a valid way to say the same thing. What must not appear
+                            // is the original body, whose length is nowhere near zero.
+                            val body = resp.fields.body
+                            assert(body.startsWith("method=GET"), s"a 303 must arrive as a GET, got: $body")
+                            assert(
+                                body.endsWith("contentLength=0") || body.endsWith("contentLength=absent"),
+                                s"the original request body must not be forwarded, got: $body"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Credential forwarding across a redirect. A redirect target is chosen by the ORIGIN, not by the caller, so the
+        // Location value is attacker-controlled the moment the origin is malicious, compromised, or merely open. Carrying
+        // the caller's Authorization to whatever authority that value names hands the credential to a third party, so the
+        // decision to forward has to be conditioned on the target, not made unconditionally.
+        //
+        // The collector below reports what the SECOND server actually received, which is what makes the leak observable
+        // rather than inferred: the client returns the second server's body as the final response.
+
+        // The positive control for the two leaves below, and the reason they cannot be satisfied by stripping
+        // unconditionally. A relative Location stays on the origin the caller chose, so the credential is going
+        // exactly where it was already sent and must survive: dropping it here would break every authenticated
+        // redirect. None of the other redirect leaves carry credentials, so without this nothing pins that.
+        "forwards Authorization across a same-origin redirect (GHSA-2rgg-r783-mrx4 control)" - {
+            val startRoute  = HttpRoute.getRaw("start").response(_.bodyText)
+            val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
+            val targetEp = targetRoute.handler { req =>
+                HttpResponse.ok(s"auth=${req.headers.get("Authorization").getOrElse("none")}")
+            }
+            val redirectEp = startRoute.handler(_ => HttpResponse.redirect("/target").addField("body", "redirect"))
+            runServer(targetEp, redirectEp) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val request = HttpRequest
+                            .getRaw(HttpUrl(url.scheme, url.host, url.port, "/start", Absent))
+                            .setHeader("Authorization", "Bearer super-secret")
+                        client.sendWith(targetRoute, request) { resp =>
+                            assert(
+                                resp.fields.body == "auth=Bearer super-secret",
+                                s"a same-origin redirect must keep the caller's credential, got: ${resp.fields.body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        "does not forward Authorization across an origin change (GHSA-2rgg-r783-mrx4)" - {
+            val startRoute   = HttpRoute.getRaw("start").response(_.bodyText)
+            val collectRoute = HttpRoute.getRaw("collect").response(_.bodyText)
+            // Both credential-bearing fields are reported, so a fix that drops only Authorization while Cookie still
+            // crosses cannot satisfy this leaf. A cookie is bound to the origin that set it just as an Authorization
+            // value is bound to the origin it was issued for.
+            val collectEp = collectRoute.handler { req =>
+                val auth   = req.headers.get("Authorization").getOrElse("none")
+                val cookie = req.headers.get("Cookie").getOrElse("none")
+                HttpResponse.ok(s"auth=$auth cookie=$cookie")
+            }
+            // The collector runs on its own server, so it is a different port and therefore a different origin
+            // (RFC 6454 section 4 makes origin the scheme/host/port triple, so a port change alone crosses it).
+            "plain" in {
+                initTrustAllClient().map { httpClient =>
+                    HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                        val redirectEp = startRoute.handler { _ =>
+                            HttpResponse.halt(
+                                HttpResponse(HttpStatus.Found)
+                                    .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                            )
+                        }
+                        HttpServer.init(0, "localhost")(redirectEp).map { origin =>
+                            HttpClient.let(httpClient) {
+                                HttpClient.withConfig(noTimeout) {
+                                    val request = HttpRequest
+                                        .getRaw(HttpUrl.parse(s"http://localhost:${origin.port}/start").getOrThrow)
+                                        .setHeader("Authorization", "Bearer super-secret")
+                                        .setHeader("Cookie", "session=super-secret")
+                                    HttpClient.use(_.sendWith(collectRoute, request) { resp =>
+                                        assert(
+                                            resp.fields.body == "auth=none cookie=none",
+                                            s"the redirect target received the caller's credentials: ${resp.fields.body}"
+                                        )
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The scheme half of the same decision, and the more damaging one: here the credential does not merely reach an
+        // unintended party, it reaches the network in cleartext. A caller that chose https did so to keep the header off
+        // the wire, and a Location naming http silently undoes that choice.
+        "does not forward Authorization across an https to http downgrade (GHSA-2rgg-r783-mrx4)" in {
+            val startRoute   = HttpRoute.getRaw("start").response(_.bodyText)
+            val collectRoute = HttpRoute.getRaw("collect").response(_.bodyText)
+            val collectEp = collectRoute.handler { req =>
+                val auth   = req.headers.get("Authorization").getOrElse("none")
+                val cookie = req.headers.get("Cookie").getOrElse("none")
+                HttpResponse.ok(s"auth=$auth cookie=$cookie")
+            }
+            initTrustAllClient().map { httpClient =>
+                // Hop 2 is plaintext; hop 1 below is TLS, so following the Location downgrades the scheme.
+                HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                    val redirectEp = startRoute.handler { _ =>
+                        HttpResponse.halt(
+                            HttpResponse(HttpStatus.Found)
+                                .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                        )
+                    }
+                    HttpServer.init(
+                        HttpServerConfig.default.port(0).host("localhost")
+                            .tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+                    )(redirectEp).map { origin =>
+                        HttpClient.let(httpClient) {
+                            HttpClient.withConfig(noTimeout) {
+                                val request = HttpRequest
+                                    .getRaw(HttpUrl.parse(s"https://localhost:${origin.port}/start").getOrThrow)
+                                    .setHeader("Authorization", "Bearer super-secret")
+                                    .setHeader("Cookie", "session=super-secret")
+                                HttpClient.use(_.sendWith(collectRoute, request) { resp =>
+                                    assert(
+                                        resp.fields.body == "auth=none cookie=none",
+                                        s"an https origin redirected to http and the credentials followed in cleartext: ${resp.fields.body}"
+                                    )
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     "retry" - {

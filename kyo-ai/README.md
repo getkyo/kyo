@@ -45,7 +45,7 @@ Three types frame the whole module. They differ by what each adds along a single
 - **`AI` is a conversation that remembers.** You mint an instance with `AI.init`; every `ai.gen` on that instance accumulates into its own history, so a later turn sees the earlier ones. Memory lasts for one `LLM.run`. Reach for it when one call needs to know what an earlier call said.
 - **`Agent` is a persistent, addressable entity.** It lives behind an actor, holds its conversation across many `ask` calls, and processes one input at a time. Reach for it when the conversation must outlive a single `run` and you want a long-lived thing to send inputs to.
 
-The sections below climb that ladder: one-shot `gen` first, then remembering instances, then agents, with the generation-shaping surface (tools, prompts, thoughts, modes) layered in between.
+The sections below climb in that order: one-shot `gen` first, then remembering instances, then agents, with the generation-shaping surface (tools, prompts, thoughts, modes) layered in between.
 
 ## One-shot generation
 
@@ -328,7 +328,9 @@ def streamedAnswers: Chunk[Answer] < (Async & Abort[AIStreamException | AIGenExc
     }
 ```
 
-The stream's element row carries `Scope` because the SSE connection is held open until the stream terminates or errors, so running it adds `Scope` to the residual. You write no SSE parsing, no fragment accumulation, no incremental-decode attempt.
+A fully consumed stream joins the conversation: the turn is recorded once its elements are drained, so a later `gen` or `stream` can read what was streamed, and a stream abandoned part way records nothing. The element row carries `LLM` for that write-back, so a stream is consumed inside `LLM.run`.
+
+The stream's element row also carries `Scope` because the SSE connection is held open until the stream terminates or errors, so running it adds `Scope` to the residual. You write no SSE parsing, no fragment accumulation, no incremental-decode attempt.
 
 ## Parallel generation
 
@@ -342,6 +344,55 @@ def answerAll(questions: Chunk[Question]) =
 ```
 
 The given is the asymmetric `isolate`: on join it merges each shared instance's conversation prefix-aware (so the shared history is never duplicated) and adds fork-born instances as-is. You do not manage threads or per-conversation state isolation across branches; the isolate does both.
+
+## Tracking usage
+
+Every completed model turn reports what it spent. `Observe.withStats` collects it over a scope, alongside the result:
+
+```scala
+def measured(question: String): (AIStats, String) < (LLM & Sync) =
+    Observe.withStats(AI.gen[String](question))
+```
+
+`AIStats` carries `inputTokens`, `outputTokens`, and `turns`, plus two subsets the wire may break out: `cachedInputTokens` (part of `inputTokens` served from the provider's cache) and `reasoningOutputTokens` (part of `outputTokens` spent reasoning). The subsets are `Maybe`, so a wire that reports zero stays distinguishable from one that reports nothing; `add` aggregates any two.
+
+The varargs form breaks the count down by named instances. Every named instance appears, `AIStats.empty` if it completed no turn; spend by any other instance stays out of the breakdown (wrap in the untargeted form for the scope total):
+
+```scala
+def perAgent(researcher: AI, writer: AI): (Dict[AI, AIStats], String) < (LLM & Sync) =
+    Observe.withStats(researcher, writer) {
+        researcher.gen[String]("Gather the facts.").map(facts => writer.gen[String](facts))
+    }
+```
+
+Counting is a side effect at the source: each turn is recorded on the fiber that ran it, at the moment the wire reply is read. So a rolled-back `AI.forget` block, a losing `Async.race` branch, and an `AI.gen` one-shot all count the turns they completed, and nothing can un-spend them. A turn interrupted before its reply arrives is uncounted (no number ever reached this side of the wire), and an abandoned stream records nothing. One placement rule for streams: a scope-enabled observer covers a streamed turn only when the stream is consumed inside the enabling bracket, while an instance-enabled observer covers its instance's streams wherever they are consumed.
+
+Underneath sits the fifth enablement kind: `Observe`, a wire-tier counterpart of `Mode` that cannot change control flow. Where a mode receives the generation as a value and returns what the caller sees, an observer receives each completed turn's reply (its messages and usage) and returns `Unit`. Enable one on a scope or an instance like any other enablement:
+
+```scala
+def logged[A, S](v: A < (LLM & S)): A < (LLM & S) =
+    val log = Observe.init { (ai, reply) =>
+        AI.config.map(c => Log.info(s"${c.modelName}: ${reply.usage.totalTokens} tokens"))
+    }
+    AI.enable(log)(v)
+end logged
+```
+
+`AI.config` inside the callback is the config the turn ran under, instance overrides included, and `ai.context` is the conversation up to (not including) the turn. An observer whose capability row carries `Abort[E]` is a typed guardrail: its failure fails the generation it fired in, visible in the row at the enable site.
+
+```scala
+case class BudgetExceeded(spent: Long)
+
+def capped[A, S](limit: Long)(v: A < (LLM & S)): A < (LLM & S & Abort[BudgetExceeded] & Sync) =
+    AtomicRef.init(0L).map { spent =>
+        val guard = Observe.init { (_, reply) =>
+            spent.updateAndGet(_ + reply.usage.totalTokens).map { total =>
+                Abort.when(total > limit)(BudgetExceeded(total))
+            }
+        }
+        AI.enable(guard)(v)
+    }
+```
 
 ## Controlling conversation state
 
@@ -377,7 +428,7 @@ An `AISession` holds code (tool runners, effectful prompts, modes), so it is in-
 
 ## Configuration and providers
 
-`AI.Config` is an immutable, copy-on-write settings record naming the provider, model, and runtime knobs (temperature, seed, timeout, retry schedule, iteration cap). Every builder returns a modified copy.
+`AI.Config` is an immutable, copy-on-write settings record naming the provider, model, and runtime knobs (temperature, seed, timeout, retry schedule, iteration cap, reasoning). Every builder returns a modified copy.
 
 ```scala
 val openAiConfig =
@@ -386,11 +437,66 @@ val openAiConfig =
         .temperature(0.2)
 ```
 
-The module ships nine providers: Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter, Claude Code, and Codex, each available as `AI.Config.Anthropic`, `AI.Config.OpenAI`, and so on, and as `AI.Config.Provider.all`. `AI.Config.default` first honors the provider override flag `kyo.ai.provider` (environment variable `KYO_AI_PROVIDER`), then probes provider markers and keys in order, preferring `CLAUDE_CODE`, then `CODEX`, then API provider keys such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. Supported override values are `claude-code`, `codex`, `anthropic`, `openai`, `deepseek`, `gemini`, `groq`, `baseten`, and `openrouter`. Each provider exposes a pure catalog `.default` you refine with builders. `AI.Config.init` builds a config for an API-key provider while reading its API key and org from system properties then the environment.
+Reasoning is on by default, so models reason before answering, at the cost of extra output tokens and latency on every generation. `disableReasoning` turns it off. Whether to reason and how much are stated separately, because they are different questions and the endpoints answer them in different vocabularies.
+
+```scala
+val budgetedReasoning =
+    AI.Config.Anthropic.default.reasoningBudget(20000) // a bound in tokens
+val gradedReasoning =
+    AI.Config.DeepSeek.default.reasoningLevel("high") // a word from that wire's own levels
+val noReasoning =
+    AI.Config.Anthropic.default.disableReasoning
+```
+
+### Reasoning
+
+How much reasoning a request can state is a fact declared on the catalog entry, never inferred from the model's name. An entry declares one of five encodings:
+
+- a **token budget** that bounds reasoning,
+- **self-sized** reasoning the model scales itself,
+- a **graded level** drawn from that wire's own set of words,
+- **provider-managed** reasoning, with no field to state an amount at all, or
+- **none**.
+
+It also declares how its endpoint says "do not reason", which genuinely differs across wires: one omits the activation block, one sends an explicit deactivation object, one sends a level word meaning none, and a harness exports an environment switch.
+
+Levels stay the wire's own words rather than a kyo vocabulary, because the sets do not agree: three endpoints enumerate three different sets, overlapping in the middle and differing at the ends. A level an entry does not declare is reported and still sent, leaving the endpoint the authority, so a stale list never refuses a value the wire would accept.
+
+An untouched config states no amount, so the entry's own default applies. A stated amount an entry's encoding cannot express is named in the log and the request is built as if it were absent, rather than failing, so one config stays re-aimable across providers. While reasoning is off nothing rides, and an amount stated then is held rather than dropped.
+
+Whether a request carries a reasoning activation field also decides the result tool's `tool_choice`: two endpoints refuse a forced tool call while reasoning is active, so an active request leaves the call to the model and the eval loop's repair turn covers the rare reply that skips it. A deactivated request still forces, because a deactivation is not an activation.
+
+### Output ceilings
+
+The reasoning declaration also sizes the request's output ceiling, because reasoning tokens count against it. Where a budget bounds reasoning, the ceiling clears that budget with room for the result. Everywhere else nothing bounds reasoning from this side, so the ceiling defaults to the model's own maximum; a smaller ceiling would let reasoning consume the whole allowance and stop the reply before it produced anything. A level names no token count, so nothing can be added for it: only the endpoint knows what a level costs.
+
+An unset ceiling is the model's own maximum, sent rather than withheld, so the limit in force is the one the entry declares. That holds only where the maximum is the provider's own: an entry declaring `OutputMaximum.Unverified` has no published or probed bound, so nothing is sent and an over-large ask is left for the endpoint to refuse and name the real limit. (Withholding the ceiling everywhere once left an endpoint's undeclared default in force while this module reported the declared maximum as the one applied, which on one wire measured six times larger than the limit actually governing the reply.)
+
+A reply that stops at the ceiling with nothing to act on fails with `AIOutputLimitException`, naming the ceiling the request carried. It is not retried, because an identical request spends the whole ceiling again to stop in the same place; the levers are raising `maxTokens` toward the model's maximum, asking for less output, or choosing a model whose reasoning is budget-bounded. A reply that stopped at the ceiling but still carries a usable tool call is delivered as a partial turn instead, and the next turn starts against a fresh ceiling. On the command-harness path the ceiling bounds each of the harness's internal attempts, which it retries, so a call that keeps colliding is billed for several times the ceiling before the failure surfaces.
+
+### Declaring a model
+
+To use a model the catalog does not list, declare its facts with `Config.model(provider, name, contextWindow, outputMaximum, reasoning, acceptsTemperature, acceptsImages)`. To re-point an existing entry at an equivalent id, when a snapshot, fine-tune, or proxy alias shares that entry's capabilities, use `modelName(...)`.
+
+### The providers
+
+The module ships eleven providers, Anthropic, OpenAI, DeepSeek, Gemini, Groq, xAI, Moonshot, Baseten, OpenRouter, Claude Code, and Codex, each available as `AI.Config.Anthropic`, `AI.Config.OpenAI`, and so on, and together as `AI.Config.Provider.all`. Each is a pure catalog whose `.default` you refine with builders.
+
+`AI.Config.default` selects one: it first honors the override flag `kyo.ai.provider` (environment variable `KYO_AI_PROVIDER`), then probes provider markers and keys in order, preferring `CLAUDE_CODE`, then `CODEX`, then API keys such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. Override values are `claude-code`, `codex`, `anthropic`, `openai`, `deepseek`, `gemini`, `groq`, `xai`, `moonshot`, `baseten`, and `openrouter` (`grok` and `kimi` are also accepted for those two families).
+
+`AI.Config.init` builds a config for an API-key provider, reading the key and org from system properties then the environment. It takes the model's declared facts, so a model the catalog does not list is stated rather than guessed.
 
 ```scala
 def initConfig: AI.Config < Sync =
-    AI.Config.init(AI.Config.Anthropic, "claude-sonnet-4-5-20250929", 200000)
+    AI.Config.init(
+        AI.Config.Anthropic,
+        "claude-sonnet-4-5-20250929",
+        contextWindow = 200000,
+        outputMaximum = AI.Config.OutputMaximum.Verified(64000),
+        AI.Config.ReasoningEncoding.TokenBudget,
+        acceptsTemperature = true,
+        acceptsImages = true
+    )
 ```
 
 The no-argument `LLM.run` resolves its config with `AI.Config.default`, which probes provider markers and API keys (system properties first, then environment variables) and selects the first present, falling back to Anthropic. Retries and timeouts are wired into the eval loop, configured here: the completion call is wrapped meter, then retry, then timeout.
@@ -442,7 +548,7 @@ The agentic tool-call loop, by hand, is roughly thirty lines you write and maint
 ```python
 messages = [{"role": "user", "content": question}]
 while True:
-    resp = client.chat.completions.create(model="gpt-4o", messages=messages, tools=tool_defs)
+    resp = client.chat.completions.create(model="gpt-5.4", messages=messages, tools=tool_defs)
     msg = resp.choices[0].message
     messages.append(msg)
     if not msg.tool_calls:
@@ -467,7 +573,7 @@ AI.enable(factLookup)(AI.gen[Answer]("What is a CRDT?"))
 Streaming, by hand, is SSE plumbing: open the connection, parse each `data:` line, skip `[DONE]`, accumulate the tool-call argument fragments across deltas, and attempt to decode the growing buffer.
 
 ```python
-stream = client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True, tools=tool_defs)
+stream = client.chat.completions.create(model="gpt-5.4", messages=msgs, stream=True, tools=tool_defs)
 buf = ""
 for event in stream:
     delta = event.choices[0].delta

@@ -66,6 +66,19 @@ class Rfc6265Test extends BaseHttpTest:
         assert(value.nonEmpty, s"DQUOTE-wrapped value should be parseable, got: $value")
     }
 
+    // A ';' inside a DQUOTE-wrapped cookie value must still delimit cookie-pairs. Jetty CVE-2023-26049 and Undertow
+    // CVE-2023-4639 read a value beginning with '"' to the closing quote and swallowed every ';' in between, so a
+    // later "JSESSIONID=..." pair was captured INSIDE the first value; an intermediary splitting on ';' and the
+    // server disagreed on the cookie boundaries, which exfiltrates an HttpOnly session cookie into a readable one.
+    "Section 4.2 - a quoted value does not swallow following cookies (CVE-2023-26049, CVE-2023-4639)" in {
+        val headers = HttpHeaders.empty.set("Cookie", "DISPLAY=\"a; JSESSIONID=secret; b=c\"")
+        val session = headers.cookie("JSESSIONID")
+        assert(
+            session == Present("secret"),
+            s"';' inside a quoted value must still delimit, so JSESSIONID must parse separately, got: $session"
+        )
+    }
+
     // ==================== Response Cookie Parsing (Set-Cookie) ====================
 
     "Section 4.1 - Response cookie with Max-Age attribute" in {
@@ -266,6 +279,129 @@ class Rfc6265Test extends BaseHttpTest:
                 val setCookies = resp.headers.getAll("Set-Cookie")
                 assert(setCookies.size >= 2, s"Should have at least 2 Set-Cookie headers, got: ${setCookies.size}")
             }
+        }
+    }
+
+    // ==================== Set-Cookie Attribute Injection ====================
+
+    // RFC 6265 section 4.1.1 makes ';' the delimiter BETWEEN attributes of a set-cookie-string, and excludes it (with ',',
+    // DQUOTE, backslash, whitespace and controls) from cookie-value. A serializer that concatenates a value in without
+    // enforcing that grammar lets whoever supplies the value write the ATTRIBUTES too, and cookie attributes are security
+    // decisions: Domain widens who receives the cookie, Path widens where it is sent, and a re-stated Secure or HttpOnly
+    // cannot be undone by the caller who believed it set them. Cookie values are routinely user-derived, which is what makes
+    // this an injection rather than a formatting quirk.
+    //
+    // The grammar defines no escape, so there is nothing to escape TO: rejection is the only representation-preserving
+    // answer, and these leaves assert a raise rather than a transformed string. Asserting on a rendered string would instead
+    // presuppose that some encoding exists, which is the assumption that produces silent corruption.
+
+    "Section 4.1.1 - cookie value carrying an attribute delimiter is rejected (GHSA-7qh7-rghh-698h)" in {
+        val ex = intercept[IllegalArgumentException] {
+            discard(HttpHeaders.serializeCookie("session", HttpCookie("x; Domain=evil.example")))
+        }
+        assert(ex.getMessage.contains("cookie value"), s"expected a cookie-value grammar failure, got: ${ex.getMessage}")
+    }
+
+    "Section 4.1.1 - cookie value carrying a flag attribute is rejected (GHSA-7qh7-rghh-698h)" in {
+        // The reverse direction of the same defect: injecting an attribute the caller deliberately left off.
+        val ex = intercept[IllegalArgumentException] {
+            discard(HttpHeaders.serializeCookie("session", HttpCookie("x; HttpOnly")))
+        }
+        assert(ex.getMessage.contains("cookie value"), s"expected a cookie-value grammar failure, got: ${ex.getMessage}")
+    }
+
+    "Section 4.1.1 - cookie value carrying CR or LF is rejected (GHSA-7qh7-rghh-698h)" in {
+        // CR/LF is header injection rather than attribute injection: it ends the field and starts another. RFC 9110
+        // section 5.5 forbids it in a field value outright. Caught here at the grammar rather than downstream, so one bad
+        // cookie is a failure at the call that built it instead of a torn response.
+        val ex = intercept[IllegalArgumentException] {
+            discard(HttpHeaders.serializeCookie("session", HttpCookie("x\r\nX-Injected: 1")))
+        }
+        assert(ex.getMessage.contains("cookie value"), s"expected a cookie-value grammar failure, got: ${ex.getMessage}")
+    }
+
+    "Section 4.1.1 - cookie name carrying an attribute delimiter is rejected (GHSA-7qh7-rghh-698h)" in {
+        // The name reaches the same buffer by the same path and is just as often caller-supplied.
+        val ex = intercept[IllegalArgumentException] {
+            discard(HttpHeaders.serializeCookie("session; Domain=evil.example", HttpCookie("v")))
+        }
+        assert(ex.getMessage.contains("cookie name"), s"expected a cookie-name grammar failure, got: ${ex.getMessage}")
+    }
+
+    "Section 4.1.1 - Domain attribute carrying a delimiter is rejected (GHSA-7qh7-rghh-698h)" in {
+        val ex = intercept[IllegalArgumentException] {
+            discard(HttpHeaders.serializeCookie("session", HttpCookie("v").domain("example.com; Path=/admin")))
+        }
+        assert(ex.getMessage.contains("Domain"), s"expected a Domain grammar failure, got: ${ex.getMessage}")
+    }
+
+    // Path is appended exactly as rawly as Domain, so a fix validating only Domain would leave this open.
+    "Section 4.1.1 - Path attribute carrying a delimiter is rejected (GHSA-7qh7-rghh-698h)" in {
+        val ex = intercept[IllegalArgumentException] {
+            discard(HttpHeaders.serializeCookie("session", HttpCookie("v").path("/app; Domain=evil.example")))
+        }
+        assert(ex.getMessage.contains("Path"), s"expected a Path grammar failure, got: ${ex.getMessage}")
+    }
+
+    // The over-strictness guard. Every leaf above asserts a refusal, so without this the grammar could be satisfied by
+    // refusing everything; an ordinary cookie with every attribute set must still render.
+    "Section 4.1.1 - an ordinary cookie with all attributes still renders" in {
+        val cookie = HttpCookie("abc123")
+            .maxAge(3600.seconds)
+            .domain("example.com")
+            .path("/app")
+            .secure(true)
+            .httpOnly(true)
+            .sameSite(HttpCookie.SameSite.Strict)
+        val s = HttpHeaders.serializeCookie("session", cookie)
+        assert(s == "session=abc123; Max-Age=3600; Domain=example.com; Path=/app; Secure; HttpOnly; SameSite=Strict", s"got: $s")
+    }
+
+    // The predicates the raise is paired with, so a caller holding content that may not qualify can test it and take
+    // its own path rather than relying on the exception. This is the isAscii/writeAscii pairing from GrowableByteBuffer.
+    //
+    // The leaf checks AGREEMENT rather than the predicates in isolation: a predicate that answered correctly but
+    // disagreed with what serialization actually accepts would be worse than none, since a caller would clear the check
+    // and then be raised on anyway. So each value is run through both.
+    "Section 4.1.1 - the cookie grammar predicates agree with what serialization accepts" in {
+        def serializes(value: String): Boolean =
+            try
+                discard(HttpHeaders.serializeCookie("session", HttpCookie(value)))
+                true
+            catch case _: IllegalArgumentException => false
+
+        val values = List("abc123", "x; HttpOnly", "x; Domain=evil.example", "", "a=b", "x\r\ny", "plain")
+        values.foreach { v =>
+            assert(
+                HttpHeaders.isValidCookieValue(v) == serializes(v),
+                s"predicate and serializer disagree on \"${v.replace("\r", "\\r").replace("\n", "\\n")}\""
+            )
+        }
+
+        def serializesName(name: String): Boolean =
+            try
+                discard(HttpHeaders.serializeCookie(name, HttpCookie("v")))
+                true
+            catch case _: IllegalArgumentException => false
+
+        List("session", "sess ion", "a;b", "", "x-y_z").foreach { n =>
+            assert(
+                HttpHeaders.isValidCookieName(n) == serializesName(n),
+                s"name predicate and serializer disagree on \"$n\""
+            )
+        }
+
+        def serializesPath(path: String): Boolean =
+            try
+                discard(HttpHeaders.serializeCookie("session", HttpCookie("v").path(path)))
+                true
+            catch case _: IllegalArgumentException => false
+
+        List("/app", "/app; Secure", "/", "/a\u0001b").foreach { a =>
+            assert(
+                HttpHeaders.isValidCookieAttribute(a) == serializesPath(a),
+                s"attribute predicate and serializer disagree on \"$a\""
+            )
         }
     }
 

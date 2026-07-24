@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Codec.Reader
 import kyo.Codec.Writer
-import kyo.internal.JsonWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
 import scala.annotation.nowarn
@@ -24,8 +23,8 @@ import scala.language.dynamics
   * methods return `Any` due to `transparent inline`, at runtime the result is always `Schema[A] { type Focused = F' }` where `F'` reflects
   * the new shape.
   *
-  * Serialization (JSON / Protobuf) is not on Schema itself. Use [[Json]] and [[Protobuf]] as entry points; they require a `Schema[A]` given
-  * to be in scope.
+  * Serialization (JSON / Protobuf) is not on Schema itself. Use `Json` (kyo-schema-json module) and `Protobuf` (kyo-schema-protobuf
+  * module) as entry points; they require a `Schema[A]` given to be in scope.
   *
   * {{{
   * val schema = Schema[User]
@@ -1338,6 +1337,21 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         )
     end transform
 
+    /** Returns a copy of this schema that carries the same codec but reports `structure` as its wire
+      * shape. Pairs with the open-shape `Schema[Structure.Value]`: overriding its structure with a runtime
+      * `Structure.Type` yields a shape-dynamic schema that encodes and decodes through the generic
+      * `Structure.Value` codec, with no hand-written reader or writer. Compose with [[transform]] to expose
+      * that schema as a domain type.
+      *
+      * The override changes what the schema REPORTS (json-schema emission, tooling), never what the codec
+      * does: encode and decode are unchanged and do not validate the value against `structure`. A consumer
+      * that promised the structure to a producer enforces it separately (`Structure.conform`; the kyo-ai
+      * gen loop does this for open-shape results). Intended for open-shape schemas; installing a structure
+      * on a schema whose codec has a fixed shape makes the report and the wire disagree.
+      */
+    def withStructure(structure: Structure.Type): Schema[A] =
+        Schema.copyWith(this)(structure = structure)
+
     /** Overrides the focused field's encode and decode functions.
       *
       * The field is selected at compile time through the focus lambda and the schema's `Focused`
@@ -1554,6 +1568,12 @@ object Schema:
         override def canWriteAnnotations: Boolean       = delegate.canWriteAnnotations
         override def codecName: String                  = delegate.codecName
         override def capabilities: Codec.Capabilities   = delegate.capabilities
+
+        override def supportsFieldIdOverrides: Boolean = delegate.supportsFieldIdOverrides
+        override def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
+            val _ = delegate.withFieldIdOverrides(overrides)
+            this
+        override def fieldIdOverridesSnapshot: Map[String, Int] = delegate.fieldIdOverridesSnapshot
 
         override def annotations(values: Chunk[Any]): Unit =
             if values.nonEmpty then pendingAnnotations = pendingAnnotations ++ values
@@ -2526,7 +2546,7 @@ object Schema:
       * Unit serializes as an empty JSON object `{}`, not as `null`. The reasoning: Scala's `Unit` carries no
       * information, which in JSON wire vocabulary is the "empty object" rather than the "literal null value".
       * Using `null` for the canonical write form would conflate Unit with absent-Maybe / None-Option (both of
-      * which DO mean null on the wire) and would break JSON Schema describers like [[Json.JsonSchema]] that
+      * which DO mean null on the wire) and would break JSON Schema describers like `Json.JsonSchema` that
       * need a `type: "object"` shape for downstream consumers (MCP tool `inputSchema`, OpenAPI request bodies,
       * JSON Schema validators).
       *

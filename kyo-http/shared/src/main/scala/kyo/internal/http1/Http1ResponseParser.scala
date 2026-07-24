@@ -34,6 +34,8 @@ final private[kyo] class Http1ResponseParser(
     private var hdrOffsets     = new Array[Int](128)
     private var hdrOffsetCount = 0
     private var invalid        = false
+    // Whether a Content-Length header has been seen at all, which a running value of -1 cannot express.
+    private var seenContentLength = false
 
     /** Reusable take promise — same pattern as Http1Parser.
       *
@@ -157,6 +159,7 @@ final private[kyo] class Http1ResponseParser(
         headerCount = 0
         hdrOffsetCount = 0
         invalid = false
+        seenContentLength = false
     end reset
 
     /** Parses the status line and headers from raw bytes into a ParsedResponse. */
@@ -165,6 +168,7 @@ final private[kyo] class Http1ResponseParser(
         headerCount = 0
         hdrOffsetCount = 0
         invalid = false
+        seenContentLength = false
 
         // A response header is stored as the raw octets it was parsed from and is written back out verbatim, so a peer
         // that smuggles a line break past this parser has it re-emitted unchanged by any proxy that echoes the header.
@@ -197,15 +201,36 @@ final private[kyo] class Http1ResponseParser(
                 val valOff  = hdrOffsets(i + 2)
                 val valLen  = hdrOffsets(i + 3)
                 val (nextCl, nextChunked, nextKa) =
-                    if nameLen == 14 && asciiEqualsIgnoreCase(rawBytes.array, nameOff, "Content-Length") then
-                        (parseContentLength(rawBytes.array, valOff, valLen), isChunked, isKeepAlive)
-                    else if nameLen == 17 && asciiEqualsIgnoreCase(rawBytes.array, nameOff, "Transfer-Encoding") then
-                        val chunked = if valLen >= 7 && asciiEqualsIgnoreCase(rawBytes.array, valOff, "chunked") then true else isChunked
+                    if HeaderTokens.nameEquals(rawBytes.array, nameOff, nameLen, "Content-Length") then
+                        // A second Content-Length is refused rather than allowed to overwrite the first. RFC 9112 section 6.3
+                        // item 5 makes conflicting values unrecoverable, and letting the last one win is the response-side
+                        // half of the smuggling primitive: a proxy honouring the first and this client the last disagree
+                        // about where the body ends, so the tail of one response becomes the head of the next. The request
+                        // side already refuses this; the asymmetry was the gap.
+                        val parsed = parseContentLength(rawBytes.array, valOff, valLen)
+                        // RFC 9112 section 6.3 item 4: an invalid Content-Length makes the framing unrecoverable. Treating it
+                        // as absent instead reads the response to connection close, which a proxy that DID parse a number
+                        // frames differently, so the tail of one response becomes the head of the next.
+                        if parsed < 0 then
+                            invalid = true
+                        // A second value is refused rather than allowed to overwrite the first (section 6.3 item 5). The
+                        // comparison is against seenContentLength, not the running value, because a malformed first header
+                        // leaves -1 behind and a >= 0 test could never fire against it: "abc" then "5" would be accepted.
+                        if seenContentLength && parsed != contentLengthVal then
+                            invalid = true
+                        seenContentLength = true
+                        (parsed, isChunked, isKeepAlive)
+                    else if HeaderTokens.nameEquals(rawBytes.array, nameOff, nameLen, "Transfer-Encoding") then
+                        // The final coding decides chunk framing (RFC 9112 section 6.1), matched as a whole token so a
+                        // server cannot steer this client's view of where one response ends by sending "chunkedfoo".
+                        // Unlike the request side this only frames and never rejects: a response with no chunked coding
+                        // and no Content-Length is read until close, a legal response length (section 6.3 item 8).
+                        val chunked = isChunked || HeaderTokens.finalCodingIsChunked(rawBytes.array, valOff, valLen)
                         (contentLengthVal, chunked, isKeepAlive)
-                    else if nameLen == 10 && asciiEqualsIgnoreCase(rawBytes.array, nameOff, "Connection") then
+                    else if HeaderTokens.nameEquals(rawBytes.array, nameOff, nameLen, "Connection") then
                         val ka =
-                            if valLen >= 5 && asciiEqualsIgnoreCase(rawBytes.array, valOff, "close") then false
-                            else if valLen >= 10 && asciiEqualsIgnoreCase(rawBytes.array, valOff, "keep-alive") then true
+                            if HeaderTokens.listContainsToken(rawBytes.array, valOff, valLen, "close") then false
+                            else if HeaderTokens.listContainsToken(rawBytes.array, valOff, valLen, "keep-alive") then true
                             else isKeepAlive
                         (contentLengthVal, isChunked, ka)
                     else
@@ -213,7 +238,13 @@ final private[kyo] class Http1ResponseParser(
                     end if
                 end val
                 scanHeaders(i + 4, nextCl, nextChunked, nextKa)
-        val (contentLengthVal, isChunked, isKeepAliveHdr) = scanHeaders(0, -1, false, isKeepAliveInit)
+        val (scannedCl, isChunked, isKeepAliveHdr) = scanHeaders(0, -1, false, isKeepAliveInit)
+
+        // RFC 9112 section 6.3 item 3: with both present, Transfer-Encoding determines the length and Content-Length is
+        // discarded outright. Keeping it would leave two framings in play, and a recipient that later consulted the
+        // wrong one would read the wrong number of bytes. The client already prefers chunked when deciding how to read
+        // the body, so this makes the value it would have fallen back to unavailable rather than merely unpreferred.
+        val contentLengthVal = if isChunked then -1 else scannedCl
 
         // Per RFC 7230 §3.3.3 item 7: a response without Content-Length and without
         // Transfer-Encoding: chunked is terminated by connection close. Such a
@@ -265,6 +296,14 @@ final private[kyo] class Http1ResponseParser(
                 val actualLineEnd = if lineEnd == -1 then end else lineEnd
 
                 if actualLineEnd > lineStart then
+                    // A header line beginning with SP or HTAB is obs-fold (a continuation of the previous value). RFC
+                    // 9112 section 5.2 has a user agent UNFOLD it (replace the fold with SP); kyo instead fails closed,
+                    // a deliberate hardening deviation matching its request-side obs-fold reject and its bare CR/LF
+                    // handling. Silently dropping the colon-less fold line (the prior behaviour) truncated the value.
+                    val firstByte = rawBuf(lineStart)
+                    if firstByte == ' ' || firstByte == '\t' then
+                        invalid = true
+
                     val colonIdx = indexOfByte(rawBuf, lineStart, actualLineEnd, ':')
                     if colonIdx != -1 then
                         val nameStart = lineStart
@@ -358,7 +397,14 @@ final private[kyo] class Http1ResponseParser(
                 else
                     val b = src(off + i)
                     if b < '0' || b > '9' then -1
-                    else loop(i + 1, acc * 10 + (b - '0'))
+                    else
+                        val digit = b - '0'
+                        // Overflow guard (mirrors the request parser): Int.MaxValue = 2147483647. Without it a value past
+                        // Int range wraps to a small number, so this client frames the body at a length a server that
+                        // parsed the true value never sent, the response-side overflow desync (RFC 9112 section 6.3).
+                        if acc > 214748364 || (acc == 214748364 && digit > 7) then -1
+                        else loop(i + 1, acc * 10 + digit)
+                    end if
             loop(0, 0)
     end parseContentLength
 
@@ -393,17 +439,8 @@ final private[kyo] class Http1ResponseParser(
         len > 0 && loop(0)
     end isToken
 
-    /** Case-insensitive comparison of raw bytes against an ASCII string. */
-    private def asciiEqualsIgnoreCase(src: Array[Byte], off: Int, target: String): Boolean =
-        @tailrec def loop(i: Int): Boolean =
-            if i >= target.length then true
-            else
-                val a = (src(off + i) & 0xff).toChar.toLower
-                val b = target.charAt(i).toLower
-                if a != b then false
-                else loop(i + 1)
-        loop(0)
-    end asciiEqualsIgnoreCase
+    // Field name and value comparison lives in HeaderTokens; see the note in Http1Parser for why no prefix-comparing
+    // variant is kept beside it.
 
     @tailrec private def skipSpaces(rawBuf: Array[Byte], from: Int, limit: Int): Int =
         if from < limit && rawBuf(from) == ' ' then skipSpaces(rawBuf, from + 1, limit)

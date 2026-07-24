@@ -2,7 +2,7 @@
 
 Module-specific guide for kyo-ai. Read the repository-root [CONTRIBUTING.md](../CONTRIBUTING.md) first: it carries the conventions, naming rules, type vocabulary (`Maybe` / `Result` / `Chunk` / `Span`), `using`-clause ordering, Frame/Tag, inline guidelines, scaladoc, visibility tiers, the test framework, cross-platform placement, and the unsafe-tier boundary that apply across all of Kyo. This document records only what is specific to kyo-ai: the explicit-instance model, the `LLM` `ArrowEffect` and its threaded `State`, the per-run owner and cross-run guard, the unified enablement surface, the scope/instance env-merge rule, the eval and stream loops, the agent wiring, the provider wire layer, and the test conventions.
 
-**The headline invariant:** a program typed `A < LLM` is a pure value. `LLM` is a custom `ArrowEffect[LLM.internal.Op, Id]`, NOT a subtype of `Async` ([`LLM.scala:26`]). Its ops carry data and read/append per-instance conversation histories in one threaded `State`. The single op that reaches the world is `Gen` (and its sibling `Stream`): its handler interpretation runs the eval loop, and that is the ONLY place `Async & Abort[AIGenException]` enter, riding out on `LLM.run`'s residual ([`LLM.scala:125-141`], [`LLM.scala:228`]). A row `A < LLM` must never include `Async`; no change to the eval loop should push `Async` into the `LLM` row. `LLMTest` pins this with `summon[NotGiven[LLM <:< Async]]` ([`LLMTest.scala:409-417`]).
+**The headline invariant:** a program typed `A < LLM` is a pure value. `LLM` is a custom `ArrowEffect[LLM.internal.Op, Id]`, NOT a subtype of `Async` ([`LLM.scala:26`]). Its ops carry data and read/append per-instance conversation histories in one threaded `State`. The single op that reaches the world is `Gen` (and its sibling `Stream`): its handler interpretation runs the eval loop, and that is the ONLY place `Async & Abort[AIGenException]` enter, riding out on `LLM.run`'s residual ([`LLM.scala:119-132`], [`LLM.scala:473`]). A row `A < LLM` must never include `Async`; no change to the eval loop should push `Async` into the `LLM` row. `LLMTest` pins this with `summon[NotGiven[LLM <:< Async]]` ([`LLMTest.scala:409-417`]).
 
 ## What kyo-ai is
 
@@ -11,17 +11,17 @@ kyo-ai is a typed effect for first-class conversations with a language model. Th
 - `LLM`, the `ArrowEffect`, and its `run` (the discharge boundary).
 - `AI`, the first-class conversation instance (both the identity value `ai` and the namespace of operations).
 - `Agent`, an opaque alias over `kyo.Actor` that pairs the LLM surface with the actor model.
-- `Prompt`, `Tool`, `Thought`, `Mode`, the four composable enablement kinds (`AI.Enablement`).
+- `Prompt`, `Tool`, `Thought`, `Mode`, `Observe`, the five composable enablement kinds (`AI.Enablement`).
 - `AIEnv` and `AISession`, the generation environment and the per-instance state record.
 - the `AIException` hierarchy (`AIGenException`, `AIStreamException`, and their leaves).
 
-The settings/content value types `Config`, `Context`, `Image` live in package `kyo.ai`, but they are surfaced into `kyo` so `import kyo.*` reaches everything: the `AI` companion `export`s `kyo.ai.Config` / `Context` / `Image` ([`AI.scala:36-38`]), so a user writes `AI.Config`, `AI.Context`, `AI.Image`; `LLM` also `export`s `Config` ([`LLM.scala:31`]).
+The settings/content value types `Config`, `Context`, `Image` live in package `kyo.ai`, but they are surfaced into `kyo` so `import kyo.*` reaches everything: the `AI` companion `export`s `kyo.ai.Config` / `Context` / `Image` ([`AI.scala:36-38`]), so a user writes `AI.Config`, `AI.Context`, `AI.Image`; `LLM` also `export`s `Config` ([`LLM.scala:30`]).
 
 All code lives in `shared/src/main/scala` (`kyo/` for the effect surface, `kyo/ai/` for the value types, `kyo/ai/completion/` for the wire backends). All tests live in `shared/src/test/scala` and run cross-platform (JVM, Scala.js, Scala Native, Wasm). The `jvm/`, `js/`, `native/`, and `wasm/` trees carry no `.scala` source.
 
 ## The explicit-instance model
 
-There is no ambient "current" instance and no `AI.use`. A behavior receives its instance explicitly and calls `self.gen`; the eval loop threads the target `AI` explicitly (`reads ai.context, appends to ai`), so nothing is ambient ([`LLM.scala:317`]). Two surfaces exist:
+There is no ambient "current" instance and no `AI.use`. A behavior receives its instance explicitly and calls `self.gen`; the eval loop threads the target `AI` explicitly (`reads ai.context, appends to ai`), so nothing is ambient ([`LLM.scala:560-565`]). Two surfaces exist:
 
 - **One-shot.** `AI.gen[A]` mints a fresh ephemeral instance, generates against it, then discards its slot via `ai.reset` on success, so two one-shots never share state ([`AI.scala:80-84`]). `AITest` pins that a successful one-shot leaves `State.instances` empty (and stays empty under concurrent gens, and a transport abort fails the run so nothing leaks) ([`AITest.scala:274-300`]).
 - **Named instance.** `AI.init` mints a persistent slot whose conversation, enablements, and config override survive across turns within one `LLM.run`; `ai.gen[A]` runs against that slot ([`AI.scala:55-56`], [`AI.scala:166-167`]).
@@ -33,11 +33,11 @@ final class AI private[kyo] (private[kyo] val id: Long, private[kyo] val owner: 
     private[kyo] val ref: LLM.internal.AIRef = new LLM.internal.AIRef(this)
 ```
 
-([`AI.scala:16-17`]). The id is drawn from the run's threaded `State` counter (no process-global mutable state), so identity is scoped to one `LLM.run` and restarts per run; `LLMTest` pins that within a run successive `init` ids are `0, 1, ...` and a fresh run restarts at `0` ([`LLMTest.scala:500-513`]). Every method on `AI` is a thin value over the `LLM` effect surface: `AI` summons no `ArrowEffect` op directly, only `LLM`'s `private[kyo]` interface ([`AI.scala:19-26`], [`LLM.scala:243-275`]).
+([`AI.scala:16-17`]). The id is drawn from the run's threaded `State` counter (no process-global mutable state), so identity is scoped to one `LLM.run` and restarts per run; `LLMTest` pins that within a run successive `init` ids are `0, 1, ...` and a fresh run restarts at `0` ([`LLMTest.scala:500-513`]). Every method on `AI` is a thin value over the `LLM` effect surface: `AI` summons no `ArrowEffect` op directly, only `LLM`'s `private[kyo]` interface ([`AI.scala:19-26`], [`LLM.scala:490-519`]).
 
 ### Per-run owner and the cross-run guard
 
-Each instance remembers the run that created it (`owner`, a fresh `AnyRef` per run, object identity, no counter) ([`LLM.scala:56-59`], [`LLM.scala:106-107`]). Using an instance inside a different `LLM.run` is misuse: it cannot address that run's slots. `crossRunFailure` inspects every op that targets an instance and, when `ai.owner ne state.owner`, raises `AICrossRunException`; the panic is the handler arm's result, so it rides `runWith`'s residual `Abort` row (not the `LLM` continuation) and aborts the whole computation ([`LLM.scala:65-95`]). `AICrossRunException`'s message points the user at `ai.snapshot` / `AI.recover` ([`AIException.scala:62-70`]). `LLMTest` pins that the guard fires for EVERY targeting op (read, set, gen, stream, discard, session, setSession), not just one ([`LLMTest.scala:531-550`]).
+Each instance remembers the run that created it (`owner`, a fresh `AnyRef` per run, object identity, no counter) ([`LLM.scala:56-59`], [`LLM.scala:97-101`]). Using an instance inside a different `LLM.run` is misuse: it cannot address that run's slots. `crossRunFailure` inspects every op that targets an instance and, when `ai.owner ne state.owner`, raises `AICrossRunException`; the panic is the handler arm's result, so it rides `runWith`'s residual `Abort` row (not the `LLM` continuation) and aborts the whole computation ([`LLM.scala:63-95`]). `AICrossRunException`'s message points the user at `ai.snapshot` / `AI.recover` ([`AIException.scala:62-70`]). `LLMTest` pins that the guard fires for EVERY targeting op (read, set, gen, stream, discard, session, setSession), not just one ([`LLMTest.scala:531-550`]).
 
 To carry an instance across runs deliberately, capture it with `ai.snapshot` (returns its `AISession`) and restore it with `AI.recover(session)` in the new run ([`AI.scala:69-71`], [`AI.scala:230-231`]); `AITest` pins a round-trip of history + an enabled tool + a config override across two runs ([`AITest.scala:201-223`]).
 
@@ -45,7 +45,7 @@ To carry an instance across runs deliberately, capture it with `ai.snapshot` (re
 
 ### Effect definition and the op GADT
 
-`LLM` is `sealed trait LLM extends ArrowEffect[LLM.internal.Op, Id]` ([`LLM.scala:26`]). The op GADT `LLM.internal.Op[A]` indexes each op's reply by `A`, so the handler continuation needs no reply-side cast ([`LLM.scala:399`]). It has exactly **13** subclasses ([`LLM.scala:400-415`]); field-less ops are `case object`s, the rest carry data:
+`LLM` is `sealed trait LLM extends ArrowEffect[LLM.internal.Op, Id]` ([`LLM.scala:26`]). The op GADT `LLM.internal.Op[A]` indexes each op's reply by `A`, so the handler continuation needs no reply-side cast ([`LLM.scala:815`]). It has exactly **13** subclasses ([`LLM.scala:816-831`]); field-less ops are `case object`s, the rest carry data:
 
 | Op | Carries | Reply (`Op[A]`) |
 |----|---------|-----------------|
@@ -63,11 +63,11 @@ To carry an instance across runs deliberately, capture it with `ai.snapshot` (re
 | `GetSession(target: AI)` | target | `AISession` |
 | `SetSession(target: AI, session: AISession)` | target, session | `Unit` |
 
-There is **no `SetCurrent`** op and no ambient-current concept. `LLMTest` pins the data-bearing ops carry their fields ([`LLMTest.scala:472-484`]). `Gen` is the one op that reaches the world; its arm runs `genLoop` under a nested `runWith` against the live state, and `Async & Abort[AIGenException]` enter there ([`LLM.scala:125-132`]). `Stream`'s arm projects the SSE response and is read-only (no instance write-back), so the threaded state passes through unchanged ([`LLM.scala:133-141`]).
+There is **no `SetCurrent`** op and no ambient-current concept. `LLMTest` pins the data-bearing ops carry their fields ([`LLMTest.scala:472-484`]). `Gen` is the one op that reaches the world; its arm runs `genLoop` under a nested `runWith` against the live state, and `Async & Abort[AIGenException]` enter there ([`LLM.scala:119-125`]). `Stream`'s arm runs `streamAgainst` under a nested `runWith`: the stream's CREATION applies and restores the target's session env (the same merge `genLoop` performs), so the state threads through net-unchanged, and the recorded turn is written later, at consumption, through ordinary ops ([`LLM.scala:126-132`], [`LLM.scala:174-191`]).
 
 ### Threaded state: `LLM.State`
 
-`State` is the single record threaded through `ArrowEffect.handleLoop` ([`LLM.scala:40-44`], [`LLM.scala:83-86`]):
+`State` is the single record threaded through `ArrowEffect.handleLoop` ([`LLM.scala:39-53`], [`LLM.scala:81-137`]):
 
 ```scala
 final case class State private[kyo] (
@@ -78,48 +78,48 @@ final case class State private[kyo] (
 )
 ```
 
-- `instances` is keyed by `internal.AIRef`, a `WeakReference[AI]` whose equality/hash are by the AI's stable `id`, so a dropped `AI` becomes GC-reclaimable while its key still matches its slot ([`LLM.scala:417-428`]). `State.pruned` sweeps slots whose `AI` was collected, run when minting a new instance so an unbounded mint stream never accumulates dead slots ([`LLM.scala:51-53`], [`LLM.scala:102-107`]).
-- `nextId` is the monotonic id counter `Init` draws from; `SetState` never lowers it (`math.max`), so a `forget`/`fresh` rollback keeps the high-water id and a slot key is never reused ([`LLM.scala:116-120`]).
+- `instances` is keyed by `internal.AIRef`, a `WeakReference[AI]` whose equality/hash are by the AI's stable `id`, so a dropped `AI` becomes GC-reclaimable while its key still matches its slot ([`LLM.scala:837-845`]). `State.pruned` sweeps slots whose `AI` was collected, run when minting a new instance so an unbounded mint stream never accumulates dead slots ([`LLM.scala:50-52`], [`LLM.scala:97-101`]).
+- `nextId` is the monotonic id counter `Init` draws from; `SetState` never lowers it (`math.max`), so a `forget`/`fresh` rollback keeps the high-water id and a slot key is never reused ([`LLM.scala:110-113`]).
 - `owner` stamps every instance for the cross-run guard ([`LLM.scala:56-59`]).
-- `env` is the scope `AIEnv` (see below), read by `Op.Env` and replaced by `Op.SetEnv` ([`LLM.scala:108-111`]).
+- `env` is the scope `AIEnv` (see below), read by `Op.Env` and replaced by `Op.SetEnv` ([`LLM.scala:102-105`]).
 
-`State.empty(config)` seeds a `Present(config)` scope env and a fresh `owner` ([`LLM.scala:56-60`]).
+`State.empty(config)` seeds a `Present(config)` scope env and a fresh `owner` ([`LLM.scala:55-59`]).
 
 ### `run` and its residual
 
-`LLM.run[A, S](v: A < (LLM & S)): A < (S & Async & Abort[AIGenException])` threads a fresh `State.empty(config)` through `runWith` and discards the final state ([`LLM.scala:228-229`]). Three overloads (`run(v)`, `run(f: Config => Config)(v)`, `run(config)(v)`) all funnel through `runWith`; the first two resolve `Config.default` under `Sync` first ([`LLM.scala:228-237`]). `runTuple` keeps the final state with the value for tests and transcript access (`private[kyo]`) ([`LLM.scala:239-241`]). `runWith` is NOT inline ([`LLM.scala:82-83`]).
+`LLM.run[A, S](v: A < (LLM & S)): A < (S & Async & Abort[AIGenException])` threads a fresh `State.empty(config)` through `runWith` and discards the final state ([`LLM.scala:473-474`]). Three overloads (`run(v)`, `run(f: Config => Config)(v)`, `run(config)(v)`) all funnel through `runWith`; the first two resolve `Config.default` under `Sync` first ([`LLM.scala:473-483`]). `runTuple` keeps the final state with the value for tests and transcript access (`private[kyo]`) ([`LLM.scala:485-487`]). `runWith` is NOT inline ([`LLM.scala:79-81`]).
 
 ### The eval loop
 
-`genLoop(ai, schema)` is the `Gen` interpretation ([`LLM.scala:313-351`]). It:
+`genLoop(ai, schema)` is the `Gen` interpretation ([`LLM.scala:555-613`]). It:
 
-1. Merges the instance's own env onto the scope env for the duration of the eval, then restores it (so the effective surface is `scope ++ instance`): config is `session.env.config.orElse(scopeEnv.config)`, and the instance's prompt/tools/thoughts/modes are layered on ([`LLM.scala:318-326`]). This is the merge that makes a `Present` instance config override the scope config; an `Absent` instance config inherits the scope's.
-2. Enables `Prompt.internal.defaultGuidance` (generic structured-output guidance, not part of the empty prompt) ([`LLM.scala:327`], [`Prompt.scala:92-104`]).
-3. Loops: each iteration calls `eval[A](ai, forceResult = iterations >= config.maxIterations)`, wraps transport `HttpException` into `AITransportException`, passes the result through `Mode.internal.handle` (the mode pipeline), and on `Present(r)` yields, on `Absent` re-loops with the seed modulated (`c.seed.map(_ * 31)`) until `iterations >= config.maxIterations * 2`, where it aborts with `AIEvalExhaustedException` ([`LLM.scala:329-345`]).
+1. Merges the instance's own env onto the scope env for the duration of the eval, then restores it (so the effective surface is `scope ++ instance`): config is `session.env.config.orElse(scopeEnv.config)`, and the instance's prompt/tools/thoughts/modes are layered on ([`LLM.scala:561-565`]). This is the merge that makes a `Present` instance config override the scope config; an `Absent` instance config inherits the scope's.
+2. The default structured-output guidance rides the enriched context built per request (`Prompt.internal.enrichedContext`), not the empty prompt, so the merged env stays exactly `scope ++ instance` ([`AISession.scala:13-28`]).
+3. Loops: each iteration calls `eval[A](ai, forceResult = iterations >= config.maxIterations)`, wraps transport `HttpException` into `AITransportException`, passes the result through `Mode.internal.handle` (the mode pipeline), and on `Present(r)` yields, on `Absent` re-loops with the seed modulated (`c.seed.map(_ * 31)`) until `iterations >= config.maxIterations * 2`, where it aborts with `AIEvalExhaustedException` ([`LLM.scala:569-599`]).
 
-`eval` posts one completion request: it assembles the tools (plus the result tool), the thought-aware result schema, the enriched context, runs the provider completion under the config meter and a `Retry[HttpException](config.retrySchedule)`, appends the reply, dispatches any tool calls, and extracts the structured result directly from the `result_tool` call arguments ([`LLM.scala:353-392`]). A closed meter under an in-flight gen panics with `AIMeterClosedException` (an impossible-state, off both rows) ([`LLM.scala:374-377`], [`AIException.scala:72-76`]).
+`eval` posts one completion request: it assembles the tools (plus the result tool), the thought-aware result schema, the enriched context, runs the provider completion under the config meter and a `Retry[HttpException](config.retrySchedule)`, appends the reply, dispatches any tool calls, and extracts the structured result directly from the `result_tool` call arguments ([`LLM.scala:615-808`]). A closed meter under an in-flight gen panics with `AIMeterClosedException` (an impossible-state, off both rows) ([`LLM.scala:694-696`], [`AIException.scala:72-76`]).
 
 ### The stream loop
 
-`AI.stream[A]` / `ai.stream[A]` suspend `Op.Stream`, whose handler runs `streamAgainst` ([`LLM.scala:259-263`], [`LLM.scala:133-141`]). `streamAgainst` asks `config.provider.completion.streamFragments` for raw JSON fragments of the `{ resultValue: ... }` envelope and accumulates the fragments. For `String`, it emits decoded text chunks whose concatenation is the final text. For other result types, it emits each complete decoded element from the result array exactly once ([`LLM.scala:147-225`]). HTTP providers implement fragments with SSE result-tool deltas; command harnesses use their native event or stream-json output. The returned `Stream` carries its failures typed in its element row as `Abort[AIStreamException]`: a malformed delta is `AIStreamDeltaException`, an end without a decodable value `AIStreamIncompleteException`, a transport error `AITransportException` ([`LLM.scala:181-216`]). A missing API key is the one failure raised eagerly (before the `Stream` value), as `AIMissingApiKeyException` on the run boundary ([`LLM.scala:164-167`]).
+`AI.stream[A]` / `ai.stream[A]` suspend `Op.Stream`, whose handler runs `streamAgainst` ([`LLM.scala:503-507`], [`LLM.scala:126-132`]). `streamAgainst` asks `config.provider.completion.streamFragments` for raw JSON fragments of the `{ resultValue: ... }` envelope and accumulates the fragments. For `String`, it emits decoded text chunks whose concatenation is the final text. For other result types, it emits each complete decoded element from the result array exactly once ([`LLM.scala:368-470`]). HTTP providers implement fragments with SSE result-tool deltas; command harnesses use their native event or stream-json output. The returned `Stream` carries its failures typed in its element row as `Abort[AIStreamException]`: a malformed delta is `AIStreamDeltaException`, an end without a decodable value `AIStreamIncompleteException`, a transport error `AITransportException` ([`LLM.scala:368-470`], [`Completion.scala:119-139`]). A missing API key is the one failure raised eagerly (before the `Stream` value), as `AIMissingApiKeyException` on the run boundary ([`LLM.scala:199-201`]).
 
 ### The `LLM.isolate` given
 
-`given isolate: Isolate[LLM, Async, LLM]` lets `Async.fill`/`foreach`/`race` fork over a bare `LLM` row ([`LLM.scala:285-305`]). `Keep = Async` is exact: the in-tree parallel sites require `Isolate[LLM, Abort[E] & Async, LLM]`, and for the `E = Nothing` body (whose transport errors the eval loop already recovers) that reduces to `Isolate[LLM, Async, LLM]`, which a wider `Keep` (`Abort[Any] & Async`) cannot satisfy by `Keep` contravariance ([`LLM.scala:277-284`]). `capture` reads the live `State` via `Op.GetState`; `isolate` discharges `runWith`'s residual `Abort[AIGenException]` inside the fork with `getOrThrow`, so an unrecovered fork generation failure surfaces as a fiber panic; `restore` merges fork-born instance contexts back via `mergeInstance` (prefix-aware `Context.merge`, parent env kept), skipping GC'd slots ([`LLM.scala:289-311`]). `LLMTest` pins both the fork resolution ([`LLMTest.scala:443-455`]) and the unrecovered-fork panic ([`LLMTest.scala:457-470`]).
+`given isolate: Isolate[LLM, Async, LLM]` lets `Async.fill`/`foreach`/`race` fork over a bare `LLM` row ([`LLM.scala:528-547`]). `Keep = Async` is exact: the in-tree parallel sites require `Isolate[LLM, Abort[E] & Async, LLM]`, and for the `E = Nothing` body (whose transport errors the eval loop already recovers) that reduces to `Isolate[LLM, Async, LLM]`, which a wider `Keep` (`Abort[Any] & Async`) cannot satisfy by `Keep` contravariance ([`LLM.scala:521-527`]). `capture` reads the live `State` via `Op.GetState`; `isolate` discharges `runWith`'s residual `Abort[AIGenException]` inside the fork with `getOrThrow`, so an unrecovered fork generation failure surfaces as a fiber panic; `restore` merges fork-born instance contexts back via `mergeInstance` (prefix-aware `Context.merge`, parent env kept), skipping GC'd slots ([`LLM.scala:533-553`]). `LLMTest` pins both the fork resolution ([`LLMTest.scala:443-455`]) and the unrecovered-fork panic ([`LLMTest.scala:457-470`]).
 
 ## `AIEnv` and `AISession`: the env-merge rule
 
 `AIEnv` is the generation environment: a config plus the enablements layered for a scope or instance ([`AIEnv.scala:12-18`]):
 
 ```scala
-case class AIEnv(config: Maybe[Config], prompt: Prompt[Any], tools: Chunk[Tool[Any]], thoughts: Chunk[Thought[Any]], mode: Chunk[Mode[Any]])
+case class AIEnv(config: Maybe[Config], prompt: Prompt[Any], tools: Chunk[Tool[Any]], thoughts: Chunk[Thought[Any]], mode: Chunk[Mode[Any]], observe: Chunk[Observe[Any]])
 ```
 
 `config` is `Maybe[Config]`: the SCOPE env always holds `Present` (set at `LLM.run`), while an INSTANCE env holds `Absent` to inherit the scope config or `Present` to override it ([`AIEnv.scala:8-11`], [`AISession.scala:30-31`]). `AIEnv.empty` and `AISession.empty` both carry an `Absent` config ([`AIEnv.scala:46`], [`AISession.scala:31`]); `AIEnvTest`/`AISessionTest` pin that `config(cfg)` sets `Present`, `mapConfig` is a no-op while `Absent`, and the empty session has no override ([`AIEnvTest.scala:9-15`], [`AISessionTest.scala:8-20`]).
 
 `AISession(context: Context, env: AIEnv)` is one instance's full state: its conversation plus its env override and enablements ([`AISession.scala:12`]). It is both the value `State.instances` holds per instance and the snapshot `ai.snapshot` returns / `AI.recover` restores. It holds code (tool runners, effectful prompts, modes), so it is in-memory only and not serializable; only the `session.context` slice is serializable (`Context derives Schema`) ([`AISession.scala:6-11`]).
 
-**The override-merge rule** (`genLoop`, [`LLM.scala:318-326`]; pinned in `LLMTest`):
+**The override-merge rule** (`genLoop`, [`LLM.scala:561-565`]; pinned in `LLMTest`):
 
 - An instance `Present` config override beats the scope config in the request ([`LLMTest.scala:325-341`]).
 - A scope `AI.withConfig` wrapped around a gen is SHADOWED by the instance config override (the override wins) ([`LLMTest.scala:362-374`]).
@@ -127,14 +127,14 @@ case class AIEnv(config: Maybe[Config], prompt: Prompt[Any], tools: Chunk[Tool[A
 
 ## The enablement surface
 
-The four composable kinds, `Tool`, `Prompt`, `Thought`, `Mode`, all extend `AI.Enablement[-S]`, whose two `private[kyo]` methods say how the kind layers itself onto a scope env or an instance session ([`AI.scala:48-53`], [`Tool.scala:19-26`], [`Prompt.scala:19-43`], [`Thought.scala:21-28`], [`Mode.scala:15-28`]). `private[kyo]` so only the module's four kinds implement it; users compose, never extend. There are **no** per-type `enable` binders (no `Tool.enable`, `Thought.enable`, `Prompt.enable`, or `Mode.enable`). Enabling is unified:
+The five composable kinds, `Tool`, `Prompt`, `Thought`, `Mode`, `Observe`, all extend `AI.Enablement[-S]`, whose two `private[kyo]` methods say how the kind layers itself onto a scope env or an instance session ([`AI.scala:48-53`], [`Tool.scala:19-26`], [`Prompt.scala:19-43`], [`Thought.scala:21-28`], [`Mode.scala:15-28`], [`Observe.scala:25-32`]). `private[kyo]` so only the module's five kinds implement it; users compose, never extend. There are **no** per-type `enable` binders (no `Tool.enable`, `Thought.enable`, `Prompt.enable`, or `Mode.enable`). Enabling is unified:
 
 - **Scope.** `AI.enable[A, S](enablements: Enablement[S]*)(v): A < (S & LLM)` folds each enablement's `enableIn(AIEnv)` over the scope env via `LLM.updateEnv` (on top of the scope's current enablements); empty varargs is a no-op ([`AI.scala:114-126`]). The capability `S` rides the row, unified across the varargs to their intersection, until discharged at the run boundary.
 - **Instance.** `ai.enable[S](enablements: Enablement[S]*): AI < (S & LLM)` folds each `enableIn(AISession)` onto the named instance ([`AI.scala:217-227`]).
 
 Both take varargs or a `Seq` (a `DummyImplicit` differentiates the erased `Seq[T]` signatures) and accept a mix of kinds in one call ([`AI.scala:125`], [`AI.scala:225-227`]).
 
-Config is scoped by `AI.withConfig` (NOT `LLM.withConfig`), built on `LLM.updateEnv(_.mapConfig(f))` ([`AI.scala:107-112`], [`LLM.scala:268-273`]). `updateEnv` brackets a transform of the scope `AIEnv` over `v`: get, modify, set, run, restore, written once and reused by the `enable` methods and `withConfig`.
+Config is scoped by `AI.withConfig` (NOT `LLM.withConfig`), built on `LLM.updateEnv(_.mapConfig(f))` ([`AI.scala:114-119`], [`LLM.scala:512-517`]). `updateEnv` brackets a transform of the scope `AIEnv` over `v`: get, modify, set, run, restore, written once and reused by the `enable` methods and `withConfig`.
 
 ### Forget and fresh
 
@@ -142,7 +142,7 @@ Config is scoped by `AI.withConfig` (NOT `LLM.withConfig`), built on `LLM.update
 
 ### `Tool`
 
-`Tool.init[In][Out, S]` builds a tool from a name, optional description and prompt, and a run `In => Out < S` ([`Tool.scala:34-46`]). The `Isolate[S, LLM, S]` constraint lets the tool's effects be isolated for the mode-pipeline parallel paths. `aggregate` composes tools; `empty` is the no-tool aggregate ([`Tool.scala:48-54`]). The internal `resultToolInfo` is the dynamic `result_tool` the eval loop adds to every request: its run is a no-op, and the eval loop extracts the call's arguments directly (no capturing run, no ref) ([`Tool.scala:72-92`], [`LLM.scala:382-384`]). Tool-call dispatch contains ANY throw from user code as a tool message and never lets it escape the eval loop ([`Tool.scala:110-117`]).
+`Tool.init[In][Out, S]` builds a tool from a name, optional description and prompt, and a run `In => Out < S` ([`Tool.scala:34-46`]). The `Isolate[S, LLM, S]` constraint lets the tool's effects be isolated for the mode-pipeline parallel paths. `aggregate` composes tools; `empty` is the no-tool aggregate ([`Tool.scala:48-54`]). The internal `resultToolInfo` is the dynamic `result_tool` the eval loop adds to every request: its run is a no-op, and the eval loop extracts the call's arguments directly (no capturing run, no ref) ([`Tool.scala:72-92`], [`LLM.scala:698-707`]). Tool-call dispatch contains ANY throw from user code as a tool message and never lets it escape the eval loop ([`Tool.scala:110-117`]).
 
 ### `Thought`
 
@@ -161,6 +161,16 @@ def apply[A: Schema](ai: AI, gen: Maybe[A] < (LLM & Async & Abort[AIGenException
 ```
 
 ([`Mode.scala:21-23`]). The `gen` parameter carries its failures typed as `Abort[AIGenException]` and the mode receives the target `ai` (so it can read/write that instance's conversation around the gen). `Mode.init[S]` builds a mode from a polymorphic transform, the convenient alternative to `new Mode[S]` ([`Mode.scala:42-49`]).
+
+### `Observe`
+
+`Observe[-S]` is the wire-tier, notification-only counterpart of `Mode`: where a mode receives the generation as a value and may replace it, an observer receives each completed turn's `Completion.Reply` (messages, stop reason, usage) and returns `Unit`, so it cannot change control flow. Its method is:
+
+```scala
+def apply(ai: AI, reply: Completion.Reply)(using Frame): Unit < (LLM & Sync & S)
+```
+
+Observers fire once per completion call the eval loop resolved, on the fiber that ran the turn, on the generation path BEFORE the ceiling adjudication (a turn that aborts at the output ceiling still spent its tokens; a streamed ceiling stop fails the stream and reports nothing) and on both paths before the turn's messages join the instance context. The streaming path fires on full consumption with the recorded synthetic result pair as the reply; an abandoned stream fires nothing, matching the transcript rule. Firing at the source is load-bearing: a fork's turns fire on the fork's own fiber, so a losing `Async.race` branch and a rolled-back `AI.forget` block still count the turns they completed. `Observe.init` builds one from a callback; `Observe.withStats` (both forms) is the provided usage-collecting implementation and is deliberately just a user of the enablement machinery: it allocates its own `AtomicRef` (hence the `Sync` in its row), enables an internal observer over `v`, and reads the cell at scope end. No `LLM` op is involved; the targeted form probes each target through the existing session op so a foreign run's instance fails loud. An observer's `Sync` is honest (both fire sites run under `Async`); an `Abort[E]` in `S` is the guardrail contract: its failure fails the generation it fired in.
 
 ## `Agent`
 
@@ -214,6 +224,8 @@ The result tool has the reserved name `Completion.resultToolName` (`"result_tool
 
 Backend implementation rules:
 
+- **A backend returns messages and tool calls; it never processes tool-call payloads.** Map the provider reply to `Context.Message` values with every tool call's arguments passed through VERBATIM, exactly as `AnthropicCompletion.read` does (`Call(id, name, Json.encode(input))`) ([`AnthropicCompletion.scala:39-52`]). This includes the result tool: the backend identifies it by NAME (`Completion.resultToolName`, or a harness's native structured-output tool) or by structural position (a terminal result field), never by inspecting the payload, and forwards the arguments untouched. A backend must NOT decode, validate, reshape, envelope, or fail on a tool-call payload. The only decoding a backend does is the transport/wire format (the provider's response body or the harness's stream-json events) into typed `Message`/`Call` values. All result decoding, `resultValue`-envelope handling, thought extraction, and validation live in `LLM.eval` ([`LLM.scala:615-808`]); that is the ONLY place a result payload is decoded.
+- **A missing or unusable result is not a backend failure; it is the eval loop's repair signal.** When the model produced no result (only text or non-result tool calls), return the transcript with no `result_tool` call. `eval` then sees no result and re-queries, and on the forced iteration it passes zero user tools so the next request exposes only the result tool and the model must call it ([`LLM.scala`] eval loop, `forceResult`). This repair loop is the harness's substitute for the HTTP `tool_choice` force (`AnthropicCompletion` sets `tool_choice` to the result tool when it is the only tool; `OpenAICompletion` uses `tool_choice:"required"`), which command harnesses like the Claude Code CLI have no equivalent for. A backend that decodes/validates the payload and aborts (e.g. `AIDecodeException` on non-JSON result text) DEFEATS this loop and must not do so. NOTE: `CodexCompletion` currently violates the payload-faithfulness rule (it reshapes through `HarnessCompletion.resultOutput`); this is a known deviation to be fixed, not a pattern to copy.
 - Implement the full `Completion` contract. Do not add placeholder streaming methods, silent tool rejection, or partial support paths.
 - Kyo remains the tool runner for every backend. If a provider agent loop needs synchronous tool execution, use a private bridge that calls back into Kyo tool handlers and return the produced transcript as Kyo `Context.Message` values. Do not expose ambient user MCP servers, provider shell tools, plugins, or unrelated host tools through a completion backend.
 - Preserve structured context as far as the provider protocol allows. Use native message, image, function-call, and tool-result protocol items when they exist. If a provider has no supported native injection path for a piece of history, keep the workaround explicit in code and tests, and verify the public behavior it affects.
@@ -224,7 +236,7 @@ Backend implementation rules:
 
 Backend tests must cover the same behavior a user can observe:
 
-- Unit tests for request and response conversion: context messages, images, assistant tool calls, tool results, result tool envelopes, malformed provider output, and streaming fragments.
+- Unit tests for request and response conversion: context messages, images, assistant tool calls, tool results, and streaming fragments. For the result path, assert VERBATIM passthrough (the result-tool call carries the provider payload unchanged) and the repair paths: a non-JSON result surfaces as a raw result-tool call (no exception), and a turn with no result surfaces with no result-tool call so the eval loop repairs.
 - Shared live integration tests for command harnesses in `shared/src/test`. Use `assume` when the CLI, auth, quota, account, or network provider is unavailable, and fail on behavioral regressions after the provider is available.
 - Live tests must assert that the intended provider and completion backend are actually selected.
 - Live tests must exercise `ai.gen`, retained history via `AI.snapshot` and `AI.recover`, image input, Kyo tool calling, `ai.stream[String]`, and object streaming via `ai.stream[A]`.
@@ -245,11 +257,11 @@ JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCache
 
 A leaf mixes in every operation it can occur in. `AIMissingApiKeyException` and `AITransportException` mix in BOTH (either operation reaches the provider) ([`AIException.scala:30-38`]). Gen-only leaves: `AIEvalExhaustedException`, `AIInvalidThoughtException`, `AIDecodeException` ([`AIException.scala:40-52`]). Stream-only leaves: `AIStreamDeltaException`, `AIStreamIncompleteException` ([`AIException.scala:54-60`]). `AICrossRunException` (misuse) and `AIMeterClosedException` (impossible-state) are `AIException`s but in NEITHER operation set: they panic rather than ride a row ([`AIException.scala:62-76`]). `AIExceptionTest` pins the full lattice with `summon[... <:< ...]` and asserts cross-run/meter-closed are not gen/stream failures ([`AIExceptionTest.scala:4-48`]).
 
-When adding a failure, add a leaf to `AIException.scala` under the right operation trait(s) and route to it; keep every message string on the leaf, and never let a non-module exception (a raw `HttpException`) ride a public row, map it to `AITransportException` at the eval/stream boundary ([`LLM.scala:331`], [`LLM.scala:182`]).
+When adding a failure, add a leaf to `AIException.scala` under the right operation trait(s) and route to it; keep every message string on the leaf, and never let a non-module exception (a raw `HttpException`) ride a public row, map it to `AITransportException` at the eval/stream boundary ([`LLM.scala:686-689`], [`Completion.scala:119-139`]).
 
 ## Unsafe boundary
 
-This module has no `AllowUnsafe` sites and no `import AllowUnsafe.embrace.danger` in its sources. The former process-global `AtomicLong` id counter is GONE: ids now come from the run's threaded `State.nextId` ([`LLM.scala:106-107`]), so there is no module-level mutable state to bridge. The only `java.lang.ref` use is `internal.AIRef extends WeakReference[AI]`, a GC-reclaimability mechanism for the `State.instances` keys, not an unsafe-tier API ([`LLM.scala:417-428`]). When threading new state, keep it in `State` and the `Op` GADT; do not introduce a process-global counter or an `AllowUnsafe` parameter.
+This module has no `AllowUnsafe` sites and no `import AllowUnsafe.embrace.danger` in its sources. The former process-global `AtomicLong` id counter is GONE: ids now come from the run's threaded `State.nextId` ([`LLM.scala:97-101`]), so there is no module-level mutable state to bridge. The only `java.lang.ref` use is `internal.AIRef extends WeakReference[AI]`, a GC-reclaimability mechanism for the `State.instances` keys, not an unsafe-tier API ([`LLM.scala:837-845`]). When threading new state, keep it in `State` and the `Op` GADT; do not introduce a process-global counter or an `AllowUnsafe` parameter.
 
 ## Test patterns
 
@@ -284,7 +296,7 @@ All source and tests live in `shared/`. The `jvm/`, `js/`, `native/`, `wasm/` tr
 
 ### Effect-row precision
 
-Never widen the effect row of a `< LLM` computation to include `Async`; `Async` belongs only on `LLM.run`'s residual (the `Gen`/`Stream` interpretation) ([`LLM.scala:125-141`]). A new op goes in `LLM.internal.Op`, gets a `runWith` arm that introduces no `Async` for any op but `Gen`/`Stream`, and is suspended via `ArrowEffect.suspend` ([`LLM.scala:245-275`]). A `Mode.apply`'s `gen` parameter row is exactly `Maybe[A] < (LLM & Async & Abort[AIGenException])`, not wider ([`Mode.scala:21-23`]).
+Never widen the effect row of a `< LLM` computation to include `Async`; `Async` belongs only on `LLM.run`'s residual (the `Gen`/`Stream` interpretation) ([`LLM.scala:119-132`]). A new op goes in `LLM.internal.Op`, gets a `runWith` arm that introduces no `Async` for any op but `Gen`/`Stream`, and is suspended via `ArrowEffect.suspend` ([`LLM.scala:490-519`]). A `Mode.apply`'s `gen` parameter row is exactly `Maybe[A] < (LLM & Async & Abort[AIGenException])`, not wider ([`Mode.scala:21-23`]).
 
 ### `private[kyo]` over `protected`
 
@@ -321,12 +333,33 @@ Building auto-formats; re-read any file you edit after building, formatting may 
 
 In addition to the root checklist:
 
-1. **New `Op`.** Is it a final `case class` (data) or `case object` (field-less)? Does its `runWith` arm thread `State` and introduce no `Async` (only `Gen`/`Stream` may)? Does the reply type in `Op[A]` match the `ArrowEffect.suspend` return? Does it appear in `crossRunFailure` if it targets an instance? [`LLM.scala:65-95`, `LLM.scala:400-415`]
+1. **New `Op`.** Is it a final `case class` (data) or `case object` (field-less)? Does its `runWith` arm thread `State` and introduce no `Async` (only `Gen`/`Stream` may)? Does the reply type in `Op[A]` match the `ArrowEffect.suspend` return? Does it appear in `crossRunFailure` if it targets an instance? [`LLM.scala:63-95`, `LLM.scala:816-831`]
 2. **Eval-loop change.** Does every non-`Gen` path stay `< LLM` (no `Async`)? Does the `Gen` residual stay `A < (LLM & Async & Abort[AIGenException])`? Does `summon[NotGiven[LLM <:< Async]]` still hold? [`LLMTest.scala:409-417`]
 3. **New enablement kind or call.** Does it implement `AI.Enablement[S]`'s two `enableIn` methods (`AIEnv` and `AISession`)? Is it reached only through `AI.enable` / `ai.enable` (never a per-type binder)? Does the row carry `S` until the run boundary? [`AI.scala:48-53`, `AI.scala:114-126`]
-4. **Config override.** Is an instance config a `Maybe[Config]` (`Absent` = inherit, `Present` = override)? Does `genLoop`'s merge keep `Present` winning over the scope and over a scope `withConfig`, while a mode `withConfig` still layers on top? [`LLM.scala:318-326`, `LLMTest.scala:325-374`]
+4. **Config override.** Is an instance config a `Maybe[Config]` (`Absent` = inherit, `Present` = override)? Does `genLoop`'s merge keep `Present` winning over the scope and over a scope `withConfig`, while a mode `withConfig` still layers on top? [`LLM.scala:561-565`, `LLMTest.scala:325-374`]
 5. **New `Mode`.** Is `apply`'s `gen` row exactly `Maybe[A] < (LLM & Async & Abort[AIGenException])`? Does the mode receive `ai` and read/write that instance only? [`Mode.scala:21-23`]
-6. **New `Agent` overload.** Does it delegate to `runImpl`, minting ONE stable instance via `AI.initWith(behavior)`, discharging with `LLM.run`, re-throwing `Abort[AIGenException]` via `getOrThrow`, and handing to `Actor.run`? [`Agent.scala:217-240`]
-7. **New completion backend.** Does it match the result tool by `Completion.resultToolName` and substitute `resultSchema` when `Present`? Does it surface transport failures as `Abort[HttpException]`, never `Abort[Throwable]`? If it is command-backed, does it use the harness's native input/output shape and map process or decode failures to `AIDecodeException`? Is it reached through a new `Config.Provider` in `Provider.all`? [`Completion.scala:65-74`, `Config.scala:96-98`]
-8. **New failure.** Is there a leaf in `AIException.scala` under the right operation trait(s), with its message on the leaf, mapped from any raw `HttpException` at the eval/stream boundary? Is a misuse/impossible-state panic kept off both rows? [`AIException.scala`, `LLM.scala:331`]
-9. **New test.** Does it extend `kyo.test.Test[Any]`, use `TestCompletionServer` (not a live endpoint), assert concrete values, place each `enqueueBody`/`enqueueStream` before the consuming client call, and live in `shared/src/test`? [`TestCompletionServer.scala`, `LLMTest.scala`]
+6. **New `Observe` fire site or `AIStats` field.** Does the site fire once per resolved completion call, before any adjudication that can abort the turn? Does a new `AIStats` field follow the subset convention (shared suffix, `Maybe` when a wire may not report it)? Do all four backends map their wire's fields, with a fixture test each? [`LLM.scala:709-715`, `AIStats.scala:15-27`]
+7. **New `Agent` overload.** Does it delegate to `runImpl`, minting ONE stable instance via `AI.initWith(behavior)`, discharging with `LLM.run`, re-throwing `Abort[AIGenException]` via `getOrThrow`, and handing to `Actor.run`? [`Agent.scala:217-240`]
+8. **New completion backend.** Does it match the result tool by `Completion.resultToolName` and substitute `resultSchema` when `Present`? Does it surface transport failures as `Abort[HttpException]`, never `Abort[Throwable]`? If it is command-backed, does it use the harness's native input/output shape and map process or decode failures to `AIDecodeException`? Is it reached through a new `Config.Provider` in `Provider.all`? [`Completion.scala:65-74`, `Config.scala:96-98`]
+9. **New failure.** Is there a leaf in `AIException.scala` under the right operation trait(s), with its message on the leaf, mapped from any raw `HttpException` at the eval/stream boundary? Is a misuse/impossible-state panic kept off both rows? [`AIException.scala`, `LLM.scala:331`]
+10. **New test.** Does it extend `kyo.test.Test[Any]`, use `TestCompletionServer` (not a live endpoint), assert concrete values, place each `enqueueBody`/`enqueueStream` before the consuming client call, and live in `shared/src/test`? [`TestCompletionServer.scala`, `LLMTest.scala`]
+
+## Model facts are data, never inference
+
+A completion implementation must not name a model, a model family, or a model version, and must not
+describe how a particular model behaves. This covers comments and scaladoc, not only code: if a reader
+can learn from a completion implementation that some named model differs from another, the rule is
+broken.
+
+Where models differ, the difference is declared on the catalog entry, alongside the model's name and
+its context window, and the implementation reads the declared field without knowing which model it
+came from. Adding a model means adding an entry that declares its facts; the constructors take those
+facts without defaults, so an undeclared model is a compile error rather than a silent guess.
+
+This replaced a set of predicates that parsed version digits out of model ids to infer what a wire
+would accept. That approach put unverifiable model knowledge in code, went stale on every rename, and
+sized an output ceiling from a reasoning budget on models whose wire refuses that budget, which stopped
+generations early and was diagnosed as a harness failure.
+
+Provider names remain legal in the implementations, which are named after providers, as does a
+provider's own wire vocabulary inside the single function that decodes it.

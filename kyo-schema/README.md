@@ -46,13 +46,29 @@ These are the top-level entry points:
 | `Convert` | Bidirectional conversion between structurally compatible types |
 | `Structure` | Runtime type description and untyped value trees |
 
+## Module layout
+
+The functionality above ships as seven artifacts: a format-agnostic core plus one small module per serialization format. `kyo-schema` alone gives you `Schema`, derivation, validation, and the optics (`Focus`, `Compare`, `Modify`, `Changeset`, `Builder`, `Convert`, `Structure`) with no codec; each format section below additionally requires its module's artifact on the classpath. Every format module pulls in the core transitively.
+
+| Artifact | Provides |
+|----------|----------|
+| `kyo-schema` | The core: `Schema`, derivation, validation, annotations, optics, structural conversion, and the `Codec` SPI. No wire format. |
+| `kyo-schema-json` | The `Json` entry point: JSON text and bytes, plus JSON Schema generation. |
+| `kyo-schema-protobuf` | The `Protobuf` entry point: Protocol Buffers binary, plus `.proto` schema export. |
+| `kyo-schema-msgpack` | The `MsgPack` entry point: MessagePack binary. |
+| `kyo-schema-bson` | The `Bson` entry point: BSON document bytes. |
+| `kyo-schema-ion` | The `Ion`, `IonBinary`, and `IonSchema` entry points: Amazon Ion text, binary, and Ion Schema generation. |
+| `kyo-schema-yaml` | The `Yaml` entry point: YAML 1.2 documents, plus the CST and event APIs. |
+
 ## Installation
 
-Add the dependency to your `build.sbt`:
+Add the format modules you need to your `build.sbt`. Most projects start with JSON:
 
 ```scala doctest:expect=skipped
-libraryDependencies += "io.getkyo" %% "kyo-schema" % "<latest version>"
+libraryDependencies += "io.getkyo" %% "kyo-schema-json" % "<latest version>"
 ```
+
+`kyo-schema-json` brings in `kyo-schema` transitively; swap or add `kyo-schema-protobuf`, `kyo-schema-msgpack`, `kyo-schema-bson`, `kyo-schema-ion`, or `kyo-schema-yaml` for the other formats, or depend on `kyo-schema` alone for schemas without a codec.
 
 All public types live in the `kyo` package:
 
@@ -330,7 +346,7 @@ Json.decodeBytes[User](bytes)
 // Result.Success(alice)
 ```
 
-When accepting untrusted input, configure safety limits to protect against denial-of-service attacks. `maxDepth` limits nesting depth (default `Json.DefaultMaxDepth`, currently `512`) and `maxCollectionSize` limits the number of entries in any single collection or object (default `Json.DefaultMaxCollectionSize`, currently `100000`):
+When accepting untrusted input, configure safety limits to protect against denial-of-service attacks. `maxDepth` limits nesting depth (default `Codec.DefaultMaxDepth`, currently `512`) and `maxCollectionSize` limits the number of entries in any single collection or object (default `Codec.DefaultMaxCollectionSize`, currently `100000`):
 
 ```scala
 val untrustedInput = """{"id":1,"name":"Alice","email":"a@b.com","password":"s","address":{"city":"Portland","zip":"97201"}}"""
@@ -655,7 +671,7 @@ assert(bumped.contains("# deployment"))
 
 The comment assertion holds because `throughCst` builds a source-backed CST from the input, applies the structural edit, and renders through the trivia-aware renderer. Nodes that were not edited retain their original text, so the leading `# deployment` comment survives.
 
-For richer examples, including an anchor audit that finds undeclared aliases and unused anchors, direct pipeline decode of case classes and ADTs, and a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](shared/src/test/scala/kyo/YamlEventsTest.scala) and [YamlPipelineTest.scala](shared/src/test/scala/kyo/YamlPipelineTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
+For richer examples, including an anchor audit that finds undeclared aliases and unused anchors, direct pipeline decode of case classes and ADTs, and a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](../kyo-schema-yaml/shared/src/test/scala/kyo/YamlEventsTest.scala) and [YamlPipelineTest.scala](../kyo-schema-tests/shared/src/test/scala/kyo/YamlPipelineTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
 
 ### Protobuf
 

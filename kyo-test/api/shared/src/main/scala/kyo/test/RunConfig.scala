@@ -22,6 +22,11 @@ import kyo.minutes
   *   one at a time in the global pool); 0 (the default) and any N > 1 mean parallel (the suite pushes all its leaves to the pool, whose
   *   process-global `globalK` bound sets the real degree of concurrency). N > 1 is NO LONGER a per-suite cap.
   * @param timeout
+  * @param globallySequential
+  *   when `true`, this suite's leaves run one at a time across every globally-sequential suite in the process. For a resource shared
+  *   beyond one suite (a CLI, an account, a fixed port), which `parallelism` cannot protect since it only orders one suite's own leaves
+  *   inside the shared pool. Suites without the flag are unaffected.
+  * @param timeout
   *   maximum duration for each leaf; `Duration.Infinity` means no timeout (default)
   * @param randomize
   *   when `Present`, shuffles leaf execution order using the given seed for reproducibility; `Absent` preserves declaration order
@@ -76,6 +81,7 @@ final case class RunConfig(
     verbosity: Verbosity = Verbosity.Normal,
     filter: TestFilter = TestFilter.empty,
     parallelism: Int = 0,
+    globallySequential: Boolean = false,
     timeout: Duration = Duration.Infinity,
     randomize: Maybe[Long] = Maybe.empty,
     strictStructure: Boolean = false,
@@ -105,8 +111,28 @@ final case class RunConfig(
       */
     def parallelism(parallelism: Int): RunConfig = copy(parallelism = parallelism)
 
-    /** Returns a copy that runs fully sequentially (parallelism = 1). */
+    /** Returns a copy whose leaves run one at a time WITHIN THIS SUITE (parallelism = 1).
+      *
+      * This is suite-scoped and does not stop other suites' leaves from running alongside them. It is the
+      * right setting for state this suite owns; it is NOT enough for a resource shared with other suites,
+      * because leaves from those suites keep running in the same process-global pool. A suite guarding a
+      * shared resource wants [[globallySequential]] instead, and the difference is invisible whenever the
+      * build forks one JVM per suite, since there the two coincide.
+      */
     def sequential: RunConfig = copy(parallelism = 1)
+
+    /** Returns a copy whose leaves run one at a time ACROSS EVERY globally-sequential suite in the process.
+      *
+      * For a resource that is shared beyond one suite: a CLI, an account, a subscription, a fixed port.
+      * [[sequential]] cannot protect those, because it only orders one suite's own leaves inside a pool
+      * that every suite pushes into, so several suites each running "sequentially" still contend.
+      *
+      * Leaves of every suite carrying this flag form a single sequential stream. Suites WITHOUT it are
+      * unaffected and keep running in parallel: the flag exists to serialize contenders for one resource,
+      * not to quiesce the run, and freezing unrelated leaves would cost the whole suite's parallelism for
+      * nothing.
+      */
+    def globallySequential(globallySequential: Boolean): RunConfig = copy(globallySequential = globallySequential)
 
     /** Returns a copy with the given per-leaf timeout. */
     def timeout(timeout: Duration): RunConfig = copy(timeout = timeout)

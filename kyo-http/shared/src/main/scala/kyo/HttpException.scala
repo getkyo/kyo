@@ -280,6 +280,14 @@ object HttpUrlParseException:
         new HttpUrlParseException(HttpException.stripQuery(url), cause.getMessage, cause)
 end HttpUrlParseException
 
+/** A message body could not be decoded because its transfer framing is malformed: a chunk-size line with an embedded
+  * CR or LF, a bare-LF line ending, an invalid chunk size, or a missing CRLF after chunk data. Accepting such framing
+  * lets a recipient disagree with an upstream about where the body ends, a request-smuggling desync (RFC 9112 section
+  * 7.1.1; CVE-2025-22871, CVE-2026-2332, CVE-2026-33870).
+  */
+case class HttpMalformedBodyException private[kyo] (detail: String)(using Frame)
+    extends HttpDecodeException(s"Malformed chunked body framing: $detail.")
+
 /** Failed to decode a path capture, query parameter, header, or cookie field. */
 case class HttpFieldDecodeException private (
     fieldName: String,
