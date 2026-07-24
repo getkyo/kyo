@@ -20,6 +20,7 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     def path: Seq[String]
     case Click(path: Seq[String], mouse: MouseEventData)
     case ClickSelf(path: Seq[String], mouse: MouseEventData)
+    case ContextMenu(path: Seq[String], mouse: MouseEventData)
     case Input(path: Seq[String], value: String)
     case Change(path: Seq[String], value: String)
     case ChangeChecked(path: Seq[String], checked: Boolean)

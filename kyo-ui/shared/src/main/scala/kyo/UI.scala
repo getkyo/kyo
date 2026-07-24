@@ -835,6 +835,19 @@ object UI:
             def onClickSelf[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
                 withAttrs(attrs.copy(onClickSelfEvt = Present(eraseHandlerFn(f))))
 
+            /** Runs `action` on right-click (the `contextmenu` event), ignoring the event payload. When the right-click lands on
+              * this element or a descendant, the client suppresses the browser's native context menu (`preventDefault`); a
+              * right-click on elements with no context-menu handler in their ancestor chain keeps the native menu.
+              */
+            def onContextMenu[S](action: => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onContextMenu = Present(eraseHandler(Sync.defer(action)(using frame)))))
+
+            /** Runs `f` on right-click (the `contextmenu` event), receiving the [[kyo.UI.MouseEvent]] payload (target id, modifier
+              * chord). Same native-menu suppression as the payload-free overload.
+              */
+            def onContextMenu[S](f: MouseEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onContextMenuEvt = Present(eraseHandlerFn(f))))
+
             /** Runs `f` on key-down, receiving the [[kyo.UI.KeyboardEvent]] payload (typed key, modifier chord, target id). */
             def onKeyDown[S](f: KeyboardEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
                 withAttrs(attrs.copy(onKeyDown = Present(eraseHandlerFn(f))))
@@ -1081,6 +1094,8 @@ object UI:
             onClickEvt: Maybe[MouseEvent => Any < Async] = Absent,
             onClickSelf: Maybe[Any < Async] = Absent,
             onClickSelfEvt: Maybe[MouseEvent => Any < Async] = Absent,
+            onContextMenu: Maybe[Any < Async] = Absent,
+            onContextMenuEvt: Maybe[MouseEvent => Any < Async] = Absent,
             onKeyDown: Maybe[KeyboardEvent => Any < Async] = Absent,
             onKeyUp: Maybe[KeyboardEvent => Any < Async] = Absent,
             onFocus: Maybe[Any < Async] = Absent,

@@ -103,7 +103,9 @@ div.onClickSelf(Console.printLine("background"))(
 
 By default an event bubbles through the tree: every ancestor that declared a handler for the event's type fires, innermost first. `.stopPropagation(true)` makes an element *consume* the events it handles — when the dispatch walk reaches an element that both carries the flag and declared a handler for the arriving type, handlers on elements above it do not fire. It only consumes the types that element actually handles; other types pass through. Typical use is nested overlays, where an Escape should close just the innermost layer. Focus and blur never bubble, so the flag does not apply to them.
 
-> **Note:** `onClick`, `onClickSelf`, `onFocus`, `onBlur`, and `Form.onSubmit` each available as a by-name `=> Any < Async` action or as a typed handler receiving `MouseEvent` or `KeyboardEvent`. `onKeyDown` and `onKeyUp` take a `KeyboardEvent => Any < Async`; the function shape is required because the handler receives the key. Per-input change handlers take `String => Any < Async`, `Boolean => Any < Async`, or `Double => Any < Async`.
+`onContextMenu` fires on right-click (the `contextmenu` event). When the right-click lands on an element (or a descendant) that declared a handler, the client suppresses the browser's native context menu (`preventDefault`); a right-click with no context-menu handler anywhere in its ancestor chain keeps the native menu. Like `onClick`, it is available as a by-name action or a `MouseEvent`-typed handler.
+
+> **Note:** `onClick`, `onClickSelf`, `onContextMenu`, `onFocus`, `onBlur`, and `Form.onSubmit` each available as a by-name `=> Any < Async` action or as a typed handler receiving `MouseEvent` or `KeyboardEvent`. `onKeyDown` and `onKeyUp` take a `KeyboardEvent => Any < Async`; the function shape is required because the handler receives the key. Per-input change handlers take `String => Any < Async`, `Boolean => Any < Async`, or `Double => Any < Async`.
 
 ### Invalid states do not compile
 

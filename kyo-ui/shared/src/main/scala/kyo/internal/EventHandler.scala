@@ -15,6 +15,7 @@ sealed private[kyo] trait EventHandler derives CanEqual
 private[kyo] object EventHandler:
     case class Click(f: Unit < Async)                       extends EventHandler
     case class ClickSelf(f: Unit < Async)                   extends EventHandler
+    case class ContextMenu(f: Unit < Async)                 extends EventHandler
     case class Input(f: String => Unit < Async)             extends EventHandler
     case class Change(f: String => Unit < Async)            extends EventHandler
     case class ChangeChecked(f: Boolean => Unit < Async)    extends EventHandler
@@ -29,6 +30,7 @@ private[kyo] object EventHandler:
     def eventType(handler: EventHandler): String = handler match
         case _: Click         => "click"
         case _: ClickSelf     => "clickself"
+        case _: ContextMenu   => "contextmenu"
         case _: Input         => "input"
         case _: Change        => "change"
         case _: ChangeChecked => "change"
