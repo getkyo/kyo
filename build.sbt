@@ -121,7 +121,11 @@ lazy val `kyo-settings` = Seq(
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
-    scalafmtOnCompile := true,
+    // Not in CI: parallel cross-version compilations of one module format the same shared
+    // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every
+    // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
+    // enforcement; compile-time formatting is a local convenience only.
+    scalafmtOnCompile := !insideCI.value,
     // Tag the doc task so concurrentRestrictions can serialize scaladoc across modules; dottydoc
     // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
     Compile / doc := (Compile / doc).tag(DocTag).value,
