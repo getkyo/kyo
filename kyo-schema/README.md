@@ -822,11 +822,13 @@ Schemas are provided for all common types out of the box:
 |----------|-------|
 | Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt`, `Unit` |
 | Time | `java.time.Instant`, `java.time.Duration`, `kyo.Instant`, `kyo.Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
-| Identifiers | `UUID`, `Frame`, `Tag[A]` |
+| Identifiers | `kyo.UUID`, `java.util.UUID`, `Frame`, `Tag[A]` |
 | Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]`, `OrderedDict[K, V]` |
 | Optional | `Option[A]`, `Maybe[A]` |
 | Sums | `Either[A, B]`, `Result[E, A]` |
 | Tuples | `(A, B)`, `(A, B, C)`, `(A, B, C, D)`, `(A, B, C, D, E)` |
+
+Prefer `kyo.UUID` in new schemas. Its primary built-in schema is `Schema.uuidSchema`; it writes canonical lowercase UUID text and reads through `UUID.parse`. `java.util.UUID` remains available for Java-facing compatibility through `Schema.javaUuidSchema`. Both use a string wire representation, but their runtime schema tags remain type-specific.
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
