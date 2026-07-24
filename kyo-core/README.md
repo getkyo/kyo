@@ -931,7 +931,7 @@ val example: Unit < (Async & Sync & Scope & Abort[CommandException]) =
 
 ## Ambient services
 
-`Console`, `System`, `Random`, and `Log` are thread-local-style context services. Their default implementations target the platform's stdout/stderr, env vars, secure RNG, and console logger respectively. Tests can swap them out per scope without threading them as arguments.
+`Console`, `System`, `Random`, `UUIDGenerator`, and `Log` are dynamically scoped context services. Their defaults target the platform console, environment and properties, a non-cryptographic `java.util.Random`, secure UUID entropy, and the console logger respectively. Tests can swap them out per scope without threading them as arguments.
 
 ### `Console`
 
@@ -964,6 +964,32 @@ val homeDir: Maybe[String] < Sync =
 
 `System.env(name)` and `System.property(name)` are parameterised by a `Parser[E, A]` typeclass. Built-in `Parser` instances exist for primitive types, `String`, `Duration`, `java.net.URI`, `java.net.URL`, `java.util.UUID`, and the standard `java.time` types. Parse failures raise `Abort[E]` per the parser.
 
+Canonical `kyo.UUID` values are also supported, with malformed input reported as `UUID.InvalidUUID`:
+
+```scala
+val serviceId: Maybe[UUID] < (Sync & Abort[UUID.InvalidUUID]) =
+    System.property[UUID]("service.id")
+```
+
+### UUID generation
+
+`UUID` is the pure value type from `kyo-data`. It provides canonical parsing and formatting, network-order bytes, and the deterministic name-based constructors `UUID.v5` and `UUID.v8Sha256`. Effectful generation is provided by the secure `UUIDGenerator` capability:
+
+```scala
+val randomId: UUID < Sync =
+    UUID.v4
+
+val timeOrderedId: UUID < Sync =
+    UUID.v7
+
+def withGenerator[A, S](generator: UUIDGenerator)(value: A < S): A < (S & Sync) =
+    UUID.let(generator)(value)
+```
+
+`UUIDGenerator.live`, the default generator, uses cryptographic platform entropy. Its version 7 implementation combines secure entropy with the Kyo clock and preserves strict monotonic ordering per generator instance when the clock repeats or moves backward. Entropy and clock failures remain `Sync` panics; the live generator never falls back to `Random`, timestamps alone, or process counters.
+
+`UUID.v4` and `UUID.v7` delegate to the currently scoped generator. The equivalent capability-first entry points are `UUIDGenerator.v4`, `UUIDGenerator.v7`, and `UUIDGenerator.let`.
+
 ### `Random`
 
 ```scala
@@ -978,9 +1004,11 @@ val token: String < Sync =
     Random.nextStringAlphanumeric(length = 32)
 ```
 
-`Random` exposes `nextInt`, `nextInt(bound)`, `nextLong`, `nextDouble`, `nextBoolean`, `nextGaussian`, `nextValue(seq)`, `nextValues(length, seq)`, `nextStringAlphanumeric(length)`, and `shuffle(seq)`.
+`Random` provides non-cryptographic random values, sampling, and shuffling. It exposes `nextInt`, `nextInt(bound)`, `nextLong`, `nextDouble`, `nextFloat`, `nextBoolean`, `nextGaussian`, `nextValue(seq)`, `nextValues(length, seq)`, `nextStringAlphanumeric(length)`, `nextString(length, chars)`, `nextBytes(length)`, and `shuffle(seq)`.
 
 For deterministic tests: `Random.withSeed(seed)(v)` runs `v` with a seeded RNG; `Random.let(r)(v)` substitutes a custom `Random` instance for the scope.
+
+Code that previously used `Random.uuid` should use `UUID.v4` for random UUIDs. Tests and other callers that need repeatable UUID generation should install a deterministic `UUIDGenerator` with `UUID.let(generator)(value)`.
 
 ### `Log`
 
