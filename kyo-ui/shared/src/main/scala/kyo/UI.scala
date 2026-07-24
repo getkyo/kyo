@@ -682,6 +682,21 @@ object UI:
             def focusTrap(v: Boolean): Self  = withAttrs(attrs.copy(focusTrap = Present(v)))
             def focusGroup(id: String): Self = withAttrs(attrs.copy(focusGroup = Present(id)))
 
+            /** Declarative focus seeding: when a re-render inserts this element newly into the DOM (its `data-kyo-path` was
+              * not present before), the client calls `.focus()` on it once; re-rendering an already-visible element (same
+              * path) does not re-seed. Seeding runs after focus/caret restore, so opening a panel wins over
+              * restore-to-trigger; on initial load any focus-auto element is seeded (like native autofocus). Does not make
+              * the element focusable, pair with `tabIndex(-1)` for non-natively-focusable elements. The previously focused
+              * element is recorded for [[focusRestore]].
+              */
+            def focusAuto(v: Boolean): Self = withAttrs(attrs.copy(focusAuto = Present(v)))
+
+            /** Declarative focus return: when this focus-seeded element (see [[focusAuto]]) leaves the document, the client
+              * focuses whatever was focused just before seeding (located by `data-kyo-path`, skipped silently if gone). Only
+              * meaningful with `focusAuto(true)`; typical use is a modal that returns focus to its trigger on close.
+              */
+            def focusRestore(v: Boolean): Self = withAttrs(attrs.copy(focusRestore = Present(v)))
+
             /** Runs `action` on click, ignoring the event payload. */
             def onClick(action: => Any < Async): Self = withAttrs(attrs.copy(onClick = Present(Sync.defer(action)(using frame))))
 
@@ -922,6 +937,8 @@ object UI:
             tabIndex: Maybe[Int] = Absent,
             focusTrap: Maybe[Boolean] = Absent,
             focusGroup: Maybe[String] = Absent,
+            focusAuto: Maybe[Boolean] = Absent,
+            focusRestore: Maybe[Boolean] = Absent,
             uiStyle: Style = Style.empty,
             onClick: Maybe[Any < Async] = Absent,
             onClickEvt: Maybe[MouseEvent => Any < Async] = Absent,

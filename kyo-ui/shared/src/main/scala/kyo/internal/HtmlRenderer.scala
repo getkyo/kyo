@@ -388,6 +388,8 @@ private[kyo] object HtmlRenderer:
         attrs.tabIndex.foreach(n => w(sb, s""" tabindex="$n""""))
         attrs.focusTrap.foreach(v => if v then w(sb, """ data-kyo-focus-trap="1""""))
         attrs.focusGroup.foreach(id => w(sb, s""" data-kyo-focus-group="${esc(id)}""""))
+        attrs.focusAuto.foreach(v => if v then w(sb, """ data-kyo-focus-auto="1""""))
+        attrs.focusRestore.foreach(v => if v then w(sb, """ data-kyo-focus-restore="1""""))
         // A generated pseudoClass already carries the base props in its own rule (see
         // registerPseudoClass); rendering them inline too would shadow the pseudo-state override.
         if pseudoClass.isEmpty then
@@ -771,14 +773,19 @@ private[kyo] object HtmlRenderer:
            |      var ap=ae&&ae!==document.body&&ae.getAttribute?ae.getAttribute("data-kyo-path"):null;
            |      var ss=(ae&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
            |      var se=(ae&&typeof ae.selectionEnd==='number')?ae.selectionEnd:null;
+           |      var __fa=faPaths(el);
            |      el.outerHTML=op.Replace.html;
            |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
            |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
+           |      // Seed AFTER focus/caret restore so a newly-appeared focus-auto element wins restore-to-trigger (the morph path never seeds).
+           |      if(nel)faSeed(nel,__fa);
            |    }
+           |    frSweep();
            |  }else if(op.Remove){
            |    var p=op.Remove.path.join(".");
            |    var el=document.querySelector('[data-kyo-path="'+p+'"]');
            |    if(el)el.remove();
+           |    frSweep();
            |  }else if(op.InjectCss){
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
@@ -854,7 +861,48 @@ private[kyo] object HtmlRenderer:
            |  if(!an.length)return;
            |  requestAnimationFrame(function(){for(var i=0;i<an.length;i++){try{an[i].beginElement();}catch(e){}}});
            |}
+           |// Focus seeding/restore for [data-kyo-focus-auto]/[data-kyo-focus-restore]; __frs stacks {fa, ret|null, restore}.
+           |// Mirrors DomBackend.focusReturnStack for the SPA transport.
+           |var __frs=[];
+           |// Object-set (keyed by path) of every [data-kyo-focus-auto] path inside root, root included.
+           |function faPaths(root){
+           |  var s={};
+           |  if(!root||!root.querySelectorAll)return s;
+           |  if(root.hasAttribute&&root.hasAttribute("data-kyo-focus-auto")){var rp=root.getAttribute("data-kyo-path");if(rp!==null)s[rp]=true;}
+           |  var els=root.querySelectorAll("[data-kyo-focus-auto]");
+           |  for(var i=0;i<els.length;i++){var ep=els[i].getAttribute("data-kyo-path");if(ep!==null)s[ep]=true;}
+           |  return s;
+           |}
+           |// Seed the FIRST newly-appeared focus-auto element under newRoot (path not in oldSet); record prior focus for frSweep.
+           |function faSeed(newRoot,oldSet){
+           |  if(!newRoot||!newRoot.querySelectorAll)return;
+           |  var cand=[];
+           |  if(newRoot.hasAttribute&&newRoot.hasAttribute("data-kyo-focus-auto"))cand.push(newRoot);
+           |  var els=newRoot.querySelectorAll("[data-kyo-focus-auto]");
+           |  for(var i=0;i<els.length;i++)cand.push(els[i]);
+           |  for(var j=0;j<cand.length;j++){
+           |    var fa=cand[j].getAttribute("data-kyo-path");
+           |    if(fa!==null&&!oldSet[fa]){
+           |      var ae=document.activeElement;
+           |      var ret=(ae&&ae!==document.body&&ae.getAttribute)?ae.getAttribute("data-kyo-path"):null;
+           |      __frs.push({fa:fa,ret:ret,restore:cand[j].hasAttribute("data-kyo-focus-restore")});
+           |      if(typeof cand[j].focus==='function')cand[j].focus();
+           |      return;
+           |    }
+           |  }
+           |}
+           |// Pop stack entries whose seeded element left the document; if it carried focus-restore, focus the recorded prior element.
+           |function frSweep(){
+           |  while(__frs.length>0){
+           |    var top=__frs[__frs.length-1];
+           |    if(document.querySelector('[data-kyo-path="'+top.fa+'"][data-kyo-focus-auto]'))return;
+           |    __frs.pop();
+           |    if(top.restore&&top.ret){var re=document.querySelector('[data-kyo-path="'+top.ret+'"]');if(re&&typeof re.focus==='function')re.focus();}
+           |  }
+           |}
            |applyJsProps(document.body);ba(document.body);
+           |// Initial mount: everything server-rendered is new (empty old set), like native autofocus.
+           |faSeed(document.body,{});
            |// Dropdown helpers: close all dropdowns except the given id
            |function kyoCloseDropdown(exceptId){
            |  var all=document.querySelectorAll('[data-kyo-dropdown-options]');
