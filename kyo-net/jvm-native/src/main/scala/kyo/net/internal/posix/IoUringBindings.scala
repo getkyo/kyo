@@ -94,6 +94,9 @@ private[net] trait IoUringBindings extends Ffi:
       */
     def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit
 
+    /** Non-blocking `poll(2)` peer-close probe, off the ring (see kyo_uring.c for the POLLRDHUP rationale). Returns 1 peer gone, 0 open, -1 error. */
+    def kyo_uring_poll_peer_closed(fd: Int)(using AllowUnsafe): Int
+
     /** `io_uring_sqe_set_data64(sqe, data)`. Stores the per-op key the completion is matched against. */
     def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit
 

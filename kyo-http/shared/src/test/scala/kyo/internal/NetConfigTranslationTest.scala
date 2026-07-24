@@ -128,9 +128,10 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
         "maps no deadline: NetConfig carries none, so neither can be dropped here" in {
             // The handshake deadline travels on NetTlsConfig and the connect deadline is the connect operation's own parameter, so this
             // translator has only the connection shape to carry. Asserting the field list keeps a re-added timeout from silently
-            // reappearing in a config half the call sites ignore.
+            // reappearing in a config half the call sites ignore. peerCloseGrace is intentionally not mapped: kyo-http keeps NetConfig's
+            // finite default (it wants the reclaim).
             val fields = NetConfigTranslation.toNetConfig(HttpTransportConfig.default).productElementNames.toList
-            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf"))
+            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf", "peerCloseGrace"))
         }
 
         "does not map maxHeaderSize: kyo.net.NetConfig has no such field (HTTP-parser concern, kept in kyo-http)" in {

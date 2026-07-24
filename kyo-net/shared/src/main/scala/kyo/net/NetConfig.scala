@@ -26,17 +26,22 @@ import kyo.*
   *   - `soSndBuf`: same as `soRcvBuf` for `SO_SNDBUF` (the send buffer). It shapes the sockets that actually send, the connect socket and each
   *     accepted socket. The posix backends also set it on the listen socket before `bind`, because an accepted socket inherits its buffer sizes
   *     from the listener it came from; NIO instead skips it there, a `ServerSocketChannel` rejecting the option outright.
+  *   - `peerCloseGrace`: the window a connection whose peer has closed (FIN) is given to make read progress before it is reclaimed, when its
+  *     inbound side is backpressured (no read is armed, so the peer FIN is otherwise unobservable). Any drained span resets the window; only a full
+  *     window with zero progress reclaims the descriptor. `Duration.Infinity` disables reclamation (the pre-guard behavior).
   */
 case class NetConfig(
     channelCapacity: Int = NetConfig.DefaultChannelCapacity,
     readChunkSize: Int = NetConfig.DefaultReadChunkSize,
     soRcvBuf: Maybe[Int] = Absent,
-    soSndBuf: Maybe[Int] = Absent
+    soSndBuf: Maybe[Int] = Absent,
+    peerCloseGrace: Duration = NetConfig.DefaultPeerCloseGrace
 ) derives CanEqual:
     require(channelCapacity > 0, s"channelCapacity must be positive: $channelCapacity")
     require(readChunkSize > 0, s"readChunkSize must be positive: $readChunkSize")
     soRcvBuf.foreach(n => require(n > 0, s"soRcvBuf must be positive: $n"))
     soSndBuf.foreach(n => require(n > 0, s"soSndBuf must be positive: $n"))
+    require(peerCloseGrace > Duration.Zero, s"peerCloseGrace must be positive (or Duration.Infinity to disable): $peerCloseGrace")
 end NetConfig
 
 object NetConfig:
@@ -45,6 +50,9 @@ object NetConfig:
 
     /** Default initial per-connection read buffer size, in bytes. */
     val DefaultReadChunkSize: Int = 8192
+
+    /** Default peer-close grace window (see [[NetConfig.peerCloseGrace]]). */
+    val DefaultPeerCloseGrace: Duration = 30.seconds
 
     /** The settings every operation applies when its caller passes none. */
     val default: NetConfig = NetConfig()

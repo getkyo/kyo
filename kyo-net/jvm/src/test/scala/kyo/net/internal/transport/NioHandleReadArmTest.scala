@@ -66,7 +66,7 @@ class NioHandleReadArmTest extends Test:
         "read-delivered-exactly-once-under-double-completion" in {
             val (client, server) = openPair()
             try
-                val handle = NioHandle.init(client, 4096)
+                val handle = NioHandle.init(client, 4096, Duration.Infinity)
 
                 // Build a fresh ReadArmCell (fresh allocation + promise) and install it as the armed read.
                 // Each ReadArmCell allocation produces a distinct heap object; reference equality in
@@ -182,7 +182,7 @@ class NioHandleReadArmTest extends Test:
             "the handshake cell wins the CAS and the stale pump cell loses" in {
                 val (client, server) = openPair()
                 try
-                    val handle = NioHandle.init(client, 4096)
+                    val handle = NioHandle.init(client, 4096, Duration.Infinity)
 
                     val pumpPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     val hsPromise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
@@ -254,7 +254,7 @@ class NioHandleReadArmTest extends Test:
             "stale-arm: same-promise-different-cell-object-cas-fails" in {
                 val (client, server) = openPair()
                 try
-                    val handle = NioHandle.init(client, 4096)
+                    val handle = NioHandle.init(client, 4096, Duration.Infinity)
 
                     // One promise, used for two consecutive arms (simulates a ReadPump re-using its IOPromise).
                     val sharedPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()

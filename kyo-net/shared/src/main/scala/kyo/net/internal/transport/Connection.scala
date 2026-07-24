@@ -303,8 +303,10 @@ private[kyo] object Connection:
         handle: Handle,
         driver: IoDriver[Handle],
         channelCapacity: Int,
+        grace: Duration = Duration.Infinity,
         onClose: () => Unit = () => (),
-        canRelease: () => Boolean = () => true
+        canRelease: () => Boolean = () => true,
+        clock: Clock = Clock.live
     )(using AllowUnsafe, Frame): Connection[Handle] =
         val inbound  = Channel.Unsafe.init[Span[Byte]](channelCapacity)
         val outbound = Channel.Unsafe.init[Span[Byte]](channelCapacity)
@@ -382,7 +384,7 @@ private[kyo] object Connection:
                 self.releaseHandle()
             end if
 
-        val readPump  = new ReadPump(handle, driver, inbound, closeFn)
+        val readPump  = new ReadPump(handle, driver, inbound, closeFn, grace, clock)
         val writePump = new WritePump(handle, driver, outbound, closeFn, AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
         self = new Connection(

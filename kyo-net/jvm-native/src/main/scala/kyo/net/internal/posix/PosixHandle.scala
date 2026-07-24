@@ -79,6 +79,11 @@ final private[net] class PosixHandle private (
       */
     @volatile var driver: IoDriver[PosixHandle] = NoDriver
 
+    /** Peer-close grace window this connection's ReadPump applies when backpressured (see [[kyo.net.NetConfig.peerCloseGrace]]). On the handle so an
+      * in-place STARTTLS upgrade (same fd) inherits it without re-threading; left at `Duration.Infinity` (no reclaim) for a handle with no config (stdio).
+      */
+    @volatile var peerCloseGrace: Duration = Duration.Infinity
+
     /** STARTTLS-on-io_uring carry-over of the plaintext ReadPump's stale in-flight recv. io_uring cannot cancel an in-flight recv SQE, so after
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
       * buffer; its CQE then lands on an already-settled (cancelled) promise and the bytes would be lost, hanging the handshake. While
@@ -444,6 +449,12 @@ final private[net] class PosixHandle private (
       * `id` itself, so the stale-fd guard reads `handle.id` rather than a separately-stored copy.
       */
     @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
+
+    /** Latch: the peer has closed its write side (a FIN) or the connection hit a hard error (RST). Written only by the poll carrier at the FIN/error
+      * edges its standing registration delivers, even while the ReadPump is backpressured with no read armed. `@volatile` because the grace timer
+      * reads it from an arbitrary carrier; write-once (never cleared: a peer close is terminal).
+      */
+    @volatile var peerClosed: Boolean = false
 
     /** Ownership guard for the shared resources (the TLS engine and the reused [[readBuffer]]) against the in-flight-op-vs-close use-after-free
       * race, on BOTH the read dispatch and the write paths.
