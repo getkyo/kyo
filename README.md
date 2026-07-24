@@ -267,7 +267,7 @@ Every module ships its own README. Open the linked README for the full surface, 
 
 ### Core
 
-What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar (see [the drop-in scheduler](#drop-in-scheduler-for-zio-cats-effect-pekko-finagle)). `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
+What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar (see [the drop-in scheduler](#drop-in-scheduler-for-zio-pekko-finagle)). `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
@@ -385,7 +385,6 @@ Replace the host runtime's executors with Kyo's adaptive work-stealing scheduler
 
 | Module                                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
 | ------------------------------------------------------------ | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-scheduler-cats](kyo-scheduler-cats/README.md)           | ✅  |     |        |      | Drop-in `IORuntime` replacement: `extends KyoSchedulerIOApp` or `import KyoSchedulerIORuntime.global`     |
 | [kyo-scheduler-zio](kyo-scheduler-zio/README.md)             | ✅  |     | ✅     |      | ZIO: `extends KyoSchedulerZIOAppDefault` or `KyoSchedulerZIORuntime.default` standalone                   |
 | [kyo-scheduler-pekko](kyo-scheduler-pekko/README.md)         | ✅  |     |        |      | Pekko: one HOCON line replaces any dispatcher's executor                                                  |
 | [kyo-scheduler-finagle](kyo-scheduler-finagle/README.md)     | ✅  |     |        |      | Twitter Finagle: activated by `-Dcom.twitter.finagle.exp.scheduler=kyo` (Scala 2.13 only)                 |
@@ -420,7 +419,7 @@ Three migration paths cover most adopters:
 
 ZIO migrants looking for fluent extension methods (`.race`, `.timeout`, `.retry`, `.provide`, etc.) over Kyo effects should also see [`kyo-combinators`](kyo-combinators/README.md), which is also where Cats Effect migrants find the cats-syntax-style operators (`*>`, `<*`, `>>`) and the `forAbort[E1]` failure-narrowing DSL. Migrants whose fs2 / ZStream code crosses into Kyo can route through the bidirectional `Stream` bridge in [`kyo-reactive-streams`](kyo-reactive-streams/README.md).
 
-## Drop-in scheduler for ZIO, Cats Effect, Pekko, Finagle
+## Drop-in scheduler for ZIO, Pekko, Finagle
 
 `kyo-scheduler` is the auto-sized work-stealing pool that Kyo fibers run on. Three things set it apart from a plain thread pool:
 
@@ -428,11 +427,10 @@ ZIO migrants looking for fluent extension methods (`.race`, `.timeout`, `.retry`
 - **Admission control.** The pool measures its own latency under load and rejects new submissions when it cannot meet a target, rather than queuing them indefinitely.
 - **CPU-based blocking detection.** It watches per-worker CPU time and reacts when a task stops making progress on-CPU, so blocking work needs no `blocking { }` annotation at the call site.
 
-It ships as an independent jar that runs on any Scala 2 or Scala 3 codebase, with or without the rest of Kyo. Dropping it into an existing ZIO, Cats Effect, Pekko, or Finagle service is a one-config swap: the host code keeps its native effect APIs, and the scheduler underneath adds the three additions above.
+It ships as an independent jar that runs on any Scala 2 or Scala 3 codebase, with or without the rest of Kyo. Dropping it into an existing ZIO, Pekko, or Finagle service is a one-config swap: the host code keeps its native effect APIs, and the scheduler underneath adds the three additions above.
 
 See [`kyo-scheduler`](kyo-scheduler/README.md) for the standalone API, and one of the adapter READMEs for runtime-specific wiring:
 
-- Cats Effect: [`kyo-scheduler-cats`](kyo-scheduler-cats/README.md)
 - ZIO: [`kyo-scheduler-zio`](kyo-scheduler-zio/README.md)
 - Pekko: [`kyo-scheduler-pekko`](kyo-scheduler-pekko/README.md)
 - Finagle: [`kyo-scheduler-finagle`](kyo-scheduler-finagle/README.md) (Scala 2.13 only)

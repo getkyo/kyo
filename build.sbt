@@ -261,7 +261,6 @@ lazy val kyoJVM: Project = project
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
-        `kyo-scheduler-cats`.jvm,
         `kyo-scheduler-finagle`.jvm,
         `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
@@ -565,22 +564,6 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         `native-settings`,
         crossScalaVersions := List(scala3LTSVersion)
     )
-
-lazy val `kyo-scheduler-cats` =
-    crossProject(JVMPlatform)
-        .crossType(CrossType.Full)
-        .dependsOn(`kyo-scheduler`)
-        .in(file("kyo-scheduler-cats"))
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
-            libraryDependencies += "org.scalatest" %%% "scalatest"   % scalaTestVersion % Test
-        )
-        .jvmSettings(mimaCheck(false))
-        .settings(
-            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
-        )
 
 lazy val `kyo-scheduler-pekko` =
     crossProject(JVMPlatform)
