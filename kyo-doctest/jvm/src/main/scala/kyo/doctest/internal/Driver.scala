@@ -226,7 +226,7 @@ private[kyo] object Driver:
         freshDriver: Boolean
     )(using Frame): Driver < (Sync & Abort[Doctest.Error.DriverInitFailed]) =
         for
-            id <- Random.uuid
+            id <- UUID.v4.map(_.show)
             dir = Path.basePaths.tmp / s"doctest-out-$id"
             _ <- Abort.run[FileFsException](dir.mkDir).flatMap {
                 (r: Result[FileFsException, Unit]) =>

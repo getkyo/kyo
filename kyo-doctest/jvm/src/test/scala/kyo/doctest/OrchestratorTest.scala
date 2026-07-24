@@ -7,7 +7,7 @@ import kyo.*
   * All tests drive the real Doctest.check public API. Internal types appear only on the RHS for verification. Fixture markdown is written
   * to temp directories to keep tests self-contained.
   */
-class OrchestratorTest extends kyo.test.Test[Any]:
+class OrchestratorTest extends DoctestTest:
 
     // Real JVM classpath so the compiler can resolve kyo types in blocks.
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
@@ -22,7 +22,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         content: String
     )(f: kyo.Path => A < (Sync & Async & Scope & S))(using Frame): A < (Sync & Async & Scope & S) =
         for
-            id <- Random.uuid
+            id <- UUID.v4.map(_.show)
             dir = Path.basePaths.tmp / s"kyo-doctest-orch-test-$id"
             _ <- Abort.run[FileFsException](dir.mkDir).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap { dir =>
@@ -35,7 +35,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         f: kyo.Path => A < (Sync & Async & Scope & S)
     )(using Frame): A < (Sync & Async & Scope & S) =
         for
-            id <- Random.uuid
+            id <- UUID.v4.map(_.show)
             dir = Path.basePaths.tmp / s"doctest-cache-test-$id"
             _   <- Abort.run[FileFsException](dir.mkDir).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
@@ -229,7 +229,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
     "editing one block causes only that block to recompile" in {
         withTempCacheDir { cacheDir =>
             for
-                id <- Random.uuid
+                id <- UUID.v4.map(_.show)
                 editDir = Path.basePaths.tmp / s"kyo-doctest-edit-test-$id"
                 _ <- Abort.run[FileFsException](editDir.mkDir).unit
                 res <- Scope.acquireRelease(Sync.defer(editDir))(_ => Abort.run[FileFsException](editDir.removeAll).unit).flatMap { dir =>
@@ -298,7 +298,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
     "editing a non-first env-grouped block invalidates the unit cache" in {
         withTempCacheDir { cacheDir =>
             for
-                id <- Random.uuid
+                id <- UUID.v4.map(_.show)
                 editDir = Path.basePaths.tmp / s"kyo-doctest-env-cache-test-$id"
                 _ <- Abort.run[FileFsException](editDir.mkDir).unit
                 res <- Scope.acquireRelease(Sync.defer(editDir))(_ => Abort.run[FileFsException](editDir.removeAll).unit).flatMap { dir =>

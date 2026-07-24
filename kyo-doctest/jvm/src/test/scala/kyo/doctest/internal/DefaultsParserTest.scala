@@ -7,7 +7,7 @@ import kyo.doctest.*
   *
   * These tests use fixture 09-per-readme-defaults.md.
   */
-class DefaultsParserTest extends kyo.test.Test[Any]:
+class DefaultsParserTest extends kyo.doctest.DoctestTest:
 
     private val dummyFile: kyo.Path = kyo.Path("test.md")
 

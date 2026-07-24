@@ -3,7 +3,7 @@ package kyo.doctest
 import kyo.*
 
 /** Integration tests for Doctest.check covering Driver lifecycle and setup block visibility. */
-class DoctestCheckTest extends kyo.test.Test[Any]:
+class DoctestCheckTest extends DoctestTest:
 
     // The "Driver lifecycle" leaf counts `doctest-out*` dirs in the shared tmp dir before and after a run, so a
     // sibling leaf's concurrent Doctest.check (which also creates a doctest-out dir) would pollute the count.
@@ -22,7 +22,7 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
         content: String
     )(f: kyo.Path => A < (Sync & Async & Scope & S))(using Frame): A < (Sync & Async & Scope & S) =
         for
-            id <- Random.uuid
+            id <- UUID.v4.map(_.show)
             dir = Path.basePaths.tmp / s"doctest-check-test-$id"
             _ <- Abort.run[FileFsException](dir.mkDir).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap { dir =>
@@ -35,7 +35,7 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
         f: kyo.Path => A < (Sync & Async & Scope & S)
     )(using Frame): A < (Sync & Async & Scope & S) =
         for
-            id <- Random.uuid
+            id <- UUID.v4.map(_.show)
             dir = Path.basePaths.tmp / s"doctest-cache-check-$id"
             _   <- Abort.run[FileFsException](dir.mkDir).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
