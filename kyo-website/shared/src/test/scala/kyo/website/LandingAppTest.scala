@@ -149,7 +149,7 @@ class LandingAppTest extends WebsiteTest:
 
     "adoption band sells keeping the existing stack with four grounded paths and a code receipt" in {
         renderLanding.map { html =>
-            // The adoption band answers "do I rewrite?" with four entry points: bidirectional ZIO/Cats
+            // The adoption band answers "do I rewrite?" with four entry points: bidirectional ZIO
             // interop, the drop-in scheduler, the standalone modules used as ordinary libraries, and a
             // fresh-start import. Each is a factual interop claim.
             assert(html.contains("Keep what you already have."), s"adoption heading must render: $html")
@@ -158,7 +158,7 @@ class LandingAppTest extends WebsiteTest:
             // Four paths, each a styled card.
             val paths = countOccurrences(html, "class=\"path\"")
             assert(paths == 4, s"expected 4 adoption paths, got $paths")
-            assert(html.contains("Already on ZIO or Cats Effect?"), "path 1 names the ZIO/Cats interop")
+            assert(html.contains("Already on ZIO?"), "path 1 names the ZIO interop")
             assert(html.contains("Want only the runtime?"), "path 2 names the drop-in runtime")
             assert(html.contains("Want no runtime?"), "path 3 names the standalone-modules path")
             assert(html.contains("Starting fresh?"), "path 4 names the fresh-start import")
@@ -172,19 +172,16 @@ class LandingAppTest extends WebsiteTest:
                 html.contains("kyo-prelude handles typed errors"),
                 "the no-runtime path must name kyo-prelude's runtime-free effects"
             )
-            // The interop libraries are named as a factual interop claim.
+            // The interop library is named as a factual interop claim.
             assert(html.contains("ZIO"), "the ZIO interop fact must be named")
-            assert(html.contains("Cats Effect"), "the Cats Effect interop fact must be named")
-            // The code receipt shows FOUR conversions: ZIO and Cats Effect each lift into Kyo (`.get`) and
-            // run back out of Kyo (`.run`). ZIOs and Cats are the two bridge objects.
+            // The code receipt shows TWO conversions: ZIO lifts into Kyo (`.get`) and runs back out of
+            // Kyo (`.run`). ZIOs is the bridge object.
             assert(html.contains("ZIOs"), "the receipt must name the ZIOs bridge")
-            assert(html.contains("Cats"), "the receipt must name the Cats bridge")
             assert(html.contains(".get(loadUser)"), "the receipt must show ZIOs.get lifting a ZIO into a Kyo row")
             assert(html.contains(".run(checkout)"), "the receipt must show .run turning a Kyo computation back out")
-            assert(html.contains(".get(cachedUser)"), "the receipt must show Cats.get lifting a cats.effect.IO into a Kyo row")
             assert(
-                html.contains("Kyo composes with ZIO and Cats Effect, both ways"),
-                "the receipt comment must state the both-libraries, both-directions framing"
+                html.contains("Kyo composes with ZIO, both ways"),
+                "the receipt comment must state the both-directions framing"
             )
             // The old one-directional scheduler-as-ExecutionContext line is gone from the receipt.
             assert(!html.contains(".get.asExecutionContext"), "the receipt no longer shows the scheduler ExecutionContext line")
@@ -193,12 +190,10 @@ class LandingAppTest extends WebsiteTest:
             assert(html.contains("class=\"code-card-wrap\""), "the adopt receipt is wrapped in the centering container")
             assert(html.contains("data-section=\"adopt-code\""), "the adopt receipt carries its editor-card section hook")
             // Each path lists the modules it covers, grounded in the real module set (runtime = scheduler).
-            // Path 1 (effect interop): kyo-zio + kyo-cats.
+            // Path 1 (effect interop): kyo-zio.
             assert(html.contains("/latest/kyo-zio/"), "path 1 lists kyo-zio")
-            assert(html.contains("/latest/kyo-cats/"), "path 1 lists kyo-cats")
             // Path 2 (the scheduler runtime + its drop-in integrations).
             assert(html.contains("/latest/kyo-scheduler/"), "path 2 lists kyo-scheduler")
-            assert(html.contains("/latest/kyo-scheduler-cats/"), "path 2 lists the Cats Effect scheduler integration")
             assert(html.contains("/latest/kyo-scheduler-zio/"), "path 2 lists the ZIO scheduler integration")
             assert(html.contains("/latest/kyo-scheduler-pekko/"), "path 2 lists the Pekko scheduler integration")
             assert(html.contains("/latest/kyo-scheduler-finagle/"), "path 2 lists the Finagle scheduler integration")

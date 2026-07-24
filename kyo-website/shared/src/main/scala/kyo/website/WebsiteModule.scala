@@ -12,8 +12,8 @@ final case class WebsiteModule(
 ) derives CanEqual:
     /** Friendly nav-rail label derived from the slug: strips a leading `kyo-` prefix, then splits on
       * `-` and capitalizes each segment, joining with spaces so no hyphen survives. `kyo-core` becomes
-      * `Core`, `kyo-stats-registry` becomes `Stats Registry`, `kyo-scheduler-cats` becomes
-      * `Scheduler Cats`. Slugs without a `kyo-` prefix are transformed the same way.
+      * `Core`, `kyo-stats-registry` becomes `Stats Registry`, `kyo-scheduler-zio` becomes
+      * `Scheduler Zio`. Slugs without a `kyo-` prefix are transformed the same way.
       */
     def displayName: String =
         val base = if slug.startsWith("kyo-") then slug.stripPrefix("kyo-") else slug
