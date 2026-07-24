@@ -929,8 +929,8 @@ final private[kyo] class HttpContainerBackend(
     def copyTo(id: Container.Id, source: Path, containerPath: Path)(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        UUID.v4.map { uuid =>
-            copyToWithSuffix(id, source, containerPath, uuid.show)
+        UUID.v4String.map { suffix =>
+            copyToWithSuffix(id, source, containerPath, suffix)
         }
     end copyTo
 

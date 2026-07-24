@@ -4,7 +4,7 @@ import kyo.*
 import kyo.doctest.*
 
 /** Tests for Driver covering init, close, and compile behaviour including sequential safety, warnings, and -Werror. */
-class DriverTest extends kyo.doctest.DoctestTest:
+class DriverTest extends kyo.test.Test[Any]:
 
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
         for

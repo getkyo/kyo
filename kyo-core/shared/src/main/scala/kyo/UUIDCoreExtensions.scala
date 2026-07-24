@@ -9,6 +9,10 @@ object UUIDCoreExtensions:
         def v4(using Frame): UUID < Sync =
             UUIDGenerator.v4
 
+        /** Generates a secure RFC version 4 UUID and renders its canonical lowercase text. */
+        def v4String(using Frame): String < Sync =
+            UUIDGenerator.v4.map(_.show)
+
         /** Generates a monotonic RFC version 7 UUID with the dynamically scoped generator. */
         def v7(using Frame): UUID < Sync =
             UUIDGenerator.v7
