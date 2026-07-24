@@ -136,6 +136,17 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
                     case Absent     => fail("live version 7 UUID did not contain its timestamp")
             end for
         }
+
+        "live version 7 observes the dynamically scoped Kyo Clock" in {
+            val controlledMillis = 8000000000000L
+
+            Clock.withTimeControl { control =>
+                for
+                    _         <- control.set(Instant.Epoch + controlledMillis.millis)
+                    generated <- UUID.v7
+                yield assert(generated.unixTimestampMillis == Maybe(controlledMillis))
+            }
+        }
     }
 
     "scoping" - {
@@ -187,6 +198,14 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
     }
 
     "deterministic generator" - {
+        "checks finite entropy blocks without integer overflow" in {
+            assert(UUIDGenerator.containsEntropyBlock(size = 16, start = 0))
+            assert(!UUIDGenerator.containsEntropyBlock(size = 15, start = 0))
+            assert(UUIDGenerator.containsEntropyBlock(size = Int.MaxValue, start = Int.MaxValue - 16))
+            assert(!UUIDGenerator.containsEntropyBlock(size = Int.MaxValue, start = Int.MaxValue - 15))
+            assert(!UUIDGenerator.containsEntropyBlock(size = Int.MaxValue, start = -1))
+        }
+
         "consumes finite entropy in order and fails after it is exhausted" in {
             val firstEntropy = entropy(
                 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0xa6, 0x77,
@@ -225,6 +244,29 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
     }
 
     "version 7" - {
+        "panics with the exact failure when the observed timestamp is negative" in {
+            val generator = deterministic(-1L)(entropyWithLast(0))
+
+            Abort.run[Any](generator.v7).map: result =>
+                result match
+                    case Result.Panic(actual: IllegalArgumentException) =>
+                        assert(actual.getMessage == "UUID version 7 timestamp must be between 0 and 281474976710655 milliseconds, got -1")
+                    case other => fail(s"expected negative UUID version 7 timestamp panic, got $other")
+        }
+
+        "panics with the exact failure when the observed timestamp exceeds 48 bits" in {
+            val generator = deterministic(0x1000000000000L)(entropyWithLast(0))
+
+            Abort.run[Any](generator.v7).map: result =>
+                result match
+                    case Result.Panic(actual: IllegalArgumentException) =>
+                        assert(
+                            actual.getMessage ==
+                                "UUID version 7 timestamp must be between 0 and 281474976710655 milliseconds, got 281474976710656"
+                        )
+                    case other => fail(s"expected oversized UUID version 7 timestamp panic, got $other")
+        }
+
         "maps the observed timestamp and secure payload into the RFC layout" in {
             val generator = deterministic(0x010203040506L)(entropy(
                 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x26, 0x47,
@@ -309,6 +351,41 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
                 assert(advanced.show == "00000000-03e9-7000-8000-00000000002a")
                 assert(advanced.unixTimestampMillis == Maybe(1001L))
                 assert(exhausted.compare(advanced) < 0)
+            end for
+        }
+
+        "increments a nonexhausted payload while preserving the maximum timestamp" in {
+            val payloadBeforeMaximum =
+                Array.fill[Byte](6)(0) ++
+                    entropy(0x0f, 0xff, 0x3f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe)
+            val generator = deterministic(0xffffffffffffL, 0xffffffffffffL)(payloadBeforeMaximum)
+
+            for
+                before <- generator.v7
+                atMax  <- generator.v7
+            yield
+                assert(before.show == "ffffffff-ffff-7fff-bfff-fffffffffffe")
+                assert(atMax.show == "ffffffff-ffff-7fff-bfff-ffffffffffff")
+                assert(atMax.unixTimestampMillis == Maybe(0xffffffffffffL))
+            end for
+        }
+
+        "panics instead of wrapping when the maximum timestamp payload is exhausted" in {
+            val exhaustedPayload =
+                Array.fill[Byte](6)(0) ++
+                    entropy(0x0f, 0xff, 0x3f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)
+            val generator = deterministic(0xffffffffffffL, 0xffffffffffffL)(exhaustedPayload, entropyWithLast(0))
+
+            for
+                exhausted <- generator.v7
+                result    <- Abort.run[Any](generator.v7)
+            yield
+                assert(exhausted.show == "ffffffff-ffff-7fff-bfff-ffffffffffff")
+                result match
+                    case Result.Panic(actual: IllegalStateException) =>
+                        assert(actual.getMessage == "UUID version 7 timestamp and payload space exhausted")
+                    case other => fail(s"expected UUID version 7 exhaustion panic, got $other")
+                end match
             end for
         }
 

@@ -28,6 +28,9 @@ object UUID:
     /** The max UUID, `ffffffff-ffff-ffff-ffff-ffffffffffff`, with all 128 bits set to one. */
     val max: UUID = (-1L, -1L)
 
+    private[kyo] def fromLongs(mostSignificantBits: Long, leastSignificantBits: Long): UUID =
+        (mostSignificantBits, leastSignificantBits)
+
     /** The RFC 9562 variant encoded in a UUID's variant bits.
       *
       * The variant occupies the most significant bits of octet 8. `RFC` is the variant used by every UUID version this module
