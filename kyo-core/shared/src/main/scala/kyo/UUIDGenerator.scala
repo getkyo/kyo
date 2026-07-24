@@ -1,6 +1,5 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicInteger
 import kyo.internal.UUIDEntropyPlatform
 
 /** Generates secure random and time-ordered UUIDs.
@@ -33,7 +32,7 @@ object UUIDGenerator:
 
     /** The default generator backed by the platform secure entropy source and the dynamically scoped Kyo clock. */
     val live: UUIDGenerator =
-        make(Clock.now.map(_.toJava.toEpochMilli), UUIDEntropyPlatform.live)
+        make(Clock.nowWith(_.toJava.toEpochMilli), UUIDEntropyPlatform.live)
 
     private val local = Local.init(live)
 
@@ -149,8 +148,10 @@ object UUIDGenerator:
     end make
 
     private def makeFinite(clockMillis: Chunk[Long], entropy: Chunk[Byte]): TestControl =
-        val clockIndex   = new AtomicInteger(0)
-        val entropyIndex = new AtomicInteger(0)
+        // Unsafe: test-only counters that never escape this constructor and are only ever read or updated inside Sync.defer.
+        import AllowUnsafe.embrace.danger
+        val clockIndex   = AtomicInt.Unsafe.init(0)
+        val entropyIndex = AtomicInt.Unsafe.init(0)
         val finiteEntropy = new UUIDEntropyPlatform:
             def next16(using Frame): Span[Byte] < Sync =
                 Sync.defer:

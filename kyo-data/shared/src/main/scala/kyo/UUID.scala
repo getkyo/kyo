@@ -13,9 +13,12 @@ import kyo.internal.Sha256
   * This type carries only pure value operations: parsing, formatting, byte conversion, and the deterministic name-based constructors
   * [[UUID.v5]] and [[UUID.v8Sha256]]. Random and time-based generation (v4, v7) is an effectful capability that lives in `kyo-core`.
   */
-opaque type UUID = (Long, Long)
+opaque type UUID = UUID.Repr
 
 object UUID:
+
+    /** The 128-bit backing representation of a UUID, as two `Long` fields rather than a `Tuple2`, so the bits stay unboxed. */
+    final private[kyo] case class Repr(msb: Long, lsb: Long)
 
     inline given CanEqual[UUID, UUID] = CanEqual.derived
 
@@ -23,13 +26,13 @@ object UUID:
         def compare(x: UUID, y: UUID): Int = x.compare(y)
 
     /** The nil UUID, `00000000-0000-0000-0000-000000000000`, with all 128 bits set to zero. */
-    val nil: UUID = (0L, 0L)
+    val nil: UUID = Repr(0L, 0L)
 
     /** The max UUID, `ffffffff-ffff-ffff-ffff-ffffffffffff`, with all 128 bits set to one. */
-    val max: UUID = (-1L, -1L)
+    val max: UUID = Repr(-1L, -1L)
 
     private[kyo] def fromLongs(mostSignificantBits: Long, leastSignificantBits: Long): UUID =
-        (mostSignificantBits, leastSignificantBits)
+        Repr(mostSignificantBits, leastSignificantBits)
 
     /** The RFC 9562 variant encoded in a UUID's variant bits.
       *
@@ -116,7 +119,7 @@ object UUID:
             end if
             i += 1
         end while
-        (msb, lsb)
+        Repr(msb, lsb)
     end readCanonical
 
     private def validateCanonical(value: String): Maybe[InvalidProblem] =
@@ -188,7 +191,7 @@ object UUID:
         while i < 16 do
             lsb = (lsb << 8) | (bytes(i) & 0xffL)
             i += 1
-        (msb, lsb)
+        Repr(msb, lsb)
     end fromByteArray
 
     /** Builds a UUID from the first 16 bytes of a name-based hash, stamping the version nibble and the RFC 9562 variant bits. */
@@ -254,7 +257,8 @@ object UUID:
 
         /** Renders this UUID in canonical lowercase `8-4-4-4-12` hex form. */
         def show: String =
-            val (msb, lsb) = self
+            val msb = self.msb
+            val lsb = self.lsb
             def nibbleAt(n: Int): Int =
                 if n < 16 then ((msb >>> ((15 - n) * 4)) & 0x0fL).toInt
                 else ((lsb >>> ((31 - n) * 4)) & 0x0fL).toInt
@@ -275,9 +279,10 @@ object UUID:
 
         /** Returns the raw 128-bit big-endian byte representation of this UUID, as a fresh 16-byte `Span`. */
         def bytes: Span[Byte] =
-            val (msb, lsb) = self
-            val arr        = new Array[Byte](16)
-            var i          = 0
+            val msb = self.msb
+            val lsb = self.lsb
+            val arr = new Array[Byte](16)
+            var i   = 0
             while i < 8 do
                 arr(i) = ((msb >>> ((7 - i) * 8)) & 0xffL).toByte
                 i += 1
@@ -289,13 +294,11 @@ object UUID:
 
         /** Returns the version nibble (bits 12-15 of the time_hi_and_version field), e.g. `5` for a [[UUID.v5]] value. */
         def version: Int =
-            val (msb, _) = self
-            ((msb >>> 12) & 0x0fL).toInt
+            ((self.msb >>> 12) & 0x0fL).toInt
 
         /** Returns the RFC 9562 variant encoded in this UUID's variant bits. */
         def variant: Variant =
-            val (_, lsb) = self
-            val topByte  = ((lsb >>> 56) & 0xffL).toInt
+            val topByte = ((self.lsb >>> 56) & 0xffL).toInt
             if (topByte & 0x80) == 0 then Variant.NCS
             else if (topByte & 0x40) == 0 then Variant.RFC
             else if (topByte & 0x20) == 0 then Variant.Microsoft
@@ -306,17 +309,14 @@ object UUID:
         /** Returns the Unix timestamp in milliseconds embedded in a version 7 UUID, or `Absent` for any other version. */
         def unixTimestampMillis: Maybe[Long] =
             if self.version == 7 then
-                val (msb, _) = self
-                Maybe((msb >>> 16) & 0xffffffffffffL)
+                Maybe((self.msb >>> 16) & 0xffffffffffffL)
             else Absent
 
         /** Compares this UUID to `that` using unsigned bytewise ordering of the 128-bit value, matching RFC 9562's ordering. */
         def compare(that: UUID): Int =
-            val (msb1, lsb1) = self
-            val (msb2, lsb2) = that
-            val msbOrder     = java.lang.Long.compareUnsigned(msb1, msb2)
+            val msbOrder = java.lang.Long.compareUnsigned(self.msb, that.msb)
             if msbOrder != 0 then msbOrder
-            else java.lang.Long.compareUnsigned(lsb1, lsb2)
+            else java.lang.Long.compareUnsigned(self.lsb, that.lsb)
         end compare
     end extension
 end UUID
