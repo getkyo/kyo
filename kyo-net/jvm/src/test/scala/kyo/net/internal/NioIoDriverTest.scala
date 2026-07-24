@@ -377,6 +377,7 @@ class NioIoDriverTest extends Test:
             driver.awaitRead(handle, p2.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             p2.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get
         }.map { r2 =>
+            sv.close()
             driver.closeHandle(handle)
             driver.close()
             val ReadOutcome.Bytes(span2) = r2.runtimeChecked
