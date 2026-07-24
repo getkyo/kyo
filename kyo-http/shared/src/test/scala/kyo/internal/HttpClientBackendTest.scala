@@ -17,6 +17,19 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
 
     val client = HttpTestPlatformBackend.client
 
+    final private class FixedUUIDGenerator(value: UUID) extends UUIDGenerator:
+        var calls = 0
+
+        def v4(using Frame): UUID < Sync =
+            Sync.defer {
+                calls += 1
+                value
+            }
+
+        def v7(using Frame): UUID < Sync =
+            Sync.defer(value)
+    end FixedUUIDGenerator
+
     // ---------------------------------------------------------------------------
     // Helpers shared by integration tests
     // ---------------------------------------------------------------------------
@@ -42,6 +55,103 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                 }
             }
         }
+
+    "multipart UUID boundary plumbing" - {
+        "buffered request transmits one scoped boundary in both header and body" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route = HttpRoute.postRaw("buffered-multipart")
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
+            val endpoint = route.handler { request =>
+                val header = request.headers.get("Content-Type").getOrElse("")
+                val value  = new String(request.fields.body.head.data.toArrayUnsafe, "UTF-8")
+                HttpResponse.ok(s"$header|$value")
+            }
+            val part = HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("buffered-value".getBytes("UTF-8")))
+
+            Scope.run {
+                withServer(endpoint) { url =>
+                    UUID.let(generator) {
+                        directSend(
+                            url,
+                            route,
+                            HttpRequest.postRaw(HttpUrl.fromUri("/buffered-multipart")).addField("body", Seq(part))
+                        )
+                    }.map { response =>
+                        assert(generator.calls == 1)
+                        assert(response.fields.body == s"multipart/form-data; boundary=${uuid.show}|buffered-value")
+                    }
+                }
+            }
+        }
+
+        "streaming request transmits one scoped boundary in both header and body" in {
+            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route = HttpRoute.postRaw("streaming-multipart")
+                .request(_.bodyMultipartStream)
+                .response(_.bodyText)
+            val endpoint = route.handler { request =>
+                request.fields.body.run.map { parts =>
+                    val header = request.headers.get("Content-Type").getOrElse("")
+                    val value  = new String(parts.head.data.toArrayUnsafe, "UTF-8")
+                    HttpResponse.ok(s"$header|$value")
+                }
+            }
+            val part = HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("streaming-value".getBytes("UTF-8")))
+            val body = Stream.init[HttpRequest.Part, Async](Seq(part))
+
+            Scope.run {
+                withServer(endpoint) { url =>
+                    UUID.let(generator) {
+                        directSend(
+                            url,
+                            route,
+                            HttpRequest.postRaw(HttpUrl.fromUri("/streaming-multipart")).addField("body", body)
+                        )
+                    }.map { response =>
+                        assert(generator.calls == 1)
+                        assert(response.fields.body == s"multipart/form-data; boundary=${uuid.show}|streaming-value")
+                    }
+                }
+            }
+        }
+
+        "303 follow-up GET does not generate a second multipart boundary" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val startRoute = HttpRoute.postRaw("multipart-start")
+                .request(_.bodyMultipart)
+                .response(_.bodyText)
+            val seenRoute = HttpRoute.getRaw("multipart-seen").response(_.bodyText)
+            val redirect = startRoute.handler { _ =>
+                HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/multipart-seen"))
+            }
+            val seen = seenRoute.handler { request =>
+                HttpResponse.ok(request.method.name)
+            }
+            val part = HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
+
+            Scope.run {
+                withServer(redirect, seen) { url =>
+                    HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                        HttpClient.init().map { httpClient =>
+                            val request = HttpRequest
+                                .postRaw(HttpUrl(url.scheme, url.host, url.port, "/multipart-start", Absent))
+                                .addField("body", Seq(part))
+                            UUID.let(generator) {
+                                httpClient.sendWith(startRoute, request)(identity)
+                            }.map { response =>
+                                assert(response.fields.body == "GET")
+                                assert(generator.calls == 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // ---------------------------------------------------------------------------
     // 1. Connect to HTTP URL resolves to port 80
