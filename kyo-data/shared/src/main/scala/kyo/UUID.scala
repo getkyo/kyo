@@ -85,7 +85,7 @@ object UUID:
 
     private val urnPrefix = "urn:uuid:"
 
-    private val v8Sha256Domain: Array[Byte] = "kyo:uuid:v8sha256:v1".getBytes(StandardCharsets.UTF_8)
+    private val v8Sha256Domain: Array[Byte] = "kyo.uuid.v8.sha256.v1".getBytes(StandardCharsets.UTF_8)
 
     private def hexValue(c: Char): Int =
         if c >= '0' && c <= '9' then c - '0'
@@ -197,18 +197,14 @@ object UUID:
         fromByteArray(bytes)
     end fromHash
 
-    private def concat(namespace: UUID, name: Span[Byte], extra: Array[Byte]): Array[Byte] =
-        val nsBytes   = namespace.bytes.toArray
-        val nameBytes = name.toArray
-        val input     = new Array[Byte](extra.length + nsBytes.length + nameBytes.length)
-        var offset    = 0
-        java.lang.System.arraycopy(extra, 0, input, offset, extra.length)
-        offset += extra.length
-        java.lang.System.arraycopy(nsBytes, 0, input, offset, nsBytes.length)
-        offset += nsBytes.length
-        java.lang.System.arraycopy(nameBytes, 0, input, offset, nameBytes.length)
-        input
-    end concat
+    private[kyo] def unsignedIntBytes(value: Int): Array[Byte] =
+        Array(
+            (value >>> 24).toByte,
+            (value >>> 16).toByte,
+            (value >>> 8).toByte,
+            value.toByte
+        )
+    end unsignedIntBytes
 
     /** Deterministically derives a version 5 UUID from a namespace and a name, per RFC 9562's name-based algorithm.
       *
@@ -223,15 +219,15 @@ object UUID:
       *   the deterministic version 5 UUID
       */
     def v5(namespace: UUID, name: Span[Byte]): UUID =
-        val input = concat(namespace, name, Array.emptyByteArray)
-        fromHash(Sha1.hash(input), version = 5)
+        val input = Seq(namespace.bytes.toArrayUnsafe, name.toArrayUnsafe)
+        fromHash(Sha1.hashChunks(input), version = 5)
 
     /** Deterministically derives a version 8 UUID from a namespace and a name using the Kyo `v8Sha256` profile.
       *
-      * The result is `SHA-256(domain ++ namespace.bytes ++ name)`, truncated to 128 bits with the version nibble set to `8` and the
-      * variant bits set to the RFC 9562 variant. `domain` is a fixed, versioned marker (`kyo:uuid:v8sha256:v1`) that separates this
-      * profile's hash space from other name-based schemes, so a collision with a differently-defined v8 profile would require a SHA-256
-      * collision on the domain-tagged input. Equal `(namespace, name)` pairs always produce the same UUID.
+      * The result hashes `u32be(21) ++ UTF8("kyo.uuid.v8.sha256.v1") ++ namespace.bytes ++ u32be(name.length) ++ name`, truncates the
+      * SHA-256 digest to 128 bits, and sets the version nibble to `8` and the variant bits to the RFC 9562 variant. The unsigned 32-bit
+      * lengths use big-endian encoding. A `Span` length is bounded by `Int`, so every accepted name length has an exact representation.
+      * Equal `(namespace, name)` pairs always produce the same UUID.
       *
       * @param namespace
       *   the namespace UUID
@@ -241,8 +237,15 @@ object UUID:
       *   the deterministic version 8 UUID
       */
     def v8Sha256(namespace: UUID, name: Span[Byte]): UUID =
-        val input = concat(namespace, name, v8Sha256Domain)
-        fromHash(Sha256.hash(input), version = 8)
+        val input = Seq(
+            unsignedIntBytes(v8Sha256Domain.length),
+            v8Sha256Domain,
+            namespace.bytes.toArrayUnsafe,
+            unsignedIntBytes(name.size),
+            name.toArrayUnsafe
+        )
+        fromHash(Sha256.hashChunks(input), version = 8)
+    end v8Sha256
 
     extension (self: UUID)
 
