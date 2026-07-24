@@ -19,6 +19,13 @@ runs:
       with:
         node-version: '24'
 
+    # Native rows need the headroom (see the script header); other rows never came close to the
+    # disk cliff, so they skip the ~30s deletion cost.
+    - name: Reclaim disk (Linux Native)
+      if: ${{ contains(inputs.os, 'linux') && inputs.target == 'Native' }}
+      shell: bash
+      run: bash scripts/ci-reclaim-disk.sh
+
     - uses: actions/cache@v5
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
