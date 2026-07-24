@@ -8,6 +8,9 @@ package uuidclient {
 
         val tupleMemberAccessCompiles: Boolean =
             typeChecks("kyo.UUID.nil._1")
+
+        val trustedConstructorCompiles: Boolean =
+            typeChecks("kyo.UUID.fromLongs(0L, 0L)")
     end UUIDOpacityEvidence
 }
 
@@ -44,6 +47,19 @@ package kyo {
             "remains opaque to code outside its defining package" in {
                 assert(!uuidclient.UUIDOpacityEvidence.tupleAssignmentCompiles)
                 assert(!uuidclient.UUIDOpacityEvidence.tupleMemberAccessCompiles)
+                assert(!uuidclient.UUIDOpacityEvidence.trustedConstructorCompiles)
+            }
+
+            "constructs exact network order from trusted raw halves" in {
+                val id = UUID.fromLongs(
+                    0x0011223344556677L,
+                    0x8899aabbccddeeffL
+                )
+                assert(id.show == canonical)
+                assert(id.bytes.is(bytes(
+                    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
+                )))
             }
 
             "provides an all-zero nil value" in {
