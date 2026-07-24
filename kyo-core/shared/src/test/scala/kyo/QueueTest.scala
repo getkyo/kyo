@@ -8,6 +8,13 @@ class QueueTest extends kyo.test.Test[Any]:
 
     val access = Access.values.toList
 
+    private def drainUntilClosed(queue: Queue[Int])(using Frame): Unit < Async =
+        Loop.foreach:
+            Async.sleep(1.millis).andThen(Abort.run(queue.drain)).map:
+                case Result.Success(_)         => Loop.continue
+                case Result.Failure(_: Closed) => Loop.done
+                case panic: Result.Panic       => Abort.error(panic)
+
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
@@ -732,7 +739,7 @@ class QueueTest extends kyo.test.Test[Any]:
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.fill(100, 10)(assertEventually(queue.poll.map(_.isDefined)))
+                        drainUntilClosed(queue)
                     )
                 )
 
@@ -740,7 +747,7 @@ class QueueTest extends kyo.test.Test[Any]:
                 result1  <- producerFiber1.getResult
                 result2  <- producerFiber2.getResult
                 isClosed <- queue.closed
-                _        <- consumerFiber.getResult
+                _        <- consumerFiber.get
             yield
                 assert(isClosed)
                 assert(Seq(result1, result2).count(_.contains(true)) == 1)
@@ -771,7 +778,7 @@ class QueueTest extends kyo.test.Test[Any]:
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.fill(100, 10)(assertEventually(queue.poll.map(_.isDefined)))
+                        drainUntilClosed(queue)
                     )
                 )
 
@@ -779,7 +786,7 @@ class QueueTest extends kyo.test.Test[Any]:
                 result1  <- producerFiber1.getResult
                 result2  <- producerFiber2.getResult
                 isClosed <- queue.closed
-                _        <- consumerFiber.getResult
+                _        <- consumerFiber.get
             yield
                 assert(isClosed)
                 assert(
