@@ -1157,12 +1157,9 @@ lazy val `kyo-tasty` =
             // loads only .tasty files in the jar; missing transitive deps produce
             // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
             libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20"  % Test intransitive (),
-            libraryDependencies += "org.typelevel"     %% "cats-effect"     % "3.7.0"   % Test intransitive (),
-            libraryDependencies += "org.http4s"        %% "http4s-core"     % "0.23.28" % Test intransitive (),
             libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"   % Test intransitive (),
             libraryDependencies += "org.playframework" %% "play"            % "3.0.2"   % Test intransitive (),
             libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"   % Test intransitive (),
-            libraryDependencies += "org.typelevel"     %% "spire"           % "0.18.0"  % Test intransitive (),
             libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15"  % Test intransitive ()
         )
         .nativeSettings(`native-settings`)

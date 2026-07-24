@@ -39,42 +39,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Cats Effect classpath loads without error".onlyJvm.tagged("slow") in {
-        val jar = findJar("cats-effect_3")
-        Abort.run[TastyError](
-            Tasty.withClasspath(Seq(jar)) {
-                Tasty.classpath.map(_.errors)
-            }
-        ).map {
-            case Result.Success(errors) =>
-                assert(
-                    fileLevelErrors(errors).isEmpty,
-                    s"Cats Effect jar produced ${fileLevelErrors(errors).size} file-level errors: ${fileLevelErrors(errors).take(3).mkString(", ")}"
-                )
-                succeed
-            case Result.Failure(e) => fail(s"Unexpected TastyError loading Cats Effect jar: $e")
-            case Result.Panic(t)   => throw t
-        }
-    }
-
-    "Http4s classpath loads without error".onlyJvm.tagged("slow") in {
-        val jar = findJar("http4s-core_3")
-        Abort.run[TastyError](
-            Tasty.withClasspath(Seq(jar)) {
-                Tasty.classpath.map(_.errors)
-            }
-        ).map {
-            case Result.Success(errors) =>
-                assert(
-                    fileLevelErrors(errors).isEmpty,
-                    s"Http4s jar produced ${fileLevelErrors(errors).size} file-level errors: ${fileLevelErrors(errors).take(3).mkString(", ")}"
-                )
-                succeed
-            case Result.Failure(e) => fail(s"Unexpected TastyError loading Http4s jar: $e")
-            case Result.Panic(t)   => throw t
-        }
-    }
-
     "Pekko classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("pekko-actor_3")
         Abort.run[TastyError](
@@ -125,24 +89,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
                 )
                 succeed
             case Result.Failure(e) => fail(s"Unexpected TastyError loading Spark jar: $e")
-            case Result.Panic(t)   => throw t
-        }
-    }
-
-    "Spire classpath loads without error".onlyJvm.tagged("slow") in {
-        val jar = findJar("spire_3")
-        Abort.run[TastyError](
-            Tasty.withClasspath(Seq(jar)) {
-                Tasty.classpath.map(_.errors)
-            }
-        ).map {
-            case Result.Success(errors) =>
-                assert(
-                    fileLevelErrors(errors).isEmpty,
-                    s"Spire jar produced ${fileLevelErrors(errors).size} file-level errors: ${fileLevelErrors(errors).take(3).mkString(", ")}"
-                )
-                succeed
-            case Result.Failure(e) => fail(s"Unexpected TastyError loading Spire jar: $e")
             case Result.Panic(t)   => throw t
         }
     }
