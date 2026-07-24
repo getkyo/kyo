@@ -146,6 +146,37 @@ class SystemTest extends kyo.test.Test[Any]:
     "Parser" - {
         val TEST_PROP = "TEST_PROP"
 
+        "kyo UUID" - {
+            "parses canonical text into the exact UUID value" in {
+                val canonical = "919108f7-52d1-4320-9bac-f847db4148a8"
+                val result    = summon[Parser[UUID.InvalidUUID, UUID]].apply(canonical)
+                assert(result.map(_.show) == Result.succeed(canonical))
+            }
+
+            "preserves the typed UUID parsing problem for invalid text" in {
+                val result = summon[Parser[UUID.InvalidUUID, UUID]].apply("not-a-uuid")
+                assert(result.failure.map(_.problem) == Maybe(UUID.InvalidProblem.TextLength(10)))
+            }
+
+            "parses a UUID system property through the typed System API" in {
+                val canonical = "919108f7-52d1-4320-9bac-f847db4148a8"
+                val system    = System(new TestUnsafeSystem(properties = Map("KYO_UUID" -> canonical)))
+
+                System.let(system)(System.property[UUID]("KYO_UUID")).map: result =>
+                    assert(result.map(_.show) == Maybe(canonical))
+            }
+
+            "returns the exact typed failure for an invalid UUID system property" in {
+                val system = System(new TestUnsafeSystem(properties = Map("KYO_UUID" -> "not-a-uuid")))
+
+                Abort.run[UUID.InvalidUUID](System.let(system)(System.property[UUID]("KYO_UUID"))).map:
+                    case Result.Failure(error) =>
+                        assert(error.problem == UUID.InvalidProblem.TextLength(10))
+                    case other =>
+                        fail(s"expected typed UUID parsing failure, got $other")
+            }
+        }
+
         "String" - {
             "valid string" in {
                 j.System.setProperty(TEST_PROP, "test_value")

@@ -2534,11 +2534,25 @@ object Schema:
         )
 
     /** Schema for java.util.UUID values. Serializes as string. */
-    given uuidSchema: Schema[java.util.UUID] =
+    given javaUuidSchema: Schema[java.util.UUID] =
         Schema.init[java.util.UUID](
             writeFn = (v, w) => w.string(v.toString),
             readFn = r => java.util.UUID.fromString(r.string()),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.util.UUID].asInstanceOf[Tag[Any]])
+        )
+
+    /** Schema for kyo.UUID values. Serializes as canonical string. */
+    given uuidSchema: Schema[kyo.UUID] =
+        Schema.init[kyo.UUID](
+            writeFn = (v, w) => w.string(v.show),
+            readFn = r =>
+                val value = r.string()
+                kyo.UUID.parse(value)(using r.frame).foldOrThrow(
+                    identity,
+                    _ => throw TypeMismatchException(Seq.empty, "UUID", value)(using r.frame)
+                )
+            ,
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[kyo.UUID].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for Unit values.

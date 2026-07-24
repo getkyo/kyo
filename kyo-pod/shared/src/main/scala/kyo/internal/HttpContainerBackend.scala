@@ -929,18 +929,27 @@ final private[kyo] class HttpContainerBackend(
     def copyTo(id: Container.Id, source: Path, containerPath: Path)(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
+        UUID.v4String.map { suffix =>
+            copyToWithSuffix(id, source, containerPath, suffix)
+        }
+    end copyTo
+
+    private def copyToWithSuffix(
+        id: Container.Id,
+        source: Path,
+        containerPath: Path,
+        uniqueSuffix: String
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
         val containerDir  = containerPath.parent.map(_.toString).getOrElse("/")
         val containerFile = containerPath.name.getOrElse(containerPath.toString)
-        val uniqueSuffix  = java.util.UUID.randomUUID().toString
-        val tempDir       = Path("/tmp") / s"kyo-copyto-$uniqueSuffix"
-        val target        = tempDir / containerFile
 
-        Abort.run[FileFsException](tempDir.mkDir).map {
+        Abort.run[FileFsException](Path.tempDir(s"kyo-copyto-$uniqueSuffix-")).map {
             case Result.Failure(e) =>
                 Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
             case Result.Panic(t) =>
                 Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
-            case Result.Success(_) =>
+            case Result.Success(tempDir) =>
+                val target = tempDir / containerFile
                 Sync.ensure(tempDir.removeAll.unit) {
                     Abort.run[FileFsException](
                         source.copy(target, replaceExisting = true)
@@ -994,7 +1003,7 @@ final private[kyo] class HttpContainerBackend(
                     }
                 }
         }
-    end copyTo
+    end copyToWithSuffix
 
     def copyFrom(id: Container.Id, containerPath: Path, destination: Path)(
         using Frame

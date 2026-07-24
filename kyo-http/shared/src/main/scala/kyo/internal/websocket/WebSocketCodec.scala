@@ -3,6 +3,7 @@ package kyo.internal.websocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import kyo.*
+import kyo.internal.Sha1
 import kyo.internal.transport.*
 import kyo.internal.util.*
 import scala.annotation.tailrec
@@ -20,8 +21,8 @@ import scala.annotation.tailrec
   * readFrame handles Ping/Pong control frames transparently (auto-pong, skip-pong) and fails with Abort[Closed] on Close frames. Fragmented
   * messages are not reassembled — the caller receives each fragment as a separate frame.
   *
-  * Server frames are unmasked (mask=false); client frames are masked (mask=true) per RFC 6455 §5.3. Sha1 is used for accept key computation
-  * (WebSocketCodec.computeAcceptKey) because java.security.MessageDigest is unavailable on Scala Native.
+  * Server frames are unmasked (mask=false); client frames are masked (mask=true) per RFC 6455 §5.3. The shared Sha1 implementation is used
+  * for accept key computation because java.security.MessageDigest is unavailable on Scala Native.
   */
 private[kyo] object WebSocketCodec:
 

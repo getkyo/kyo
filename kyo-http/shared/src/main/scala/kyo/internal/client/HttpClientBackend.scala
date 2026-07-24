@@ -109,11 +109,12 @@ final private[kyo] class HttpClientBackend private (
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        maxResponseLength: Int
+        maxResponseLength: Int,
+        multipartBoundary: Maybe[String]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request)(
+            encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
                 onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
                 f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly - no `< S` wrapper
@@ -139,11 +140,12 @@ final private[kyo] class HttpClientBackend private (
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        maxResponseLength: Int
+        maxResponseLength: Int,
+        multipartBoundary: Maybe[String]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request)(
+            encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
                 onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
                 f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
@@ -217,18 +219,20 @@ final private[kyo] class HttpClientBackend private (
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        Sync.Unsafe.defer {
-            val fiber =
-                if request.method == HttpMethod.HEAD then
-                    sendBuffered(conn, route, request, maxResponseLength)
-                else if RouteUtil.isStreamingResponse(route) then
-                    sendStreaming(conn, route, request, maxResponseLength)
-                else
-                    sendBuffered(conn, route, request, maxResponseLength)
-            Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
-                onRelease(error)
-            } {
-                fiber.safe.use(f)
+        RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
+            Sync.Unsafe.defer {
+                val fiber =
+                    if request.method == HttpMethod.HEAD then
+                        sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+                    else if RouteUtil.isStreamingResponse(route) then
+                        sendStreaming(conn, route, request, maxResponseLength, multipartBoundary)
+                    else
+                        sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+                Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
+                    onRelease(error)
+                } {
+                    fiber.safe.use(f)
+                }
             }
         }
 
@@ -294,7 +298,8 @@ final private[kyo] class HttpClientBackend private (
     private inline def encodeAndSendDirectWith[In, Out, A](
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        multipartBoundary: Maybe[String]
     )(
         inline onInvalid: HttpException => A,
         inline f: (IOPromise[Nothing, ParsedResponse], String) => A
@@ -311,7 +316,7 @@ final private[kyo] class HttpClientBackend private (
                 if isDefaultPort || host.isEmpty then host else s"$host:$port"
             else
                 conn.hostHeaderValue
-        RouteUtil.encodeRequest(route, request)(
+        RouteUtil.encodeRequestWithBoundary(route, request, multipartBoundary)(
             onEmpty = (path, headers) =>
                 unsendableField(path, hostHeader, headers) match
                     case Present(ex) => onInvalid(ex)
@@ -1139,31 +1144,33 @@ final private[kyo] class HttpClientBackend private (
     )(using Frame): A < (Async & Abort[HttpException]) =
         val url = request.url
         val key = request.url.address
-        Sync.Unsafe.defer {
-            pool.poll(key) match
-                case Present(conn) =>
-                    val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
-                    releasingConn(key, conn)(responseFiber.safe.use(f))
-                case _ =>
-                    val reserved = pool.tryReserve(key)
-                    if reserved then
-                        Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
-                            val connectFiber = connect(url, config.connectTimeout, config.tls)
-                            connectFiber.safe.use { conn =>
-                                trackConn(conn)
-                                val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
-                                releasingConn(key, conn)(responseFiber.safe.use(f))
+        RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
+            Sync.Unsafe.defer {
+                pool.poll(key) match
+                    case Present(conn) =>
+                        val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                        releasingConn(key, conn)(responseFiber.safe.use(f))
+                    case _ =>
+                        val reserved = pool.tryReserve(key)
+                        if reserved then
+                            Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
+                                val connectFiber = connect(url, config.connectTimeout, config.tls)
+                                connectFiber.safe.use { conn =>
+                                    trackConn(conn)
+                                    val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                                    releasingConn(key, conn)(responseFiber.safe.use(f))
+                                }
                             }
-                        }
-                    else
-                        val (h, p) = hostPort(url)
-                        Abort.fail(HttpPoolExhaustedException(
-                            h,
-                            p,
-                            maxConnectionsPerHost,
-                            clientFrame
-                        ))
-                    end if
+                        else
+                            val (h, p) = hostPort(url)
+                            Abort.fail(HttpPoolExhaustedException(
+                                h,
+                                p,
+                                maxConnectionsPerHost,
+                                clientFrame
+                            ))
+                        end if
+            }
         }.asInstanceOf[A < (Async & Abort[HttpException])]
     end poolWithImpl
 
@@ -1207,16 +1214,17 @@ final private[kyo] class HttpClientBackend private (
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        maxResponseLength: Int
+        maxResponseLength: Int,
+        multipartBoundary: Maybe[String]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         // HEAD responses never have a body (RFC 9110 Section 9.3.2),
         // so always use the buffered path which skips body reading for HEAD.
         if request.method == HttpMethod.HEAD then
-            sendBuffered(conn, route, request, maxResponseLength)
+            sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
         else if RouteUtil.isStreamingResponse(route) then
-            sendStreaming(conn, route, request, maxResponseLength)
+            sendStreaming(conn, route, request, maxResponseLength, multipartBoundary)
         else
-            sendBuffered(conn, route, request, maxResponseLength)
+            sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
 
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
     private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed

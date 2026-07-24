@@ -265,6 +265,9 @@ object System:
         given Parser[NumberFormatException, Short]       = Parser(v => Result.catching[NumberFormatException](v.toShort))
         given Parser[Duration.InvalidDuration, Duration] = Parser(v => Duration.parse(v))
 
+        given Parser[UUID.InvalidUUID, UUID] =
+            Parser(v => UUID.parse(v))
+
         given Parser[IllegalArgumentException, java.util.UUID] =
             Parser(v => Result.catching[IllegalArgumentException](java.util.UUID.fromString(v)))
 

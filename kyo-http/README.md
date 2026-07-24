@@ -39,7 +39,7 @@ Kyo's HTTP/1.1 client and server module. Both client and server share a single A
 | JS | Node.js [`net`](https://nodejs.org/api/net.html) and [`tls`](https://nodejs.org/api/tls.html) |
 | Native | Direct [`epoll`](https://man7.org/linux/man-pages/man7/epoll.7.html) (Linux) and [`kqueue`](https://www.freebsd.org/cgi/man.cgi?kqueue) (macOS) |
 
-The library handles JSON, text, and binary content types with automatic serialization, supports streaming via SSE and NDJSON, includes composable middleware (filters), and supports OpenAPI in both directions: generating specs from routes and generating typed routes from specs at compile time. On the client side, it manages connection pooling, retries, and redirect following.
+The library handles JSON, URL-encoded forms, multipart, text, and binary body formats. JSON uses `Schema` codecs, forms use `HttpFormCodec`, and multipart bodies use `HttpRequest.Part`. It supports streaming via SSE and NDJSON, includes composable middleware (filters), and supports OpenAPI in both directions: generating specs from routes and generating typed routes from specs at compile time. On the client side, it manages connection pooling, retries, and redirect following.
 
 ## Getting Started
 
@@ -149,6 +149,41 @@ For raw byte streaming (chunked downloads, log tailing, etc.), `getStreamBytes` 
 val chunks: Stream[Span[Byte], Async & Abort[HttpException]] =
     HttpClient.getStreamBytes("https://example.com/large-file.bin")
 ```
+
+`postStreamBytes` sends a byte array request body and streams the response. To stream a request body, use typed routes with `.bodyStream`, `.bodyNdjson[V]`, or `.bodyMultipartStream`.
+
+### Multipart Uploads
+
+Multipart uploads use typed routes and `HttpRequest.Part`; there is no `postMultipart` convenience API:
+
+```scala
+val route = HttpRoute
+    .postRaw("upload")
+    .request(_.bodyMultipart)
+    .response(_.bodyText)
+
+val parts = Seq(
+    HttpRequest.Part(
+        name = "file",
+        filename = Present("report.txt"),
+        contentType = Present("text/plain"),
+        data = Span.fromUnsafe("hello".getBytes("UTF-8"))
+    )
+)
+
+val responseText =
+    HttpClient.withConfig(_.baseUrl("https://api.example.com")) {
+        HttpClient.use { client =>
+            client.sendWith(
+                route,
+                HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
+                    .addField("body", parts)
+            )(_.fields.body)
+        }
+    }
+```
+
+Outbound multipart encoding generates one boundary and applies it to both the `Content-Type` header and body, so callers normally should not set `Content-Type` manually. Valid supplied boundaries are preserved; invalid supplied boundaries are replaced.
 
 ### Configuration
 
@@ -269,6 +304,7 @@ val server2 = HttpServer.init(
 Additional config options include `backlog`, `tcpFastOpen`, `flushConsolidationLimit`, and `strictCookieParsing`.
 
 `init` returns an `HttpServer < (Async & Scope)`. The `Scope` effect means the server shuts down automatically when the enclosing scope closes.
+If the server cannot bind to the configured host and port, `HttpServer.init` and `HttpServer.initWith` abort with `HttpBindException`, usually because the address is unavailable or the port is already in use.
 
 ### Streaming
 
@@ -516,7 +552,7 @@ val route = HttpRoute
     .response(_.bodyJson[User])
 ```
 
-**File uploads** use `bodyMultipart` to receive uploaded files as `Seq[HttpPart]`, where each part has `name`, `filename`, `contentType`, and `data` fields. `bodyMultipartStream` provides a streaming variant for large uploads:
+**File uploads** use `bodyMultipart` to receive uploaded files as `Seq[HttpRequest.Part]`, where each part has `name`, `filename`, `contentType`, and `data` fields. `bodyMultipartStream` consumes `Stream[HttpRequest.Part, Async]` for large uploads. Server route decoding requires inbound multipart bodies to include a valid boundary in `Content-Type`; absent or invalid boundaries fail with `HttpMissingBoundaryException`:
 
 ```scala
 val route = HttpRoute
@@ -767,14 +803,23 @@ val handler =
 
 ### Client Errors
 
-Client operations use `Abort[HttpException]`. The error type has subtypes for different failure modes:
+Client operations use `Abort[HttpException]`. The hierarchy has five families:
 
-- `HttpConnectionException` for transport-level failures (connect errors, pool exhaustion)
-- `HttpRequestException` for request-level failures (timeouts, redirect loops, non-success status codes)
-- `HttpDecodeException` for parsing and deserialization failures (URL parsing, JSON/form decoding, missing fields)
-- `HttpServerException` for server-side operational failures (bind errors, unhandled handler errors)
+| Group and family | Leaf exceptions | Use when |
+|------------------|-----------------|----------|
+| Retry or connectivity, `HttpConnectionException` | `HttpConnectException`, `HttpDnsResolutionException`, `HttpUnixConnectException`, `HttpConnectTimeoutException`, `HttpPoolExhaustedException` | Deciding whether a failed connection attempt can be retried, or whether DNS, Unix socket configuration, connect timeout, or pool sizing must be fixed. |
+| Request policy and outbound validation, `HttpRequestException` | `HttpTimeoutException`, `HttpRedirectLoopException`, `HttpNonAsciiException`, `HttpInvalidFieldException`, `HttpStatusException` | Handling request policy failures and outbound request validation. |
+| Server operation and handler mapping, `HttpServerException` | `HttpBindException`, `HttpHandlerException` | Handling server startup failures and route handler failures that were not mapped by the endpoint. |
+| Decode, content, and wire shape, `HttpDecodeException` | `HttpUrlParseException`, `HttpMalformedBodyException`, `HttpFieldDecodeException`, `HttpMissingFieldException`, `HttpJsonDecodeException`, `HttpFormDecodeException`, `HttpUnsupportedMediaTypeException`, `HttpStreamingDecodeException`, `HttpMissingBoundaryException`, `HttpProtocolException`, `HttpPayloadTooLargeException`, `HttpConnectionClosedException` | Separating route or body decode failures from HTTP wire, framing, size, and peer-close failures. |
+| WebSocket upgrade, `HttpWebSocketException` | `HttpWebSocketHandshakeException` | Identifying the public exception leaf for WebSocket upgrade handshake failures. |
 
-Body-only convenience methods (`getText`, `getJson`, `getBinary`, etc.) automatically fail with `HttpStatusException` when the server returns a non-2xx status code. Use the `*Response` variants with `failOnError = false` to receive and inspect error responses.
+Body-only convenience methods (`getText`, `getJson`, `getBinary`, etc.) automatically fail with `HttpStatusException` when the server returns a non-2xx status code. This represents outbound response validation failure: the response arrived, but the selected client method treats that status as an error. Use the `*Response` variants with `failOnError = false` to receive and inspect error responses.
+
+Some request failures happen before the request is sent. Non-ASCII request-line data fails with `HttpNonAsciiException`, invalid field names, field values, request paths, or WebSocket request values fail with `HttpInvalidFieldException`, and redirect chains that exceed the configured limit fail with `HttpRedirectLoopException`.
+
+Decode failures split into two practical groups. Route and content decoding covers URL parse errors, path/query/header/cookie field decoding, missing required fields, JSON or form body decoding, unsupported or absent `Content-Type`, streaming content decoded as a buffered body, and missing multipart boundaries. Wire and framing failures cover malformed chunked bodies, protocol parse errors, oversized payloads, and connections closed while bytes were still expected.
+
+On the server side, failed bind attempts abort with `HttpBindException`. If a handler throws or aborts with an unmapped error, kyo-http represents that failure as `HttpHandlerException`; declared endpoint failures that use `.error[E](status)` are serialized with the declared status.
 
 ### Response Helpers
 
@@ -832,6 +877,8 @@ val echo =
 ```
 
 Call `ws.close(code, reason)` to initiate a close handshake (defaults to code `1000`). After the connection closes, `put` and `take` fail with `Abort[Closed]`, and `ws.closeReason` returns the code and reason sent by the peer. `HttpWebSocket.Config` tunes the connection: `bufferSize` (channel capacity, default 32), `maxFrameSize` (default 16 MiB), `autoPingInterval` for keep-alive pings, `closeTimeout`, and `subprotocols`. Pass it to either `HttpClient.webSocket(url, headers, config)` or `HttpHandler.webSocket(path, config)`.
+
+WebSocket-specific failures are represented by `HttpWebSocketException`, with `HttpWebSocketHandshakeException` as the public API leaf for handshake failures. Current client non-101 upgrade validation surfaces `HttpProtocolException`, while filter and `Halt` status rejection surfaces `HttpStatusException`.
 
 Caution: the backend does not close the outbound channel when the peer goes away. If you compose separate sender and receiver fibers, include `ws.onPeerClose` in the race or those fibers hang when the peer closes the connection:
 
@@ -1104,7 +1151,7 @@ val notFound: Nothing < Abort[HttpResponse.Halt] =
 
 - **Typed domain errors**: declare error types on the route with `.error[E](status)`. The framework serializes the error as JSON and responds with the declared status:
 
-  ```scala
+  ```scala doctest:expect=skipped
 val route =
     HttpRoute.getRaw("users" / Capture[Int]("id"))
         .response(_.bodyJson[User].error[ApiError](HttpStatus.NotFound))
