@@ -31,7 +31,7 @@ jobs:
       JAVA_OPTS: -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
       JVM_OPTS:  -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v8.1.1
