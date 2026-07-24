@@ -48,10 +48,76 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
             closeCalls += 1
     end ThrowingSource
 
+    final private class RecordingWindowsSource(bytes: Array[Byte], status: Int = 0) extends UUIDEntropyPlatform.WindowsSource:
+        var calls      = 0
+        var lastLength = -1
+
+        def fill(target: Array[Byte]): Int =
+            calls += 1
+            lastLength = target.length
+            if status == 0 then java.lang.System.arraycopy(bytes, 0, target, 0, target.length)
+            status
+        end fill
+    end RecordingWindowsSource
+
     "Native secure entropy adapter" - {
         "live adapter returns exactly 16 bytes" in {
             UUIDEntropyPlatform.live.next16.map: bytes =>
                 assert(bytes.size == 16)
+        }
+
+        "selects /dev/urandom on POSIX" in {
+            val expected      = Array.tabulate[Byte](16)(i => (i * 7 + 1).toByte)
+            val source        = new ScriptedSource(expected, Chunk(16))
+            val windowsSource = new RecordingWindowsSource(Array.fill[Byte](16)(0))
+            var openedPath    = ""
+            val adapter = UUIDEntropyPlatform.forOperatingSystem(
+                isWindows = false,
+                openPosix = path =>
+                    openedPath = path
+                    source
+                ,
+                windowsSource = windowsSource
+            )
+
+            adapter.next16.map: actual =>
+                assert(actual.is(Span.from(expected)))
+                assert(openedPath == "/dev/urandom")
+                assert(windowsSource.calls == 0)
+        }
+
+        "selects the Windows secure source and fills exactly 16 bytes" in {
+            val expected      = Array.tabulate[Byte](16)(i => (i * 19 + 2).toByte)
+            val windowsSource = new RecordingWindowsSource(expected)
+            var posixOpens    = 0
+            val adapter = UUIDEntropyPlatform.forOperatingSystem(
+                isWindows = true,
+                openPosix = _ =>
+                    posixOpens += 1
+                    throw new AssertionError("POSIX source opened on Windows")
+                ,
+                windowsSource = windowsSource
+            )
+
+            adapter.next16.map: actual =>
+                assert(actual.is(Span.from(expected)))
+                assert(windowsSource.calls == 1)
+                assert(windowsSource.lastLength == 16)
+                assert(posixOpens == 0)
+        }
+
+        "surfaces the exact Windows secure source status as a Sync panic" in {
+            val windowsSource = new RecordingWindowsSource(Array.fill[Byte](16)(0), status = 0xc0000001)
+            val adapter       = UUIDEntropyPlatform.fromWindowsSource(windowsSource)
+
+            Abort.run[Any](adapter.next16).map: result =>
+                result match
+                    case Result.Panic(actual: IllegalStateException) =>
+                        assert(actual.getMessage == "BCryptGenRandom failed with NTSTATUS 0xc0000001")
+                    case other => fail(s"expected BCryptGenRandom status panic, got $other")
+                end match
+                assert(windowsSource.calls == 1)
+                assert(windowsSource.lastLength == 16)
         }
 
         "opens /dev/urandom and retries partial reads until exactly 16 bytes are filled" in {
@@ -97,6 +163,23 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
                 end match
                 assert(source.readCalls == 1)
                 assert(source.closeCalls == 1)
+        }
+
+        "preserves the primary failure when read and close throw the same instance" in {
+            val failure = new RuntimeException("read and close failed")
+            val source = new UUIDEntropyPlatform.NativeSource:
+                def read(target: Array[Byte], offset: Int, length: Int): Int =
+                    throw failure
+                def close(): Unit =
+                    throw failure
+            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+
+            Abort.run[Any](adapter.next16).map: result =>
+                result match
+                    case Result.Panic(actual) =>
+                        assert(actual eq failure)
+                        assert(actual.getSuppressed.isEmpty)
+                    case other => fail(s"expected original read panic, got $other")
         }
 
         "surfaces a close failure after a successful read as the exact panic" in {
