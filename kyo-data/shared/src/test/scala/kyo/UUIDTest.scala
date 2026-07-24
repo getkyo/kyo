@@ -207,6 +207,10 @@ package kyo {
                 assert(UUID.v8Sha256(dns, utf8("kyo")).show == "40b14c55-e8a6-81ec-befd-7dcf39275a9b")
             }
 
+            "encodes the largest Span length as an unsigned 32-bit value" in {
+                assert(UUID.unsignedIntBytes(Int.MaxValue).sameElements(Array[Byte](0x7f, 0xff.toByte, 0xff.toByte, 0xff.toByte)))
+            }
+
             "sets the version-8 nibble" in {
                 assert(UUID.v8Sha256(dns, utf8("kyo")).version == 8)
             }
