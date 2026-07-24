@@ -2,9 +2,9 @@ import WasmCrossProject.*
 import WithKyoTest._
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
 import org.scalajs.jsenv.nodejs.*
-import org.typelevel.scalacoptions.ScalacOption
-import org.typelevel.scalacoptions.ScalacOptions
-import org.typelevel.scalacoptions.ScalaVersion
+import kyo.build.ScalacOption
+import kyo.build.ScalacOptions
+import kyo.build.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 import scala.scalanative.build.NativeConfig
 
