@@ -8,11 +8,6 @@ class QueueTest extends kyo.test.Test[Any]:
 
     val access = Access.values.toList
 
-    private def drainAfterOffersComplete(queue: Queue[Int], offersComplete: Latch)(using Frame): Unit < Async =
-        offersComplete.await.andThen(Abort.run(queue.drain)).map:
-            case panic: Result.Panic => Abort.error(panic)
-            case _                   => ()
-
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
@@ -718,27 +713,26 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "two producers calling closeAwaitEmpty" in {
             (for
-                size           <- Choice.eval(0, 1, 2, 10, 100)
-                queue          <- Queue.init[Int](size)
-                latch          <- Latch.init(1)
-                offersComplete <- Latch.init(50)
+                size  <- Choice.eval(0, 1, 2, 10, 100)
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
 
                 producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
                 producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        drainAfterOffersComplete(queue, offersComplete)
+                        Async.fill(100, 10)(assertEventually(queue.poll.map(_.isDefined)))
                     )
                 )
 
@@ -746,7 +740,7 @@ class QueueTest extends kyo.test.Test[Any]:
                 result1  <- producerFiber1.getResult
                 result2  <- producerFiber2.getResult
                 isClosed <- queue.closed
-                _        <- consumerFiber.get
+                _        <- consumerFiber.getResult
             yield
                 assert(isClosed)
                 assert(Seq(result1, result2).count(_.contains(true)) == 1)
@@ -758,27 +752,26 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "producer calling closeAwaitEmpty and another calling close" in {
             (for
-                size           <- Choice.eval(0, 1, 2, 10, 100)
-                queue          <- Queue.init[Int](size)
-                latch          <- Latch.init(1)
-                offersComplete <- Latch.init(50)
+                size  <- Choice.eval(0, 1, 2, 10, 100)
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
 
                 producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
                 producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)).andThen(offersComplete.release))
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.close)
                     )
                 )
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        drainAfterOffersComplete(queue, offersComplete)
+                        Async.fill(100, 10)(assertEventually(queue.poll.map(_.isDefined)))
                     )
                 )
 
@@ -786,7 +779,7 @@ class QueueTest extends kyo.test.Test[Any]:
                 result1  <- producerFiber1.getResult
                 result2  <- producerFiber2.getResult
                 isClosed <- queue.closed
-                _        <- consumerFiber.get
+                _        <- consumerFiber.getResult
             yield
                 assert(isClosed)
                 assert(

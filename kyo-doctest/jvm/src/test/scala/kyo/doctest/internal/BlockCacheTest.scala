@@ -4,7 +4,7 @@ import kyo.*
 import kyo.doctest.*
 
 /** Tests for BlockCache covering directory creation, cache lookup and recording, cache key components, and concurrent safety. */
-class BlockCacheTest extends kyo.doctest.DoctestTest:
+class BlockCacheTest extends kyo.test.Test[Any]:
 
     private def makeBlock(body: String, lineStart: Int = 1): Block =
         Block(
@@ -25,7 +25,7 @@ class BlockCacheTest extends kyo.doctest.DoctestTest:
     // S is an additional effect row so callers can return Async or any other effect.
     private def withTempDir[A, S](f: kyo.Path => A < (Async & Sync & Scope & S))(using Frame): A < (Async & Sync & Scope & S) =
         for
-            id <- UUID.v4.map(_.show)
+            id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-cache-test-$id"
             _   <- Abort.run[FileFsException](dir.mkDir).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)

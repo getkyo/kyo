@@ -2,25 +2,6 @@ package kyo
 
 class RandomTest extends kyo.test.Test[Any]:
 
-    "removed UUID API" - {
-        "does not expose UUID generation on the companion" in {
-            typeCheckFailure("Random." + "uuid")("value uuid is not a member of object kyo.Random")
-        }
-
-        "does not expose UUID generation on instances" in {
-            typeCheckFailure("Random.live." + "uuid")("value uuid is not a member of kyo.Random")
-        }
-
-        "does not expose UUID generation on Unsafe instances" in {
-            typeCheckFailure(
-                """
-                    import AllowUnsafe.embrace.danger
-                    Random.live.unsafe.
-                """ + "uuid()"
-            )("value uuid is not a member of kyo.Random.Unsafe")
-        }
-    }
-
     "mocked" - {
         val testRandom = Random(
             new Random.Unsafe:
@@ -37,6 +18,7 @@ class RandomTest extends kyo.test.Test[Any]:
                 def nextString(length: Int, chars: Seq[Char])(using AllowUnsafe) = chars.last.toString * length
                 def nextBytes(length: Int)(using AllowUnsafe)                    = Seq.fill(length)(1.toByte)
                 def shuffle[A](seq: Seq[A])(using AllowUnsafe)                   = seq.reverse
+                override def uuid()(using AllowUnsafe)                           = "mocked-uuid"
         )
 
         "nextInt" in {
@@ -117,6 +99,11 @@ class RandomTest extends kyo.test.Test[Any]:
             }
         }
 
+        "uuid" in {
+            Random.let(testRandom)(Random.uuid).map { v =>
+                assert(v == "mocked-uuid")
+            }
+        }
     }
 
     "live" - {
@@ -213,6 +200,19 @@ class RandomTest extends kyo.test.Test[Any]:
             }
         }
 
+        "uuid" in {
+            Random.uuid.map { v =>
+                assert(v.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+            }
+        }
+
+        "uuid uniqueness" in {
+            Random.uuid.map { a =>
+                Random.uuid.map { b =>
+                    assert(a != b)
+                }
+            }
+        }
     }
 
     "unsafe" - {
@@ -299,6 +299,11 @@ class RandomTest extends kyo.test.Test[Any]:
             assert(result.toSet == seq.toSet)
         }
 
+        "should generate uuid correctly" in {
+            val result = testUnsafe.uuid()
+            assert(result.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+        }
+
         "should convert to safe Random" in {
             val safeRandom: Random = testUnsafe.safe
             discard(safeRandom)
@@ -321,6 +326,7 @@ class RandomTest extends kyo.test.Test[Any]:
             def nextString(length: Int, chars: Seq[Char])(using Frame) = chars.last.toString * length
             def nextBytes(length: Int)(using Frame)                    = Seq.fill(length)(1.toByte)
             def shuffle[A](seq: Seq[A])(using Frame)                   = seq.reverse
+            def uuid(using Frame)                                      = "context-uuid"
             def unsafe                                                 = ???
 
         "get should return current Random instance" in {
