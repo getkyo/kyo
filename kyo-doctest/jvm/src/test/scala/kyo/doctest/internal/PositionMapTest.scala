@@ -3,7 +3,7 @@ package kyo.doctest.internal
 import kyo.*
 
 /** Tests for PositionMap covering synthetic-line to README-line translation. */
-class PositionMapTest extends kyo.test.Test[Any]:
+class PositionMapTest extends kyo.doctest.DoctestTest:
 
     // Helper: builds a standard Block with the given parameters.
     private def makeBlock(

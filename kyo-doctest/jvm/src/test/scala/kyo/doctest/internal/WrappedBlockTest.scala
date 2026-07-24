@@ -3,7 +3,7 @@ package kyo.doctest.internal
 import kyo.*
 
 /** Tests for WrappedBlock covering synthetic source generation and position-map construction. */
-class WrappedBlockTest extends kyo.test.Test[Any]:
+class WrappedBlockTest extends kyo.doctest.DoctestTest:
 
     private def makeBlock(
         body: String,

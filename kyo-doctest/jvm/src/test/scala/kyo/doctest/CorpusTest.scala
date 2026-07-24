@@ -9,7 +9,7 @@ import kyo.doctest.internal.MarkdownParser
   * Each test loads one fixture from the resources/corpus/ directory, runs Doctest.check against it, and asserts the expected Report shape.
   * The final test self-validates README.md.
   */
-class CorpusTest extends kyo.test.Test[Any]:
+class CorpusTest extends DoctestTest:
 
     // JVM classpath so the compiler can resolve types.
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
@@ -33,7 +33,7 @@ class CorpusTest extends kyo.test.Test[Any]:
         scalaOpts: Chunk[String] = Chunk.empty
     )(using Frame): Doctest.Report < (Sync & Async & Scope & Abort[Doctest.Error]) =
         for
-            id    <- Random.uuid
+            id    <- UUID.v4.map(_.show)
             cp    <- testClasspath
             nCpus <- System.availableProcessors
             cacheDir = Path.basePaths.tmp / s"kyo-doctest-corpus-cache-$id"

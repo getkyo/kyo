@@ -3,7 +3,7 @@ package kyo.doctest.internal
 import kyo.*
 
 /** Tests for ErrorReporter covering formatting of MappedDiagnostics and Failures. */
-class ErrorReporterTest extends kyo.test.Test[Any]:
+class ErrorReporterTest extends kyo.doctest.DoctestTest:
 
     // Helper: builds a PositionMap.MappedDiagnostic inline.
     private def makeDiagnostic(

@@ -1712,7 +1712,7 @@ val todoApp: UI < (Async & Scope) =
         draft <- Signal.initRef("")
         addTodo = draft.get.map { text =>
             if text.isEmpty then ()
-            else Random.uuid.map(id => todos.updateAndGet(_ :+ Todo(id, text, false))).andThen(draft.set(""))
+            else UUID.v4.map(id => todos.updateAndGet(_ :+ Todo(id.show, text, false))).andThen(draft.set(""))
         }
         toggle = (id: String) => todos.updateAndGet(_.map(t => if t.id == id then t.copy(done = !t.done) else t))
         remove = (id: String) => todos.updateAndGet(_.filterNot(_.id == id))
