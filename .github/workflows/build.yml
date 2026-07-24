@@ -86,6 +86,10 @@ jobs:
       # the 16GB runner (kernel OOM, exit 143). ci-test.sh applies this to the nativeLink
       # invocations only; compile and the test run keep all 4 CPUs.
       NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && '2' || '' }}"
+      # Below 512MB free the runner is minutes from dying WITHOUT uploading its log (observed twice
+      # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,
+      # converting an unattributable runner loss into a normal red job with the evidence in the log.
+      CI_MON_DISK_ABORT_MB: "512"
 
     steps:
       - uses: actions/checkout@v7.0.0
