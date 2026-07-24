@@ -92,7 +92,7 @@ jobs:
       CI_MON_DISK_ABORT_MB: "512"
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           # github.sha, not github.ref: a queued job must validate the commit that triggered the
           # run, not whatever the branch tip is when the job starts. The concurrency group in
