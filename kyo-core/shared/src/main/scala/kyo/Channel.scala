@@ -224,7 +224,7 @@ object Channel:
           * closed.
           *
           * @return
-          *   true if the channel was successfully closed and emptied, false if it was already closed
+          *   true if the channel was successfully closed and emptied, false if it was already closed or a hard `close()` aborted the drain
           */
         def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe.defer(self.closeAwaitEmpty().safe.get)
 
@@ -802,12 +802,26 @@ object Channel:
                     takes.poll().foreach { promise =>
                         queue.poll() match
                             case Result.Success(Present(value)) =>
-                                if !promise.complete(Result.succeed(value)) && !queue.offer(value).contains(true) then
-                                    // If completing the take fails and the queue
-                                    // cannot accept the value back, enqueue a
-                                    // placeholder put operation
-                                    val placeholder = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                                    discard(puts.offer(Put.Value(value, placeholder)))
+                                if !promise.complete(Result.succeed(value)) then
+                                    // The take was interrupted before receiving the value. Put it back if the queue still accepts writes.
+                                    queue.offer(value) match
+                                        case r if r.contains(true) => ()
+                                        case Result.Success(false) =>
+                                            // Full but open: hold as a placeholder put for a later transfer.
+                                            val placeholder = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                                            discard(puts.offer(Put.Value(value, placeholder)))
+                                        case _ =>
+                                            // HalfOpen/closed (a closeAwaitEmpty drain): the offer can never succeed, and a placeholder put would
+                                            // just be failed by the transfer arm, dropping the value. Retry delivery against the remaining takers.
+                                            // If none are waiting, the value's only consumer interrupted and the closing queue will not re-buffer
+                                            // it, so it is forfeited (the drain settles one element short).
+                                            @tailrec
+                                            def retryTransfer(): Unit =
+                                                takes.poll() match
+                                                    case Present(next) => if !next.complete(Result.succeed(value)) then retryTransfer()
+                                                    case Absent        => ()
+                                            retryTransfer()
+                                    end match
                             case _ =>
                                 // Queue became empty, enqueue the take again
                                 discard(takes.offer(promise))
@@ -827,21 +841,29 @@ object Channel:
                                     if i >= size then
                                         // All items offered, complete put
                                         promise.completeUnitDiscard()
-                                    else if !queue.offer(chunk(i)).contains(true) then
-                                        // Queue became full, add pending put for the rest of the batch
-                                        discard(priorityPuts.offer(Put.Batch(chunk.dropLeft(i), promise)))
-                                    else loop(i + 1)
+                                    else
+                                        queue.offer(chunk(i)) match
+                                            case Result.Success(true)  => loop(i + 1)
+                                            case Result.Success(false) =>
+                                                // Queue became full, add pending put for the rest of the batch
+                                                discard(priorityPuts.offer(Put.Batch(chunk.dropLeft(i), promise)))
+                                            case error =>
+                                                // Closing or closed: the offer can never succeed again; re-enqueueing would livelock this flush. Fail like the closed drain.
+                                                promise.completeDiscard(error.map(_ => ()))
+                                        end match
 
                                 loop(0)
 
                             case put @ Put.Value(value, promise) =>
-                                if queue.offer(value).contains(true) then
-                                    // Queue accepted the value, complete the put
-                                    promise.completeUnitDiscard()
-                                else
-                                    // Queue became full, enqueue the put again
-                                    discard(puts.offer(put))
-                                end if
+                                queue.offer(value) match
+                                    case Result.Success(true) =>
+                                        promise.completeUnitDiscard()
+                                    case Result.Success(false) =>
+                                        discard(puts.offer(put))
+                                    case error =>
+                                        // closing/closed: fail rather than re-enqueue (see the batch arm above)
+                                        promise.completeDiscard(error.map(_ => ()))
+                                end match
                         }
                         batchInProgress.set(false)
                         flush()
