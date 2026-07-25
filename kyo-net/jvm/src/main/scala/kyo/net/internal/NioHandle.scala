@@ -16,7 +16,10 @@ import scala.annotation.tailrec
   * distinguishable by their cell object identity.
   */
 final private[kyo] case class ReadArmCell(
-    promise: Promise.Unsafe[ReadOutcome, Abort[Closed]]
+    promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
+    // Probe arm rather than a ReadPump read arm: its promise is a throwaway (dispatch stages consumed bytes into NioHandle.graceStaging,
+    // never completes it). The flag rides the cell the ownership CAS already keys, so a raced retire cannot misroute.
+    probe: Boolean = false
 )
 
 /** JVM connection handle wrapping a non-blocking `SocketChannel` and a persistent read buffer.
@@ -33,7 +36,10 @@ final private[kyo] case class ReadArmCell(
 final private[kyo] class NioHandle private (
     val channel: SocketChannel,
     val readBufferSize: Int,
-    @volatile var tls: Maybe[NioTlsState]
+    @volatile var tls: Maybe[NioTlsState],
+    // Peer-close reclaim grace for this connection's ReadPump (kyo.net.NetConfig.peerCloseGrace), set from config at adoption. One handle
+    // spans a STARTTLS upgrade, so the upgraded connection inherits it.
+    val peerCloseGrace: Duration
 ):
     import AllowUnsafe.embrace.danger
     val readBuffer: ByteBuffer = ByteBuffer.allocateDirect(readBufferSize)
@@ -90,6 +96,17 @@ final private[kyo] class NioHandle private (
     // completion (completeConnect), the NIO analog of PosixTransport.deliverHandshakePlaintext. Empty for a fresh (non-upgrade) handshake.
     // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
     val upgradeAppData: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
+
+    // Peer-close grace latch: selector-carrier writer only (probe read saw FIN or a hard error); never cleared (terminal, and the handle spans a
+    // STARTTLS upgrade). @volatile for the grace timer's arbitrary reader carrier. No recycled-handle hazard: NIO keys every map by SocketChannel
+    // object identity, not an integer fd.
+    @volatile var peerClosed: Boolean = false
+
+    // Raw socket bytes the peer-close grace probe consumed while backpressured (plaintext for a plain handle, CIPHERTEXT for TLS): every read path
+    // redelivers them in order BEFORE any fresh socket byte. Selector-carrier single appender (CAS-append, chunk order preserved); drained by
+    // getAndSet(Chunk.empty) at each read entry. Bounded by NioIoDriver.GraceProbeStagingCap so a live chatty peer cannot turn the fd leak into a
+    // heap leak. Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
+    val graceStaging: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
 end NioHandle
 
 /** Factory and lifecycle operations for `NioHandle`. */
@@ -111,18 +128,18 @@ private[kyo] object NioHandle:
     end UpgradeHandoff
 
     /** Create a plain-TCP handle with an allocated direct read buffer. */
-    def init(channel: SocketChannel, bufferSize: Int)(using AllowUnsafe): NioHandle =
-        new NioHandle(channel, bufferSize, Absent)
+    def init(channel: SocketChannel, bufferSize: Int, peerCloseGrace: Duration)(using AllowUnsafe): NioHandle =
+        new NioHandle(channel, bufferSize, Absent, peerCloseGrace)
     end init
 
     /** Create a TLS-enabled handle. TLS buffers are sized from the `SSLEngine` session's recommended capacities. */
-    def initTls(channel: SocketChannel, bufferSize: Int, engine: SSLEngine)(using AllowUnsafe): NioHandle =
+    def initTls(channel: SocketChannel, bufferSize: Int, engine: SSLEngine, peerCloseGrace: Duration)(using AllowUnsafe): NioHandle =
         val session   = engine.getSession
         val netInBuf  = ByteBuffer.allocate(session.getPacketBufferSize)
         val netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
         val appInBuf  = ByteBuffer.allocate(session.getApplicationBufferSize)
         val tlsState  = NioTlsState(engine, netInBuf, netOutBuf, appInBuf)
-        new NioHandle(channel, bufferSize, Present(tlsState))
+        new NioHandle(channel, bufferSize, Present(tlsState), peerCloseGrace)
     end initTls
 
     /** Close the handle: send TLS close_notify if TLS (best-effort, non-blocking), then close channel. */

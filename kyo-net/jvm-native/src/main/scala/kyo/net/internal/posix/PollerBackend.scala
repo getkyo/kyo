@@ -182,10 +182,9 @@ final private[net] class PollScratch(
     val flags: Array[Int],
     val armBuf: kyo.ffi.Buffer[Byte],
     val kqueueData: Maybe[KqueuePollData],
-    // Per-event decoded kqueue `udata` (the owning handle id), parallel to `fds`/`flags`. kqueue's decode fills it from each event's `udata`; the
-    // poll loop drops an event whose `ids(i)` no longer matches the fd's current owner in `activeFds` (a stale event for a closed-and-recycled fd).
-    // On epoll this stays at the no-check sentinel ([[PollScratch.IdNoCheck]]) for every slot, so the guard is a no-op there (epoll cleanly drops a
-    // closed fd's pending events, so it has no recycled-fd stale-event exposure). Poll-loop-carrier-owned, like `fds`/`flags`. A heap array, GC'd.
+    // Per-event owning handle id, parallel to `fds`/`flags`, filled from each event's owner tag (kqueue `udata`, epoll the high 32 bits of
+    // `epoll_event.data`). The poll loop drops an event whose `ids(i)` no longer matches the fd's current owner in `activeFds` (a stale event for a
+    // closed-and-recycled fd). Only the wake event and unused slots keep the no-check sentinel ([[PollScratch.IdNoCheck]]). Poll-loop-carrier-owned.
     val ids: Array[Long]
 ):
     /** Per-driver fd -> currently-armed epoll direction bits (a union of EPOLLIN / EPOLLOUT). Used only by the epoll arm: mutated by
