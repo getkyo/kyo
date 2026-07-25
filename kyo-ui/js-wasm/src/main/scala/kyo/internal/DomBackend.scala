@@ -466,6 +466,12 @@ private[kyo] object DomBackend:
             st.top = rect.top.asInstanceOf[Double].toString + "px"
             st.width = rect.width.asInstanceOf[Double].toString + "px"
             st.height = rect.height.asInstanceOf[Double].toString + "px"
+            // The clone keeps the source classes; a %-based min/max (e.g. an overlay's `min-width:100%`)
+            // resolves against <body> and would override the pinned width, so neutralize it to hold the rect pin.
+            st.minWidth = "0"
+            st.maxWidth = "none"
+            st.minHeight = "0"
+            st.maxHeight = "none"
             st.margin = "0"
             st.pointerEvents = "none"
             g.setAttribute("data-kyo-ghost", "1")

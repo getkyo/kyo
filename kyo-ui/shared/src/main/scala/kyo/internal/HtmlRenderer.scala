@@ -923,7 +923,11 @@ private[kyo] object HtmlRenderer:
            |    var node=out[n];var rect=node.getBoundingClientRect();var leave=node.getAttribute("data-kyo-leave");
            |    var g=node.cloneNode(true);kyoStrip(g);
            |    g.style.position="fixed";g.style.left=rect.left+"px";g.style.top=rect.top+"px";
-           |    g.style.width=rect.width+"px";g.style.height=rect.height+"px";g.style.margin="0";g.style.pointerEvents="none";
+           |    g.style.width=rect.width+"px";g.style.height=rect.height+"px";
+           |    // The clone keeps the source classes; a %-based min/max (e.g. `min-width:100%`) resolves
+           |    // against <body> and would override the pinned width, so neutralize it to hold the rect pin.
+           |    g.style.minWidth="0";g.style.maxWidth="none";g.style.minHeight="0";g.style.maxHeight="none";
+           |    g.style.margin="0";g.style.pointerEvents="none";
            |    g.setAttribute("data-kyo-ghost","1");
            |    ghosts.push({node:g,leave:leave});
            |  }
