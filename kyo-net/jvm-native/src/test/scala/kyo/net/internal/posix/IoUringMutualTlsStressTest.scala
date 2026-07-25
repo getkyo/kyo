@@ -33,6 +33,9 @@ class IoUringMutualTlsStressTest extends Test:
             else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
         }
 
+    private val firstStallDump = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val stallDump       = java.util.concurrent.atomic.AtomicReference("(no dump captured)")
+
     "io_uring STARTTLS multi-record upgrade stress" in {
         PosixTestSockets.assumeUring()
         TlsRealEngines.assumeTlsReady()
@@ -131,6 +134,11 @@ class IoUringMutualTlsStressTest extends Test:
                         // The upgrade did not complete its round-trip: record the stage it stalled at (the race manifests as a Timeout at the
                         // "upgrade" stage). The recorded entries fail the test at the end so a stall is a hard failure, not a swallowed log line.
                         discard(stalls.add(s"$tag stalled-at=${stage.get} -> $other"))
+                        // EXPERIMENT: capture driver state at the FIRST stall, while the connection is still open (the
+                        // ensure closes it after). inFlight tells us whether a recv is armed and unfulfilled (ring/kernel
+                        // not delivering) or absent (the re-arm was lost in the upgrade window).
+                        if firstStallDump.compareAndSet(false, true) then
+                            discard(stallDump.set(kyo.internal.Diagnostics.dumpAll()))
                 }
             end oneUpgrade
 
@@ -158,7 +166,7 @@ class IoUringMutualTlsStressTest extends Test:
             Async.foreach(0 until groups)(oneGroup).andThen {
                 assert(
                     stalls.isEmpty,
-                    s"${stalls.size} upgrade(s) stalled: ${stalls.toArray.mkString("; ")}"
+                    s"${stalls.size} upgrade(s) stalled: ${stalls.toArray.mkString("; ")}\nDRIVER STATE AT FIRST STALL:\n${stallDump.get()}"
                 )
             }
         }
