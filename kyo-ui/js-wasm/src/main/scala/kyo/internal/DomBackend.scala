@@ -260,15 +260,40 @@ private[kyo] object DomBackend:
                             Present(UIEvent.ChangeNumeric(path, tgt.value.toDouble))
                         else if typ == "file" then
                             val files = tgt.files
-                            if files.length > 0 then
-                                val reader = new dom.FileReader()
-                                reader.onload = (_: dom.Event) =>
-                                    val content = reader.result.asInstanceOf[String]
-                                    val ev      = UIEvent.Change(path, content)
-                                    fireFromJs(events, dispatch(path, ev).unit)
-                                reader.readAsText(files(0))
+                            if evTypes.contains("fileselect") then
+                                // A FileReader per file, indexed so order survives; post FileSelect once all complete.
+                                val n = files.length
+                                if n > 0 then
+                                    val results = scala.collection.mutable.ArrayBuffer.fill[Maybe[UI.FilePayload]](n)(Absent)
+                                    var doneCt  = 0
+                                    var i       = 0
+                                    while i < n do
+                                        val ix     = i
+                                        val f      = files(ix)
+                                        val reader = new dom.FileReader()
+                                        reader.onload = (_: dom.Event) =>
+                                            val content = reader.result.asInstanceOf[String]
+                                            results(ix) = Present(UI.FilePayload(f.name, f.size.toLong, f.`type`, content))
+                                            doneCt += 1
+                                            if doneCt == n then
+                                                val payloads = results.toSeq.collect { case Present(p) => p }
+                                                fireFromJs(events, dispatch(path, UIEvent.FileSelect(path, payloads)).unit)
+                                        reader.readAsText(f)
+                                        i += 1
+                                    end while
+                                end if
+                                Absent
+                            else
+                                // Legacy: first file's text -> Change (byte-compatible content-only).
+                                if files.length > 0 then
+                                    val reader = new dom.FileReader()
+                                    reader.onload = (_: dom.Event) =>
+                                        val content = reader.result.asInstanceOf[String]
+                                        fireFromJs(events, dispatch(path, UIEvent.Change(path, content)).unit)
+                                    reader.readAsText(files(0))
+                                end if
+                                Absent
                             end if
-                            Absent
                         else
                             Present(UIEvent.Change(path, tgt.value))
                         end if

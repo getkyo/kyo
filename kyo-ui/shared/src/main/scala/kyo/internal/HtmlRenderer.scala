@@ -511,6 +511,7 @@ private[kyo] object HtmlRenderer:
             case f: FileInput =>
                 w(sb, " type=\"file\"")
                 boolAttr(sb, "disabled", f.disabled)
+                boolAttr(sb, "multiple", f.multiple)
                 f.accept.foreach { accepts =>
                     val value = accepts.map {
                         case FileAccept.AnyImage             => "image/*"
@@ -649,13 +650,15 @@ private[kyo] object HtmlRenderer:
             case bi: BooleanInput if bi.onChange.nonEmpty || hasSignalRefValue(bi.checked)     => events += "change"
             case ni: NumberInput if ni.onChangeNumeric.nonEmpty || hasSignalRefValue(ni.value) => events += "change"
             case ri: RangeInput if ri.onChange.nonEmpty || hasSignalRefValue(ri.value)         => events += "change"
-            case fi: FileInput if fi.onChange.nonEmpty                                         => events += "change"
+            case fi: FileInput if fi.onChange.nonEmpty || attrs.onFileSelect.nonEmpty          => events += "change"
             case sel: Select if hasSignalRefValue(sel.value)                                   => events += "change"
             case _                                                                             =>
         end match
         elem match
             case f: Form if f.onSubmit.nonEmpty || f.onSubmitEvt.nonEmpty => events += "submit"
             case _                                                        =>
+        // fileselect marker so the client's change branch reads all files instead of the legacy single-file path.
+        if attrs.onFileSelect.nonEmpty then events += "fileselect"
         val ev = events.result()
         if ev.nonEmpty then w(sb, s""" data-kyo-ev="${ev.mkString(",")}"""")
     end renderEventAttr
@@ -925,6 +928,26 @@ private[kyo] object HtmlRenderer:
            |    var tgt=e.target,typ=tgt.type;
            |    if(typ==="checkbox"||typ==="radio")post({ChangeChecked:{path:p,checked:tgt.checked}});
            |    else if(typ==="number"||typ==="range")post({ChangeNumeric:{path:p,value:parseFloat(tgt.value)}});
+           |    else if(typ==="file"){
+           |      // fileselect token: read all files (indexed, order preserved), post one FileSelect when all complete.
+           |      // Otherwise legacy: first file's text into a Change.
+           |      var files=tgt.files;
+           |      if(he(el,"fileselect")){
+           |        var n=files.length;
+           |        if(n>0){
+           |          var results=new Array(n);var doneCt=0;
+           |          for(var fidx=0;fidx<n;fidx++){(function(ix){
+           |            var f=files[ix];var r=new FileReader();
+           |            r.onload=function(){results[ix]={name:f.name,size:f.size,mimeType:f.type,content:r.result};doneCt++;if(doneCt===n)post({FileSelect:{path:p,files:results}});};
+           |            r.readAsText(f);
+           |          })(fidx);}
+           |        }
+           |      }else if(files.length>0){
+           |        var r0=new FileReader();
+           |        r0.onload=function(){post({Change:{path:p,value:r0.result}});};
+           |        r0.readAsText(files[0]);
+           |      }
+           |    }
            |    else post({Change:{path:p,value:tgt.value}});
            |  }else if(t==="submit"){e.preventDefault();if(!window._kyoClickSubmit&&he(el,"submit")){var smid=e.target&&e.target.id?e.target.id:null;post({Submit:{path:p,mouse:mkMouse({ctrl:false,alt:false,shift:false,meta:false},smid)}});}}
            |  else if(t==="keydown"){

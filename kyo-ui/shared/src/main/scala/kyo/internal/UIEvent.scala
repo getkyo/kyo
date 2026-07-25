@@ -22,6 +22,8 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case ClickSelf(path: Seq[String], mouse: MouseEventData)
     case Input(path: Seq[String], value: String)
     case Change(path: Seq[String], value: String)
+    // UI.FilePayload derives Schema, so it rides the wire directly (as UI.Modifiers does above).
+    case FileSelect(path: Seq[String], files: Seq[UI.FilePayload])
     case ChangeChecked(path: Seq[String], checked: Boolean)
     case ChangeNumeric(path: Seq[String], value: Double)
     case Submit(path: Seq[String], mouse: MouseEventData)

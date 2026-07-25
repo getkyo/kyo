@@ -13,17 +13,18 @@ import kyo.UI.Ast.*
 sealed private[kyo] trait EventHandler derives CanEqual
 
 private[kyo] object EventHandler:
-    case class Click(f: Unit < Async)                       extends EventHandler
-    case class ClickSelf(f: Unit < Async)                   extends EventHandler
-    case class Input(f: String => Unit < Async)             extends EventHandler
-    case class Change(f: String => Unit < Async)            extends EventHandler
-    case class ChangeChecked(f: Boolean => Unit < Async)    extends EventHandler
-    case class ChangeNumeric(f: Double => Unit < Async)     extends EventHandler
-    case class Submit(f: Unit < Async)                      extends EventHandler
-    case class KeyDown(f: UI.KeyboardEvent => Unit < Async) extends EventHandler
-    case class KeyUp(f: UI.KeyboardEvent => Unit < Async)   extends EventHandler
-    case class Focus(f: Unit < Async)                       extends EventHandler
-    case class Blur(f: Unit < Async)                        extends EventHandler
+    case class Click(f: Unit < Async)                             extends EventHandler
+    case class ClickSelf(f: Unit < Async)                         extends EventHandler
+    case class Input(f: String => Unit < Async)                   extends EventHandler
+    case class Change(f: String => Unit < Async)                  extends EventHandler
+    case class FileSelect(f: Seq[UI.FilePayload] => Unit < Async) extends EventHandler
+    case class ChangeChecked(f: Boolean => Unit < Async)          extends EventHandler
+    case class ChangeNumeric(f: Double => Unit < Async)           extends EventHandler
+    case class Submit(f: Unit < Async)                            extends EventHandler
+    case class KeyDown(f: UI.KeyboardEvent => Unit < Async)       extends EventHandler
+    case class KeyUp(f: UI.KeyboardEvent => Unit < Async)         extends EventHandler
+    case class Focus(f: Unit < Async)                             extends EventHandler
+    case class Blur(f: Unit < Async)                              extends EventHandler
 
     /** The event type string used in data-kyo-ev attributes and handler map keys. */
     def eventType(handler: EventHandler): String = handler match
@@ -31,6 +32,7 @@ private[kyo] object EventHandler:
         case _: ClickSelf     => "clickself"
         case _: Input         => "input"
         case _: Change        => "change"
+        case _: FileSelect    => "fileselect"
         case _: ChangeChecked => "change"
         case _: ChangeNumeric => "change"
         case _: Submit        => "submit"

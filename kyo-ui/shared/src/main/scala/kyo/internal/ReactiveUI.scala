@@ -710,6 +710,10 @@ private[kyo] object ReactiveUI:
                             autoSet.andThen(invokeWith(pi.onChange, e.value)).andThen(true)
                         case fi: FileInput => invokeWith(fi.onChange, e.value).andThen(true)
                         case _             => true
+            case e: UIEvent.FileSelect =>
+                // Bubbles like Change (files carried in the payload; nothing read from the element here).
+                if isTarget && isDisabled(elem) then true
+                else invokeWith(attrs.onFileSelect, e.files).andThen(keepBubbling(elem, attrs.onFileSelect.nonEmpty))
             case e: UIEvent.ChangeChecked =>
                 if isTarget && isDisabled(elem) then true
                 else
