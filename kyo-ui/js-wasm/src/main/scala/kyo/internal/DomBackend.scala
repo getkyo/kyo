@@ -362,6 +362,14 @@ private[kyo] object DomBackend:
         var clickSubmitGuard = false
 
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
+            // Runs before path resolution so it fires even when the focused descendant is not a path element;
+            // the keydown is still forwarded below, so the region's own onKeyDown runs (see `scrollKeyPrevented`).
+            if e.`type` == "keydown" then
+                val ke  = e.asInstanceOf[dom.KeyboardEvent]
+                val tgt = e.target.asInstanceOf[dom.Element]
+                if tgt != null && scrollKeyPrevented(ke.key, tgt) && tgt.closest("[data-kyo-scroll-keys]") != null then
+                    e.preventDefault()
+            end if
             findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
                 val evTypes = ChainTypes(target)
@@ -752,5 +760,22 @@ private[kyo] object DomBackend:
                 if nv != v then setValue(t, nv)
             end if
         end if
+
+    /** True when `key` is a page-scrolling navigation key a `preventScrollKeys` region should suppress on `target`.
+      * Vertical keys are always suppressed; horizontal/edge keys only when `target` is not text-editable, so a filter
+      * input keeps caret movement.
+      */
+    private def scrollKeyPrevented(key: String, target: dom.Element): Boolean =
+        def editable =
+            val tag = target.tagName
+            tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT" ||
+            target.asInstanceOf[scalajs.js.Dynamic].isContentEditable.asInstanceOf[Boolean]
+        end editable
+        key match
+            case "ArrowUp" | "ArrowDown" | "PageUp" | "PageDown" => true
+            case "ArrowLeft" | "ArrowRight" | "Home" | "End"     => !editable
+            case _                                               => false
+        end match
+    end scrollKeyPrevented
 
 end DomBackend

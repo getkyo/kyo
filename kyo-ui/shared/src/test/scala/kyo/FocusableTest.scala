@@ -692,4 +692,27 @@ class FocusableTest extends UITest:
         }
     }
 
+    "preventScrollKeys suppresses the browser's native page scroll for a nav key, still firing onKeyDown" in {
+        // A tall page so PageDown CAN scroll it natively; the focused button opts into preventScrollKeys.
+        val app: UI < Async =
+            for log <- Signal.initRef("")
+            yield UI.div(
+                UI.button("nav").id("nav").tabIndex(0).preventScrollKeys
+                    .onKeyDown((_: KeyboardEvent) => log.set("pressed")),
+                UI.span(log).id("log"),
+                UI.div("spacer").style(Style.height(Length.Px(3000)))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("nav"))
+                _ <- Browser.assertFocused(Selector.id("nav"))
+                _ <- Browser.assertAttribute(Selector.id("nav"), "data-kyo-scroll-keys", "1")
+                _ <- Browser.press(Selector.id("nav"), Key.PageDown)
+                // The keydown is suppressed for scrolling, not swallowed: onKeyDown still ran...
+                _  <- Browser.assertText(Selector.id("log"), "pressed")
+                sp <- Browser.scrollPosition
+            yield assert(sp.y == 0) // ...and the page did not scroll
+        }
+    }
+
 end FocusableTest
