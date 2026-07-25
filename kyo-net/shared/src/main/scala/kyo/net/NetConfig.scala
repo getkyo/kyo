@@ -52,7 +52,7 @@ object NetConfig:
     val DefaultReadChunkSize: Int = 8192
 
     /** Default peer-close grace window (see [[NetConfig.peerCloseGrace]]). */
-    val DefaultPeerCloseGrace: Duration = 30.seconds
+    val DefaultPeerCloseGrace: Duration = Duration.Infinity
 
     /** The settings every operation applies when its caller passes none. */
     val default: NetConfig = NetConfig()
