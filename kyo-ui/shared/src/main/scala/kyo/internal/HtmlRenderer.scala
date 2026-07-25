@@ -776,7 +776,7 @@ private[kyo] object HtmlRenderer:
            |      var __fa=faPaths(el);
            |      el.outerHTML=op.Replace.html;
            |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
-           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
+           |      if(ap){var rf=lbp(ap);if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
            |      // Seed AFTER focus/caret restore so a newly-appeared focus-auto element wins restore-to-trigger (the morph path never seeds).
            |      if(nel)faSeed(nel,__fa);
            |    }
@@ -891,13 +891,15 @@ private[kyo] object HtmlRenderer:
            |    }
            |  }
            |}
+           |// Prefer the non-wrapper match: a reactive wrapper span shares its data-kyo-path with the element it wraps and is transparent/unfocusable.
+           |function lbp(p){return document.querySelector('[data-kyo-path="'+p+'"]:not([data-kyo-reactive])')||document.querySelector('[data-kyo-path="'+p+'"]');}
            |// Pop stack entries whose seeded element left the document; if it carried focus-restore, focus the recorded prior element.
            |function frSweep(){
            |  while(__frs.length>0){
            |    var top=__frs[__frs.length-1];
            |    if(document.querySelector('[data-kyo-path="'+top.fa+'"][data-kyo-focus-auto]'))return;
            |    __frs.pop();
-           |    if(top.restore&&top.ret){var re=document.querySelector('[data-kyo-path="'+top.ret+'"]');if(re&&typeof re.focus==='function')re.focus();}
+           |    if(top.restore&&top.ret){var re=lbp(top.ret);if(re&&typeof re.focus==='function')re.focus();}
            |  }
            |}
            |applyJsProps(document.body);ba(document.body);

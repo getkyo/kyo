@@ -607,4 +607,30 @@ class FocusableTest extends UITest:
         }
     }
 
+    "closing a focus-restore panel returns focus to a reactive-wrapped trigger (skips the wrapper span)" in {
+        // The reactive-wrapped trigger sits in a <span data-kyo-reactive> that shares its data-kyo-path and is
+        // unfocusable, so restore must prefer the :not([data-kyo-reactive]) match to reach the real button.
+        val app: UI < Async =
+            for
+                showPanel <- Signal.initRef(false)
+                tick      <- Signal.initRef(0)
+            yield UI.div(
+                tick.map(_ => UI.button("Open").id("trigger").onClick(showPanel.set(true))),
+                UI.when(showPanel)(
+                    UI.div(
+                        UI.button("Close").id("close").onClick(showPanel.set(false))
+                    ).id("panel").tabIndex(-1).focusAuto(true).focusRestore(true)
+                )
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("trigger"))
+                _ <- Browser.assertFocused(Selector.id("panel"))
+                _ <- Browser.click(Selector.id("close"))
+                _ <- Browser.assertNotExists(Selector.id("panel"))
+                _ <- Browser.assertFocused(Selector.id("trigger"))
+            yield ()
+        }
+    }
+
 end FocusableTest
