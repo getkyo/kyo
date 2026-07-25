@@ -33,6 +33,22 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             yield subscription.handle
         }
 
+    /** Like [[makeDispatch]] but installs a session handler-error policy at the normalize root. */
+    private def makeDispatch(ui: UI, onHandlerError: Throwable => Unit < Async)(using
+        Frame
+    ): ((Seq[String], UIEvent) => Boolean < Async) < Async =
+        Scope.run {
+            for
+                root         <- ReactiveUI.normalize(ui, Seq.empty, onHandlerError = Present(onHandlerError))
+                subscription <- ReactiveUI.subscribe(root, new NoopExchange)
+            yield subscription.handle
+        }
+
+    private val boom = new RuntimeException("action failed")
+
+    private def click(path: Seq[String]): UIEvent =
+        UIEvent.Click(path, MouseEventData(UI.Modifiers.none, Absent))
+
     // ---- onHover action fires (HTML) ----
 
     "onHover(action) fires on Hover dispatch (HTML div)" in {
@@ -234,6 +250,91 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         yield
             assert(action)
             assert(evt == Present("foo"))
+    }
+
+    // ---- session handler-error policy (normalize onHandlerError -> safeDispatch) ----
+    // These pin the opt-in policy: an unconsumed handler failure/panic is offered to onHandlerError, after the log, without stopping the bubble.
+
+    "a handler Abort reaches the policy and the event still dispatches (bubbling continues)" in {
+        Scope.run {
+            for
+                seen <- AtomicRef.init(Maybe.empty[Throwable])
+                ui = UI.div(
+                    UI.button("go").id("go").onClick(Abort.fail(boom))
+                )
+                dispatch <- makeDispatch(ui, err => seen.set(Present(err)))
+                handled  <- dispatch(Seq("0"), click(Seq("0")))
+                s        <- seen.get
+            yield
+                assert(handled)
+                assert(s == Present(boom))
+        }
+    }
+
+    "a handler panic reaches the policy too" in {
+        Scope.run {
+            for
+                seen <- AtomicRef.init(Maybe.empty[Throwable])
+                ui = UI.div(
+                    UI.button("go").id("go").onClick(Sync.defer((throw boom): Unit))
+                )
+                dispatch <- makeDispatch(ui, err => seen.set(Present(err)))
+                handled  <- dispatch(Seq("0"), click(Seq("0")))
+                s        <- seen.get
+            yield
+                assert(handled)
+                assert(s == Present(boom))
+        }
+    }
+
+    "a successful handler never invokes the policy" in {
+        Scope.run {
+            for
+                seen    <- AtomicRef.init(false)
+                clicked <- AtomicInt.init(0)
+                ui = UI.div(
+                    UI.button("go").id("go").onClick(clicked.incrementAndGet.unit)
+                )
+                dispatch <- makeDispatch(ui, _ => seen.set(true))
+                _        <- dispatch(Seq("0"), click(Seq("0")))
+                n        <- clicked.get
+                s        <- seen.get
+            yield
+                assert(n == 1)
+                assert(!s)
+        }
+    }
+
+    "a handler that consumes its own failure keeps it from the policy; observe-and-reraise lets it bubble" in {
+        Scope.run {
+            for
+                policySaw <- AtomicRef.init(List.empty[String])
+                tapSaw    <- AtomicRef.init(false)
+                ui = UI.div(
+                    // consumed locally: never reaches the policy
+                    UI.button("a").id("a").onClick(Abort.recover[Throwable](_ => ())(Abort.fail(boom): Unit < Abort[Throwable])),
+                    // observed then re-raised (what Abort.tap does): bubbles on to the policy
+                    UI.button("b").id("b").onClick(
+                        Abort.recover[Throwable](e => tapSaw.set(true).andThen(Abort.fail(e)))(Abort.fail(boom): Unit < Abort[Throwable])
+                    )
+                )
+                dispatch <- makeDispatch(ui, err => policySaw.getAndUpdate(err.getMessage :: _).unit)
+                _        <- dispatch(Seq("0"), click(Seq("0")))
+                _        <- dispatch(Seq("1"), click(Seq("1")))
+                p        <- policySaw.get
+                t        <- tapSaw.get
+            yield
+                assert(p == List("action failed")) // only button b's failure arrived
+                assert(t)                          // and the observer saw it on the way
+        }
+    }
+
+    "no policy installed: dispatch behaves as before (log-only, bubbling continues)" in {
+        for
+            ui       <- Kyo.lift(UI.div(UI.button("go").id("go").onClick(Abort.fail(boom))))
+            dispatch <- makeDispatch(ui)
+            handled  <- dispatch(Seq("0"), click(Seq("0")))
+        yield assert(handled)
     }
 
 end UIEventWiringTest

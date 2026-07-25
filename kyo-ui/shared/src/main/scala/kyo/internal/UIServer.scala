@@ -8,10 +8,15 @@ private[kyo] object UIServer:
         if basePath.endsWith("/") then basePath.dropRight(1) else basePath
 
     def handlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
+        handlers(basePath, Absent)(ui)
+
+    def handlers(basePath: String, onHandlerError: Maybe[Throwable => Unit < Async])(ui: => UI < Async)(using
+        Frame
+    ): Seq[HttpHandler[?, ?, ?]] < Sync =
         val base = normalizePath(basePath)
         Sync.defer(Seq(
             getPage(base, basePath, Sync.defer(ui)),
-            wsRoute(base, Sync.defer(ui))
+            wsRoute(base, Sync.defer(ui), onHandlerError)
         ))
     end handlers
 
@@ -30,11 +35,15 @@ private[kyo] object UIServer:
                 .addHeader("Content-Type", "text/html; charset=utf-8")
         }
 
-    private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < Async)(using Frame): Unit < (Async & Abort[Closed]) =
+    private[kyo] def serveSession(
+        ws: HttpWebSocket,
+        ui: => UI < Async,
+        onHandlerError: Maybe[Throwable => Unit < Async] = Absent
+    )(using Frame): Unit < (Async & Abort[Closed]) =
         Scope.run {
             for
                 uiTree <- ui
-                root   <- ReactiveUI.normalize(uiTree, Seq.empty)
+                root   <- ReactiveUI.normalize(uiTree, Seq.empty, onHandlerError = onHandlerError)
                 // Pre-seed the connection's sent-class tracking with every pseudo-state class the
                 // initial SSR page already carries (rendered once more here, discarding the HTML), so
                 // the first reactive update touching an unchanged pseudo-styled element does not
@@ -56,9 +65,13 @@ private[kyo] object UIServer:
             yield ()
         }
 
-    private def wsRoute(base: String, ui: => UI < Async)(using Frame): HttpHandler[?, ?, ?] =
+    private def wsRoute(
+        base: String,
+        ui: => UI < Async,
+        onHandlerError: Maybe[Throwable => Unit < Async] = Absent
+    )(using Frame): HttpHandler[?, ?, ?] =
         HttpHandler.webSocket(s"$base/_kyo/ws") { (_, ws) =>
-            serveSession(ws, ui)
+            serveSession(ws, ui, onHandlerError)
         }
 
     private def wsExchange(root: ReactiveUI, ws: HttpWebSocket, seenClasses: Set[String])(using Frame): UIExchange =

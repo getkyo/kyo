@@ -358,6 +358,15 @@ object UI:
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         UIServer.handlers(basePath)(ui)
 
+    /** [[runHandlers]] with a per-session handler-error policy: the server-push counterpart of the `runMount`
+      * overload. One central decision for an event-handler failure/panic nothing below consumed; logged
+      * out-of-band either way, and the bubble chain never stops.
+      */
+    def runHandlers(basePath: String, onHandlerError: Throwable => Unit < Async)(ui: => UI < Async)(using
+        Frame
+    ): Seq[HttpHandler[?, ?, ?]] < Sync =
+        UIServer.handlers(basePath, Present(onHandlerError))(ui)
+
     /** Scrolls the element with `id` into the client viewport, from inside an event handler.
       *
       * The command rides the session the handler runs in: under [[runHandlers]] it travels the same
