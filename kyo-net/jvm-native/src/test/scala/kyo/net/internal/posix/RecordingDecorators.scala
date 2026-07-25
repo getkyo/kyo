@@ -429,6 +429,9 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
     def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit =
         real.kyo_uring_prep_poll_multishot(sqe, fd, pollMask)
 
+    def kyo_uring_poll_peer_closed(fd: Int)(using AllowUnsafe): Int =
+        real.kyo_uring_poll_peer_closed(fd)
+
     def kyo_uring_eventfd_create(initval: Int, flags: Int)(using AllowUnsafe): Int =
         real.kyo_uring_eventfd_create(initval, flags)
 

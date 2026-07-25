@@ -67,6 +67,7 @@ class IoUringProbeDepthTest extends Test:
             true
         // This test exercises only the depth-probe call below; the wake-eventfd surface is never invoked here.
         def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit = ()
+        def kyo_uring_poll_peer_closed(fd: Int)(using AllowUnsafe): Int                                                 = 0
         def kyo_uring_eventfd_create(initval: Int, flags: Int)(using AllowUnsafe): Int                                  = -1
         def kyo_uring_eventfd_write(fd: Int)(using AllowUnsafe): Int                                                    = 0
         def kyo_uring_eventfd_read(fd: Int)(using AllowUnsafe): Int                                                     = 0

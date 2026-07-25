@@ -45,7 +45,7 @@ final private[kyo] class Http1ClientConnection(
             responsePromise.completeDiscard(Result.succeed(response))
         ,
         onClosed = () =>
-            responsePromise.completeDiscard(Result.panic(new java.io.IOException("connection closed")))
+            responsePromise.completeDiscard(Http1ClientConnection.connectionClosedPanic)
     )
 
     /** Sends an HTTP request and returns a fiber that completes when response headers are parsed.
@@ -149,13 +149,22 @@ final private[kyo] class Http1ClientConnection(
 
     /** Close the connection. Fails any pending response promise so waiting fibers unblock. */
     def close()(using AllowUnsafe): Unit =
-        responsePromise.completeDiscard(
-            Result.panic(new java.io.IOException("connection closed"))
-        )
+        responsePromise.completeDiscard(Http1ClientConnection.connectionClosedPanic)
 
 end Http1ClientConnection
 
 private[kyo] object Http1ClientConnection:
+
+    /** The completion sentinel for a connection that closed with a response outstanding.
+      *
+      * NoStackTrace, and allocated once: the sentinel marks WHERE the wait ended, never a failure
+      * site, so a trace carries no information. Capturing one would also walk the unwinder on
+      * whatever carrier delivers the close, and a driver carrier's stack crosses C poller frames
+      * the Scala Native unwinder cannot step through on arm64 (observed SIGSEGV inside
+      * fillInStackTrace).
+      */
+    private val connectionClosedPanic: Result[Nothing, Nothing] =
+        Result.panic(new java.io.IOException("connection closed") with scala.util.control.NoStackTrace)
 
     private val HttpVersion             = " HTTP/1.1\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
     private val ContentLengthPrefix     = "Content-Length: ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)

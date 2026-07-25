@@ -17,18 +17,31 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // Pending read promise (at most one). Absent when no read is pending.
     var pendingRead: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
 
-    // Leftover bytes from an oversized chunk
-    private var leftoverState: Maybe[JsHandle.Leftover] = Absent
+    // Peer-close grace window the ReadPump applies when backpressured (see kyo.net.NetConfig.peerCloseGrace); on the handle so an in-place STARTTLS
+    // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
+    var peerCloseGrace: Duration = Duration.Infinity
 
-    def hasLeftover: Boolean = leftoverState.isDefined
+    // FIFO of undelivered chunks, delivered one per awaitRead. Two producers: an oversized "data" chunk's tail, and the peer-close grace probe's
+    // resume() draining kernel bytes into the "data" listener while the pump is parked (JsIoDriver.isPeerClosed). A single slot would let the probe's
+    // chunk clobber the tail (byte loss), so a queue; the single-threaded event loop makes a plain mutable queue safe. stagedBytesTotal bounds it (JsIoDriver.PeerProbeBufferCap).
+    private val leftoverQueue: scala.collection.mutable.Queue[JsHandle.Leftover] = scala.collection.mutable.Queue.empty
+    private var stagedBytesTotal: Int                                            = 0
 
-    def leftover: Maybe[JsHandle.Leftover] = leftoverState
+    def hasLeftover: Boolean = leftoverQueue.nonEmpty
 
-    def setLeftover(buf: Array[Byte], off: Int, len: Int): Unit =
-        leftoverState = Present(JsHandle.Leftover(buf, off, len))
+    /** Total undelivered staged bytes across the queue, the peer-close probe's cap check. */
+    def stagedBytes: Int = stagedBytesTotal
 
-    def clearLeftover(): Unit =
-        leftoverState = Absent
+    def enqueueLeftover(buf: Array[Byte], off: Int, len: Int): Unit =
+        leftoverQueue.enqueue(JsHandle.Leftover(buf, off, len))
+        stagedBytesTotal += len
+
+    def dequeueLeftover(): Maybe[JsHandle.Leftover] =
+        if leftoverQueue.isEmpty then Absent
+        else
+            val head = leftoverQueue.dequeue()
+            stagedBytesTotal -= head.len
+            Present(head)
 
     def clearPendingRead(): Unit =
         pendingRead = Absent
@@ -60,8 +73,8 @@ private[kyo] object JsHandle:
                         handle.clearPendingRead()
                         pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                     case Absent =>
-                        // No pending read: store as leftover
-                        handle.setLeftover(arr, 0, arr.length)
+                        // No pending read: enqueue as leftover (the pump is parked, or the peer-close grace probe's resume() drained this chunk).
+                        handle.enqueueLeftover(arr, 0, arr.length)
                 end match
             }: js.Function1[js.Dynamic, Unit]
         ))
