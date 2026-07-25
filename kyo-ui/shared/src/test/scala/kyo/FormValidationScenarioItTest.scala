@@ -286,4 +286,24 @@ class FormValidationScenarioItTest extends UITest:
         }
     }
 
+    "clicking a submit button runs onSubmit exactly once (no click+native-submit double dispatch)" in {
+        val app: UI < Async =
+            for
+                count <- Signal.initRef(0)
+            yield UI.div(
+                UI.form.id("f").onSubmit(count.updateAndGet(_ + 1).unit)(
+                    UI.input.id("name"),
+                    UI.button("Submit").id("sub")
+                ),
+                count.map(v => UI.span(s"count:$v").id("c"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("sub"))
+                // Regression guard for DomBackend's clickSubmitGuard: the click+native-submit pair fires onSubmit once.
+                _ <- Browser.assertText(Selector.id("c"), "count:1")
+            yield ()
+        }
+    }
+
 end FormValidationScenarioItTest

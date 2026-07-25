@@ -257,6 +257,11 @@ private[kyo] object DomBackend:
         final class ChainTypes(target: dom.Element):
             def contains(t: String): Boolean = declaredInChain(target, t)
 
+        // A submit button's click makes the browser fire a native `submit` right after, but the Click dispatch
+        // already emulates onSubmit; this flag (set on Click, cleared on a 0-timeout) suppresses that one
+        // following native submit so the form handler runs once. Mirrors clientJs's `_kyoClickSubmit` guard.
+        var clickSubmitGuard = false
+
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
             findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
@@ -277,6 +282,8 @@ private[kyo] object DomBackend:
                         // is handled by UILocation's interceptor. Prevent-defaulting every anchor here
                         // would also kill those.
                         if target.tagName.toLowerCase == "a" && evTypes.contains("click") then e.preventDefault()
+                        clickSubmitGuard = true
+                        discard(dom.window.setTimeout(() => clickSubmitGuard = false, 0))
                         Present(UIEvent.Click(path, mouse))
                     else if t == "input" && evTypes.contains("input") then
                         Present(UIEvent.Input(path, e.target.asInstanceOf[dom.html.Input].value))
@@ -303,12 +310,15 @@ private[kyo] object DomBackend:
                         end if
                     else if t == "submit" && evTypes.contains("submit") then
                         e.preventDefault()
-                        val submitTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
-                        val submitMouse = MouseEventData(
-                            modifiers = UI.Modifiers.none,
-                            targetId = submitTargetId
-                        )
-                        Present(UIEvent.Submit(path, submitMouse))
+                        if clickSubmitGuard then Absent
+                        else
+                            val submitTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
+                            val submitMouse = MouseEventData(
+                                modifiers = UI.Modifiers.none,
+                                targetId = submitTargetId
+                            )
+                            Present(UIEvent.Submit(path, submitMouse))
+                        end if
                     else if t == "keydown" && evTypes.contains("keydown") then
                         val ke         = e.asInstanceOf[dom.KeyboardEvent]
                         val kdTargetId = Maybe(ke.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
