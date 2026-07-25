@@ -22,11 +22,15 @@
 
 #if defined(__linux__) && __has_include(<liburing.h>)
 
-/* POLLRDHUP (peer half-close) is a Linux extension gated behind _GNU_SOURCE; define it before any header so kyo_uring_poll_peer_closed sees it. */
-#define _GNU_SOURCE 1
-
 #include <liburing.h>
 #include <poll.h>
+
+/* POLLRDHUP (peer half-close) is a Linux extension glibc gates behind _GNU_SOURCE. Defining that macro would change the feature-test
+ * exposure for this whole translation unit while the sibling shims linked into the same library do not, so define the constant directly
+ * (its value is fixed by the Linux ABI) and leave the headers alone. */
+#ifndef POLLRDHUP
+#define POLLRDHUP 0x2000
+#endif
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
