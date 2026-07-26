@@ -166,7 +166,7 @@ container_provision() {
     # liburing-dev + libssl-dev: the kyo-net JVM FFI shims link the io_uring (-luring) and OpenSSL TLS data planes; without them
     # kyo-netJVM's ffiCompile fails (cannot find -luring). Small and always installed so any kyo-net command builds in the container.
     local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev"
-    local node_pkgs="" native_pkgs="" bssl_pkgs=""
+    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
         JS|Wasm|all) node_pkgs="nodejs npm" ;;
@@ -181,11 +181,37 @@ container_provision() {
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
     # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
     [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
+    # Aeron build toolchain (a C toolchain + git for the pinned clone), only when STAGE_AERON=1 stages the static Aeron C library so
+    # kyo-aeron's shim has an archive to link. uuid-dev supplies the libuuid.so link target the driver needs and that no base image
+    # preinstalls. The staged tree is gitignored, so any container command touching kyo-aeron needs this. Heavy, so off by default.
+    local aeron_setup=""
+    if [ "${STAGE_AERON:-}" = 1 ]; then
+        aeron_pkgs="build-essential git uuid-dev"
+        # Aeron 1.50.2's CMakeLists sets cmake_minimum_required(3.30) and noble's apt cmake is 3.28, so apt cannot satisfy it. GitHub
+        # runners only avoid this because they preinstall a newer cmake; the setup action's apt fallback would hit the same wall.
+        # Install the upstream binary unless the image already carries >= 3.30.
+        aeron_setup='
+cmake_ok=0
+if command -v cmake >/dev/null 2>&1; then
+    cmake_ver=$(cmake --version | head -1 | tr -cd "0-9.\n" )
+    cmake_major=${cmake_ver%%.*}
+    cmake_rest=${cmake_ver#*.}
+    cmake_minor=${cmake_rest%%.*}
+    if [ "${cmake_major:-0}" -gt 3 ] 2>/dev/null || { [ "${cmake_major:-0}" -eq 3 ] 2>/dev/null && [ "${cmake_minor:-0}" -ge 30 ] 2>/dev/null; }; then
+        cmake_ok=1
+    fi
+fi
+if [ "$cmake_ok" != 1 ]; then
+    case $(uname -m) in aarch64) cmake_arch=linux-aarch64 ;; *) cmake_arch=linux-x86_64 ;; esac
+    curl -fsSL "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-${cmake_arch}.tar.gz" \
+        | tar xz -C /usr/local --strip-components=1
+fi'
+    fi
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null
-    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs >/dev/null
+    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
 fi
 export COURSIER_CACHE=/root/.cache/coursier
 if ! command -v cs >/dev/null 2>&1; then
@@ -202,6 +228,7 @@ fi
 eval "\$(cs java --jvm corretto:25 --env)"
 command -v sbt >/dev/null 2>&1 || cs install sbt >/dev/null
 export PATH="/root/.local/share/coursier/bin:\$PATH"
+$aeron_setup
 PROVISION
 }
 
@@ -233,6 +260,9 @@ run_in_container() {
     # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
     # against real libssl/libcrypto instead of cancelling.
     [ -n "${STAGE_BORINGSSL:-}" ] && envs+=(-e "STAGE_BORINGSSL=$STAGE_BORINGSSL")
+    # Forward the libaeron-staging flag; when set the container builds the pinned Aeron C library before the command so kyo-aeron's
+    # ffiCompile finds the staged archive instead of failing to link.
+    [ -n "${STAGE_AERON:-}" ] && envs+=(-e "STAGE_AERON=$STAGE_AERON")
     # Forward the kyo-net per-backend test isolation flag (KYO_NET_ONLY=<backend>), the per-TLS-provider isolation flag
     # (KYO_NET_TLS_ONLY=<provider>), and the success-leaves-only flag (KYO_NET_SUCCESS_ONLY=1) so a podman run can
     # validate/sample a single (backend x provider) cell in isolation. Unset by default (all backends/providers), so a normal run is unaffected.
@@ -260,7 +290,8 @@ run_in_container() {
 $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
-    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh \"linux-\$(uname -m)\"; fi
+    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh \"linux-\$(uname -m)\"; fi \
+    && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh \"linux-\$(uname -m)\"; fi
 if $inner; then __rc=0; else __rc=\$?; fi
 if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi
 exit \${__rc:-1}"
