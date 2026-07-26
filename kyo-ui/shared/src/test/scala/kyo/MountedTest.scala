@@ -56,7 +56,7 @@ class MountedTest extends UITest:
                 for
                     seen <- Promise.init[String, Any]
                     exchange = new kyo.internal.UIExchange:
-                        def onChange(path: Seq[String], changed: UI)(using Frame): Unit < Async =
+                        def onChange(path: Seq[String], changed: UI, mount: Boolean)(using Frame): Unit < Async =
                             kyo.internal.HtmlRenderer.render(changed, path).map { html =>
                                 if html.contains("hello-env") then seen.completeDiscard(Result.succeed(html))
                                 else ()
@@ -390,7 +390,7 @@ class MountedTest extends UITest:
                     )
                 )
                 exchange = new kyo.internal.UIExchange:
-                    def onChange(path: Seq[String], changed: UI)(using Frame): Unit < Async = ()
+                    def onChange(path: Seq[String], changed: UI, mount: Boolean)(using Frame): Unit < Async = ()
                 root     <- kyo.internal.ReactiveUI.normalize(ui, Seq.empty)
                 dispatch <- kyo.internal.ReactiveUI.subscribe(root, exchange)
                 // Target = the LABEL region's path: div(0)=cards-div... button-bar=child 1, button=child 0, label=child 0.
@@ -501,6 +501,53 @@ class MountedTest extends UITest:
                 _ <- Browser.assertText(Selector.id("content"), "live")
                 _ <- Browser.click(Selector.id("kill"))
                 _ <- Browser.assertText(Selector.id("content"), "error:late-fail")
+            yield ()
+        }
+    }
+
+    "keyed mounted nodes inside a fragment splice paint their content" in {
+        // Regression: a Fragment child that is a Mounted node must be normalized at the
+        // fragment child's own path (where the renderer paints the slot anchor), not at the
+        // top-level content descent (path :+ "$r"): the mismatch left every publish patch
+        // targeting a nonexistent DOM node: placeholder forever, no error anywhere.
+        val app: UI < Async =
+            for tick <- Signal.initRef(0)
+            yield UI.div(
+                tick.map(_ =>
+                    UI.div(
+                        UI.fragment(
+                            UI.mounted(Kyo.lift(UI.span("card-a").id("card-a")))
+                                .keyed("a")
+                                .placeholder(UI.span("loading-a").id("ph-a")),
+                            UI.mounted(Kyo.lift(UI.span("card-b").id("card-b")))
+                                .keyed("b")
+                                .placeholder(UI.span("loading-b").id("ph-b"))
+                        )
+                    )
+                )
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("card-a"), "card-a")
+                _ <- Browser.assertText(Selector.id("card-b"), "card-b")
+            yield ()
+        }
+    }
+
+    "reactive child inside a fragment splice receives patches" in {
+        // Same path mismatch, quieter symptom: the initial SSR paints the reactive's current
+        // value inline (correct), but every LATER patch targeted the wrong path and was lost.
+        val app: UI < Async =
+            for cell <- Signal.initRef("v1")
+            yield UI.div(
+                UI.button("Bump").id("bump").onClick(cell.set("v2")),
+                UI.div(UI.fragment(cell.map(v => UI.span(v).id("val"))))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("val"), "v1")
+                _ <- Browser.click(Selector.id("bump"))
+                _ <- Browser.assertText(Selector.id("val"), "v2")
             yield ()
         }
     }

@@ -24,7 +24,7 @@ class HandlerEnvTest extends UITest:
                         )
                     )
                     exchange = new kyo.internal.UIExchange:
-                        def onChange(path: Seq[String], changed: UI)(using Frame): Unit < Async = ()
+                        def onChange(path: Seq[String], changed: UI, mount: Boolean)(using Frame): Unit < Async = ()
                     root <- kyo.internal.ReactiveUI.normalize(ui, Seq.empty)
                     sub  <- kyo.internal.ReactiveUI.subscribe(root, exchange)
                     _    <- sub.handle(Seq("0"), UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent)))

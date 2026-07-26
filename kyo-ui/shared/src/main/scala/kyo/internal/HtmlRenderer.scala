@@ -12,10 +12,16 @@ private[kyo] object HtmlRenderer:
     // costs nothing on the render(...) path (cssRules stays Absent there).
     private type CssCollector = scala.collection.mutable.LinkedHashMap[String, String]
 
-    /** Render a UI tree to HTML with data-kyo-path attributes. */
-    def render(ui: UI, path: Seq[String])(using Frame): String < Sync =
+    /** Render a UI tree to HTML with data-kyo-path attributes.
+      *
+      * `mountSlot` (CLIENT-ONLY, set by the region-morph exchanges `DomBackend`/`UIServer` `onChange`) stamps a
+      * `data-kyo-mount-slot` marker on every `Mounted` placeholder, so a morph can tell "this slot IS a mount"
+      * from content that merely collided on the positional data-kyo-path key. SSR/full-page keep the default
+      * `false`, so golden HTML stays byte-identical.
+      */
+    def render(ui: UI, path: Seq[String], mountSlot: Boolean = false)(using Frame): String < Sync =
         val sb = new StringBuilder
-        renderTo(sb, ui, path).andThen(sb.toString)
+        renderTo(sb, ui, path, mountSlot = mountSlot).andThen(sb.toString)
 
     /** Render a UI tree to HTML, additionally collecting the CSS rule(s) for every pseudo-state
       * (hover/focus/active/disabled) [[kyo.Style]] encountered along the way.
@@ -28,31 +34,13 @@ private[kyo] object HtmlRenderer:
       * [[kyo.internal.CssStyleRenderer.pseudoStateClass]]), so the result has one entry per distinct
       * rule, in first-encountered order.
       */
-    private[kyo] def renderWithCss(ui: UI, path: Seq[String])(using Frame): (String, Chunk[(String, String)]) < Sync =
+    private[kyo] def renderWithCss(ui: UI, path: Seq[String], mountSlot: Boolean = false)(using
+        Frame
+    ): (String, Chunk[(String, String)]) < Sync =
         val sb  = new StringBuilder
         val css = new CssCollector
-        renderTo(sb, ui, path, cssRules = Present(css)).andThen((sb.toString, Chunk.from(css)))
+        renderTo(sb, ui, path, cssRules = Present(css), mountSlot = mountSlot).andThen((sb.toString, Chunk.from(css)))
     end renderWithCss
-
-    /** Wrap a reactive region's inner HTML in the appropriate placeholder tag.
-      *
-      * Used by the server transport layer when pushing an updated reactive region to the client.
-      * Extracts the tag-choice logic (g in SVG context, span in HTML context) into a shared, testable
-      * function so tests can assert on the real production wrap rather than reconstructing the string
-      * themselves.
-      *
-      * @param path
-      *   the region's path segments (joined with "." for the data-kyo-path attribute)
-      * @param svgContext
-      *   true if the reactive region lives inside SVG (uses "g" tag), false for HTML (uses "span")
-      * @param innerHtml
-      *   the rendered inner content to wrap
-      * @return
-      *   the full placeholder HTML string with data-kyo-path and data-kyo-reactive attributes
-      */
-    private[kyo] def wrapReactiveRegion(path: Seq[String], svgContext: Boolean, innerHtml: String): String =
-        val tag = if svgContext then "g" else "span"
-        s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive>$innerHtml</$tag>"""
 
     /** Wrap body HTML in a full page with inline JS client. */
     def renderPage(title: String, body: String, css: String, basePath: String): String =
@@ -120,11 +108,20 @@ private[kyo] object HtmlRenderer:
 
     // ---- Core rendering ----
 
-    private def renderTo(sb: StringBuilder, ui: UI, path: Seq[String], svg: Boolean = false, cssRules: Maybe[CssCollector] = Absent)(using
+    private def renderTo(
+        sb: StringBuilder,
+        ui: UI,
+        path: Seq[String],
+        svg: Boolean = false,
+        cssRules: Maybe[CssCollector] = Absent,
+        // Client-only: when true, stamp `data-kyo-mount-slot` on Mounted placeholders reached here (forwarded recursively).
+        mountSlot: Boolean = false
+    )(using
         Frame
     ): Unit < Sync =
         ui match
             case dd: Dropdown =>
+                // Dropdown renders <select>/<option> only, never a Mounted node, so `mountSlot` need not thread through.
                 renderDropdown(sb, dd, path, cssRules)
             case elem: Element =>
                 val tag  = tagName(elem)
@@ -161,7 +158,7 @@ private[kyo] object HtmlRenderer:
                             case _            => Kyo.unit
                         textChild.andThen(
                             Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
-                                renderTo(sb, child, path :+ i.toString, childSvg, cssRules)
+                                renderTo(sb, child, path :+ i.toString, childSvg, cssRules, mountSlot)
                             }.andThen(w(sb, s"</$tag>"))
                         )
                     end if
@@ -180,23 +177,22 @@ private[kyo] object HtmlRenderer:
                     val childPath = child match
                         case kc: KeyedChild[?] => path :+ kc.key
                         case _                 => path :+ i.toString
-                    renderTo(sb, child, childPath, svg, cssRules)
+                    renderTo(sb, child, childPath, svg, cssRules, mountSlot)
                 }
 
             case KeyedChild(_, child) =>
-                renderTo(sb, child, path, svg, cssRules)
+                renderTo(sb, child, path, svg, cssRules, mountSlot)
 
             case r: Reactive[?] =>
-                // In SVG context emit a <g> placeholder (a <span> is invalid inside <svg>); the
-                // closing tag matches the opening. Both carry the same data-kyo-reactive anchor.
-                val tag = if svg then "g" else "span"
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
+                // Regions are delimited by comment markers, not a wrapper element: comments are valid
+                // in every parse context (table, tr, select, svg), whereas the parser foster-parents a
+                // wrapper out of table contexts and drops it inside select.
+                w(sb, RegionMarker.open(path))
                 for current <- r.signal.current(using r.frame)
-                yield renderTo(sb, current, path, svg, cssRules).andThen(w(sb, s"</$tag>"))
+                yield renderTo(sb, current, contentPath(path, current), svg, cssRules, mountSlot).andThen(w(sb, RegionMarker.close(path)))
 
             case fe: Foreach[?, ?] @unchecked =>
-                val tag = if svg then "g" else "span"
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
+                w(sb, RegionMarker.open(path))
                 fe.applyTyped {
                     [T] =>
                         (signal, keyFn, renderFn) =>
@@ -205,26 +201,28 @@ private[kyo] object HtmlRenderer:
                                 val key = keyFn match
                                     case Present(f) => f(item)
                                     case Absent     => i.toString
-                                renderTo(sb, renderFn(i, item), path :+ key, svg, cssRules)
-                            }.andThen(w(sb, s"</$tag>"))
+                                renderTo(sb, renderFn(i, item), path :+ key, svg, cssRules, mountSlot)
+                            }.andThen(w(sb, RegionMarker.close(path)))
                             end for
                 }
 
             case m: Mounted =>
                 // Static/SSG projection of a mount is its placeholder; live, ReactiveUI.subscribeMounted patches
                 // the region when the node's cell publishes (synchronously, before paint, for an adopted keyed instance).
-                val tag = if svg then "g" else "span"
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
-                renderTo(sb, m.placeholderUI.getOrElse(UI.empty(using m.frame)), path, svg)
-                    .andThen(w(sb, s"</$tag>"))
+                // The `s` flag is client-only (see `render`): declares a mount belongs at this slot, so a parent morph
+                // preserves a live mount but reconciles away a stale one when the new content is NOT a mount. SSR keeps golden HTML.
+                w(sb, RegionMarker.open(path, slot = mountSlot))
+                val mph = m.placeholderUI.getOrElse(UI.empty(using m.frame))
+                renderTo(sb, mph, contentPath(path, mph), svg, cssRules, mountSlot)
+                    .andThen(w(sb, RegionMarker.close(path)))
 
             case b: Boundary =>
                 // Static/SSG projection of a boundary is its fallback; live, ReactiveUI.subscribeBoundary repaints
                 // with the child on reveal (same task chain, when the eager child walk started nothing pending).
-                val tag = if svg then "g" else "span"
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
-                renderTo(sb, b.fallbackUI.getOrElse(UI.empty(using b.frame)), path, svg)
-                    .andThen(w(sb, s"</$tag>"))
+                w(sb, RegionMarker.open(path))
+                val bfb = b.fallbackUI.getOrElse(UI.empty(using b.frame))
+                renderTo(sb, bfb, contentPath(path, bfb), svg, cssRules, mountSlot)
+                    .andThen(w(sb, RegionMarker.close(path)))
     end renderTo
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
@@ -665,7 +663,6 @@ private[kyo] object HtmlRenderer:
           |body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
           |div, section, main, header, footer, form, article, aside, p, ul, ol, pre, code, h1, h2, h3, h4, h5, h6, label { display: flex; flex-direction: column; }
           |nav, li, span, button, a { display: flex; flex-direction: row; align-items: center; }
-          |[data-kyo-reactive] { display: contents; }
           |ul, ol { list-style: none; padding: 0; margin: 0; }
           |h1, h2, h3, h4, h5, h6, p { margin: 0; }
           |a { color: inherit; text-decoration: none; }
@@ -674,6 +671,25 @@ private[kyo] object HtmlRenderer:
           |""".stripMargin
 
     private def pathAttr(path: Seq[String]): String = path.mkString(".")
+
+    /** Reserved path segment for a reactive region whose current value is ITSELF a reactive region
+      * (`Reactive`/`Foreach`/`Mounted`/`Boundary`). Without it, nested reactive wrappers collapse onto one
+      * `data-kyo-path` and only the OUTERMOST is addressable; appending it gives each nesting level a distinct,
+      * stable wrapper path. Contains no '.' (path separator) and is not a decimal index, so it cannot collide with
+      * Element/Fragment child indices; it only appears as a reactive wrapper's sole content, so it cannot collide
+      * with Foreach/KeyedChild keys.
+      */
+    private[kyo] val reactiveContentSegment: String = "$r"
+
+    /** Path at which a reactive region renders its current value: a distinct sub-path when the value is itself a
+      * reactive region, else `path` unchanged (flat content stays byte-identical). SINGLE SOURCE OF TRUTH:
+      * `renderTo` (SSR), `ReactiveUI.walkStatic`, and both patch exchanges (`DomBackend`/`UIServer` `onChange`)
+      * MUST all route content through this, or SSR and client paths diverge.
+      */
+    private[kyo] def contentPath(path: Seq[String], current: UI): Seq[String] =
+        current match
+            case _: Reactive[?] | _: Foreach[?, ?] | _: Mounted | _: Boundary => path :+ reactiveContentSegment
+            case _                                                            => path
 
     private def fmtD(v: Double): String = NumberFormat.double(v)
 
@@ -755,46 +771,45 @@ private[kyo] object HtmlRenderer:
            |  var op=JSON.parse(e.data);
            |  if(op.Replace){
            |    var p=op.Replace.path.join(".");
-           |    var el=document.querySelector('[data-kyo-path="'+p+'"]');
-           |    // Two-way binding echoes each keystroke back as a Replace. An outerHTML replace of the focused field
-           |    // resets its caret (email/number inputs do not support selectionStart, so it cannot be restored),
-           |    // reversing typed text. So when the focused editable element is inside this Replace, MORPH it in place
-           |    // instead: sync attributes (the value attribute keeps mirroring the signal) but assign the live .value
-           |    // only on a genuine change. The user's own keystroke echo carries the value the field already holds, so
-           |    // .value is left alone and the caret is preserved; a submit-clear or external update carries a different
-           |    // value and is applied. The re-render is wrapped in <span data-kyo-reactive>, so the field is inside `el`.
-           |    // Only morph the field's OWN value echo: its data-kyo-path equals this Replace's path (the bound input
-           |    // and its wrapper span share the path). A larger subtree re-render (a foreach reorder, a `when` swap)
-           |    // has a shorter path and merely CONTAINS the focused field; that must fall through to the normal
-           |    // replace so focus-follows-item and structural changes still work.
-           |    var __ae=document.activeElement;
-           |    var __morphed=false;
-           |    if(el&&__ae&&(__ae.tagName==="INPUT"||__ae.tagName==="TEXTAREA")&&__ae.getAttribute("data-kyo-path")===p&&el.contains(__ae)){
-           |      var __t=document.createElement("template");__t.innerHTML=op.Replace.html.trim();
-           |      var __ni=__t.content.querySelector(__ae.tagName.toLowerCase());
-           |      if(__ni){
-           |        for(var __i=0;__i<__ni.attributes.length;__i++){var __a=__ni.attributes[__i];if(__ae.getAttribute(__a.name)!==__a.value)__ae.setAttribute(__a.name,__a.value);}
-           |        var __names=[];for(var __j=0;__j<__ae.attributes.length;__j++)__names.push(__ae.attributes[__j].name);
-           |        for(var __k=0;__k<__names.length;__k++){if(!__ni.hasAttribute(__names[__k]))__ae.removeAttribute(__names[__k]);}
-           |        var __nv=(__ae.tagName==="TEXTAREA")?__ni.textContent:(__ni.getAttribute("value")||"");
-           |        if(__nv!==__ae.value)__ae.value=__nv;
-           |        applyJsProps(__ae);
-           |        __morphed=true;
+           |    var r=__kyoRegion(p);
+           |    if(!r){
+           |      // ELEMENT region (a signal-bound field like input.value(ref)): the region root IS the live
+           |      // element carrying the path: morph it 1:1 in place. Genuinely unpainted DOM (e.g. Boundary
+           |      // pre-reveal) stays a silent no-op. Twin of DomBackend.onChange.
+           |      var eel=document.querySelector(__kyoPathSel(p));
+           |      if(eel&&eel.parentNode){
+           |        var etc=__kyoParseCtx(eel.parentNode,op.Replace.html);
+           |        var etr=etc?__kyoFirstEl(etc):null;
+           |        if(etr){__kyoMorphNode(eel,etr);var eln=document.querySelector(__kyoPathSel(p));if(eln){applyJsProps(eln);ba(eln);}}
            |      }
            |    }
-           |    if(el&&!__morphed&&el.outerHTML!==op.Replace.html){
+           |    // A live mount region ('m') is left untouched ONLY when the new content is itself a mount slot
+           |    // ('s' = the SAME mount re-rendering, which owns its subtree).
+           |    else if(!(!op.Replace.mount&&r.m&&__kyoPayloadSlot(op.Replace.html))){
+           |      var rp=r.s.parentNode;
+           |      // Capture focus/caret of the active element inside the patched range.
            |      var ae=document.activeElement;
-           |      var ap=ae&&ae!==document.body&&ae.getAttribute?ae.getAttribute("data-kyo-path"):null;
-           |      var ss=(ae&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
-           |      var se=(ae&&typeof ae.selectionEnd==='number')?ae.selectionEnd:null;
-           |      el.outerHTML=op.Replace.html;
-           |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
-           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
+           |      var inR=ae&&ae!==document.body&&__kyoRangeHas(r,ae);
+           |      var ap=inR?((ae.hasAttribute&&ae.hasAttribute("data-kyo-path"))?ae.getAttribute("data-kyo-path"):p):null;
+           |      var ss=(inR&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
+           |      var se=(inR&&typeof ae.selectionEnd==='number')?ae.selectionEnd:null;
+           |      var tc=__kyoParseCtx(rp,op.Replace.html);
+           |      if(tc){
+           |        __kyoMorphRange(rp,r.s.nextSibling,r.e,tc.firstChild,null);
+           |        // The mount's own first paint claims the region: the 'm' flag rides the live start marker
+           |        // (source of truth, survives registry rebuilds); the registry entry is a cache.
+           |        if(op.Replace.mount&&!r.m){r.m=true;r.s.data="kyo:"+__kyoMEsc(p)+" m";}
+           |        // A morph imports subtrees (new nested-region markers ride along), so refresh this range.
+           |        __kyoRescanRange(r);
+           |        var rn=r.s.nextSibling;while(rn&&rn!==r.e){if(rn.nodeType===1){applyJsProps(rn);ba(rn);}rn=rn.nextSibling;}
+           |        if(ap)__kyoRestoreFocus(ap,ss,se);
+           |      }
            |    }
            |  }else if(op.Remove){
            |    var p=op.Remove.path.join(".");
-           |    var el=document.querySelector('[data-kyo-path="'+p+'"]');
+           |    var el=document.querySelector(__kyoPathSel(p));
            |    if(el)el.remove();
+           |    else{var rr=__kyoRegions[p];if(rr&&rr.s.isConnected){var n=rr.s.nextSibling;while(n&&n!==rr.e){var nx=n.nextSibling;rr.s.parentNode.removeChild(n);n=nx;}}}
            |  }else if(op.InjectCss){
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
@@ -808,6 +823,198 @@ private[kyo] object HtmlRenderer:
            |    });
            |  }
            |};
+           |// ---- region markers + range morphing (twin of RegionMarker/DomBackend; keep in lockstep) ----
+           |// Regions are delimited by comment markers <!--kyo:PATH-->...<!--/kyo:PATH--> (flags: ' m' mount root,
+           |// ' s' mount slot). Patch a marker-delimited sibling range in place toward new HTML, so focus/caret/
+           |// scroll/transitions on reused nodes survive. Reconciliation is SIBLING-SCOPED over LOGICAL children:
+           |// an element keyed by data-kyo-path, a marker-delimited span keyed by its region path (never matched
+           |// positionally: mispairing would corrupt marker text). Objects use Object.create(null) so a path equal
+           |// to a prototype name (e.g. "constructor") can't false-match.
+           |// Marker byte-format contract lives in RegionMarker.scala: escape %->%25, '-'->%2D, ' '->%20.
+           |function __kyoMEsc(s){return s.replace(/%/g,"%25").replace(/-/g,"%2D").replace(/ /g,"%20");}
+           |function __kyoMUnesc(s){return s.replace(/%2D/g,"-").replace(/%20/g," ").replace(/%25/g,"%");}
+           |function __kyoMParse(d){
+           |  var close=false,s=d;
+           |  if(s.indexOf("/kyo:")===0){close=true;s=s.substring(5);}
+           |  else if(s.indexOf("kyo:")===0){s=s.substring(4);}
+           |  else return null;
+           |  var m=false,sl=false;
+           |  if(!close){var sp=s.indexOf(" ");if(sp>=0){var fl=s.substring(sp+1).split(" ");m=fl.indexOf("m")>=0;sl=fl.indexOf("s")>=0;s=s.substring(0,sp);}}
+           |  return {p:__kyoMUnesc(s),c:close,m:m,s:sl};
+           |}
+           |// True when the payload's first node is an open marker with the 's' flag (the region's new content
+           |// root IS a mount placeholder). Bounded to the leading comment.
+           |function __kyoPayloadSlot(html){
+           |  if(html.indexOf("<!--")!==0)return false;
+           |  var e=html.indexOf("-->");if(e<=4)return false;
+           |  var p=__kyoMParse(html.substring(4,e));
+           |  return !!(p&&!p.c&&p.s);
+           |}
+           |// Path -> {s:startComment,e:endComment,m:mountFlag}. Rebuilt by full scans (boot, stale lookup),
+           |// refreshed by range-scoped rescans after each patch. Marker pairs always share one parent.
+           |var __kyoRegions=Object.create(null);
+           |// Register a pair, repairing parser separation first (twin of DomBackend.registerPair): an open marker
+           |// that precedes a table's FIRST row stays a <table> child while rows + close marker land inside the
+           |// implied <tbody>: adopt the open marker into that row group so the pair shares a parent again.
+           |function __kyoRegPair(path,start,end,m){
+           |  if(start.parentNode!==end.parentNode&&end.parentNode&&end.parentNode.parentNode===start.parentNode)end.parentNode.insertBefore(start,end.parentNode.firstChild);
+           |  __kyoRegions[path]={s:start,e:end,m:m};
+           |}
+           |function __kyoScanInto(root){
+           |  var w=document.createTreeWalker(root,128,null);
+           |  var opens=Object.create(null),n=w.nextNode();
+           |  while(n){
+           |    var p=__kyoMParse(n.data);
+           |    if(p){if(p.c){var o=opens[p.p];if(o){__kyoRegPair(p.p,o.n,n,o.m);delete opens[p.p];}}else opens[p.p]={n:n,m:p.m};}
+           |    n=w.nextNode();
+           |  }
+           |}
+           |function __kyoRebuild(){__kyoRegions=Object.create(null);__kyoScanInto(document.body);}
+           |function __kyoRescanRange(r){
+           |  var opens=Object.create(null),n=r.s.nextSibling;
+           |  while(n&&n!==r.e){
+           |    if(n.nodeType===8){var p=__kyoMParse(n.data);if(p){if(p.c){var o=opens[p.p];if(o){__kyoRegPair(p.p,o.n,n,o.m);delete opens[p.p];}}else opens[p.p]={n:n,m:p.m};}}
+           |    else if(n.nodeType===1)__kyoScanInto(n);
+           |    n=n.nextSibling;
+           |  }
+           |}
+           |// Connectivity-validated lookup: stale/missing -> ONE full rescan -> retry -> null (silent no-op).
+           |function __kyoRegion(p){
+           |  var r=__kyoRegions[p];
+           |  if(r&&r.s.isConnected&&r.e.isConnected)return r;
+           |  __kyoRebuild();
+           |  r=__kyoRegions[p];
+           |  return (r&&r.s.isConnected&&r.e.isConnected)?r:null;
+           |}
+           |function __kyoRangeHas(r,node){var n=r.s.nextSibling;while(n&&n!==r.e){if(n===node||(n.nodeType===1&&n.contains(node)))return true;n=n.nextSibling;}return false;}
+           |// Keyed-list keys are user data and become path segments: escape the CSS attribute-selector
+           |// metacharacters (backslash, double quote) so a key cannot break or redirect the query. Built via
+           |// fromCharCode because this literal's escape processing must not touch the emitted JS.
+           |function __kyoPathSel(p){var bs=String.fromCharCode(92),q=String.fromCharCode(34);var s=String(p).split(bs).join(bs+bs).split(q).join(bs+q);return '[data-kyo-path='+q+s+q+']';}
+           |// Focus restore: an element path resolves directly; a region path searches its range for the first
+           |// focus-capable element (mirrors the old descend-into-wrapper behavior).
+           |function __kyoRestoreFocus(ap,ss,se){
+           |  var rf=document.querySelector(__kyoPathSel(ap));
+           |  if(!rf){var r=__kyoRegions[ap];if(r&&r.s.isConnected){var fs='input,textarea,select,[contenteditable]',n=r.s.nextSibling;while(!rf&&n&&n!==r.e){if(n.nodeType===1){rf=(n.matches&&n.matches(fs))?n:n.querySelector(fs);}n=n.nextSibling;}}}
+           |  if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}
+           |}
+           |function __kyoFirstEl(p){var c=p.firstChild;while(c&&c.nodeType!==1)c=c.nextSibling;return c;}
+           |// For an open marker, its matching close among following siblings (paths unique among siblings).
+           |function __kyoSpanClose(open,path){
+           |  var n=open.nextSibling;
+           |  while(n){if(n.nodeType===8){var p=__kyoMParse(n.data);if(p&&p.c&&p.p===path)return n;}n=n.nextSibling;}
+           |  return null;
+           |}
+           |// Logical-child key: element data-kyo-path, open marker's region path, else null (positional).
+           |function __kyoLKey(n){
+           |  if(n.nodeType===1)return n.hasAttribute("data-kyo-path")?n.getAttribute("data-kyo-path"):null;
+           |  if(n.nodeType===8){var p=__kyoMParse(n.data);if(p&&!p.c&&__kyoSpanClose(n,p.p))return p.p;}
+           |  return null;
+           |}
+           |// Next logical sibling: past the whole span for an open marker, else nextSibling.
+           |function __kyoLNext(n){
+           |  if(n.nodeType===8){var p=__kyoMParse(n.data);if(p&&!p.c){var c=__kyoSpanClose(n,p.p);if(c)return c.nextSibling;}}
+           |  return n.nextSibling;
+           |}
+           |function __kyoEachSpan(first,f){
+           |  var last=first;
+           |  if(first.nodeType===8){var p=__kyoMParse(first.data);if(p&&!p.c){var c=__kyoSpanClose(first,p.p);if(c)last=c;}}
+           |  var n=first,stop=false;
+           |  while(!stop&&n){var nx=n.nextSibling;stop=(n===last);f(n);n=nx;}
+           |}
+           |function __kyoMoveL(parent,node,ref){__kyoEachSpan(node,function(n){parent.insertBefore(n,ref);});}
+           |function __kyoRemoveL(parent,node){__kyoEachSpan(node,function(n){parent.removeChild(n);});}
+           |function __kyoInsertL(parent,toNode,ref){__kyoEachSpan(toNode,function(n){parent.insertBefore(document.importNode(n,true),ref);});}
+           |// Patch matched logical children. Span vs span recurses on the content ranges, unless the live span
+           |// carries 'm' and the incoming one 's' (the SAME mount re-rendering, which owns its subtree): opaque,
+           |// and the 'm' start marker is never touched. Kind mismatch replaces wholesale.
+           |function __kyoPatchL(parent,m,toNode){
+           |  var fs=m.nodeType===8,ts=toNode.nodeType===8;
+           |  if(!fs&&!ts){__kyoMorphNode(m,toNode);return;}
+           |  if(fs&&ts){
+           |    var f=__kyoMParse(m.data),t=__kyoMParse(toNode.data);
+           |    if(!f||!t)return;
+           |    var fc=__kyoSpanClose(m,f.p),tc=__kyoSpanClose(toNode,t.p);
+           |    if(!fc||!tc)return;
+           |    if(f.m&&t.s)return;
+           |    __kyoMorphRange(parent,m.nextSibling,fc,toNode.nextSibling,tc);
+           |    return;
+           |  }
+           |  __kyoInsertL(parent,toNode,m);__kyoRemoveL(parent,m);
+           |}
+           |// Parse a bare content fragment in the parse context the live parent dictates (twin of
+           |// DomBackend.parseToContainer): the wrap keeps the fragment parser from foster-parenting or dropping
+           |// context-sensitive content. Comments survive all these parse modes. Returns the node whose childNodes
+           |// are the new content, or null.
+           |function __kyoParseCtx(parent,html){
+           |  var t=document.createElement("template"),tag=parent.tagName,pre="",suf="",d=0;
+           |  if(parent.namespaceURI==="http://www.w3.org/2000/svg"&&tag.toLowerCase()!=="foreignobject"){pre="<svg>";suf="</svg>";d=1;}
+           |  else if(tag==="TABLE"||tag==="THEAD"||tag==="TBODY"||tag==="TFOOT"){pre="<table><tbody>";suf="</tbody></table>";d=2;}
+           |  else if(tag==="TR"){pre="<table><tbody><tr>";suf="</tr></tbody></table>";d=3;}
+           |  else if(tag==="SELECT"||tag==="OPTGROUP"){pre="<select>";suf="</select>";d=1;}
+           |  t.innerHTML=pre+html+suf;
+           |  var c=t.content;
+           |  while(d>0&&c){c=__kyoFirstEl(c);d--;}
+           |  return c;
+           |}
+           |function __kyoCompat(a,b){return a.nodeType===b.nodeType&&(a.nodeType!==1||a.tagName===b.tagName);}
+           |function __kyoMorphAttrs(fromEl,toEl){
+           |  var tag=fromEl.tagName;
+           |  var activeInput=(fromEl===document.activeElement)&&(tag==="INPUT"||tag==="TEXTAREA");
+           |  var ta=toEl.attributes,i;
+           |  for(i=0;i<ta.length;i++){var a=ta[i];if(fromEl.getAttribute(a.name)!==a.value)fromEl.setAttribute(a.name,a.value);}
+           |  var fa=fromEl.attributes,j;
+           |  for(j=fa.length-1;j>=0;j--){var fn=fa[j].name;if(!toEl.hasAttribute(fn))fromEl.removeAttribute(fn);}
+           |  // Never overwrite a focused field's live .value (its caret) with its own two-way-binding echo (value
+           |  // already matches); assign only a genuine external change (submit-clear, programmatic update).
+           |  if(activeInput){var nv=(tag==="TEXTAREA")?toEl.textContent:(toEl.getAttribute("value")||"");if(nv!==fromEl.value)fromEl.value=nv;}
+           |}
+           |// Reconcile the live sibling range [fromStart,fromEnd) toward [toStart,toEnd) (template nodes).
+           |// Null bounds = to the end of the parent; a region's close marker is the from-side sentinel, so
+           |// out-of-range siblings (incl. the region's own markers) are never visited and insertBefore(node,
+           |// sentinel) appends at the range end. Twin of DomBackend.morphRange; keep in lockstep.
+           |function __kyoMorphRange(fromParent,fromStart,fromEnd,toStart,toEnd){
+           |  var fromKeyed=null,toKeyed=null,scan=fromStart;
+           |  while(scan&&scan!==fromEnd){var k=__kyoLKey(scan);if(k!==null){if(!fromKeyed)fromKeyed=Object.create(null);fromKeyed[k]=scan;}scan=__kyoLNext(scan);}
+           |  scan=toStart;
+           |  while(scan&&scan!==toEnd){var k2=__kyoLKey(scan);if(k2!==null){if(!toKeyed)toKeyed=Object.create(null);toKeyed[k2]=true;}scan=__kyoLNext(scan);}
+           |  var curFrom=fromStart,curTo=toStart;
+           |  while(curTo&&curTo!==toEnd){
+           |    var toNext=__kyoLNext(curTo),tKey=__kyoLKey(curTo);
+           |    if(tKey!==null){
+           |      var m=(fromKeyed&&fromKeyed[tKey])?fromKeyed[tKey]:null;
+           |      if(m){
+           |        if(m!==curFrom)__kyoMoveL(fromParent,m,curFrom);else curFrom=__kyoLNext(curFrom);
+           |        __kyoPatchL(fromParent,m,curTo);
+           |      }else __kyoInsertL(fromParent,curTo,curFrom);
+           |    }else{
+           |      var handled=false,loop=true;
+           |      while(loop&&curFrom&&curFrom!==fromEnd){
+           |        var fNext=__kyoLNext(curFrom),fKey=__kyoLKey(curFrom);
+           |        if(fKey!==null){
+           |          // A keyed from-child at an unkeyed slot: keep it if `to` reuses it elsewhere, else stale.
+           |          if(!toKeyed||!toKeyed[fKey])__kyoRemoveL(fromParent,curFrom);
+           |          curFrom=fNext;
+           |        }else if(__kyoCompat(curFrom,curTo)){__kyoMorphNode(curFrom,curTo);curFrom=fNext;handled=true;loop=false;}
+           |        else{__kyoRemoveL(fromParent,curFrom);curFrom=fNext;}
+           |      }
+           |      if(!handled)__kyoInsertL(fromParent,curTo,curFrom);
+           |    }
+           |    curTo=toNext;
+           |  }
+           |  while(curFrom&&curFrom!==fromEnd){var fN=__kyoLNext(curFrom);__kyoRemoveL(fromParent,curFrom);curFrom=fN;}
+           |}
+           |function __kyoMorphChildren(fromParent,toParent){__kyoMorphRange(fromParent,fromParent.firstChild,null,toParent.firstChild,null);}
+           |function __kyoMorphEl(fromEl,toEl){
+           |  __kyoMorphAttrs(fromEl,toEl);
+           |  var editing=(fromEl===document.activeElement)&&fromEl.hasAttribute("contenteditable");
+           |  if(!editing)__kyoMorphChildren(fromEl,toEl);
+           |}
+           |function __kyoMorphNode(fromNode,toNode){
+           |  if(toNode.nodeType!==1){if(fromNode.nodeValue!==toNode.nodeValue)fromNode.nodeValue=toNode.nodeValue;}
+           |  else if(fromNode.tagName!==toNode.tagName)fromNode.parentNode.replaceChild(document.importNode(toNode,true),fromNode);
+           |  else __kyoMorphEl(fromNode,toNode);
+           |}
            |function fp(el){
            |  while(el&&el!==document.body){
            |    if(el.hasAttribute("data-kyo-path"))return el;
@@ -870,7 +1077,7 @@ private[kyo] object HtmlRenderer:
            |  if(!an.length)return;
            |  requestAnimationFrame(function(){for(var i=0;i<an.length;i++){try{an[i].beginElement();}catch(e){}}});
            |}
-           |applyJsProps(document.body);ba(document.body);
+           |__kyoRebuild();applyJsProps(document.body);ba(document.body);
            |// Dropdown helpers: close all dropdowns except the given id
            |function kyoCloseDropdown(exceptId){
            |  var all=document.querySelectorAll('[data-kyo-dropdown-options]');

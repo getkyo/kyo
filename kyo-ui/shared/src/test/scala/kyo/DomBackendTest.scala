@@ -134,4 +134,131 @@ class DomBackendTest extends UITest:
         }
     }
 
+    // The expando probe: a JS property no markup carries survives a sibling-driven re-render only if the node
+    // itself is reused (an outerHTML replace would recreate it and lose it).
+    "morph reuses an inner element (preserving its DOM-local state) across a re-render of its region" in {
+        val app: UI < Async =
+            for outer <- Signal.initRef[Int](0)
+            yield UI.div(
+                outer.map(o =>
+                    UI.div(
+                        UI.div("keep-me").id("inner"),
+                        UI.span(s"o=$o").id("status")
+                    )
+                ),
+                UI.button("bump").id("bump").onClick(outer.getAndUpdate(_ + 1).unit)
+            )
+        withUI(app) {
+            for
+                _      <- Browser.assertText(Selector.id("status"), "o=0")
+                _      <- Browser.evalDiscard("document.getElementById('inner').__kyoMark = 4242;")
+                before <- Browser.evalJson[Int]("document.getElementById('inner').__kyoMark || 0")
+                _      <- Browser.evalDiscard("document.getElementById('bump').click()")
+                _      <- Browser.assertText(Selector.id("status"), "o=1")
+                after  <- Browser.evalJson[Int]("document.getElementById('inner').__kyoMark || 0")
+            yield
+                assert(before == 4242)
+                assert(after == 4242) // node reused; an outerHTML replace would recreate it (mark gone)
+        }
+    }
+
+    "nested reactive directly inside a reactive patches independently (no path collision)" in {
+        // Regression for the same-data-kyo-path collision (a reactive whose value is ITSELF a reactive, e.g.
+        // `open.render(hi.render(...))`). The `: UI` ascription lifts the inner Signal into a Reactive so the outer value is itself reactive.
+        val app: UI < Async =
+            for
+                outer <- Signal.initRef("o0")
+                inner <- Signal.initRef("i0")
+            yield UI.div(
+                UI.button("set-inner").id("set-inner").onClick(inner.set("i1")),
+                UI.button("set-outer").id("set-outer").onClick(outer.set("o1")),
+                outer.map(o => (inner.map(i => UI.span(s"$o/$i").id("cell")): UI))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("cell"), "o0/i0")
+                // change ONLY inner: before the fix this stayed "o0/i0".
+                _ <- Browser.click(Selector.id("set-inner"))
+                _ <- Browser.assertText(Selector.id("cell"), "o0/i1")
+                _ <- Browser.click(Selector.id("set-outer"))
+                _ <- Browser.assertText(Selector.id("cell"), "o1/i1")
+            yield ()
+        }
+    }
+
+    // Mount-slot reconciliation: a keyless UI.mounted and a Reactive share the reactiveContentSegment key, so
+    // swapping one for the other collides on the same data-kyo-path. The live mount is preserved ONLY when the
+    // incoming top-down node is itself a mount slot (data-kyo-mount-slot); otherwise the stale mount is removed.
+
+    "a region swapping a keyless mount for colliding reactive content removes the stale mount DOM" in {
+        val app: UI < Async =
+            for
+                sel   <- Signal.initRef("a")
+                inner <- Signal.initRef("B-content")
+            yield UI.div(
+                UI.button("swap").id("swap").onClick(sel.set("b")),
+                sel.map {
+                    // both branches are reactive content -> they reconcile at the SAME positional key
+                    case "a" =>
+                        UI.mounted {
+                            Signal.initRef(0).map(_ => UI.span("A-content").id("mount-a"))
+                        }.placeholder(UI.empty): UI
+                    case _ =>
+                        inner.map(v => UI.span(v).id("plain-b")): UI
+                }
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("mount-a"), "A-content") // mount painted (data-kyo-mount)
+                _ <- Browser.click(Selector.id("swap"))
+                _ <- Browser.assertText(Selector.id("plain-b"), "B-content")
+                _ <- Browser.assertNotExists(Selector.id("mount-a"))         // stale mount DOM gone
+            yield ()
+        }
+    }
+
+    "a region closing a gate over a mount removes the mount DOM" in {
+        // Empty-slot path, keyed on the ABSENCE of a mount-slot marker: open -> false yields no mount, so the morph empties it.
+        val app: UI < Async =
+            for open <- Signal.initRef(true)
+            yield UI.div(
+                UI.button("gclose").id("gclose").onClick(open.set(false)),
+                open.map {
+                    case true  => UI.mounted { Signal.initRef(0).map(_ => UI.span("panel").id("gpanel")) }.placeholder(UI.empty): UI
+                    case false => UI.empty: UI
+                }
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("gpanel"), "panel")
+                _ <- Browser.click(Selector.id("gclose"))
+                _ <- Browser.assertNotExists(Selector.id("gpanel"))
+            yield ()
+        }
+    }
+
+    "a re-rendered region keeps a mount that is still present (no wipe)" in {
+        // Safety companion: the SAME mount stays across a region re-render. Its placeholder carries the mount-slot
+        // marker, so the guard preserves the live mount (the legitimate case the opaque-mount guard exists for).
+        val app: UI < Async =
+            for tick <- Signal.initRef(0)
+            yield UI.div(
+                UI.button("ktick").id("ktick").onClick(tick.getAndUpdate(_ + 1).unit),
+                tick.map { t =>
+                    UI.div(
+                        UI.span(s"t:$t").id("ktxt"),
+                        UI.mounted { Signal.initRef(0).map(_ => UI.span("kept").id("kpanel")) }.placeholder(UI.empty)
+                    ): UI
+                }
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("kpanel"), "kept")
+                _ <- Browser.click(Selector.id("ktick"))
+                _ <- Browser.assertText(Selector.id("ktxt"), "t:1")
+                _ <- Browser.assertText(Selector.id("kpanel"), "kept") // mount preserved across the morph
+            yield ()
+        }
+    }
+
 end DomBackendTest

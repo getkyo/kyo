@@ -25,7 +25,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
     // A no-op exchange: the teardown/cascade proof does not depend on rendered output, only on subscription liveness.
     private val stubExchange: UIExchange =
         new UIExchange:
-            def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async = ()
+            def onChange(path: Seq[String], ui: UI, mount: Boolean)(using Frame): Unit < Async = ()
 
     "bound input re-renders the latest value across back-to-back changes (convergence)".ignore(
         "interrupt-driven Scope finalizer teardown can stall before the result is observed; known finalizer-execution-on-interrupt issue, comprehensive fix pending"
@@ -43,7 +43,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             // Exchange that renders each emitted input region to HTML and records it (the real onChange wire behavior).
             recordingExchange =
                 new UIExchange:
-                    def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
+                    def onChange(path: Seq[String], ui: UI, mount: Boolean)(using Frame): Unit < Async =
                         HtmlRenderer.render(ui, path).map(html => rendered.updateAndGet(_.append(html)).unit)
             tree = UI.input.id("i").value(ref)
             live <- AtomicInt.init(0)

@@ -40,8 +40,11 @@ private[kyo] object DomBackend:
             root <- ReactiveUI.normalize(ui, Seq.empty)
             html <- HtmlRenderer.render(ui, Seq.empty)
             _    <- Sync.defer(container.innerHTML = html)
-            _    <- applyJsProps(container)
-            _    <- Sync.defer(beginAnimationsSync(container))
+            // Comment markers produce no node handles from an innerHTML assignment; one full scan
+            // builds the path->range registry the patch path resolves against.
+            _ <- Sync.defer { scanRoot = container; rebuildRegions() }
+            _ <- applyJsProps(container)
+            _ <- Sync.defer(beginAnimationsSync(container))
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
             // Single-consumer drain owned by the ambient page Scope: every JS event effect is run by a
@@ -74,49 +77,86 @@ private[kyo] object DomBackend:
                 discard(el.asInstanceOf[js.Dynamic].scrollIntoView(js.Dynamic.literal(behavior = "smooth", block = "start")))
         }
 
+    // Keyed-list keys are user data and become path segments: escape the CSS attribute-selector
+    // metacharacters (backslash, double quote) so a key cannot break or redirect the query.
+    private def pathSelector(joined: String): String =
+        s"""[data-kyo-path="${joined.replace("\\", "\\\\").replace("\"", "\\\"")}"]"""
+
+    private def queryByPath(path: Seq[String]): dom.Element =
+        document.querySelector(pathSelector(path.mkString(".")))
+
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:
-        private def svgContextAt(path: Seq[String]): Boolean =
-            ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
 
-        def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
-            HtmlRenderer.render(ui, path).map { html =>
-                // Always wrap the rendered html in the reactive boundary element so the node carrying
-                // data-kyo-path=path survives subsequent replacements. A Fragment, Text, or RawHtml value
-                // renders without a path-carrying root, so an unwrapped replace would drop the marker and
-                // the next update could not locate the node. In SVG context the boundary is a <g> (a <span>
-                // is invalid inside <svg>); otherwise a <span> (CSS sets `display: contents` so it is layout-
-                // transparent).
-                val tag       = if svgContextAt(path) then "g" else "span"
-                val pathAttr  = path.mkString(".")
-                val finalHtml = s"""<$tag data-kyo-path="$pathAttr" data-kyo-reactive>$html</$tag>"""
+        def onChange(path: Seq[String], ui: UI, mount: Boolean)(using Frame): Unit < Async =
+            // Render content at its nested-reactive sub-path (contentPath) so a reactive-valued region paints a
+            // DISTINCT inner marker span matching SSR/walkStatic. mountSlot=true stamps the `s` flag on Mounted
+            // placeholders for the mount guards below. The payload is a bare fragment: the region's own live
+            // markers stay in the DOM and are never re-sent, so the path stays addressable across replacements
+            // regardless of what the content is (Fragment, Text, RawHtml: none carry a path-bearing root).
+            HtmlRenderer.render(ui, HtmlRenderer.contentPath(path, ui), mountSlot = true).map { html =>
                 Sync.defer {
-                    val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
-                    if el != null && el.outerHTML != finalHtml then
-                        // Capture focus and caret of the active element inside the replaced region,
-                        // keyed on data-kyo-path identity (mirrors HtmlRenderer.clientJs:576-583 on
-                        // the JS DOM API). Plain DOM inside the already-suspended Sync.defer; no new
-                        // AllowUnsafe crossing.
-                        val ae = document.activeElement
-                        val insideRegion = ae != null && (ae ne document.body) &&
-                            (ae.getAttribute("data-kyo-path") == pathAttr || el.contains(ae))
-                        // Use the active element's own data-kyo-path when it carries one (nested
-                        // reactive region), otherwise fall back to pathAttr so the region wrapper
-                        // itself is queried (common case: value-bound input inside the region has
-                        // no data-kyo-path of its own).
+                    val pathAttr = path.mkString(".")
+                    val r        = lookupRegion(pathAttr)
+                    if r == null then
+                        // No marker pair at this path: either an ELEMENT region (a signal-bound field like
+                        // `input.value(ref)`: the region root IS the live element carrying the path; no wrapper
+                        // of any kind exists) morphed 1:1 in place, or genuinely unpainted DOM (e.g. Boundary
+                        // pre-reveal), which stays a silent no-op.
+                        val el = queryByPath(path)
+                        if el != null && el.parentNode != null then
+                            val toContainer = parseToContainer(el.parentNode.asInstanceOf[dom.Element], html)
+                            val toRoot      = if toContainer != null then firstElementChildOf(toContainer) else null
+                            if toRoot != null then
+                                morphNode(el, toRoot)
+                                val live = queryByPath(path)
+                                if live != null then
+                                    applyJsPropsSync(live)
+                                    beginAnimationsSync(live)
+                            end if
+                        end if
+                    // Leave the live mount region untouched ONLY when the new content is itself a mount slot
+                    // (`s` = the SAME mount re-rendering, which owns its subtree). Different content or an empty
+                    // gate-closed repaint falls through so the morph reconciles/empties the region.
+                    else if !mount && r.mount && payloadRootIsMountSlot(html) then ()
+                    else
+                        val parent = r.start.parentNode.asInstanceOf[dom.Element]
+                        // Capture focus and caret of the active element inside the replaced region (mirrors the
+                        // clientJs Replace handler on the JS DOM API). Plain DOM inside the already-suspended
+                        // Sync.defer; no new AllowUnsafe crossing.
+                        val ae           = document.activeElement
+                        val insideRegion = ae != null && (ae ne document.body) && rangeContains(r, ae)
+                        // Use the active element's own data-kyo-path when it carries one (nested element),
+                        // otherwise fall back to the region path so restoreFocus searches the range (common
+                        // case: value-bound input inside the region has no data-kyo-path of its own).
                         val activePath =
                             if insideRegion then
                                 if ae.hasAttribute("data-kyo-path") then ae.getAttribute("data-kyo-path")
                                 else pathAttr
                             else null
                         val (selStart, selEnd) = if insideRegion then readSelection(ae) else (Absent, Absent)
-                        el.outerHTML = finalHtml
-                        val updated = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
-                        if updated != null then
-                            applyJsPropsSync(updated)
-                            beginAnimationsSync(updated)
-                        if activePath != null then
-                            restoreFocus(activePath, selStart, selEnd)
+                        val toContainer        = parseToContainer(parent, html)
+                        if toContainer != null then
+                            // Morph the marker-delimited range instead of replacing, so focus/caret/scroll/
+                            // transitions on reused nodes survive.
+                            morphRange(parent, r.start.nextSibling, r.end, toContainer.firstChild, null)
+                            if mount && !r.mount then
+                                // The mount's own first paint claims the region: the `m` flag rides the live
+                                // start marker (source of truth, survives registry rebuilds); the registry
+                                // entry is a cache. Client-only mutation, never in server-rendered HTML.
+                                r.mount = true
+                                r.start.data = RegionMarker.openData(pathAttr, mount = true)
+                            end if
+                            // A morph imports subtrees, which carries new nested-region markers with it:
+                            // refresh the registry for exactly this range.
+                            rescanRange(r)
+                            foreachRangeElement(r) { el =>
+                                applyJsPropsSync(el)
+                                beginAnimationsSync(el)
+                            }
+                            if activePath != null then
+                                restoreFocus(activePath, selStart, selEnd)
+                        end if
                     end if
                 }
             }
@@ -130,13 +170,27 @@ private[kyo] object DomBackend:
     end readSelection
 
     private def restoreFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
-        val located = document.querySelector(s"""[data-kyo-path="$capturedPath"]""")
-        if located != null then
-            val focusTarget =
-                if located.hasAttribute("data-kyo-reactive") then
-                    val inner = located.querySelector("input,textarea,select,[contenteditable]")
-                    if inner != null then inner else located
-                else located
+        val located = document.querySelector(pathSelector(capturedPath))
+        val focusTarget: dom.Element =
+            if located != null then located
+            else
+                // A region path has no element carrying it; resolve via the registry and take the first
+                // focus-capable element in the range (mirrors the old descend-into-wrapper behavior).
+                regions.get(capturedPath).orNull match
+                    case null => null
+                    case r =>
+                        var found: dom.Element = null
+                        foreachRangeElement(r) { el =>
+                            if found == null then
+                                val sel = "input,textarea,select,[contenteditable]"
+                                if el.matches(sel) then found = el
+                                else
+                                    val inner = el.querySelector(sel)
+                                    if inner != null then found = inner
+                                end if
+                        }
+                        found
+        if focusTarget != null then
             val _ = focusTarget.asInstanceOf[scalajs.js.Dynamic].focus()
             (selStart, selEnd) match
                 case (Present(s), Present(e)) =>
@@ -373,5 +427,414 @@ private[kyo] object DomBackend:
     private def parsePath(p: String): Seq[String] =
         if p == null || p.isEmpty then Seq.empty
         else p.split("\\.").toSeq
+
+    // ---- DOM morphing: patch a sibling range in place toward new HTML, preserving element identity ----
+    // Replacing wholesale discards DOM-local state (focus, caret, scroll, in-flight transitions, pointer
+    // capture) and node identity; morphing reuses nodes and patches only diffs. Reconciliation is
+    // SIBLING-SCOPED, keyed on `data-kyo-path` for elements (unique among siblings: Foreach items get
+    // `path :+ key`, element children `path :+ i`) and on the region path for marker-delimited spans, which
+    // move/insert/remove as ONE logical child. A region owns the sibling range between its two comment
+    // markers, so patches never touch out-of-range siblings of the same parent.
+    private val SvgNs = "http://www.w3.org/2000/svg"
+
+    // ---- region registry: joined path -> live comment-marker range ----
+
+    /** A live region's marker pair. `mount` mirrors the `m` flag on the start marker's data (cache only;
+      * the marker text is the source of truth and survives registry rebuilds).
+      */
+    final private class RegionRange(val start: dom.Comment, val end: dom.Comment, var mount: Boolean)
+
+    /** Path -> live range. Rebuilt by full scans (initial paint, stale-lookup fallback) and refreshed by
+      * range-scoped rescans after every patch (a morph imports subtrees via importNode, which brings new
+      * nested-region markers with them). Module-level mutable is safe on the single-threaded runtime.
+      */
+    private var regions: js.Dictionary[RegionRange] = js.Dictionary.empty
+    private var scanRoot: dom.Node                  = null
+
+    private def commentData(n: dom.Node): String = n.asInstanceOf[dom.Comment].data
+
+    /** Register a scanned pair, repairing parser separation first: the whole-page parser keeps an open
+      * marker that precedes a table's FIRST row as a `<table>` child while the rows and the close
+      * marker land inside the implied `<tbody>` it synthesizes. Adopting the open marker into that row
+      * group makes the pair share a parent again (the invariant every range walk relies on) and puts
+      * the rows inside the range. Twin of `__kyoRegPair` in clientJs.
+      */
+    private def registerPair(path: String, start: dom.Comment, end: dom.Comment, mount: Boolean): Unit =
+        if (start.parentNode ne end.parentNode) && end.parentNode != null && (end.parentNode.parentNode eq start.parentNode) then
+            discard(end.parentNode.insertBefore(start, end.parentNode.firstChild))
+        regions(path) = new RegionRange(start, end, mount)
+    end registerPair
+
+    /** Register every marker pair under `root` (whole-subtree TreeWalker) into `regions`. Paths are
+      * document-unique, so pairing open->close by path needs no stack; unbalanced markers are dropped.
+      */
+    private def scanRegionsInto(root: dom.Node): Unit =
+        val walker = document.createTreeWalker(root, dom.NodeFilter.SHOW_COMMENT, null, false)
+        val opens  = js.Dictionary.empty[(dom.Comment, Boolean)]
+        var n      = walker.nextNode()
+        while n != null do
+            RegionMarker.parse(commentData(n)) match
+                case Present(p) =>
+                    if p.isClose then
+                        opens.get(p.path) match
+                            case Some((start, mount)) =>
+                                registerPair(p.path, start, n.asInstanceOf[dom.Comment], mount)
+                                discard(opens.remove(p.path))
+                            case None => ()
+                    else opens(p.path) = (n.asInstanceOf[dom.Comment], p.mount)
+                case Absent => ()
+            end match
+            n = walker.nextNode()
+        end while
+    end scanRegionsInto
+
+    private def rebuildRegions(): Unit =
+        regions = js.Dictionary.empty
+        if scanRoot != null then scanRegionsInto(scanRoot)
+    end rebuildRegions
+
+    /** Re-register marker pairs inside `r` after a patch. A pair always shares one parent, so direct
+      * comment siblings pair at this level and everything deeper is contained in element siblings.
+      * Bounded by patch size, not page size.
+      */
+    private def rescanRange(r: RegionRange): Unit =
+        val opens = js.Dictionary.empty[(dom.Comment, Boolean)]
+        var n     = r.start.nextSibling
+        while n != null && (n ne r.end) do
+            if n.nodeType == 8 then
+                RegionMarker.parse(commentData(n)) match
+                    case Present(p) =>
+                        if p.isClose then
+                            opens.get(p.path) match
+                                case Some((start, mount)) =>
+                                    registerPair(p.path, start, n.asInstanceOf[dom.Comment], mount)
+                                    discard(opens.remove(p.path))
+                                case None => ()
+                        else opens(p.path) = (n.asInstanceOf[dom.Comment], p.mount)
+                    case Absent => ()
+            else if n.nodeType == 1 then scanRegionsInto(n)
+            end if
+            n = n.nextSibling
+        end while
+    end rescanRange
+
+    /** Locate a live region by joined path. Connectivity-validated; a stale or missing entry triggers
+      * ONE full rescan, then retries; still missing -> null. Callers no-op on null, preserving the old
+      * "querySelector returned null -> silently skip" contract Boundary pre-reveal patches rely on.
+      */
+    private def lookupRegion(pathAttr: String): RegionRange =
+        def connected(r: RegionRange): Boolean =
+            r != null && r.start.isConnected && r.end.isConnected
+        val direct = regions.get(pathAttr).orNull
+        if connected(direct) then direct
+        else
+            rebuildRegions()
+            val retried = regions.get(pathAttr).orNull
+            if connected(retried) then retried else null
+        end if
+    end lookupRegion
+
+    /** True when `node` is one of the range's direct children or a descendant of one. */
+    private def rangeContains(r: RegionRange, node: dom.Node): Boolean =
+        var n     = r.start.nextSibling
+        var found = false
+        while !found && n != null && (n ne r.end) do
+            if (n eq node) || (n.nodeType == 1 && n.contains(node)) then found = true
+            n = n.nextSibling
+        found
+    end rangeContains
+
+    private def foreachRangeElement(r: RegionRange)(f: dom.Element => Unit): Unit =
+        var n = r.start.nextSibling
+        while n != null && (n ne r.end) do
+            if n.nodeType == 1 then f(n.asInstanceOf[dom.Element])
+            n = n.nextSibling
+    end foreachRangeElement
+
+    // ---- logical children: a marker-delimited span is ONE keyed child ----
+
+    /** For an open marker, its matching close marker among following siblings; null when unbalanced (the
+      * caller then treats the comment as a plain positional node). Pairs never nest at one level (paths
+      * are unique among siblings), so a direct path match suffices.
+      */
+    private def spanClose(open: dom.Node, openPath: String): dom.Node =
+        var n                = open.nextSibling
+        var result: dom.Node = null
+        while result == null && n != null do
+            if n.nodeType == 8 then
+                RegionMarker.parse(commentData(n)) match
+                    case Present(p) if p.isClose && p.path == openPath => result = n
+                    case _                                             => ()
+            end if
+            n = n.nextSibling
+        end while
+        result
+    end spanClose
+
+    /** The reconciliation key of a logical child: an element's `data-kyo-path`, an open marker's region
+      * path, else null (text, plain comments, and unkeyed elements reconcile positionally). Markers are
+      * NEVER matched positionally: mispairing would rewrite marker text and corrupt region identity.
+      */
+    private def logicalKey(node: dom.Node): String =
+        if node.nodeType == 1 then
+            val el = node.asInstanceOf[dom.Element]
+            if el.hasAttribute("data-kyo-path") then el.getAttribute("data-kyo-path") else null
+        else if node.nodeType == 8 then
+            RegionMarker.parse(commentData(node)) match
+                case Present(p) if !p.isClose && spanClose(node, p.path) != null => p.path
+                case _                                                           => null
+        else null
+
+    /** Next logical sibling: past the whole span for an open marker, else nextSibling. */
+    private def logicalNext(node: dom.Node): dom.Node =
+        if node.nodeType == 8 then
+            RegionMarker.parse(commentData(node)) match
+                case Present(p) if !p.isClose =>
+                    val close = spanClose(node, p.path)
+                    if close != null then close.nextSibling else node.nextSibling
+                case _ => node.nextSibling
+        else node.nextSibling
+
+    private def eachSpanNode(first: dom.Node)(f: dom.Node => Unit): Unit =
+        val last =
+            if first.nodeType == 8 then
+                RegionMarker.parse(commentData(first)) match
+                    case Present(p) if !p.isClose =>
+                        val close = spanClose(first, p.path)
+                        if close != null then close else first
+                    case _ => first
+            else first
+        var n    = first
+        var stop = false
+        while !stop && n != null do
+            val next = n.nextSibling
+            stop = n eq last
+            f(n)
+            n = next
+        end while
+    end eachSpanNode
+
+    private def moveLogicalBefore(parent: dom.Element, node: dom.Node, ref: dom.Node): Unit =
+        eachSpanNode(node)(n => discard(parent.insertBefore(n, ref)))
+
+    private def removeLogical(parent: dom.Element, node: dom.Node): Unit =
+        eachSpanNode(node)(n => discard(parent.removeChild(n)))
+
+    private def insertLogicalClone(parent: dom.Element, toNode: dom.Node, ref: dom.Node): Unit =
+        eachSpanNode(toNode)(n => discard(parent.insertBefore(document.importNode(n, true), ref)))
+
+    /** Patch matched logical children (same key). Element vs element morphs in place; span vs span
+      * recurses on the two content ranges, unless the live span carries the `m` (mount root) flag and
+      * the incoming one the `s` (mount slot) flag: that is the SAME mount re-rendering, which owns and
+      * repaints its own subtree, so the span is opaque and its start marker is never touched (the `m`
+      * flag must survive). A kind mismatch at one key replaces wholesale.
+      */
+    private def patchLogical(parent: dom.Element, m: dom.Node, toNode: dom.Node): Unit =
+        val fromIsSpan = m.nodeType == 8
+        val toIsSpan   = toNode.nodeType == 8
+        if !fromIsSpan && !toIsSpan then morphNode(m, toNode)
+        else if fromIsSpan && toIsSpan then
+            (RegionMarker.parse(commentData(m)), RegionMarker.parse(commentData(toNode))) match
+                case (Present(f), Present(t)) =>
+                    val fClose = spanClose(m, f.path)
+                    val tClose = spanClose(toNode, t.path)
+                    if fClose == null || tClose == null then ()
+                    else if f.mount && t.slot then ()
+                    else morphRange(parent, m.nextSibling, fClose, toNode.nextSibling, tClose)
+                case _ => ()
+        else
+            insertLogicalClone(parent, toNode, m)
+            removeLogical(parent, m)
+        end if
+    end patchLogical
+
+    /** True when the payload's first node is an open marker carrying the `s` (mount slot) flag: the
+      * region's new content root IS a mount placeholder. Bounded to the leading comment so a descendant
+      * marker cannot false-match.
+      */
+    private def payloadRootIsMountSlot(html: String): Boolean =
+        if !html.startsWith("<!--") then false
+        else
+            val end = html.indexOf("-->")
+            end > 4 && (RegionMarker.parse(html.substring(4, end)) match
+                case Present(p) => !p.isClose && p.slot
+                case Absent     => false)
+
+    private def firstElementChildOf(parent: dom.Node): dom.Element =
+        var c = parent.firstChild
+        while c != null && c.nodeType != 1 do c = c.nextSibling
+        if c == null then null else c.asInstanceOf[dom.Element]
+    end firstElementChildOf
+
+    /** Parse a region payload (a bare content fragment, zero..n roots) in the parse context its live
+      * parent dictates, returning the detached node whose childNodes are the new content (kept inside
+      * the template; the morph imports nodes on insert). The context wrap keeps the fragment parser from
+      * foster-parenting or silently dropping context-sensitive content: a `<tr>` payload outside a table
+      * parse is discarded wholesale, an `<option>` outside select likewise, and bare SVG elements in an
+      * HTML template become unknown elements. Comment markers survive every one of these parse modes,
+      * which is what makes marker-delimited regions parseable at all. Twin of `__kyoParseCtx` in
+      * clientJs; keep in lockstep.
+      */
+    private def parseToContainer(parent: dom.Element, html: String): dom.Node =
+        val tpl = document.createElement("template").asInstanceOf[dom.HTMLTemplateElement]
+        val tag = parent.tagName
+        val (prefix, suffix, depth) =
+            if parent.namespaceURI == SvgNs && tag.toLowerCase != "foreignobject" then ("<svg>", "</svg>", 1)
+            else
+                tag match
+                    // Explicit <tbody> (not the parser's implied one) so the descent depth is fixed.
+                    case "TABLE" | "THEAD" | "TBODY" | "TFOOT" => ("<table><tbody>", "</tbody></table>", 2)
+                    case "TR"                                  => ("<table><tbody><tr>", "</tr></tbody></table>", 3)
+                    case "SELECT" | "OPTGROUP"                 => ("<select>", "</select>", 1)
+                    case _                                     => ("", "", 0)
+        tpl.innerHTML = prefix + html + suffix
+        var container: dom.Node = tpl.content
+        var d                   = depth
+        while d > 0 && container != null do
+            container = firstElementChildOf(container)
+            d -= 1
+        container
+    end parseToContainer
+
+    private def morphNode(fromNode: dom.Node, toNode: dom.Node): Unit =
+        if toNode.nodeType != 1 then
+            if fromNode.nodeValue != toNode.nodeValue then fromNode.nodeValue = toNode.nodeValue
+        else
+            val fromEl = fromNode.asInstanceOf[dom.Element]
+            val toEl   = toNode.asInstanceOf[dom.Element]
+            if fromEl.tagName != toEl.tagName then
+                discard(fromEl.parentNode.replaceChild(document.importNode(toEl, true), fromEl))
+            else morphEl(fromEl, toEl)
+    end morphNode
+
+    private def morphEl(fromEl: dom.Element, toEl: dom.Element): Unit =
+        morphAttrs(fromEl, toEl)
+        // A focused contenteditable would lose its caret if its children were rewritten mid-edit; leave its
+        // subtree alone (INPUT/TEXTAREA have no element children, so need no such guard).
+        val editing = (fromEl eq document.activeElement) && fromEl.hasAttribute("contenteditable")
+        if !editing then morphChildren(fromEl, toEl)
+    end morphEl
+
+    private def morphAttrs(fromEl: dom.Element, toEl: dom.Element): Unit =
+        val tag = fromEl.tagName
+        val activeInput =
+            (fromEl eq document.activeElement) && (tag == "INPUT" || tag == "TEXTAREA")
+        val toAttrs = toEl.attributes
+        var i       = 0
+        while i < toAttrs.length do
+            val a    = toAttrs(i)
+            val name = a.name
+            if fromEl.getAttribute(name) != a.value then fromEl.setAttribute(name, a.value)
+            i += 1
+        end while
+        // Remove attributes gone from `to`. Walk the live NamedNodeMap backward so a removal never shifts an
+        // index still to be visited (no intermediate collection allocated).
+        val fromAttrs = fromEl.attributes
+        var j         = fromAttrs.length - 1
+        while j >= 0 do
+            val name = fromAttrs(j).name
+            if !toEl.hasAttribute(name) then fromEl.removeAttribute(name)
+            j -= 1
+        end while
+        // Active-input preservation: two-way binding echoes each keystroke back as a re-render. Never overwrite the
+        // focused field's live `.value` (its caret) with its own echo (value already matches); assign only a genuine
+        // external change (submit-clear, programmatic update).
+        if activeInput then
+            val nv =
+                if tag == "TEXTAREA" then toEl.textContent
+                else
+                    val v = toEl.getAttribute("value")
+                    if v == null then "" else v
+            val dyn = fromEl.asInstanceOf[scalajs.js.Dynamic]
+            if nv != dyn.value.asInstanceOf[String] then dyn.value = nv
+        end if
+    end morphAttrs
+
+    private def morphChildren(fromParent: dom.Element, toParent: dom.Element): Unit =
+        morphRange(fromParent, fromParent.firstChild, null, toParent.firstChild, null)
+
+    /** Reconcile the live sibling range [fromStart, fromEnd) of `fromParent` toward the target range
+      * [toStart, toEnd) (nodes inside a detached template). Null bounds mean "to the end of the parent";
+      * a region's close marker serves as the from-side sentinel, so out-of-range siblings (including a
+      * region's own markers) are never visited and `insertBefore(node, sentinel)` appends at the range
+      * end. Keyed lookups are sibling-scoped over LOGICAL children (keys unique among siblings); `toKeyed`
+      * records which stale from-children are reused elsewhere so an unkeyed slot doesn't destroy them.
+      * Twin of `__kyoMorphRange` in clientJs; keep in lockstep.
+      */
+    private def morphRange(
+        fromParent: dom.Element,
+        fromStart: dom.Node,
+        fromEnd: dom.Node,
+        toStart: dom.Node,
+        toEnd: dom.Node
+    ): Unit =
+        var fromKeyed: js.Dictionary[dom.Node] = null
+        var toKeyed: js.Dictionary[Boolean]    = null
+        var scan                               = fromStart
+        while scan != null && (scan ne fromEnd) do
+            val k = logicalKey(scan)
+            if k != null then
+                if fromKeyed == null then fromKeyed = js.Dictionary.empty[dom.Node]
+                fromKeyed(k) = scan
+            scan = logicalNext(scan)
+        end while
+        scan = toStart
+        while scan != null && (scan ne toEnd) do
+            val k = logicalKey(scan)
+            if k != null then
+                if toKeyed == null then toKeyed = js.Dictionary.empty[Boolean]
+                toKeyed(k) = true
+            scan = logicalNext(scan)
+        end while
+        var curFrom = fromStart
+        var curTo   = toStart
+        while curTo != null && (curTo ne toEnd) do
+            val toNext = logicalNext(curTo)
+            val tKey   = logicalKey(curTo)
+            if tKey != null then
+                val m = if fromKeyed != null then fromKeyed.get(tKey).orNull else null
+                if m != null then
+                    if m ne curFrom then moveLogicalBefore(fromParent, m, curFrom)
+                    else curFrom = logicalNext(curFrom)
+                    patchLogical(fromParent, m, curTo)
+                else
+                    insertLogicalClone(fromParent, curTo, curFrom)
+                end if
+            else
+                var handled = false
+                var loop    = true
+                while loop && curFrom != null && (curFrom ne fromEnd) do
+                    val fNext = logicalNext(curFrom)
+                    val fKey  = logicalKey(curFrom)
+                    if fKey != null then
+                        // A keyed from-child at an unkeyed slot: keep it if `to` reuses it elsewhere (its own slot
+                        // moves it into place), else it's stale and removed. Null toKeyed = `to` has no keyed child.
+                        if toKeyed == null || !toKeyed.contains(fKey) then removeLogical(fromParent, curFrom)
+                        curFrom = fNext
+                    else if compatible(curFrom, curTo) then
+                        morphNode(curFrom, curTo)
+                        curFrom = fNext
+                        handled = true
+                        loop = false
+                    else
+                        removeLogical(fromParent, curFrom)
+                        curFrom = fNext
+                    end if
+                end while
+                if !handled then insertLogicalClone(fromParent, curTo, curFrom)
+            end if
+            curTo = toNext
+        end while
+        while curFrom != null && (curFrom ne fromEnd) do
+            val fNext = logicalNext(curFrom)
+            removeLogical(fromParent, curFrom)
+            curFrom = fNext
+        end while
+    end morphRange
+
+    /** Two nodes may be patched into each other positionally: same node kind, and for elements the same tag. */
+    private def compatible(a: dom.Node, b: dom.Node): Boolean =
+        a.nodeType == b.nodeType &&
+            (a.nodeType != 1 || a.asInstanceOf[dom.Element].tagName == b.asInstanceOf[dom.Element].tagName)
 
 end DomBackend

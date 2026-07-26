@@ -58,8 +58,8 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         yield capturedData match
             case Present(data) =>
                 Json.decode[HtmlOp](data) match
-                    case Result.Success(HtmlOp.Replace(_, html)) => assert(html.contains("after"))
-                    case other                                   => fail(s"expected HtmlOp.Replace with 'after', got: $other")
+                    case Result.Success(HtmlOp.Replace(_, html, _)) => assert(html.contains("after"))
+                    case other                                      => fail(s"expected HtmlOp.Replace with 'after', got: $other")
             case Absent => fail("client did not receive a second frame after the click")
         end for
     }

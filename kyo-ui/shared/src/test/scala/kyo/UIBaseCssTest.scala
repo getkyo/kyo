@@ -7,9 +7,8 @@ class UIBaseCssTest extends kyo.test.Test[Any]:
         assert(UI.baseCss.contains("box-sizing: border-box"))
     }
 
-    "UI.baseCss contains the data-kyo-reactive display:contents rule" in {
-        assert(UI.baseCss.contains("[data-kyo-reactive]"))
-        assert(UI.baseCss.contains("display: contents"))
+    "UI.baseCss carries no reactive-anchor rule (regions are comment markers)" in {
+        assert(!UI.baseCss.contains("data-kyo-reactive"))
     }
 
     "runRenderPage output contains UI.baseCss verbatim" in {

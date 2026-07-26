@@ -14,7 +14,7 @@ class MountSupervisionTest extends kyo.test.Test[Any]:
     final private class Recording(markers: Map[String, Fiber.Promise.Unsafe[String, Any]]):
         val emissions = new CopyOnWriteArrayList[String]()
         val exchange = new UIExchange:
-            def onChange(path: Seq[String], changed: UI)(using Frame): Unit < Async =
+            def onChange(path: Seq[String], changed: UI, mount: Boolean)(using Frame): Unit < Async =
                 HtmlRenderer.render(changed, path).map { html =>
                     discard(emissions.add(html))
                     markers.foreach { (marker, p) =>

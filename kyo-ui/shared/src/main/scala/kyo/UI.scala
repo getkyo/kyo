@@ -384,7 +384,7 @@ object UI:
                 Channel.use[Unit](256) { channel =>
                     val exchange =
                         new UIExchange:
-                            def onChange(path: Seq[String], changedUI: UI)(using Frame): Unit < Async =
+                            def onChange(path: Seq[String], changedUI: UI, mount: Boolean)(using Frame): Unit < Async =
                                 // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
                                 Abort.runPartial[Closed](channel.put(())).unit
                     // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,
@@ -412,8 +412,8 @@ object UI:
         }
 
     /** The base CSS reset kyo-ui relies on for correct layout: `box-sizing: border-box`, the
-      * flex-column / flex-row element defaults, `[data-kyo-reactive] { display: contents }`, the
-      * list/heading/anchor/table normalizations, and `[hidden] { display: none }`.
+      * flex-column / flex-row element defaults, the list/heading/anchor/table normalizations, and
+      * `[hidden] { display: none }`.
       *
       * Every kyo-ui runner injects this automatically (`runMount` via the DOM stylesheet,
       * `runHandlers` and the page runner via the document `<head>`), so a normal app never names
