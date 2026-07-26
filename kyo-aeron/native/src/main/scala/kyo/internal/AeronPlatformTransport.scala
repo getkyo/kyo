@@ -46,12 +46,15 @@ private[kyo] object AeronPlatformTransport:
         Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
             // A driver-absent connect returns NULL after the ~10s driver timeout, which the
             // generated binding raises as FfiNullPointer inside the fiber: a Panic, hence recover
-            // rather than catch.
-            val connect: Ffi.Handle[AeronClientHandle] < (Async & Abort[Any]) =
+            // rather than catch. A `@Ffi.blocking` binding returns `Fiber.Unsafe[A, Any]`, whose
+            // second parameter is the effect row, not an error type: `Any` is the empty row, so
+            // `.safe.get` is `A < Async` and carries no typed failure. Only the panic branch can
+            // fire, which is why onFail is uninhabited here.
+            val connect: Ffi.Handle[AeronClientHandle] < Async =
                 Sync.Unsafe.defer(bindings.clientConnect(aeronDir)).flatMap(_.safe.get)
-            Abort.recover[Any](
-                onFail = mapConnectFailure,
-                onPanic = mapConnectFailure
+            Abort.recover[Nothing](
+                onFail = (never: Nothing) => never,
+                onPanic = mapConnectPanic
             )(connect).map { client =>
                 new AeronRuntime:
                     val transport: AeronTransport        = new FfiAeronTransport(bindings, client)
@@ -61,15 +64,12 @@ private[kyo] object AeronPlatformTransport:
         }
     end external
 
-    /** Maps a connect failure, treating the absent-driver NULL as the only expected one and
-      * re-raising everything else as a panic so a genuine defect stays a defect.
+    /** Maps a connect panic, treating the absent-driver NULL as the only expected one and
+      * re-raising everything else so a genuine defect stays a defect.
       */
-    private def mapConnectFailure(e: Any)(using Frame): Nothing < Abort[TopicTransportFailedException] =
-        e match
+    private def mapConnectPanic(t: Throwable)(using Frame): Nothing < Abort[TopicTransportFailedException] =
+        t match
             case n: FfiNullPointer =>
                 Abort.fail(TopicTransportFailedException(Maybe(n.getMessage).filter(_.nonEmpty).getOrElse(n.toString), n))
-            case t: Throwable => Abort.panic(t)
-            // Not a Throwable, so there is no cause to chain: carry the value's rendering in the
-            // cause channel (KyoException takes String | Throwable) rather than only in the message.
-            case other => Abort.panic(TopicTransportFailedException("connect failed with a non-throwable value", s"$other"))
+            case other => Abort.panic(other)
 end AeronPlatformTransport
