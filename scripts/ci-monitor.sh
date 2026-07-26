@@ -12,16 +12,31 @@ set -uo pipefail
 #      cumulative CPU steal ticks); vm_stat/sysctl on macOS (avail, swap, disk, load; PSI and steal are
 #      Linux-only so they read `na`); nothing where neither is available.
 #
-# On stop it prints any kernel OOM verdict from dmesg (Linux). Disabled with CI_MON=0. Never disrupts
-# or fails the run.
+# Disk watch: the per-interval line always carries diskFreeMB. When free disk first drops below
+# CI_MON_DISK_WARN_MB (and again below CI_MON_DISK_CRIT_MB) the monitor prints a one-shot
+# "[ci-mon-disk]" attribution dump (du of the workspace targets, the dependency caches, and /tmp), and
+# below the crit threshold every line carries a DISK-CRIT marker. The healthy path stays cost-free: no
+# du runs unless a threshold is crossed. Runner background: a Native row consumes tens of GB of link
+# workspace; a runner that starts small exhausts its disk and dies WITHOUT uploading logs, which is
+# unattributable. These dumps are the flight recorder for that failure mode.
+#
+# On stop it prints any kernel OOM verdict from dmesg (Linux), plus the disk attribution when a
+# threshold was crossed during the run. Disabled with CI_MON=0. Never disrupts or fails the run,
+# with one opt-in exception: when CI_MON_DISK_ABORT_MB is set and free disk drops below it, the
+# monitor prints the attribution and TERM-kills its process group (the whole ci-test.sh tree runs in
+# one group, so the build dies with the evidence in the log instead of the runner dying with none).
 #
 # Env: CI_MON (set 0 to disable), KYO_SCHED_FILE (scheduler snapshot path), CI_MON_INTERVAL (seconds,
-#      default 20).
+#      default 20), CI_MON_DISK_WARN_MB (default 8192), CI_MON_DISK_CRIT_MB (default 2048),
+#      CI_MON_DISK_ABORT_MB (default unset: never abort).
 
 [ "${CI_MON:-1}" != "0" ] || exit 0
 
 INTERVAL="${CI_MON_INTERVAL:-20}"
 SCHED_FILE="${KYO_SCHED_FILE:-}"
+DISK_WARN_MB="${CI_MON_DISK_WARN_MB:-8192}"
+DISK_CRIT_MB="${CI_MON_DISK_CRIT_MB:-2048}"
+DISK_ABORT_MB="${CI_MON_DISK_ABORT_MB:-}"
 OS="$(uname -s 2>/dev/null || echo unknown)"
 if [ -r /proc/meminfo ]; then MON_SRC=proc
 elif [ "$OS" = "Darwin" ]; then MON_SRC=darwin
@@ -30,7 +45,23 @@ fi
 
 log() { echo "=== [ci-mon] $(date -u +%H:%M:%S) $* ==="; }
 
+# One-shot disk attribution: where the space went, biggest first. Runs only on a threshold crossing
+# (or in the exit report after one), never on the healthy path: du over a large build tree costs
+# real IO, and by the time this fires the run is already degraded.
+disk_attribution() {
+    log "disk attribution (free=${1:-?}MB):"
+    {
+        du -scm ./*/target ./*/*/target 2>/dev/null | sort -rn | head -12
+        du -sm "$HOME/.cache/coursier" "$HOME/.sbt" "$HOME/.cache/kyo-browser" /tmp 2>/dev/null
+    } | while IFS= read -r line; do echo "[ci-mon-disk] $line"; done
+    echo "[ci-mon-disk] $(df -Pm . 2>/dev/null | awk 'NR==2{print "fs="$1" totalMB="$2" usedMB="$3" freeMB="$4}')"
+}
+
+disk_warned=0
+disk_critted=0
+
 report() {
+    [ "$disk_warned" = "1" ] && disk_attribution "$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')"
     [ "$MON_SRC" = "proc" ] || return 0
     local oom
     oom=$(sudo -n dmesg 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process' | tail -20) || true
@@ -38,6 +69,37 @@ report() {
     if [ -n "$oom" ]; then log "kernel OOM detected:"; echo "$oom"; else log "no kernel OOM lines in dmesg"; fi
 }
 trap 'report; exit 0' TERM INT
+
+# Threshold ladder for one disk sample. WARN and CRIT entries each dump the attribution once;
+# below-crit samples are additionally marked on the periodic line by the caller. The abort rung is
+# opt-in (CI_MON_DISK_ABORT_MB): it prints the evidence and TERM-kills the process group, so the
+# whole ci-test.sh tree (sbt, clang, this monitor) dies with the log intact rather than the runner
+# dying with no log at all.
+disk_check() {
+    local free="$1"
+    case "$free" in '' | *[!0-9]*) return 0 ;; esac
+    if [ -n "$DISK_ABORT_MB" ] && [ "$free" -lt "$DISK_ABORT_MB" ]; then
+        log "DISK-ABORT free=${free}MB < abort=${DISK_ABORT_MB}MB: killing the build to preserve the log"
+        disk_attribution "$free"
+        trap - TERM INT
+        [ "$MON_SRC" = "proc" ] && report
+        kill -TERM 0
+        exit 1
+    fi
+    # Flags are set BEFORE the (slow) attribution dump: a TERM landing mid-dump still leaves the
+    # exit report knowing a threshold was crossed, so it re-dumps the final state.
+    if [ "$disk_critted" = "0" ] && [ "$free" -lt "$DISK_CRIT_MB" ]; then
+        disk_critted=1
+        disk_warned=1
+        log "DISK-CRIT free=${free}MB < ${DISK_CRIT_MB}MB"
+        disk_attribution "$free"
+    elif [ "$disk_warned" = "0" ] && [ "$free" -lt "$DISK_WARN_MB" ]; then
+        disk_warned=1
+        log "DISK-WARN free=${free}MB < ${DISK_WARN_MB}MB"
+        disk_attribution "$free"
+    fi
+    return 0
+}
 
 os_headline() {
     case "$MON_SRC" in
@@ -94,11 +156,15 @@ proc_top() {
 }
 
 ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
-log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none}"
+log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off}"
 while true; do
     os="$(os_headline)"
     top="$(proc_top)"
     sc="$(sched_snapshot)"
-    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${top:+ $top}${sc:+ $sc}"
+    free_mb=$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')
+    disk_check "$free_mb"
+    crit=""
+    [ "$disk_critted" = "1" ] && crit=" DISK-CRIT"
+    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${top:+ $top}${sc:+ $sc}${crit}"
     sleep "$INTERVAL"
 done

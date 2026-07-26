@@ -181,11 +181,11 @@ object TestRunner:
                     val results: Chunk[(Chunk[String], TestResult)] < (Async & Abort[Throwable] & Scope) =
                         if effectiveConfig.parallelism == 1 then
                             Kyo.foreach(ordered) { case (path, builderOpt) =>
-                                LeafPool.submit(leafComp(path, builderOpt)).map(_.get)
+                                LeafPool.submit(leafComp(path, builderOpt), effectiveConfig.globallySequential).map(_.get)
                             }.map(_.foldLeft(Chunk.empty[(Chunk[String], TestResult)])(_ ++ _))
                         else
                             Kyo.foreach(ordered) { case (path, builderOpt) =>
-                                LeafPool.submit(leafComp(path, builderOpt))
+                                LeafPool.submit(leafComp(path, builderOpt), effectiveConfig.globallySequential)
                             }.flatMap { promises =>
                                 Kyo.foreach(promises)(_.get)
                                     .map(_.foldLeft(Chunk.empty[(Chunk[String], TestResult)])(_ ++ _))

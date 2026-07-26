@@ -275,6 +275,18 @@ object Gen:
     given Gen[String]  = string
     given Gen[Boolean] = boolean
 
+    /** So `Gen.derive[A]` resolves a field of type `Option[B]`: draws `None` 1:4 against `Some(inner)`, covering both branches. */
+    given optionGen[A](using inner: Gen[A]): Gen[Option[A]] =
+        Gen.frequency(1 -> Gen.const(None: Option[A]), 4 -> inner.map(Some(_): Option[A]))
+
+    /** So `Gen.derive[A]` resolves a field of type `Chunk[B]`: `Gen.list` already yields a `Gen[Chunk[B]]`. */
+    given chunkGen[A](using inner: Gen[A]): Gen[Chunk[A]] = Gen.list(inner)
+
+    /** So `Gen.derive[A]` resolves a field of type `Byte`: narrows `Gen.int` via `toByte`, so every value in the full `Byte` range remains
+      * reachable through truncation.
+      */
+    given byteGen: Gen[Byte] = Gen.int.map(_.toByte)
+
     /** Generates chunks of varying length in [0, clampedSize] where clampedSize = max(0, size), with elements from g, biased occasionally
       * toward the empty and singleton collections (both in-band: length stays within [0, clampedSize]).
       */

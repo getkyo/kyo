@@ -26,18 +26,29 @@ final private[kyo] class Http1StreamContext(
     headerBuf: GrowableByteBuffer
 )(using allow: AllowUnsafe, frame: Frame) extends StreamContext:
 
-    private var _request: ParsedRequest = ParsedRequest.empty
-    private var _bodySpan: Span[Byte]   = Span.empty[Byte]
-    private var _leftover: Span[Byte]   = Span.empty[Byte]
+    private var _request: ParsedRequest       = ParsedRequest.empty
+    private var _bodySpan: Span[Byte]         = Span.empty[Byte]
+    private var _leftover: Span[Byte]         = Span.empty[Byte]
+    private var _mustCloseConnection: Boolean = false
 
     /** Called by parser when request is ready. */
     def setRequest(req: ParsedRequest, body: Span[Byte]): Unit =
         _request = req
         _bodySpan = body
         _leftover = Span.empty[Byte]
+        _mustCloseConnection = false
     end setRequest
 
     def request: ParsedRequest = _request
+
+    /** Marks the connection for closure after the in-flight handler settles. Set by a handler-path rejection (e.g. a chunked body over
+      * maxContentLength answered 413) whose declared body is not consumed, so the keep-alive restart must be suppressed and the connection
+      * closed instead (RFC 9112 section 9.3). Read by the dispatch's fiber onComplete.
+      */
+    def requestConnectionClose(): Unit =
+        _mustCloseConnection = true
+
+    def mustCloseConnection: Boolean = _mustCloseConnection
 
     /** Returns the initial body bytes passed by the parser (e.g., chunk framing data for chunked requests, or partial body for
       * Content-Length requests). Consumes the span — subsequent calls return empty.

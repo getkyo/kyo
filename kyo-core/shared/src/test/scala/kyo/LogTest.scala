@@ -560,6 +560,42 @@ class LogTest extends kyo.test.Test[Any]:
         succeed("SyncFallback-on-full reorder: inline write precedes still-buffered enqueue")
     }
 
+    "Flag.Reader[Log.Level]" - {
+        val reader = summon[Flag.Reader[Log.Level]]
+
+        "typeName" in {
+            assert(reader.typeName == "Log.Level")
+        }
+
+        "parses every level the enum defines" in {
+            // Enumerated from the enum itself rather than a hand-written list, so a level added later
+            // is covered here the moment it exists instead of silently going unparsed.
+            val parsed = Log.Level.values.map(level => reader(level.toString))
+            assert(parsed.toList == Log.Level.values.map(Right(_)).toList)
+        }
+
+        "accepts any casing" in {
+            assert(reader("DEBUG") == Right(Log.Level.debug))
+            assert(reader("Debug") == Right(Log.Level.debug))
+        }
+
+        "ignores surrounding whitespace" in {
+            assert(reader("  info  ") == Right(Log.Level.info))
+        }
+
+        "rejects an unknown level, naming the ones that exist" in {
+            // The failure a typo actually produces. It must report the mistake rather than silently
+            // fall back to a default, which would leave the process logging at a level nobody chose.
+            val result = reader("verbose")
+            assert(result.isLeft)
+            val message = result.left.toOption.get.getMessage
+            assert(message.contains("verbose"), s"the rejected input must appear: $message")
+            Log.Level.values.foreach(level =>
+                assert(message.contains(level.toString), s"level ${level} must be listed: $message")
+            )
+        }
+    }
+
     if Platform.isJVM || Platform.isNative then
 
         "Log.flush drains all buffered events, zero loss" in {

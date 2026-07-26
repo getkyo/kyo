@@ -114,7 +114,8 @@ object Queue:
           */
         def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drainUpTo(max)))
 
-        /** Closes the queue and returns any remaining elements.
+        /** Closes the queue and returns any remaining elements. On a queue with a pending `closeAwaitEmpty`, this aborts the drain: the awaiter
+          * completes `false` and this returns the undrained backlog.
           *
           * @return
           *   a sequence of remaining elements
@@ -128,8 +129,8 @@ object Queue:
           * closed.
           *
           * @return
-          *   true if the queue was successfully closed and emptied, false if it was already closed or another closeAwaitEmpty is already
-          *   running.
+          *   true if the queue was successfully closed and emptied, false if it was already closed, another closeAwaitEmpty is already
+          *   running, or a hard `close()` aborted the drain.
           */
         def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe.defer(self.closeAwaitEmpty().safe.get)
 
@@ -554,7 +555,23 @@ object Queue:
 
             final def close()(using frame: Frame, allow: AllowUnsafe) =
                 val fail = Result.Failure(Closed("Queue", initFrame))
-                Maybe.when(state.compareAndSet(State.Open, State.FullyClosed(fail))) {
+                // A hard close on a HalfOpen queue aborts the await-empty: complete its promise false (the queue did not drain before this
+                // close) so a parked closeAwaitEmpty caller does not hang.
+                @tailrec
+                def escalate(): Boolean =
+                    state.get() match
+                        case State.Open =>
+                            if state.compareAndSet(State.Open, State.FullyClosed(fail)) then true
+                            else escalate()
+                        case s @ State.HalfOpen(p, _) =>
+                            if state.compareAndSet(s, State.FullyClosed(fail)) then
+                                p.completeDiscard(Result.succeed(false))
+                                true
+                            else escalate()
+                        case _: State.FullyClosed => false
+                    end match
+                end escalate
+                Maybe.when(escalate()) {
                     // Race: an in-flight offer that read state=Open before our CAS may still
                     // commit and run race-repair, which can re-insert via q.offer (when the
                     // polled item is not its own). If that re-insert lands AFTER _drain() exits,

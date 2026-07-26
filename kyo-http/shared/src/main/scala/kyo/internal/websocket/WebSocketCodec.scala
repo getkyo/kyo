@@ -3,6 +3,7 @@ package kyo.internal.websocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import kyo.*
+import kyo.internal.Sha1
 import kyo.internal.transport.*
 import kyo.internal.util.*
 import scala.annotation.tailrec
@@ -20,8 +21,8 @@ import scala.annotation.tailrec
   * readFrame handles Ping/Pong control frames transparently (auto-pong, skip-pong) and fails with Abort[Closed] on Close frames. Fragmented
   * messages are not reassembled — the caller receives each fragment as a separate frame.
   *
-  * Server frames are unmasked (mask=false); client frames are masked (mask=true) per RFC 6455 §5.3. Sha1 is used for accept key computation
-  * (WebSocketCodec.computeAcceptKey) because java.security.MessageDigest is unavailable on Scala Native.
+  * Server frames are unmasked (mask=false); client frames are masked (mask=true) per RFC 6455 §5.3. The shared Sha1 implementation is used
+  * for accept key computation because java.security.MessageDigest is unavailable on Scala Native.
   */
 private[kyo] object WebSocketCodec:
 
@@ -60,7 +61,7 @@ private[kyo] object WebSocketCodec:
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
         Abort.recover[HttpException](_ => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))) {
-            readRawFrameWith(src, maxFrameSize) { (opcode, payload, remaining) =>
+            readRawFrameWith(src, maxFrameSize, expectMasked = !mask) { (opcode, payload, remaining) =>
                 opcode match
                     case OpText   => f(HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
                     case OpBinary => f(HttpWebSocket.Payload.Binary(payload), remaining)
@@ -336,15 +337,27 @@ private[kyo] object WebSocketCodec:
     // ── Internal I/O ────────────────────────────────────────────
 
     /** Read a single raw frame (handles extended length + masking). */
-    private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int)(
+    private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int, expectMasked: Boolean)(
         inline f: (Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
     )(using inline frame: Frame): A < (S2 & Async & Abort[HttpException]) =
         ByteStream.readExactWith(src, 2) { (header, rem1) =>
             val fh          = parseFrameHeader(header(0), header(1))
             val payloadLen  = fh.payloadLen
             val extLenBytes = if payloadLen == 126 then 2 else if payloadLen == 127 then 8 else 0
+            val isControl   = fh.opcode >= OpClose
 
-            if extLenBytes == 0 then
+            if fh.masked != expectMasked then
+                // A server MUST receive masked frames and a client MUST receive unmasked ones (RFC 6455 section 5.1);
+                // the wrong masking direction is a protocol violation and (server side) a smuggling lever.
+                Abort.fail(HttpProtocolException("HttpWebSocket frame masking violates role (RFC 6455 section 5.1)"))
+            else if isControl && payloadLen > 125 then
+                // A control frame's payload MUST be <= 125 bytes, so its length is never the 126/127 extended form
+                // (RFC 6455 section 5.5).
+                Abort.fail(HttpProtocolException("HttpWebSocket control frame payload exceeds 125 bytes (RFC 6455 section 5.5)"))
+            else if isControl && !fh.fin then
+                // A control frame MUST NOT be fragmented (RFC 6455 section 5.5).
+                Abort.fail(HttpProtocolException("HttpWebSocket control frame is fragmented (RFC 6455 section 5.5)"))
+            else if extLenBytes == 0 then
                 val actualLen = payloadLen.toLong
                 if actualLen > maxFrameSize.toLong then
                     Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))

@@ -56,54 +56,51 @@ private[kyo] object SchemaSerializer:
             acc.toInt
     end wireFieldId
 
-    /** Threads a schema's field-id overrides onto a Protobuf writer, mirroring what `Protobuf.encode`
+    /** Threads a schema's field-id overrides onto a field-id-aware writer, mirroring what `Protobuf.encode`
       * does for its own entry point. `writeTo` calls this once for the outermost schema passed to
       * `Schema.encode[C]` / `Schema.encodeString[C]`; `Schema.init`'s `serializeWrite` override also
       * calls this directly for every schema reached at any nesting depth (a container element, a
       * product field, or the outermost schema itself), so a nested schema's own pin is visible to the
       * writer regardless of whether the nested schema carries a structural transform of its own.
       *
-      * The writer-type check runs FIRST, before `fieldIdNameOverrides` is computed: this runs at
-      * every nesting depth, so computing the overrides map unconditionally would pay its
-      * rename-resolution cost at every node of every non-Protobuf encode too. Gating on the writer type first makes the call a single failed `isInstanceOf` check
-      * for every non-Protobuf writer, with `fieldIdNameOverrides` computed only on an actual
-      * `ProtobufWriter`, where a nonEmpty result can matter.
+      * Gating on `supportsFieldIdOverrides` runs FIRST, before `fieldIdNameOverrides` is computed:
+      * this runs at every nesting depth, so computing the overrides map unconditionally would pay
+      * its rename-resolution cost at every node of every encode on codecs that cannot use the
+      * result too. The gate makes the call a single virtual call for every codec without field
+      * ids, with `fieldIdNameOverrides` computed only when a nonEmpty result can matter.
       *
       * Returns the writer's PRIOR override map, scoped to this call, so `restoreFieldIdOverridesForWrite`
       * can put it back once this schema's own write completes: `Schema.init`'s `serializeWrite` calls
       * this at every nesting depth, and a nested schema's own pin must not permanently replace an
       * ancestor's pin for the remainder of the ancestor's write. `Absent` means this call made no
-      * change (this schema carried no overrides of its own, or the writer is not a `ProtobufWriter`),
-      * so there is nothing to restore and an ambient ancestor override, if any, is left untouched.
+      * change (this schema carried no overrides of its own, or the writer does not support field-id
+      * overrides), so there is nothing to restore and an ambient ancestor override, if any, is left
+      * untouched.
       */
     private[kyo] def threadFieldIdOverridesForWrite(schema: Schema[?], writer: Writer): Maybe[Map[String, Int]] =
-        writer match
-            case pw: ProtobufWriter =>
-                val overrides = schema.fieldIdNameOverrides
-                if overrides.nonEmpty then
-                    val prior = pw.fieldIdOverridesSnapshot
-                    // Installs this schema's pins on the writer: withFieldIdOverrides mutates the
-                    // writer's active override map (the side effect is the purpose) and returns the
-                    // writer for chaining, discarded here because `prior` captured above is what the
-                    // caller restores once this schema's write completes.
-                    val _ = pw.withFieldIdOverrides(overrides)
-                    Maybe.Present(prior)
-                else Maybe.Absent
-                end if
-            case _ => Maybe.Absent
+        if writer.supportsFieldIdOverrides then
+            val overrides = schema.fieldIdNameOverrides
+            if overrides.nonEmpty then
+                val prior = writer.fieldIdOverridesSnapshot
+                // Installs this schema's pins on the writer: withFieldIdOverrides mutates the
+                // writer's active override map (the side effect is the purpose) and returns the
+                // writer for chaining, discarded here because `prior` captured above is what the
+                // caller restores once this schema's write completes.
+                val _ = writer.withFieldIdOverrides(overrides)
+                Maybe.Present(prior)
+            else Maybe.Absent
+            end if
+        else Maybe.Absent
     end threadFieldIdOverridesForWrite
 
-    /** Restores a Protobuf writer's field-id override state saved by `threadFieldIdOverridesForWrite`,
+    /** Restores a writer's field-id override state saved by `threadFieldIdOverridesForWrite`,
       * scoping a nested schema's overrides to its own `serializeWrite` call. `Absent` means the
       * matching thread call made no change, so restoring is a no-op.
       */
     private[kyo] def restoreFieldIdOverridesForWrite(writer: Writer, prior: Maybe[Map[String, Int]]): Unit =
         prior match
-            case Maybe.Present(overrides) =>
-                writer match
-                    case pw: ProtobufWriter => val _ = pw.withFieldIdOverrides(overrides)
-                    case _                  => ()
-            case Maybe.Absent => ()
+            case Maybe.Present(overrides) => val _ = writer.withFieldIdOverrides(overrides)
+            case Maybe.Absent             => ()
     end restoreFieldIdOverridesForWrite
 
     /** Writes a value to a Writer, dispatching to the direct or transform-aware path.
@@ -135,11 +132,10 @@ private[kyo] object SchemaSerializer:
         // threaded it). The call here is an idempotent no-op on those paths and keeps this
         // function correct standing alone for any caller that does not route through
         // `serializeWrite`.
-        val fieldIdOverrides = schema.fieldIdNameOverrides
-        if fieldIdOverrides.nonEmpty then
-            writer match
-                case pw: ProtobufWriter => val _ = pw.withFieldIdOverrides(fieldIdOverrides)
-                case _                  => ()
+        if writer.supportsFieldIdOverrides then
+            val fieldIdOverrides = schema.fieldIdNameOverrides
+            if fieldIdOverrides.nonEmpty then
+                val _ = writer.withFieldIdOverrides(fieldIdOverrides)
         end if
 
         val structWriter = StructureValueWriter()
@@ -571,50 +567,51 @@ private[kyo] object SchemaSerializer:
                 fields
     end applyFieldConvention
 
-    /** Threads a schema's field-id overrides onto a Protobuf reader, mirroring what `Protobuf.decode`
+    /** Threads a schema's field-id overrides onto a field-id-aware reader, mirroring what `Protobuf.decode`
       * does for its own entry point. `readFrom` calls this once for the outermost schema passed to
       * `Schema.decode[C]`; `Schema.init`'s `serializeRead` override also calls this directly for every
       * schema reached at any nesting depth (a container element, a product field, or the outermost
       * schema itself), so a nested schema's own pin is visible to the reader regardless of whether the
       * nested schema carries a structural transform of its own.
       *
-      * The reader-type check runs FIRST, before `fieldIdNameOverrides` is computed: this runs at
-      * every nesting depth, so computing the overrides map unconditionally would pay its
-      * rename-resolution cost at every node of every non-Protobuf decode too. Gating on the reader type first makes the call a single failed `isInstanceOf` check
-      * for every non-Protobuf reader, with `fieldIdNameOverrides` computed only on an actual
-      * `ProtobufReader`, where a nonEmpty result can matter.
+      * Gating on `supportsFieldIdOverrides` runs FIRST, before `fieldIdNameOverrides` is computed:
+      * this runs at every nesting depth, so computing the overrides map unconditionally would pay
+      * its rename-resolution cost at every node of every decode on codecs that cannot use the
+      * result too. The gate makes the call a single virtual call for every codec without field
+      * ids, with `fieldIdNameOverrides` computed only when a nonEmpty result can matter.
       *
       * Returns the reader's PRIOR override map, scoped to this call, so `restoreFieldIdOverridesForRead`
       * can put it back once this schema's own read completes: `Schema.init`'s `serializeRead` calls
       * this at every nesting depth, and a nested schema's own pin must not permanently replace an
       * ancestor's pin for the remainder of the ancestor's read. `Absent` means this call made no
-      * change (this schema carried no overrides of its own, or the reader is not a `ProtobufReader`),
-      * so there is nothing to restore and an ambient ancestor override, if any, is left untouched.
+      * change (this schema carried no overrides of its own, or the reader does not support field-id
+      * overrides), so there is nothing to restore and an ambient ancestor override, if any, is left
+      * untouched.
       */
     private[kyo] def threadFieldIdOverridesForRead(schema: Schema[?], reader: Reader): Maybe[Map[String, Int]] =
-        reader match
-            case pr: ProtobufReader =>
-                val overrides = schema.fieldIdNameOverrides
-                if overrides.nonEmpty then
-                    val prior = pr.fieldIdOverridesSnapshot
-                    val _     = pr.withFieldIdOverrides(overrides)
-                    Maybe.Present(prior)
-                else Maybe.Absent
-                end if
-            case _ => Maybe.Absent
+        if reader.supportsFieldIdOverrides then
+            val overrides = schema.fieldIdNameOverrides
+            if overrides.nonEmpty then
+                val prior = reader.fieldIdOverridesSnapshot
+                // Installs this schema's pins on the reader: withFieldIdOverrides mutates the
+                // reader's active override map (the side effect is the purpose) and returns the
+                // reader for chaining, discarded here because `prior` captured above is what the
+                // caller restores once this schema's read completes.
+                val _ = reader.withFieldIdOverrides(overrides)
+                Maybe.Present(prior)
+            else Maybe.Absent
+            end if
+        else Maybe.Absent
     end threadFieldIdOverridesForRead
 
-    /** Restores a Protobuf reader's field-id override state saved by `threadFieldIdOverridesForRead`,
+    /** Restores a reader's field-id override state saved by `threadFieldIdOverridesForRead`,
       * scoping a nested schema's overrides to its own `serializeRead` call. `Absent` means the
       * matching thread call made no change, so restoring is a no-op.
       */
     private[kyo] def restoreFieldIdOverridesForRead(reader: Reader, prior: Maybe[Map[String, Int]]): Unit =
         prior match
-            case Maybe.Present(overrides) =>
-                reader match
-                    case pr: ProtobufReader => val _ = pr.withFieldIdOverrides(overrides)
-                    case _                  => ()
-            case Maybe.Absent => ()
+            case Maybe.Present(overrides) => val _ = reader.withFieldIdOverrides(overrides)
+            case Maybe.Absent             => ()
     end restoreFieldIdOverridesForRead
 
     /** Reads a value from a Reader, dispatching to direct or transform-aware path.
@@ -646,11 +643,10 @@ private[kyo] object SchemaSerializer:
         // the same schema instance whose `serializeRead` already threaded it). The call here is an
         // idempotent no-op on those paths and keeps this function correct standing alone for any
         // caller that does not route through `serializeRead`.
-        val fieldIdOverrides = schema.fieldIdNameOverrides
-        if fieldIdOverrides.nonEmpty then
-            reader match
-                case pr: ProtobufReader => val _ = pr.withFieldIdOverrides(fieldIdOverrides)
-                case _                  => ()
+        if reader.supportsFieldIdOverrides then
+            val fieldIdOverrides = schema.fieldIdNameOverrides
+            if fieldIdOverrides.nonEmpty then
+                val _ = reader.withFieldIdOverrides(fieldIdOverrides)
         end if
 
         // Build reverse rename map: external name (in JSON) -> original field name
@@ -1320,6 +1316,9 @@ private[kyo] object SchemaSerializer:
 
         def frame: Frame = _frame
 
+        // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
+        private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
+
         protected var delegateReader: Maybe[Reader]   = Maybe.empty
         protected var delegateDepth: Int              = 0
         protected var phase: Int                      = 0
@@ -1956,6 +1955,9 @@ private[kyo] object SchemaSerializer:
     ) extends Reader:
 
         def frame: Frame = inner.frame
+
+        // A wrapper consumes nothing of its own; whether the input is exhausted is the reader it wraps.
+        private[kyo] def requireEndOfInput(): Unit = inner.requireEndOfInput()
 
         // Pre-compute the dropped-field bitmask once per reader instance.
         // Bit i is set iff field index i is dropped. Indices >= 64 are clamped to 63 (see the 64-field macro limit).

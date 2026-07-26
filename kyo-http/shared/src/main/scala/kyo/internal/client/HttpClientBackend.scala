@@ -109,11 +109,12 @@ final private[kyo] class HttpClientBackend private (
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        maxResponseLength: Int
+        maxResponseLength: Int,
+        multipartBoundary: Maybe[String]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request)(
+            encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
                 onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
                 f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly - no `< S` wrapper
@@ -139,11 +140,12 @@ final private[kyo] class HttpClientBackend private (
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        maxResponseLength: Int
+        maxResponseLength: Int,
+        multipartBoundary: Maybe[String]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request)(
+            encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
                 onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
                 f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
@@ -162,7 +164,7 @@ final private[kyo] class HttpClientBackend private (
                                         readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
                                     else
                                         val lastBodySpan = conn.http1.lastBodySpan
-                                        val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan)
+                                        val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan, maxResponseLength)
                                         RouteUtil.decodeStreamingResponse(
                                             route,
                                             HttpStatus(parsed.statusCode),
@@ -217,18 +219,20 @@ final private[kyo] class HttpClientBackend private (
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        Sync.Unsafe.defer {
-            val fiber =
-                if request.method == HttpMethod.HEAD then
-                    sendBuffered(conn, route, request, maxResponseLength)
-                else if RouteUtil.isStreamingResponse(route) then
-                    sendStreaming(conn, route, request, maxResponseLength)
-                else
-                    sendBuffered(conn, route, request, maxResponseLength)
-            Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
-                onRelease(error)
-            } {
-                fiber.safe.use(f)
+        RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
+            Sync.Unsafe.defer {
+                val fiber =
+                    if request.method == HttpMethod.HEAD then
+                        sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+                    else if RouteUtil.isStreamingResponse(route) then
+                        sendStreaming(conn, route, request, maxResponseLength, multipartBoundary)
+                    else
+                        sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+                Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
+                    onRelease(error)
+                } {
+                    fiber.safe.use(f)
+                }
             }
         }
 
@@ -294,7 +298,8 @@ final private[kyo] class HttpClientBackend private (
     private inline def encodeAndSendDirectWith[In, Out, A](
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        multipartBoundary: Maybe[String]
     )(
         inline onInvalid: HttpException => A,
         inline f: (IOPromise[Nothing, ParsedResponse], String) => A
@@ -311,7 +316,7 @@ final private[kyo] class HttpClientBackend private (
                 if isDefaultPort || host.isEmpty then host else s"$host:$port"
             else
                 conn.hostHeaderValue
-        RouteUtil.encodeRequest(route, request)(
+        RouteUtil.encodeRequestWithBoundary(route, request, multipartBoundary)(
             onEmpty = (path, headers) =>
                 unsendableField(path, hostHeader, headers) match
                     case Present(ex) => onInvalid(ex)
@@ -435,7 +440,8 @@ final private[kyo] class HttpClientBackend private (
                         case Result.Panic(t) =>
                             resultPromise.completeDiscard(Result.panic(t))
                     },
-                    size => resultPromise.completeDiscard(Result.fail(HttpPayloadTooLargeException(size, maxResponseLength)))
+                    size => resultPromise.completeDiscard(Result.fail(HttpPayloadTooLargeException(size, maxResponseLength))),
+                    malformed => resultPromise.completeDiscard(Result.fail(malformed))
                 )
             else if parsed.contentLength > 0 then
                 if parsed.contentLength > maxResponseLength then
@@ -567,7 +573,7 @@ final private[kyo] class HttpClientBackend private (
     // -- Streaming response path --
 
     /** Build a raw body stream from the parsed response metadata. */
-    private def buildBodyStream(conn: HttpConnection, parsed: ParsedResponse, lastBodySpan: Span[Byte])(using
+    private def buildBodyStream(conn: HttpConnection, parsed: ParsedResponse, lastBodySpan: Span[Byte], maxControlBytes: Int)(using
         AllowUnsafe,
         Frame
     ): Stream[Span[Byte], Async] =
@@ -578,10 +584,14 @@ final private[kyo] class HttpClientBackend private (
             val decodedCh = Channel.Unsafe.init[Span[Byte]](4)
             // Start the chunked decoder in a background fiber
             discard(kyo.scheduler.IOTask(
-                Abort.run[Closed](ChunkedBodyDecoder.readStreaming(
+                // Malformed framing (HttpMalformedBodyException) and an over-limit control plane
+                // (HttpPayloadTooLargeException) are caught here alongside Closed: the decoded channel is closed,
+                // ending the consumer's stream at the fault rather than propagating an uncaught abort.
+                Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](ChunkedBodyDecoder.readStreaming(
                     conn.http1.bodyChannel,
                     lastBodySpan,
                     decodedCh,
+                    maxControlBytes,
                     conn.http1.chunkedDecoderState
                 ))
                     .unit
@@ -1075,12 +1085,31 @@ final private[kyo] class HttpClientBackend private (
                                         nonAsciiRedirect(resolved) match
                                             case Present(field) => Abort.fail(HttpNonAsciiException(field))
                                             case Absent         =>
+                                                // A redirect target is named by the ORIGIN, not by the caller, so the Location value is
+                                                // attacker-chosen whenever the origin is malicious, compromised, or merely open. Carrying
+                                                // the caller's credentials to whatever authority it names hands them to a third party, and
+                                                // an https to http Location additionally puts them on the wire in cleartext. Credentials
+                                                // are therefore scoped to the origin that received them (RFC 6454 section 4: the scheme,
+                                                // host and port triple) and dropped whenever a hop leaves it.
+                                                val crossOrigin = !HttpClientBackend.sameOrigin(req.url, resolved)
+                                                val nextHeaders =
+                                                    if crossOrigin then HttpClientBackend.stripCredentials(req.headers)
+                                                    else req.headers
                                                 // RFC 9110 section 15.4.4: 303 See Other requires changing method to GET
                                                 val nextReq =
                                                     if res.status == HttpStatus.SeeOther then
-                                                        req.copy(url = resolved, method = HttpMethod.GET)
-                                                    else req.copy(url = resolved)
-                                                loop(nextReq, count + 1, chain.append(location))
+                                                        req.copy(url = resolved, method = HttpMethod.GET, headers = nextHeaders)
+                                                    else req.copy(url = resolved, headers = nextHeaders)
+                                                // Debug rather than warn: a service redirecting an authenticated request to a CDN or a
+                                                // sibling port is ordinary traffic, so this is not on its own a fault. It is logged
+                                                // because the visible consequence, a 401 from the target, is otherwise hard to explain.
+                                                val announce =
+                                                    if crossOrigin && nextHeaders.size != req.headers.size then
+                                                        Log.debug(
+                                                            s"dropping credential headers on redirect leaving origin ${req.url.baseUrl} for ${resolved.baseUrl}"
+                                                        )
+                                                    else Kyo.unit
+                                                announce.andThen(loop(nextReq, count + 1, chain.append(location)))
                                         end match
                                     case Result.Failure(err) =>
                                         Abort.fail(err)
@@ -1115,31 +1144,33 @@ final private[kyo] class HttpClientBackend private (
     )(using Frame): A < (Async & Abort[HttpException]) =
         val url = request.url
         val key = request.url.address
-        Sync.Unsafe.defer {
-            pool.poll(key) match
-                case Present(conn) =>
-                    val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
-                    releasingConn(key, conn)(responseFiber.safe.use(f))
-                case _ =>
-                    val reserved = pool.tryReserve(key)
-                    if reserved then
-                        Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
-                            val connectFiber = connect(url, config.connectTimeout, config.tls)
-                            connectFiber.safe.use { conn =>
-                                trackConn(conn)
-                                val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
-                                releasingConn(key, conn)(responseFiber.safe.use(f))
+        RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
+            Sync.Unsafe.defer {
+                pool.poll(key) match
+                    case Present(conn) =>
+                        val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                        releasingConn(key, conn)(responseFiber.safe.use(f))
+                    case _ =>
+                        val reserved = pool.tryReserve(key)
+                        if reserved then
+                            Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
+                                val connectFiber = connect(url, config.connectTimeout, config.tls)
+                                connectFiber.safe.use { conn =>
+                                    trackConn(conn)
+                                    val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                                    releasingConn(key, conn)(responseFiber.safe.use(f))
+                                }
                             }
-                        }
-                    else
-                        val (h, p) = hostPort(url)
-                        Abort.fail(HttpPoolExhaustedException(
-                            h,
-                            p,
-                            maxConnectionsPerHost,
-                            clientFrame
-                        ))
-                    end if
+                        else
+                            val (h, p) = hostPort(url)
+                            Abort.fail(HttpPoolExhaustedException(
+                                h,
+                                p,
+                                maxConnectionsPerHost,
+                                clientFrame
+                            ))
+                        end if
+            }
         }.asInstanceOf[A < (Async & Abort[HttpException])]
     end poolWithImpl
 
@@ -1183,16 +1214,17 @@ final private[kyo] class HttpClientBackend private (
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        maxResponseLength: Int
+        maxResponseLength: Int,
+        multipartBoundary: Maybe[String]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         // HEAD responses never have a body (RFC 9110 Section 9.3.2),
         // so always use the buffered path which skips body reading for HEAD.
         if request.method == HttpMethod.HEAD then
-            sendBuffered(conn, route, request, maxResponseLength)
+            sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
         else if RouteUtil.isStreamingResponse(route) then
-            sendStreaming(conn, route, request, maxResponseLength)
+            sendStreaming(conn, route, request, maxResponseLength, multipartBoundary)
         else
-            sendBuffered(conn, route, request, maxResponseLength)
+            sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
 
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
     private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed
@@ -1217,6 +1249,34 @@ final private[kyo] class HttpClientBackend private (
 end HttpClientBackend
 
 private[kyo] object HttpClientBackend:
+
+    /** Header fields carrying a caller's credentials, dropped when a redirect leaves the origin they were sent to.
+      *
+      * `Cookie` belongs here with the two authorization fields: a cookie is bound to the origin that set it, and forwarding one to a
+      * different authority is the same disclosure as forwarding an `Authorization` value.
+      */
+    private val CredentialHeaders = List("Authorization", "Proxy-Authorization", "Cookie")
+
+    /** Drops every credential-bearing field from `headers`. */
+    private[client] def stripCredentials(headers: HttpHeaders): HttpHeaders =
+        CredentialHeaders.foldLeft(headers)((acc, name) => acc.remove(name))
+
+    /** Whether two URLs share an origin: the same scheme, host and port (RFC 6454 section 4).
+      *
+      * Host is compared case-insensitively because a DNS name is case-insensitive. Port needs no default-filling here because `HttpUrl.parse`
+      * already resolves an absent port to the scheme's default, so `https://h` and `https://h:443` arrive equal.
+      */
+    private[client] def sameOrigin(a: HttpUrl, b: HttpUrl): Boolean =
+        // Scheme and host are both compared case-insensitively (RFC 3986 sections 3.1 and 3.2.2 make both case-insensitive, and `HttpUrl`
+        // stores the scheme as written rather than normalized). Comparing the scheme exactly would read "HTTPS://host" redirecting to
+        // "https://host" as a change of origin and silently strip credentials from a hop that never left it.
+        val schemeMatches =
+            (a.scheme, b.scheme) match
+                case (Present(x), Present(y)) => x.equalsIgnoreCase(y)
+                case (Absent, Absent)         => true
+                case _                        => false
+        schemeMatches && a.host.equalsIgnoreCase(b.host) && a.port == b.port
+    end sameOrigin
 
     /** Create a fully pooled backend for production use.
       *

@@ -50,6 +50,20 @@ class Rfc3986Test extends BaseHttpTest:
         assert(url.host == "host.com", s"Host should be 'host.com' after stripping userinfo, got: ${url.host}")
     }
 
+    // An ambiguous authority must not resolve to a host different from what a browser would connect to. Jetty
+    // CVE-2024-6763 parsed a host from a malformed authority that disagreed with the client's, defeating an allow/deny
+    // list keyed on the URL. Whatever host kyo picks (for a client connection), it must not be the attacker's suffix
+    // "evil.example": either the leading authority, or a rejection. This is the SSRF / wrong-host property.
+    "Section 3.2.2 - an ambiguous authority does not resolve to an attacker suffix (CVE-2024-6763)" in {
+        HttpUrl.parse("http://browser.check#@evil.example/") match
+            case Result.Success(url) =>
+                assert(
+                    url.host != "evil.example",
+                    s"the host must not be the attacker suffix after a '#', got: ${url.host}"
+                )
+            case _ => succeed("rejecting the ambiguous authority is acceptable")
+    }
+
     "Section 3.2.2 - Host case normalization" in {
         // RFC 3986 §3.2.2: "the host subcomponent is case-insensitive"
         val url = HttpUrl.parse("http://EXAMPLE.COM/path").getOrThrow

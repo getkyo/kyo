@@ -155,6 +155,8 @@ Use `exec` for one-shot commands where you just need the exit code and output. U
 
 Each entry in `execStream`'s output is a `LogEntry(source, content)` where `source` is `Source.Stdout` or `Source.Stderr`, so you can separate streams if needed. This works identically on both backends.
 
+To attach to the container's main process instead of launching a new exec process, call `c.attach`. The returned `AttachSession` is the same bidirectional shape as `execInteractive`: `write` sends strings or bytes to stdin, `read` streams tagged stdout/stderr entries, and `resize` changes the pseudo-terminal size when the container was created with `allocateTty(true)`.
+
 ### Logs
 
 Container logs accumulate whatever the main process writes to stdout/stderr. Read them four ways:
@@ -191,13 +193,15 @@ Pre-built factories cover common cases:
 |---------|--------|
 | `HealthCheck.exec(cmd)` | Runs `cmd` inside the container; passes if exit code is 0 |
 | `HealthCheck.port(port)` | TCP `/dev/tcp` probe inside the container (requires `sh`) |
-| `HealthCheck.httpGet(path, port)` | HTTP GET; passes on 2xx |
+| `HealthCheck.httpGet(port, path = "/", expectedStatus = 200)` | HTTP GET inside the container; passes only when the response status exactly matches `expectedStatus` |
 | `HealthCheck.log(pattern)` | Greps the last 500 log lines for `pattern` |
+| `HealthCheck.running` | Passes once `inspect` reports `State.Running`; this is the `Config` default |
+| `HealthCheck.all(a, b, ...)` | Runs several checks and passes only when all pass |
 | `HealthCheck.init(check)` | Bare function: bring your own logic |
 | `HealthCheck.init(retrySchedule)(check)` | Same, with a custom retry schedule |
 | `HealthCheck.noop` | No check: `init` returns immediately after `start` |
 
-Each factory accepts an optional `retrySchedule`. The default is `Schedule.fixed(500.millis).take(30)`, which probes every 500ms for up to 30 attempts before giving up with a `ContainerHealthCheckException`.
+`HealthCheck.exec`, `HealthCheck.port`, `HealthCheck.httpGet`, `HealthCheck.log`, and `HealthCheck.init(retrySchedule)(check)` accept a retry schedule. `HealthCheck.running`, `HealthCheck.noop`, and `HealthCheck.all` do not. The default is `Schedule.fixed(500.millis).take(30)`, which probes every 500ms for up to 30 attempts before giving up with a `ContainerHealthCheckException`. `HealthCheck.all` uses the schedule of its first check, or the default schedule when called with no checks.
 
 > **Note:** A `HealthCheck` schedule is a retry policy, not a periodic reschedule: once the check passes the container is healthy and the schedule stops. `isHealthy` re-runs the check once on demand.
 
@@ -218,6 +222,8 @@ Container.init(alpine).map { c =>
 For reading a file's metadata without transferring it, `c.stat(containerPath)` returns name, size, mode, modification time, and symlink target. For exporting the entire filesystem as a tar stream, `c.exportFs` returns `Stream[Byte, ...]`.
 
 Both copy operations require `tar` on the host's PATH, because tar is used to pack and unpack the archives the Docker API expects.
+
+On the HTTP backend, `copyTo` stages the source through a newly created temporary directory whose prefix includes a Kyo-scoped UUID. Cleanup is confined to the directory created for the current operation, so a source-staging failure is reported as a `ContainerException` and unrelated existing staging-like directories remain untouched. Callers should treat the staging location as an implementation detail, not as an exact legacy `/tmp/kyo-copyto-<uuid>` path.
 
 ## Pre-defined containers
 
@@ -470,7 +476,9 @@ ContainerImage.buildFromPath(
 
 `buildFromPath` uses `tar` to archive the build context, then streams it to the `/build` endpoint. After the stream completes, kyo-pod verifies the tagged image exists on the daemon. This catches silent failures that some builder pipelines emit as plain stream text instead of structured `error` fields, and surfaces them as a `ContainerBuildFailedException`.
 
-To publish a local image to a registry, use `ContainerImage.push(ref)` (pass `auth = Present(auth)` for private registries). To snapshot a running container's filesystem as a new image, use `ContainerImage.commit(container.id, repo = "myapp", tag = "v2")`; it returns the new image ID.
+`buildFromPath` defaults `forceRm = true`, unlike the Docker CLI, so failed build steps do not leave intermediate containers behind. Pass `forceRm = false` when you deliberately want to preserve a failed intermediate container for manual inspection.
+
+To publish a local image to a registry, use `ContainerImage.push(ref)` (pass `auth = Present(auth)` for private registries). To snapshot a running container's filesystem as a new image, use `ContainerImage.commit(container.id, repo = "myapp", tag = "v2")`; it returns the new image ID. To clean up local images, use `ContainerImage.remove(ref, force = true)` for a specific image or `ContainerImage.prune` for daemon image-prune cleanup: dangling images by default, or unused images when supported filters such as `dangling=false` request that behavior.
 
 ### Authentication
 
@@ -539,6 +547,25 @@ val result: ExecResult < (Async & Abort[ContainerException]) =
 ```
 
 On timeout, the container is still torn down (via scope) and the result carries `ExitCode.Signaled(15)` with a sentinel message appended to stderr.
+
+### Existing Containers
+
+To work with containers created outside the current scope, attach by ID or name:
+
+```scala doctest:expect=skipped
+for
+    summaries <- Container.list(all = true)
+    selected <- summaries.find(_.names.exists(_.contains("redis"))) match
+        case Some(summary) => summary.attach
+        case None          => Container.attach(Container.Id("redis"))
+    logs <- selected.logsText
+yield logs
+end for
+```
+
+`Container.list` returns running containers by default; pass `all = true` to include stopped containers and `filters = Dict(...)` for daemon-side filtering. A `Container.Summary` is a lightweight listing entry, and `summary.attach` resolves it to a full `Container` handle for logs, stats, exec, file copy, or removal. Attached containers are not lifecycle-managed by your `Scope`, so stopping or removing them is an explicit caller decision.
+
+Use `Container.prune` to remove stopped containers that are not needed anymore, optionally with filters. It returns a `PruneResult` with deleted IDs and reclaimed bytes.
 
 ### Test Fixtures
 

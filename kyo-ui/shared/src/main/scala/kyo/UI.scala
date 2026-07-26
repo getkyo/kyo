@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.HtmlRenderer
 import kyo.internal.ReactiveUI
+import kyo.internal.UICommands
 import kyo.internal.UIExchange
 import kyo.internal.UIServer
 import scala.language.implicitConversions
@@ -247,6 +248,22 @@ object UI:
       */
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         UIServer.handlers(basePath)(ui)
+
+    /** Scrolls the element with `id` into the client viewport, from inside an event handler.
+      *
+      * The command rides the session the handler runs in: under [[runHandlers]] it travels the same
+      * WebSocket as the reactive updates and the connected browser scrolls the element; under a
+      * browser mount (`UI.runMount`) it scrolls the local document directly. Outside any session
+      * (plain SSR, [[runRender]], render-only tests) there is no client to scroll and the call is a
+      * no-op.
+      *
+      * Fire-and-forget: an `id` with no matching element on the client is silently ignored, with no
+      * round trip or retry. The target must therefore already exist on the client when the command
+      * arrives; a scroll aimed at an element that only appears in a later re-render is dropped, since
+      * the command does not wait for pending updates beyond the frame it lands in.
+      */
+    def scrollIntoView(id: String)(using Frame): Unit < Async =
+        UICommands.scrollIntoView(id)
 
     /** Read-only stream of the full rendered HTML. Emits whenever any signal changes. First emission is the initial render. Useful for
       * testing, SSR, export, or custom transports.

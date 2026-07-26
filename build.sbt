@@ -121,7 +121,11 @@ lazy val `kyo-settings` = Seq(
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
-    scalafmtOnCompile := true,
+    // Not in CI: parallel cross-version compilations of one module format the same shared
+    // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every
+    // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
+    // enforcement; compile-time formatting is a local convenience only.
+    scalafmtOnCompile := !insideCI.value,
     // Tag the doc task so concurrentRestrictions can serialize scaladoc across modules; dottydoc
     // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
     Compile / doc := (Compile / doc).tag(DocTag).value,
@@ -284,6 +288,13 @@ lazy val kyoJVM: Project = project
         `kyo-aeron`.jvm,
         `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
+        `kyo-schema-json`.jvm,
+        `kyo-schema-protobuf`.jvm,
+        `kyo-schema-msgpack`.jvm,
+        `kyo-schema-bson`.jvm,
+        `kyo-schema-ion`.jvm,
+        `kyo-schema-yaml`.jvm,
+        `kyo-schema-tests`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-ai`.jvm,
@@ -358,6 +369,13 @@ lazy val kyoJS = project
         `kyo-tasty`.js,
         `kyo-tasty-fixtures-internal`.js,
         `kyo-schema`.js,
+        `kyo-schema-json`.js,
+        `kyo-schema-protobuf`.js,
+        `kyo-schema-msgpack`.js,
+        `kyo-schema-bson`.js,
+        `kyo-schema-ion`.js,
+        `kyo-schema-yaml`.js,
+        `kyo-schema-tests`.js,
         `kyo-http`.js,
         `kyo-aeron`.js,
         `kyo-flow`.js,
@@ -387,7 +405,7 @@ lazy val kyoNative = project
     .in(file("native"))
     .settings(
         name := "kyoNative",
-        `native-settings`,
+        `native-settings-base`,
         publish / skip := true
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
@@ -412,6 +430,13 @@ lazy val kyoNative = project
         `kyo-tasty`.native,
         `kyo-tasty-fixtures-internal`.native,
         `kyo-schema`.native,
+        `kyo-schema-json`.native,
+        `kyo-schema-protobuf`.native,
+        `kyo-schema-msgpack`.native,
+        `kyo-schema-bson`.native,
+        `kyo-schema-ion`.native,
+        `kyo-schema-yaml`.native,
+        `kyo-schema-tests`.native,
         `kyo-http`.native,
         `kyo-aeron`.native,
         `kyo-flow`.native,
@@ -457,6 +482,13 @@ lazy val kyoWasm = project
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
         `kyo-schema`.wasm,
+        `kyo-schema-json`.wasm,
+        `kyo-schema-protobuf`.wasm,
+        `kyo-schema-msgpack`.wasm,
+        `kyo-schema-bson`.wasm,
+        `kyo-schema-ion`.wasm,
+        `kyo-schema-yaml`.wasm,
+        `kyo-schema-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
         `kyo-ffi`.wasm,
@@ -675,6 +707,114 @@ lazy val `kyo-schema` =
         .dependsOn(`kyo-data` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        // kyo-schema/README.md documents the whole module family (core + every format), so its
+        // blocks need classpaths the core does not have; kyo-schema-tests validates it instead.
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-json` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-json"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+// Unpublished home for suites that exercise multiple serialization formats at once
+// (sbt cannot express mutual test-scope dependencies between sibling format modules).
+// Also validates kyo-schema/README.md doctest blocks, which span every format.
+lazy val `kyo-schema-tests` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-protobuf`)
+        .dependsOn(`kyo-schema-msgpack`)
+        .dependsOn(`kyo-schema-bson`)
+        .dependsOn(`kyo-schema-ion`)
+        .dependsOn(`kyo-schema-yaml`)
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-tests"))
+        .withKyoTest
+        .settings(`kyo-settings`, publish / skip := true)
+        .jvmSettings(mimaCheck(false))
+        // The shared kyo-schema README exercises every format; only this project's Test
+        // classpath sees the core plus all six format modules, so it hosts the validation.
+        .jvmConfigure(_.settings(
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md")
+        ))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-protobuf` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-protobuf"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-msgpack` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-msgpack"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-bson` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-bson"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-ion` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-ion"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-schema-yaml` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
+        .in(file("kyo-schema-yaml"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1016,6 +1156,7 @@ lazy val `kyo-tasty` =
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`)
+        .dependsOn(`kyo-schema-json` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1822,7 +1963,7 @@ lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema`)
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
         .dependsOn(`kyo-net`)
         .withKyoTest
         .settings(
@@ -1862,7 +2003,7 @@ lazy val `kyo-ai` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
-        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
+        .dependsOn(`kyo-core`, `kyo-schema-json`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1897,7 +2038,7 @@ lazy val `kyo-jsonrpc` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
         .in(file("kyo-jsonrpc"))
         .withKyoTest
@@ -2445,7 +2586,7 @@ lazy val `kyo-slack` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
-        .dependsOn(`kyo-http`, `kyo-schema`)
+        .dependsOn(`kyo-http`, `kyo-schema-json`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2592,7 +2733,7 @@ lazy val `kyo-examples` =
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
         .dependsOn(`kyo-http`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-actor`)
@@ -2618,7 +2759,8 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-http`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-yaml`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
@@ -2688,7 +2830,7 @@ lazy val `kyo-doctest` =
         .crossType(CrossType.Full)
         .in(file("kyo-doctest"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-direct` % Test)
         .withKyoTest
@@ -2773,7 +2915,10 @@ def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String]): Seq[S
         if (dir.isDirectory) (dir * "*.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
     }.map(_.trim).filter(_.nonEmpty).distinct
 
-lazy val `native-settings` = Seq(
+// Everything a Native row needs that does not assume the project is itself a Scala Native module, so
+// the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
+// take these without the per-module link hook below.
+lazy val `native-settings-base` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
@@ -2793,13 +2938,36 @@ lazy val `native-settings` = Seq(
     }
 )
 
+lazy val `native-settings` = `native-settings-base` ++ Seq(
+    // Drop this module's LLVM intermediates the moment its test binary links. Scala Native keeps
+    // <target>/native-test/generated (IR plus objects: 526MB of kyo-core's 665MB workspace) so a LATER
+    // invocation can relink incrementally. CI links each module exactly once, and the ~13GB the ~40
+    // modules of a Native row accumulate is what carries the row's peak past the free disk of a runner
+    // image that started small, killing the runner mid-link with no log at all. Deleting them forces no
+    // relink: sbt caches the nativeLink result and the binary itself is untouched. Reads the environment
+    // rather than insideCI because a value transform sees no other settings; a local build keeps its
+    // intermediates for the next incremental link.
+    Test / nativeLink ~= { binary =>
+        if (sys.env.contains("CI")) IO.delete(binary.getParentFile / "native-test" / "generated")
+        binary
+    }
+)
+
 lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
     fork                                        := false,
     bspEnabled                                  := false,
     Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
+    // CI links every module's test binary in one sbt process; retaining each module's incremental
+    // linker state overflows the 12G sbt heap now that the schema family links per-format
+    // binaries. Batch mode drops that state after each link: incremental relink speed is
+    // irrelevant in CI, footprint is what matters.
+    scalaJSLinkerConfig := {
+        val c = scalaJSLinkerConfig.value
+        if (insideCI.value) c.withBatchMode(true) else c
+    }
 )
 
 // WASM rows are Scala.js compilations: same scala-java-time stand-in for the JDK time APIs,
@@ -2819,7 +2987,12 @@ lazy val `wasm-settings` = Seq(
             "--experimental-wasm-exnref"
         ))
     ),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
+    // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
+    scalaJSLinkerConfig := {
+        val c = scalaJSLinkerConfig.value
+        if (insideCI.value) c.withBatchMode(true) else c
+    }
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
@@ -3092,6 +3265,16 @@ lazy val `kyo-test-snapshot` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-data`)
+        .dependsOn(`kyo-schema`)
+        // SnapshotCodec's presets cover every codec kyo-schema ships, so this module needs
+        // all six per-format modules of the split schema family, like kyo-schema-tests.
+        .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-schema-protobuf`)
+        .dependsOn(`kyo-schema-msgpack`)
+        .dependsOn(`kyo-schema-bson`)
+        .dependsOn(`kyo-schema-ion`)
+        .dependsOn(`kyo-schema-yaml`)
+        .dependsOn(`kyo-test-prop`)
         .dependsOn(`kyo-test-runner` % Test)
         .in(file("kyo-test/snapshot"))
         .settings(

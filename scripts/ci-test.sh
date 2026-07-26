@@ -162,9 +162,9 @@ if [ "${1:-}" = "--self-test" ]; then
     # 8a. NATIVE_HEAVY pre-links each heavy module in its own process before the aggregate link.
     : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'echo "Tests: succeeded 100, failed 0"; exit 0'
     PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_HEAVY="kyo-schema" "$SELF" Native test >/dev/null 2>&1
+        NATIVE_HEAVY="kyo-schema-tests" "$SELF" Native test >/dev/null 2>&1
     CT_EXIT=$?
-    if call_nth_is 1 "kyo-schemaNative/Test/nativeLink" && call_nth_is 2 "kyoNative/Test/nativeLink" \
+    if call_nth_is 1 "kyo-schema-testsNative/Test/nativeLink" && call_nth_is 2 "kyoNative/Test/nativeLink" \
        && calls_have "testKyo --all Native" && exit_is 0
     then record ok "NATIVE_HEAVY pre-links heavy modules before the aggregate link"
     else record no "NATIVE_HEAVY pre-links heavy modules before the aggregate link"; fi
@@ -172,7 +172,7 @@ if [ "${1:-}" = "--self-test" ]; then
     # 8a2. NATIVE_LINK_CPUS caps the two link invocations but never the test run.
     : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'echo "Tests: succeeded 100, failed 0"; exit 0'
     PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_HEAVY="kyo-schema" NATIVE_LINK_CPUS=2 "$SELF" Native test >/dev/null 2>&1
+        NATIVE_HEAVY="kyo-schema-tests" NATIVE_LINK_CPUS=2 "$SELF" Native test >/dev/null 2>&1
     CT_EXIT=$?
     if heap_nth_has 1 "-XX:ActiveProcessorCount=2" && heap_nth_has 2 "-XX:ActiveProcessorCount=2" \
        && ! heap_nth_has 3 "-XX:ActiveProcessorCount=2" && exit_is 0
@@ -181,11 +181,11 @@ if [ "${1:-}" = "--self-test" ]; then
 
     # 8b. A heavy pre-link failure aborts before the aggregate link and before any tests.
     : > "$CALLS"; : > "$HEAP"
-    make_fake_sbt 'if [ "$*" = "kyo-schemaNative/Test/nativeLink" ]; then exit 3; fi; echo "Tests: succeeded 100, failed 0"; exit 0'
+    make_fake_sbt 'if [ "$*" = "kyo-schema-testsNative/Test/nativeLink" ]; then exit 3; fi; echo "Tests: succeeded 100, failed 0"; exit 0'
     PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
-        NATIVE_HEAVY="kyo-schema" "$SELF" Native test >/dev/null 2>&1
+        NATIVE_HEAVY="kyo-schema-tests" "$SELF" Native test >/dev/null 2>&1
     CT_EXIT=$?
-    if calls_count 1 && call_nth_is 1 "kyo-schemaNative/Test/nativeLink" \
+    if calls_count 1 && call_nth_is 1 "kyo-schema-testsNative/Test/nativeLink" \
        && calls_lack "kyoNative/Test/nativeLink" && calls_lack "testKyo" && exit_is 1
     then record ok "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"
     else record no "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"; fi
@@ -255,13 +255,15 @@ MAX_RETRIES=${MAX_RETRIES:-3}
 STALE_TIMEOUT=${STALE_TIMEOUT:-600}
 POLL_INTERVAL=${POLL_INTERVAL:-10}
 
-# Space-separated module names (e.g. "kyo-schema") whose SOLO native-link optimize peak needs an
-# isolated, fresh-heap sbt driver. Each is linked first in its own process, keeping its
-# whole-program optimize off the shared aggregate driver where the preceding modules have already
-# filled the 2G metaspace. Measured: kyo-schema alone peaks ~7.7G RSS in a clean process vs ~9.9G in
-# the accumulated aggregate (the delta is that accumulation), which OOM-killed the 8G-capped Native
-# driver. nativeLink is disk-cached per project, so the aggregate link below skips a module already
-# linked here. Empty by default; the CI workflow sets it for the Native target.
+# Space-separated module names (e.g. "kyo-schema-tests", which links every serialization format
+# into one binary) whose SOLO native-link optimize peak needs an isolated, fresh-heap sbt driver.
+# Each is linked first in its own process, keeping its whole-program optimize off the shared
+# aggregate driver where the preceding modules have already filled the 2G metaspace. Measured
+# before the format-module split: the then-monolithic kyo-schema alone peaked ~7.7G RSS in a clean
+# process vs ~9.9G in the accumulated aggregate (the delta is that accumulation), which OOM-killed
+# the 8G-capped Native driver. nativeLink is disk-cached per project, so the aggregate link below
+# skips a module already linked here. Empty by default; the CI workflow sets it for the Native
+# target.
 NATIVE_HEAVY="${NATIVE_HEAVY:-}"
 
 # When non-empty, the nativeLink sbt invocations run with -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS.

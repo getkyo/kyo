@@ -82,6 +82,85 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
             assert(resp.statusCode == 200)
         }
 
+        // A response naming chunked as its FINAL coding is chunked, whatever precedes it (RFC 9112 section 6.1). The old
+        // comparison stopped after seven bytes and so failed on "gzip, chunked", framing the response by Content-Length
+        // or by close instead. Unpinned until now.
+        "frames a response whose final coding is chunked (GHSA-jrpm-956j-96jg)" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n")
+            assert(resp != null, "the response should parse")
+            assert(resp.isChunked, "chunked is the final coding, so the response is chunk-framed")
+        }
+
+        // RFC 9112 section 6.3 item 5: conflicting Content-Length values are unrecoverable. Letting the last one win is
+        // the response-side smuggling primitive, since a proxy honouring the first and this client the last disagree
+        // about where the body ends. The request side already refused this; the asymmetry was the gap.
+        "rejects a response with conflicting Content-Length values (GHSA-p83c-4wj9-p6w9)" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 100\r\n\r\nhello")
+            assert(resp == null, "two different Content-Length values leave the body length undeterminable")
+        }
+
+        // The over-strictness control: a repeated but IDENTICAL value is not a conflict and must still parse.
+        "accepts a repeated identical Content-Length (GHSA-p83c-4wj9-p6w9)" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello")
+            assert(resp != null, "the two values agree, so the length is determinable")
+            assert(resp.contentLength == 5)
+        }
+
+        // RFC 9112 section 6.3 item 3: with both present, Transfer-Encoding determines the length and Content-Length is
+        // discarded. Leaving it readable keeps two framings in play for anything that later consults the wrong one.
+        "discards Content-Length when Transfer-Encoding is present (GHSA-p83c-4wj9-p6w9)" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n")
+            assert(resp != null, "this is resolvable, not malformed: chunked wins")
+            assert(resp.isChunked, "the response is chunk-framed")
+            assert(resp.contentLength == -1, s"Content-Length must be discarded, got ${resp.contentLength}")
+        }
+
+        // The response parser must reject an obs-fold (a header line beginning with SP or HTAB), as the request parser
+        // does. RFC 9112 section 5.2 makes rejecting or unfolding a recipient MUST, because a folded value read one way
+        // by this client and another by an intermediary is a header-interpretation disagreement. Here the fold line is
+        // silently dropped, so the value is truncated ("one two" becomes "one") rather than rejected. This asserts the
+        // secure behavior (rejection) and therefore FAILS until the response parser refuses obs-fold.
+        //
+        // Origin: RFC 9112 section 5.2; the response-side analog of the request-parser obs-fold reject.
+        "rejects an obs-folded response header (RFC 9112 section 5.2)" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nX-A: one\r\n two\r\nContent-Length: 0\r\n\r\n")
+            assert(
+                resp == null,
+                s"an obs-folded header must be refused, but the response parsed with X-A=${
+                        if resp == null then "n/a" else resp.headers.get("X-A")
+                    }"
+            )
+        }
+
+        // A Content-Length that overflows the Int accumulator must be refused, not wrapped. The request parser guards
+        // this (Http1Parser.parseContentLength rejects above 214748364); the response parser does not, so
+        // "4294967301" (2^32 + 5) wraps to 5. The client then frames the body at 5 bytes, keeps the pooled keep-alive
+        // connection, and reads the attacker's trailing bytes as the next response on that connection. This asserts
+        // the secure behavior (refusal) and therefore FAILS until the response side carries the same overflow guard.
+        //
+        // Origin: hyper RUSTSEC-2021-0078 (lenient Content-Length), the response-side analog of the request-side guard.
+        "rejects a response Content-Length that overflows Int" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 4294967301\r\nConnection: keep-alive\r\n\r\nHELLO")
+            assert(
+                resp == null || resp.contentLength < 0,
+                s"an overflowing Content-Length must be refused, but it wrapped to ${if resp == null then "n/a" else resp.contentLength}"
+            )
+        }
+
+        // The response-side half of the Transfer-Encoding token check. "chunkedfoo" is a single token and is not
+        // "chunked" (RFC 9110 section 5.6.2 tokens are delimited, not prefixes), so a value comparison that stops
+        // after the 7 bytes of "chunked" matches it here. On this side the reader is the CLIENT, so the party that
+        // chooses the value is the SERVER: a malicious or compromised origin picks a value a conforming proxy frames
+        // one way and this client frames the other, and the disagreement lets it steer where this client believes
+        // one response ends and the next begins.
+        "Transfer-Encoding value is matched as a whole token, not by prefix (GHSA-jrpm-956j-96jg)" in {
+            val (resp, _) = parseResponse(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunkedfoo\r\n\r\n"
+            )
+            assert(resp != null, "the response should still parse")
+            assert(!resp.isChunked, "\"chunkedfoo\" is not the token \"chunked\" and must not frame the response as chunked")
+        }
+
         // Test 3
         "parse response with explicit Connection: close" in {
             val (resp, _) = parseResponse(
@@ -170,13 +249,25 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         }
 
         // Test 10
+        // The leaf is named for rejection and used to assert the opposite: the response parsed and the bad length was
+        // reported as absent. RFC 9112 section 6.3 item 4 makes an invalid Content-Length unrecoverable, and treating it
+        // as absent reads the response to connection close, which a proxy that DID parse a number out of "1a2b" frames
+        // differently, so the tail of one response becomes the head of the next. The name was right and the assertion
+        // was wrong.
         "reject Content-Length with non-digit characters" in {
             val (resp, _) = parseResponse(
                 "HTTP/1.1 200 OK\r\nContent-Length: 1a2b\r\n\r\n"
             )
-            assert(resp != null, "Response should have been parsed")
-            // parseContentLength returns -1 on non-digit characters
-            assert(resp.contentLength == -1, "Content-Length with non-digits should be -1")
+            assert(resp == null, "an invalid Content-Length leaves the framing undeterminable and must be refused")
+        }
+
+        // The spelling the duplicate check could not catch while a malformed value was tolerated: the first header
+        // leaves -1 behind, so a test against the running value never fires and the second value is silently adopted.
+        "rejects a malformed Content-Length followed by a valid one (GHSA-p83c-4wj9-p6w9)" in {
+            val (resp, _) = parseResponse(
+                "HTTP/1.1 200 OK\r\nContent-Length: abc\r\nContent-Length: 5\r\n\r\nhello"
+            )
+            assert(resp == null, "the first value is not recoverable, so the message is not framed by the second")
         }
 
         // Test 11

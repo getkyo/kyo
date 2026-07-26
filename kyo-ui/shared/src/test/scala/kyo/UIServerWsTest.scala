@@ -120,4 +120,55 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(decoded == Result.Success(event))
     }
 
+    // ==================== Leaf 5: scrollIntoView command over WS ====================
+
+    // notNative: WS-behavior leaf; see class scaladoc for RI-001 rationale.
+    "scrollIntoView: a click handler's command reaches the client as a ScrollIntoView op".notNative in {
+        for
+            // captured holds the frame received after the click (the command the handler sent).
+            captured <- AtomicRef.init(Absent: Maybe[String])
+            ref      <- Signal.initRef("static")
+            // The reactive region produces the initial render frame the client awaits before clicking;
+            // the handler never touches it, so the click's only response frame is the scroll command.
+            app = UI.div(
+                UI.button("Jump").id("btn").onClick(UI.scrollIntoView("card-7")),
+                ref.map(v => UI.span(v))
+            )
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
+                    (clientWs: HttpWebSocket) =>
+                        for
+                            // Await the initial render frame to confirm the subscription is live.
+                            _ <- clientWs.take()
+                            clickEvent = UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent))
+                            _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](clickEvent)))
+                            frame <- clientWs.take()
+                            text = frame match
+                                case HttpWebSocket.Payload.Text(data) => Present(data)
+                                case _                                => Absent
+                            _ <- captured.set(text)
+                        yield ()
+                )
+            }
+            capturedData <- captured.get
+        yield capturedData match
+            case Present(data) =>
+                assert(Json.decode[HtmlOp](data) == Result.Success(HtmlOp.ScrollIntoView("card-7")))
+            case Absent => fail("client did not receive a frame after the click")
+        end for
+    }
+
+    "scrollIntoView outside any session is a no-op" in {
+        // No runner installed a sink (plain test context): the command completes without effect.
+        UI.scrollIntoView("nowhere").andThen(succeed)
+    }
+
+    "ScrollIntoView JSON round-trips through the wire codec" in {
+        val op      = HtmlOp.ScrollIntoView("card-7")
+        val encoded = Json.encode[HtmlOp](op)
+        assert(encoded.contains("ScrollIntoView"), s"the client dispatches on the op name; got $encoded")
+        assert(Json.decode[HtmlOp](encoded) == Result.Success(op))
+    }
+
 end UIServerWsTest
