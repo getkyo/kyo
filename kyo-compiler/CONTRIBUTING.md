@@ -64,7 +64,7 @@ Offsets everywhere are UTF-16 code-unit offsets into `text`; line/column mapping
 
 ### Neutral result and wire types
 
-The result ADTs (`Span`, `Severity`, `Diagnostic`, `Completion` + `Completion.Kind`, `Hover`, `Signature` + `Signature.Param`, `SymbolInfo` + `SymbolInfo.Kind`, `CompilerError`) all `derive CanEqual, Compiler.AsMessage` (`Compiler.scala:171-231`). `AsMessage[A] = ReadWriter[A]` is the upickle wire codec alias and mirrors kyo-aeron's `Topic.AsMessage`, so a result type rides the aeron transport directly (`Compiler.scala:148-152`). `Uri` is an opaque type over `String` with a `given ReadWriter[Uri]` that keeps it opaque through serialization (`Compiler.scala:154-163`), and there is a `given ReadWriter[Maybe[A]]` lifted from `Option` (`Compiler.scala:165-169`).
+The result ADTs (`Span`, `Severity`, `Diagnostic`, `Completion` + `Completion.Kind`, `Hover`, `Signature` + `Signature.Param`, `SymbolInfo` + `SymbolInfo.Kind`, `CompilerError`) all `derive CanEqual, Compiler.AsMessage` (`Compiler.scala:173-231`). `AsMessage[A] = Schema[A]` is the kyo-schema wire codec alias (`Compiler.scala:156-159`), so a result type carries a `Schema` and rides the kyo-aeron `Topic` transport directly, whose `publish` and `stream` take `Schema[A]`. `Uri` is an opaque type over `String` with a `given Schema[Uri]`, derived by `transform` over the `String` schema, that keeps it opaque through serialization (`Compiler.scala:161-170`).
 
 `CompilerError` has two leaves: `InitializationFailed(message)` (a backend that could not start) and `Fatal(message)` (an op-level failure surfaced in-band), `Compiler.scala:228-231`.
 
@@ -231,7 +231,7 @@ All tests extend the module's `kyo.test.Test[Any]` base, never ScalaTest directl
 
 | Test | What it grounds | How |
 |------|-----------------|-----|
-| `CompilerTest` | the public surface | result-ADT upickle round-trips, `Uri` opacity, the three-state `isolate` default, and compile-fail witnesses that no `cancel`/`spawn`/lsp4j surface exists |
+| `CompilerTest` | the public surface | result-ADT MsgPack round-trips, `Uri` opacity, the three-state `isolate` default, and compile-fail witnesses that no `cancel`/`spawn`/lsp4j surface exists |
 | `WireTest` | the adapter | pure `Wire` tests: `LineIndex` offsets, null / `Either` handling, hover / signature / symbol adapters, request/response/envelope round-trips, and a corrupt-envelope decode raising a contained throw |
 | `LocalBackendTest` | the in-JVM pc | a real pc built from classpath jars: diagnostics, completions, `sourceRoots` `-sourcepath` resolution, interrupt-cancel, exceptional-future-as-Fatal, pc-throw-as-typed, didClose-then-recompile |
 | `WorkerTest` | the worker-side path | `WorkerConfig.fromEnv` + `LocalBackend`, proving the diagnostics opt-in survives |
