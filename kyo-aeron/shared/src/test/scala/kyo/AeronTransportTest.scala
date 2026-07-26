@@ -40,6 +40,9 @@ class AeronTransportTest extends Test:
     val errorHandlerRegressionStreamId = 113
     val errorHandlerEmptyMsgStreamId   = 114
 
+    /** Distinct message type for the saturated UAF leaf, so its tag hash gives it its own stream. */
+    case class UafSaturatedMsg(pad: String) derives CanEqual, Schema
+
     /** Waits until cond returns true, polling every 1ms with a non-blocking Async suspension. Returns
       * false if maxAttempts is exhausted.
       */
@@ -727,9 +730,12 @@ class AeronTransportTest extends Test:
     // ---------------------------------------------------------------------------
 
     // Because the forked fibers are unscoped, Topic.run's body completes and fires runtime.close() while
-    // the publish fiber may still be mid-offer and the stream fiber mid-poll. On Native/JS the close path
-    // frees the inner Aeron handles those fibers still hold; the close_mutex+closing guard turns the
-    // freed-handle deref into a safe sentinel instead of a segfaulting UAF (JVM's io.aeron is heap-safe).
+    // the publish fiber may still be mid-offer and the stream fiber mid-poll. Every platform turns that
+    // into a safe sentinel rather than a UAF: Native and JS through kyo_aeron.c's close_mutex+closing
+    // guard, the JVM through JvmAeronTransport's per-handle OpsGate plus the drain in closeAll. The JVM
+    // is not exempt by virtue of running on a managed heap: offer copies into a claimed log-buffer
+    // region and poll writes the subscriber position into the CnC, both mapped memory that closing the
+    // client unmaps, and io.aeron's own grace for that (closeLingerDurationNs) defaults to 0.
     "UAF-loop: a high-iteration forked-then-close loop does not use-after-free" in {
         val iterations = 100
         val messages   = Seq(1, 2, 3)
@@ -746,6 +752,34 @@ class AeronTransportTest extends Test:
                         )
                         // Let both fibers enter their offer/poll loops before the body completes.
                         _ <- Async.sleep(1.millis)
+                    yield ()
+                }.andThen(Loop.continue)
+        }
+    }
+
+    // The loop above publishes three ints, so its fibers spend most of the window in add and backoff
+    // rather than inside offer, which made the crash it guards against intermittent: it reproduced on CI
+    // roughly once per run. Saturating the window instead (20k messages of ~1KB) keeps the publish fiber
+    // continuously inside offer's claim-and-copy when the close lands, which segfaulted the carrier on
+    // every run before the OpsGate existed.
+    "UAF-saturated: a close landing inside a running offer/poll loop does not use-after-free" in {
+        val iterations = 50
+        val payload    = "x" * 1024
+        val messages   = Seq.fill(20000)(UafSaturatedMsg(payload))
+        Loop.indexed { i =>
+            if i >= iterations then Loop.done(succeed)
+            else
+                Topic.run {
+                    for
+                        _ <- Fiber.initUnscoped(using Topic.isolate)(
+                            Topic.stream[UafSaturatedMsg]("aeron:ipc").take(messages.size).run
+                        )
+                        _ <- Fiber.initUnscoped(using Topic.isolate)(
+                            Topic.publish[UafSaturatedMsg]("aeron:ipc")(Stream.init(messages))
+                        )
+                        // Long enough for both fibers to be deep inside offer/poll, short enough that
+                        // the close lands mid-flight rather than after the stream drains.
+                        _ <- Async.sleep(5.millis)
                     yield ()
                 }.andThen(Loop.continue)
         }

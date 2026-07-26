@@ -30,14 +30,68 @@ final private[kyo] class JvmAeronTransport(
     type AsyncPub = Long
     type AsyncSub = Long
 
+    /** Handles this transport has produced and the caller has not closed.
+      *
+      * `closeAll` drains and closes them before the client goes away, which is what makes closing
+      * the client safe while fibers still hold handles. Kyo has no unsafe-tier concurrent set, so
+      * this uses ConcurrentHashMap as kyo-core's Exchange and kyo-net's NioTransport do.
+      */
+    private val livePubs = java.util.concurrent.ConcurrentHashMap.newKeySet[PublicationState]()
+    private val liveSubs = java.util.concurrent.ConcurrentHashMap.newKeySet[SubscriptionState]()
+
+    /** Excludes the mapped-memory operations from a concurrent close of the region they write.
+      *
+      * `offer` copies into a claimed log-buffer region and `pollOne` writes the subscriber position
+      * into the CnC mapping, both on the caller's carrier. Closing the client unmaps those regions,
+      * and io.aeron's only protection is `closeLingerDurationNs`, which defaults to 0. A bare
+      * `isClosed` test is check-then-act, so without this an offer in flight when the client closes
+      * writes freed memory and takes a SIGSEGV on the carrier. This is the JVM counterpart of the C
+      * shim's close_mutex + closing guard, giving every platform the same safe-sentinel contract.
+      *
+      * `enter` increments then re-reads `closed`, so an operation that raced past the first test
+      * backs out and `close` never waits on it. The drain spin is bounded by one offer or poll.
+      */
+    final class OpsGate(using AllowUnsafe):
+        private val closed   = AtomicBoolean.Unsafe.init(false)
+        private val inFlight = AtomicInt.Unsafe.init(0)
+
+        /** True when the caller holds the gate and owes a matching `exit`. */
+        def enter()(using AllowUnsafe): Boolean =
+            if closed.get() then false
+            else
+                discard(inFlight.incrementAndGet())
+                if closed.get() then
+                    discard(inFlight.decrementAndGet())
+                    false
+                else true
+                end if
+
+        def exit()(using AllowUnsafe): Unit = discard(inFlight.decrementAndGet())
+
+        /** Marks the handle closed and waits out in-flight operations. True for the caller that
+          * performed the transition, so the underlying close runs exactly once.
+          *
+          * The wait spins rather than parking: it is bounded by one offer or poll, and it runs on
+          * the teardown path, which already blocks on the Aeron client and driver close beneath it.
+          */
+        def close()(using AllowUnsafe): Boolean =
+            if !closed.compareAndSet(false, true) then false
+            else
+                while inFlight.get() > 0 do Thread.onSpinWait()
+                true
+    end OpsGate
+
     /** Pairs a publication with a reusable `BufferClaim`, saving a per-offer allocation on the
       * publish hot path. Exactly one publish call owns a publication and offers sequentially, so
       * the claim is never raced.
       */
-    class PublicationState(val publication: AeronPublication):
+    class PublicationState(val publication: AeronPublication)(using AllowUnsafe):
         val claim: BufferClaim = new BufferClaim
+        val gate: OpsGate      = new OpsGate
 
-    class SubscriptionState(val subscription: AeronSubscription):
+    class SubscriptionState(val subscription: AeronSubscription)(using AllowUnsafe):
+        val gate: OpsGate = new OpsGate
+
         /** Holds the last polled message. The `FragmentAssembler` callback writes it synchronously
           * inside `poll()` and `pollOne` reads it immediately after, so under the
           * single-poller-per-subscription contract a plain var is safe. `private[kyo]` keeps it
@@ -69,7 +123,11 @@ final private[kyo] class JvmAeronTransport(
         try
             val pub = aeron.getPublication(async)
             if pub == null then AeronTransport.AddPoll.Awaiting
-            else AeronTransport.AddPoll.Done(new PublicationState(pub))
+            else
+                val state = new PublicationState(pub)
+                discard(livePubs.add(state))
+                AeronTransport.AddPoll.Done(state)
+            end if
         catch
             case e: RegistrationException =>
                 // errorCodeValue() is the driver's typed error code, always non-zero.
@@ -88,8 +146,12 @@ final private[kyo] class JvmAeronTransport(
     def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean =
         // The FFI shim returns 0 under b->closed, so guard on isClosed() to keep the
         // post-own-close contract uniform across platforms (as maxMessageLength does).
-        if pub.publication.isClosed() then false
-        else pub.publication.isConnected()
+        if !pub.gate.enter() then false
+        else
+            try
+                if pub.publication.isClosed() then false
+                else pub.publication.isConnected()
+            finally pub.gate.exit()
 
     def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long =
         // Unsafe: writes into an off-heap claimed log-buffer region (tryClaim + commit), or wraps
@@ -98,35 +160,48 @@ final private[kyo] class JvmAeronTransport(
         // bytes on IPC), so larger messages take offer's copy-and-fragment path. Both throw IAE on
         // an oversize message, which Topic.publish's up-front check makes unreachable outside a
         // race; the catch normalizes that race to the same -6 the FFI offer returns.
-        val publication = pub.publication
-        try
-            if message.length <= publication.maxPayloadLength() then
-                val claim  = pub.claim
-                val result = publication.tryClaim(message.length, claim)
-                if result > 0 then
-                    val buffer = claim.buffer()
-                    val offset = claim.offset()
-                    buffer.putBytes(offset, message)
-                    claim.commit()
+        // The gate keeps the claimed region mapped for the duration of the copy and commit; without
+        // it a concurrent client close unmaps underneath and the write segfaults the carrier.
+        if !pub.gate.enter() then AeronSentinels.Closed
+        else
+            val publication = pub.publication
+            try
+                if message.length <= publication.maxPayloadLength() then
+                    val claim  = pub.claim
+                    val result = publication.tryClaim(message.length, claim)
+                    if result > 0 then
+                        val buffer = claim.buffer()
+                        val offset = claim.offset()
+                        buffer.putBytes(offset, message)
+                        claim.commit()
+                    end if
+                    result
+                else
+                    publication.offer(new UnsafeBuffer(message), 0, message.length)
                 end if
-                result
-            else
-                publication.offer(new UnsafeBuffer(message), 0, message.length)
-            end if
-        catch case _: IllegalArgumentException => AeronSentinels.Error
-        end try
+            catch case _: IllegalArgumentException => AeronSentinels.Error
+            finally pub.gate.exit()
+            end try
+        end if
     end offer
 
     def maxMessageLength(pub: Publication)(using AllowUnsafe): Int =
         // io.aeron caches maxMessageLength and would keep returning the live value after the
         // caller's own close; guarding on isClosed() matches the FFI shim, which returns 0 once
         // the bundle is closed.
-        if pub.publication.isClosed() then 0
+        if !pub.gate.enter() then 0
         else
-            // Long return, but bounded by the 16 MiB ceiling, so the Int cast is safe.
-            pub.publication.maxMessageLength().toInt
+            try
+                if pub.publication.isClosed() then 0
+                else
+                    // Long return, but bounded by the 16 MiB ceiling, so the Int cast is safe.
+                    pub.publication.maxMessageLength().toInt
+            finally pub.gate.exit()
 
-    def closePublication(pub: Publication)(using AllowUnsafe): Unit = pub.publication.close()
+    def closePublication(pub: Publication)(using AllowUnsafe): Unit =
+        if pub.gate.close() then
+            discard(livePubs.remove(pub))
+            pub.publication.close()
 
     def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] =
         // Closed-client handling as in asyncAddPublication.
@@ -137,7 +212,11 @@ final private[kyo] class JvmAeronTransport(
         try
             val sub = aeron.getSubscription(async)
             if sub == null then AeronTransport.AddPoll.Awaiting
-            else AeronTransport.AddPoll.Done(new SubscriptionState(sub))
+            else
+                val state = new SubscriptionState(sub)
+                discard(liveSubs.add(state))
+                AeronTransport.AddPoll.Done(state)
+            end if
         catch
             case e: RegistrationException =>
                 AeronTransport.AddPoll.Failed(e.errorCodeValue(), e.getMessage)
@@ -148,24 +227,45 @@ final private[kyo] class JvmAeronTransport(
     def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit = ()
 
     def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean =
-        sub.subscription.isConnected()
+        if !sub.gate.enter() then false
+        else
+            try sub.subscription.isConnected()
+            finally sub.gate.exit()
 
     def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]] =
-        sub.result = Absent
-        // poll throws transiently under load (a registration error surfaced on poll, a log buffer
-        // closed by an interrupt during teardown). Reporting an empty poll lets the shared retry
-        // loop absorb it as backpressure rather than escaping as a panic; fatal errors still
-        // surface through fatalError.
-        val fragmentsRead =
-            try sub.poll()
-            catch
-                case _: AeronException                               => 0
-                case _: java.nio.channels.ClosedByInterruptException => 0
-        if fragmentsRead == 0 then Absent else sub.result
+        // Gated for the same reason as offer: poll writes the subscriber position into the CnC
+        // mapping, which a concurrent client close unmaps.
+        if !sub.gate.enter() then Absent
+        else
+            sub.result = Absent
+            // poll throws transiently under load (a registration error surfaced on poll, a log buffer
+            // closed by an interrupt during teardown). Reporting an empty poll lets the shared retry
+            // loop absorb it as backpressure rather than escaping as a panic; fatal errors still
+            // surface through fatalError.
+            val fragmentsRead =
+                try sub.poll()
+                catch
+                    case _: AeronException                               => 0
+                    case _: java.nio.channels.ClosedByInterruptException => 0
+                finally sub.gate.exit()
+            if fragmentsRead == 0 then Absent else sub.result
+        end if
     end pollOne
 
     def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit =
-        sub.subscription.close()
+        if sub.gate.close() then
+            discard(liveSubs.remove(sub))
+            sub.subscription.close()
+
+    /** Drains and closes every handle the caller still holds.
+      *
+      * The runtime calls this before closing the client, so by the time the client unmaps its
+      * buffers no offer or poll can be in flight against them. Fibers still holding a handle then
+      * see the ordinary post-close sentinels rather than freed memory.
+      */
+    def closeAll()(using AllowUnsafe): Unit =
+        livePubs.forEach(pub => closePublication(pub))
+        liveSubs.forEach(sub => closeSubscription(sub))
 
     def fatalError(using AllowUnsafe): Maybe[String] =
         // The slot the Aeron.Context error handler sets holds null or a non-empty string: both

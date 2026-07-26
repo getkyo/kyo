@@ -35,11 +35,17 @@ private[kyo] object AeronPlatformTransport:
                         discard(errorSlot.compareAndSet(null, msg))
                     }
             )
+            val jvmTransport = new JvmAeronTransport(aeron, errorSlot)
             new AeronRuntime:
-                val transport: AeronTransport = new JvmAeronTransport(aeron, errorSlot)
+                val transport: AeronTransport = jvmTransport
                 def close()(using AllowUnsafe): Unit =
+                    // Drain the handles first: closing the client unmaps the log buffers and the CnC
+                    // that an in-flight offer or poll is writing, and Aeron's own grace for that,
+                    // closeLingerDurationNs, defaults to 0.
+                    jvmTransport.closeAll()
                     aeron.close()
                     driver.close()
+                end close
             end new
         }
     end embedded
@@ -62,9 +68,14 @@ private[kyo] object AeronPlatformTransport:
                         discard(errorSlot.compareAndSet(null, msg))
                     }
             )
+            val jvmTransport = new JvmAeronTransport(aeron, errorSlot)
             new AeronRuntime:
-                val transport: AeronTransport        = new JvmAeronTransport(aeron, errorSlot)
-                def close()(using AllowUnsafe): Unit = aeron.close()
+                val transport: AeronTransport = jvmTransport
+                def close()(using AllowUnsafe): Unit =
+                    // Same drain-before-client-close ordering as embedded.
+                    jvmTransport.closeAll()
+                    aeron.close()
+                end close
             end new
         }.handle(Abort.catching[io.aeron.exceptions.AeronException] { e =>
             TopicTransportFailedException(Maybe(e.getMessage).filter(_.nonEmpty).getOrElse(e.toString))
