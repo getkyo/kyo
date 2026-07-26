@@ -4,13 +4,13 @@ import kyo.*
 import scala.scalajs.js
 import scala.scalajs.js.typedarray.Int8Array
 
-private[kyo] trait UUIDEntropyPlatformPlatformSpecific:
+private[kyo] trait UUIDEntropyPlatformSpecific:
 
-    val live: UUIDEntropyPlatform =
+    val live: UUIDEntropy =
         fromGlobalThis(js.Dynamic.global.globalThis)
 
-    private[kyo] def fromGlobalThis(globalThis: js.Dynamic): UUIDEntropyPlatform =
-        new UUIDEntropyPlatform:
+    private[kyo] def fromGlobalThis(globalThis: js.Dynamic): UUIDEntropy =
+        new UUIDEntropy:
             def next16(using Frame): Span[Byte] < Sync =
                 Sync.defer:
                     val crypto = globalThis.selectDynamic("crypto")
@@ -28,4 +28,4 @@ private[kyo] trait UUIDEntropyPlatformPlatformSpecific:
 
     private def unavailable(): Nothing =
         throw new IllegalStateException("globalThis.crypto.getRandomValues is unavailable")
-end UUIDEntropyPlatformPlatformSpecific
+end UUIDEntropyPlatformSpecific

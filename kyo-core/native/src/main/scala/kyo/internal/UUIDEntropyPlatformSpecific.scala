@@ -6,7 +6,7 @@ import kyo.*
 import scala.scalanative.runtime.ByteArray
 import scala.scalanative.unsafe.*
 
-private[kyo] trait UUIDEntropyPlatformPlatformSpecific:
+private[kyo] trait UUIDEntropyPlatformSpecific:
 
     private val SourcePath = "/dev/urandom"
 
@@ -19,7 +19,7 @@ private[kyo] trait UUIDEntropyPlatformPlatformSpecific:
         def fill(target: Array[Byte]): Int
     end WindowsSource
 
-    val live: UUIDEntropyPlatform =
+    val live: UUIDEntropy =
         forOperatingSystem(
             Platform.isWindows,
             openPosix,
@@ -49,12 +49,12 @@ private[kyo] trait UUIDEntropyPlatformPlatformSpecific:
         isWindows: Boolean,
         openPosix: String => NativeSource,
         windowsSource: WindowsSource
-    ): UUIDEntropyPlatform =
+    ): UUIDEntropy =
         if isWindows then fromWindowsSource(windowsSource)
         else fromNativeSource(openPosix)
 
-    private[kyo] def fromWindowsSource(source: WindowsSource): UUIDEntropyPlatform =
-        new UUIDEntropyPlatform:
+    private[kyo] def fromWindowsSource(source: WindowsSource): UUIDEntropy =
+        new UUIDEntropy:
             def next16(using Frame): Span[Byte] < Sync =
                 Sync.defer:
                     val bytes  = new Array[Byte](16)
@@ -66,8 +66,8 @@ private[kyo] trait UUIDEntropyPlatformPlatformSpecific:
                     end if
                     Span.fromUnsafe(bytes)
 
-    private[kyo] def fromNativeSource(open: String => NativeSource): UUIDEntropyPlatform =
-        new UUIDEntropyPlatform:
+    private[kyo] def fromNativeSource(open: String => NativeSource): UUIDEntropy =
+        new UUIDEntropy:
             def next16(using Frame): Span[Byte] < Sync =
                 Sync.defer:
                     val source                    = open(SourcePath)
@@ -95,7 +95,7 @@ private[kyo] trait UUIDEntropyPlatformPlatformSpecific:
                                         if failure ne closeFailure then failure.addSuppressed(closeFailure)
                                     case Absent => throw closeFailure
                     end try
-end UUIDEntropyPlatformPlatformSpecific
+end UUIDEntropyPlatformSpecific
 
 @extern
 private object UUIDEntropyWindows:

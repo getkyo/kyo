@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.UUIDEntropyPlatform
+import kyo.internal.UUIDEntropy
 
 /** Generates secure random and time-ordered UUIDs.
   *
@@ -32,7 +32,7 @@ object UUIDGenerator:
 
     /** The default generator backed by the platform secure entropy source and the dynamically scoped Kyo clock. */
     val live: UUIDGenerator =
-        make(Clock.nowWith(_.toJava.toEpochMilli), UUIDEntropyPlatform.live)
+        make(Clock.nowWith(_.toJava.toEpochMilli), UUIDEntropy.live)
 
     private val local = Local.init(live)
 
@@ -52,7 +52,7 @@ object UUIDGenerator:
         def v7WithStateReadHook(hook: UUID => Unit < Async)(using Frame): UUID < Async
     end TestControl
 
-    private[kyo] def init(clockMillis: () => Long, entropy: UUIDEntropyPlatform): UUIDGenerator =
+    private[kyo] def init(clockMillis: () => Long, entropy: UUIDEntropy): UUIDGenerator =
         make(Sync.defer(clockMillis()), entropy)
 
     private[kyo] def test(clockMillis: Chunk[Long], entropy: Chunk[Byte]): UUIDGenerator =
@@ -68,7 +68,7 @@ object UUIDGenerator:
 
     final private class Default(
         clockMillis: Frame ?=> Long < Sync,
-        entropy: UUIDEntropyPlatform,
+        entropy: UUIDEntropy,
         state: AtomicRef[V7State]
     ) extends TestControl:
 
@@ -141,7 +141,7 @@ object UUIDGenerator:
             )
     end validateMillis
 
-    private def make(clockMillis: Frame ?=> Long < Sync, entropy: UUIDEntropyPlatform): TestControl =
+    private def make(clockMillis: Frame ?=> Long < Sync, entropy: UUIDEntropy): TestControl =
         // Unsafe: construction creates the generator's private atomic state before any effectful operation can observe it.
         import AllowUnsafe.embrace.danger
         new Default(clockMillis, entropy, AtomicRef.Unsafe.init[V7State](V7State.Empty).safe)
@@ -152,7 +152,7 @@ object UUIDGenerator:
         import AllowUnsafe.embrace.danger
         val clockIndex   = AtomicInt.Unsafe.init(0)
         val entropyIndex = AtomicInt.Unsafe.init(0)
-        val finiteEntropy = new UUIDEntropyPlatform:
+        val finiteEntropy = new UUIDEntropy:
             def next16(using Frame): Span[Byte] < Sync =
                 Sync.defer:
                     val start = entropyIndex.getAndAdd(16)

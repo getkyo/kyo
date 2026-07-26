@@ -4,13 +4,13 @@ import java.io.EOFException
 import kyo.*
 import scala.collection.mutable.ArrayBuffer
 
-class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
+class UUIDEntropyPlatformSpecificNativeTest extends kyo.test.Test[Any]:
 
     final private class ScriptedSource(
         payload: Array[Byte],
         reads: Chunk[Int],
         closeFailure: Maybe[Throwable] = Absent
-    ) extends UUIDEntropyPlatform.NativeSource:
+    ) extends UUIDEntropy.NativeSource:
         val requests         = ArrayBuffer.empty[(Int, Int)]
         var closeCalls       = 0
         private var nextRead = 0
@@ -36,7 +36,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
         end close
     end ScriptedSource
 
-    final private class ThrowingSource(failure: Throwable) extends UUIDEntropyPlatform.NativeSource:
+    final private class ThrowingSource(failure: Throwable) extends UUIDEntropy.NativeSource:
         var readCalls  = 0
         var closeCalls = 0
 
@@ -48,7 +48,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
             closeCalls += 1
     end ThrowingSource
 
-    final private class RecordingWindowsSource(bytes: Array[Byte], status: Int = 0) extends UUIDEntropyPlatform.WindowsSource:
+    final private class RecordingWindowsSource(bytes: Array[Byte], status: Int = 0) extends UUIDEntropy.WindowsSource:
         var calls      = 0
         var lastLength = -1
 
@@ -62,7 +62,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
 
     "Native secure entropy adapter" - {
         "live adapter returns exactly 16 bytes" in {
-            UUIDEntropyPlatform.live.next16.map: bytes =>
+            UUIDEntropy.live.next16.map: bytes =>
                 assert(bytes.size == 16)
         }
 
@@ -71,7 +71,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
             val source        = new ScriptedSource(expected, Chunk(16))
             val windowsSource = new RecordingWindowsSource(Array.fill[Byte](16)(0))
             var openedPath    = ""
-            val adapter = UUIDEntropyPlatform.forOperatingSystem(
+            val adapter = UUIDEntropy.forOperatingSystem(
                 isWindows = false,
                 openPosix = path =>
                     openedPath = path
@@ -90,7 +90,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
             val expected      = Array.tabulate[Byte](16)(i => (i * 19 + 2).toByte)
             val windowsSource = new RecordingWindowsSource(expected)
             var posixOpens    = 0
-            val adapter = UUIDEntropyPlatform.forOperatingSystem(
+            val adapter = UUIDEntropy.forOperatingSystem(
                 isWindows = true,
                 openPosix = _ =>
                     posixOpens += 1
@@ -108,7 +108,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
 
         "surfaces the exact Windows secure source status as a Sync panic" in {
             val windowsSource = new RecordingWindowsSource(Array.fill[Byte](16)(0), status = 0xc0000001)
-            val adapter       = UUIDEntropyPlatform.fromWindowsSource(windowsSource)
+            val adapter       = UUIDEntropy.fromWindowsSource(windowsSource)
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -124,7 +124,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
             val expected   = Array.tabulate[Byte](16)(i => (i * 17 + 5).toByte)
             val source     = new ScriptedSource(expected, Chunk(3, 5, 8))
             var openedPath = ""
-            val adapter = UUIDEntropyPlatform.fromNativeSource { path =>
+            val adapter = UUIDEntropy.fromNativeSource { path =>
                 openedPath = path
                 source
             }
@@ -138,7 +138,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
 
         "panics and closes the source when a read stops before 16 bytes" in {
             val source  = new ScriptedSource(Array.fill[Byte](16)(1), Chunk(4, 0))
-            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+            val adapter = UUIDEntropy.fromNativeSource(_ => source)
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -153,7 +153,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
         "surfaces read failures as the exact panic and closes the source" in {
             val failure = new RuntimeException("read failed")
             val source  = new ThrowingSource(failure)
-            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+            val adapter = UUIDEntropy.fromNativeSource(_ => source)
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -167,12 +167,12 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
 
         "preserves the primary failure when read and close throw the same instance" in {
             val failure = new RuntimeException("read and close failed")
-            val source = new UUIDEntropyPlatform.NativeSource:
+            val source = new UUIDEntropy.NativeSource:
                 def read(target: Array[Byte], offset: Int, length: Int): Int =
                     throw failure
                 def close(): Unit =
                     throw failure
-            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+            val adapter = UUIDEntropy.fromNativeSource(_ => source)
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -189,7 +189,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
                 Chunk(16),
                 closeFailure = Maybe(failure)
             )
-            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => source)
+            val adapter = UUIDEntropy.fromNativeSource(_ => source)
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -203,7 +203,7 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
 
         "panics when /dev/urandom cannot be opened" in {
             val failure = new RuntimeException("open failed")
-            val adapter = UUIDEntropyPlatform.fromNativeSource(_ => throw failure)
+            val adapter = UUIDEntropy.fromNativeSource(_ => throw failure)
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -212,4 +212,4 @@ class UUIDEntropyPlatformNativeTest extends kyo.test.Test[Any]:
         }
     }
 
-end UUIDEntropyPlatformNativeTest
+end UUIDEntropyPlatformSpecificNativeTest

@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.UUIDEntropyPlatform
+import kyo.internal.UUIDEntropy
 
 class UUIDGeneratorTest extends kyo.test.Test[Any]:
 
@@ -471,7 +471,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
             val failure = new RuntimeException("secure entropy unavailable")
             val generator = UUIDGenerator.init(
                 () => 1000L,
-                new UUIDEntropyPlatform:
+                new UUIDEntropy:
                     def next16(using Frame): Span[Byte] < Sync = Sync.defer(throw failure)
             )
 
@@ -485,7 +485,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
             val failure = new RuntimeException("secure entropy unavailable")
             val generator = UUIDGenerator.init(
                 () => 1000L,
-                new UUIDEntropyPlatform:
+                new UUIDEntropy:
                     def next16(using Frame): Span[Byte] < Sync = Sync.defer(throw failure)
             )
 

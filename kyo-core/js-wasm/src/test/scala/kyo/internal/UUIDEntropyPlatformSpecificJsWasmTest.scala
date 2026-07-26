@@ -4,11 +4,11 @@ import kyo.*
 import scala.scalajs.js.typedarray.Int8Array
 import scala.scalajs.js as sjs
 
-class UUIDEntropyPlatformJsWasmTest extends kyo.test.Test[Any]:
+class UUIDEntropyPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
 
     "JavaScript and WebAssembly secure entropy adapter" - {
         "live adapter returns exactly 16 bytes" in {
-            UUIDEntropyPlatform.live.next16.map: bytes =>
+            UUIDEntropy.live.next16.map: bytes =>
                 assert(bytes.size == 16)
         }
 
@@ -26,7 +26,7 @@ class UUIDEntropyPlatformJsWasmTest extends kyo.test.Test[Any]:
             val globalThis = sjs.Dynamic.literal(
                 crypto = sjs.Dynamic.literal(getRandomValues = getRandomValues)
             )
-            val adapter  = UUIDEntropyPlatform.fromGlobalThis(globalThis)
+            val adapter  = UUIDEntropy.fromGlobalThis(globalThis)
             val expected = Span.from(Array.tabulate[Byte](16)(i => (i * 11 + 3).toByte))
 
             adapter.next16.map: actual =>
@@ -36,7 +36,7 @@ class UUIDEntropyPlatformJsWasmTest extends kyo.test.Test[Any]:
         }
 
         "panics when globalThis.crypto is unavailable" in {
-            val adapter = UUIDEntropyPlatform.fromGlobalThis(sjs.Dynamic.literal())
+            val adapter = UUIDEntropy.fromGlobalThis(sjs.Dynamic.literal())
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -51,7 +51,7 @@ class UUIDEntropyPlatformJsWasmTest extends kyo.test.Test[Any]:
             val globalThis = sjs.Dynamic.literal(
                 crypto = sjs.Dynamic.literal(getRandomValues = getRandomValues)
             )
-            val adapter = UUIDEntropyPlatform.fromGlobalThis(globalThis)
+            val adapter = UUIDEntropy.fromGlobalThis(globalThis)
 
             Abort.run[Any](adapter.next16).map: result =>
                 result match
@@ -60,4 +60,4 @@ class UUIDEntropyPlatformJsWasmTest extends kyo.test.Test[Any]:
         }
     }
 
-end UUIDEntropyPlatformJsWasmTest
+end UUIDEntropyPlatformSpecificJsWasmTest
