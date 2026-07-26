@@ -56,14 +56,15 @@ class NetConfigTest extends Test:
         succeed
     }
 
-    "carries no deadline: those belong to the operations that can act on them" - {
+    "carries no connect or handshake deadline: those belong to the operations that can act on them" - {
         // Guards the shape this type was reduced to. A connect deadline is a parameter of the connect operations and a handshake deadline is
         // a NetTlsConfig field, so neither can be handed to an operation it does not apply to. Reads the case class's own field names, so
         // re-adding either field to NetConfig fails here rather than silently reintroducing a setting half the call sites ignore.
+        // peerCloseGrace is connection shape, not a connect/handshake deadline, so it belongs here.
         val fields = NetConfig.default.productElementNames.toList
 
-        "the four fields are exactly the connection and socket shape" in {
-            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf"))
+        "the five fields are the connection shape, socket options, and the peer-close reclaim grace" in {
+            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf", "peerCloseGrace"))
             succeed
         }
 

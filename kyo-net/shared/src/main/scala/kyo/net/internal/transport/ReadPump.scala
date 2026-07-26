@@ -28,7 +28,9 @@ final private[kyo] class ReadPump[Handle](
     handle: Handle,
     driver: IoDriver[Handle],
     channel: Channel.Unsafe[Span[Byte]],
-    closeFn: () => Unit
+    closeFn: () => Unit,
+    grace: Duration,
+    clock: Clock
 ) extends IOPromise[Closed, ReadOutcome]:
 
     // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala): a
@@ -81,20 +83,27 @@ final private[kyo] class ReadPump[Handle](
                 // Channel accepted, request next read
                 requestNextRead()
             case Result.Success(false) =>
-                // Channel full: backpressure. Park on the put; when the channel accepts, the callback requests the next read. A STARTTLS upgrade
-                // can close the inbound channel while these bytes are still parked in the put (they carry the peer's first TLS flight): on that
-                // Closed failure the driver hook salvages them for the handshake instead of losing them (default no-op for an ordinary close).
+                // Channel full: backpressure. Park on the put; when the channel accepts (the consumer drained a span), the callback requests the
+                // next read. A STARTTLS upgrade can close the inbound channel while these bytes are still parked in the put (they carry the peer's
+                // first TLS flight): on that Closed failure the driver hook salvages them for the handshake instead of losing them (a no-op for an
+                // ordinary close).
+                //
+                // While parked no read is armed, so a peer FIN here is otherwise unobservable and an abandoned consumer would leak the socket in
+                // CLOSE_WAIT. The BackpressureGrace episode armed below reclaims such a connection on a grace of no progress; see its scaladoc.
+                val episode  = new BackpressureGrace
                 val putFiber = channel.putFiber(bytes)
                 putFiber.onComplete { result =>
                     // Unsafe: this is the channel putFiber completion callback boundary; it runs off the fiber and has no AllowUnsafe in scope.
                     import AllowUnsafe.embrace.danger
                     given Frame = Frame.internal
+                    episode.progressed()
                     result match
                         case Result.Success(_)         => requestNextRead()
                         case Result.Failure(_: Closed) => driver.onInboundClosedDuringRead(handle, bytes)
                         case Result.Panic(_)           => teardown()
                     end match
                 }
+                episode.arm()
             case Result.Failure(_: Closed) =>
                 // The inbound channel is closed: normally these bytes are discarded with the teardown. But a STARTTLS upgrade closes inbound while
                 // this read may carry the peer's first TLS flight off the socket; the driver hook salvages those bytes for the handshake instead of
@@ -124,5 +133,75 @@ final private[kyo] class ReadPump[Handle](
         // never empties, so the close never fired and the peer-FIN'd socket lingered in CLOSE_WAIT until process exit.
         closeFn()
     end teardown
+
+    /** One backpressure episode: the pump is parked on a full inbound channel with no read armed. A grace timer is armed on park; on each expiry
+      * it asks the driver whether the peer has closed ([[IoDriver.isPeerClosed]]) and reclaims the connection only when the peer is gone AND no
+      * consumer progress happened for a full grace window, re-arming the timer otherwise (the peer is still there, or the consumer is merely idle).
+      * The abandonment evidence is the progress silence, confirmed against the peer-close state; slow-but-live consumers are never reclaimed,
+      * because any drained span completes the put ([[progressed]]) and settles the episode.
+      *
+      * The `settled` flag is a one-shot gate: `progressed` (consumer drained / channel closed) and a reclaiming expiry race to win it; the loser
+      * no-ops. A FRESH episode is allocated per park, so progress resets the grace for the next park.
+      *
+      * Teardown always goes through `closeFn`, never `Connection.close()`: a `close()` on an Upgrading connection routes to the upgrade's abandon
+      * hook, so a stray grace expiry surviving into a STARTTLS window would kill a live upgrade, whereas `closeFn` is a structural no-op on the
+      * Upgrading state (and the detach path fails the parked put Closed, which settles the episode first anyway).
+      */
+    final private class BackpressureGrace:
+        import AllowUnsafe.embrace.danger
+
+        // false until the episode settles, by progress/close ([[progressed]]) or by a reclaiming expiry. The CAS winner acts; a non-reclaiming
+        // expiry (peer not yet closed) does NOT settle, it re-arms.
+        private val settled = AtomicBoolean.Unsafe.init(false)
+        // The current grace timer fiber, published by [[armTimer]] and read by [[progressed]] to interrupt it. @volatile for the cross-carrier read.
+        @volatile private var timer: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
+
+        // Interrupt the grace timer fiber. Panic so its onComplete guard (settled) short-circuits rather than reclaiming.
+        private def disarm(t: Fiber.Unsafe[Unit, Any])(using Frame): Unit =
+            discard(t.interruptDiscard(Result.Panic(Closed("ReadPump", summon[Frame], "grace disarmed by progress"))))
+
+        /** Arm the first grace timer on park. `Duration.Infinity` disables reclamation (no timer). */
+        def arm()(using Frame): Unit =
+            if grace.isFinite then armTimer()
+        end arm
+
+        /** Consumer made progress (the parked put completed) or the channel closed: settle the episode so a running grace timer cannot reclaim,
+          * and interrupt it. Idempotent via the gate; a no-op if a reclaiming expiry already fired, in which case the caller's re-arm hits the
+          * closing handle and fails Closed, re-entering the connection's own teardown.
+          */
+        def progressed()(using Frame): Unit =
+            if settled.compareAndSet(false, true) then
+                timer.foreach(disarm)
+        end progressed
+
+        private def armTimer()(using Frame): Unit =
+            val t = clock.unsafe.sleep(grace)
+            timer = Present(t)
+            t.onComplete { _ =>
+                import AllowUnsafe.embrace.danger
+                given Frame = Frame.internal
+                onExpiry()
+            }
+            // Publish-then-recheck: if progressed() settled the gate between arm and publish, its interrupt saw the previous timer, so cancel this
+            // just-armed one rather than let it fire against a connection the consumer is actively draining.
+            if settled.get() then disarm(t)
+        end armTimer
+
+        private def onExpiry()(using Frame): Unit =
+            // Reclaim only if still parked and the peer has actually closed; the CAS gate makes that exactly-once against a concurrent progress. A
+            // closed/upgrading handle reads as peer-closed via a local shutdown, but isPeerClosed's isClosing skip and closeFn's idempotent CAS make
+            // that at worst a no-op. Otherwise (consumer idle or peer still live) re-arm and keep waiting.
+            if !settled.get() then
+                if driver.isPeerClosed(handle) then
+                    if settled.compareAndSet(false, true) then
+                        Log.live.unsafe.debug(
+                            s"ReadPump peer-close grace (${grace.show}) elapsed with no progress on a closed peer ${driver.handleLabel(handle)}; reclaiming"
+                        )
+                        closeFn()
+                    end if
+                else armTimer()
+                end if
+        end onExpiry
+    end BackpressureGrace
 
 end ReadPump

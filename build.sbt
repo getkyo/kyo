@@ -399,7 +399,7 @@ lazy val kyoNative = project
     .in(file("native"))
     .settings(
         name := "kyoNative",
-        `native-settings`,
+        `native-settings-base`,
         publish / skip := true
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
@@ -2663,7 +2663,10 @@ def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String]): Seq[S
         if (dir.isDirectory) (dir * "*.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
     }.map(_.trim).filter(_.nonEmpty).distinct
 
-lazy val `native-settings` = Seq(
+// Everything a Native row needs that does not assume the project is itself a Scala Native module, so
+// the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
+// take these without the per-module link hook below.
+lazy val `native-settings-base` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
@@ -2680,6 +2683,21 @@ lazy val `native-settings` = Seq(
         val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir)
         val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
         if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
+    }
+)
+
+lazy val `native-settings` = `native-settings-base` ++ Seq(
+    // Drop this module's LLVM intermediates the moment its test binary links. Scala Native keeps
+    // <target>/native-test/generated (IR plus objects: 526MB of kyo-core's 665MB workspace) so a LATER
+    // invocation can relink incrementally. CI links each module exactly once, and the ~13GB the ~40
+    // modules of a Native row accumulate is what carries the row's peak past the free disk of a runner
+    // image that started small, killing the runner mid-link with no log at all. Deleting them forces no
+    // relink: sbt caches the nativeLink result and the binary itself is untouched. Reads the environment
+    // rather than insideCI because a value transform sees no other settings; a local build keeps its
+    // intermediates for the next incremental link.
+    Test / nativeLink ~= { binary =>
+        if (sys.env.contains("CI")) IO.delete(binary.getParentFile / "native-test" / "generated")
+        binary
     }
 )
 

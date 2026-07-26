@@ -42,7 +42,7 @@ class NioTransportHandshakeReapTest extends Test:
     "a bare channel close leaves the pendingReads entry stranded, driver.closeHandle removes it" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
         try
             discard(driver.registerChannel(handle))
             // Arm a read: this is what the server handshake does while waiting for the ClientHello; it creates the pendingReads[channel] -> handle

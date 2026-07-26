@@ -62,6 +62,13 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def awaitWritable(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit
 
+    /** Whether the peer has closed its write side (FIN) or the connection has a hard error (RST / hangup). Synchronous, non-blocking, and
+      * side-effect-free from the caller's view: a backend with no non-consuming close signal (NIO, JS) may internally consume socket bytes to probe,
+      * but MUST redeliver them, in order, through its normal read path before any fresh socket byte. A `false` may therefore mean "not observed yet"
+      * rather than "peer is open". Detection only; defaults to `false`, so a backend that cannot test peer-close never reclaims.
+      */
+    def isPeerClosed(handle: Handle)(using AllowUnsafe, Frame): Boolean = false
+
     /** Request connect completion notification. The driver completes the promise when the non-blocking connect finishes.
       *
       * On JVM this uses OP_CONNECT which fires reliably when the TCP handshake completes, eliminating the race condition that exists with

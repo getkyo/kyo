@@ -6,8 +6,9 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Verifies that write backpressure does not deadlock the inbound channel, and that the ReadPump
-  * re-arms exactly once per drain cycle.
+/** Verifies that write backpressure does not deadlock the inbound channel, that the ReadPump re-arms exactly once per drain cycle, and
+  * (the last leaf) reproduces the read-backpressure peer-close gap behind the kyo-netJVM/test CLOSE_WAIT descriptor leak: a pump parked
+  * on a full inbound channel arms no driver read, so a peer FIN is structurally unobservable and an unclosed connection is never reclaimed.
   *
   * When a write parks (AwaitingWritable), the connection's inbound channel must still be drainable. Backpressure on the write side must
   * not block the read side. This exercises the write-coupling discipline: the WritePump parks independently of the ReadPump.
@@ -142,6 +143,160 @@ class ReadPumpBackpressureTest extends Test:
             // Polling does not trigger another re-arm (the pump is already parked waiting for the driver).
             assert(awaitReadCalls == 2, s"poll must not trigger additional re-arms; awaitReadCalls stayed at $awaitReadCalls")
             succeed
+        }
+    }
+
+    "read backpressure leaves no peer-close signal (CLOSE_WAIT leak reproduction)" - {
+
+        // The mechanism behind the kyo-netJVM/test CLOSE_WAIT descriptor leak, at the Connection level, backend-agnostic and deterministic.
+        //
+        // When the inbound channel fills, the ReadPump parks on an in-memory channel put (ReadPump.offerToChannel) and arms NO driver read.
+        // IoDriver's only EOF path is `awaitRead` completing with ReadOutcome.PeerFin, under a one-read-per-handle contract, so a peer FIN that
+        // arrives while the pump is backpressured is structurally unobservable through the read path. The fix adds a read-independent
+        // `isPeerClosed` state test the grace timer polls on expiry (exercised in the sibling section below). Here the connection uses the default
+        // `peerCloseGrace = Infinity` (reclaim opt-out, so no grace timer is armed) and the spy driver leaves `isPeerClosed` at its no-op default
+        // (false): the pump still stops arming reads at cap+1 (model unchanged), and with no grace timer and no peer-close signal the handle is
+        // held, the pre-guard behavior a backend without the override retains.
+        "a backpressured read arms no further read; with no peer-close detection the handle is held" in {
+            val cap = 1
+            final class BackpressureFinDriver extends IoDriver[Unit]:
+                val awaitReadCalls   = AtomicInt.Unsafe.init(0)
+                val closeHandleCalls = AtomicInt.Unsafe.init(0)
+                def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                    Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
+                def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                    // Deliver one span per arm through the channel-filling arm: the first `cap` arms are accepted, arm cap+1 overflows and
+                    // parks the pump on the put. No arm follows the overflow, so this never fires past cap+1 (the guard is defensive).
+                    if awaitReadCalls.incrementAndGet() <= cap + 1 then
+                        promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](1)))))
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+                def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
+                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
+                def close()(using AllowUnsafe, Frame): Unit                   = ()
+                def label: String                                             = "BackpressureFinDriver"
+                def handleLabel(handle: Unit): String                         = "stub"
+            end BackpressureFinDriver
+
+            val driver = new BackpressureFinDriver
+            val conn   = Connection.init[Unit]((), driver, cap)
+            conn.start()
+            Sync.defer {
+                // start() arms read #1 (delivers a span, the channel accepts, the pump re-arms #2); read #2 delivers the overflow span,
+                // which the full channel rejects, so the pump parks on the put and arms no read #3.
+                assert(
+                    driver.awaitReadCalls.get() == cap + 1,
+                    s"a backpressured ReadPump must stop arming reads at cap+1=${cap + 1}; got ${driver.awaitReadCalls.get()}"
+                )
+                // No read is armed, the default Infinity grace arms no timer, and the spy driver's isPeerClosed stays false, so the handle is
+                // held: the behavior a backend with no peer-close detection keeps. The grace-driven reclaim is asserted in the sibling section
+                // with a driver that implements isPeerClosed.
+                assert(
+                    driver.closeHandleCalls.get() == 0,
+                    s"with no peer-close detection the backpressured handle must be held (not reclaimed); closeHandle=${driver.closeHandleCalls.get()}"
+                )
+            }
+        }
+    }
+
+    "peer-close grace reclaims an abandoned backpressured connection without harming a live one" - {
+
+        /** A spy driver that fills a capacity-`cap` inbound channel (one span per read arm, distinct bytes so order is checkable), parks the pump
+          * on the overflow, and exposes a `peerClosed` latch the test flips to simulate a FIN. `isPeerClosed` reads that latch (the poll-on-expiry
+          * grace polls it on each timer expiry). Counts `closeHandle`.
+          */
+        final class WatchDriver(cap: Int) extends IoDriver[Unit]:
+            val awaitReadCalls                = AtomicInt.Unsafe.init(0)
+            val closeHandleCalls              = AtomicInt.Unsafe.init(0)
+            @volatile var peerClosed: Boolean = false
+            def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
+            def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                val n = awaitReadCalls.incrementAndGet()
+                if n <= cap + 1 then promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](n.toByte)))))
+            override def isPeerClosed(handle: Unit)(using AllowUnsafe, Frame): Boolean                                    = peerClosed
+            def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+            def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
+            def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+            def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                        = WriteResult.Done
+            def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                      = ()
+            def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
+            def close()(using AllowUnsafe, Frame): Unit                   = ()
+            def label: String                                             = "WatchDriver"
+            def handleLabel(handle: Unit): String                         = "stub"
+        end WatchDriver
+
+        // Abandoned case: the pump parks, the peer FIN arrives while parked, the consumer never drains. Advancing past the grace fires the expiry,
+        // which polls isPeerClosed and reclaims. Time is controlled so the expiry is deterministic, not a real-time wait.
+        "a peer FIN with no consumer progress reclaims after the grace elapses" in {
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val driver = new WatchDriver(1)
+                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
+                    conn.start()             // fills the channel, parks on the overflow put, arms the grace timer
+                    driver.peerClosed = true // peer FIN: the grace expiry polls isPeerClosed and observes it
+                    tc.advance(100.millis).map { _ =>
+                        assert(
+                            driver.closeHandleCalls.get() == 1,
+                            s"the grace must reclaim an abandoned backpressured connection; closeHandle=${driver.closeHandleCalls.get()}"
+                        )
+                    }
+                }
+            }
+        }
+
+        // Live-consumer case: the pump parks, the peer FIN arrives, but the consumer drains before any expiry. Progress disarms the timer
+        // synchronously on the take, so advancing fully past the grace still must NOT reclaim, and the overflow span the pump held is delivered.
+        "a peer FIN with consumer progress within the grace does not reclaim and loses no bytes" in {
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val driver = new WatchDriver(1)
+                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 10.seconds, clock = clock)
+                    conn.start()             // channel = [1], overflow [2] parked, grace timer armed on park
+                    driver.peerClosed = true // peer FIN latched: the drain below disarms the grace before any expiry polls it
+                    val a =
+                        conn.inbound.poll() // take span 1; frees the slot, the parked overflow transfers, progress disarms synchronously
+                    val b = conn.inbound.poll() // take span 2 (the overflow) -> proves it was not dropped
+                    tc.advance(10.seconds).map { _ => // fully elapse the grace: the disarmed timer must still not reclaim
+                        assert(a.exists(_.exists(_.toArray.sameElements(Array[Byte](1)))), s"first span must be delivered; got $a")
+                        assert(
+                            b.exists(_.exists(_.toArray.sameElements(Array[Byte](2)))),
+                            s"the overflow span must be delivered, not dropped; got $b"
+                        )
+                        assert(
+                            driver.closeHandleCalls.get() == 0,
+                            s"consumer progress within the grace must NOT reclaim; closeHandle=${driver.closeHandleCalls.get()}"
+                        )
+                    }
+                }
+            }
+        }
+
+        // Re-arm case: the first expiry finds the peer still live (isPeerClosed false), so it re-arms instead of reclaiming; the next expiry, after
+        // the peer closes, reclaims. Proves a non-reclaiming expiry keeps waiting rather than settling the episode.
+        "a grace expiry with the peer still live re-arms, and reclaims only once the peer closes" in {
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val driver = new WatchDriver(1)
+                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
+                    conn.start()                      // parks on the overflow put, arms the grace timer; peer still live (peerClosed=false)
+                    tc.advance(100.millis).map { _ => // first expiry: isPeerClosed false -> re-arm, no reclaim
+                        assert(
+                            driver.closeHandleCalls.get() == 0,
+                            s"a live peer must not reclaim on expiry; closeHandle=${driver.closeHandleCalls.get()}"
+                        )
+                        driver.peerClosed = true          // peer FIN now arrives
+                        tc.advance(100.millis).map { _ => // second expiry: isPeerClosed true -> reclaim
+                            assert(
+                                driver.closeHandleCalls.get() == 1,
+                                s"the re-armed timer must reclaim once the peer closes; closeHandle=${driver.closeHandleCalls.get()}"
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 

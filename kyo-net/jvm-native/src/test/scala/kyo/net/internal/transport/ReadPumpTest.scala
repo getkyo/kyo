@@ -95,7 +95,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed", Duration.Infinity, Clock.live)
 
                 pump.start()
                 assert(spy.awaitReadCalls.get() == 1, "start must register first read")
@@ -139,9 +139,12 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    { () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    },
+                    Duration.Infinity,
+                    Clock.live
                 )
 
                 pump.start()
@@ -168,7 +171,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed", Duration.Infinity, Clock.live)
 
                 pump.start()
 
@@ -204,7 +207,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](1)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed", Duration.Infinity, Clock.live)
                 val payload = Array.tabulate[Byte](128 * 1024)(i => (i % 251).toByte)
 
                 pump.start()
@@ -234,7 +237,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](1)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed", Duration.Infinity, Clock.live)
 
                 discard(channel.offer(Span.fromUnsafe("prefill".getBytes("UTF-8"))))
                 pump.start()
@@ -270,9 +273,12 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    { () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    },
+                    Duration.Infinity,
+                    Clock.live
                 )
 
                 pump.start()
@@ -304,9 +310,12 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    { () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    },
+                    Duration.Infinity,
+                    Clock.live
                 )
 
                 pump.start()
@@ -344,9 +353,12 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    { () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    },
+                    Duration.Infinity,
+                    Clock.live
                 )
 
                 pump.start()
@@ -410,9 +422,12 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    { () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    },
+                    Duration.Infinity,
+                    Clock.live
                 )
 
                 pump.start()
@@ -444,9 +459,12 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    { () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    },
+                    Duration.Infinity,
+                    Clock.live
                 )
 
                 pump.start()
