@@ -126,6 +126,12 @@ object Topic:
       * offer conditions abort with a [[TopicPublishException]] leaf; terminal add and transport
       * conditions abort with a [[TopicTransportException]] leaf.
       *
+      * Ordering is per call: subscribers receive the messages of one `source` in the order the stream
+      * emits them. Each call publishes over its own Aeron publication, and Aeron orders messages
+      * within a publication but not across them, so two separate `publish` calls have no defined
+      * relative order at the subscriber even when the calls are sequenced. Publish one stream when
+      * the order of several messages matters, rather than calling `publish` once per message.
+      *
       * @param aeronUri
       *   The Aeron URI to publish to (e.g. `"aeron:ipc"`, `"aeron:udp?endpoint=..."`)
       * @param retrySchedule

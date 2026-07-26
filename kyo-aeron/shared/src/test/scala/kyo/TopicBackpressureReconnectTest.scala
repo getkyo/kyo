@@ -89,19 +89,30 @@ class TopicBackpressureReconnectTest extends Test:
     }
 
     // Mirrors Aeron's SubscriptionReconnectTest (plain linger=0 arm): the subscription must transparently
-    // pick up the new image, not abort via CLOSED (-4) or retry-exhaustion. Joining publish A's fiber before
-    // publish B starts sequences the close-then-readd, no sleeps needed.
+    // pick up the new image, not abort via CLOSED (-4) or retry-exhaustion. Awaiting receipt of message 1
+    // before the second publish is what upstream does, and it is load-bearing here: each publish call owns
+    // its own publication, so the two rounds are two Aeron sessions and two images on this subscription.
+    // Aeron orders within an image, never across, so without the receipt barrier the poll rotation could
+    // surface round 2 first and the assertion below would be testing undefined ordering rather than
+    // reconnect. Draining image 1 before session 2 exists keeps this about the reconnect only.
     "a publisher reconnects to a live subscriber" in {
         val reconnectUri = "aeron:ipc"
         Topic.run {
             for
-                started <- Latch.init(1)
+                started   <- Latch.init(1)
+                firstSeen <- Latch.init(1)
                 // Long-lived consumer: one subscription spanning both publisher lifecycles.
                 consumer <- Fiber.initUnscoped(using Topic.isolate)(
-                    started.release.andThen(Topic.stream[PubReconnectMsg](reconnectUri).take(2).run)
+                    started.release.andThen(
+                        Topic.stream[PubReconnectMsg](reconnectUri)
+                            .map(msg => (if msg == PubReconnectMsg(1) then firstSeen.release else Kyo.unit).andThen(msg))
+                            .take(2)
+                            .run
+                    )
                 )
                 _        <- started.await
                 _        <- Topic.publish[PubReconnectMsg](reconnectUri)(Stream.init(Seq(PubReconnectMsg(1))))
+                _        <- firstSeen.await
                 _        <- Topic.publish[PubReconnectMsg](reconnectUri)(Stream.init(Seq(PubReconnectMsg(2))))
                 received <- consumer.get
             yield assert(
