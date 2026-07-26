@@ -19,14 +19,6 @@ class WebsiteExceptionTest extends WebsiteTest:
         }
     }
 
-    "MarkdownException fields" - {
-        "slug and detail are accessible" in {
-            val ex = WebsiteMarkdownException("kyo-core", "boom")
-            assert(ex.slug == "kyo-core")
-            assert(ex.detail == "boom")
-        }
-    }
-
     "EmitException wraps a cause" - {
         "getCause returns the wrapped Throwable" in {
             val cause = new RuntimeException("disk full")
@@ -57,11 +49,6 @@ class WebsiteExceptionTest extends WebsiteTest:
     "leaves are WebsiteException subtypes" - {
         "WebsiteReadmeException is a WebsiteException" in {
             val ex = WebsiteReadmeException(Path("x", "README.md"), WebsiteReadmeException.ReadmeFailure.Missing)
-            assert(ex.isInstanceOf[WebsiteException])
-        }
-
-        "WebsiteMarkdownException is a WebsiteException" in {
-            val ex = WebsiteMarkdownException("kyo-core", "boom")
             assert(ex.isInstanceOf[WebsiteException])
         }
 

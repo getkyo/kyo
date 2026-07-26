@@ -294,6 +294,7 @@ lazy val kyoJVM: Project = project
         `kyo-schema-ion`.jvm,
         `kyo-schema-yaml`.jvm,
         `kyo-schema-tests`.jvm,
+        `kyo-eventlog`.jvm,
         `kyo-system`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
@@ -373,6 +374,7 @@ lazy val kyoJS = project
         `kyo-schema-ion`.js,
         `kyo-schema-yaml`.js,
         `kyo-schema-tests`.js,
+        `kyo-eventlog`.js,
         `kyo-system`.js,
         `kyo-http`.js,
         `kyo-aeron`.js,
@@ -434,6 +436,7 @@ lazy val kyoNative = project
         `kyo-schema-ion`.native,
         `kyo-schema-yaml`.native,
         `kyo-schema-tests`.native,
+        `kyo-eventlog`.native,
         `kyo-system`.native,
         `kyo-http`.native,
         `kyo-aeron`.native,
@@ -487,6 +490,7 @@ lazy val kyoWasm = project
         `kyo-schema-ion`.wasm,
         `kyo-schema-yaml`.wasm,
         `kyo-schema-tests`.wasm,
+        `kyo-eventlog`.wasm,
         `kyo-system`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
@@ -698,6 +702,45 @@ lazy val `kyo-schema` =
         // blocks need classpaths the core does not have; kyo-schema-tests validates it instead.
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-eventlog` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-eventlog"))
+        .dependsOn(
+            `kyo-core`,
+            `kyo-schema`,
+            `kyo-schema-json`,
+            `kyo-schema-ion`,
+            `kyo-schema-msgpack`,
+            `kyo-schema-protobuf` % "test->compile",
+            `kyo-system`
+        )
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(
+            mimaCheck(false),
+            libraryDependencies += "com.h2database" % "h2" % "2.2.224" % Test,
+            Compile / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "test" / "scala",
+            doctestSources := Seq(
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "README.md",
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "docs" / "tutorials" / "basic-eventlog.md",
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "docs" / "tutorials" / "raw-journal.md",
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "docs" / "tutorials" / "custom-storage.md"
+            )
+        )
+        .nativeSettings(
+            `native-settings`,
+            Compile / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "test" / "scala"
+        )
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
@@ -2690,6 +2733,7 @@ lazy val `kyo-examples` =
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-actor`)
+        .dependsOn(`kyo-eventlog`)
         .dependsOn(`kyo-system`)
         .disablePlugins(MimaPlugin)
         .settings(
