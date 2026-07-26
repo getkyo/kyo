@@ -146,13 +146,31 @@ private[kyo] object DomBackend:
         end if
     end resolveElementByPath
 
+    /** A conservative "focusable" CSS selector: what a focus command may land on. Mirrors
+      * the reactive-focus-restore query used elsewhere in this backend / HtmlRenderer.
+      */
+    private val FocusableSelector = "input,textarea,select,button,a[href],[tabindex],[contenteditable]"
+
+    /** Focus `el` if it is itself focusable, else its FIRST focusable descendant. Lets a
+      * focus command target a non-focusable WRAPPER (e.g. an InputGroup around several
+      * fields) and land on the first field inside it. A focusable element (an `<input>`,
+      * …) matches the selector and focuses itself, so existing focus targets are unchanged.
+      */
+    private def focusInto(el: dom.Element): Unit =
+        if el != null then
+            val dyn         = el.asInstanceOf[scalajs.js.Dynamic]
+            val selfMatches = scalajs.js.typeOf(dyn.matches) == "function" && dyn.matches(FocusableSelector).asInstanceOf[Boolean]
+            val target      = if selfMatches then el else el.querySelector(FocusableSelector)
+            if target != null then
+                val tdyn = target.asInstanceOf[scalajs.js.Dynamic]
+                if scalajs.js.typeOf(tdyn.focus) == "function" then discard(tdyn.focus())
+
     /** Apply a whitelisted `verb` to `el` (shared by path- and id-addressed commands). Unknown verbs are ignored. */
     private def applyVerbDom(el: dom.Element, verb: String): Unit =
         if el != null then
             val dyn = el.asInstanceOf[scalajs.js.Dynamic]
             verb match
-                case "focus" =>
-                    if scalajs.js.typeOf(dyn.focus) == "function" then discard(dyn.focus())
+                case "focus" => focusInto(el)
                 case "scrollIntoView" =>
                     if scalajs.js.typeOf(dyn.scrollIntoView) == "function" then
                         discard(dyn.scrollIntoView(scalajs.js.Dynamic.literal(block = "nearest")))
@@ -209,6 +227,15 @@ private[kyo] object DomBackend:
                         markOwned(el, "style")
                         mergeStyleDomById(id, css)
                 }
+            // set an attribute in place (element stays in the DOM, so a CSS `>` anchored on it keeps matching).
+            case HtmlOp.SetAttrById(id, name, value) =>
+                Sync.defer {
+                    val el = document.getElementById(id)
+                    if el != null then
+                        markOwned(el, name)
+                        el.setAttribute(name, value)
+                }
+            // measure now + deliver, then attach the continuous scroll/resize observer for `id`.
             case HtmlOp.ObserveViewportById(id) =>
                 Sync.defer(registerViewportObserver(id, commands)).andThen(
                     Sync.defer(measureDomById(id)).map {
@@ -268,6 +295,32 @@ private[kyo] object DomBackend:
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:
+
+        // In-place attr patch, ownership-marked (__kyoOwn) so a parent region's morph won't reconcile the live value back.
+        override def onAttrPatch(path: Seq[String], name: String, value: String)(using Frame): Unit < Async =
+            Sync.defer {
+                val el = queryByPath(path)
+                if el != null then
+                    markOwned(el, name)
+                    el.setAttribute(name, value)
+            }
+
+        override def onBoolAttrPatch(path: Seq[String], name: String, value: Boolean)(using Frame): Unit < Async =
+            Sync.defer {
+                val el = queryByPath(path)
+                if el != null then
+                    markOwned(el, name)
+                    if value then el.setAttribute(name, "") else el.removeAttribute(name)
+            }
+
+        // Class twin: toggle in place (so CSS transitions fire) rather than re-render; own "class" against the morph.
+        override def onClassPatch(path: Seq[String], name: String, on: Boolean)(using Frame): Unit < Async =
+            Sync.defer {
+                val el = queryByPath(path)
+                if el != null then
+                    markOwned(el, "class")
+                    discard(el.classList.toggle(name, on))
+            }
 
         def onChange(path: Seq[String], ui: UI, mount: Boolean)(using Frame): Unit < Async =
             // Render content at its nested-reactive sub-path (contentPath) so a reactive-valued region paints a

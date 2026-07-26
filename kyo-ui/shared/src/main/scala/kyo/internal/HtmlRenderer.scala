@@ -126,10 +126,21 @@ private[kyo] object HtmlRenderer:
             case elem: Element =>
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
-                renderCommonAttrs(sb, elem.attrs, cssRules)
-                renderEventAttr(sb, elem)
-                for _ <- renderElementAttrs(sb, elem)
+                for
+                    // Reactive classes currently true, folded into the class list so SSR is correct. Empty when
+                    // none are bound, so the `class` attribute is byte-identical there.
+                    extraClasses <- reactiveTrueClasses(elem.attrs)
+                    _ = w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
+                    _ = renderCommonAttrs(
+                        sb,
+                        if extraClasses.isEmpty then elem.attrs
+                        else elem.attrs.copy(cssClasses = elem.attrs.cssClasses ++ extraClasses),
+                        cssRules
+                    )
+                    _ = renderEventAttr(sb, elem)
+                    _ <- renderElementAttrs(sb, elem)
+                    _ <- renderReactiveAttrs(sb, elem.attrs)
+                    _ <- renderReactiveBoolAttrs(sb, elem.attrs)
                 yield
                     if void then
                         w(sb, " />")
@@ -422,6 +433,32 @@ private[kyo] object HtmlRenderer:
     end renderCommonAttrs
 
     // ---- Element-specific attributes ----
+
+    /** Emits each reactive attribute's current value as an ordinary `name="value"` so SSR carries it; the client
+      * then patches it in place (HtmlOp.SetAttrByPath). Sorted for deterministic output.
+      */
+    private def renderReactiveAttrs(sb: StringBuilder, attrs: Attrs)(using Frame): Unit < Sync =
+        Kyo.foreachDiscard(attrs.reactiveAttrs.toSeq.sortBy(_._1)) { case (name, sig) =>
+            sig.current.map(v => w(sb, s""" $name="${esc(v)}""""))
+        }
+
+    /** Emits each reactive boolean attribute as a bare present attribute while its signal is true (mirrors
+      * `boolAttr`); the client toggles it in place (HtmlOp.SetBoolAttrByPath). Sorted for deterministic output.
+      */
+    private def renderReactiveBoolAttrs(sb: StringBuilder, attrs: Attrs)(using Frame): Unit < Sync =
+        Kyo.foreachDiscard(attrs.reactiveBoolAttrs.toSeq.sortBy(_._1)) { case (name, sig) =>
+            sig.current.map(v => if v then w(sb, s" $name"))
+        }
+
+    /** The reactive classes whose signal is currently true, for folding into the SSR class list; the client
+      * toggles them in place afterwards (HtmlOp.SetClassByPath). Empty (and cheap) when none are bound.
+      */
+    private def reactiveTrueClasses(attrs: Attrs)(using Frame): Seq[String] < Sync =
+        if attrs.reactiveClasses.isEmpty then Seq.empty
+        else
+            Kyo.foreach(attrs.reactiveClasses.toSeq.sortBy(_._1)) { case (name, sig) =>
+                sig.current.map(v => if v then name else "")
+            }.map(_.filter(_.nonEmpty))
 
     private def renderElementAttrs(sb: StringBuilder, elem: Element)(using Frame): Unit < Sync =
         elem match
@@ -853,6 +890,17 @@ private[kyo] object HtmlRenderer:
            |  }else if(op.SetStyleById){
            |    var ssel=document.getElementById(op.SetStyleById.id);
            |    if(ssel){__kyoMark(ssel,"style");var ssd=op.SetStyleById.css.split(";");for(var ssi=0;ssi<ssd.length;ssi++){var ssc=ssd[ssi].trim();if(!ssc)continue;var sso=ssc.indexOf(":");if(sso>0)ssel.style.setProperty(ssc.substring(0,sso).trim(),ssc.substring(sso+1).trim());}}
+           |  }else if(op.SetAttrById){
+           |    // set an attribute in place (element stays put, so a CSS `>` anchored on it keeps matching).
+           |    var sael=document.getElementById(op.SetAttrById.id);if(sael){__kyoMark(sael,op.SetAttrById.name);sael.setAttribute(op.SetAttrById.name,op.SetAttrById.value);}
+           |  }else if(op.SetAttrByPath){
+           |    // Regions carry no element of their own (comment markers), so the path resolves uniquely to the content element.
+           |    var sapp=op.SetAttrByPath.path.join(".");var sapel=document.querySelector(__kyoPathSel(sapp));if(sapel){__kyoMark(sapel,op.SetAttrByPath.name);sapel.setAttribute(op.SetAttrByPath.name,op.SetAttrByPath.value);}
+           |  }else if(op.SetBoolAttrByPath){
+           |    var sbpp=op.SetBoolAttrByPath.path.join(".");var sbpel=document.querySelector(__kyoPathSel(sbpp));if(sbpel){__kyoMark(sbpel,op.SetBoolAttrByPath.name);if(op.SetBoolAttrByPath.value){sbpel.setAttribute(op.SetBoolAttrByPath.name,'');}else{sbpel.removeAttribute(op.SetBoolAttrByPath.name);}}
+           |  }else if(op.SetClassByPath){
+           |    // Path-addressed reactive class: toggle in place so CSS transitions fire; own "class" so a morph won't reconcile it.
+           |    var scpp=op.SetClassByPath.path.join(".");var scpel=document.querySelector(__kyoPathSel(scpp));if(scpel){__kyoMark(scpel,'class');scpel.classList.toggle(op.SetClassByPath.name,op.SetClassByPath.on);}
            |  }else if(op.ObserveViewportById){
            |    var vid=op.ObserveViewportById.id;
            |    window.__kyoVpObs=window.__kyoVpObs||{};
@@ -1079,7 +1127,7 @@ private[kyo] object HtmlRenderer:
            |// Shared verb whitelist for Command/CommandById; unknown verbs ignored (forward-compat).
            |function kyoApplyVerb(el,verb){
            |  if(!el)return;
-           |  if(verb==="focus"){if(typeof el.focus==="function")el.focus();}
+           |  if(verb==="focus"){var fs='input,textarea,select,button,a[href],[tabindex],[contenteditable]';var ft=(el.matches&&el.matches(fs))?el:(el.querySelector?el.querySelector(fs):null);if(ft&&typeof ft.focus==="function")ft.focus();}
            |  else if(verb==="scrollIntoView"){if(typeof el.scrollIntoView==="function")el.scrollIntoView({block:"nearest"});}
            |}
            |function fp(el){

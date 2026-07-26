@@ -508,6 +508,15 @@ object UI:
         def bindStyleById(id: String, style: Signal[Style])(using Frame): Unit < (Async & Scope) =
             Fiber.init(style.observe(v => emit(internal.HtmlOp.SetStyleById(id, internal.CssStyleRenderer.render(v))))).unit
 
+        /** Bind attribute `name` on the element with DOM id `id` to `value`, emitting [[internal.HtmlOp.SetAttrById]]
+          * on every emission (current value included). The client sets the attribute WITHOUT replacing the element, so
+          * it keeps its DOM position, needed for a reactive attribute (e.g. `aria-expanded`) on an element that must
+          * stay a direct child for a CSS `>` child-combinator, which a `Reactive` re-render's wrapper would break.
+          * Cancelled on scope close.
+          */
+        def bindAttrById(id: String, name: String, value: Signal[String])(using Frame): Unit < (Async & Scope) =
+            Fiber.init(value.observe(v => emit(internal.HtmlOp.SetAttrById(id, name, v)))).unit
+
         /** Continuously observe the viewport geometry of the element with DOM id `id`: register `sink` in the persistent
           * [[observers]] map, emit [[internal.HtmlOp.ObserveViewportById]] (the client measures now and attaches
           * scroll+resize listeners that each reply with a `MeasureById(id)`), and register a [[kyo.Scope]] finalizer that
@@ -550,6 +559,13 @@ object UI:
                         new UIExchange:
                             def onChange(path: Seq[String], changedUI: UI, mount: Boolean)(using Frame): Unit < Async =
                                 // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
+                                Abort.runPartial[Closed](channel.put(())).unit
+                            override def onAttrPatch(path: Seq[String], name: String, value: String)(using Frame): Unit < Async =
+                                // Plain-HTML transport has no in-place patch; re-emit full HTML like onChange.
+                                Abort.runPartial[Closed](channel.put(())).unit
+                            override def onBoolAttrPatch(path: Seq[String], name: String, value: Boolean)(using Frame): Unit < Async =
+                                Abort.runPartial[Closed](channel.put(())).unit
+                            override def onClassPatch(path: Seq[String], name: String, on: Boolean)(using Frame): Unit < Async =
                                 Abort.runPartial[Closed](channel.put(())).unit
                     // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,
                     // the consume loop ends, the Scope closes, and the subscription tree cascade-tears-down.
@@ -898,6 +914,17 @@ object UI:
             def children: Chunk[UI]
             private[kyo] def withAttrs(a: Attrs): Self
 
+            /** Shared bodies of the declarative reactive-channel setters (aria/title/placeholder →
+              * reactiveAttrs; disabled/readOnly → reactiveBoolAttrs; cssClass → reactiveClasses). `inline`
+              * so each compiles to the bare `withAttrs(attrs.copy(...))`, adding no dispatch of its own.
+              */
+            private[kyo] inline def withReactiveAttr(name: String, sig: Signal[String]): Self =
+                withAttrs(attrs.copy(reactiveAttrs = attrs.reactiveAttrs.updated(name, sig)))
+            private[kyo] inline def withReactiveBoolAttr(name: String, sig: Signal[Boolean]): Self =
+                withAttrs(attrs.copy(reactiveBoolAttrs = attrs.reactiveBoolAttrs.updated(name, sig)))
+            private[kyo] inline def withReactiveClass(name: String, on: Signal[Boolean]): Self =
+                withAttrs(attrs.copy(reactiveClasses = attrs.reactiveClasses.updated(name, on)))
+
             // Identity & visibility
             def id(v: String): Self      = withAttrs(attrs.copy(identifier = Present(v)))
             def hidden(v: Boolean): Self = withAttrs(attrs.copy(hidden = Present(v)))
@@ -924,6 +951,19 @@ object UI:
             /** Sets several `aria-*` attributes at once from name/value pairs. */
             def aria(pairs: (String, String)*): Self =
                 withAttrs(attrs.copy(ariaAttrs = attrs.ariaAttrs ++ pairs))
+
+            /** REACTIVE `aria-*`: the `aria-$name` attribute tracks `sig`, patched IN PLACE on emission, NOT a
+              * re-render (unlike the `Reactive[Self]`-returning value overloads like `disabled(Signal[Boolean])`).
+              * For a locale-driven accessible name/description that must re-translate without re-mounting.
+              */
+            def aria(name: String, sig: Signal[String]): Self =
+                withReactiveAttr(s"aria-$name", sig)
+
+            /** REACTIVE native `title` (tooltip): the `title` attribute tracks `sig`, patched in place on
+              * emission, with no re-render.
+              */
+            def title(sig: Signal[String]): Self =
+                withReactiveAttr("title", sig)
 
             /** Sets the WAI-ARIA `role` attribute (emitted as the bare `role="..."` HTML attribute). */
             def role(v: String): Self =
@@ -966,6 +1006,14 @@ object UI:
               * coexist on one element.
               */
             def cssClass(name: String): Self = withAttrs(attrs.copy(cssClasses = attrs.cssClasses :+ name))
+
+            /** Constant OR reactive class through one union setter. A `Boolean` is static (byte-identical to
+              * `cssClass(name)` resp. omitting it). A `Signal[Boolean]` toggles `name` IN PLACE on emission
+              * (`classList.toggle`, so CSS transitions fire) with no re-render, still chainable (`Self`). Declarative twin of `UI.Commands.bindClassById`.
+              */
+            def cssClass(name: String, on: Boolean | Signal[Boolean]): Self = on match
+                case b: Boolean                    => if b then cssClass(name) else withAttrs(attrs)
+                case s: Signal[Boolean] @unchecked => withReactiveClass(name, s)
 
             // Internal JS property setter (used by Checkbox.indeterminate, etc.)
             private[kyo] def jsProp(name: String, value: String): Self =
@@ -1229,10 +1277,13 @@ object UI:
             def disabled: Maybe[Boolean]
             def disabled(v: Boolean): Self
 
-            /** Reactive `disabled`: re-renders when the signal emits. */
-            def disabled(v: Signal[Boolean]): Reactive[Self] =
-                given Frame = frame
-                Reactive[Self](v.map(b => this.disabled(b): UI))
+            /** Constant OR reactive disabled through one union setter. A `Boolean` sets it statically; a
+              * `Signal[Boolean]` toggles `disabled` IN PLACE on emission (setAttribute("")/removeAttribute)
+              * via the boolean-attribute channel with no re-render, still chainable.
+              */
+            def disabled(v: Boolean | Signal[Boolean]): Self = v match
+                case b: Boolean                    => disabled(b)
+                case s: Signal[Boolean] @unchecked => withReactiveBoolAttr("disabled", s)
         end HasDisabled
 
         /** Capability trait for free-text form inputs: a `String` `value` (constant or `SignalRef`), placeholder, read-only, and `onInput`/`onChange`. */
@@ -1240,12 +1291,28 @@ object UI:
             def value: Maybe[Bound[String]]
             def placeholder: Maybe[String]
             def readOnly: Maybe[Boolean]
+            def readOnly(v: Boolean): Self
             def onInput: Maybe[String => Any < Async]
             def onChange: Maybe[String => Any < Async]
             def value(v: String): Self
 
             /** Binds the input to a `SignalRef` two-way: edits write the new text back into the ref, and ref changes update the input. */
             def value(v: SignalRef[String]): Self
+
+            /** REACTIVE placeholder: the `placeholder` attribute tracks `sig`, patched IN PLACE on emission, with
+              * no re-render of the field. Owns the `placeholder` attribute, so do not also set the constant
+              * `placeholder(String)` on the same input.
+              */
+            def placeholder(sig: Signal[String]): Self =
+                withReactiveAttr("placeholder", sig)
+
+            /** Constant OR reactive readonly through one union setter: a `Boolean` sets it statically; a
+              * `Signal[Boolean]` toggles the `readonly` attribute IN PLACE on emission via the boolean-attribute
+              * channel: no re-render, so caret/focus survive.
+              */
+            def readOnly(v: Boolean | Signal[Boolean]): Self = v match
+                case b: Boolean                    => readOnly(b)
+                case s: Signal[Boolean] @unchecked => withReactiveBoolAttr("readonly", s)
         end TextInput
 
         /** Capability trait for picker inputs that carry a `String` `value` and an `onChange` but no free-text typing (`select`, date/time/color, ...). */
@@ -1310,7 +1377,14 @@ object UI:
             dataAttrs: Map[String, String] = Map.empty,
             jsProps: Map[String, String] = Map.empty,
             cssClasses: Chunk[String] = Chunk.empty,
-            role: Maybe[String] = Absent
+            role: Maybe[String] = Absent,
+            // Declarative reactive channels: the element renders each signal's current value at SSR, then an
+            // observer (started in ReactiveUI.subscribeScoped) patches it IN PLACE on emission (no re-render).
+            // reactiveAttrs: fully-qualified name -> value (aria/placeholder/title(sig)); reactiveBoolAttrs:
+            // present while true (disabled/readOnly(sig)); reactiveClasses: classList.toggle (cssClass(name, sig)).
+            reactiveAttrs: Map[String, Signal[String]] = Map.empty,
+            reactiveBoolAttrs: Map[String, Signal[Boolean]] = Map.empty,
+            reactiveClasses: Map[String, Signal[Boolean]] = Map.empty
         )
 
         // ---- Non-element AST cases ----

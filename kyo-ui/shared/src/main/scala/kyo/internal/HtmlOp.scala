@@ -26,6 +26,18 @@ private[kyo] object HtmlOp:
     // setProperty each declaration of the serialized `css` onto getElementById(id), so it merges over other inline
     // props rather than clobbering them (unlike a full style="" replace).
     case class SetStyleById(id: String, css: String) extends HtmlOp derives Schema
+    // set an attribute on getElementById(id) WITHOUT replacing the element, so a reactive attribute (e.g.
+    // aria-expanded) tracks a signal in place; a Reactive wrapper would insert a data-kyo-reactive node and
+    // break a CSS `>` child-combinator anchored on that element. Emitted by UI.Commands.bindAttrById.
+    case class SetAttrById(id: String, name: String, value: String) extends HtmlOp derives Schema
+    // Declarative, path-addressed (data-kyo-path) twin of SetAttrById/SetClassById: patch the attribute/class in
+    // place (no re-render, no re-mount). The client marks ownership (the __kyoOwn shield) so a parent re-render's
+    // morph won't reconcile the live value back. Emitted by the observers started in ReactiveUI.subscribeScoped
+    // from Attrs.reactiveAttrs / reactiveBoolAttrs / reactiveClasses; SetClassByPath uses classList.toggle so CSS
+    // transitions fire.
+    case class SetAttrByPath(path: Seq[String], name: String, value: String)      extends HtmlOp derives Schema
+    case class SetBoolAttrByPath(path: Seq[String], name: String, value: Boolean) extends HtmlOp derives Schema
+    case class SetClassByPath(path: Seq[String], name: String, on: Boolean)       extends HtmlOp derives Schema
     // Attach capturing scroll+resize listeners to getElementById(id); each reply routes to a PERSISTENT sink in
     // UI.Commands.observers (kept, not consumed like RequestMeasureById).
     case class ObserveViewportById(id: String) extends HtmlOp derives Schema

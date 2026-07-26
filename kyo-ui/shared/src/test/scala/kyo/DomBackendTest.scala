@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Browser.*
+import kyo.UI.foreachKeyed
 
 // DomBackend.scala is a JS-only source. These tests exercise its behaviour
 // end-to-end via the JVM browser test infrastructure (SSE/event POST cycle).
@@ -284,6 +285,198 @@ class DomBackendTest extends UITest:
                 _ <- Browser.click(Selector.id("tick"))
                 _ <- Browser.assertText(Selector.id("txt"), "t:1") // the element was morphed
                 _ <- Browser.assertAttribute(Selector.id("host"), "class", "owned-cls")
+            yield ()
+        }
+    }
+
+    "imperatively-bound attribute survives a re-render morph of its element" in {
+        val app: UI < Async =
+            for
+                tick <- Signal.initRef(0)
+                v    <- Signal.initRef("yes")
+            yield UI.div(
+                UI.button("tick").id("atick").onClick(tick.getAndUpdate(_ + 1).unit),
+                tick.map(t => UI.div.id("ahost")(UI.span(s"t:$t").id("atxt"))),
+                UI.mounted {
+                    for
+                        cmds <- UI.commands
+                        _    <- cmds.bindAttrById("ahost", "data-owned", v)
+                    yield UI.empty
+                }.placeholder(UI.empty)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.waitForAttribute(Selector.id("ahost"), "data-owned", "yes")
+                _ <- Browser.click(Selector.id("atick"))
+                _ <- Browser.assertText(Selector.id("atxt"), "t:1")
+                _ <- Browser.assertAttribute(Selector.id("ahost"), "data-owned", "yes") // owned attr survives the morph
+            yield ()
+        }
+    }
+
+    "declarative reactive attribute patches a const element in place (no re-render), survives a sibling morph" in {
+        val app: UI < Async =
+            for
+                tick <- Signal.initRef(0)
+                lbl  <- Signal.initRef("first")
+            yield UI.div(
+                UI.button("tick").id("dtick").onClick(tick.getAndUpdate(_ + 1).unit),
+                // dhost is CONST (only a reactive aria-label, no ref-bound value), so its label can change only
+                // via the in-place attr patch, proving no re-render/re-mount.
+                UI.div.id("dhost").aria("label", lbl)(UI.span("x").id("dchild")),
+                tick.map(t => UI.span(s"t:$t").id("dtxt")),
+                UI.button("relabel").id("drelabel").onClick(lbl.set("second"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.waitForAttribute(Selector.id("dhost"), "aria-label", "first")
+                _ <- Browser.click(Selector.id("drelabel"))
+                _ <- Browser.assertAttribute(Selector.id("dhost"), "aria-label", "second") // patched in place on a const node
+                _ <- Browser.click(Selector.id("dtick"))
+                _ <- Browser.assertText(Selector.id("dtxt"), "t:1")
+                _ <- Browser.assertAttribute(Selector.id("dhost"), "aria-label", "second") // owned attr unaffected by the morph
+            yield ()
+        }
+    }
+
+    "declarative reactive attribute on an element produced INSIDE a UI.mounted block patches in place" in {
+        // Mirrors the DatePicker/AutoComplete/Select topology: the reactive-attr element is produced by an
+        // effectful UI.mounted body, NOT at the top level. Pins that the attr observer forks while walking
+        // mounted content, so the aria-label still patches in place (no re-mount) on emission.
+        val app: UI < Async =
+            for lbl <- Signal.initRef("m-first")
+            yield UI.div(
+                UI.button("relabel").id("mrelabel").onClick(lbl.set("m-second")),
+                UI.mounted {
+                    Signal.initRef(0).map(_ => UI.div.id("mhost").aria("label", lbl)(UI.span("y").id("mchild")))
+                }.placeholder(UI.empty)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.waitForAttribute(Selector.id("mhost"), "aria-label", "m-first")
+                _ <- Browser.click(Selector.id("mrelabel"))
+                _ <- Browser.assertAttribute(Selector.id("mhost"), "aria-label", "m-second")
+                _ <- Browser.assertText(Selector.id("mchild"), "y") // child untouched, no re-mount
+            yield ()
+        }
+    }
+
+    "declarative reactive boolean attribute (disabled) toggles in place, survives a sibling morph" in {
+        // bhost is a CONST button (only a reactive `disabled`), so its disabled attribute can change only via
+        // the presence-based in-place patch (proving no re-render) and must survive a sibling morph.
+        val app: UI < Async =
+            for
+                tick <- Signal.initRef(0)
+                off  <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("tick").id("btick").onClick(tick.getAndUpdate(_ + 1).unit),
+                UI.button("target").id("bhost").disabled(off),
+                tick.map(t => UI.span(s"t:$t").id("btxt")),
+                UI.button("toggle").id("btoggle").onClick(off.getAndUpdate(b => !b).unit)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertNoAttribute(Selector.id("bhost"), "disabled")
+                _ <- Browser.click(Selector.id("btoggle"))
+                _ <- Browser.assertAttribute(Selector.id("bhost"), "disabled", "") // patched present in place
+                _ <- Browser.click(Selector.id("btick"))
+                _ <- Browser.assertText(Selector.id("btxt"), "t:1")
+                _ <- Browser.assertAttribute(Selector.id("bhost"), "disabled", "") // owned attr survived the morph
+                _ <- Browser.click(Selector.id("btoggle"))
+                _ <- Browser.assertNoAttribute(Selector.id("bhost"), "disabled")   // toggled back off, removed in place
+            yield ()
+        }
+    }
+
+    "declarative reactive class toggles in place, survives a sibling morph" in {
+        // chost is a CONST div with a static class plus a reactive class, so the reactive class can change only
+        // via the in-place classList.toggle patch (proving no re-render), and must survive a sibling morph.
+        val app: UI < Async =
+            for
+                tick <- Signal.initRef(0)
+                on   <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("tick").id("ctick").onClick(tick.getAndUpdate(_ + 1).unit),
+                UI.div.id("chost").cssClass("base").cssClass("hot", on)(UI.span("z").id("cchild")),
+                tick.map(t => UI.span(s"t:$t").id("ctxt")),
+                UI.button("toggle").id("ctoggle").onClick(on.getAndUpdate(b => !b).unit)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertAttributeSatisfies(Selector.id("chost"), "class", "no hot initially")(c => !c.contains("hot"))
+                _ <- Browser.click(Selector.id("ctoggle"))
+                _ <- Browser.assertAttributeSatisfies(Selector.id("chost"), "class", "hot added in place")(_.contains("hot"))
+                _ <- Browser.click(Selector.id("ctick"))
+                _ <- Browser.assertText(Selector.id("ctxt"), "t:1")
+                _ <- Browser.assertAttributeSatisfies(Selector.id("chost"), "class", "hot survives morph")(_.contains("hot"))
+                _ <- Browser.click(Selector.id("ctoggle"))
+                _ <- Browser.assertAttributeSatisfies(Selector.id("chost"), "class", "hot removed in place")(c => !c.contains("hot"))
+            yield ()
+        }
+    }
+
+    "keyed foreach row whose root is a reactive region patches at the row path" in {
+        // A row rendered AS a Reactive (signal.map) is a fragment child whose root is itself a region: the
+        // walk must subscribe it at the row path (matching where the renderer paints its anchor), not at
+        // rowPath :+ "$r", or every patch targets a path the painted DOM does not have.
+        val app: UI < Async =
+            for
+                rows   <- Signal.initRef(Chunk("a", "b"))
+                status <- Signal.initRef("s0")
+            yield UI.div(
+                UI.ul(
+                    rows.foreachKeyed(identity) { item =>
+                        status.map(s => UI.li.id(s"rrow-$item")(s"$item:$s"))
+                    }
+                ),
+                UI.button("bump").id("rbump").onClick(status.set("s1"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("rrow-a"), "a:s0")
+                _ <- Browser.assertText(Selector.id("rrow-b"), "b:s0")
+                _ <- Browser.click(Selector.id("rbump"))
+                _ <- Browser.assertText(Selector.id("rrow-a"), "a:s1")
+                _ <- Browser.assertText(Selector.id("rrow-b"), "b:s1")
+            yield ()
+        }
+    }
+
+    "reactive class on a keyed foreach row root patches in place" in {
+        // The row ROOT itself carries the reactive class channel. A row is a fragment child of the
+        // Foreach region, so the fragment walk must promote it to a ReactiveUI node, or the channel
+        // observer never starts and selecting paints nothing (silently: the setter is accepted).
+        val app: UI < Async =
+            for
+                rows     <- Signal.initRef(Chunk("a", "b", "c"))
+                selected <- Signal.initRef("")
+            yield UI.div(
+                UI.ul(
+                    rows.foreachKeyed(identity) { item =>
+                        UI.li.id(s"krow-$item").cssClass("item").cssClass("sel", selected.map(_ == item))(item)
+                    }
+                ),
+                UI.button("select b").id("kselb").onClick(selected.set("b")),
+                UI.button("deselect").id("kdesel").onClick(selected.set("")),
+                UI.button("reverse").id("krev").onClick(rows.getAndUpdate(c => Chunk.from(c.toSeq.reverse)))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertAttributeSatisfies(Selector.id("krow-b"), "class", "no sel initially")(c => !c.contains("sel"))
+                _ <- Browser.click(Selector.id("kselb"))
+                _ <- Browser.assertAttributeSatisfies(Selector.id("krow-b"), "class", "sel patched on the row root in place")(
+                    _.contains("sel")
+                )
+                _ <- Browser.click(Selector.id("krev"))
+                _ <- Browser.assertText(Selector.id("krow-a"), "a")
+                _ <- Browser.assertAttributeSatisfies(Selector.id("krow-b"), "class", "sel survives the keyed reorder")(
+                    _.contains("sel")
+                )
+                // Fresh observers must be re-subscribed after the list re-render: deselect patches in place.
+                _ <- Browser.click(Selector.id("kdesel"))
+                _ <- Browser.assertAttributeSatisfies(Selector.id("krow-b"), "class", "sel removed in place after reorder")(c =>
+                    !c.contains("sel")
+                )
             yield ()
         }
     }

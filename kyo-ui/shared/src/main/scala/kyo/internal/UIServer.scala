@@ -104,6 +104,16 @@ private[kyo] object UIServer:
                 }
             end onChange
 
+            override def onAttrPatch(path: Seq[String], name: String, value: String)(using Frame): Unit < Async =
+                val op = HtmlOp.SetAttrByPath(path, name, value)
+                Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
+            override def onBoolAttrPatch(path: Seq[String], name: String, value: Boolean)(using Frame): Unit < Async =
+                val op = HtmlOp.SetBoolAttrByPath(path, name, value)
+                Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
+            override def onClassPatch(path: Seq[String], name: String, on: Boolean)(using Frame): Unit < Async =
+                val op = HtmlOp.SetClassByPath(path, name, on)
+                Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
+
     private def dispatchEvent(
         handle: (Seq[String], UIEvent) => Boolean < Async,
         commands: UI.Commands,
