@@ -461,4 +461,76 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
+    // ---- tutorial attachment (WebsiteTutorials registry wired into buildModule) ----
+
+    private val tutorialTreeReadme =
+        """# Kyo
+          |
+          |## Modules
+          |
+          |### Application
+          || Module | JVM | JS | Native | Identity |
+          || ------ | --- | -- | ------ | -------- |
+          || [kyo-eventlog](kyo-eventlog/README.md) | ✅ | ✅ | ✅ | Event streaming |
+          |""".stripMargin
+
+    "fromRepo attaches the three registered tutorials to the parsed kyo-eventlog module with loaded content" in {
+        for
+            result <- fromRepoResult(Seq(
+                "README.md"                                     -> tutorialTreeReadme,
+                "kyo-eventlog/README.md"                        -> "# kyo-eventlog\n\nEvent streaming.",
+                "kyo-eventlog/docs/tutorials/basic-eventlog.md" -> "# Basic EventLog\n\nTyped event log.",
+                "kyo-eventlog/docs/tutorials/raw-journal.md"    -> "# Raw Journal\n\nEnvelope layer.",
+                "kyo-eventlog/docs/tutorials/custom-storage.md" -> "# Custom storage\n\nBackend SPI."
+            ))
+        yield result match
+            case Result.Success(content) =>
+                val module = content.groups.head.modules.head
+                assert(module.slug == "kyo-eventlog", s"module slug: ${module.slug}")
+                assert(module.tutorials.size == 3, s"expected 3 tutorials, got ${module.tutorials.size}")
+                assert(
+                    module.tutorials.map(_.slug) == Chunk("basic-eventlog", "raw-journal", "custom-storage"),
+                    s"tutorial slugs: ${module.tutorials.map(_.slug)}"
+                )
+                assert(
+                    module.tutorials.map(_.title) == Chunk("Basic EventLog", "Raw Journal", "Custom storage"),
+                    s"tutorial titles: ${module.tutorials.map(_.title)}"
+                )
+                assert(content.tutorials.size == 3, s"expected 3 loaded tutorials, got ${content.tutorials.size}")
+                assert(
+                    content.tutorials.map(_.module) == Chunk("kyo-eventlog", "kyo-eventlog", "kyo-eventlog"),
+                    s"tutorial modules: ${content.tutorials.map(_.module)}"
+                )
+                assert(content.tutorials.forall(_.content.nonEmpty), "every loaded tutorial must carry non-empty content")
+            case other => fail(s"expected Success, got $other")
+        end for
+    }
+
+    private val unregisteredModuleReadme =
+        """# Kyo
+          |
+          |## Modules
+          |
+          |### Foundation
+          || Module | JVM | JS | Native | Identity |
+          || ------ | --- | -- | ------ | -------- |
+          || [kyo-data](kyo-data/README.md) | ✅ | ✅ | ✅ | Data types |
+          |""".stripMargin
+
+    "fromRepo leaves a co-listed unregistered module with an empty tutorial rail" in {
+        for
+            result <- fromRepoResult(Seq(
+                "README.md"          -> unregisteredModuleReadme,
+                "kyo-data/README.md" -> "# kyo-data\n\nData types."
+            ))
+        yield result match
+            case Result.Success(content) =>
+                val module = content.groups.head.modules.head
+                assert(module.slug == "kyo-data", s"module slug: ${module.slug}")
+                assert(module.tutorials.isEmpty, s"expected an empty tutorial rail, got ${module.tutorials}")
+                assert(content.tutorials.isEmpty, s"expected no loaded tutorials, got ${content.tutorials}")
+            case other => fail(s"expected Success, got $other")
+        end for
+    }
+
 end WebsiteContentTest

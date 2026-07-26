@@ -331,6 +331,7 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | [kyo-i18n](kyo-i18n/README.md)               | ✅  | ✅  | ✅     | ✅   | Translate from `.ftl` bundles; active locale as a `Signal` drives reactive `t` leaves; pure Fluent subset  |
 | [kyo-ai](kyo-ai/README.md)                   | ✅  | ✅  | ✅     | ✅   | Typed LLM programs: prompts, tools, thoughts, agents, streaming, provider backends                         |
 | [kyo-caliban](kyo-caliban/README.md)         | ✅  |     |        |      | Caliban GraphQL mounted on kyo-http: typed Kyo effects in resolvers, WebSocket subscriptions               |
+| [kyo-eventlog](kyo-eventlog/README.md)       | ✅  | ✅  | ✅     | ✅   | Durable event log: `Journal`, `JournalEvent`, `JournalMetadata`, `JournalError`                            |
 
 ### Writing style
 

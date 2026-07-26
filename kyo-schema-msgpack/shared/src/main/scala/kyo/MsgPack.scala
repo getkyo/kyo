@@ -28,6 +28,8 @@ final class MsgPack(val config: MsgPack.Config = MsgPack.Config.Default) extends
     def newWriter(): Codec.Writer = kyo.internal.msgpack.MsgPackWriter(config)
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.msgpack.MsgPackReader(input.toArray, config)
+
+    override def mediaType: String = "application/msgpack"
 end MsgPack
 
 /** Entry point for MessagePack binary serialization.

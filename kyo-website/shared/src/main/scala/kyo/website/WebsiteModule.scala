@@ -1,5 +1,7 @@
 package kyo.website
 
+import kyo.*
+
 /** One module's documentation-page input: its URL slug, the root-README group it belongs to, its
   * display title, the raw README Markdown, and which platforms it supports.
   */
@@ -8,7 +10,8 @@ final case class WebsiteModule(
     group: String,
     title: String,
     readme: String,
-    platforms: WebsiteModule.Platforms
+    platforms: WebsiteModule.Platforms,
+    tutorials: Chunk[WebsiteTutorial.Declaration] = Chunk.empty
 ) derives CanEqual:
     /** Friendly nav-rail label derived from the slug: strips a leading `kyo-` prefix, then splits on
       * `-` and capitalizes each segment, joining with spaces so no hyphen survives. `kyo-core` becomes
@@ -19,6 +22,18 @@ final case class WebsiteModule(
         val base = if slug.startsWith("kyo-") then slug.stripPrefix("kyo-") else slug
         base.split('-').iterator.filter(_.nonEmpty).map(_.capitalize).mkString(" ")
     end displayName
+
+    /** Attach validated tutorial child routes to this module. Each `Declaration`
+      * is already field-valid by construction (built through `WebsiteTutorial.Declaration.init`), so
+      * the wither validates only the cross-entry property: slug uniqueness across `entries`. A
+      * repeated slug fails loud with `WebsiteTutorialException("slug", DuplicateSlug)`; otherwise the
+      * module is returned with its tutorial rail set.
+      */
+    def withTutorials(entries: Chunk[WebsiteTutorial.Declaration])(using Frame): WebsiteModule < Abort[WebsiteException] =
+        val slugs = entries.map(_.slug)
+        if slugs.distinct.size == slugs.size then this.copy(tutorials = entries)
+        else Abort.fail(WebsiteTutorialException("slug", WebsiteTutorialException.TutorialFailure.DuplicateSlug))
+    end withTutorials
 
 end WebsiteModule
 
