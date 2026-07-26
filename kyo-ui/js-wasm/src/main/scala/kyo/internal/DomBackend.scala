@@ -379,6 +379,32 @@ private[kyo] object DomBackend:
             handler,
             js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
         )
+        // onScrollPosition: rAF-coalesces a scroll burst to one dispatch per frame. Scroll does not bubble, but the
+        // capture-phase listener catches descendant viewport scrolls; a page-level scroll (no data-kyo-path) is ignored.
+        var scrRaf               = 0
+        var scrEl: dom.Element   = null
+        var scrPath: Seq[String] = Seq.empty
+        val scrollHandler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
+            findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
+                if declaredInChain(target, "scroll") then
+                    scrEl = target
+                    scrPath = parsePath(target.getAttribute("data-kyo-path"))
+                    if scrRaf == 0 then
+                        scrRaf = dom.window.requestAnimationFrame { (_: Double) =>
+                            scrRaf = 0
+                            val sid = Maybe(scrEl.id).filter(_.nonEmpty)
+                            fireFromJs(
+                                events,
+                                dispatch(scrPath, UIEvent.ScrollPosition(scrPath, scrEl.scrollTop, scrEl.scrollLeft, sid)).unit
+                            )
+                        }
+                    end if
+            }
+        document.body.addEventListener(
+            "scroll",
+            scrollHandler,
+            js.Dynamic.literal(capture = true, passive = true).asInstanceOf[dom.EventListenerOptions]
+        )
     }
     end setupEventDelegation
 

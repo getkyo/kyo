@@ -667,6 +667,17 @@ object UI:
         modifiers: Modifiers
     ) derives CanEqual
 
+    /** The payload delivered to an `onScrollPosition` handler: the element's resulting native scroll offset
+      * (`scrollTop`/`scrollLeft`) after a scroll gesture, plus the scrolled element's `id` (`Absent` when it has
+      * none). Unlike [[WheelEvent]] (a per-notch mouse-wheel delta), this reports the browser-owned scroll position
+      * and fires for every scroll input (wheel, scrollbar drag, touch, keyboard).
+      */
+    final case class ScrollPositionEvent(
+        scrollTop: Double,
+        scrollLeft: Double,
+        targetId: Maybe[String]
+    ) derives CanEqual
+
     /** The case-class abstract syntax tree that every [[kyo.UI]] factory returns.
       *
       * Every node a factory builds is a value under `Ast`: the element case classes (`Div`, `Button`, `Input`, ...), the text node
@@ -872,6 +883,19 @@ object UI:
             /** Runs `f` when the mouse wheel is used over this element, receiving the [[kyo.UI.WheelEvent]] payload. */
             def onScroll[S](f: WheelEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
                 withAttrs(attrs.copy(onScrollEvt = Present(eraseHandlerFn(f))))
+
+            /** Runs `f` when this element is natively scrolled (a real `overflow:auto`/`scroll` viewport), receiving the
+              * [[kyo.UI.ScrollPositionEvent]] payload (`scrollTop`/`scrollLeft`). Unlike [[onScroll]] (a per-notch wheel
+              * delta), this fires for all scroll input (wheel, scrollbar drag, touch, keyboard) because the browser owns
+              * the scroll and reports the resulting position; the client rAF-coalesces bursts to one event per frame.
+              * Intended for server-authoritative virtual scrolling: the browser scrolls a full-height spacer natively and
+              * the server repositions the rendered window from the reported `scrollTop`. Emits the `scroll` token in
+              * `data-kyo-ev`.
+              */
+            def onScrollPosition[S](f: ScrollPositionEvent => Any < (Abort[Throwable] & Async & S))(using
+                Isolate[S, Sync, S]
+            ): Self =
+                withAttrs(attrs.copy(onScrollPos = Present(eraseHandlerFn(f))))
         end Interactive
 
         // ---- Layout traits ----
@@ -1093,6 +1117,7 @@ object UI:
             onUnhoverEvt: Maybe[MouseEvent => Any < Async] = Absent,
             onScroll: Maybe[Any < Async] = Absent,
             onScrollEvt: Maybe[WheelEvent => Any < Async] = Absent,
+            onScrollPos: Maybe[ScrollPositionEvent => Any < Async] = Absent,
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
             jsProps: Map[String, String] = Map.empty,

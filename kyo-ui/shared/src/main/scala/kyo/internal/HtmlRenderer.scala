@@ -638,6 +638,7 @@ private[kyo] object HtmlRenderer:
         if attrs.onHover.nonEmpty || attrs.onHoverEvt.nonEmpty then events += "mouseover"
         if attrs.onUnhover.nonEmpty || attrs.onUnhoverEvt.nonEmpty then events += "mouseout"
         if attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty then events += "wheel"
+        if attrs.onScrollPos.nonEmpty then events += "scroll"
         // "input" event: when handler is set OR when .value(SignalRef) auto-binding is in use
         elem match
             case ti: TextInput if ti.onInput.nonEmpty || hasSignalRefValue(ti.value) => events += "input"
@@ -885,6 +886,9 @@ private[kyo] object HtmlRenderer:
            |function mkMouse(mods,tid){var m={modifiers:mods};if(tid)m.targetId=tid;return m;}
            |// Build a keyboard payload, omitting targetId when absent.
            |function mkKbd(key,mods,tid){var k={key:key,modifiers:mods};if(tid)k.targetId=tid;return k;}
+           |// onScrollPosition: rAF-coalesce bursts to one post per frame; capture-phase catches non-bubbling scroll.
+           |var __scrRaf=0,__scrEl=null,__scrPath=null;
+           |function __scrFlush(){__scrRaf=0;if(__scrEl){var stid=__scrEl.id?__scrEl.id:null;var sp={path:__scrPath,scrollTop:__scrEl.scrollTop,scrollLeft:__scrEl.scrollLeft};if(stid)sp.targetId=stid;post({ScrollPosition:sp});}}
            |function handle(e){
            |  var el=fp(e.target);
            |  if(!el)return;
@@ -1070,11 +1074,13 @@ private[kyo] object HtmlRenderer:
            |  else if(t==="mouseout"&&he(el,"mouseout")){var uhotid=e.target&&e.target.id?e.target.id:null;post({Unhover:{path:p,mouse:mkMouse({ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},uhotid)}});}
            |  // Do NOT auto-call preventDefault: leave native-scroll suppression to the handler, matching DomBackend. Server-side rendering cannot synchronously decline the event, so the default is to NOT prevent.
            |  else if(t==="wheel"&&he(el,"wheel")){var whtid=e.target&&e.target.id?e.target.id:null;var sc={path:p,deltaX:e.deltaX,deltaY:e.deltaY,modifiers:{ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey}};if(whtid)sc.targetId=whtid;post({Scroll:sc});}
+           |  else if(t==="scroll"&&he(el,"scroll")){__scrEl=el;__scrPath=p;if(!__scrRaf)__scrRaf=requestAnimationFrame(__scrFlush);}
            |}
            |["click","input","change","submit","keydown","keyup","focus","blur","mouseover","mouseout"].forEach(function(t){
            |  document.body.addEventListener(t,handle,true);
            |});
            |document.body.addEventListener("wheel",handle,{capture:true,passive:false});
+           |document.body.addEventListener("scroll",handle,{capture:true,passive:true});
            |})();""".stripMargin
 
     // ---- SVG tag and attribute rendering ----

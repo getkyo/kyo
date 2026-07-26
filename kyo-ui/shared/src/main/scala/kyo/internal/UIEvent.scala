@@ -30,6 +30,8 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case Focus(path: Seq[String], mouse: MouseEventData)
     case Blur(path: Seq[String], mouse: MouseEventData)
     case Scroll(path: Seq[String], deltaX: Double, deltaY: Double, modifiers: UI.Modifiers, targetId: Maybe[String])
+    // Browser-owned scrollTop/scrollLeft after a scroll gesture; distinct from Scroll (a per-notch wheel delta).
+    case ScrollPosition(path: Seq[String], scrollTop: Double, scrollLeft: Double, targetId: Maybe[String])
     case Hover(path: Seq[String], mouse: MouseEventData)
     case Unhover(path: Seq[String], mouse: MouseEventData)
 end UIEvent

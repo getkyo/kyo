@@ -1372,4 +1372,26 @@ class EventHandlerTest extends UITest:
         }
     }
 
+    "onScrollPosition delivers the element's native scrollTop after it is scrolled" in {
+        val app: UI < Async =
+            for pos <- Signal.initRef(-1)
+            yield UI.div(
+                UI.div(UI.div("tall").id("tall"))
+                    .id("scroller")
+                    .onScrollPosition((e: UI.ScrollPositionEvent) => pos.set(e.scrollTop.toInt)),
+                pos.map(p => UI.span(s"pos:$p").id("out"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("out"), "pos:-1")
+                // Setting scrollTop programmatically fires a native 'scroll' the capture-phase listener catches.
+                _ <- Browser.evalDiscard(
+                    "var s=document.getElementById('scroller');s.style.display='block';s.style.height='80px';s.style.overflow='auto';" +
+                        "document.getElementById('tall').style.height='2000px';void s.scrollHeight;s.scrollTop=120;"
+                )
+                _ <- Browser.assertText(Selector.id("out"), "pos:120")
+            yield ()
+        }
+    }
+
 end EventHandlerTest

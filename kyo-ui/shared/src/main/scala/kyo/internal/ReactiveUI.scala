@@ -753,6 +753,10 @@ private[kyo] object ReactiveUI:
                 val wheel = UI.WheelEvent(ev.deltaX, ev.deltaY, ev.targetId, ev.modifiers)
                 invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel))
                     .andThen(keepBubbling(elem, attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty))
+            case ev: UIEvent.ScrollPosition =>
+                val sp = UI.ScrollPositionEvent(ev.scrollTop, ev.scrollLeft, ev.targetId)
+                invokeWith(attrs.onScrollPos, sp)
+                    .andThen(keepBubbling(elem, attrs.onScrollPos.nonEmpty))
             case _ => true
         end match
     end dispatchToElement
