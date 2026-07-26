@@ -200,11 +200,7 @@ private[kyo] object SpawnBackend:
       * transport break maps to one typed `TransportError`.
       */
     private def sendFrame(aeron: AeronClient, reqStreamId: Int, frame: Envelope)(using Frame): Unit < (Async & Abort[TransportError]) =
-        transportErrors(Topic.run(aeron)(Topic.publish[Envelope](
-            "aeron:ipc",
-            Topic.defaultRetrySchedule,
-            Present(reqStreamId)
-        )(Stream.init(Chunk(frame)))))
+        transportErrors(Topic.run(aeron)(Topic.publish[Envelope]("aeron:ipc")(Stream.init(Chunk(frame)), streamId = Present(reqStreamId))))
 
     /** The reply stream against the captured client, the `Topic` effect discharged so the row is
       * `Async & Abort[TransportError]` as Exchange's `receive` requires.

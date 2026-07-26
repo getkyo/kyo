@@ -152,11 +152,11 @@ object Topic:
       *   or [[TopicTransportException]] aborts
       * @see [[Topic.stream]] to subscribe to the published messages
       */
-    def publish[A: Schema](
-        aeronUri: String,
+    def publish[A: Schema](aeronUri: String)[S](
+        source: Stream[A, S],
         retrySchedule: Schedule = defaultRetrySchedule,
         streamId: Maybe[Int] = Absent
-    )[S](source: Stream[A, S])(using
+    )(using
         frame: Frame,
         tag: Tag[A],
         etag: Tag[Emit[Chunk[A]]]

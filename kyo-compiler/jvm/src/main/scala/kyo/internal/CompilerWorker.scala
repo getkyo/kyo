@@ -130,5 +130,5 @@ private[internal] object WorkerServer:
     private def publish(respStreamId: Int, frame: Envelope)(using
         Frame
     ): Unit < (Async & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Topic) =
-        Topic.publish[Envelope]("aeron:ipc", Topic.defaultRetrySchedule, Present(respStreamId))(Stream.init(Chunk(frame)))
+        Topic.publish[Envelope]("aeron:ipc")(Stream.init(Chunk(frame)), streamId = Present(respStreamId))
 end WorkerServer

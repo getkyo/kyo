@@ -989,7 +989,7 @@ class AeronTransportTest extends Test:
             _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
             result <- Abort.run[TopicException] {
                 Topic.runWith(transport) {
-                    Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
+                    Topic.publish[Int](ipcUri)(Stream.init(Seq(42)), Schedule.never)
                 }
             }
             _ <- Sync.Unsafe.defer(rt.close())
@@ -1099,7 +1099,7 @@ class AeronTransportTest extends Test:
             )
             result <- Abort.run[TopicException] {
                 Topic.runWith(transport) {
-                    Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
+                    Topic.publish[Int](ipcUri)(Stream.init(Seq(42)), Schedule.never)
                 }
             }
             _ <- Sync.Unsafe.defer(rt.close())
