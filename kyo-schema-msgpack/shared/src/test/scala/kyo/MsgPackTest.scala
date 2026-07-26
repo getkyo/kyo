@@ -12,6 +12,8 @@ class MsgPackTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    private val highBitsUuidText = "fedcba98-7654-3210-89ab-cdef01234567"
+
     // ===== writer/reader primitives =====
 
     "writer/reader primitives" - {
@@ -128,6 +130,29 @@ class MsgPackTest extends kyo.test.Test[Any]:
         "nested case class with collection round-trip" in {
             val v = MPNested(MPPerson("Alice", 30), List("a", "b", "c"))
             assert(CodecTestSupport.roundTrip[MPNested, MsgPack](v) == v)
+        }
+    }
+
+    "UUID schemas" - {
+
+        "kyo UUID round-trip preserves all 128 bits including high bits" in {
+            val value             = UUID.parse(highBitsUuidText).getOrThrow
+            val encoded           = MsgPack.encode(value)
+            val canonicalEncoding = MsgPack.encode(highBitsUuidText)
+            val javaEncoding      = MsgPack.encode(java.util.UUID.fromString(highBitsUuidText))
+            val decoded           = MsgPack.decode[UUID](encoded).getOrThrow
+            assert(CodecTestSupport.sameBytes(encoded, canonicalEncoding))
+            assert(CodecTestSupport.sameBytes(encoded, javaEncoding))
+            assert(decoded == value)
+            assert(decoded.show == highBitsUuidText)
+            assert(decoded.bytes.is(value.bytes))
+        }
+
+        "java UUID round-trip remains compatible" in {
+            val value   = java.util.UUID.fromString(highBitsUuidText)
+            val decoded = MsgPack.decode[java.util.UUID](MsgPack.encode(value)).getOrThrow
+            assert(decoded == value)
+            assert(decoded.toString == highBitsUuidText)
         }
     }
 
