@@ -27,7 +27,7 @@ import kyo.*
   * maps `Absent` to `TopicPublicationClosedException`; `Topic.stream` maps it to
   * `TopicBackpressureExhaustedException` (transient, retried per the retry schedule).
   */
-private[kyo] trait AeronTransport:
+abstract private[kyo] class AeronTransport:
     type Publication
     type Subscription
     type AsyncPub

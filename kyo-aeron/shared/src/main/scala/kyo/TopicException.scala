@@ -156,11 +156,12 @@ case class TopicAddTimeoutException(aeronUri: String, streamId: Int, timeout: Du
 /** A fatal Aeron conductor or transport condition (driver timeout, client timeout, command-buffer-full,
   * or broadcast error). The client is no longer usable once this is reported.
   */
-case class TopicTransportFailedException(detail: String)(using Frame)
+case class TopicTransportFailedException(detail: String, cause: String | Throwable = "")(using Frame)
     extends TopicTransportException(
         s"""Fatal Aeron transport error: $detail
            |
            |  The Aeron conductor reported an unrecoverable condition and the client is no longer usable.
            |
-           |  Restart the Topic.run scope to re-establish the client.""".stripMargin
+           |  Restart the Topic.run scope to re-establish the client.""".stripMargin,
+        cause
     )

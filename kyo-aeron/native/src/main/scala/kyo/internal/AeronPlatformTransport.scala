@@ -67,7 +67,7 @@ private[kyo] object AeronPlatformTransport:
     private def mapConnectFailure(e: Any)(using Frame): Nothing < Abort[TopicTransportFailedException] =
         e match
             case n: FfiNullPointer =>
-                Abort.fail(TopicTransportFailedException(Maybe(n.getMessage).filter(_.nonEmpty).getOrElse(n.toString)))
+                Abort.fail(TopicTransportFailedException(Maybe(n.getMessage).filter(_.nonEmpty).getOrElse(n.toString), n))
             case t: Throwable => Abort.panic(t)
             case other        => Abort.panic(new RuntimeException(s"unexpected Aeron connect failure: $other"))
 end AeronPlatformTransport

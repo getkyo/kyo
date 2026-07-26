@@ -22,7 +22,7 @@ import org.agrona.concurrent.UnsafeBuffer
   */
 final private[kyo] class JvmAeronTransport(
     aeron: Aeron,
-    errorSlot: java.util.concurrent.atomic.AtomicReference[String]
+    errorSlot: AtomicRef.Unsafe[Maybe[String]]
 ) extends AeronTransport:
     type Publication  = PublicationState
     type Subscription = SubscriptionState
@@ -268,9 +268,9 @@ final private[kyo] class JvmAeronTransport(
         liveSubs.forEach(sub => closeSubscription(sub))
 
     def fatalError(using AllowUnsafe): Maybe[String] =
-        // The slot the Aeron.Context error handler sets holds null or a non-empty string: both
-        // that handler (AeronPlatformTransport) and injectError below derive a non-empty detail.
-        Maybe(errorSlot.get())
+        // Both writers (the Aeron.Context error handler in AeronPlatformTransport and injectError
+        // below) store a non-empty detail, so Present always carries usable text.
+        errorSlot.get()
 
     override def injectError(errcode: Int, errmsg: String)(using AllowUnsafe): Unit =
         // Writes the slot directly, bypassing the JVM handler, since no conductor is involved.
@@ -278,6 +278,6 @@ final private[kyo] class JvmAeronTransport(
         val detail =
             if errmsg.nonEmpty then errmsg
             else s"fatal client error (code $errcode)"
-        errorSlot.set(detail)
+        errorSlot.set(Present(detail))
     end injectError
 end JvmAeronTransport

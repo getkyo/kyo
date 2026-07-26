@@ -2,7 +2,6 @@ package kyo.internal
 
 import io.aeron.exceptions.AeronException
 import java.nio.channels.ClosedByInterruptException
-import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 // Unsafe: this test drives JvmAeronTransport's AllowUnsafe transport tier (pollOne /
 // injectError / fatalError) directly, so it embraces AllowUnsafe ambiently.
@@ -21,7 +20,7 @@ class JvmAeronTransportTest extends kyo.Test:
       * real catch without an embedded driver.
       */
     private def transport(): JvmAeronTransport =
-        new JvmAeronTransport(null, new AtomicReference[String]())
+        new JvmAeronTransport(null, AtomicRef.Unsafe.init(Absent: Maybe[String]))
 
     /** io.aeron.Subscription is final and unmockable here, so the poll() seam is overridden; the real
       * subscription is never touched and a null is safe.
@@ -75,13 +74,13 @@ class JvmAeronTransportTest extends kyo.Test:
     }
 
     "a fatal client error surfaces via fatalError (routes to TopicTransportFailedException, not backpressure)" in {
-        val t = new JvmAeronTransport(null, new AtomicReference[String]())
+        val t = new JvmAeronTransport(null, AtomicRef.Unsafe.init(Absent: Maybe[String]))
         t.injectError(-1000, "driver timeout")
         assert(t.fatalError == Present("driver timeout"))
     }
 
     "a fatal client error with an empty message records a non-empty detail derived from the code" in {
-        val t = new JvmAeronTransport(null, new AtomicReference[String]())
+        val t = new JvmAeronTransport(null, AtomicRef.Unsafe.init(Absent: Maybe[String]))
         t.injectError(-7, "")
         assert(t.fatalError == Present("fatal client error (code -7)"))
     }

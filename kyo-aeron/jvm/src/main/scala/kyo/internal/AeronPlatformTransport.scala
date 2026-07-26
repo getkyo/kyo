@@ -16,7 +16,7 @@ private[kyo] object AeronPlatformTransport:
       * prior run.
       */
     def embedded(dir: String)(using Frame): AeronRuntime < Async =
-        Sync.defer {
+        Sync.Unsafe.defer {
             val driver = MediaDriver.launchEmbedded(
                 new io.aeron.driver.MediaDriver.Context().aeronDirectoryName(dir).dirDeleteOnStart(true)
             )
@@ -24,7 +24,7 @@ private[kyo] object AeronPlatformTransport:
             // conductor service timeout, buffer full) into errorSlot, which fatalError reads at the
             // offer/poll boundary. The default handler instead spawns an exit daemon thread on
             // DriverTimeoutException.
-            val errorSlot = new java.util.concurrent.atomic.AtomicReference[String](null)
+            val errorSlot = AtomicRef.Unsafe.init(Absent: Maybe[String])
             val aeron = Aeron.connect(
                 new Aeron.Context()
                     .aeronDirectoryName(dir)
@@ -32,7 +32,7 @@ private[kyo] object AeronPlatformTransport:
                         // getMessage is null for throwables with no message text; toString never is.
                         val msg = Maybe(t.getMessage).filter(_.nonEmpty).getOrElse(t.toString)
                         // First error wins, matching the C handler's slot.
-                        discard(errorSlot.compareAndSet(null, msg))
+                        discard(errorSlot.compareAndSet(Absent, Present(msg)))
                     }
             )
             val jvmTransport = new JvmAeronTransport(aeron, errorSlot)
@@ -58,14 +58,14 @@ private[kyo] object AeronPlatformTransport:
       * context on the way out, so no client leaks.
       */
     def external(aeronDir: String)(using Frame): AeronRuntime < (Async & Abort[TopicTransportFailedException]) =
-        Sync.defer {
-            val errorSlot = new java.util.concurrent.atomic.AtomicReference[String](null)
+        Sync.Unsafe.defer {
+            val errorSlot = AtomicRef.Unsafe.init(Absent: Maybe[String])
             val aeron = Aeron.connect(
                 new Aeron.Context()
                     .aeronDirectoryName(aeronDir)
                     .errorHandler { t =>
                         val msg = Maybe(t.getMessage).filter(_.nonEmpty).getOrElse(t.toString)
-                        discard(errorSlot.compareAndSet(null, msg))
+                        discard(errorSlot.compareAndSet(Absent, Present(msg)))
                     }
             )
             val jvmTransport = new JvmAeronTransport(aeron, errorSlot)

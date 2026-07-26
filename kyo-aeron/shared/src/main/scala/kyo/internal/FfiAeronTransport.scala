@@ -133,8 +133,15 @@ end FfiAeronTransport
 
 private[kyo] object FfiAeronTransport:
 
-    /** Matches the shim's `KYO_AERON_SLOT_INITIAL_CAP`. 64 KiB holds an unfragmented IPC message
-      * and most multi-fragment messages without a regrow.
+    /** Starting size of the Scala-side receive buffer: 64 KiB holds an unfragmented IPC message and
+      * most multi-fragment ones without a regrow.
+      *
+      * Deliberately the same value as the shim's `KYO_AERON_SLOT_INITIAL_CAP`, but not derived from
+      * it: these are two buffers, the shim's reassembly slot and the buffer it copies out into, and
+      * each grows on its own. `pollOne` regrows this one from the capacity the shim reports for the
+      * retained message, never from the slot's size, so the two can diverge without breaking
+      * correctness. Matching the starting sizes only means a message that fits the shim's first
+      * slot also fits here, avoiding a retain-regrow-repoll round-trip on the common path.
       */
     private inline val InitialReceiveCap = 64 * 1024
 
