@@ -151,7 +151,7 @@ class TopicTest extends Test:
                     started <- Latch.init(1)
                     fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Base](uri, failSchedule).run))
                     _       <- started.await
-                    result1 <- Abort.run(Topic.publish(uri)(Stream.init(messages), failSchedule))
+                    result1 <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(messages)))
                     result2 <- fiber.getResult
                 yield assert(result1.isFailure && result2.isFailure)
             }
@@ -165,7 +165,7 @@ class TopicTest extends Test:
                     started <- Latch.init(1)
                     fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Derived1](uri, failSchedule).run))
                     _       <- started.await
-                    result1 <- Abort.run(Topic.publish(uri)(Stream.init(messages), failSchedule))
+                    result1 <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(messages)))
                     result2 <- fiber.getResult
                 yield assert(result1.isFailure && result2.isFailure)
             }
@@ -212,7 +212,7 @@ class TopicTest extends Test:
                 started <- Latch.init(1)
                 fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri, failSchedule).take(1).run))
                 _       <- started.await
-                _       <- Topic.publish[Message](uri)(Stream.empty, failSchedule)
+                _       <- Topic.publish[Message](uri, failSchedule)(Stream.empty)
                 result  <- fiber.getResult
             yield assert(result.isFailure)
         }
@@ -259,7 +259,7 @@ class TopicTest extends Test:
         Topic.run {
             for
                 result <- Abort.run[TopicException] {
-                    Topic.publish[String](oversizeUri)(Stream.init(Seq(payload)), failSchedule)
+                    Topic.publish[String](oversizeUri, failSchedule)(Stream.init(Seq(payload)))
                 }
             yield result match
                 case Result.Failure(err: TopicMessageTooLargeException) =>
@@ -284,7 +284,7 @@ class TopicTest extends Test:
         "publisher without subscribers" in {
             Topic.run {
                 for
-                    result <- Abort.run(Topic.publish(uri)(Stream.init(Seq(Message(1))), failSchedule))
+                    result <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(Seq(Message(1)))))
                 yield assert(result.isFailure)
             }
         }
@@ -301,7 +301,7 @@ class TopicTest extends Test:
         "subscriber starts after publisher" in {
             Topic.run {
                 for
-                    result1 <- Abort.run(Topic.publish(uri)(Stream.init(Seq(Message(1))), failSchedule))
+                    result1 <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(Seq(Message(1)))))
                     result2 <- Abort.run(Topic.stream[Message](uri, failSchedule).take(1).run)
                 yield
                     assert(result1.isFailure)
@@ -322,7 +322,7 @@ class TopicTest extends Test:
     "malformed-URI publish aborts with TopicRegistrationFailedException" in {
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[Message](badUri)(Stream.init(Seq(Message(1))), failSchedule)
+                Topic.publish[Message](badUri, failSchedule)(Stream.init(Seq(Message(1))))
             }.map { result =>
                 result match
                     case Result.Failure(reg: TopicRegistrationFailedException) =>
@@ -378,13 +378,13 @@ class TopicTest extends Test:
         Topic.run {
             for
                 regR <- Abort.run[TopicException] {
-                    Topic.publish[Message](badUri)(Stream.init(Seq(Message(1))), failSchedule)
+                    Topic.publish[Message](badUri, failSchedule)(Stream.init(Seq(Message(1))))
                 }
                 _ = regR match
                     case Result.Failure(_: TopicRegistrationFailedException) => succeed
                     case other => fail(s"Registration path: expected TopicRegistrationFailedException, got: $other")
                 ncR <- Abort.run[TopicException] {
-                    Topic.publish[Message]("aeron:ipc")(Stream.init(Seq(Message(1))), failSchedule)
+                    Topic.publish[Message]("aeron:ipc", failSchedule)(Stream.init(Seq(Message(1))))
                 }
             yield ncR match
                 case Result.Failure(_: TopicRegistrationFailedException) =>
@@ -400,7 +400,7 @@ class TopicTest extends Test:
     "detail-normalization (all platforms): TopicRegistrationFailedException fields are populated" in {
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[Message](badUri)(Stream.init(Seq(Message(1))), failSchedule)
+                Topic.publish[Message](badUri, failSchedule)(Stream.init(Seq(Message(1))))
             }.map { result =>
                 result match
                     case Result.Failure(reg: TopicRegistrationFailedException) =>
@@ -428,7 +428,7 @@ class TopicTest extends Test:
         Topic.run {
             for
                 result <- Abort.run[TopicException] {
-                    Topic.publish[String](oversizeUri)(Stream.init(Seq(oversizeBytes)), failSchedule)
+                    Topic.publish[String](oversizeUri, failSchedule)(Stream.init(Seq(oversizeBytes)))
                 }
             yield result match
                 case Result.Failure(_: TopicMessageTooLargeException) => succeed

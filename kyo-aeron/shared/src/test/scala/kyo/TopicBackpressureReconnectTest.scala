@@ -73,7 +73,7 @@ class TopicBackpressureReconnectTest extends Test:
                 // The subscriber is now gone, so this publish sees a not-connected publication and the
                 // retry must exhaust.
                 result <- Abort.run[TopicException] {
-                    Topic.publish[DropMsg](dropUri)(Stream.init(Seq(DropMsg(4), DropMsg(5))), exhaustSchedule)
+                    Topic.publish[DropMsg](dropUri, exhaustSchedule)(Stream.init(Seq(DropMsg(4), DropMsg(5))))
                 }
             yield result match
                 case Result.Failure(_: TopicBackpressureExhaustedException) => succeed

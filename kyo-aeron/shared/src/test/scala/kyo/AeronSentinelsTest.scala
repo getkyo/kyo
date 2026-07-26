@@ -260,7 +260,7 @@ class AeronSentinelsTest extends Test:
         val failSchedule = Schedule.fixed(1.millis).take(3)
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[Int](uri)(Stream.init(Seq(1)), failSchedule)
+                Topic.publish[Int](uri, failSchedule)(Stream.init(Seq(1)))
             }.map { r =>
                 r match
                     case Result.Failure(e) =>

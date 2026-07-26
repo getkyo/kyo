@@ -79,7 +79,7 @@ class TopicValidationTest extends Test:
         val uri = "aeron:udp?endpoint=wibble:1234"
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[RejMsg11](uri)(Stream.init(Seq(RejMsg11(1))), failSchedule)
+                Topic.publish[RejMsg11](uri, failSchedule)(Stream.init(Seq(RejMsg11(1))))
             }.map(assertRegistrationFailed(_, s"publish to '$uri'"))
         }
     }
@@ -90,7 +90,7 @@ class TopicValidationTest extends Test:
         val uri = "aeron:udp?endpoint=localhost:24325|interface={does_not_exist}:24326"
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[RejMsg12](uri)(Stream.init(Seq(RejMsg12(1))), failSchedule)
+                Topic.publish[RejMsg12](uri, failSchedule)(Stream.init(Seq(RejMsg12(1))))
             }.map(assertRegistrationFailed(_, s"publish to '$uri'"))
         }
     }
@@ -101,7 +101,7 @@ class TopicValidationTest extends Test:
         val uri = "aeron:udp?endpoint=localhost:0"
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[RejMsg13](uri)(Stream.init(Seq(RejMsg13(1))), failSchedule)
+                Topic.publish[RejMsg13](uri, failSchedule)(Stream.init(Seq(RejMsg13(1))))
             }.map(assertRegistrationFailed(_, s"publish to '$uri'"))
         }
     }
@@ -121,7 +121,7 @@ class TopicValidationTest extends Test:
         val uri = "aeron:udp?control=localhost:9999"
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[RejMsg15](uri)(Stream.init(Seq(RejMsg15(1))), failSchedule)
+                Topic.publish[RejMsg15](uri, failSchedule)(Stream.init(Seq(RejMsg15(1))))
             }.map(assertRegistrationFailed(_, s"publish to '$uri'"))
         }
     }
@@ -131,7 +131,7 @@ class TopicValidationTest extends Test:
         val uri = "aeron:udp?control-mode=dynamic"
         Topic.run {
             Abort.run[TopicException] {
-                Topic.publish[RejMsg16](uri)(Stream.init(Seq(RejMsg16(1))), failSchedule)
+                Topic.publish[RejMsg16](uri, failSchedule)(Stream.init(Seq(RejMsg16(1))))
             }.map(assertRegistrationFailed(_, s"publish to '$uri'"))
         }
     }
@@ -152,7 +152,7 @@ class TopicValidationTest extends Test:
         Topic.run {
             for
                 pubResult <- Abort.run[TopicException] {
-                    Topic.publish[RejMsg17ipc](tooLongUri)(Stream.init(Seq(RejMsg17ipc(1))), failSchedule)
+                    Topic.publish[RejMsg17ipc](tooLongUri, failSchedule)(Stream.init(Seq(RejMsg17ipc(1))))
                 }
                 subResult <- Abort.run[TopicException] {
                     Topic.stream[RejMsg17ipc](tooLongUri, failSchedule).take(1).run
@@ -177,7 +177,7 @@ class TopicValidationTest extends Test:
         Topic.run {
             for
                 pubResult <- Abort.run[TopicException] {
-                    Topic.publish[RejMsg17udp](tooLongUri)(Stream.init(Seq(RejMsg17udp(1))), failSchedule)
+                    Topic.publish[RejMsg17udp](tooLongUri, failSchedule)(Stream.init(Seq(RejMsg17udp(1))))
                 }
                 subResult <- Abort.run[TopicException] {
                     Topic.stream[RejMsg17udp](tooLongUri, failSchedule).take(1).run

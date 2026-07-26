@@ -152,58 +152,81 @@ object Topic:
       *   or [[TopicTransportException]] aborts
       * @see [[Topic.stream]] to subscribe to the published messages
       */
-    def publish[A: Schema](aeronUri: String)[S](
-        source: Stream[A, S],
+    def publish[A](
+        aeronUri: String,
         retrySchedule: Schedule = defaultRetrySchedule,
         streamId: Maybe[Int] = Absent
-    )(using
-        frame: Frame,
-        tag: Tag[A],
-        etag: Tag[Emit[Chunk[A]]]
-    ): Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async) =
-        Env.use[AeronTransport] { transport =>
-            val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-            addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
-                case Absent =>
-                    Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
-                case Present(publication) =>
-                    val backpressured = Abort.fail(TopicBackpressureExhaustedException(aeronUri, resolvedStreamId))
-                    Sync.ensure(Sync.Unsafe.defer(transport.closePublication(publication))) {
-                        source.foreachChunk { messages =>
-                            // Encoded outside the retry so the bytes are reused across every attempt.
-                            val bytes = MsgPack.encode(Envelope(tag.show, messages)).toArray
-                            Retry[TopicBackpressureException](retrySchedule) {
-                                Sync.Unsafe.defer {
-                                    // fatalError is set by the non-exiting conductor error handler
-                                    // (C: kyo_aeron_error_handler; JVM: Aeron.Context.errorHandler).
-                                    transport.fatalError match
-                                        case Present(detail) =>
-                                            Abort.fail(TopicTransportFailedException(detail))
-                                        case Absent =>
-                                            val maxLen = transport.maxMessageLength(publication)
-                                            // Checked before connectivity: oversize is terminal regardless of
-                                            // whether a subscriber is attached, so retrying could never help.
-                                            // maxLen == 0 is the closed-publication sentinel on both backends,
-                                            // not a real limit, so it falls through to the connectivity check.
-                                            if maxLen > 0 && bytes.length > maxLen then
-                                                Abort.fail(TopicMessageTooLargeException(bytes.length, maxLen))
-                                            else if !transport.publicationIsConnected(publication) then backpressured
-                                            else
-                                                mapOfferResult(
-                                                    transport.offer(publication, bytes),
-                                                    aeronUri,
-                                                    resolvedStreamId,
-                                                    backpressured,
-                                                    bytes.length,
-                                                    maxLen
-                                                )
-                                            end if
+    ): PublishTo[A] =
+        new PublishTo[A](aeronUri, retrySchedule, streamId)
+
+    /** The destination and options from [[Topic.publish]], awaiting the stream to publish.
+      *
+      * `publish` hands this back rather than taking the source in a following parameter list so that
+      * its arguments are fully applied before `S` is inferred. Scala 3.8.4 fails an internal
+      * assertion when it applies inferred type arguments to the block that argument desugaring
+      * produces, which a defaulted or reordered argument before a type-parameter clause creates
+      * (`Typer.adapt1` calling `appliedToTypeTrees`, which asserts its function is not a block).
+      * Taking `S` here keeps every call shape compiling, including `streamId = id` and arguments
+      * named out of order.
+      *
+      * `Schema[A]` is required here rather than on `publish` so that `A` can still be inferred from
+      * `source`: bounding it on `publish` would force the instance to resolve before `A` is known.
+      */
+    final class PublishTo[A] private[kyo] (
+        aeronUri: String,
+        retrySchedule: Schedule,
+        streamId: Maybe[Int]
+    ):
+        def apply[S](source: Stream[A, S])(using
+            schema: Schema[A],
+            frame: Frame,
+            tag: Tag[A],
+            etag: Tag[Emit[Chunk[A]]]
+        ): Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async) =
+            Env.use[AeronTransport] { transport =>
+                val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
+                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
+                    case Absent =>
+                        Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
+                    case Present(publication) =>
+                        val backpressured = Abort.fail(TopicBackpressureExhaustedException(aeronUri, resolvedStreamId))
+                        Sync.ensure(Sync.Unsafe.defer(transport.closePublication(publication))) {
+                            source.foreachChunk { messages =>
+                                // Encoded outside the retry so the bytes are reused across every attempt.
+                                val bytes = MsgPack.encode(Envelope(tag.show, messages)).toArray
+                                Retry[TopicBackpressureException](retrySchedule) {
+                                    Sync.Unsafe.defer {
+                                        // fatalError is set by the non-exiting conductor error handler
+                                        // (C: kyo_aeron_error_handler; JVM: Aeron.Context.errorHandler).
+                                        transport.fatalError match
+                                            case Present(detail) =>
+                                                Abort.fail(TopicTransportFailedException(detail))
+                                            case Absent =>
+                                                val maxLen = transport.maxMessageLength(publication)
+                                                // Checked before connectivity: oversize is terminal regardless of
+                                                // whether a subscriber is attached, so retrying could never help.
+                                                // maxLen == 0 is the closed-publication sentinel on both backends,
+                                                // not a real limit, so it falls through to the connectivity check.
+                                                if maxLen > 0 && bytes.length > maxLen then
+                                                    Abort.fail(TopicMessageTooLargeException(bytes.length, maxLen))
+                                                else if !transport.publicationIsConnected(publication) then backpressured
+                                                else
+                                                    mapOfferResult(
+                                                        transport.offer(publication, bytes),
+                                                        aeronUri,
+                                                        resolvedStreamId,
+                                                        backpressured,
+                                                        bytes.length,
+                                                        maxLen
+                                                    )
+                                                end if
+                                    }
                                 }
                             }
                         }
-                    }
+                }
             }
-        }
+    end PublishTo
 
     /** Creates a stream of messages from a specified Aeron URI.
       *
