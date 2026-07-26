@@ -374,6 +374,126 @@ object UI:
     def scrollIntoView(id: String)(using Frame): Unit < Async =
         UICommands.scrollIntoView(id)
 
+    /** An element geometry rectangle plus the current viewport size: the reply to a [[kyo.UI.Commands.requestMeasure]]
+      * . `x`/`y`/`width`/`height` are the element's `getBoundingClientRect` (viewport coordinates);
+      * `viewportWidth`/`viewportHeight` are `window.innerWidth`/`innerHeight`. All in CSS pixels.
+      */
+    final case class Rect(
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+        viewportWidth: Double,
+        viewportHeight: Double
+    ) derives CanEqual
+
+    /** Session-scoped imperative channel provided by every live kyo-ui runner (`runMount` / `runHandlers`).
+      *
+      * The normal way a kyo-ui app changes the page is declarative: edit a [[kyo.Signal]], the reactive region re-renders.
+      * `Commands` is the escape hatch for the two things a render diff cannot express: sending a whitelisted imperative DOM
+      * command to an element ([[command]]: `focus`, `scrollIntoView`) and asking the client for an element's live
+      * geometry ([[requestMeasure]]). Obtain it inside any event handler or `UI.mounted` effect via [[kyo.UI.commands]];
+      * the runner injects it per session as `Env[Commands]`.
+      *
+      * Both ride the same transport that carries render ops: the server emits an op, the client applies it (server-push:
+      * over the WebSocket; SPA: straight to the local DOM). A measure additionally flows back as an inbound `Measure` event
+      * the runner routes here, resolving the `requestMeasure` callback, so the honest pattern is "request a measure, update
+      * a Signal from the callback, re-render with correct geometry". Example: an overlay that flips above its anchor when it
+      * would overflow the viewport: on open, `requestMeasure` the panel; in the callback, if `rect.y + rect.height >
+      * rect.viewportHeight`, set a `flip` Signal the panel reads and re-renders from.
+      */
+    final class Commands private[kyo] (
+        private[kyo] val emit: internal.HtmlOp => Unit < Async,
+        private[kyo] val pending: AtomicRef[Map[Seq[String], Rect => Unit < Async]],
+        private[kyo] val pendingById: AtomicRef[Map[String, Rect => Unit < Async]],
+        private[kyo] val idCounter: AtomicInt
+    ):
+        // ---- imperative command ----
+
+        /** Send a whitelisted imperative `verb` to the element at `path`. v1 verbs: `"focus"`, `"scrollIntoView"`. Unknown
+          * verbs are silently ignored by the client (forward-compatible).
+          */
+        def command(path: Seq[String], verb: String)(using Frame): Unit < Async =
+            emit(internal.HtmlOp.Command(path, verb))
+
+        /** `command(path, "focus")`: move DOM focus to the element at `path` (e.g. OTP auto-advance: focus the next cell). */
+        def focus(path: Seq[String])(using Frame): Unit < Async = command(path, "focus")
+
+        /** `command(path, "scrollIntoView")`: scroll the element at `path` into view (`{block:"nearest"}`), e.g. a
+          * terminal/carousel scrolling its newest line into view.
+          */
+        def scrollIntoView(path: Seq[String])(using Frame): Unit < Async = command(path, "scrollIntoView")
+
+        // ---- measure round-trip ----
+
+        /** Request the client to measure the element at `path`; when the reply arrives, run `sink` with its [[kyo.UI.Rect]]
+          * (element rect + viewport). Fire-and-forget: returns as soon as the request op is emitted; `sink` runs later, when
+          * the inbound `Measure` event is routed here. A second request for the same path replaces the pending callback.
+          */
+        def requestMeasure(path: Seq[String])(sink: Rect => Unit < Async)(using Frame): Unit < Async =
+            pending.getAndUpdate(_.updated(path, sink)).andThen(emit(internal.HtmlOp.RequestMeasure(path)))
+
+        /** Transport hook: resolve the pending [[requestMeasure]] for `path` with `rect` (run + drop its callback). */
+        private[kyo] def deliverMeasure(path: Seq[String], rect: Rect)(using Frame): Unit < Async =
+            pending.getAndUpdate(_.removed(path)).map { m =>
+                m.get(path) match
+                    case Some(sink) => sink(rect)
+                    case None       => ()
+            }
+
+        // ---- Self-addressing: id minting + id-addressed command/measure ----
+
+        /** Mint a session-unique element id (`"kyo-uic-N"`, N monotonically increasing from 1). Deterministic within a
+          * session and unique across the page (no clock/random). The self-addressing pattern: a reusable component mints
+          * an id here, stamps it on one of its own elements (`.id(theId)`: id is a settable prop), and then drives
+          * [[focusId]] / [[scrollIntoViewId]] / [[requestMeasureById]] at that id, so it can self-focus/scroll/measure
+          * without ever learning its structural render path (which a component has no API to discover).
+          */
+        def freshId(using Frame): String < Sync = idCounter.incrementAndGet.map(n => s"kyo-uic-$n")
+
+        /** Id-addressed twin of [[command]]: send a whitelisted `verb` to the element with DOM id `id` (resolved client-side
+          * via `document.getElementById`). Same verb whitelist as [[command]]; unknown verbs are ignored (forward-compat).
+          */
+        def commandById(id: String, verb: String)(using Frame): Unit < Async =
+            emit(internal.HtmlOp.CommandById(id, verb))
+
+        /** `commandById(id, "focus")`: move DOM focus to the element with id `id`. */
+        def focusId(id: String)(using Frame): Unit < Async = commandById(id, "focus")
+
+        /** `commandById(id, "scrollIntoView")`: scroll the element with id `id` into view (`{block:"nearest"}`). */
+        def scrollIntoViewId(id: String)(using Frame): Unit < Async = commandById(id, "scrollIntoView")
+
+        /** Id-addressed twin of [[requestMeasure]]: measure the element with DOM id `id`. The reply (`UIEvent.MeasureById`)
+          * carries the `id`, so [[deliverMeasureById]] matches it against a SEPARATE id-keyed pending map (kept side by side
+          * with the path-keyed [[pending]] map for clarity). A second request for the same id replaces the pending callback.
+          */
+        def requestMeasureById(id: String)(sink: Rect => Unit < Async)(using Frame): Unit < Async =
+            pendingById.getAndUpdate(_.updated(id, sink)).andThen(emit(internal.HtmlOp.RequestMeasureById(id)))
+
+        /** Transport hook: resolve the pending [[requestMeasureById]] for `id` with `rect` (run + drop its callback). */
+        private[kyo] def deliverMeasureById(id: String, rect: Rect)(using Frame): Unit < Async =
+            pendingById.getAndUpdate(_.removed(id)).map { m =>
+                m.get(id) match
+                    case Some(sink) => sink(rect)
+                    case None       => ()
+            }
+    end Commands
+
+    private[kyo] object Commands:
+        /** Create a session channel over `emit` (the per-transport op sink: `ws.put` server-side, direct DOM apply in the SPA). */
+        def init(emit: internal.HtmlOp => Unit < Async)(using Frame): Commands < Sync =
+            for
+                pending     <- AtomicRef.init(Map.empty[Seq[String], Rect => Unit < Async])
+                pendingById <- AtomicRef.init(Map.empty[String, Rect => Unit < Async])
+                idCounter   <- AtomicInt.init(0)
+            yield new Commands(emit, pending, pendingById, idCounter)
+    end Commands
+
+    /** The session's [[kyo.UI.Commands]] channel (imperative commands + measure requests). Available inside any event handler
+      * or `UI.mounted` effect: the runner provides `Env[Commands]` per session.
+      */
+    def commands(using Frame): Commands < Env[Commands] = Env.get[Commands]
+
     /** Read-only stream of the full rendered HTML. Emits whenever any signal changes. First emission is the initial render. Useful for
       * testing, SSR, export, or custom transports.
       */
@@ -667,6 +787,31 @@ object UI:
         modifiers: Modifiers
     ) derives CanEqual
 
+    /** The payload delivered to an `onPointerDown`/`onPointerMove`/`onPointerUp` handler, and the wire payload of the
+      * corresponding `UIEvent` cases.
+      *
+      * `x`/`y` are the pointer position RELATIVE to the target element's top-left; `rectX`/`rectY`/`rectW`/`rectH` are the target's
+      * `getBoundingClientRect` (viewport coordinates), so a drag handler can normalize the pointer into the element's 0..1 local space
+      * (`(x/rectW, y/rectH)`) without a second round-trip. `buttons` is the pressed-button bitmask (1 = primary). `targetId` is the `id`
+      * of the element the pointer event fired on (`Absent` when it has none). Public and `derives Schema` so it doubles as the on-wire
+      * representation, mirroring how [[kyo.UI.FilePayload]] is both a public payload type and a wire field.
+      *
+      * On `pointerdown` over an element declaring `onPointerDown` the client calls `setPointerCapture`, so subsequent `pointermove`s
+      * keep streaming to the same element even outside its bounds (a real drag session); moves are coalesced to at most one per animation
+      * frame and stop on `pointerup` (which releases the capture). Only an active capture session streams moves: an idle mouse-move
+      * over the page posts nothing.
+      */
+    final case class PointerEvent(
+        x: Double,
+        y: Double,
+        rectX: Double,
+        rectY: Double,
+        rectW: Double,
+        rectH: Double,
+        buttons: Int,
+        targetId: Maybe[String]
+    ) derives CanEqual, Schema
+
     /** The case-class abstract syntax tree that every [[kyo.UI]] factory returns.
       *
       * Every node a factory builds is a value under `Ast`: the element case classes (`Div`, `Button`, `Input`, ...), the text node
@@ -872,6 +1017,27 @@ object UI:
             /** Runs `f` when the mouse wheel is used over this element, receiving the [[kyo.UI.WheelEvent]] payload. */
             def onScroll[S](f: WheelEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
                 withAttrs(attrs.copy(onScrollEvt = Present(eraseHandlerFn(f))))
+
+            /** Runs `f` on pointer-down over this element, receiving the [[kyo.UI.PointerEvent]] payload (local x/y, target rect,
+              * button mask). Declaring this starts a drag session: the client calls `setPointerCapture` on pointer-down, so the
+              * subsequent [[onPointerMove]] stream keeps flowing even when the pointer leaves the element, until [[onPointerUp]]
+              * releases the capture. Emits the `pointerdown` token in `data-kyo-ev`; bubbles like `onClick`.
+              */
+            def onPointerDown[S](f: PointerEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onPointerDown = Present(eraseHandlerFn(f))))
+
+            /** Runs `f` on each pointer-move during an active drag session started by a pointer-down on a declaring element,
+              * receiving the [[kyo.UI.PointerEvent]] payload. Moves are rAF-coalesced (at most one per animation frame, latest
+              * coordinates win), so a rapid drag delivers fewer handler calls than raw DOM move events. Emits the `pointermove` token.
+              */
+            def onPointerMove[S](f: PointerEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onPointerMove = Present(eraseHandlerFn(f))))
+
+            /** Runs `f` on pointer-up ending a drag session, receiving the [[kyo.UI.PointerEvent]] payload. The client releases the
+              * pointer capture before posting. Emits the `pointerup` token; bubbles like `onClick`.
+              */
+            def onPointerUp[S](f: PointerEvent => Any < (Abort[Throwable] & Async & S))(using Isolate[S, Sync, S]): Self =
+                withAttrs(attrs.copy(onPointerUp = Present(eraseHandlerFn(f))))
         end Interactive
 
         // ---- Layout traits ----
@@ -1093,6 +1259,9 @@ object UI:
             onUnhoverEvt: Maybe[MouseEvent => Any < Async] = Absent,
             onScroll: Maybe[Any < Async] = Absent,
             onScrollEvt: Maybe[WheelEvent => Any < Async] = Absent,
+            onPointerDown: Maybe[PointerEvent => Any < Async] = Absent,
+            onPointerMove: Maybe[PointerEvent => Any < Async] = Absent,
+            onPointerUp: Maybe[PointerEvent => Any < Async] = Absent,
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
             jsProps: Map[String, String] = Map.empty,

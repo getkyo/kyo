@@ -765,6 +765,13 @@ private[kyo] object ReactiveUI:
                 val wheel = UI.WheelEvent(ev.deltaX, ev.deltaY, ev.targetId, ev.modifiers)
                 invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel))
                     .andThen(keepBubbling(elem, attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty))
+            // Payload (UI.PointerEvent) rides the wire directly like FileSelect, so nothing is read from the element.
+            case ev: UIEvent.PointerDown =>
+                invokeWith(attrs.onPointerDown, ev.pointer).andThen(keepBubbling(elem, attrs.onPointerDown.nonEmpty))
+            case ev: UIEvent.PointerMove =>
+                invokeWith(attrs.onPointerMove, ev.pointer).andThen(keepBubbling(elem, attrs.onPointerMove.nonEmpty))
+            case ev: UIEvent.PointerUp =>
+                invokeWith(attrs.onPointerUp, ev.pointer).andThen(keepBubbling(elem, attrs.onPointerUp.nonEmpty))
             case _ => true
         end match
     end dispatchToElement
