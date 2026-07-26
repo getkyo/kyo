@@ -1749,6 +1749,9 @@ lazy val `kyo-aeron` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-ffi`)
         .dependsOn(`kyo-schema`)
+        // Schema types the public publish/stream surface; MsgPack encodes the Envelope on the wire and
+        // lives in the per-format module since the schema family split, like kyo-test-snapshot.
+        .dependsOn(`kyo-schema-msgpack`)
         .withKyoTest
         .settings(
             `kyo-settings`,
