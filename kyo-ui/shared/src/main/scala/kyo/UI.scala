@@ -406,6 +406,9 @@ object UI:
         private[kyo] val emit: internal.HtmlOp => Unit < Async,
         private[kyo] val pending: AtomicRef[Map[Seq[String], Rect => Unit < Async]],
         private[kyo] val pendingById: AtomicRef[Map[String, Rect => Unit < Async]],
+        // Viewport-observer sinks kept across replies (unlike the one-shot `pendingById`), removed only by
+        // observeViewportById's scope finalizer. An id lives in exactly one of the two maps.
+        private[kyo] val observers: AtomicRef[Map[String, Rect => Unit < Async]],
         private[kyo] val idCounter: AtomicInt
     ):
         // ---- imperative command ----
@@ -470,13 +473,53 @@ object UI:
         def requestMeasureById(id: String)(sink: Rect => Unit < Async)(using Frame): Unit < Async =
             pendingById.getAndUpdate(_.updated(id, sink)).andThen(emit(internal.HtmlOp.RequestMeasureById(id)))
 
-        /** Transport hook: resolve the pending [[requestMeasureById]] for `id` with `rect` (run + drop its callback). */
+        /** Transport hook: deliver `rect` for `id`. Checks BOTH maps: a PERSISTENT [[observers]] sink (viewport
+          * observation) is run and KEPT (the stream continues); otherwise the one-shot [[pendingById]] callback is run
+          * and dropped. An id is only ever in one map, so the observer branch takes precedence and short-circuits.
+          */
         private[kyo] def deliverMeasureById(id: String, rect: Rect)(using Frame): Unit < Async =
-            pendingById.getAndUpdate(_.removed(id)).map { m =>
-                m.get(id) match
+            observers.get.map { obs =>
+                obs.get(id) match
                     case Some(sink) => sink(rect)
-                    case None       => ()
+                    case None =>
+                        pendingById.getAndUpdate(_.removed(id)).map { m =>
+                            m.get(id) match
+                                case Some(sink) => sink(rect)
+                                case None       => ()
+                        }
             }
+
+        // ---- in-place reactive attribute patching + viewport observation ----
+
+        /** Bind a class on the element with DOM id `id` to `on`: fork a mount-lifetime fiber that observes the signal and
+          * emits [[internal.HtmlOp.SetClassById]]`(id, className, value)` on every emission (including the current value
+          * at subscribe). The client toggles the class WITHOUT replacing the element, so CSS transitions on that class
+          * fire, the whole point of this channel over a `Reactive` re-render. The fiber (and thus the subscription) is
+          * bound to the current [[kyo.Scope]] and cancelled on scope close. Idempotent with any baked-in initial class.
+          */
+        def bindClassById(id: String, className: String, on: Signal[Boolean])(using Frame): Unit < (Async & Scope) =
+            Fiber.init(on.observe(v => emit(internal.HtmlOp.SetClassById(id, className, v)))).unit
+
+        /** Bind the inline style of the element with DOM id `id` to `style`: fork a mount-lifetime fiber that observes the
+          * signal and emits [[internal.HtmlOp.SetStyleById]] with the serialized declaration string on every emission
+          * (including the current value at subscribe). The client MERGES the declarations over the element's existing
+          * inline props (no full `style=""` clobber), so transitions fire. Cancelled on scope close.
+          */
+        def bindStyleById(id: String, style: Signal[Style])(using Frame): Unit < (Async & Scope) =
+            Fiber.init(style.observe(v => emit(internal.HtmlOp.SetStyleById(id, internal.CssStyleRenderer.render(v))))).unit
+
+        /** Continuously observe the viewport geometry of the element with DOM id `id`: register `sink` in the persistent
+          * [[observers]] map, emit [[internal.HtmlOp.ObserveViewportById]] (the client measures now and attaches
+          * scroll+resize listeners that each reply with a `MeasureById(id)`), and register a [[kyo.Scope]] finalizer that
+          * emits [[internal.HtmlOp.UnobserveViewportById]] AND drops the sink. Replies arrive as `MeasureById(id)` and are
+          * routed to `sink` by [[deliverMeasureById]] (kept, not removed) for as long as the scope is open.
+          */
+        def observeViewportById(id: String)(sink: Rect => Unit < Async)(using Frame): Unit < (Async & Scope) =
+            observers.getAndUpdate(_.updated(id, sink))
+                .andThen(emit(internal.HtmlOp.ObserveViewportById(id)))
+                .andThen(Scope.ensure(
+                    emit(internal.HtmlOp.UnobserveViewportById(id)).andThen(observers.getAndUpdate(_.removed(id)))
+                ))
     end Commands
 
     private[kyo] object Commands:
@@ -485,8 +528,9 @@ object UI:
             for
                 pending     <- AtomicRef.init(Map.empty[Seq[String], Rect => Unit < Async])
                 pendingById <- AtomicRef.init(Map.empty[String, Rect => Unit < Async])
+                observers   <- AtomicRef.init(Map.empty[String, Rect => Unit < Async])
                 idCounter   <- AtomicInt.init(0)
-            yield new Commands(emit, pending, pendingById, idCounter)
+            yield new Commands(emit, pending, pendingById, observers, idCounter)
     end Commands
 
     /** The session's [[kyo.UI.Commands]] channel (imperative commands + measure requests). Available inside any event handler

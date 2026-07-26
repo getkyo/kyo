@@ -261,4 +261,31 @@ class DomBackendTest extends UITest:
         }
     }
 
+    // The sibling `tick` signal bumps the reactive region containing `host`, so morphAttrs runs against server HTML
+    // that lacks the owned class, proving the ownership guard shields the client-set class from reconciliation.
+    "imperatively-bound class survives a re-render morph of its element" in {
+        val app: UI < Async =
+            for
+                tick <- Signal.initRef(0)
+                on   <- Signal.initRef(true)
+            yield UI.div(
+                UI.button("tick").id("tick").onClick(tick.getAndUpdate(_ + 1).unit),
+                tick.map(t => UI.div.id("host")(UI.span(s"t:$t").id("txt"))),
+                UI.mounted {
+                    for
+                        cmds <- UI.commands
+                        _    <- cmds.bindClassById("host", "owned-cls", on)
+                    yield UI.empty
+                }.placeholder(UI.empty)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.waitForAttribute(Selector.id("host"), "class", "owned-cls")
+                _ <- Browser.click(Selector.id("tick"))
+                _ <- Browser.assertText(Selector.id("txt"), "t:1") // the element was morphed
+                _ <- Browser.assertAttribute(Selector.id("host"), "class", "owned-cls")
+            yield ()
+        }
+    }
+
 end DomBackendTest

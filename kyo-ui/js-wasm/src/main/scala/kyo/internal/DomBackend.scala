@@ -8,6 +8,35 @@ import scala.scalajs.js
 /** Scala.js UI backend. Mounts a UI into the browser DOM. */
 private[kyo] object DomBackend:
 
+    /** The page-scoped drain channel, captured once per mount so the viewport scroll/resize listeners (raw JS
+      * callbacks, outside any Kyo context) can bridge their `deliverMeasureById` effect back in via [[fireFromJs]].
+      * Set in `mountInto` before any op can be emitted. Module-level mutable state is safe on the single-threaded runtime.
+      */
+    private var sessionEvents: Maybe[Channel[Unit < Async]] = Absent
+
+    /** Live viewport observers for the SPA transport, keyed by element id. Each entry is the single handler
+      * registered for BOTH `window` scroll (capture phase) and resize; Unobserve removes it from both and drops the
+      * entry. Backed by a native `js.Map` (mirrors `UIMouseEventOps`), giving `contains`/`apply`/`update`/`remove`.
+      */
+    private val viewportObservers: js.WrappedMap[String, js.Function1[dom.Event, Unit]] =
+        new js.WrappedMap(js.Map.empty[String, js.Function1[dom.Event, Unit]])
+
+    /** Mark attribute `name` on `el` as owned by the imperative id-addressed channel (SetClassById/SetStyleById),
+      * applied out of the render pass so CSS transitions on the toggled class/style fire. The owned names live in a
+      * `__kyoOwn` expando dict ON the element, so the flag is reclaimed with the node (no session-lived set that only
+      * ever grows) and `morphAttrs` shields each owned attribute BY NAME. Mirrors `__kyoMark` in HtmlRenderer.clientJs.
+      */
+    private def markOwned(el: dom.Element, name: String): Unit =
+        val d = el.asInstanceOf[js.Dynamic]
+        val own =
+            if js.isUndefined(d.__kyoOwn) then
+                val fresh = js.Dictionary.empty[Boolean]
+                d.__kyoOwn = fresh.asInstanceOf[js.Any]
+                fresh
+            else d.__kyoOwn.asInstanceOf[js.Dictionary[Boolean]]
+        own.update(name, true)
+    end markOwned
+
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
         mountInto(ui, document.body)
@@ -60,6 +89,7 @@ private[kyo] object DomBackend:
                     // Fiber.init consumer (interrupted on page teardown). The single consumer preserves event ordering
                     // and is scoped, so page teardown interrupt propagates to the drain via the ambient Scope.
                     events <- Channel.init[Unit < Async](256)
+                    _ = sessionEvents = Present(events)
                     // runPartial captures only the Closed failure (the channel closed on page teardown -> stop draining);
                     // a Panic propagates rather than being silently swallowed as a clean drain end. The drain carries the
                     // session's scroll sink: a handler calling UI.scrollIntoView scrolls the local document, the
@@ -165,9 +195,76 @@ private[kyo] object DomBackend:
                     case Present(rect) => commands().deliverMeasureById(id, rect)
                     case Absent        => Kyo.unit
                 }
+            case HtmlOp.SetClassById(id, className, on) =>
+                Sync.defer {
+                    val el = document.getElementById(id)
+                    if el != null then
+                        markOwned(el, "class")
+                        discard(el.classList.toggle(className, on))
+                }
+            case HtmlOp.SetStyleById(id, css) =>
+                Sync.defer {
+                    val el = document.getElementById(id)
+                    if el != null then
+                        markOwned(el, "style")
+                        mergeStyleDomById(id, css)
+                }
+            case HtmlOp.ObserveViewportById(id) =>
+                Sync.defer(registerViewportObserver(id, commands)).andThen(
+                    Sync.defer(measureDomById(id)).map {
+                        case Present(rect) => commands().deliverMeasureById(id, rect)
+                        case Absent        => Kyo.unit
+                    }
+                )
+            case HtmlOp.UnobserveViewportById(id) =>
+                Sync.defer(unregisterViewportObserver(id))
             // Replace/Remove/InjectCss reach the DOM through LocalExchange, never this imperative channel.
             case _ => Kyo.unit
     end applyOpLocal
+
+    /** Merges a serialized `Style` declaration string ("prop:val;prop:val") onto getElementById(id) with setProperty
+      * per declaration, so it merges over other inline props rather than clobbering them (unlike a full `style=""`
+      * replace). Blank declarations and those without a `:` are skipped.
+      */
+    private def mergeStyleDomById(id: String, css: String): Unit =
+        val el = document.getElementById(id)
+        if el != null then
+            val style = el.asInstanceOf[dom.HTMLElement].style
+            css.split(';').foreach { decl =>
+                val trimmed = decl.trim
+                if trimmed.nonEmpty then
+                    val colon = trimmed.indexOf(':')
+                    if colon > 0 then
+                        style.setProperty(trimmed.substring(0, colon).trim, trimmed.substring(colon + 1).trim)
+                end if
+            }
+        end if
+    end mergeStyleDomById
+
+    /** Attaches a single handler to `window` scroll (capture) + resize that re-measures getElementById(id) and
+      * bridges the deliver back into the drain via [[fireFromJs]]. Guards against double-registration for the same id.
+      */
+    private def registerViewportObserver(id: String, commands: () => UI.Commands)(using Frame): Unit =
+        if !viewportObservers.contains(id) then
+            val handler: js.Function1[dom.Event, Unit] = (_: dom.Event) =>
+                measureDomById(id) match
+                    case Present(rect) => sessionEvents.foreach(ev => fireFromJs(ev, commands().deliverMeasureById(id, rect)))
+                    case Absent        => ()
+            viewportObservers(id) = handler
+            dom.window.addEventListener("scroll", handler, true)
+            dom.window.addEventListener("resize", handler)
+        end if
+    end registerViewportObserver
+
+    /** Removes the scroll/resize handler registered for `id` (from both listeners) and drops the map entry. */
+    private def unregisterViewportObserver(id: String): Unit =
+        if viewportObservers.contains(id) then
+            val handler = viewportObservers(id)
+            dom.window.removeEventListener("scroll", handler, true)
+            dom.window.removeEventListener("resize", handler)
+            discard(viewportObservers.remove(id))
+        end if
+    end unregisterViewportObserver
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:
@@ -901,7 +998,12 @@ private[kyo] object DomBackend:
     end morphEl
 
     private def morphAttrs(fromEl: dom.Element, toEl: dom.Element): Unit =
-        val tag = fromEl.tagName
+        // An attribute the imperative id-addressed channel owns (its name is in the element's `__kyoOwn` expando dict)
+        // is never reconciled: server HTML never carries the client-set value, so reconciling would clobber it.
+        val own                         = fromEl.asInstanceOf[js.Dynamic].__kyoOwn
+        val ownDict                     = if js.isUndefined(own) then null else own.asInstanceOf[js.Dictionary[Boolean]]
+        def owns(name: String): Boolean = ownDict != null && ownDict.contains(name)
+        val tag                         = fromEl.tagName
         val activeInput =
             (fromEl eq document.activeElement) && (tag == "INPUT" || tag == "TEXTAREA")
         val toAttrs = toEl.attributes
@@ -909,7 +1011,7 @@ private[kyo] object DomBackend:
         while i < toAttrs.length do
             val a    = toAttrs(i)
             val name = a.name
-            if fromEl.getAttribute(name) != a.value then fromEl.setAttribute(name, a.value)
+            if !owns(name) && fromEl.getAttribute(name) != a.value then fromEl.setAttribute(name, a.value)
             i += 1
         end while
         // Remove attributes gone from `to`. Walk the live NamedNodeMap backward so a removal never shifts an
@@ -918,7 +1020,7 @@ private[kyo] object DomBackend:
         var j         = fromAttrs.length - 1
         while j >= 0 do
             val name = fromAttrs(j).name
-            if !toEl.hasAttribute(name) then fromEl.removeAttribute(name)
+            if !owns(name) && !toEl.hasAttribute(name) then fromEl.removeAttribute(name)
             j -= 1
         end while
         // Active-input preservation: two-way binding echoes each keystroke back as a re-render. Never overwrite the

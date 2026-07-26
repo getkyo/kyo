@@ -770,6 +770,10 @@ private[kyo] object HtmlRenderer:
         s"""(function(){
            |var base="$basePath";
            |var __q=[];
+           |// Mark an attr name as owned by the imperative id-addressed channel: names live in a __kyoOwn expando dict
+           |// ON the element (reclaimed with the node), which __kyoMorphAttrs reads to shield each owned attr from
+           |// reconciliation. Mirrors markOwned in DomBackend.
+           |function __kyoMark(el,n){(el.__kyoOwn||(el.__kyoOwn={}))[n]=true;}
            |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
            |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
            |ws.onmessage=function(e){
@@ -843,6 +847,29 @@ private[kyo] object HtmlRenderer:
            |    if(rmiel){
            |      var rmir=rmiel.getBoundingClientRect();
            |      post({MeasureById:{path:[],id:op.RequestMeasureById.id,rectX:rmir.left,rectY:rmir.top,rectW:rmir.width,rectH:rmir.height,viewportW:window.innerWidth,viewportH:window.innerHeight}});
+           |    }
+           |  }else if(op.SetClassById){
+           |    var scel=document.getElementById(op.SetClassById.id);if(scel){__kyoMark(scel,"class");scel.classList.toggle(op.SetClassById.className,op.SetClassById.on);}
+           |  }else if(op.SetStyleById){
+           |    var ssel=document.getElementById(op.SetStyleById.id);
+           |    if(ssel){__kyoMark(ssel,"style");var ssd=op.SetStyleById.css.split(";");for(var ssi=0;ssi<ssd.length;ssi++){var ssc=ssd[ssi].trim();if(!ssc)continue;var sso=ssc.indexOf(":");if(sso>0)ssel.style.setProperty(ssc.substring(0,sso).trim(),ssc.substring(sso+1).trim());}}
+           |  }else if(op.ObserveViewportById){
+           |    var vid=op.ObserveViewportById.id;
+           |    window.__kyoVpObs=window.__kyoVpObs||{};
+           |    if(!window.__kyoVpObs[vid]){
+           |      var vh=function(){var ve=document.getElementById(vid);if(ve){var vr=ve.getBoundingClientRect();post({MeasureById:{path:[],id:vid,rectX:vr.left,rectY:vr.top,rectW:vr.width,rectH:vr.height,viewportW:window.innerWidth,viewportH:window.innerHeight}});}};
+           |      window.__kyoVpObs[vid]=vh;
+           |      window.addEventListener("scroll",vh,true);
+           |      window.addEventListener("resize",vh);
+           |      vh();
+           |    }
+           |  }else if(op.UnobserveViewportById){
+           |    var uid=op.UnobserveViewportById.id;
+           |    if(window.__kyoVpObs&&window.__kyoVpObs[uid]){
+           |      var uh=window.__kyoVpObs[uid];
+           |      window.removeEventListener("scroll",uh,true);
+           |      window.removeEventListener("resize",uh);
+           |      delete window.__kyoVpObs[uid];
            |    }
            |  }
            |};
@@ -990,12 +1017,15 @@ private[kyo] object HtmlRenderer:
            |}
            |function __kyoCompat(a,b){return a.nodeType===b.nodeType&&(a.nodeType!==1||a.tagName===b.tagName);}
            |function __kyoMorphAttrs(fromEl,toEl){
+           |  // An attribute the imperative id-addressed channel owns (its name is in the element's __kyoOwn expando) is
+           |  // never reconciled: server HTML never carries the client-set value, so reconciling would clobber it.
+           |  var own=fromEl.__kyoOwn;
            |  var tag=fromEl.tagName;
            |  var activeInput=(fromEl===document.activeElement)&&(tag==="INPUT"||tag==="TEXTAREA");
            |  var ta=toEl.attributes,i;
-           |  for(i=0;i<ta.length;i++){var a=ta[i];if(fromEl.getAttribute(a.name)!==a.value)fromEl.setAttribute(a.name,a.value);}
+           |  for(i=0;i<ta.length;i++){var a=ta[i];if(!(own&&own[a.name])&&fromEl.getAttribute(a.name)!==a.value)fromEl.setAttribute(a.name,a.value);}
            |  var fa=fromEl.attributes,j;
-           |  for(j=fa.length-1;j>=0;j--){var fn=fa[j].name;if(!toEl.hasAttribute(fn))fromEl.removeAttribute(fn);}
+           |  for(j=fa.length-1;j>=0;j--){var fn=fa[j].name;if(!(own&&own[fn])&&!toEl.hasAttribute(fn))fromEl.removeAttribute(fn);}
            |  // Never overwrite a focused field's live .value (its caret) with its own two-way-binding echo (value
            |  // already matches); assign only a genuine external change (submit-clear, programmatic update).
            |  if(activeInput){var nv=(tag==="TEXTAREA")?toEl.textContent:(toEl.getAttribute("value")||"");if(nv!==fromEl.value)fromEl.value=nv;}
