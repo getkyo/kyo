@@ -54,7 +54,7 @@ abstract private[kyo] class AeronTransport:
       *
       * The Aeron conductor calls the installed recording error handler on fatal conditions (driver
       * timeout, conductor service timeout, buffer full), which writes a slot (C:
-      * kyo_aeron_error_slot under pthread_mutex; JVM: AtomicReference). `Topic` reads that slot
+      * kyo_aeron_error_slot under pthread_mutex; JVM: AtomicRef.Unsafe). `Topic` reads that slot
       * here at the offer/poll boundary on every transport operation and aborts with
       * TopicTransportFailedException when present.
       */

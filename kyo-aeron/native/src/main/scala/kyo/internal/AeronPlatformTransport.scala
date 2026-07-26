@@ -69,5 +69,7 @@ private[kyo] object AeronPlatformTransport:
             case n: FfiNullPointer =>
                 Abort.fail(TopicTransportFailedException(Maybe(n.getMessage).filter(_.nonEmpty).getOrElse(n.toString), n))
             case t: Throwable => Abort.panic(t)
-            case other        => Abort.panic(new RuntimeException(s"unexpected Aeron connect failure: $other"))
+            // Not a Throwable, so there is no cause to chain: carry the value's rendering in the
+            // cause channel (KyoException takes String | Throwable) rather than only in the message.
+            case other => Abort.panic(TopicTransportFailedException("connect failed with a non-throwable value", s"$other"))
 end AeronPlatformTransport
