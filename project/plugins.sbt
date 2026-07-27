@@ -43,7 +43,3 @@ Compile / unmanagedSourceDirectories ++= {
     val pluginRoot = baseDirectory.value.getParentFile / "kyo-ffi" / "plugin"
     Seq(pluginRoot / "src" / "main" / "scala")
 }
-
-libraryDependencies ++= Seq(
-    "org.typelevel" %% "scalac-options" % "0.1.11"
-)

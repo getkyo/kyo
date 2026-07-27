@@ -1,10 +1,10 @@
 import WasmCrossProject.*
 import WithKyoTest._
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
+import kyo.build.ScalacOption
+import kyo.build.ScalacOptions
+import kyo.build.ScalaVersion
 import org.scalajs.jsenv.nodejs.*
-import org.typelevel.scalacoptions.ScalacOption
-import org.typelevel.scalacoptions.ScalacOptions
-import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 import scala.scalanative.build.NativeConfig
 
@@ -261,7 +261,6 @@ lazy val kyoJVM: Project = project
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
-        `kyo-scheduler-cats`.jvm,
         `kyo-scheduler-finagle`.jvm,
         `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
@@ -306,7 +305,6 @@ lazy val kyoJVM: Project = project
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
         `kyo-zio`.jvm,
-        `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
@@ -321,7 +319,6 @@ lazy val kyoJVM: Project = project
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
-        `kyo-compat-ce`.jvm,
         `kyo-compat-ox`.jvm,
         `kyo-compat-twitter-future`.jvm,
         `kyo-compat-plugin`,
@@ -362,7 +359,6 @@ lazy val kyoJS = project
         `kyo-stats-machine`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
-        `kyo-cats`.js,
         `kyo-combinators`.js,
         `kyo-case-app`.js,
         `kyo-actor`.js,
@@ -394,7 +390,6 @@ lazy val kyoJS = project
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
         `kyo-compat-zio`.js,
-        `kyo-compat-ce`.js,
         `kyo-test-api`.js,
         `kyo-test-runner`.js,
         `kyo-test-prop`.js,
@@ -570,22 +565,6 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         `native-settings`,
         crossScalaVersions := List(scala3LTSVersion)
     )
-
-lazy val `kyo-scheduler-cats` =
-    crossProject(JVMPlatform)
-        .crossType(CrossType.Full)
-        .dependsOn(`kyo-scheduler`)
-        .in(file("kyo-scheduler-cats"))
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
-            libraryDependencies += "org.scalatest" %%% "scalatest"   % scalaTestVersion % Test
-        )
-        .jvmSettings(mimaCheck(false))
-        .settings(
-            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
-        )
 
 lazy val `kyo-scheduler-pekko` =
     crossProject(JVMPlatform)
@@ -1180,14 +1159,11 @@ lazy val `kyo-tasty` =
             // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
             // loads only .tasty files in the jar; missing transitive deps produce
             // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
-            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20"  % Test intransitive (),
-            libraryDependencies += "org.typelevel"     %% "cats-effect"     % "3.7.0"   % Test intransitive (),
-            libraryDependencies += "org.http4s"        %% "http4s-core"     % "0.23.28" % Test intransitive (),
-            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"   % Test intransitive (),
-            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"   % Test intransitive (),
-            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"   % Test intransitive (),
-            libraryDependencies += "org.typelevel"     %% "spire"           % "0.18.0"  % Test intransitive (),
-            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15"  % Test intransitive ()
+            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20" % Test intransitive (),
+            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"  % Test intransitive (),
+            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"  % Test intransitive (),
+            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"  % Test intransitive (),
+            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15" % Test intransitive ()
         )
         .nativeSettings(`native-settings`)
         .jsSettings(
@@ -2155,22 +2131,6 @@ lazy val `kyo-zio` =
         .jvmSettings(mimaCheck(false))
         .wasmSettings(`wasm-settings`)
 
-// TODO(wasm): re-enable once cats-effect supports WASM (typelevel/cats-effect#4608).
-lazy val `kyo-cats` =
-    crossProject(JSPlatform, JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-cats"))
-        .dependsOn(`kyo-core`)
-        .withKyoTest
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
-        )
-        .jsSettings(
-            `js-settings`
-        )
-        .jvmSettings(mimaCheck(false))
-
 lazy val `kyo-compat-future` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -2273,38 +2233,6 @@ lazy val `kyo-compat-zio` =
         )
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .wasmSettings(`wasm-settings`)
-
-// TODO(wasm): re-enable with cats-effect WASM support; depends on cats-effect (see kyo-cats).
-lazy val `kyo-compat-ce` =
-    crossProject(JSPlatform, JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-compat/bindings/ce"))
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
-            scalacOptions += "-Xmax-inlines:1024",
-            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
-            libraryDependencies += "co.fs2"        %%% "fs2-core"    % "3.13.0",
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
-            },
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "shared" / "src" / "test" / "scala"
-            }
-        )
-        .jsSettings(`js-settings`)
-        .jvmSettings(
-            mimaCheck(false),
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "jvm" / "src" / "test" / "scala"
-            },
-            Test / unmanagedSourceDirectories += {
-                (ThisBuild / baseDirectory).value / "kyo-compat" / "test-streams" / "jvm" / "src" / "test" / "scala"
-            }
-        )
-        .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
 
 lazy val `kyo-compat-ox` =
     crossProject(JVMPlatform)
@@ -2767,7 +2695,6 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
-        .dependsOn(`kyo-scheduler-cats`)
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
@@ -2856,7 +2783,6 @@ lazy val `root-readme` =
             `kyo-direct`.jvm,
             `kyo-bench`.jvm,
             `kyo-zio`.jvm,
-            `kyo-cats`.jvm,
             `kyo-caliban`.jvm,
             `kyo-combinators`.jvm
         )

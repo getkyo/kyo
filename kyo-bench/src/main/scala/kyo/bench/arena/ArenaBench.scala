@@ -25,11 +25,7 @@ abstract class ArenaBench[A](val expectedResult: A) extends BaseBench:
             zio.Runtime.default.unsafe
     end zioRuntime
 
-    given ioRuntime: cats.effect.unsafe.IORuntime =
-        if System.getProperty("replaceCatsExecutor", "false") == "true" then
-            kyo.KyoSchedulerIORuntime.global
-        else
-            cats.effect.unsafe.implicits.global
+    given ioRuntime: cats.effect.unsafe.IORuntime = cats.effect.unsafe.implicits.global
 end ArenaBench
 
 object ArenaBench:
