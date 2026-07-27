@@ -234,17 +234,15 @@ assert(span.start == 7 && span.end == 9)
 
 ### AsMessage: the wire codec
 
-`Compiler.AsMessage[A]` is a type alias for upickle's `ReadWriter[A]`, and every result type derives it. That single derive is what lets a result round-trip to a forked worker, ride a `Topic`, or serialize onto an LSP connection.
+`Compiler.AsMessage[A]` is a type alias for kyo-schema's `Schema[A]`, and every result type derives it. That single derive is what lets a result round-trip to a forked worker, ride a `Topic`, or serialize onto an LSP connection.
 
 ```scala
-import upickle.default.*
-
 val diag = Compiler.Diagnostic(
     span = Compiler.Span(7, 9),
     severity = Compiler.Severity.Warning,
     message = "unused value xs"
 )
-val decoded = readBinary[Compiler.Diagnostic](writeBinary(diag))
+val decoded = MsgPack.decode[Compiler.Diagnostic](MsgPack.encode(diag)).getOrThrow
 assert(decoded == diag)
 assert(diag.code == Absent)
 ```

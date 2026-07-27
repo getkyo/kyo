@@ -6,15 +6,14 @@ import kyo.internal.*
 import org.eclipse.lsp4j.jsonrpc.messages.Either as LspEither
 import org.eclipse.lsp4j as lsp4j
 import scala.jdk.CollectionConverters.*
-import upickle.default.*
 
 class WireTest extends kyo.test.Test[Any]:
 
     "every Request case round-trips through the AsMessage codec" in {
         val uri = Compiler.Uri("Main.scala")
 
-        def roundTrip[T: ReadWriter](value: T): T =
-            readBinary[T](writeBinary[T](value))
+        def roundTrip[T: Schema](value: T): T =
+            MsgPack.decode[T](MsgPack.encode(value)).getOrThrow
 
         val cases: List[Request] = List(
             Request.Compile(uri, "object Main"),
@@ -30,8 +29,8 @@ class WireTest extends kyo.test.Test[Any]:
     "every Response and Envelope case round-trips through the AsMessage codec" in {
         val uri = Compiler.Uri("Main.scala")
 
-        def roundTrip[T: ReadWriter](value: T): T =
-            readBinary[T](writeBinary[T](value))
+        def roundTrip[T: Schema](value: T): T =
+            MsgPack.decode[T](MsgPack.encode(value)).getOrThrow
 
         val responses: List[Response] = List(
             Response.Diagnostics(Chunk(
@@ -68,24 +67,17 @@ class WireTest extends kyo.test.Test[Any]:
             case _                    => assert(false)
     }
 
-    "a corrupt envelope decode raises a contained throw, never a silent success" in {
+    "a corrupt envelope decode fails, never a silent success" in {
+        // MsgPack.decode returns a Result rather than throwing, so a corrupt or wrong-typed payload
+        // surfaces as a non-Success rather than a contained throw.
         val truncatedBytes: Array[Byte] = Array[Byte](0, 1, 2)
+        val truncatedResult             = MsgPack.decode[Envelope](Span.from(truncatedBytes))
+        assert(!truncatedResult.isSuccess, s"truncated bytes must not decode as an Envelope; got $truncatedResult")
 
-        Abort.run[Throwable](Sync.defer(readBinary[Envelope](truncatedBytes))).map { truncatedResult =>
-            assert(truncatedResult.isFailure)
-            truncatedResult match
-                case Result.Success(_) => assert(false)
-                case _                 => ()
-        }.andThen {
-            val uri          = Compiler.Uri("x")
-            val requestBytes = writeBinary[Request](Request.Compile(uri, ""))
-            Abort.run[Throwable](Sync.defer(readBinary[Envelope](requestBytes))).map { unknownTagResult =>
-                assert(unknownTagResult.isFailure)
-                unknownTagResult match
-                    case Result.Success(_) => assert(false)
-                    case _                 => ()
-            }
-        }
+        val uri          = Compiler.Uri("x")
+        val requestBytes = MsgPack.encode[Request](Request.Compile(uri, "")).toArray
+        val unknownTag   = MsgPack.decode[Envelope](Span.from(requestBytes))
+        assert(!unknownTag.isSuccess, s"a Request payload must not decode as an Envelope; got $unknownTag")
     }
 
     "LineIndex maps line/character positions to UTF-16 offsets, including CRLF and tab" in {
@@ -209,9 +201,9 @@ class WireTest extends kyo.test.Test[Any]:
     }
 
     "toHover adapter: Left-side contents (MarkedString list), Right-side MarkupContent, and empty Optional" in {
-        // Build a HoverSignature stub whose toLsp returns a Hover with Left-side contents:
-        // one plain-String element and one MarkedString element with a language tag.
-        // A Left-side hover carries a list of String/MarkedString entries; the renderer reads that list, never the absent Right (MarkupContent) side.
+        // A Left-side hover carries a list of String/MarkedString entries; the renderer reads that list,
+        // never the absent Right (MarkupContent) side. This stub returns one plain String plus one
+        // MarkedString with a language tag.
         val plainElem  = LspEither.forLeft[String, lsp4j.MarkedString]("**Int**")
         val ms         = new lsp4j.MarkedString("scala", "val x: Int")
         val markedElem = LspEither.forRight[String, lsp4j.MarkedString](ms)
@@ -343,8 +335,8 @@ class WireTest extends kyo.test.Test[Any]:
             Wire.toCompletions(new lsp4j.CompletionList(JArrays.asList(item))).head.kind
         end completionKind
 
-        // The just-extended lsp4j kinds collapse onto the narrower neutral kinds:
-        // Constructor/Method -> Method, Property/Field -> Field, Struct -> Class, Enum -> Type.
+        // lsp4j's broader kinds collapse onto the narrower neutral kinds: Constructor/Method -> Method,
+        // Property/Field -> Field, Struct -> Class, Enum -> Type.
         assert(completionKind(lsp4j.CompletionItemKind.Constructor) == Compiler.Completion.Kind.Method)
         assert(completionKind(lsp4j.CompletionItemKind.Method) == Compiler.Completion.Kind.Method)
         assert(completionKind(lsp4j.CompletionItemKind.Property) == Compiler.Completion.Kind.Field)

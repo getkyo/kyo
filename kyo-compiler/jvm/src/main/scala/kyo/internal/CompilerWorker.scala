@@ -1,6 +1,5 @@
 package kyo.internal
 
-import io.aeron.Aeron
 import kyo.*
 
 /** The forked-worker JVM entry point.
@@ -14,8 +13,9 @@ import kyo.*
   */
 object CompilerWorker extends KyoApp:
 
-    // The worker entry point is a synthesized-frame boundary: no user frame exists at a process main,
-    // so the run call and its block root their Frame here (Frame cannot derive in `package kyo`).
+    /** Roots the `Frame` for the run call and its block. A process main has no user frame to derive
+      * one from, and `Frame` cannot derive inside `package kyo` anyway.
+      */
     private given Frame = Frame.internal
 
     run {
@@ -87,19 +87,17 @@ private[internal] object WorkerServer:
         Frame
     ): Unit < (Async & Abort[CompilerException] & Scope) =
         LocalBackend.init(config).map { backend =>
-            connect(aeronDir).map { aeron =>
-                // The serve loop runs until the request/reply session breaks. A transport break (a
-                // `Closed` medium, or backpressure the publish retry cannot clear) is NEVER swallowed
-                // per response: it propagates here, ends the loop, and stops the worker, so the host's
-                // Exchange observes a broken session and fails its pending op with a typed
-                // `TransportError` rather than hanging on a silently dropped reply. The host then
-                // force-kills and respawns. The break is logged, not discarded.
+            // A failed connect to the host's medium is a transport failure for this worker.
+            Abort.recover[TopicTransportFailedException](e => Abort.fail(CompilerTransportException(e)))(connect(aeronDir)).map { aeron =>
+                // The serve loop runs until the session breaks. A transport break (a `Closed` medium, or
+                // backpressure the retry cannot clear) is never swallowed per response: it propagates, ends
+                // the loop, and lets the host's Exchange fail its pending op with a typed `TransportError`.
                 Topic.run(aeron) {
                     Topic.stream[Envelope]("aeron:ipc", Topic.defaultRetrySchedule, Present(reqStreamId)).foreach {
                         case Envelope.Req(id, request) => respond(backend, respStreamId, id, request)
                         case _                         => ()
                     }
-                }.handle(Abort.run[Closed | Topic.Backpressured]).map {
+                }.handle(Abort.run[TopicBackpressureException | TopicPublishException | TopicTransportException]).map {
                     case Result.Success(_) => ()
                     case break             => Log.warn(s"[worker] serve session ended: $break")
                 }
@@ -110,17 +108,15 @@ private[internal] object WorkerServer:
       * spawning host created), Scope-bound so the client is closed on scope close. The worker shares
       * the host's one `aeron:ipc` medium rather than launching a second driver.
       */
-    private def connect(aeronDir: String)(using Frame): Aeron < (Sync & Scope) =
-        Scope.acquireRelease(
-            Sync.defer(Aeron.connect(new Aeron.Context().aeronDirectoryName(aeronDir)))
-        )(a => Sync.defer(a.close()))
+    private def connect(aeronDir: String)(using Frame): AeronClient < (Scope & Async & Abort[TopicTransportFailedException]) =
+        AeronClient.connect(Path(aeronDir))
 
     /** Drives the backend for one request and publishes the id-matched response; a backend failure or
       * panic is reported as a `Response.Failed` frame rather than killing the serve loop.
       */
     private def respond(backend: Backend, respStreamId: Int, id: Int, request: Request)(using
         Frame
-    ): Unit < (Async & Abort[Closed | Topic.Backpressured] & Topic) =
+    ): Unit < (Async & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Topic) =
         Abort.run[CompilerException](backend.run(request)).map {
             case Result.Success(response) => publish(respStreamId, Envelope.Resp(id, response))
             case Result.Failure(error)    => publish(respStreamId, Envelope.Resp(id, Response.Failed(error)))
@@ -131,6 +127,8 @@ private[internal] object WorkerServer:
       * cannot clear) is NOT swallowed here: it propagates so the serve loop ends and the host observes
       * a broken session instead of hanging on a silently dropped reply.
       */
-    private def publish(respStreamId: Int, frame: Envelope)(using Frame): Unit < (Async & Abort[Closed | Topic.Backpressured] & Topic) =
+    private def publish(respStreamId: Int, frame: Envelope)(using
+        Frame
+    ): Unit < (Async & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Topic) =
         Topic.publish[Envelope]("aeron:ipc", Topic.defaultRetrySchedule, Present(respStreamId))(Stream.init(Chunk(frame)))
 end WorkerServer
