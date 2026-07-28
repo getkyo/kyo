@@ -94,6 +94,35 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("-pthread")
     }
 
+    test("buildCommand: MSVC routes /LIBPATH and libs through /link so the linker finds a vendored .lib") {
+        // Regression: `/LIBPATH:` is a linker option cl silently ignores on the compiler command line,
+        // so a vendored library named by linkLibs + libDirs (e.g. aeron_driver_static.lib staged under a
+        // build dir) is unfindable unless the search dir and the lib follow `/link` (LNK1181 otherwise).
+        val src = new File("/tmp/kyo_aeron.c")
+        val out = new File("/tmp/kyo_aeron-windows-x86_64.dll")
+        val libDir = new File("/tmp/staged/lib")
+        val cmd = CCompiler.buildCommand(
+            cc = "cl",
+            family = CCompiler.Msvc,
+            cFlags = Seq("/MD"),
+            linkFlags = Nil,
+            linkLibs = Seq("aeron_driver_static", "ws2_32"),
+            sources = Seq(src),
+            includes = Nil,
+            outFile = out,
+            staticLink = false,
+            libDirs = Seq(libDir),
+            os = "windows"
+        )
+        val linkIdx    = cmd.indexOf("/link")
+        val libPathIdx = cmd.indexWhere(_ == "/LIBPATH:" + libDir.getAbsolutePath)
+        val libIdx     = cmd.indexOf("aeron_driver_static.lib")
+        linkIdx should be >= 0
+        libPathIdx should be > linkIdx
+        libIdx should be > linkIdx
+        cmd should contain("ws2_32.lib")
+    }
+
     test("buildCommand: linkFlags (C++ runtime) come AFTER linkLibs so GNU ld resolves archive C++ symbols") {
         // Regression: a vendored C++ static archive (e.g. BoringSSL) needs its C++ runtime (-lstdc++ / -lc++)
         // AFTER the archive on the GNU ld command line; before, ld leaves the archive's C++ symbols undefined
