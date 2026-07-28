@@ -15,10 +15,45 @@
 
 #include <aeronc.h>
 #include <aeronmd.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Threading portability. aeron itself builds on Windows only under MSVC, which has no <pthread.h>,
+ * so the shim uses a tiny mutex + once abstraction that maps to Win32 critical sections on Windows
+ * and to POSIX pthreads everywhere else. Every non-Windows target compiles the pthread branch below
+ * unchanged. */
+#if defined(_WIN32)
+#include <windows.h>
+typedef CRITICAL_SECTION kyo_mutex_t;
+typedef INIT_ONCE        kyo_once_t;
+#define KYO_ONCE_INIT INIT_ONCE_STATIC_INIT
+static void kyo_mutex_init(kyo_mutex_t *m)    { InitializeCriticalSection(m); }
+static void kyo_mutex_lock(kyo_mutex_t *m)    { EnterCriticalSection(m); }
+static void kyo_mutex_unlock(kyo_mutex_t *m)  { LeaveCriticalSection(m); }
+static void kyo_mutex_destroy(kyo_mutex_t *m) { DeleteCriticalSection(m); }
+static BOOL CALLBACK kyo_once_trampoline(PINIT_ONCE once, PVOID param, PVOID *ctx)
+{
+    (void)once; (void)ctx;
+    ((void (*)(void))(uintptr_t)param)();
+    return TRUE;
+}
+static void kyo_once(kyo_once_t *once, void (*fn)(void))
+{
+    InitOnceExecuteOnce(once, kyo_once_trampoline, (PVOID)(uintptr_t)fn, NULL);
+}
+#else
 #include <unistd.h>
 #include <pthread.h>
+typedef pthread_mutex_t kyo_mutex_t;
+typedef pthread_once_t  kyo_once_t;
+#define KYO_ONCE_INIT PTHREAD_ONCE_INIT
+static void kyo_mutex_init(kyo_mutex_t *m)    { pthread_mutex_init(m, NULL); }
+static void kyo_mutex_lock(kyo_mutex_t *m)    { pthread_mutex_lock(m); }
+static void kyo_mutex_unlock(kyo_mutex_t *m)  { pthread_mutex_unlock(m); }
+static void kyo_mutex_destroy(kyo_mutex_t *m) { pthread_mutex_destroy(m); }
+static void kyo_once(kyo_once_t *once, void (*fn)(void)) { pthread_once(once, fn); }
+#endif
 
 #include "kyo_aeron.h"
 
@@ -76,7 +111,7 @@ typedef struct {
 #define KYO_AERON_ERR_SLOT_MSG_SIZE 256
 
 typedef struct {
-    pthread_mutex_t mutex;
+    kyo_mutex_t mutex;
     volatile int    present;                      /* 1 after first error recorded, 0 initially */
     int             errcode;
     char            errmsg[KYO_AERON_ERR_SLOT_MSG_SIZE];
@@ -91,7 +126,7 @@ typedef struct kyo_aeron_client_bundle_stct {
     aeron_t*          client;
     aeron_context_t*  ctx;
     volatile int      closing;  /* set to 1 before aeron_close is invoked */
-    pthread_mutex_t   close_mutex;
+    kyo_mutex_t   close_mutex;
     int               refcount;  /* protected by g_registry_mutex */
     /* Recording error slot installed as the Aeron error handler clientd. */
     kyo_aeron_error_slot* err_slot;
@@ -249,13 +284,13 @@ typedef struct {
  * client_connect, removal at client_bundle_release when the refcount reaches 0, and the
  * liveness check plus refcount increment in add_publication / add_subscription. Every critical
  * section under it is short; no slow Aeron API runs while it is held. */
-static pthread_mutex_t  g_registry_mutex;
-static pthread_once_t   g_registry_once = PTHREAD_ONCE_INIT;
+static kyo_mutex_t  g_registry_mutex;
+static kyo_once_t   g_registry_once = KYO_ONCE_INIT;
 static kyo_aeron_client_bundle* g_registry_head = NULL;
 
 static void registry_init_once(void)
 {
-    pthread_mutex_init(&g_registry_mutex, NULL);
+    kyo_mutex_init(&g_registry_mutex);
 }
 
 /* Called under g_registry_mutex: inserts b at the head of the list. */
@@ -298,17 +333,17 @@ static int registry_is_live(kyo_aeron_client_bundle* c)
 static void client_bundle_release(kyo_aeron_client_bundle* b)
 {
     int should_free;
-    pthread_mutex_lock(&g_registry_mutex);
+    kyo_mutex_lock(&g_registry_mutex);
     b->refcount--;
     should_free = (b->refcount == 0);
     if (should_free)
         registry_remove(b);
-    pthread_mutex_unlock(&g_registry_mutex);
+    kyo_mutex_unlock(&g_registry_mutex);
     if (should_free) {
-        pthread_mutex_destroy(&b->close_mutex);
+        kyo_mutex_destroy(&b->close_mutex);
         /* The error slot is a separate malloc; free it before the bundle. */
         if (b->err_slot != NULL) {
-            pthread_mutex_destroy(&b->err_slot->mutex);
+            kyo_mutex_destroy(&b->err_slot->mutex);
             free(b->err_slot);
         }
         free(b);
@@ -394,7 +429,7 @@ static void kyo_aeron_error_handler(void* clientd, int errcode, const char* mess
 {
     kyo_aeron_error_slot* slot = (kyo_aeron_error_slot*)clientd;
     if (slot == NULL) return;
-    pthread_mutex_lock(&slot->mutex);
+    kyo_mutex_lock(&slot->mutex);
     if (!slot->present) {
         /* First error only: the one that caused the conductor to terminate. */
         slot->errcode  = errcode;
@@ -410,13 +445,13 @@ static void kyo_aeron_error_handler(void* clientd, int errcode, const char* mess
          * mutex (the bytes can no longer change). */
         slot->present = 1;
     }
-    pthread_mutex_unlock(&slot->mutex);
+    kyo_mutex_unlock(&slot->mutex);
     /* MUST NOT exit(), abort(), or block. */
 }
 
 void* kyo_aeron_client_connect(const char* dir)
 {
-    pthread_once(&g_registry_once, registry_init_once);
+    kyo_once(&g_registry_once, registry_init_once);
     aeron_context_t* ctx = NULL;
     if (aeron_context_init(&ctx) < 0) return NULL;
     if (dir != NULL) aeron_context_set_dir(ctx, dir);
@@ -427,27 +462,27 @@ void* kyo_aeron_client_connect(const char* dir)
         aeron_context_close(ctx);
         return NULL;
     }
-    pthread_mutex_init(&slot->mutex, NULL);
+    kyo_mutex_init(&slot->mutex);
     slot->present  = 0;
     slot->errcode  = 0;
     slot->errmsg[0] = '\0';
     /* Install BEFORE aeron_init, which spawns the conductor thread that may call the handler. */
     if (aeron_context_set_error_handler(ctx, kyo_aeron_error_handler, slot) < 0) {
-        pthread_mutex_destroy(&slot->mutex);
+        kyo_mutex_destroy(&slot->mutex);
         free(slot);
         aeron_context_close(ctx);
         return NULL;
     }
     aeron_t* client = NULL;
     if (aeron_init(&client, ctx) < 0) {
-        pthread_mutex_destroy(&slot->mutex);
+        kyo_mutex_destroy(&slot->mutex);
         free(slot);
         aeron_context_close(ctx);
         return NULL;
     }
     if (aeron_start(client) < 0) {
         aeron_close(client);
-        pthread_mutex_destroy(&slot->mutex);
+        kyo_mutex_destroy(&slot->mutex);
         free(slot);
         aeron_context_close(ctx);
         return NULL;
@@ -455,7 +490,7 @@ void* kyo_aeron_client_connect(const char* dir)
     kyo_aeron_client_bundle* b = (kyo_aeron_client_bundle*)malloc(sizeof(kyo_aeron_client_bundle));
     if (b == NULL) {
         aeron_close(client);
-        pthread_mutex_destroy(&slot->mutex);
+        kyo_mutex_destroy(&slot->mutex);
         free(slot);
         aeron_context_close(ctx);
         return NULL;
@@ -469,12 +504,12 @@ void* kyo_aeron_client_connect(const char* dir)
     b->next          = NULL;
     b->pub_list_head = NULL;
     b->sub_list_head = NULL;
-    pthread_mutex_init(&b->close_mutex, NULL);
+    kyo_mutex_init(&b->close_mutex);
     /* Register before returning: from here add_publication/add_subscription can find the bundle
      * and safely increment its refcount under g_registry_mutex. */
-    pthread_mutex_lock(&g_registry_mutex);
+    kyo_mutex_lock(&g_registry_mutex);
     registry_insert(b);
-    pthread_mutex_unlock(&g_registry_mutex);
+    kyo_mutex_unlock(&g_registry_mutex);
     return b;
 }
 
@@ -490,13 +525,13 @@ void kyo_aeron_client_close(void* client)
      * b is deliberately NOT removed from the registry here: it stays until
      * client_bundle_release sees refcount == 0, which requires every publication/subscription
      * ref to have been released too. Safe, because add* stops at the closing check. */
-    pthread_mutex_lock(&g_registry_mutex);
+    kyo_mutex_lock(&g_registry_mutex);
     b->closing = 1;
-    pthread_mutex_unlock(&g_registry_mutex);
+    kyo_mutex_unlock(&g_registry_mutex);
     /* Acquire and release close_mutex to publish closing = 1 to any publication/subscription
      * close that reads it under that mutex (the happens-before those guards rely on). */
-    pthread_mutex_lock(&b->close_mutex);
-    pthread_mutex_unlock(&b->close_mutex);
+    kyo_mutex_lock(&b->close_mutex);
+    kyo_mutex_unlock(&b->close_mutex);
     /* Close handle before context. */
     aeron_close(b->client);
     aeron_context_close(b->ctx);
@@ -516,7 +551,7 @@ void kyo_aeron_client_close(void* client)
      *
      * Only close_mutex is held here (g_registry_mutex was released above), and the sweep never
      * calls client_bundle_release, so the lock order is preserved. */
-    pthread_mutex_lock(&b->close_mutex);
+    kyo_mutex_lock(&b->close_mutex);
     kyo_aeron_publication_bundle** link = &b->pub_list_head;
     while (*link != NULL) {
         kyo_aeron_publication_bundle* pb = *link;
@@ -540,7 +575,7 @@ void kyo_aeron_client_close(void* client)
             slink = &sb->sub_next; /* leave for its own subscription_close to free */
         }
     }
-    pthread_mutex_unlock(&b->close_mutex);
+    kyo_mutex_unlock(&b->close_mutex);
     /* Release the client call site's own reference; frees the bundle if it was the last. */
     client_bundle_release(b);
 }
@@ -554,28 +589,28 @@ void* kyo_aeron_async_add_publication(void* client, const char* uri, int32_t str
     kyo_aeron_client_bundle* c = (kyo_aeron_client_bundle*)client;
     /* Add-vs-close guard: verify liveness and take the refcount under g_registry_mutex. NULL
      * signals a closed client, which Scala maps to TopicPublicationClosedException. */
-    pthread_mutex_lock(&g_registry_mutex);
+    kyo_mutex_lock(&g_registry_mutex);
     if (!registry_is_live(c) || c->closing) {
-        pthread_mutex_unlock(&g_registry_mutex);
+        kyo_mutex_unlock(&g_registry_mutex);
         return NULL;
     }
     c->refcount++;
-    pthread_mutex_unlock(&g_registry_mutex);
+    kyo_mutex_unlock(&g_registry_mutex);
 
     /* Registry-to-close-mutex gap: once g_registry_mutex is released, a racing
      * kyo_aeron_client_close can call aeron_close(c->client) and free the inner aeron_t before
      * the use below (TOCTOU). Re-check closing and make the non-blocking start call under
      * close_mutex, which client_close never holds across aeron_close. Lock order holds:
      * g_registry_mutex was acquired and released first. */
-    pthread_mutex_lock(&c->close_mutex);
+    kyo_mutex_lock(&c->close_mutex);
     if (c->closing) {
-        pthread_mutex_unlock(&c->close_mutex);
+        kyo_mutex_unlock(&c->close_mutex);
         client_bundle_release(c);
         return NULL;
     }
     aeron_async_add_publication_t* async_handle = NULL;
     int add_rc = aeron_async_add_publication(&async_handle, c->client, uri, stream_id);
-    pthread_mutex_unlock(&c->close_mutex);
+    kyo_mutex_unlock(&c->close_mutex);
     if (add_rc < 0) {
         client_bundle_release(c);
         return NULL;
@@ -660,9 +695,9 @@ void* kyo_aeron_async_add_publication_get(void* async_token)
      * client-close sweep and kyo_aeron_publication_close hold when touching it. The refcount
      * taken in _start keeps the client bundle (and its mutex) alive. Lock order preserved:
      * g_registry_mutex was released back in _start, so only close_mutex is held here. */
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     pub_list_insert(b->client, b);
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     /* The refcount taken in _start now belongs to the bundle (released by publication_close). */
     free(tok);
     return b;
@@ -692,15 +727,15 @@ void kyo_aeron_async_add_publication_free(void* async_token)
 int kyo_aeron_publication_is_connected(void* pub)
 {
     kyo_aeron_publication_bundle* b = (kyo_aeron_publication_bundle*)pub;
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     /* b->closed guards the caller's-own-close path the same way client->closing guards the
      * client-close path; both return the sentinel without touching the dead Aeron handle. */
     if (b->closed || b->client->closing) {
-        pthread_mutex_unlock(&b->client->close_mutex);
+        kyo_mutex_unlock(&b->client->close_mutex);
         return 0; /* not connected: the Scala not-connected/backpressure path */
     }
     int r = aeron_publication_is_connected(b->publication) ? 1 : 0;
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     return r;
 }
 
@@ -708,19 +743,19 @@ long kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t lengt
 {
     kyo_aeron_publication_bundle* b = (kyo_aeron_publication_bundle*)pub;
     /* Close-mutex guard: see kyo_aeron_publication_is_connected. */
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     /* -4 is the EXISTING sentinel, matching the JVM where a closed io.aeron.Publication.offer
      * returns Publication.CLOSED without faulting. Never a new value: -4 maps through
      * AeronSentinels.Closed to TopicPublicationClosedException. */
     if (b->closed || b->client->closing) {
-        pthread_mutex_unlock(&b->client->close_mutex);
+        kyo_mutex_unlock(&b->client->close_mutex);
         return (long)AERON_PUBLICATION_CLOSED;
     }
     /* Raw int64_t sentinels pass through unchanged; the Scala side maps them via
      * AeronSentinels. reserved_value_supplier and clientd are NULL. */
     long r = (long)aeron_publication_offer(
         b->publication, buffer, (size_t)length, NULL, NULL);
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     return r;
 }
 
@@ -731,14 +766,14 @@ long kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t lengt
 int32_t kyo_aeron_publication_max_message_length(void* pub)
 {
     kyo_aeron_publication_bundle* b = (kyo_aeron_publication_bundle*)pub;
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     if (b->closed || b->client->closing) {
-        pthread_mutex_unlock(&b->client->close_mutex);
+        kyo_mutex_unlock(&b->client->close_mutex);
         return 0;   /* cannot send: Scala aborts with TopicMessageTooLargeException */
     }
     aeron_publication_constants_t constants;
     int rc = aeron_publication_constants(b->publication, &constants);
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     if (rc < 0) return 0;
     /* max_message_length is size_t but at most 16 MiB (AERON_MAX_MESSAGE_LENGTH = 16777216),
      * well within int32_t range. */
@@ -751,11 +786,11 @@ void kyo_aeron_publication_close(void* pub)
     if (b == NULL) return;
     /* The refcount taken in kyo_aeron_async_add_publication keeps the client bundle (and its
      * close_mutex) alive here, so the guard below is safe to take. */
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     /* Idempotent: a second close on an already-closed (free-deferred) bundle is a no-op, so a
      * double close never double-frees the bundle nor double-releases the client refcount. */
     if (b->closed) {
-        pthread_mutex_unlock(&b->client->close_mutex);
+        kyo_mutex_unlock(&b->client->close_mutex);
         return;
     }
     int closing = b->client->closing;
@@ -778,7 +813,7 @@ void kyo_aeron_publication_close(void* pub)
     if (free_here) {
         pub_list_remove(b->client, b);
     }
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     /* Release this publication's reference to the client bundle. */
     client_bundle_release(b->client);
     if (free_here) {
@@ -791,25 +826,25 @@ void* kyo_aeron_async_add_subscription(void* client, const char* uri, int32_t st
 {
     kyo_aeron_client_bundle* c = (kyo_aeron_client_bundle*)client;
     /* Guard the add-vs-close race: same protocol as async_add_publication. */
-    pthread_mutex_lock(&g_registry_mutex);
+    kyo_mutex_lock(&g_registry_mutex);
     if (!registry_is_live(c) || c->closing) {
-        pthread_mutex_unlock(&g_registry_mutex);
+        kyo_mutex_unlock(&g_registry_mutex);
         return NULL;
     }
     c->refcount++;
-    pthread_mutex_unlock(&g_registry_mutex);
+    kyo_mutex_unlock(&g_registry_mutex);
 
     /* Registry-to-close-mutex gap: symmetric to kyo_aeron_async_add_publication. */
-    pthread_mutex_lock(&c->close_mutex);
+    kyo_mutex_lock(&c->close_mutex);
     if (c->closing) {
-        pthread_mutex_unlock(&c->close_mutex);
+        kyo_mutex_unlock(&c->close_mutex);
         client_bundle_release(c);
         return NULL;
     }
     aeron_async_add_subscription_t* async_handle = NULL;
     /* Image handler params are all NULL; the shim does not track image availability. */
     int add_rc = aeron_async_add_subscription(&async_handle, c->client, uri, stream_id, NULL, NULL, NULL, NULL);
-    pthread_mutex_unlock(&c->close_mutex);
+    kyo_mutex_unlock(&c->close_mutex);
     if (add_rc < 0) {
         client_bundle_release(c);
         return NULL;
@@ -894,9 +929,9 @@ void* kyo_aeron_async_add_subscription_get(void* async_token)
     }
     /* Insert into the client's free-deferral list under close_mutex, mirroring the publication
      * _get insertion. The refcount taken in _start keeps the client bundle alive. */
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     sub_list_insert(b->client, b);
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     free(tok);
     return b;
 }
@@ -942,13 +977,13 @@ int kyo_aeron_subscription_is_connected(void* sub)
 {
     kyo_aeron_subscription_bundle* b = (kyo_aeron_subscription_bundle*)sub;
     /* Close-mutex guard: see kyo_aeron_publication_is_connected. */
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     if (b->closed || b->client->closing) {
-        pthread_mutex_unlock(&b->client->close_mutex);
+        kyo_mutex_unlock(&b->client->close_mutex);
         return 0; /* not connected */
     }
     int r = aeron_subscription_is_connected(b->subscription) ? 1 : 0;
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     return r;
 }
 
@@ -981,14 +1016,14 @@ long kyo_aeron_subscription_poll(void* sub, uint8_t* dst, int32_t dst_cap)
      * only it needs the guard (the pending-copy arm above reads local fields the client close
      * does not free). Closing returns 0, which FfiAeronTransport.pollOne maps to Absent and the
      * stream loop treats as transient. */
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     if (b->closed || b->client->closing) {
-        pthread_mutex_unlock(&b->client->close_mutex);
+        kyo_mutex_unlock(&b->client->close_mutex);
         return 0; /* no fragment: the existing safe sentinel */
     }
     int fragments = aeron_subscription_poll(
         b->subscription, aeron_fragment_assembler_handler, b->assembler, 1);
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     if (fragments < 0) return -1;
     if (b->slot_len == -2) return -2; /* overflow: message exceeded the 16 MiB ceiling */
     if (b->slot_len < 0) return 0;    /* no fragment received this poll */
@@ -1007,11 +1042,11 @@ void kyo_aeron_subscription_close(void* sub)
     if (b == NULL) return;
     /* Symmetric to kyo_aeron_publication_close. This subscription's still-held refcount keeps
      * the client bundle (and its close_mutex) alive until the release below. */
-    pthread_mutex_lock(&b->client->close_mutex);
+    kyo_mutex_lock(&b->client->close_mutex);
     /* Idempotent: a second close on an already-closed (free-deferred) bundle is a no-op, so a
      * double close never double-frees the bundle nor double-releases the client refcount. */
     if (b->closed) {
-        pthread_mutex_unlock(&b->client->close_mutex);
+        kyo_mutex_unlock(&b->client->close_mutex);
         return;
     }
     int closing = b->client->closing;
@@ -1029,7 +1064,7 @@ void kyo_aeron_subscription_close(void* sub)
     if (free_here) {
         sub_list_remove(b->client, b);
     }
-    pthread_mutex_unlock(&b->client->close_mutex);
+    kyo_mutex_unlock(&b->client->close_mutex);
     /* Release this subscription's reference to the client bundle. */
     client_bundle_release(b->client);
     if (free_here) {
@@ -1050,9 +1085,9 @@ int kyo_aeron_has_client_error(void* client)
 {
     kyo_aeron_client_bundle* b = (kyo_aeron_client_bundle*)client;
     if (b == NULL || b->err_slot == NULL) return 0;
-    pthread_mutex_lock(&b->err_slot->mutex);
+    kyo_mutex_lock(&b->err_slot->mutex);
     int p = b->err_slot->present;
-    pthread_mutex_unlock(&b->err_slot->mutex);
+    kyo_mutex_unlock(&b->err_slot->mutex);
     return p;
 }
 
@@ -1064,9 +1099,9 @@ const char* kyo_aeron_client_error_msg(void* client)
      * its matching unlock, so the errmsg bytes are visible here. errmsg is write-once under
      * first-wins and is never re-mutated while present == 1, so the internal pointer is safe to
      * read after the unlock. */
-    pthread_mutex_lock(&b->err_slot->mutex);
+    kyo_mutex_lock(&b->err_slot->mutex);
     const char* msg = b->err_slot->present ? b->err_slot->errmsg : "";
-    pthread_mutex_unlock(&b->err_slot->mutex);
+    kyo_mutex_unlock(&b->err_slot->mutex);
     return msg;
 }
 
@@ -1077,9 +1112,9 @@ int kyo_aeron_client_error_code(void* client)
 {
     kyo_aeron_client_bundle* b = (kyo_aeron_client_bundle*)client;
     if (b == NULL || b->err_slot == NULL) return 0;
-    pthread_mutex_lock(&b->err_slot->mutex);
+    kyo_mutex_lock(&b->err_slot->mutex);
     int code = b->err_slot->present ? b->err_slot->errcode : 0;
-    pthread_mutex_unlock(&b->err_slot->mutex);
+    kyo_mutex_unlock(&b->err_slot->mutex);
     return code;
 }
 
@@ -1092,9 +1127,9 @@ void kyo_aeron_test_inject_error(void* client, int errcode, const char* errmsg)
     kyo_aeron_client_bundle* b = (kyo_aeron_client_bundle*)client;
     if (b == NULL || b->err_slot == NULL) return;
     /* Reset present so each inject overwrites the last. */
-    pthread_mutex_lock(&b->err_slot->mutex);
+    kyo_mutex_lock(&b->err_slot->mutex);
     b->err_slot->present = 0;
-    pthread_mutex_unlock(&b->err_slot->mutex);
+    kyo_mutex_unlock(&b->err_slot->mutex);
     kyo_aeron_error_handler(b->err_slot, errcode, errmsg);
 }
 

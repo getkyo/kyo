@@ -483,6 +483,10 @@ object KyoFfiPlugin extends AutoPlugin {
                         } else {
                             val perLibCacheDir = cacheDir / s"lib-${idx}-${lib.id}"
                             IO.createDirectory(perLibCacheDir)
+                            // A library may override the global compiler for the OS being built
+                            // (e.g. Aeron, which supports Windows only under MSVC); the default empty
+                            // map leaves every other library on the global `cc`, unchanged.
+                            val libCc      = lib.compilerFor(buildOs).getOrElse(cc)
                             val flags      = globalFlags ++ lib.cFlags
                             val linkFlags  = globalLinkFlags ++ lib.linkFlags
                             val linkLibs   = lib.resolvedLinkLibs(buildOs)
@@ -495,14 +499,14 @@ object KyoFfiPlugin extends AutoPlugin {
                             val libDirs    = lib.libDirs.distinct
 
                             val configHash =
-                                s"$cc|${flags.mkString(",")}|${linkFlags.mkString(",")}|${linkLibs.mkString(",")}|${lib.id}|${includes.map(_.getAbsolutePath).mkString(",")}|libdirs=${libDirs.map(_.getAbsolutePath).mkString(",")}|static=$staticLink"
+                                s"$libCc|${flags.mkString(",")}|${linkFlags.mkString(",")}|${linkLibs.mkString(",")}|${lib.id}|${includes.map(_.getAbsolutePath).mkString(",")}|libdirs=${libDirs.map(_.getAbsolutePath).mkString(",")}|static=$staticLink"
                             val configSentinel = perLibCacheDir / "config.hash"
                             IO.write(configSentinel, configHash)
 
                             val cached = FileFunction.cached(perLibCacheDir, FilesInfo.hash, FilesInfo.exists) { _ =>
                                 log.info(s"[kyo-ffi-plugin] ffiCompile: cc invocation for ${lib.id}.")
                                 CCompiler.compile(
-                                    cc = cc,
+                                    cc = libCc,
                                     cFlags = flags,
                                     linkFlags = linkFlags,
                                     linkLibs = linkLibs,
@@ -620,6 +624,8 @@ object KyoFfiPlugin extends AutoPlugin {
             val os  = CCompiler.detectOs()
             val arc = CCompiler.detectArch()
             libs.map { lib =>
+                val libCc      = lib.compilerFor(os).getOrElse(cc)
+                val libFamily  = CCompiler.detectFamily(libCc)
                 val headerDirs = lib.cHeaders.map(_.getParentFile).distinct
                 val includes   = (globalIncludes ++ headerDirs ++ lib.includeDirs).distinct
                 val ext = os match {
@@ -631,8 +637,8 @@ object KyoFfiPlugin extends AutoPlugin {
                 val prefix  = if (os == "windows") "" else "lib"
                 val outFile = new File(targetDir, s"$prefix${lib.id}-$os-$arc.$ext")
                 CCompiler.buildCommand(
-                    cc = cc,
-                    family = family,
+                    cc = libCc,
+                    family = libFamily,
                     cFlags = globalFlags ++ lib.cFlags,
                     linkFlags = globalLinkFlags ++ lib.linkFlags,
                     linkLibs = lib.resolvedLinkLibs(os),
