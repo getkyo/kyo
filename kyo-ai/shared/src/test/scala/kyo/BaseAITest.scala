@@ -161,13 +161,17 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
             Backend("Baseten", Config.Baseten, Absent, Config.Baseten.gpt_oss_120b)
         )
 
-    /** The backends this run exercises: every one by default, narrowed by the `kyo.ai.provider` flag.
+    /** The backends this run exercises, selected by the `kyo.ai.completion.provider` flag.
       *
-      * There is no curated enabled list. A run costs nothing for a backend whose key or CLI is absent,
-      * because [[requireBackend]] cancels that arm and reports it, so the honest default is all of them:
-      * a curated subset silently stops seeing regressions in the columns it omits, which happened once.
-      * A keyed box that wants a cheap run narrows with the flag, which takes a comma-separated list of
-      * provider names; exporting a key is the opt-in to paying for that column.
+      * An ABSENT flag runs the whole matrix, so a plain `sbt kyo-aiJVM/test` drives every backend whose
+      * key is present. That is the widest and most expensive setting, and it is worth knowing before
+      * running one: these suites make live, metered calls. Narrow with a comma-separated list, for
+      * example `-Dkyo.ai.completion.provider=codex`, which `build.sbt` forwards to the forked test JVM
+      * (the flag is a `StaticFlag`, so it resolves at class load there rather than in the sbt launcher).
+      *
+      * A run's actual coverage is legible from its ARM LABELS, `[Codex]` and the like, which every
+      * backend-touching leaf carries. Reading coverage off the output any other way, such as grepping for
+      * a provider URL, does not work: the URL never appears, so the check always passes.
       */
     private[kyo] val backends: Chunk[Backend] = selectBackends(provider())
 

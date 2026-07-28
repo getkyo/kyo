@@ -1,27 +1,31 @@
 package kyo.ai
 
 import kyo.*
+import kyo.ai.Compaction.*
 import kyo.ai.Context.*
 
 class ContextTest extends kyo.test.Test[Any]:
 
+    def um(s: String): UserMessage             = UserMessage(s, Absent)
+    def tm(id: String, s: String): ToolMessage = ToolMessage(CallId(id), s)
+
     "systemMessage skips blank content" in {
         val ctx = Context.empty.systemMessage("   ")
-        assert(ctx.messages.isEmpty)
+        assert(ctx.raw.isEmpty && ctx.compacted.isEmpty)
     }
 
     "userMessage skips blank content and absent image" in {
         val ctx1 = Context.empty.userMessage("", Absent)
-        assert(ctx1.messages.isEmpty)
+        assert(ctx1.raw.isEmpty)
         val ctx2 = Context.empty.userMessage("hi")
-        assert(ctx2.messages.size == 1)
+        assert(ctx2.raw.size == 1)
     }
 
     "assistantMessage skips blank+empty-calls, keeps with calls" in {
         val ctx1 = Context.empty.assistantMessage("", Chunk.empty)
-        assert(ctx1.messages.isEmpty)
+        assert(ctx1.raw.isEmpty)
         val ctx2 = Context.empty.assistantMessage("", Chunk(Call(CallId("c"), "f", "{}")))
-        assert(ctx2.messages.size == 1)
+        assert(ctx2.raw.size == 1)
     }
 
     "Role.name carries exact lowercase wire-strings" in {
@@ -31,68 +35,228 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(Role.Tool.name == "tool")
     }
 
-    "merge with a common prefix does not duplicate" in {
-        val a      = Context.empty.systemMessage("s").userMessage("u1")
-        val b      = Context.empty.systemMessage("s").userMessage("u1").userMessage("u2")
-        val merged = a.merge(b)
-        assert(merged.messages.size == 3)
+    "two fields raw+compacted; no Maybe; compacted starts == raw; single-arg factory" in {
+        val chunk = Chunk[Message](SystemMessage("s"), um("u"))
+        val ctx   = Context(chunk)
+        assert(ctx.raw == chunk, s"raw should equal the given chunk, got: ${ctx.raw}")
+        assert(ctx.compacted == chunk, s"compacted should equal the given chunk, got: ${ctx.compacted}")
+        assert(ctx.raw == ctx.compacted, "the single-arg factory sets raw == compacted")
+        // Origin is a nested type, not a third Context field.
+        val o = Context.Origin(1, 3, 7)
+        assert(o.start == 1 && o.end == 3 && o.since == 7)
     }
 
-    "merge of disjoint contexts appends fully" in {
-        val a      = Context.empty.userMessage("x")
-        val b      = Context.empty.userMessage("y")
+    "add appends to both lists; builders delegate; Context carries no compaction logic" in {
+        val ctx = Context.empty.add(SystemMessage("m1")).userMessage("u").toolMessage(CallId("c"), "t")
+        assert(ctx.raw.size == 3, s"raw should hold three messages, got: ${ctx.raw}")
+        assert(ctx.raw == ctx.compacted, "add appends to BOTH lists, never one")
+        assert(ctx.raw.map(_.content) == Chunk("m1", "u", "t"))
+    }
+
+    "add appends unconditionally, even blank content the skip-builders would drop (both lists)" in {
+        val ctx = Context.empty.add(SystemMessage(""))
+        assert(ctx.raw == Chunk[Message](SystemMessage("")))
+        assert(ctx.compacted == Chunk[Message](SystemMessage("")))
+    }
+
+    "toolMessage appends a tool-result message to both lists" in {
+        val ctx = Context.empty.toolMessage(CallId("c1"), "result")
+        assert(ctx.raw == Chunk[Message](tm("c1", "result")))
+        assert(ctx.compacted == Chunk[Message](tm("c1", "result")))
+    }
+
+    "isEmpty tracks raw" in {
+        assert(Context.empty.isEmpty)
+        assert(!Context.empty.add(um("x")).isEmpty)
+    }
+
+    "merge appends fork suffix to both; receiver compacted prefix kept; uncompacted stays compacted==raw" in {
+        val base = Context.empty.add(um("a")).add(um("b"))
+        // A receiver whose compacted was rewritten to a shorter frozen view.
+        val receiver = base.copy(compacted = Chunk[Message](SystemMessage("[frozen view]")))
+        val fork     = base.add(um("c")).add(um("d"))
+        val merged   = receiver.merge(fork)
+        assert(
+            merged.raw.map(_.content) == Chunk("a", "b", "c", "d"),
+            s"merge keeps the common raw prefix and appends the fork suffix, got: ${merged.raw.map(_.content)}"
+        )
+        assert(
+            merged.compacted.map(_.content) == Chunk("[frozen view]", "c", "d"),
+            s"the receiver's frozen compacted prefix is preserved and the fork suffix appended, got: ${merged.compacted.map(_.content)}"
+        )
+        // An uncompacted receiver keeps compacted == raw after merge.
+        val u2 = base.merge(fork)
+        assert(u2.raw == u2.compacted, "an uncompacted receiver stays compacted == raw")
+    }
+
+    "merge of disjoint contexts appends the whole fork to both" in {
+        val a      = Context.empty.add(um("x"))
+        val b      = Context.empty.add(um("y"))
         val merged = a.merge(b)
-        assert(merged.messages.size == 2)
+        assert(merged.raw.map(_.content) == Chunk("x", "y"))
+        assert(merged.compacted.map(_.content) == Chunk("x", "y"))
+    }
+
+    "self-merge does not duplicate" in {
+        val p          = Context.empty.add(um("a")).add(um("b"))
+        val selfMerged = p.merge(p)
+        assert(selfMerged.raw == p.raw, s"merge of identical contexts should not duplicate, got: ${selfMerged.raw}")
+    }
+
+    "core-field comparison ignores enrichment fields" in {
+        // Two messages identical on content/role but differing solely on enrichment compare as the same
+        // under coreEq (merge/dedup/cache-gate path), while full-record == treats them as different.
+        val bare = um("same")
+        val rich = UserMessage("same", Absent, tokens = Present(TokenStamp("m", 7)), origin = Present(Origin(0, 1, 0)))
+        assert(Context.coreEq(bare, rich), "coreEq ignores tokens/origin")
+        assert(bare != rich, "full-record == is NOT the comparison coreEq uses (enrichment differs)")
+        // A genuine core difference is not equal under coreEq.
+        assert(!Context.coreEq(bare, um("other")))
+        // merge's prefix walk uses coreEq: an enrichment-only difference in the receiver's raw prefix
+        // still counts as the common prefix (no spurious fork).
+        val recv   = Context(Chunk[Message](rich))
+        val fork   = Context(Chunk[Message](bare, um("next")))
+        val merged = recv.merge(fork)
+        assert(merged.raw.map(_.content) == Chunk("same", "next"), s"enrichment-only diff is common prefix, got: ${merged.raw}")
+    }
+
+    "tokens/origin default Absent on every ordinarily-added message" in {
+        val ctx = Context.empty.add(SystemMessage("s")).userMessage("u").assistantMessage("a").toolMessage(CallId("c"), "t")
+        assert(
+            ctx.raw.forall(m => m.tokens.isEmpty && m.origin.isEmpty),
+            "every appended message defaults to Absent enrichment"
+        )
+    }
+
+    "Context Schema round-trips every message type, including image, tool calls, and enrichment fields" in {
+        // The serializable slice behind ai.snapshot/AI.recover: a Schema regression here silently corrupts
+        // cross-run persistence. Exercise one of every variant PLUS Present tokens/origin, and a divergent
+        // compacted (a synthetic marker) so BOTH lists are checked.
+        val marker = SystemMessage("[compacted region 0: 12 bytes omitted]", origin = Present(Origin(0, 2, 4)))
+        val ctx = Context(Chunk[Message](
+            SystemMessage("sys"),
+            UserMessage("look", Present(Image.fromBase64("SGVsbG8="))),
+            AssistantMessage("thinking", Chunk(Call(CallId("c1"), "fn", """{"x":1}""")), tokens = Present(TokenStamp("o200k", 42))),
+            ToolMessage(CallId("c1"), "tool-out")
+        )).copy(compacted = Chunk[Message](marker))
+        Json.decode[Context](Json.encode(ctx)) match
+            case Result.Success(decoded) =>
+                assert(decoded.compacted == Chunk[Message](marker), "the compacted list (incl. origin) round-trips byte-for-byte")
+                assert(decoded.raw.size == ctx.raw.size)
+                assert(decoded.raw(0) == ctx.raw(0) && decoded.raw(3) == ctx.raw(3), "content-only messages round-trip structurally")
+                assert(decoded.raw(1) == ctx.raw(1), "an image-carrying message round-trips structurally")
+                assert(decoded.raw(2).tokens == Present(TokenStamp("o200k", 42)), "the TokenStamp round-trips (tokenizerId + count)")
+            case other => assert(false, s"Context decode failed: $other")
+        end match
     }
 
     "Context/Role/CallId/Message derive CanEqual" in {
         val ctx1 = Context.empty.systemMessage("hello")
         val ctx2 = Context.empty.systemMessage("hello")
         assert(ctx1 == ctx2)
-        val id1 = CallId("abc")
-        val id2 = CallId("abc")
-        assert(id1 == id2)
+        assert(CallId("abc") == CallId("abc"))
         val msg1: Message = SystemMessage("test")
         val msg2: Message = SystemMessage("test")
         assert(msg1 == msg2)
     }
 
-    "add appends unconditionally, even blank content the skip-builders would drop" in {
-        val ctx = Context.empty.add(SystemMessage(""))
-        assert(ctx.messages == Chunk(SystemMessage("")))
-    }
-
-    "toolMessage appends a tool-result message" in {
-        val ctx = Context.empty.toolMessage(CallId("c1"), "result")
-        assert(ctx.messages == Chunk(ToolMessage(CallId("c1"), "result")))
-    }
-
-    "Context Schema round-trips every message type, including an image and tool calls" in {
-        // The serializable slice behind ai.snapshot/AI.recover: a Schema regression here silently corrupts
-        // cross-run persistence, so exercise one of every message variant including a vision image and a call.
-        val ctx = Context.empty
-            .add(SystemMessage("sys"))
-            .add(UserMessage("look", Present(Image.fromBase64("SGVsbG8="))))
-            .add(AssistantMessage("thinking", Chunk(Call(CallId("c1"), "fn", """{"x":1}"""))))
-            .add(ToolMessage(CallId("c1"), "tool-out"))
-        Json.decode[Context](Json.encode(ctx)) match
-            case Result.Success(decoded) => assert(decoded == ctx, s"round-trip mismatch: $decoded")
-            case other                   => assert(false, s"Context decode failed: $other")
-    }
-
-    "merge appends the fork's suffix in order and self-merge does not duplicate" in {
-        // merge appends the fork's non-prefix suffix in append order.
-        // pCtx has [a, b]; fCtx (derived from pCtx) appends c. merge(pCtx, fCtx) = [a, b, c].
-        val pCtx   = Context.empty.add(UserMessage("a", Absent)).add(UserMessage("b", Absent))
-        val fCtx   = pCtx.add(UserMessage("c", Absent))
-        val merged = pCtx.merge(fCtx)
+    "every Message leaf defaults tokens Absent and no longer has summary" in {
+        val sm = SystemMessage("s")
+        val um = UserMessage("u", Absent)
+        val am = AssistantMessage("a")
+        val tm = ToolMessage(CallId("c"), "t")
         assert(
-            merged.messages.map(_.content) == Chunk("a", "b", "c"),
-            s"merge should append in order, got: ${merged.messages.map(_.content)}"
+            sm.tokens == Absent && um.tokens == Absent && am.tokens == Absent && tm.tokens == Absent,
+            "every leaf defaults tokens to Absent when only its required fields are given"
         )
-        // Verify prefix-awareness: re-merging pCtx with itself = pCtx (no duplication).
-        val selfMerged = pCtx.merge(pCtx)
-        assert(selfMerged.messages == pCtx.messages, s"merge of identical contexts should not duplicate, got: ${selfMerged.messages}")
+    }
+
+    "the sealed trait exposes def tokens: Maybe[TokenStamp]" in {
+        val msg: Message              = SystemMessage("s")
+        val tokens: Maybe[TokenStamp] = msg.tokens
+        assert(tokens == Absent, "the trait accessor type-checks as Maybe[TokenStamp] and returns Absent by default")
+    }
+
+    "coreEq ignores the tokens field" in {
+        val a = SystemMessage("x")
+        val b = SystemMessage("x", tokens = Present(TokenStamp("o200k", 7)))
+        assert(Context.coreEq(a, b), "coreEq compares content/role only, so a tokens-only difference compares equal")
+    }
+
+    "the TokenStamp round-trips through Message.tokens via copy and Schema" in {
+        val msg: AssistantMessage = AssistantMessage("thinking", tokens = Present(TokenStamp("o200k", 42)))
+        val copied                = msg.copy()
+        assert(copied.tokens == Present(TokenStamp("o200k", 42)), "copy preserves the stamped tokens field")
+        Json.decode[Message](Json.encode(copied: Message)) match
+            case Result.Success(decoded) =>
+                assert(decoded.tokens == Present(TokenStamp("o200k", 42)), "the (tokenizerId, count) stamp round-trips through Schema")
+            case other => assert(false, s"Message decode failed: $other")
+        end match
+    }
+
+    "Context carries the raw, compacted, and the compaction-state seat (default Absent)" in {
+        val ctx = Context.empty
+        assert(ctx.compaction == Absent, "the compaction-state seat defaults to Absent on a fresh Context")
+        ctx match
+            case Context(raw, compacted, compaction) =>
+                assert(
+                    raw == ctx.raw && compacted == ctx.compacted && compaction == ctx.compaction,
+                    "Context has the raw, compacted, and compaction fields"
+                )
+        end match
+    }
+
+    "Compaction.State round-trips through Schema with EVERY field populated" in {
+        // The persisted cell's serialize/deserialize contract, asserted field by field rather than by
+        // equality alone. Equality alone would pass a codec that dropped a field on BOTH legs, and a
+        // silently dropped field is exactly the failure this guards: losing `summaries` loses every written
+        // summary (they are write-once, so they are never regenerated), and losing `lastUsage` unseats the
+        // occupancy anchor, which reads as ~0 and stops compaction firing at all.
+        //
+        // Every field is populated on purpose. A default-valued field round-trips through a codec that does
+        // not carry it, so a fixture that left one at its default would not be testing that field.
+        val state = Compaction.State(
+            boundaryCounter = 7,
+            lastUsage = Present(12345),
+            lastUsageRawSize = 42,
+            recalls = Chunk(RecallRecord(3, 5), RecallRecord(9, 6)),
+            summaries = Chunk(SpanSummary(0, 4, "the first span's frozen bytes"), SpanSummary(4, 9, "the second span's bytes")),
+            analyses = Chunk(
+                RegionAnalysis(2, Chunk(Relation(0, RelationKind.DependsOn), Relation(1, RelationKind.Relates))),
+                RegionAnalysis(5, Chunk(Relation(2, RelationKind.Supersedes)))
+            )
+        )
+        val decoded = Json.decode[Compaction.State](Json.encode(state))
+        decoded match
+            case Result.Success(back) =>
+                assert(back.boundaryCounter == 7, s"the recall decay clock must survive, got ${back.boundaryCounter}")
+                assert(back.lastUsage == Present(12345), s"the occupancy anchor must survive, got ${back.lastUsage}")
+                assert(back.lastUsageRawSize == 42, s"the raw size the anchor was taken at must survive, got ${back.lastUsageRawSize}")
+                assert(back.recalls == state.recalls, s"every recall record must survive, got ${back.recalls}")
+                assert(back.summaries == state.summaries, s"every write-once summary slot must survive, got ${back.summaries}")
+                assert(back.analyses == state.analyses, s"every write-once analysis must survive, got ${back.analyses}")
+                // and the relation kinds inside, since the enum's wire form is a bare name rather than the
+                // default wrapped-object derivation
+                assert(
+                    back.analyses.head.relations.map(_.kind) == Chunk(RelationKind.DependsOn, RelationKind.Relates),
+                    s"relation kinds must survive by name, got ${back.analyses.head.relations.map(_.kind)}"
+                )
+                assert(back == state, "and the whole cell compares equal, so no field was missed above")
+            case other => assert(false, s"the compaction cell must round-trip through Schema, got $other")
+        end match
+    }
+
+    "a Compaction.State round-trip inside a whole Context keeps the cell" in {
+        // The cell travels on Context, so the enclosing codec must carry it. A Context whose compaction seat
+        // survives as Absent would look healthy while having lost every summary and the anchor.
+        val state = Compaction.State(boundaryCounter = 3, lastUsage = Present(999), summaries = Chunk(SpanSummary(0, 2, "bytes")))
+        val ctx   = Context(Chunk[Message](um("hello")), Chunk[Message](um("hello")), Present(state))
+        Json.decode[Context](Json.encode(ctx)) match
+            case Result.Success(back) =>
+                assert(back.compaction == Present(state), s"the compaction seat must survive on Context, got ${back.compaction}")
+                assert(back.raw == ctx.raw && back.compacted == ctx.compacted, "and both message lists survive alongside it")
+            case other => assert(false, s"Context with a populated compaction cell must round-trip, got $other")
+        end match
     }
 
 end ContextTest

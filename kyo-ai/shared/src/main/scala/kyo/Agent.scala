@@ -15,7 +15,8 @@ import kyo.ai.Config
   * `run` mints one stable `AI` instance for the agent and hands it to the behavior as its `self`: the
   * behavior calls `self.gen` explicitly, and because the actor's parked continuation keeps the `LLM.State`
   * alive, that instance's conversation persists across asks. The agent's enablements (tools, prompts,
-  * thoughts, modes) are enabled around the behavior in argument order (via `AI.enable`), then `LLM.run`.
+  * thoughts, modes, compactors) are enabled around the behavior in argument order (via `AI.enable`), then
+  * `LLM.run`.
   * `runBehavior` is the lower-level escape hatch for custom actor behaviors.
   *
   * @tparam Error
@@ -47,7 +48,8 @@ object Agent:
             (self: Actor[Error, Message[In, Out], Any]).close.map(_.map(_.map(_.input)))
     end extension
 
-    /** Creates an agent with an explicit config and any mix of enablements (tools, prompts, thoughts, modes).
+    /** Creates an agent with an explicit config and any mix of enablements (tools, prompts, thoughts, modes,
+      * compactors).
       *
       * Mints the agent's stable `AI` instance and passes it to the behavior as `self`, then enables the given
       * enablements over a receive-all behavior (via `AI.enable`, in argument order) and runs `LLM`. The

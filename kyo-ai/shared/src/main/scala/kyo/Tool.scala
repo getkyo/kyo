@@ -29,7 +29,33 @@ object Tool:
 
     import internal.*
 
-    /** Builds a typed tool from an input type, output type, name, description, prompt, and run function. */
+    /** Declares whether a tool reads or writes the state its supersession key names, so the
+      * compactor can tell a re-read from a write when applying supersession.
+      */
+    enum Kind derives CanEqual:
+        case Read, Write
+
+    /** A tool's opt-in supersession declaration: how to read the identity of the state a call touches,
+      * and whether that call reads or writes it.
+      *
+      * Both halves are needed, and neither is inferable. Nothing outside the tool knows which input field
+      * carries the identity of the thing a call acts on (a path, an id, something compound), and nothing
+      * can tell a re-read from a write. Carrying them as ONE value is what keeps them from separating: a
+      * kind without a key decides nothing, since the kind is consulted only for a call that produced a
+      * key, so that state is better left unrepresentable.
+      *
+      * @param kind
+      *   whether a call reads or writes the keyed state
+      * @param key
+      *   the identity of the state a call touches, or `Absent` for a call that touches none
+      */
+    case class Supersession[In](kind: Kind, key: In => Maybe[String])
+
+    /** Builds a typed tool from an input type, output type, name, description, prompt, and run function.
+      *
+      * A tool built here takes no part in compaction supersession: its calls never supersede an earlier
+      * call and are never superseded. Use [[initSuperseding]] to opt in.
+      */
     def init[In](using
         Schema[In]
     )[Out: Schema, S](
@@ -39,8 +65,56 @@ object Tool:
     )(
         run: In => Out < S
     )(using frame: Frame): Tool[S] =
+        build(name, description, prompt, Absent)(run)
+
+    /** Builds a typed tool that OPTS IN to compaction supersession.
+      *
+      * A later call carrying the same key as an earlier one supersedes it, so the compactor can let the
+      * stale read go and keep liveness on the current content. Identical to [[init]] otherwise; the
+      * declaration is a separate constructor rather than a defaulted parameter so a tool that has nothing
+      * to do with compaction never reads compaction vocabulary in its signature.
+      *
+      * {{{
+      * case class Edit(path: String, contents: String) derives Schema
+      *
+      * Tool.initSuperseding[Edit](
+      *     name = "edit",
+      *     supersession = Tool.Supersession(Tool.Kind.Write, e => Present(e.path))
+      * )(edit => write(edit.path, edit.contents))
+      * }}}
+      */
+    def initSuperseding[In](using
+        Schema[In]
+    )[Out: Schema, S](
+        name: String,
+        supersession: Supersession[In],
+        description: String = "",
+        prompt: Prompt[S] = Prompt.empty
+    )(
+        run: In => Out < S
+    )(using frame: Frame): Tool[S] =
+        build(name, description, prompt, Present(supersession))(run)
+
+    // The canonical builder both constructors delegate to, so the Info shape is written once.
+    private def build[In: Schema, Out: Schema, S](
+        name: String,
+        description: String,
+        prompt: Prompt[S],
+        supersession: Maybe[Supersession[In]]
+    )(
+        run: In => Out < S
+    )(using frame: Frame): Tool[S] =
         new Tool[S]:
-            def infos = Chunk(Info(name, description, prompt, run, summon[Schema[In]], summon[Schema[Out]], frame))
+            def infos = Chunk(Info(
+                name,
+                description,
+                prompt,
+                run,
+                summon[Schema[In]],
+                summon[Schema[Out]],
+                frame,
+                supersession
+            ))
 
     /** Combines tools into one. */
     def aggregate[S](tools: Tool[S]*): Tool[S] =
@@ -52,6 +126,22 @@ object Tool:
 
     private[kyo] object internal:
 
+        /** The outcome of decoding a tool call's arguments and running the tool.
+          *
+          * `DecodeFailed` tags a failure to decode the caller's JSON arguments into the tool's input
+          * type: the model supplied arguments that do not match the schema, so `handle` answers with a
+          * schema-repair message. `Ran` carries the result of the tool's own run body, whether it
+          * succeeded or failed with a thrown value; a failure originating inside user run code routes to
+          * the generic tool-failure message and is never mistaken for malformed arguments, even when the
+          * run body itself fails with a `DecodeException`.
+          */
+        enum RunOutcome:
+            case DecodeFailed(error: Throwable)
+            // surplus carries the trailing whitespace/closing-bracket bytes dropped when a complete value
+            // was salvaged from arguments that did not decode whole, so the drop can be logged, never hidden.
+            case Ran(result: Result[Throwable, String], surplus: Maybe[String] = Absent)
+        end RunOutcome
+
         case class Info[In, Out, -S](
             name: String,
             description: String,
@@ -59,12 +149,44 @@ object Tool:
             run: In => Out < (LLM & S),
             inputSchema: Schema[In],
             outputSchema: Schema[Out],
-            createdAt: Frame
-        )
+            createdAt: Frame,
+            supersession: Maybe[Tool.Supersession[In]] = Absent
+        ):
+            // Existential-closure decoders: each method closes over this Info's own In/Out with the
+            // captured inputSchema/outputSchema, so callers decode/encode/run with NO Schema[Any] cast.
+            // The kind rides the key rather than being read separately, so a caller cannot pick up one
+            // without the other. Undecodable arguments yield Absent: an unreadable call has no identity.
+            def supersessionKeyFor(arguments: String)(using Frame): Maybe[(String, Tool.Kind)] =
+                supersession.flatMap { s =>
+                    Json.decode[In](arguments)(using summon, inputSchema, summon) match
+                        case Result.Success(in) => s.key(in).map((_, s.kind))
+                        case _                  => Absent
+                }
+
+            def inputJsonSchema: Json.JsonSchema = Json.jsonSchema(using inputSchema)
+
+            def decodeAndRun(arguments: String)(using Frame): RunOutcome < (LLM & S) =
+                // Salvage a complete value carrying surplus closing brackets before failing the decode:
+                // a strict whole-input decode once rejected schema-conforming payloads over one trailing
+                // bracket, and every rejection regenerates from scratch, so the retries could cross the
+                // model's output ceiling on a byte no caller can act on.
+                val (decoded, surplus) = decodeArguments(arguments)(using inputSchema.asInstanceOf[Schema[Any]])
+                decoded match
+                    case Result.Success(in) =>
+                        // Contain ANY throw (not just NonFatal): run is user code; its failure must
+                        // surface as a tool message, never escape the eval loop.
+                        Abort.run[Throwable](run(in.asInstanceOf[In]).map(out => Json.encode(out)(using outputSchema, summon)))
+                            .map(RunOutcome.Ran(_, surplus))
+                    case Result.Failure(e) => RunOutcome.DecodeFailed(e)
+                    case Result.Panic(e)   => RunOutcome.DecodeFailed(e)
+                end match
+            end decodeAndRun
+        end Info
 
         def infos(using Frame): Chunk[Info[?, ?, LLM]] < LLM =
-            // cast: State.tools holds Tool[Any]; re-widen to the LLM-erased Info the eval loop consumes.
-            LLM.env.map(_.tools.asInstanceOf[Chunk[Tool[LLM]]].flatMap(_.infos))
+            // State.tools holds Tool[Any]; Tool is contravariant, so Tool[Any] <: Tool[LLM] and .infos
+            // flattens directly with no recast.
+            LLM.env.map(_.tools.flatMap(_.infos))
 
         private val resultToolDescription =
             "Use this tool to return your final response in the requested structured format. You MUST " +
@@ -233,12 +355,29 @@ object Tool:
                     case Present(tool) =>
                         val processingMessage = ToolMessage(call.id, s"Processing tool call: ${tool.name}")
                         ai.updateContext(_.add(processingMessage)).andThen {
-                            // cast: tool is an existential Info[?, ?, LLM]; its captured inputSchema decodes the call
-                            // arguments to that tool's own In, erased to Any here and fed straight to its own run.
-                            val (decodedArgs, surplus) =
-                                decodeArguments(call.arguments)(using tool.inputSchema.asInstanceOf[Schema[Any]])
-                            decodedArgs match
-                                case Result.Success(decoded) =>
+                            tool.decodeAndRun(call.arguments).map {
+                                case RunOutcome.DecodeFailed(error) =>
+                                    ai.updateContext { ctx =>
+                                        def reconcileProcessing(ms: Chunk[Message]) =
+                                            ms
+                                                .filterNot(_ == processingMessage)
+                                                .map {
+                                                    case msg: AssistantMessage =>
+                                                        msg.copy(calls = msg.calls.filterNot(_.id == call.id))
+                                                    case other => other
+                                                }
+                                        ctx.copy(
+                                            raw = reconcileProcessing(ctx.raw),
+                                            compacted = reconcileProcessing(ctx.compacted)
+                                        ).systemMessage(
+                                            s"Before calling '${tool.name}', carefully review its schema and provide arguments that match the expected format. " +
+                                                s"Calling this tool is known to be difficult for LLMs and fail with the following error: $error. Make an extra effort " +
+                                                s"to ensure the correctness of the argument json by paying close attention to its schema and required fields and making " +
+                                                s"sure your tool calls won't produce the same error message. Do not omit required fields. Strictly follow the tool schema." +
+                                                argumentTail(call.arguments)
+                                        )
+                                    }
+                                case RunOutcome.Ran(Result.Success(out), surplus) =>
                                     // Salvaging is never silent: dropping bytes a model sent is the same
                                     // invisibility this loop exists to remove.
                                     Kyo.when(surplus.nonEmpty)(
@@ -248,50 +387,28 @@ object Tool:
                                                 s"(${surplus.getOrElse("")}); the value was used and the excess dropped"
                                         )
                                     ).andThen(
-                                        // Contain ANY throw (not just NonFatal): tool.run is user code; its
-                                        // failure must surface as a tool message, never escape the eval loop.
-                                        Abort.run[Throwable](
-                                            // cast: bridge the existential tool's run/outputSchema to the Any-erased decoded
-                                            // input; In/Out are the same erased type the inputSchema produced, so the run is total.
-                                            tool.run.asInstanceOf[Any => Any < (LLM)](decoded).map(out =>
-                                                Json.encode(out)(using tool.outputSchema.asInstanceOf[Schema[Any]], summon)
-                                            )
-                                        ).map {
-                                            case Result.Success(out) => out
-                                            case error =>
-                                                p"""
-                                                Tool '${tool.name}' failed:
-                                                ${error}
-                                                Call ID: ${call.id.id}
-                                            """
-                                        }.map { out =>
-                                            ai.updateContext { ctx =>
-                                                ctx.copy(messages = ctx.messages.map {
-                                                    case `processingMessage` => ToolMessage(call.id, out)
-                                                    case other               => other
-                                                })
+                                        ai.updateContext { ctx =>
+                                            def reconcileProcessing(ms: Chunk[Message]) = ms.map {
+                                                case `processingMessage` => ToolMessage(call.id, out)
+                                                case other               => other
                                             }
+                                            ctx.copy(raw = reconcileProcessing(ctx.raw), compacted = reconcileProcessing(ctx.compacted))
                                         }
                                     )
-                                case error =>
+                                case RunOutcome.Ran(failure, _) =>
+                                    val text = p"""
+                                        Tool '${tool.name}' failed:
+                                        ${failure}
+                                        Call ID: ${call.id.id}
+                                    """
                                     ai.updateContext { ctx =>
-                                        ctx.copy(messages =
-                                            ctx.messages
-                                                .filterNot(_ == processingMessage)
-                                                .map {
-                                                    case msg: AssistantMessage =>
-                                                        msg.copy(calls = msg.calls.filterNot(_.id == call.id))
-                                                    case other => other
-                                                }
-                                        ).systemMessage(
-                                            s"Before calling '${tool.name}', carefully review its schema and provide arguments that match the expected format. " +
-                                                s"Calling this tool is known to be difficult for LLMs and fail with the following error: $error. Make an extra effort " +
-                                                s"to ensure the correctness of the argument json by paying close attention to its schema and required fields and making " +
-                                                s"sure your tool calls won't produce the same error message. Do not omit required fields. Strictly follow the tool schema." +
-                                                argumentTail(call.arguments)
-                                        )
+                                        def reconcileProcessing(ms: Chunk[Message]) = ms.map {
+                                            case `processingMessage` => ToolMessage(call.id, text)
+                                            case other               => other
+                                        }
+                                        ctx.copy(raw = reconcileProcessing(ctx.raw), compacted = reconcileProcessing(ctx.compacted))
                                     }
-                            end match
+                            }
                         }
             }
 

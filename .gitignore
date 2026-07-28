@@ -17,5 +17,7 @@ jmh-result.json
 *.gpg
 test-output
 .DS_Store
+kyo-ai/reference-vocab/
+.scala-build/
 .jvmopts
 node_modules

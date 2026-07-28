@@ -419,7 +419,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         handler.call[P, A](method, params)
     end requestAs
 
-    private def eventRoutes(events: Channel[RpcEvent])(using Frame): Seq[JsonRpcRoute[?, ?, ?]] =
+    private[completion] def eventRoutes(events: Channel[RpcEvent])(using Frame): Seq[JsonRpcRoute[?, ?, ?]] =
         Seq(
             eventRoute(events, "item/started"),
             eventRoute(events, "item/completed"),
@@ -427,6 +427,10 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             eventRoute(events, "rawResponseItem/completed"),
             eventRoute(events, "item/agentMessage/delta"),
             eventRoute(events, "turn/completed"),
+            // Without this subscription the turn's token counts never reach the event channel and every
+            // codex turn reports no usage at all: collectTurn's tokenUsage branch and the post-interrupt
+            // drain both read from here.
+            eventRoute(events, "thread/tokenUsage/updated"),
             eventRoute(events, "thread/status/changed"),
             eventRoute(events, "error")
         )
@@ -488,8 +492,16 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     bridge.resultCapture.get.map { captured =>
                         bridge.deferred.get.map { deferred =>
                             if captured.isDefined || deferred then
+                                // The app-server emits `thread/tokenUsage/updated` AFTER `turn/interrupt`, so a
+                                // turn that ends by result capture (the common ai.gen shape: the model calls the
+                                // result tool, which kills the turn) reports NO usage unless the trailing events
+                                // are drained. Verified live: a gen resolving in a single capture-interrupt turn
+                                // recorded zero tokens, which both blanks the Observe spend report and, because
+                                // the compaction anchor gates on inputTokens > 0, silently drops that session
+                                // back to the offline occupancy estimate.
                                 interruptTurn(handler, threadId, turnId)
-                                    .andThen(Loop.done((finalText(completed, delta), turnStats(usage))))
+                                    .andThen(drainForUsage(events, threadId, turnId, usage))
+                                    .map(drained => Loop.done((finalText(completed, delta), turnStats(drained))))
                             else if isTurnCompleted(event, threadId, turnId) then
                                 Loop.done((finalText(completed, delta), turnStats(usage)))
                             else if event.method == "thread/tokenUsage/updated" then
@@ -514,6 +526,54 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             }
         }
     end collectTurn
+
+    /** Consumes the events that trail a `turn/interrupt` until this turn's token usage lands.
+      *
+      * The interrupt cuts the collect loop before the app-server has emitted
+      * `thread/tokenUsage/updated`, so the capture path would otherwise report a turn with no numbers.
+      * Returns as soon as usage is seen (the common case, a handful of events later), and is bounded on
+      * both axes so a turn whose notification never arrives costs a fixed, small wait rather than hanging:
+      * the event budget caps the walk and the timeout caps the wall clock. `already` is the usage seen
+      * before the interrupt, kept when the drain finds nothing so this can only add information.
+      */
+    private[completion] def drainForUsage(
+        events: Channel[RpcEvent],
+        threadId: String,
+        turnId: String,
+        already: Maybe[TokenCounts]
+    )(using Frame): Maybe[TokenCounts] < Async =
+        Abort.run[Timeout | Closed] {
+            Async.timeout(drainForUsageTimeout) {
+                Loop((0, already)) { (seen, usage) =>
+                    if seen >= drainForUsageMaxEvents then Loop.done(usage)
+                    else
+                        events.take.map { event =>
+                            if event.method == "thread/tokenUsage/updated" then
+                                decodeEvent[TokenUsageNotification](event).handle(Abort.run[AIGenException]).map {
+                                    case Result.Success(n) if n.threadId == threadId && n.turnId == turnId =>
+                                        // The thread aggregate is this ephemeral thread's whole turn.
+                                        val found = n.tokenUsage.total.orElse(usage)
+                                        if found.isDefined then Loop.done(found)
+                                        else Loop.continue((seen + 1, usage))
+                                    case _ => Loop.continue((seen + 1, usage))
+                                }
+                            else if isTurnCompleted(event, threadId, turnId) then Loop.done(usage)
+                            else Loop.continue((seen + 1, usage))
+                        }
+                }
+            }
+        }.map {
+            case Result.Success(usage) => usage
+            // A drain that times out, exhausts its budget, or races a closed channel keeps whatever the
+            // turn already reported: this step can only add usage, never fail the turn that succeeded.
+            case _ => already
+        }
+    end drainForUsage
+
+    // Bounds for the post-interrupt usage drain: the notification lands within a few trailing events, so a
+    // small budget and a short ceiling catch it without adding meaningful latency to the common path.
+    private val drainForUsageTimeout   = 2.seconds
+    private val drainForUsageMaxEvents = 64
 
     // A turn that saw no usage notification still ran: one turn, no numbers.
     private def turnStats(usage: Maybe[TokenCounts]): AIStats =

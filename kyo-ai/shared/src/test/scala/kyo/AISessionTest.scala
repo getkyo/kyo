@@ -19,7 +19,7 @@ class AISessionTest extends kyo.test.Test[Any]:
         val raw = Context.empty.userMessage("hello")
         LLM.run {
             session.copy(rawContext = raw).context.map { enriched =>
-                val msgs = enriched.messages
+                val msgs = enriched.compacted
                 assert(msgs.size == 3, s"expected system + user + reminder, got ${msgs.size}: $msgs")
                 msgs.head match
                     case m: Context.SystemMessage => assert(m.content.contains("INSTRUCTIONS"))

@@ -47,9 +47,28 @@ object LLM:
         private[kyo] def withSession(ai: AI, s: AISession): State = copy(instances = instances.update(ai.ref, s))
         private[kyo] def withContext(ai: AI, ctx: Context): State = withSession(ai, sessionOf(ai).copy(rawContext = ctx))
         private[kyo] def without(ai: AI): State                   = copy(instances = instances.remove(ai.ref))
-        // Drops slots whose AI has been GC'd; run at each mint so an unbounded mint stream never
-        // accumulates dead slots.
+        // Drops slots whose AI has been GC'd. Kept for callers that only need the surviving map;
+        // the mint path uses prunedWithDead instead, because dropping a slot is not enough on its own:
+        // its compaction seat has to be released and unenrolled or the seat outlives the session.
         private[kyo] def pruned: State = copy(instances = instances.filter((ref, _) => ref.isValid))
+
+        /** Splits the map at the collection line: the seats of sessions whose `AI` is gone, and the state
+          * without those slots.
+          *
+          * ONE partition rather than a listing pass followed by [[pruned]], because two passes over a
+          * `WeakReference` map can disagree. A slot still valid during the listing may be collected before
+          * the filter runs, and its seat would then be dropped with nothing having released it, which is
+          * the exact defect this exists to close.
+          */
+        private[kyo] def prunedWithDead: (Chunk[Compactor.Seated], State) =
+            val (alive, dead) = instances.toMap.partition((ref, _) => ref.isValid)
+            val seats = dead.values.foldLeft(Chunk.empty[Compactor.Seated]) { (acc, session) =>
+                session.compaction match
+                    case Present(seated) => acc.append(seated)
+                    case Absent          => acc
+            }
+            (seats, copy(instances = Dict.from(alive)))
+        end prunedWithDead
     end State
 
     private[kyo] object State:
@@ -98,14 +117,32 @@ object LLM:
                         case _: Op.Init.type =>
                             // Mint with the next id from the threaded State (no global counter), stamped with
                             // this run's owner; prune GC'd slots on the way.
-                            val ai = new AI(state.nextId, state.owner)
-                            Loop.continue(state.pruned.copy(nextId = state.nextId + 1).withContext(ai, Context.empty), cont(ai))
+                            //
+                            // Pruning RELEASES what it drops. A collected session is the ordinary end of an
+                            // instance, since nothing obliges a caller to discard one, and dropping its seat
+                            // silently left a compactor's ephemeral work (a preparation fiber, staged bytes)
+                            // for the run-end sweep alone. Prune is the first point that can see the slot is
+                            // dead, so it is where the release belongs.
+                            val ai                  = new AI(state.nextId, state.owner)
+                            val (deadSeats, pruned) = state.prunedWithDead
+                            releaseSeats(state.env, deadSeats).andThen(
+                                Loop.continue(pruned.copy(nextId = state.nextId + 1).withContext(ai, Context.empty), cont(ai))
+                            )
                         case _: Op.Env.type =>
                             Loop.continue(state, cont(state.env))
                         case op: Op.SetEnv =>
                             Loop.continue(state.copy(env = op.env), cont(state.env))
                         case op: Op.Discard =>
-                            Loop.continue(state.without(op.target), cont(()))
+                            // Release this instance's compaction state before dropping its slot, through the
+                            // compactor that created it, and UNENROLL it from the run registry. Releasing
+                            // without unenrolling left every seat a run ever created strongly reachable
+                            // until exit, so the per-session teardown freed the fiber but not the staged
+                            // bytes behind it. The registry is still the sweep's bridge; it is no longer
+                            // add-only.
+                            val release = state.sessionOf(op.target).compaction match
+                                case Present(seated) => releaseSeats(state.env, Chunk(seated))
+                                case Absent          => Kyo.unit
+                            release.andThen(Loop.continue(state.without(op.target), cont(())))
                         case _: Op.GetState.type =>
                             Loop.continue(state, cont(state))
                         case op: Op.SetState =>
@@ -125,10 +162,12 @@ object LLM:
                                 .map((s, c) => Loop.continue(s, cont(c)))
                         case op: Op.Stream[C] @unchecked =>
                             // The SSE projection is itself an LLM computation (reads config, assembles the
-                            // result-tool/context), so a nested runWith discharges those ops; on full
-                            // consumption it records the turn through the same state. The op carries the
-                            // element-emit Tag captured at the suspend site, since the handler's C is abstract
-                            // and the Tag cannot be re-derived here.
+                            // result-tool/context), so a nested runWith discharges those LLM ops; on full
+                            // consumption it records the turn through the same state, and at an update boundary
+                            // the projection writes the rendered compacted list back through the compaction seam,
+                            // so the threaded state carries that update out. The op carries the element-emit Tag
+                            // captured at the suspend site, since the handler's C is abstract and the Tag cannot
+                            // be re-derived here.
                             runWith(state)(streamAgainst(op.target, op.schema)(using summon[Frame], op.emitTag))((s, c) => (s, c))
                                 .map((s, c) => Loop.continue(s, cont(c)))
             ,
@@ -195,82 +234,144 @@ object LLM:
         Tag[Emit[Chunk[A]]]
     ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
-        AI.config.map { config =>
-            if config.provider.usesApiKey && config.apiKey.isEmpty then
-                Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
-            else
-                // The result_tool rides every request: its definition plus prompt go into the request body
-                // via enrichedContext.
-                val toolInfos = Tool.internal.resultToolDefinition.infos
-                // Mode inferred from A: String streams incrementally (each element the next decoded text
-                // chunk), every other type streams complete array elements. A bare partial scalar has no
-                // meaning, so only String takes the incremental path; everything else takes complete-element.
-                val stringMode = schema.structure match
-                    case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
-                    case _                                                           => false
-                context(target).map { targetContext =>
-                    // Streaming has no eval loop and no repair turn: the result must arrive as a result_tool
-                    // call on THIS turn. HTTP backends compel it by protocol (forced tool_choice); command
-                    // harnesses have no forcing knob, so the request carries an explicit result directive,
-                    // request-scoped and riding every backend identically.
-                    val requestCtx = targetContext.systemMessage(
-                        s"Deliver the result by calling the '${Completion.resultToolName}' tool: only " +
-                            "the tool call's arguments reach the caller, so do not reply in plain text."
-                    )
-                    Prompt.internal.enrichedContext(requestCtx, toolInfos).map { context =>
-                        // Wrap in the {resultValue: A} object envelope (array of A in element mode): providers
-                        // require an object tool schema, so a bare non-object schema is rejected. The array
-                        // schema comes from kyo-schema's chunk Schema, not hand-built.
-                        val resultValueSchema =
-                            if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
-                        val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
-                        val completion   = config.provider.completion
-                        Log.debug(
-                            s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
-                                s"mode=${if stringMode then "prefix" else "elements"} messages=${context.messages.size} tools=${toolInfos.size}"
-                        ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
-                            Stream[A, LLM & Async & Scope & Abort[AIStreamException]] {
-                                val consumed =
-                                    if stringMode then consumePrefixFragments(fragments, schema)
-                                    else consumeElementFragments(fragments, schema)
-                                consumed.map { (produced, usage) =>
-                                    // Recorded HERE, after the fold completes, so the turn joins the
-                                    // conversation exactly as a generated one and a later turn can read it; an
-                                    // abandoned or part-way-failed stream records nothing rather than half a
-                                    // turn. Recorded as the result_tool call the model made (the streamed
-                                    // fragments ARE its arguments), closed by a synthetic result: recording it
-                                    // as prose instead teaches a weaker model to answer in text on a later turn
-                                    // and pull away from the forced tool call a streamed result requires.
-                                    // Observers fire BEFORE the append, matching the generation path: an
-                                    // observer reading ai.context sees the conversation up to this turn, and a
-                                    // guardrail abort keeps the turn out of the transcript on both paths. An
-                                    // abandoned or failed stream fires nothing.
-                                    Kyo.when(produced.nonEmpty) {
-                                        val envelope =
-                                            if stringMode then s"""{"resultValue":${Json.encode(produced)}}"""
-                                            else s"""{"resultValue":$produced}"""
-                                        // The context grows with the conversation, so its size is a per-turn
-                                        // unique seed matching call to result.
-                                        val callId        = CallId(s"stream-result-${context.messages.size}")
-                                        val call          = Call(callId, Completion.resultToolName, envelope)
-                                        val callMessage   = AssistantMessage("", Chunk(call))
-                                        val resultMessage = ToolMessage(callId, Json.encode("Result received."))
-                                        // The turn count is structural on this path, as it already is on every
-                                        // non-streaming path: a fully consumed stream IS one turn, even when the
-                                        // wire emitted no usage element (a provider ignoring the usage request).
-                                        val turnUsage = if usage.turns == 0 then usage.copy(turns = 1) else usage
-                                        fireStreamObservers(
-                                            target,
-                                            Completion.Reply(Chunk(callMessage, resultMessage), Completion.StopReason.Completed, turnUsage)
-                                        )
-                                            .andThen(LLM.append(target, callMessage))
-                                            .andThen(LLM.append(target, resultMessage))
-                                    }.unit
+        // Resolve config, the compactor, and tool metadata the SAME way genLoop resolves them for gen
+        // (instance-over-scope), so `ai.stream` compacts identically to `ai.gen` for a named instance: the
+        // merged env means render's occupancy/config read see the instance's overrides. Prompt/thoughts/modes
+        // stay scope-only (the stream path sends only the result tool and never loops them).
+        LLM.session(target).map { session =>
+            LLM.updateEnv(scopeEnv =>
+                scopeEnv
+                    .copy(config = session.env.config.orElse(scopeEnv.config))
+                    .copy(compactor = session.env.compactor.orElse(scopeEnv.compactor))
+                    .addTools(session.env.tools)
+            ) {
+                AI.config.map { config =>
+                    if config.provider.usesApiKey && config.apiKey.isEmpty then
+                        Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
+                    else
+                        // The result_tool rides every request: its definition plus prompt go into the request
+                        // body via enrichedContext.
+                        val toolInfos = Tool.internal.resultToolDefinition.infos
+                        // Mode inferred from A: String streams incrementally (each element the next decoded text
+                        // chunk), every other type streams complete array elements. A bare partial scalar has no
+                        // meaning, so only String takes the incremental path; everything else takes complete-element.
+                        val stringMode = schema.structure match
+                            case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
+                            case _                                                           => false
+                        Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(config, e)))(
+                            Compactor.internal.applyStreamMeasure(target, config)
+                        ).andThen(context(target)).map { targetContext =>
+                            // Apply a pending stream re-anchor at the turn start, then render. Compaction seam for
+                            // the stream path, shared with gen via renderView: below the occupancy trigger re-serve
+                            // the context unchanged, at/above it render + install the rebuilt compacted list. The
+                            // compactor is read from the merged env (instance-over-scope).
+                            LLM.env.map(e => renderView(target, targetContext, config, e.compactor)).map { view =>
+                                // Streaming has no eval loop and no repair turn: the result must arrive as a
+                                // result_tool call on THIS turn. HTTP backends compel it by protocol (forced
+                                // tool_choice); command harnesses have no forcing knob, so the request carries an
+                                // explicit result directive, request-scoped and riding every backend identically.
+                                // It builds on the rendered view; the anchor basis stays the pre-directive
+                                // view.compacted, so the request-scoped directive joins the excluded enrichment.
+                                val requestView = view.systemMessage(
+                                    s"Deliver the result by calling the '${Completion.resultToolName}' tool: only " +
+                                        "the tool call's arguments reach the caller, so do not reply in plain text."
+                                )
+                                Prompt.internal.enrichedContext(requestView, toolInfos).map { context =>
+                                    // Wrap in the {resultValue: A} object envelope (array of A in element mode):
+                                    // providers require an object tool schema, so a bare non-object schema is
+                                    // rejected. The array schema comes from kyo-schema's chunk Schema, not hand-built.
+                                    val resultValueSchema =
+                                        if stringMode then Json.jsonSchema[A]
+                                        else Json.jsonSchema(using Schema.chunkSchema(using schema))
+                                    val resultSchema             = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
+                                    val completion               = config.provider.completion
+                                    val (tokenizer, tokenizerId) = Compactor.internal.activeTokenizer(config)
+                                    // Seat the stream re-anchor: usage rides the element stream and is folded
+                                    // consumer-side, so the sink is written at the consumption continuation below
+                                    // (an AtomicRef because the anchor is seated before the stream is consumed); the
+                                    // sent view + active tokenizer are captured here (LLM live) for applyStreamMeasure
+                                    // to consume at the next turn's start. The anchor basis is the pre-enrichment,
+                                    // pre-directive view.compacted, the same non-enriched list occupancy apportions
+                                    // over on subsequent turns.
+                                    AtomicRef.init(Maybe.empty[AIStats]).map { usageSink =>
+                                        LLM.session(target).map { session =>
+                                            val anchor =
+                                                Compactor.internal.StreamAnchor(usageSink, view.compacted, tokenizer, tokenizerId)
+                                            LLM.setSession(target, session.withStreamAnchor(anchor)).andThen {
+                                                Log.debug(
+                                                    s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
+                                                        s"mode=${if stringMode then "prefix" else "elements"} messages=${context.compacted.size} tools=${toolInfos.size}"
+                                                ).andThen(completion.streamFragments(
+                                                    config,
+                                                    context,
+                                                    resultSchema,
+                                                    toolInfos
+                                                )).map { fragments =>
+                                                    Stream[A, LLM & Async & Scope & Abort[AIStreamException]] {
+                                                        val consumed =
+                                                            if stringMode then consumePrefixFragments(fragments, schema)
+                                                            else consumeElementFragments(fragments, schema)
+                                                        consumed.map { (produced, usage) =>
+                                                            // The stream anchor's usage write (the adapters no longer
+                                                            // carry a sink): a fully consumed stream that REPORTED
+                                                            // usage seats it for applyStreamMeasure to consume at the
+                                                            // next turn's start. An abandoned or mid-stream-failed
+                                                            // stream never reaches here and writes nothing, so a
+                                                            // seated anchor with an unfilled sink degrades to no
+                                                            // re-anchor exactly as before.
+                                                            Kyo.when(usage.inputTokens > 0)(usageSink.set(Present(usage))).andThen {
+                                                                // Recorded HERE, after the fold completes, so the turn
+                                                                // joins the conversation exactly as a generated one and a
+                                                                // later turn can read it; an abandoned or part-way-failed
+                                                                // stream records nothing rather than half a turn. Recorded
+                                                                // as the result_tool call the model made (the streamed
+                                                                // fragments ARE its arguments), closed by a synthetic
+                                                                // result: recording it as prose instead teaches a weaker
+                                                                // model to answer in text on a later turn and pull away
+                                                                // from the forced tool call a streamed result requires.
+                                                                // Observers fire BEFORE the appends, matching the
+                                                                // generation path: an observer reading ai.context sees the
+                                                                // conversation up to this turn, and a guardrail abort keeps
+                                                                // the turn out of the transcript on both paths.
+                                                                Kyo.when(produced.nonEmpty) {
+                                                                    val envelope =
+                                                                        if stringMode then s"""{"resultValue":${Json.encode(produced)}}"""
+                                                                        else s"""{"resultValue":$produced}"""
+                                                                    // The context grows with the conversation, so its
+                                                                    // size is a per-turn unique seed matching call to result.
+                                                                    val callId        = CallId(s"stream-result-${context.compacted.size}")
+                                                                    val call          = Call(callId, Completion.resultToolName, envelope)
+                                                                    val callMessage   = AssistantMessage("", Chunk(call))
+                                                                    val resultMessage = ToolMessage(callId, Json.encode("Result received."))
+                                                                    // The turn count is structural on this path, as it
+                                                                    // already is on every non-streaming path: a fully
+                                                                    // consumed stream IS one turn, even when the wire
+                                                                    // emitted no usage element.
+                                                                    val turnUsage =
+                                                                        if usage.turns == 0 then usage.copy(turns = 1) else usage
+                                                                    fireStreamObservers(
+                                                                        target,
+                                                                        Completion.Reply(
+                                                                            Chunk(callMessage, resultMessage),
+                                                                            Completion.StopReason.Completed,
+                                                                            turnUsage
+                                                                        )
+                                                                    )
+                                                                        .andThen(LLM.append(target, callMessage))
+                                                                        .andThen(LLM.append(target, resultMessage))
+                                                                }.unit
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
                 }
+            }
         }
     end streamUnder
 
@@ -471,19 +572,62 @@ object LLM:
 
     /** Discharges `LLM`, threading a fresh `State`. */
     def run[A, S](v: A < (LLM & S))(using Frame): A < (S & Async & Abort[AIGenException]) =
-        Config.default.map(c => runWith(State.empty(c))(v)((_, a) => a))
+        Config.default.map(c => bracketed(State.empty(c))(v)((_, a) => a))
 
     /** Runs with a transformed configuration. */
     def run[A, S](f: Config => Config)(v: A < (LLM & S))(using Frame): A < (S & Async & Abort[AIGenException]) =
-        Config.default.map(c => runWith(State.empty(f(c)))(v)((_, a) => a))
+        Config.default.map(c => bracketed(State.empty(f(c)))(v)((_, a) => a))
 
     /** Runs with a specific configuration. */
     def run[A, S](config: Config)(v: A < (LLM & S))(using Frame): A < (S & Async & Abort[AIGenException]) =
-        runWith(State.empty(config))(v)((_, a) => a)
+        bracketed(State.empty(config))(v)((_, a) => a)
 
     /** Runs and returns the final `State` (transcripts) with the value. Internal/test use only. */
     private[kyo] def runTuple[A, S](v: A < (LLM & S))(using Frame): (LLM.State, A) < (S & Async & Abort[AIGenException]) =
-        Config.default.map(c => runWith(State.empty(c))(v)((s, a) => (s, a)))
+        Config.default.map(c => bracketed(State.empty(c))(v)((s, a) => (s, a)))
+
+    // Lifecycle: bracket the run so every compaction state still seated is released on ANY exit, normal
+    // or not.
+    //
+    // Per-session release at Op.Discard is not enough and cannot be. The threaded LLM.State lives inside
+    // the handler, so on interrupt the `done` continuation never runs, and this finalizer is closed over
+    // BEFORE the run, so it cannot see the final state either. The registry is the bridge: a mutable cell
+    // the finalizer captures and every seating writes into. Without it, preparation fibers (deliberately
+    // unscoped, so nothing else reaps them) outlive the run: each one's body is bounded single-flight work
+    // rather than a loop, so the exposure is one analysis plus its fills spent on a view nobody will read,
+    // and the state they staged retained until something drops it.
+    //
+    // A fork's child runs bare, with no bracket of its own, and its restore merges only rawContext, so a
+    // child's seatings would be dropped entirely. They are not, because the registry travels inside the
+    // captured env BY REFERENCE, so a child seats into the parent's registry. That is also why the sweep
+    // reads the registry rather than walking the final state's instances: a walk misses forks and
+    // everything a discard already dropped.
+    private def bracketed[A, S, B, S2](state: State)(v: A < (LLM & S))(
+        done: (State, A) => B < S2
+    )(using Frame): B < (S & S2 & Async & Abort[AIGenException]) =
+        AtomicRef.init(Set.empty[Compactor.Seated]).map { registry =>
+            val seated = state.copy(env = state.env.compactions(registry))
+            Sync.ensure(releaseAll(registry))(runWith(seated)(v)(done))
+        }
+
+    // Release is documented idempotent precisely so this can overlap with an eager per-session release:
+    // a discarded session releases at the discard AND may still be swept here.
+    private def releaseAll(registry: AtomicRef[Set[Compactor.Seated]])(using Frame): Unit < Sync =
+        registry.get.map(seats => Kyo.foreachDiscard(seats)(_.release))
+
+    // Eager teardown for seats whose session has ended, by discard or by collection: release each one and
+    // drop it from the registry so what it held becomes reclaimable within the run rather than at exit.
+    //
+    // Unenrolling is what makes the registry bounded. Release alone frees the fiber; only removal frees the
+    // staged summaries and analyses hanging off the seat, and a run that mints many instances would
+    // otherwise retain every one of them to the end.
+    private def releaseSeats(env: AIEnv, seats: Chunk[Compactor.Seated])(using Frame): Unit < Sync =
+        if seats.isEmpty then Kyo.unit
+        else
+            val unenroll = env.compactions match
+                case Present(r) => r.getAndUpdate(set => seats.foldLeft(set)(_ - _)).unit
+                case Absent     => Kyo.unit
+            Kyo.foreachDiscard(seats)(_.release).andThen(unenroll)
 
     // The `private[kyo]` effect surface `AI` is built on: the sole place `LLM`'s ArrowEffect ops are
     // summoned. Read = noun, write = setNoun, lifecycle/action = verb; every op targets exactly one instance.
@@ -551,6 +695,132 @@ object LLM:
             val merged = if parent.isEmpty then forked else parent.merge(forked)
             ai.setContext(merged)
         }
+
+    // The compaction seam shared by eval (gen) and streamAgainst (stream). ONE dispatch for every
+    // compactor: hand it the context and its session state, install what it hands back. The seam holds no
+    // trigger of its own, so when a boundary fires is the strategy's decision rather than the framework's,
+    // which is what lets a custom compactor have a different one.
+    //
+    // Unchanged re-serves the input by reference, so the provider's prefix cache survives. That much is
+    // structural: a compactor reporting Unchanged has no channel through which to return a modified view.
+    // Compacted installs the returned context after the one check a returned Context could fail, that raw
+    // was preserved.
+    //
+    // What the seam does NOT promise is that a compactor stays silent between boundaries. It holds no
+    // trigger, so it cannot tell a boundary from anything else, and both shipped compactors answer
+    // Compacted below one: the off switch restores raw after a compactor switch, and the default appends
+    // an automatic-recall expansion. The guarantee is therefore that the served PREFIX is stable and any
+    // change is an append, which preserves the cache property because caching is positional. Enforcing
+    // that here would need a discriminator the seam does not have and would newly constrain every custom
+    // compactor, so it is enforced inside the default compactor's own answer construction instead.
+    private def renderView(ai: AI, ctx: Context, config: Config, compactor: Maybe[Compactor[LLM]])(using
+        Frame
+    ): Context < (LLM & Async & Abort[AIGenException]) =
+        compactor match
+            case Absent => Kyo.lift(ctx)
+            case Present(c) =>
+                LLM.session(ai).map { session =>
+                    seatCompaction(ai, session, c.asInstanceOf[Compactor[Any]]).map { seated =>
+                        seated.compactor.compact(ctx, seated.state).map {
+                            case Compactor.Decision.Unchanged => Kyo.lift(ctx)
+                            case Compactor.Decision.Compacted(updated) =>
+                                checkRawPreserved(ctx, updated).andThen(ai.setContext(updated)).andThen(updated)
+                        }
+                    }
+                }
+    end renderView
+
+    // Seats this session's compaction state on first use and hands back the same handle every call.
+    // Interior-mutable and owned here rather than by the compactor: Decision.Unchanged carries nothing
+    // back, so a handle threaded through the return would lose the arming a below-boundary pass performs.
+    // Seats this session's compaction state on first use and hands back the same pair every call.
+    //
+    // Gated on compactor IDENTITY, because the enabled compactor can change mid-session (an instance env
+    // overrides the scope one). Handing state created by A to compactor B would be a type error the
+    // erasure cannot catch: it would surface later, inside B, or not at all. So a change releases the old
+    // state and seats fresh, losing only speculation, since everything persisted lives on the Context.
+    //
+    // One slot rather than a map keyed by compactor: `Compactor.init(tuning)` mints a fresh instance per
+    // call, so a caller enabling one per turn would grow a map without bound, while a single slot merely
+    // reseats. Enable a compactor once and reuse the instance.
+    private def seatCompaction(ai: AI, session: AISession, c: Compactor[Any])(using Frame): Compactor.Seated < (LLM & Async) =
+        LLM.env.map { env =>
+            def enroll(seated: Compactor.Seated): Unit < Sync =
+                env.compactions match
+                    case Present(r) => r.getAndUpdate(_ + seated).unit
+                    case Absent     => Kyo.unit
+            def seatFresh: Compactor.Seated < (LLM & Async) =
+                Compactor.Seated.init(c).map { seated =>
+                    enroll(seated).andThen(LLM.setSession(ai, session.withCompaction(seated))).andThen(seated)
+                }
+            session.compaction match
+                // Enrolling on EVERY seat, not only a fresh one, is what keeps unenrollment safe under
+                // forks. A fork's child shares the parent's Dict values, so a child that discards a
+                // pre-fork instance removes a seat the parent still holds and may still arm. Since this
+                // runs before every compact, re-enrolling here restores the invariant the sweep depends
+                // on: a seat is enrolled whenever any of its fibers could be forked. The add is
+                // idempotent, so the steady state costs one Set insert that changes nothing.
+                case Present(seated) if seated.compactor eq c => enroll(seated).andThen(seated)
+                case Present(stale)                           => releaseSeats(env, Chunk(stale)).andThen(seatFresh)
+                case Absent                                   => seatFresh
+            end match
+        }
+    end seatCompaction
+
+    // The one thing a returned Context could get wrong. `raw` is the complete transcript and only the
+    // eviction backstop may touch it, in place: each entry is either the identical value or a marker
+    // carrying an origin that stands for what it replaced, and the length never changes.
+    //
+    // A checked invariant rather than a structural one, which is the price of letting the compactor
+    // return a whole Context instead of just a view. It aborts rather than logging, because a compactor
+    // that rewrote history must fail the turn, not continue against a corrupted transcript. The check runs
+    // only on the Compacted arm, so an ordinary turn pays nothing, and untouched entries keep reference
+    // identity through eviction's map, so even a boundary pays a pointer compare per message.
+    private def checkRawPreserved(before: Context, after: Context)(using Frame): Unit < Abort[AIGenException] =
+        if after.raw.size != before.raw.size then
+            Abort.fail(AICompactionException(
+                s"a compactor changed the raw transcript's length from ${before.raw.size} to ${after.raw.size}"
+            ))
+        else
+            val offending = after.raw.zipWithIndex.collectFirst {
+                case (m, i) if m != before.raw(i) && m.origin.isEmpty => i
+            }
+            offending match
+                case Some(i) =>
+                    Abort.fail(AICompactionException(
+                        s"a compactor rewrote raw entry $i without leaving a marker: only eviction may replace raw, " +
+                            "and each replacement carries the origin range it stands for"
+                    ))
+                case None => checkViewClosed(after)
+            end match
+
+    // The other half of the same invariant: the view may not reference raw it can no longer produce.
+    //
+    // A view marker points into raw by index, and the retention forget rewrites raw. Nothing stopped the
+    // two from disagreeing, and they did: a marker kept advertising `recall(N)` for a region whose bytes
+    // had been forgotten, so the model was invited to call a tool that could only refuse. Checked here
+    // rather than trusted, because it holds for ANY compactor and the seam is the one place that sees
+    // both lists after a rewrite.
+    //
+    // Either the marker stands over live raw, or it IS the band's own representative. A band head carries
+    // its band's origin and legitimately refuses recall; a marker pointing INTO a band it does not
+    // represent is the divergence.
+    private def checkViewClosed(after: Context)(using Frame): Unit < Abort[AIGenException] =
+        val offending = after.compacted.zipWithIndex.collectFirst {
+            case (m, i) if m.origin.exists { o =>
+                    o.start >= 0 && o.start < after.raw.size &&
+                    after.raw(o.start).origin.exists(_ != o)
+                } => (i, m.origin)
+        }
+        offending match
+            case Some((i, o)) =>
+                Abort.fail(AICompactionException(
+                    s"a compactor served a view whose entry $i advertises $o over raw that has been forgotten: " +
+                        "a marker must stand over live raw, or be the forgotten band's own representative"
+                ))
+            case None => Kyo.unit
+        end match
+    end checkViewClosed
 
     private def genLoop[A](ai: AI, schema: Schema[A])(using Frame): A < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
@@ -623,21 +893,38 @@ object LLM:
         for
             config   <- AI.config
             thoughts <- Thought.internal.infos
+            env      <- LLM.env
             tools    <- if !forceResult then Tool.internal.infos else Kyo.lift(Chunk.empty)
-            allTools     = tools ++ resultToolInfos
+            // The recall tool is registered here, bound to THIS calling instance, so a scope-wide compactor
+            // serving many instances resolves each recall against its own state (never another session's).
+            // Excluded when forcing the result, matching the user tools and the forced-turn directive below.
+            recallInfos = if forceResult then Chunk.empty
+            else env.compactor.map(c => c.tools(ai).flatMap(_.infos)).getOrElse(Chunk.empty)
+            allTools     = tools ++ recallInfos ++ resultToolInfos
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
+            // Apply a pending stream re-anchor + the tokenizer-unit suffix stamp at the turn start (a prior
+            // streaming turn seated its usage sink; gen consumes it here, the next handler-live point).
+            // Idempotent when nothing is pending, so byte-stability is preserved. A transport failure while
+            // measuring classifies to a typed leaf, the same treatment the completion call gets below.
+            _ <- Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(config, e)))(
+                Compactor.internal.applyStreamMeasure(ai, config)
+            )
             ctx <- ai.context
-            // The forced turn carries an explicit finalize directive, request-scoped (never stored). On a
-            // backend that compels the call (forced tool_choice with grammar-constrained decoding), the
-            // model must emit a schema-valid envelope even when it believes it was told to keep working, and
-            // without an explicit instruction it sometimes encodes that withholding INTO the envelope (a
-            // progress note or empty string in place of the value). The eval loop accepts any schema-valid
-            // result, so a compelled backend has no repair turn; the directive closes that gap at the source.
-            // It also names itself as the instruction to finalize and retires any standing "keep working"
-            // order the caller left, which costs nothing on a backend already going to comply.
+            // Compaction seam (shared with streamAgainst via renderView): the framework owns byte-stability.
+            // Below the occupancy trigger re-serve ctx unchanged (NO render); at/above it render + install the
+            // rebuilt compacted list, write it back via setContext, and send it. raw is never shrunk.
+            view <- renderView(ai, ctx, config, env.compactor)
+            // The forced turn carries an explicit finalize directive, request-scoped (never stored) and built
+            // ON THE VIEW so the anchor basis stays the pre-directive view.compacted. On a backend that compels
+            // the call (forced tool_choice with grammar-constrained decoding), the model must emit a schema-valid
+            // envelope even when it believes it was told to keep working, and without an explicit instruction it
+            // sometimes encodes that withholding INTO the envelope (a progress note or empty string in place of
+            // the value). The eval loop accepts any schema-valid result, so a compelled backend has no repair
+            // turn; the directive closes that gap at the source. It also names itself as the instruction to
+            // finalize and retires any standing "keep working" order the caller left.
             requestCtx =
                 if forceResult then
-                    ctx.systemMessage(
+                    view.systemMessage(
                         s"This is the instruction to finalize. Every other tool has been REMOVED for this " +
                             s"turn: '${Completion.resultToolName}' is the only tool available, and a call to any " +
                             "other tool will fail. Any earlier instruction to keep working, wait, or withhold the " +
@@ -646,14 +933,14 @@ object LLM:
                             "exact values from prior tool results; do not report progress, interim state, or " +
                             "placeholder values."
                     )
-                else ctx
+                else view
             context <- Prompt.internal.enrichedContext(requestCtx, allTools)
             _ <- Log.debug(
                 // Carries the facts that DECIDE this request's shape, not just its size: the reasoning state,
                 // resolved amount, and ceiling are each derived from a declaration, so a turn that behaved
                 // unexpectedly can't be diagnosed from the call alone without this.
                 s"kyo-ai gen backend=${config.provider.name} model=${config.modelName} " +
-                    s"messages=${context.messages.size} tools=${allTools.size} thoughts=${thoughts.size} " +
+                    s"messages=${context.compacted.size} tools=${allTools.size} thoughts=${thoughts.size} " +
                     s"forceResult=$forceResult reasoning=${config.reasoningEnabled} encoding=${config.modelReasoning} " +
                     s"amount=${config.resolvedAmount} ceiling=${config.effectiveMaxOutputTokens}"
             )
@@ -765,8 +1052,34 @@ object LLM:
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"
             )
             _ <- ai.updateContext(ctx => messages.foldLeft(ctx)(_.add(_)))
+            // Re-anchor occupancy on the provider's reported request total through the ONE fused seam
+            // helper every usage-consumption site shares, so the anchor scalar and the per-message stamps it
+            // covers can never disagree: it records the exact input-token total at the sent view's size (so
+            // the next pass sizes only the suffix appended since) AND apportions the exact sent view via the
+            // active tokenizer, propagating each stamp onto its raw twin for the demotion loop. The sent view
+            // is the pre-response request (view.compacted), never the just-appended response tail. Absent
+            // usage leaves the anchor untouched (offline-estimated).
+            _ <-
+                // A Reply always carries usage now (AIStats, zeroed when the wire reported none), so
+                // REPORTED-NESS is `inputTokens > 0`, not a Maybe. The gate is load-bearing: re-anchoring
+                // unconditionally would seat the anchor at 0 for a synthetic repair reply or a wire that
+                // reports nothing, and occupancy would read ~0 forever, silently disabling compaction.
+                Kyo.when(reply.usage.inputTokens > 0) {
+                    val (tokenizer, tokenizerId) = Compactor.internal.activeTokenizer(config)
+                    Abort.recover[HttpException](e => Abort.fail(Completion.classifyHttp(config, e)))(
+                        ai.context.map(c =>
+                            Compactor.internal.reanchor(
+                                c,
+                                view.compacted,
+                                reply.usage.inputTokens.toInt,
+                                tokenizer,
+                                tokenizerId
+                            ).map(ai.setContext)
+                        )
+                    )
+                }.unit
             calls            = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
-            completedCallIds = messages.collect { case ToolMessage(callId, _) => callId }
+            completedCallIds = messages.collect { case ToolMessage(callId, _, _, _) => callId }
             // The payload is decoded ONCE by the tool loop against the result tool's typed schema, like any
             // other tool; the capturing run interprets the decoded envelope (thought hooks, open-shape
             // conformance) and stores the value. Rejections ride the tool loop's feedback, so eval never

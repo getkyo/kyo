@@ -23,6 +23,7 @@ import kyo.ai.*
 final class TestCompletionServer private (
     scripts: AtomicRef[Chunk[TestCompletionServer.Scripted]],
     received: AtomicRef[Chunk[TestCompletionServer.Captured]],
+    arrivals: Channel[TestCompletionServer.Captured],
     val baseUrl: String
 ):
 
@@ -55,6 +56,18 @@ final class TestCompletionServer private (
     /** The requests the server received, in order, for asserting the outgoing request DTO shape. */
     def captured(using Frame): Chunk[TestCompletionServer.Captured] < Async =
         received.get
+
+    /** Suspends until a captured request satisfying `pred` arrives, observing genuine HTTP arrival through
+      * the internal arrival channel rather than racing a background-forked dispatch or polling `captured`.
+      * A non-matching arrival is drained off the channel and discarded (it still lands in `captured`, read
+      * independently through the `received` log). Every route puts onto the same channel in capture order,
+      * so a caller awaiting a specific request shape (e.g. by a unique substring in its body) observes it
+      * deterministically the moment it lands, never before.
+      */
+    def awaitCaptured(pred: TestCompletionServer.Captured => Boolean)(using
+        Frame
+    ): TestCompletionServer.Captured < (Async & Abort[Closed]) =
+        arrivals.take.map(c => if pred(c) then c else awaitCaptured(pred))
 
 end TestCompletionServer
 
@@ -122,13 +135,27 @@ object TestCompletionServer:
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[Captured])
+            arrivals <- Channel.initUnscoped[Captured](256)
             handlers =
                 if streaming then
-                    Seq(sseRoute("v1/chat/completions", scripts, received), sseRoute("v1/messages", scripts, received))
+                    Seq(
+                        sseRoute("v1/chat/completions", scripts, received, arrivals),
+                        sseRoute("v1/messages", scripts, received, arrivals)
+                    )
                 else
-                    Seq(jsonRoute("v1/chat/completions", scripts, received), jsonRoute("v1/messages", scripts, received))
-            result <- HttpServer.initWith(HttpServerConfig.default)(handlers*) { server =>
-                val handle = new TestCompletionServer(scripts, received, s"http://127.0.0.1:${server.port}/v1")
+                    Seq(
+                        jsonRoute("v1/chat/completions", scripts, received, arrivals),
+                        jsonRoute("v1/messages", scripts, received, arrivals),
+                        jsonRoute("v1/embeddings", scripts, received, arrivals)
+                    )
+            // A generous buffered-body ceiling, because this fixture stands in for a PROVIDER and a real one
+            // does not refuse a request that fits the model's context window. The default 64KB is smaller
+            // than a legitimately full view serializes to on prose-heavy transcripts, where the token
+            // estimator's three-chars-per-token bias understates the byte size by roughly half, so the
+            // default turns a correct request into a transport failure and hides whatever the test was
+            // actually measuring.
+            result <- HttpServer.initWith(HttpServerConfig.default.maxContentLength(8 * 1024 * 1024))(handlers*) { server =>
+                val handle = new TestCompletionServer(scripts, received, arrivals, s"http://127.0.0.1:${server.port}/v1")
                 f(handle)
             }
         yield result
@@ -141,25 +168,31 @@ object TestCompletionServer:
 
     // The non-streaming endpoint: capture the request, then respond per the next scripted entry. A Never
     // entry blocks on a latch that is never released (an Async suspension, no thread blocked), driving a
-    // client-side timeout; with no script queued it defaults to an empty-choices OpenAI body.
+    // client-side timeout; with no script queued it defaults to an empty-choices OpenAI body (or an
+    // empty-data embeddings body on the embeddings path).
     private def jsonRoute(
         path: String,
         scripts: AtomicRef[Chunk[Scripted]],
-        received: AtomicRef[Chunk[Captured]]
+        received: AtomicRef[Chunk[Captured]],
+        arrivals: Channel[Captured]
     )(using Frame): HttpHandler[?, ?, ?] =
         HttpRoute.postRaw(path).request(_.bodyText).response(_.bodyText).handler { req =>
-            received.getAndUpdate(_.append(Captured(path, req.fields.body))).andThen {
-                popNext(scripts).map {
-                    case Present(Scripted.Status(code, body)) => HttpResponse(HttpStatus(code)).addField("body", body)
-                    // A stall script reaching the non-streaming route means the test bound the wrong server;
-                    // holding the connection surfaces that as the caller's timeout rather than a handler panic.
-                    case Present(Scripted.Never) | Present(Scripted.SseStall(_)) =>
-                        Latch.init(1).map(_.await).andThen(HttpResponse.ok(""))
-                    case Present(Scripted.Body(b)) => HttpResponse.ok(b)
-                    case Present(Scripted.Sse(cs)) => HttpResponse.ok(cs.headMaybe.getOrElse("""{"choices":[]}"""))
-                    case Absent                    => HttpResponse.ok("""{"choices":[]}""")
+            val cap             = Captured(path, req.fields.body)
+            val noScriptDefault = if path.contains("embeddings") then """{"data":[]}""" else """{"choices":[]}"""
+            received.getAndUpdate(_.append(cap))
+                .andThen(Abort.run[Closed](arrivals.offerDiscard(cap)).unit)
+                .andThen {
+                    popNext(scripts).map {
+                        case Present(Scripted.Status(code, body)) => HttpResponse(HttpStatus(code)).addField("body", body)
+                        // A stall script reaching the non-streaming route means the test bound the wrong server;
+                        // holding the connection surfaces that as the caller's timeout rather than a handler panic.
+                        case Present(Scripted.Never) | Present(Scripted.SseStall(_)) =>
+                            Latch.init(1).map(_.await).andThen(HttpResponse.ok(""))
+                        case Present(Scripted.Body(b)) => HttpResponse.ok(b)
+                        case Present(Scripted.Sse(cs)) => HttpResponse.ok(cs.headMaybe.getOrElse(noScriptDefault))
+                        case Absent                    => HttpResponse.ok(noScriptDefault)
+                    }
                 }
-            }
         }
 
     // The streaming endpoint: capture the request, emit the next scripted SSE chunks as `data: <chunk>`
@@ -169,11 +202,13 @@ object TestCompletionServer:
     private def sseRoute(
         path: String,
         scripts: AtomicRef[Chunk[Scripted]],
-        received: AtomicRef[Chunk[Captured]]
+        received: AtomicRef[Chunk[Captured]],
+        arrivals: Channel[Captured]
     )(using Frame): HttpHandler[?, ?, ?] =
         val terminator = if path.contains("messages") then """{"type":"message_stop"}""" else "[DONE]"
         HttpRoute.postRaw(path).request(_.bodyText).response(_.bodySseText).handler { req =>
-            received.getAndUpdate(_.append(Captured(path, req.fields.body))).andThen {
+            val cap = Captured(path, req.fields.body)
+            received.getAndUpdate(_.append(cap)).andThen(Abort.run[Closed](arrivals.offerDiscard(cap)).unit).andThen {
                 popNext(scripts).map {
                     case Present(Scripted.Status(code, body)) =>
                         HttpResponse(HttpStatus(code)).addField("body", Stream.init(Chunk(body)).map(HttpSseEvent(_)))

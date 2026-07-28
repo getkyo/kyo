@@ -2,10 +2,38 @@ package kyo
 
 import kyo.*
 import kyo.ai.*
+import kyo.ai.Compaction.*
 import kyo.ai.Context
 import kyo.ai.Context.*
+import kyo.ai.completion.Completion
 
 class LLMStreamTest extends kyo.test.Test[Any]:
+
+    /** A deterministic tokenizer for the re-anchor leaves: every text counts as a fixed 10, so a
+      * suffix count and an apportioned share are stable across platforms with no live endpoint.
+      */
+    val fixedTok: Tokenizer = new Tokenizer:
+        def count(texts: Chunk[String])(using Frame): Chunk[Int] < (LLM & Async & Abort[HttpException | AIGenException]) =
+            Kyo.lift(texts.map(_ => 10))
+
+    /** A config with a large window so a re-anchored 50000/42000 stays below the compaction trigger and
+      * renderView re-serves the context unchanged (the re-anchor is the only rewrite under test).
+      */
+    def wideServerConfig(baseUrl: String): Config =
+        Config.OpenAI.default.apiKey("test").model(Config.OpenAI, "gpt-4o", 1000000).apiUrl(baseUrl)
+
+    def wideAnthropicConfig(baseUrl: String): Config =
+        Config.Anthropic.default.apiKey("test").model(Config.Anthropic, "claude-sonnet-4-5", 1000000).apiUrl(baseUrl)
+
+    /** The OpenAI include_usage final chunk: empty choices plus a top-level usage object, the shape that
+      * arrives before [DONE] on a stream_options.include_usage request.
+      */
+    def openAiUsageChunk(promptTokens: Int, completionTokens: Int): String =
+        s"""{"choices":[],"usage":{"prompt_tokens":$promptTokens,"completion_tokens":$completionTokens}}"""
+
+    /** The Anthropic message_start event carrying message.usage.input_tokens (no opt-in required). */
+    def anthropicMessageStart(inputTokens: Int): String =
+        s"""{"type":"message_start","message":{"usage":{"input_tokens":$inputTokens}}}"""
 
     case class Answer(text: String) derives Schema, CanEqual
     case class Nested(name: String, inner: Answer) derives Schema, CanEqual
@@ -281,6 +309,42 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an instance-enabled compactor is consulted on the stream seam (not only gen)" in {
+        // ai.enable(compactor) must take effect on the STREAM path too: streamAgainst resolves the effective
+        // compactor the same way genLoop does (instance-over-scope). Enable a compacting compactor on the
+        // named instance, stream against it, and assert the outbound stream request carries the compaction
+        // marker (proving the seam consulted the instance compactor, not only the scope env).
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            val marker = "[compacted region 0: stream seam marker]"
+            val c = new Compactor[Any]:
+                type State = Unit
+                def initState(using Frame): Unit < Sync = Kyo.unit
+                def compact(ctx: Context, state: Unit)(using Frame): Compactor.Decision < (LLM & Async & Abort[AIGenException]) =
+                    Kyo.lift(Compactor.Decision.Compacted(ctx.copy(compacted = Chunk(SystemMessage(marker)))))
+            server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"ok\"}"))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        val ctx = Context(Chunk(
+                            SystemMessage("s"),
+                            UserMessage("first", Absent),
+                            AssistantMessage("big " + ("x" * 400)),
+                            UserMessage("latest", Absent)
+                        ))
+                        ai.enable(c).andThen(ai.setContext(ctx)).andThen(ai.stream[String].map(_.run)).andThen {
+                            server.captured.map { caps =>
+                                assert(
+                                    caps.exists(cap => cap.path.contains("chat/completions") && cap.body.contains("compacted region")),
+                                    s"the instance-enabled compactor compacted the stream request: ${caps.map(_.body)}"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "stream fails with AIStreamDeltaException on a malformed SSE delta that is not a valid OpenAI chunk" in {
         // The malformed chunk fails parseDeltaArguments, which the stream raises as a typed AIStreamDeltaException.
         TestCompletionServer.runStreaming { server =>
@@ -485,11 +549,11 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                             s"the streaming request must carry the result directive, got: ${caps.head.body}"
                         )
                         assert(
-                            !ctx.messages.exists {
-                                case Context.SystemMessage(content) => content.contains("Deliver the result by calling")
-                                case _                              => false
+                            !ctx.raw.exists {
+                                case Context.SystemMessage(content, _, _) => content.contains("Deliver the result by calling")
+                                case _                                    => false
                             },
-                            s"the directive must not persist in the conversation: ${ctx.messages}"
+                            s"the directive must not persist in the conversation: ${ctx.raw}"
                         )
                     }
                 }
@@ -968,6 +1032,127 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         assert(true)
     }
 
+    // --- streaming re-anchor and the shared stamp-at-creation root ---
+
+    "an OpenAI streaming turn re-anchors occupancy to the reported total at the sent view's size" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(50000, 12)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.stream[String].map(_.run).andThen {
+                            LLM.session(ai).map { session =>
+                                session.streamAnchor match
+                                    case Present(anchor) =>
+                                        anchor.usageSink.get.map { u =>
+                                            assert(
+                                                u.exists(st => st.inputTokens == 50000 && st.outputTokens == 12),
+                                                s"the seated sink holds the stream-end usage, got: $u"
+                                            )
+                                            val sentSize = anchor.sentView.size
+                                            ai.stream[String].map(_.run).andThen {
+                                                ai.context.map { ctx =>
+                                                    val st = ctx.compactionState
+                                                    assert(
+                                                        st.lastUsage == Present(50000),
+                                                        s"the next turn re-anchors on the reported 50000, got: ${st.lastUsage}"
+                                                    )
+                                                    assert(
+                                                        st.lastUsageRawSize == sentSize,
+                                                        s"the anchor size is the streamed sent-view size $sentSize, got ${st.lastUsageRawSize}"
+                                                    )
+                                                    assert(
+                                                        Compactor.internal.occupancy(ctx) >= 50000,
+                                                        s"occupancy anchors at or above the reported total, got ${Compactor.internal.occupancy(ctx)}"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    case Absent =>
+                                        Kyo.lift(assert(false, "a streaming turn must seat a StreamAnchor"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a streamed turn followed by a gen turn: the gen turn consumes the seated stream anchor, re-anchoring at the streamed sent-view size with the recorded streamed pair in the suffix" in {
+        // The gen path consumes a seated StreamAnchor through the SAME applyStreamMeasure the stream path
+        // uses, so a stream-then-gen sequence must compose: the streamed turn seats the anchor and records
+        // its pair, and the following gen turn re-anchors at the streamed sent-view size before its own
+        // request. The stream turn needs the SSE server; the gen turn needs the JSON server, so the gen
+        // turn re-aims apiUrl with AI.withConfig while keeping the same session (and its seated anchor).
+        TestCompletionServer.run { jsonServer =>
+            TestCompletionServer.runStreaming { sseServer =>
+                val config = wideServerConfig(sseServer.baseUrl).tokenizer(fixedTok)
+                val prior  = Context(Chunk(UserMessage("q1", Absent), UserMessage("q2", Absent)))
+                // the stream turn reports usage 50000/12 at stream end, seating the anchor
+                sseServer.enqueueStream(Chunk(
+                    argDelta("{\"resultValue\":\"streamed\"}"),
+                    openAiUsageChunk(50000, 12)
+                )).andThen {
+                    // the gen turn returns a result_tool call, no usage, so the anchor stays at the streamed total
+                    val genArgs = Json.encode("""{"resultValue":"gen"}""")
+                    val genBody =
+                        s"""{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g1","type":"function","function":{"name":"result_tool","arguments":$genArgs}}]}}]}"""
+                    jsonServer.enqueueBody(genBody).andThen {
+                        LLM.run(config) {
+                            AI.init.map { ai =>
+                                ai.setContext(prior).andThen(ai.stream[String].map(_.run)).andThen {
+                                    LLM.session(ai).map { session =>
+                                        session.streamAnchor match
+                                            case Absent =>
+                                                Kyo.lift(assert(false, "the streamed turn must seat a StreamAnchor"))
+                                            case Present(anchor) =>
+                                                val sentSize = anchor.sentView.size
+                                                assert(
+                                                    sentSize == prior.compacted.size,
+                                                    s"the anchor captures the non-enriched streamed sent view (${prior.compacted.size}), got $sentSize"
+                                                )
+                                                // the gen turn re-aims at the JSON server; applyStreamMeasure consumes the
+                                                // seated anchor at the turn start, before the gen completion
+                                                AI.withConfig(_.apiUrl(jsonServer.baseUrl)) {
+                                                    ai.gen[String]
+                                                }.map { genResult =>
+                                                    ai.context.map { ctx =>
+                                                        val st = ctx.compactionState
+                                                        assert(genResult == "gen", s"the gen turn returns its own result, got '$genResult'")
+                                                        assert(
+                                                            st.lastUsage == Present(50000),
+                                                            s"the gen turn re-anchors on the streamed turn's reported total (50000), got ${st.lastUsage}"
+                                                        )
+                                                        assert(
+                                                            st.lastUsageRawSize == sentSize,
+                                                            s"the applied anchor sizes at the streamed sent-view size ($sentSize), got ${st.lastUsageRawSize}"
+                                                        )
+                                                        // the streamed turn's recorded result_tool call survives into the
+                                                        // conversation the gen turn read and extended
+                                                        val calls = ctx.raw.collect { case AssistantMessage(_, cs, _, _) => cs }.flatten
+                                                        assert(
+                                                            calls.exists(_.arguments.contains("streamed")),
+                                                            s"the streamed turn's recorded call stays in the conversation: ${ctx.raw}"
+                                                        )
+                                                        assert(
+                                                            Compactor.internal.occupancy(ctx) >= 50000,
+                                                            s"occupancy anchors at or above the streamed total, got ${Compactor.internal.occupancy(ctx)}"
+                                                        )
+                                                    }
+                                                }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "a streamed turn joins the conversation" - {
 
         "a fully consumed stream records the result_tool call it made, so a later turn can read it" in {
@@ -984,15 +1169,15 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                                 // The streamed fragments were the result_tool call's arguments, so the turn
                                 // joins the conversation as that call closed by a synthetic result, exactly
                                 // as a generated turn does, never as plain assistant prose.
-                                val calls = ctx.messages.collect { case AssistantMessage(_, cs) => cs }.flatten
-                                assert(calls.size == 1, s"the streamed turn records one result_tool call: ${ctx.messages}")
+                                val calls = ctx.raw.collect { case AssistantMessage(_, cs, _, _) => cs }.flatten
+                                assert(calls.size == 1, s"the streamed turn records one result_tool call: ${ctx.raw}")
                                 assert(calls.head.function == "result_tool", s"recorded as a result_tool call: ${calls.head}")
                                 assert(
                                     calls.head.arguments.contains(text),
                                     s"the call carries the streamed value so a later turn can read it: ${calls.head.arguments}"
                                 )
-                                val resultIds = ctx.messages.collect { case ToolMessage(id, _) => id }
-                                assert(resultIds == Chunk(calls.head.id), s"a matching synthetic result closes the call: ${ctx.messages}")
+                                val resultIds = ctx.raw.collect { case ToolMessage(id, _, _, _) => id }
+                                assert(resultIds == Chunk(calls.head.id), s"a matching synthetic result closes the call: ${ctx.raw}")
                             }
                         })
                     })
@@ -1013,8 +1198,8 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                             ai.context.map { ctx =>
                                 assert(taken.size <= 1, s"only the taken element is delivered: $taken")
                                 assert(
-                                    ctx.messages.isEmpty,
-                                    s"an abandoned stream must leave the conversation untouched: ${ctx.messages}"
+                                    ctx.raw.isEmpty,
+                                    s"an abandoned stream must leave the conversation untouched: ${ctx.raw}"
                                 )
                             }
                         })
@@ -1034,13 +1219,252 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                             ai.context.map { ctx =>
                                 assert(result.isFailure, s"a stream that never decodes fails: $result")
                                 assert(
-                                    ctx.messages.isEmpty,
-                                    s"a failed stream records no half turn: ${ctx.messages}"
+                                    ctx.raw.isEmpty,
+                                    s"a failed stream records no half turn: ${ctx.raw}"
                                 )
                             }
                         }
                     })
                 }
+            }
+        }
+    }
+
+    "the stream anchor captures the non-enriched sent view, so a later turn's occupancy counts the appended suffix and is not deferred by the prompt/reminder count" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            // Three live messages sent on the first turn; the prompt/reminder enrichment prepends one system
+            // prompt and appends one reminder, so the enriched request is five messages, strictly larger than
+            // the non-enriched view the anchor must record.
+            val prior = Context(Chunk(
+                UserMessage("q1", Absent),
+                UserMessage("q2", Absent),
+                UserMessage("q3", Absent)
+            ))
+            val prompt = Prompt.init("system instruction", "reminder text")
+            // Four live messages appended after the first turn seats its anchor: the second turn drops exactly
+            // the recorded sent-view size, so a correct anchor leaves all four in the suffix.
+            val appended = Chunk(
+                UserMessage("a1", Absent),
+                UserMessage("a2", Absent),
+                UserMessage("a3", Absent),
+                UserMessage("a4", Absent)
+            )
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(50000, 12)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        AI.enable(prompt) {
+                            ai.setContext(prior).andThen(ai.stream[String].map(_.run)).andThen {
+                                LLM.session(ai).map { session =>
+                                    session.streamAnchor match
+                                        case Present(anchor) =>
+                                            assert(
+                                                anchor.sentView.size == prior.compacted.size,
+                                                s"the anchor captures the non-enriched sent view (${prior.compacted.size}), not the prompt/reminder-enriched request; got ${anchor.sentView.size}"
+                                            )
+                                            ai.context.map(c => ai.setContext(appended.foldLeft(c)(_.add(_)))).andThen {
+                                                ai.stream[String].map(_.run).andThen {
+                                                    ai.context.map { ctx =>
+                                                        assert(
+                                                            ctx.compactionState.lastUsageRawSize == prior.compacted.size,
+                                                            s"the applied anchor sizes at the non-enriched sent view (${prior.compacted.size}), got ${ctx.compactionState.lastUsageRawSize}"
+                                                        )
+                                                        // occupancy drops lastUsageRawSize from compacted: the non-enriched anchor
+                                                        // leaves every appended message in the suffix. An enriched anchor would size
+                                                        // at prior.size + 2 (prompt + reminder), dropping two real appended messages.
+                                                        // Each streamed turn also records a synthetic result pair (assistant
+                                                        // result-tool call + tool result) into the conversation, so the suffix holds
+                                                        // the four appended messages plus the two recorded streamed-turn pairs; the
+                                                        // B-1 contract is that no appended message is deferred by the enrichment count.
+                                                        val suffix = ctx.compacted.drop(ctx.compactionState.lastUsageRawSize)
+                                                        // Compared on content: the live suffix messages are stamped by the turn's
+                                                        // apportionment, so the stored copies differ from the freshly built appended
+                                                        // values only by their token stamp.
+                                                        assert(
+                                                            appended.forall(a => suffix.exists(_.content == a.content)),
+                                                            s"the non-enriched anchor keeps every appended message in the suffix, none deferred by the enrichment count; suffix: $suffix"
+                                                        )
+                                                        assert(
+                                                            suffix.size == appended.size + 4,
+                                                            s"the suffix holds the ${appended.size} appended messages plus the two recorded streamed-turn pairs; got ${suffix.size}"
+                                                        )
+                                                        assert(
+                                                            ctx.compactionState.lastUsage == Present(50000),
+                                                            s"the anchor scalar is turn one's provider total, unchanged by turn two which reported no usage; got ${ctx.compactionState.lastUsage}"
+                                                        )
+                                                        assert(
+                                                            Compactor.internal.occupancy(ctx) == 50106,
+                                                            // 50000 anchored + the eight suffix messages: the turn-one recorded pair and
+                                                            // the four appended messages are stamped at 14 each (six times 14 = 84), and
+                                                            // the still-unstamped turn-two recorded pair falls to the offline estimate
+                                                            // (12 + 10), so 84 + 22 = 106.
+                                                            s"occupancy is the anchored 50000 plus the suffix estimate (50106); got ${Compactor.internal.occupancy(ctx)}"
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        case Absent =>
+                                            Kyo.lift(assert(false, "a streaming turn must seat a StreamAnchor"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "an Anthropic streaming turn re-anchors from the message_start input_tokens" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideAnthropicConfig(server.baseUrl).tokenizer(fixedTok)
+            server.enqueueStream(Chunk(
+                anthropicMessageStart(42000),
+                anthropicArgDelta("{\"resultValue\":\"ok\"}")
+            )).andThen(server.enqueueStream(Chunk(anthropicArgDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.stream[String].map(_.run).andThen {
+                            LLM.session(ai).map { session =>
+                                session.streamAnchor match
+                                    case Present(anchor) =>
+                                        anchor.usageSink.get.map { u =>
+                                            assert(
+                                                u.exists(st => st.inputTokens == 42000 && st.outputTokens == 0),
+                                                s"the seated sink holds the message_start usage, got: $u"
+                                            )
+                                            ai.stream[String].map(_.run).andThen {
+                                                ai.context.map { ctx =>
+                                                    assert(
+                                                        ctx.compactionState.lastUsage == Present(42000),
+                                                        s"the next turn re-anchors on the Anthropic 42000, got: ${ctx.compactionState.lastUsage}"
+                                                    )
+                                                    assert(
+                                                        Compactor.internal.occupancy(ctx) >= 42000,
+                                                        s"occupancy anchors on the Anthropic reported total, got ${Compactor.internal.occupancy(ctx)}"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    case Absent =>
+                                        Kyo.lift(assert(false, "an Anthropic streaming turn must seat a StreamAnchor"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a streaming turn reporting NO usage leaves the anchor untouched (the no-usage / harness MUST-DEGRADE path)" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            val prior = Context(Chunk(SystemMessage("s"), UserMessage("hi", Absent)))
+                .withCompaction(Compaction.State(lastUsage = Present(30000), lastUsageRawSize = 2))
+            server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"ok\"}"))).andThen(
+                server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))
+            ).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.setContext(prior).andThen(ai.stream[String].map(_.run)).andThen {
+                            LLM.session(ai).map { session =>
+                                session.streamAnchor match
+                                    case Present(anchor) =>
+                                        anchor.usageSink.get.map { u =>
+                                            assert(u.isEmpty, s"a no-usage stream leaves the sink Absent, got: $u")
+                                            ai.stream[String].map(_.run).andThen {
+                                                ai.context.map { ctx =>
+                                                    assert(
+                                                        ctx.compactionState.lastUsage == Present(30000),
+                                                        s"a no-usage stream must not re-anchor: the prior 30000 is unchanged, got: ${ctx.compactionState.lastUsage}"
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    case Absent =>
+                                        Kyo.lift(assert(false, "a streaming turn must seat a StreamAnchor even when it reports no usage"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "the streaming re-anchor apportions the sent view: live twins and the synthetic marker stamped, nothing escapes its share (integration)" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl).tokenizer(fixedTok)
+            val marker = SystemMessage("[summary of earlier region]", Absent, Present(Origin(0, 2, 0)))
+            val live   = UserMessage("current question", Absent)
+            val seeded = Context(Chunk(live), Chunk(marker, live))
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(1000, 8)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.setContext(seeded).andThen(ai.stream[String].map(_.run)).andThen {
+                            ai.stream[String].map(_.run).andThen {
+                                ai.context.map { ctx =>
+                                    assert(
+                                        ctx.compactionState.lastUsage == Present(1000),
+                                        s"the re-anchor seats the reported total 1000, got: ${ctx.compactionState.lastUsage}"
+                                    )
+                                    val stampedMarker = ctx.compacted.find(_.origin == Present(Origin(0, 2, 0)))
+                                    assert(
+                                        stampedMarker.exists(_.tokens.isDefined),
+                                        s"the synthetic marker carries its apportioned stamp, not Absent, got: ${stampedMarker.map(_.tokens)}"
+                                    )
+                                    assert(
+                                        ctx.raw.exists(m => m.origin.isEmpty && m.tokens.isDefined),
+                                        s"a live raw twin the reported total covers carries an apportioned stamp, got: ${ctx.raw.map(_.tokens)}"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "the streaming re-anchor + stamp path is model-free (zero extra completions, no fiber)" in {
+        TestCompletionServer.runStreaming { server =>
+            val config = wideServerConfig(server.baseUrl)
+            server.enqueueStream(Chunk(
+                argDelta("{\"resultValue\":\"ok\"}"),
+                openAiUsageChunk(1000, 8)
+            )).andThen(server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"next\"}")))).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.stream[String].map(_.run).andThen(ai.stream[String].map(_.run))
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        assert(
+                            caps.size == 2,
+                            s"two stream turns issue exactly two completions; the re-anchor / apportion / suffix-stamp step adds none, got ${caps.size}"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "a keepalive between fragments does not fail the stream" in {
+        // A stream may hold the connection open with a payload-free event. It carries no chunk, and
+        // reading it as a malformed one fails a generation that was proceeding normally.
+        val text = "keepalive tolerated"
+        val full = prefixArgs(text)
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            val frags  = Chunk(argDelta(full.substring(0, 20)), "", argDelta(full.substring(20)))
+            server.enqueueStream(frags).andThen {
+                LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
+                    assert(collected.mkString == text, s"the keepalive must be skipped, not decoded: $collected")
+                }))
             }
         }
     }
@@ -1167,22 +1591,6 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                         )
                     }
                 }
-            }
-        }
-    }
-
-    "a keepalive between fragments does not fail the stream" in {
-        // A stream may hold the connection open with a payload-free event. It carries no chunk, and
-        // reading it as a malformed one fails a generation that was proceeding normally.
-        val text = "keepalive tolerated"
-        val full = prefixArgs(text)
-        TestCompletionServer.runStreaming { server =>
-            val config = serverConfig(server.baseUrl)
-            val frags  = Chunk(argDelta(full.substring(0, 20)), "", argDelta(full.substring(20)))
-            server.enqueueStream(frags).andThen {
-                LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                    assert(collected.mkString == text, s"the keepalive must be skipped, not decoded: $collected")
-                }))
             }
         }
     }

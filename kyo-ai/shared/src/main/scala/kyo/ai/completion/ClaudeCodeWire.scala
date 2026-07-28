@@ -158,7 +158,7 @@ private[completion] object ClaudeCodeWire:
       * the replayed turns renders in place as a `[system instruction]` transcript line.
       */
     def turnInput(context: Context)(using Frame): String < Abort[AIGenException] =
-        val rest       = if leadingSystem(context).isDefined then context.messages.drop(1) else context.messages
+        val rest       = if leadingSystem(context).isDefined then context.compacted.drop(1) else context.compacted
         val directives = HarnessCompletion.trailingSystemCount(rest)
         val body       = rest.dropRight(directives)
         // The CLI acts only on a user turn: a conversation ending on an assistant or tool message replays
@@ -175,13 +175,13 @@ private[completion] object ClaudeCodeWire:
         // The preamble holds only system and user messages by construction (lastTurnIndex), so
         // collect is total here.
         val preambleBlocks = history.drop(turns).collect {
-            case SystemMessage(content) => Chunk(reminderBlock(content))
-            case user: UserMessage      => requestBlocks(user)
+            case SystemMessage(content, _, _) => Chunk(reminderBlock(content))
+            case user: UserMessage            => requestBlocks(user)
         }.flattenChunk
         // The suffix is all SystemMessages by construction (HarnessCompletion.trailingSystemCount),
         // so collect is total here.
         val directiveBlocks = rest.takeRight(directives).collect {
-            case SystemMessage(content) => reminderBlock(content)
+            case SystemMessage(content, _, _) => reminderBlock(content)
         }
         val blocks = historyBlocks(turnHistory).concat(preambleBlocks).concat(requestBlocks(request)).concat(directiveBlocks)
         Kyo.lift(Json.encode(InputEvent("user", InputMessage(Role.User.name, blocks.toList))))
@@ -222,19 +222,19 @@ private[completion] object ClaudeCodeWire:
             val (lines, images) = history.foldLeft((Chunk.empty[String], Chunk.empty[Image])) {
                 case ((lines, images), message) =>
                     message match
-                        case UserMessage(content, Present(image)) =>
+                        case UserMessage(content, Present(image), _, _) =>
                             (lines.append(s"[user] (image attached below): $content"), images.append(image))
-                        case UserMessage(content, _) =>
+                        case UserMessage(content, _, _, _) =>
                             (lines.append(s"[user]: $content"), images)
-                        case AssistantMessage(content, calls) =>
+                        case AssistantMessage(content, calls, _, _) =>
                             val withText = if content.nonEmpty then lines.append(s"[assistant]: $content") else lines
                             val withCalls = calls.foldLeft(withText) { (acc, call) =>
                                 acc.append(s"[assistant, tool call ${call.function}]: ${call.arguments}")
                             }
                             (withCalls, images)
-                        case ToolMessage(_, content) =>
+                        case ToolMessage(_, content, _, _) =>
                             (lines.append(s"[tool result]: $content"), images)
-                        case SystemMessage(content) =>
+                        case SystemMessage(content, _, _) =>
                             (lines.append(s"[system instruction]: $content"), images)
             }
             val header =
@@ -263,7 +263,7 @@ private[completion] object ClaudeCodeWire:
       * appended and the model-visible system content matches the Anthropic backend's.
       */
     private def leadingSystem(context: Context): Option[String] =
-        context.messages.headOption.collect { case SystemMessage(content) => content }
+        context.compacted.headOption.collect { case SystemMessage(content, _, _) => content }
 
     def readMessages(output: String, captured: Maybe[String], callIdSeed: String)(using
         Frame

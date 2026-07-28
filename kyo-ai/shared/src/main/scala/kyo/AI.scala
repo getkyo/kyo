@@ -36,7 +36,7 @@ object AI:
     export kyo.ai.Image
 
     /** A composable element of the generation surface that can be enabled on an `AI`: a [[kyo.Tool]], a
-      * [[kyo.Prompt]], a [[kyo.Thought]], a [[kyo.Mode]], or an [[kyo.Observe]].
+      * [[kyo.Prompt]], a [[kyo.Thought]], a [[kyo.Mode]], a [[kyo.Compactor]], or an [[kyo.Observe]].
       *
       * `AI.enable` layers enablements over a scoped computation; `ai.enable` layers them onto a single
       * instance. Both take varargs or a `Seq` and accept a mix of kinds in one call. `S` is the capability an
@@ -45,7 +45,8 @@ object AI:
       */
     trait Enablement[-S]:
         // How this enablement layers itself onto the scope env (AI.enable) or one instance's session
-        // (ai.enable). private[kyo] so only the module's five kinds implement it; users compose, never extend.
+        // (ai.enable). private[kyo] so only the module's own kinds implement it; users compose, or
+        // implement a kind that is itself open (Compactor); the kind set is closed.
         private[kyo] def enableIn(env: AIEnv)(using Frame): AIEnv
         private[kyo] def enableIn(session: AISession)(using Frame): AISession
     end Enablement
@@ -62,7 +63,13 @@ object AI:
 
     /** Mints an instance initialized from an `AISession`: its conversation, enablements, and config. */
     def init(session: AISession)(using Frame): AI < LLM =
-        init.map(ai => LLM.setSession(ai, session).andThen(ai))
+        // The compaction handle is NOT carried over. It is interior-mutable, so a recovered instance
+        // sharing the original's handle would share one staging cell and one single-flight fiber: a
+        // boundary on one would join or interrupt the other's preparation, and a pending stream anchor
+        // consumed by the wrong instance would re-anchor it against a view it never sent, silently
+        // corrupting its token accounting. The recovered instance seats its own on first use, which is
+        // what "a snapshot loses only in-flight preparation" has always claimed.
+        init.map(ai => LLM.setSession(ai, session.copy(compaction = Absent, streamAnchor = Absent)).andThen(ai))
 
     /** Recreates an instance from a snapshot, restoring its conversation, enablements, and config. */
     def recover(session: AISession)(using Frame): AI < LLM =
@@ -102,7 +109,9 @@ object AI:
     def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
         init.map(ai => ai.stream[A])
 
-    /** Reads the current scope `AIEnv`: the active config plus the scope's enablements (prompt, tools, thoughts, modes, observers). */
+    /** Reads the current scope `AIEnv`: the active config plus the scope's enablements (prompt, tools, thoughts,
+      * modes, compactor, observers).
+      */
     def env(using Frame): AIEnv < LLM = LLM.env
 
     /** Reads the active config. The active env (the scope env, or the scope merged with an instance during a
@@ -118,9 +127,10 @@ object AI:
     def withConfig[A, S](config: Config)(v: A < (LLM & S))(using Frame): A < (LLM & S) =
         withConfig(_ => config)(v)
 
-    /** Layers enablements (tools, prompts, thoughts, modes, observers, in any mix) over a scoped computation, on top of
-      * the scope's current enablements. Each enablement's capability `S` rides the row, unified across the
-      * varargs to their intersection, so the requirements stay visible until discharged at the run boundary.
+    /** Layers enablements (tools, prompts, thoughts, modes, compactors, observers, in any mix) over a scoped
+      * computation, on top of the scope's current enablements. Each enablement's capability `S` rides the row,
+      * unified across the varargs to their intersection, so the requirements stay visible until discharged at
+      * the run boundary.
       */
     def enable[A, S](enablements: Enablement[S]*)(v: A < S)(using Frame): A < (S & LLM) =
         if enablements.isEmpty then v
@@ -221,10 +231,10 @@ object AI:
         def updateContext(f: Context => Context)(using Frame): Unit < LLM =
             ai.context.map(c => ai.setContext(f(c)))
 
-        /** Layers enablements (tools, prompts, thoughts, modes, observers, in any mix) onto this instance, on top of the
-          * scope's enablements. Each enablement's capability `S` rides the row, unified across the varargs to
-          * their intersection, so a tool/prompt/thought/mode needing more than `LLM` keeps that requirement
-          * visible at this instance's generations.
+        /** Layers enablements (tools, prompts, thoughts, modes, compactors, observers, in any mix) onto this
+          * instance, on top of the scope's enablements. Each enablement's capability `S` rides the row, unified
+          * across the varargs to their intersection, so a tool/prompt/thought/mode/compactor/observer needing
+          * more than `LLM` keeps that requirement visible at this instance's generations.
           */
         def enable[S](enablements: Enablement[S]*)(using Frame): AI < (S & LLM) =
             AI.updateSession(ai)(s => enablements.foldLeft(s)((acc, e) => e.enableIn(acc)))

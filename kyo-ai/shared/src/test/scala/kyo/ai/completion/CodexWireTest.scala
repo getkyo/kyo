@@ -94,6 +94,24 @@ class CodexWireTest extends kyo.test.Test[Any]:
         }
     }
 
+    "turn/start states an effort only when the config states one" in {
+        // The app-server takes a reasoning effort per turn. An untouched config must send nothing, so turns
+        // stay byte-identical to before the field existed; disableReasoning must send the entry's off word,
+        // which is what makes compaction's maintenance calls actually cheap on this harness.
+        Path.tempDir("codex-effort-test").map { dir =>
+            def effortOf(config: Config) =
+                CodexWire.turnStartParams(config, "t1", dir, Chunk.empty).effort
+            assert(
+                effortOf(Config.Codex.auto) == Absent,
+                s"a config that states nothing must send no effort: ${effortOf(Config.Codex.auto)}"
+            )
+            assert(
+                effortOf(Config.Codex.auto.disableReasoning) == Present("none"),
+                s"disableReasoning must ride as the entry's off word: ${effortOf(Config.Codex.auto.disableReasoning)}"
+            )
+        }
+    }
+
     "historyItems renders a non-leading system message IN PLACE as a system-reminder user item" in {
         // The app-server delivers no injected system-role item to the model and treats a
         // developer-role item as confidential, so the in-place carrier is a user-role item with the
@@ -128,7 +146,7 @@ class CodexWireTest extends kyo.test.Test[Any]:
         val image   = Image.fromBytes(Span.from(Array[Byte](1, 2, 3)))
         val history = Context.empty.userMessage("look", Present(image))
 
-        Abort.run[AIGenException](CodexWire.historyItems(history.messages)).map {
+        Abort.run[AIGenException](CodexWire.historyItems(history.compacted)).map {
             case Result.Success(items) =>
                 val encoded = Json.encode(items.toList)
                 assert(encoded.contains("\"type\":\"input_image\""), s"input_image block missing: $encoded")
@@ -143,7 +161,7 @@ class CodexWireTest extends kyo.test.Test[Any]:
             .assistantMessage("calling", Chunk(Call(CallId("c1"), "lookup", """{"q":"kyo"}""")))
             .toolMessage(CallId("c1"), """{"answer":"Kyo"}""")
 
-        Abort.run[AIGenException](CodexWire.historyItems(history.messages)).map {
+        Abort.run[AIGenException](CodexWire.historyItems(history.compacted)).map {
             case Result.Success(items) =>
                 val encoded = Json.encode(items.toList)
                 assert(encoded.contains("\"type\":\"function_call\""), s"function_call item missing: $encoded")
@@ -174,7 +192,7 @@ class CodexWireTest extends kyo.test.Test[Any]:
 
         assert(messages.size == 3, s"one call pair plus the result message: $messages")
         messages(0) match
-            case AssistantMessage(content, calls) =>
+            case AssistantMessage(content, calls, _, _) =>
                 assert(content == "", s"an executed call message carries no prose: $content")
                 assert(
                     calls.map(c => (c.id.id, c.function, c.arguments)) == Chunk(("call_1", "lookup", """{"q":"kyo"}""")),
@@ -184,7 +202,7 @@ class CodexWireTest extends kyo.test.Test[Any]:
         end match
         assert(messages(1) == ToolMessage(CallId("call_1"), """{"answer":"Kyo"}"""))
         messages(2) match
-            case AssistantMessage(content, calls) =>
+            case AssistantMessage(content, calls, _, _) =>
                 assert(content == "final prose", s"the turn's final text rides the result message: $content")
                 assert(
                     calls.map(c => (c.id.id, c.function, c.arguments)) ==
@@ -278,6 +296,34 @@ class CodexWireTest extends kyo.test.Test[Any]:
             Structure.Value.Record(Chunk("threadId" -> Structure.Value.Str("t1")))
         )
         assert(CodexWire.startsFollowUp(missingItem, "t1", "u1"))
+    }
+
+    "thread/tokenUsage/updated decodes both breakdowns and tolerates the wire's extra fields" in {
+        // The real app-server payload carries more counters than the adapter reads (reasoning/total counters
+        // in each breakdown). The decode must pin the anchor fields by their wire names AND ignore the rest:
+        // a strict decoder would reject the live payload and the turn would silently report no usage at all.
+        // `total` aggregates the ephemeral thread (what the adapter anchors on), `last` is the most recent
+        // provider request.
+        val payload =
+            """{"threadId":"t1","turnId":"u1","tokenUsage":{
+              |  "total":{"inputTokens":9999,"cachedInputTokens":8888,"outputTokens":7777,"reasoningOutputTokens":10,"totalTokens":26674},
+              |  "last":{"inputTokens":1200,"cachedInputTokens":900,"outputTokens":340,"reasoningOutputTokens":40,"totalTokens":1540}
+              |}}""".stripMargin
+        val decoded = Json.decode[CodexWire.TokenUsageNotification](payload)
+        assert(decoded.isSuccess, s"the token-usage notification must decode against the live wire shape: $decoded")
+        val n = decoded.getOrThrow
+        assert(n.threadId == "t1" && n.turnId == "u1", s"the notification must carry its thread/turn ids: $n")
+        val total = n.tokenUsage.total.get
+        assert(
+            total.inputTokens == Present(9999L) && total.outputTokens == Present(7777L) &&
+                total.cachedInputTokens == Present(8888L),
+            s"the thread total must carry the anchor counters by their wire names: $total"
+        )
+        val last = n.tokenUsage.last.get
+        assert(
+            last.inputTokens == Present(1200L) && last.outputTokens == Present(340L),
+            s"the last-request breakdown decodes alongside the total: $last"
+        )
     }
 
     "resultMessages on a resultless turn keeps the executed pairs plus the final text and adds no result call" in {

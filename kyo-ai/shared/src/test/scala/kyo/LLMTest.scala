@@ -10,6 +10,11 @@ class LLMTest extends kyo.test.Test[Any]:
 
     case class City(name: String) derives Schema
 
+    def um(s: String): UserMessage                    = UserMessage(s, Absent)
+    def sm(s: String): SystemMessage                  = SystemMessage(s)
+    def am(s: String, calls: Call*): AssistantMessage = AssistantMessage(s, Chunk.from(calls))
+    def ctxOf(msgs: Message*): Context                = Context(Chunk.from(msgs))
+
     /** A config pointing the OpenAI backend at the test server, with a dummy key so the backend proceeds
       * to the HTTP call instead of aborting on a missing key.
       */
@@ -43,9 +48,22 @@ class LLMTest extends kyo.test.Test[Any]:
     def noResultBody: String =
         """{"choices":[{"message":{"role":"assistant","content":"thinking","tool_calls":null}}]}"""
 
+    /** The single captured outbound request body for the last scripted turn. */
+    def requestBody(server: TestCompletionServer)(using Frame): String < Async =
+        server.captured.map(_.head.body)
+
+    /** The committed default-off golden: the enriched-request bytes for the fixed scripted turn in the
+      * "default-off matches committed pre-change golden bytes" test below, captured with the compactor
+      * Absent and pinned as a source constant. The contract is that compaction off is byte-identical to
+      * the module's own request (no compactor involvement), so a seam edit that leaked a byte onto the
+      * Absent path fails that test against this, not a self-derivation.
+      */
+    val goldenDefaultOffRequest: String =
+        """{"model":"gpt-4o","max_completion_tokens":16384,"messages":[{"role":"system","content":"you are precise"},{"role":"user","content":"ping"}],"tools":[{"function":{"description":"Use this tool to return your final response in the requested structured format. You MUST call this tool exactly once at the end of your response to provide the structured output. Do not make parallel calls to this tool in the same completion; only the first invocation will be considered.","name":"result_tool","strict":false,"parameters":{"type":"object","properties":{"resultValue":{"type":"string"}},"required":["resultValue"]}},"type":"function"}],"tool_choice":"required"}"""
+
     "run discharges LLM to Async leaving an Async value" in {
         LLM.run(
-            AI.initWith(ai => ai.systemMessage("hi").andThen(ai.context.map(_.messages.size)))
+            AI.initWith(ai => ai.systemMessage("hi").andThen(ai.context.map(_.raw.size)))
         ).map(result => assert(result == 1))
     }
 
@@ -55,7 +73,7 @@ class LLMTest extends kyo.test.Test[Any]:
                 ai.systemMessage("s")
                     .andThen(ai.userMessage("u"))
                     .andThen(ai.assistantMessage("a"))
-                    .andThen(ai.context.map(_.messages.map(_.role.name)))
+                    .andThen(ai.context.map(_.raw.map(_.role.name)))
             }
         ).map(roles => assert(roles == Chunk("system", "user", "assistant")))
     }
@@ -65,7 +83,7 @@ class LLMTest extends kyo.test.Test[Any]:
             AI.initWith { ai =>
                 ai.systemMessage("outer")
                     .andThen(AI.forget(ai.systemMessage("inner")))
-                    .andThen(ai.context.map(_.messages.map(_.content)))
+                    .andThen(ai.context.map(_.raw.map(_.content)))
             }
         ).map(contents => assert(contents == Chunk("outer")))
     }
@@ -160,11 +178,11 @@ class LLMTest extends kyo.test.Test[Any]:
                                 )
                                 // Request-scoped: the stored conversation never contains it.
                                 assert(
-                                    !ctx.messages.exists {
-                                        case SystemMessage(content) => content.contains(directive)
-                                        case _                      => false
+                                    !ctx.raw.exists {
+                                        case SystemMessage(content, _, _) => content.contains(directive)
+                                        case _                            => false
                                     },
-                                    s"the directive must not persist in the conversation: ${ctx.messages}"
+                                    s"the directive must not persist in the conversation: ${ctx.raw}"
                                 )
                             }
                         }
@@ -176,6 +194,63 @@ class LLMTest extends kyo.test.Test[Any]:
         check(serverConfig, noResultBody, resultToolBody("""{"resultValue":"done"}""")).andThen(
             check(anthropicServerConfig, anthropicNoResultBody, anthropicResultToolBody("""{"resultValue":"done"}"""))
         )
+    }
+
+    "the request-scoped forced directive leaves the served conversation prefix byte-stable across turns" in {
+        // The prompt-cache property: the per-request forced directive joins the enrichment-excluded anchor
+        // basis and rides TRAILING, so the served conversation's bytes keep their positions from the tool
+        // turn to the forced turn. A directive prepended or inserted mid-conversation would shift every
+        // later byte and defeat provider prefix caching. Below the trigger (compaction re-serves the
+        // context unchanged), so any byte movement here is the directive's alone.
+        val finalizeDirective = "This is the instruction to finalize"
+        def commonPrefixLen(a: String, b: String): Int =
+            val n = math.min(a.length, b.length)
+            var i = 0
+            while i < n && a.charAt(i) == b.charAt(i) do i += 1
+            i
+        end commonPrefixLen
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).maxIterations(1)
+            server.enqueueBody(noResultBody).andThen {
+                server.enqueueBody(resultToolBody("""{"resultValue":"done"}""")).andThen {
+                    LLM.run(config) {
+                        AI.initWith { ai =>
+                            ai.systemMessage("you are precise").andThen(ai.userMessage("ping")).andThen(ai.gen[String])
+                        }
+                    }.map { r =>
+                        server.captured.map { caps =>
+                            assert(r == "done", s"expected the forced turn's result, got '$r'")
+                            assert(caps.size == 2, s"expected one tool turn and one forced turn, got ${caps.size}")
+                            val toolTurn   = caps(0).body
+                            val forcedTurn = caps(1).body
+                            assert(!toolTurn.contains(finalizeDirective), "the tool turn carries no directive")
+                            assert(forcedTurn.contains(finalizeDirective), "the forced turn carries the directive")
+                            val shared = commonPrefixLen(toolTurn, forcedTurn)
+                            val prefix = toolTurn.take(shared)
+                            // the byte-stable prefix carries the whole served conversation verbatim
+                            assert(
+                                prefix.contains("\"role\":\"system\",\"content\":\"you are precise\""),
+                                s"the byte-stable served prefix carries the system message verbatim, prefix: $prefix"
+                            )
+                            assert(
+                                prefix.contains("\"role\":\"user\",\"content\":\"ping\""),
+                                s"the byte-stable served prefix carries the user message verbatim, prefix: $prefix"
+                            )
+                            // the directive never appears within the stable prefix; it rides strictly after it
+                            assert(
+                                !prefix.contains(finalizeDirective),
+                                "the directive is not inside the byte-stable served prefix"
+                            )
+                            assert(
+                                forcedTurn.indexOf(finalizeDirective) >= shared,
+                                s"the request-scoped directive rides strictly after the byte-stable served prefix " +
+                                    s"(directive at ${forcedTurn.indexOf(finalizeDirective)}, prefix length $shared)"
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     "a present result that fails schema decode is repaired and retried, not aborted" in {
@@ -650,7 +725,7 @@ class LLMTest extends kyo.test.Test[Any]:
                             },
                             AI.config.andThen(reachedInner.await)
                         ).andThen {
-                            ai.context.map(_.messages.map(_.content)).map { contents =>
+                            ai.context.map(_.raw.map(_.content)).map { contents =>
                                 assert(contents == Chunk("parent"), s"parent context must be unchanged after the interrupt, got: $contents")
                             }
                         }
@@ -796,8 +871,8 @@ class LLMTest extends kyo.test.Test[Any]:
     "an Async tool body compiles and runs in the eval loop (no Isolate required)" in {
         TestCompletionServer.run { server =>
             val config = serverConfig(server.baseUrl)
-            // Regression: Tool.init no longer requires Isolate[S, LLM, S]. Async has no such Isolate, so before
-            // this an async tool body would not compile. The body does real async work; its result feeds back.
+            // Tool.init does not require Isolate[S, LLM, S]. Async has no such Isolate, so an async tool
+            // body must compile and run without one. The body does real async work; its result feeds back.
             val asyncDoubler: Tool[Async] =
                 Tool.init[Int][Int, Async]("async_double", "doubles its input asynchronously")(n => Async.delay(1.millis)(n * 2))
             val turn1 =
@@ -940,7 +1015,7 @@ class LLMTest extends kyo.test.Test[Any]:
                 ai.userMessage("hi").andThen(ai)
             }
         }.map { case (state, ai) =>
-            val msgs = state.contextOf(ai).messages
+            val msgs = state.contextOf(ai).raw
             assert(msgs == Chunk(UserMessage("hi", Absent)), s"expected exactly one userMessage, got: $msgs")
         }
     }
@@ -967,7 +1042,7 @@ class LLMTest extends kyo.test.Test[Any]:
             }
         }.map { ctxs =>
             assert(ctxs.size == 3, s"expected 3 results from fill(3), got: ${ctxs.size}")
-            assert(ctxs.forall(_.messages.size == 1), s"each context should have 1 message, got: $ctxs")
+            assert(ctxs.forall(_.raw.size == 1), s"each context should have 1 message, got: $ctxs")
         }
     }
 
@@ -1009,7 +1084,7 @@ class LLMTest extends kyo.test.Test[Any]:
             }
         }.map { ctx =>
             val expected = Chunk(UserMessage("a", Absent), UserMessage("b", Absent))
-            assert(ctx.messages == expected, s"context should have two messages in order, got: ${ctx.messages}")
+            assert(ctx.raw == expected, s"context should have two messages in order, got: ${ctx.raw}")
         }
     }
 
@@ -1083,7 +1158,7 @@ class LLMTest extends kyo.test.Test[Any]:
                         }.andThen {
                             AI.config.map { config =>
                                 shared.context.map { sharedCtx =>
-                                    (config.temperature, sharedCtx.messages.map(_.content))
+                                    (config.temperature, sharedCtx.raw.map(_.content))
                                 }
                             }
                         }
@@ -1114,6 +1189,177 @@ class LLMTest extends kyo.test.Test[Any]:
         assert(ref1.hashCode == ref2.hashCode, "equal AIRefs share a hashCode")
         assert(!ref1.equals(different), "AIRefs with different ids are not equal")
         assert(ref1.isValid, "a ref to a live AI is valid")
+    }
+
+    "default-off matches committed pre-change golden bytes" in {
+        // With no compactor enabled (env.compactor Absent), the seam is a literal no-op: the enriched-request
+        // bytes must equal the committed golden captured from the pre-seam eval, byte-for-byte. The golden was
+        // captured independently of this edited path (a source constant), so a regression that leaks a byte
+        // onto the Absent path fails this leaf for real, not a tautological compare-the-code-to-itself.
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueBody(resultToolBody("""{"resultValue":"x"}""")).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.systemMessage("you are precise").andThen {
+                            ai.userMessage("ping").andThen(ai.gen[String])
+                        }
+                    }
+                }.andThen {
+                    requestBody(server).map { body =>
+                        assert(body == goldenDefaultOffRequest, s"default-off request drifted from the committed golden: $body")
+                    }
+                }
+            }
+        }
+    }
+
+    "seam adds no Op, no slot shrink" in {
+        // (1) The LLM Op GADT stays at exactly 13 subclasses: the compaction seam mints no new Op.
+        val theAi = new AI(0L, new AnyRef)
+        val cfg   = serverConfig("http://127.0.0.1:1")
+        val ops: List[LLM.internal.Op[?]] = List(
+            LLM.internal.Op.Read(theAi),
+            LLM.internal.Op.Add(theAi, UserMessage("x", Absent)),
+            LLM.internal.Op.Set(theAi, Context.empty),
+            LLM.internal.Op.Init,
+            LLM.internal.Op.Env,
+            LLM.internal.Op.Gen(theAi, summon[Schema[Int]]),
+            LLM.internal.Op.Stream(theAi, summon[Schema[Int]], Tag[Emit[Chunk[Int]]]),
+            LLM.internal.Op.SetEnv(AIEnv.empty),
+            LLM.internal.Op.Discard(theAi),
+            LLM.internal.Op.GetState,
+            LLM.internal.Op.SetState(LLM.State.empty(cfg)),
+            LLM.internal.Op.GetSession(theAi),
+            LLM.internal.Op.SetSession(theAi, AISession.empty)
+        )
+        assert(ops.size == 13, s"the LLM Op GADT has exactly 13 subclasses (no new Op minted for compaction), got ${ops.size}")
+        // (2) The transcript slot (ai.context) never shrinks across the seam (Absent compactor).
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueBody(resultToolBody("""{"resultValue":"ok"}""")).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.userMessage("hello").andThen {
+                            ai.context.map(_.raw.size).map { before =>
+                                ai.gen[String].andThen {
+                                    ai.context.map(_.raw.size).map { after =>
+                                        assert(
+                                            after >= before,
+                                            s"the transcript slot never shrinks across the seam: before=$before after=$after"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "genLoop merge threads compactor instance-over-scope, last-wins" in {
+        // The genLoop env-merge threads the compactor with instance-over-scope precedence
+        // (session.env.compactor.orElse(scopeEnv.compactor)): a single active policy, last-wins, never a
+        // pipeline. Read the scope and instance envs directly (no generation turn) and assert the precedence.
+        // Two DISTINCT compactor instances (Compactor.init returns the shared Default singleton, so a
+        // precedence test needs its own instances to tell scope from instance by reference).
+        def passThrough: Compactor[Any] = new Compactor[Any]:
+            type State = Unit
+            def initState(using Frame): Unit < Sync = Kyo.unit
+            def compact(ctx: Context, state: Unit)(using Frame): Compactor.Decision < (LLM & Async & Abort[AIGenException]) =
+                Kyo.lift(Compactor.Decision.Unchanged)
+        val scopeCompactor: Compactor[Any]    = passThrough
+        val instanceCompactor: Compactor[Any] = passThrough
+        val withScope =
+            LLM.run {
+                AI.enable(scopeCompactor) {
+                    AI.init.map { withInstance =>
+                        withInstance.enable(instanceCompactor).andThen {
+                            AI.init.map { bare =>
+                                for
+                                    scopeEnv <- AI.env
+                                    instEnv  <- withInstance.snapshot.map(_.env)
+                                    bareEnv  <- bare.snapshot.map(_.env)
+                                yield (scopeEnv.compactor, instEnv.compactor, bareEnv.compactor)
+                            }
+                        }
+                    }
+                }
+            }
+        val noScope =
+            LLM.run {
+                AI.init.map { bare =>
+                    for
+                        scopeEnv <- AI.env
+                        instEnv  <- bare.snapshot.map(_.env)
+                    yield (scopeEnv.compactor, instEnv.compactor)
+                }
+            }
+        withScope.map { case (scopeC, instC, bareC) =>
+            assert(scopeC.exists(_ eq scopeCompactor), "scope env carries scopeCompactor")
+            assert(instC.exists(_ eq instanceCompactor), "instance env carries instanceCompactor")
+            assert(
+                instC.orElse(scopeC).exists(_ eq instanceCompactor),
+                "both present -> merge picks instanceCompactor (instance-over-scope)"
+            )
+            assert(bareC.isEmpty, "a bare instance holds Absent")
+            assert(bareC.orElse(scopeC).exists(_ eq scopeCompactor), "only scope present -> merge picks scopeCompactor")
+            noScope.map { case (nScopeC, nInstC) =>
+                assert(nScopeC.isEmpty && nInstC.isEmpty, "neither present -> both Absent (byte-unchanged)")
+                assert(nInstC.orElse(nScopeC).isEmpty, "neither present -> merged compactor stays Absent")
+            }
+        }
+    }
+
+    "instance compactor takes precedence over scope at the gen request seam" in {
+        // Beyond the env-merge above: drive a real generation with BOTH a scope compactor (huge cap, never
+        // compacts) and an instance compactor (tiny cap, compacts) enabled, and assert the OUTBOUND gen
+        // request is compacted, i.e. the INSTANCE compactor's rendering (instance-over-scope) reached the
+        // wire, not merely that Maybe.orElse picks it in the test body.
+        TestCompletionServer.run { server =>
+            val cfg         = serverConfig(server.baseUrl)
+            val scopeMarker = "SCOPE-COMPACTOR-MARKER"
+            val instMarker  = "INSTANCE-COMPACTOR-MARKER"
+            def tagging(tag: String): Compactor[Any] = new Compactor[Any]:
+                type State = Unit
+                def initState(using Frame): Unit < Sync = Kyo.unit
+                def compact(ctx: Context, state: Unit)(using Frame): Compactor.Decision < (LLM & Async & Abort[AIGenException]) =
+                    Kyo.lift(Compactor.Decision.Compacted(ctx.copy(compacted = Chunk(SystemMessage(tag)))))
+            server.enqueueBody(resultToolBody("""{"resultValue":"done"}""")).andThen {
+                LLM.run(cfg) {
+                    AI.enable(tagging(scopeMarker)) {
+                        AI.init.map { ai =>
+                            val ctx = ctxOf(sm("s"), um("first"), am("big " + ("x" * 400)), um("latest"))
+                            ai.setContext(ctx).andThen(ai.enable(tagging(instMarker))).andThen(ai.gen[String]).andThen {
+                                server.awaitCaptured(cap =>
+                                    cap.path == "v1/chat/completions" && cap.body.contains("result_tool")
+                                ).map { mainReq =>
+                                    assert(
+                                        mainReq.body.contains(instMarker),
+                                        s"the instance compactor's rendering reached the outbound gen request: ${mainReq.body}"
+                                    )
+                                    assert(
+                                        !mainReq.body.contains(scopeMarker),
+                                        s"the scope compactor's rendering must NOT reach the wire (instance-over-scope): ${mainReq.body}"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "an LLM-composed program stays in the < LLM row after the seam (no Async leak)" in {
+        // The load-bearing compile check: a program built ONLY from LLM operations ascribes to Unit < LLM,
+        // proving the seam leaked no Async into the LLM effect's own row (Async still enters only at Gen/Stream,
+        // riding LLM.run's residual). A seam edit that widened eval's own < LLM row would make this fail.
+        val notAsync: NotGiven[LLM <:< Async] = summon[NotGiven[LLM <:< Async]]
+        val p: Unit < LLM                     = AI.init.map(ai => ai.userMessage("a").andThen(ai.userMessage("b")))
+        val _                                 = p
+        assert(notAsync != null, "NotGiven[LLM <:< Async] is derivable and the < LLM ascription compiles")
     }
 
     "a wire that refuses the model's tool call gets a repair turn, not an outright failure" - {

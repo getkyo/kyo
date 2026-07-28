@@ -80,7 +80,8 @@ final case class Config private (
     // default applies, so an untouched config states nothing and never warns; a warning fires only on a
     // STATED amount the encoding cannot express. Held rather than dropped where it cannot ride, since
     // one config re-aims across providers, and held while reasoning is off.
-    reasoningAmount: Maybe[Config.Amount] = Absent
+    reasoningAmount: Maybe[Config.Amount] = Absent,
+    tokenizer: Maybe[Tokenizer] = Absent
 ):
     def apiUrl(url: String): Config              = copy(apiUrl = url)
     def apiKey(key: String): Config              = copy(apiKey = Present(key))
@@ -102,6 +103,38 @@ final case class Config private (
     def timeout(timeout: Duration): Config             = copy(timeout = timeout)
     def maxIterations(max: Int): Config                = copy(maxIterations = max)
     def retrySchedule(retrySchedule: Schedule): Config = copy(retrySchedule = retrySchedule)
+
+    /** Replaces the provider's offline tiktoken default with a user token accountant. Occupancy
+      * anchors on the provider's reported total either way; the tokenizer counts for
+      * apportionment, where exactness is a quality property, not a safety one.
+      */
+    def tokenizer(tokenizer: Tokenizer): Config = copy(tokenizer = Present(tokenizer))
+
+    /** Clears a user tokenizer set earlier in the chain, returning to the provider's offline tiktoken
+      * default. Mirrors the other optional-field reset (`noContextCeiling`).
+      */
+    def noTokenizer: Config = copy(tokenizer = Absent)
+
+    // The output reservation counted once, on the hard-limit side. When the caller pins maxTokens the
+    // reservation is the ceiling the wire actually sends: the pin clamped to the model's maximum and
+    // raised past any reasoning budget (effectiveMaxOutputTokens), never the raw pin, so a pin above the
+    // model's maximum reserves the real sent ceiling rather than an impossible number that would leave
+    // window - reservation negative. With no pin, reserve the provider's verified output maximum where it
+    // is known and small enough to keep the occupancy axis coherent under the current watermarks, so
+    // window - reservation reflects what the provider actually leaves for input. Fall back to a
+    // conservative default both when no verified maximum exists (an Unverified stand-in that equals
+    // the window would zero window - reservation) and when a verified maximum is large enough to
+    // reorder the axis on its shipped defaults, so a catalog entry never fails to construct.
+    /** The output reservation a compactor counts once on its hard-limit side: the pinned ceiling the wire
+      * actually sends when the caller pinned one, otherwise the provider's verified output maximum.
+      *
+      * A model fact, and nothing more. It used to also decide whether its own value would reorder the
+      * compaction axis, which meant `Config` had to know the watermarks; that judgement now belongs to
+      * `Compactor.internal.axis`, which is the only thing that knows both.
+      */
+    private[kyo] def outputReservation: Int =
+        if maxTokens.isDefined then effectiveMaxOutputTokens
+        else sendableMaximum.getOrElse(Config.defaultMaxOutputReservation)
 
     /** States a reasoning budget in model tokens, and turns reasoning on.
       *
@@ -286,6 +319,23 @@ final case class Config private (
       * afterwards when pointing at a proxy or a local endpoint. To keep this config's provider and facts
       * and only change which id rides the wire, use `modelName`.
       */
+    /** Re-declares provider, model id, and context window, leaving the remaining facts unstated: the
+      * output maximum is an `Unverified` stand-in (so the once-counted reservation falls back to the
+      * conservative default rather than a claimed ceiling), reasoning is `Unavailable`, and both
+      * temperature and images are accepted. The convenience form for setting only the window on a
+      * config whose other facts come from its provider default; the full [[model]] declares them all.
+      */
+    def model(provider: Config.Provider, modelName: String, contextWindow: Int): Config =
+        model(
+            provider,
+            modelName,
+            contextWindow,
+            Config.OutputMaximum.Unverified(contextWindow),
+            Config.ReasoningEncoding.Unavailable,
+            acceptsTemperature = true,
+            acceptsImages = true
+        )
+
     def model(
         provider: Config.Provider,
         modelName: String,
@@ -338,6 +388,12 @@ end Config
 private[kyo] object provider extends StaticFlag[String]("")
 
 object Config:
+
+    // The output reservation counted once on the hard-limit side when the user pins no
+    // maxTokens and no verified model maximum is available. Small enough that the default axis
+    // stays valid for every shipped catalog window.
+    private[kyo] val defaultMaxOutputReservation: Int = 4096 // not configuration: it only backstops an
+    // entry with no verified maximum, so tuning it would tune a value the provider should have supplied
 
     /** The reasoning budget applied when an entry encodes reasoning as a token budget and the caller
       * states none.
@@ -667,6 +723,12 @@ object Config:
         val orgKey: String = keyName + "_ORG"
         def default: Config
 
+        /** The provider's cheap-tier catalog entry, used for the degraded warm summarizer route. Concrete
+          * with a `= default` fallback: a `Provider` subclass that does not override it runs on `default`;
+          * the built-in catalogs override it with their cheap entry.
+          */
+        def small: Config = default
+
         /** Every named catalog entry, listed explicitly: a new model `val` is added here in the same
           * diff, which is what puts it under the catalog-wide config tests.
           */
@@ -766,7 +828,8 @@ object Config:
             acceptsTemperature = false,
             acceptsImages = true
         )
-        def default: Config = opus_4_8
+        def default: Config        = opus_4_8
+        override def small: Config = haiku_4_5
         private[kyo] val entries: Chunk[Config] =
             Chunk(opus_4_8, sonnet_4_6, haiku_4_5, fable_5, sonnet_5)
     end Anthropic
@@ -820,7 +883,8 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = gpt_5_4
+        def default: Config        = gpt_5_4
+        override def small: Config = gpt_5_4_mini
         private[kyo] val entries: Chunk[Config] =
             Chunk(gpt_5_5, gpt_5_4, gpt_5_4_mini)
     end OpenAI
@@ -876,7 +940,8 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false
         )
-        def default: Config = deepseek_v4_flash
+        def default: Config        = deepseek_v4_flash
+        override def small: Config = deepseek_v4_flash
         private[kyo] val entries: Chunk[Config] =
             Chunk(deepseek_v4_flash, deepseek_v4_pro)
     end DeepSeek
@@ -928,7 +993,8 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = true
         )
-        def default: Config = gemini_3_5_flash
+        def default: Config        = gemini_3_5_flash
+        override def small: Config = gemini_3_1_flash_lite
         private[kyo] val entries: Chunk[Config] =
             Chunk(gemini_3_5_flash, gemini_3_1_flash_lite, gemini_2_5_pro)
     end Gemini
@@ -983,7 +1049,8 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false
         )
-        def default: Config = gpt_oss_120b
+        def default: Config        = gpt_oss_120b
+        override def small: Config = gpt_oss_20b
         private[kyo] val entries: Chunk[Config] =
             Chunk(gpt_oss_120b, gpt_oss_20b)
     end Groq
@@ -1032,7 +1099,8 @@ object Config:
             // Measured against this endpoint: a request stating none cuts the reasoning body from 94 characters to 5; this endpoint counts no reasoning tokens for the model at all. An image part is refused outright.
             reasoningOff = Present(ReasoningOff.Level("none"))
         )
-        def default: Config = deepseek_v4_pro
+        def default: Config        = deepseek_v4_pro
+        override def small: Config = gpt_oss_120b
         private[kyo] val entries: Chunk[Config] =
             Chunk(deepseek_v4_pro, gpt_oss_120b)
     end Baseten
@@ -1149,7 +1217,8 @@ object Config:
             // Measured against this endpoint: none is refused as mandatory here, and the lowest level is accepted.
             reasoningOff = Present(ReasoningOff.CannotDisable("minimal"))
         )
-        def default: Config = deepseek_v4_pro
+        def default: Config        = deepseek_v4_pro
+        override def small: Config = gpt_oss_20b
         private[kyo] val entries: Chunk[Config] =
             Chunk(
                 deepseek_v4_pro,
@@ -1269,7 +1338,8 @@ object Config:
             // entry rather than for the provider.
             forcedToolChoice = Present(ForcedToolChoice.RefusedWhileReasoning)
         )
-        def default: Config = kimi_k3
+        def default: Config        = kimi_k3
+        override def small: Config = kimi_k2_6
         private[kyo] val entries: Chunk[Config] =
             Chunk(kimi_k3, kimi_k2_6)
     end Moonshot
@@ -1316,7 +1386,8 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = sonnet
+        def default: Config        = sonnet
+        override def small: Config = haiku
         private[kyo] val entries: Chunk[Config] =
             Chunk(opus, sonnet, haiku)
     end ClaudeCode
@@ -1329,10 +1400,9 @@ object Config:
             // Inert here: this harness sends no ceiling at all, so neither OpenAI-family name is
             // ever sent. Declared because the type requires it.
             OutputTokensParam.MaxCompletionTokens,
-            // This harness exposes no way to say "do not reason": nothing in its request shape carries
-            // the instruction, and declaring an encoding it does not implement would silence the very
-            // warning that reports the gap.
-            ReasoningOff.Omit,
+            // Off rides `turn/start.effort`, whose vocabulary includes this word; reasoning ON still states
+            // nothing, so an untouched config's turns are unchanged.
+            ReasoningOff.Level("none"),
             usesApiKey = false
         ):
         // The empty model name asks the harness to pick, so no one model's sizes describe this entry.

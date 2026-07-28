@@ -190,6 +190,31 @@ case class AIOutputLimitException(
 case class AIHarnessException(provider: String, detail: String)(using Frame)
     extends AIException(s"$provider harness malfunctioned: $detail") with AIGenException with AIStreamException
 
+/** The forced path could not fit the transcript's unshrinkable roots (system, first/latest
+  * user, unresolved pairs, recent tail) inside the model's hard window, so it fails loudly
+  * rather than sending an over-limit request. The transcript loses nothing; only the view
+  * omits. It surfaces on `Compactor.compact`'s `Abort[AIGenException]` row.
+  */
+case class AIContextOverflowException(viewTokens: Int, hardLimitTokens: Int)(using Frame)
+    extends AIException(
+        s"projected view of $viewTokens tokens exceeds the compaction hard limit of $hardLimitTokens tokens " +
+            "with no further demotable units"
+    ) with AIGenException
+
+/** A compactor returned a context whose `raw` it had rewritten.
+  *
+  * `raw` is the complete transcript, and only the eviction backstop may touch it: in place, replacing an
+  * entry with a marker that carries the origin range it stands for, never changing the length. Anything
+  * else is a compactor destroying history the caller still owns, so the turn fails rather than continuing
+  * against a corrupted transcript.
+  *
+  * A checked invariant rather than a structural one, and deliberately so: the boundary hands back a whole
+  * `Context` because the compactor owns its own trigger and persisted state, which is worth one check the
+  * framework runs on the compacting turns alone.
+  */
+case class AICompactionException(detail: String)(using Frame)
+    extends AIException(s"compactor violated the raw-transcript contract: $detail") with AIGenException
+
 /** A streaming SSE delta was not a parseable event for the provider. */
 case class AIStreamDeltaException(detail: String)(using Frame)
     extends AIException(s"malformed SSE delta: $detail") with AIStreamException

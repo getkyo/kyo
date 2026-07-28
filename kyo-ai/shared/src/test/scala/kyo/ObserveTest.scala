@@ -330,13 +330,13 @@ class ObserveTest extends kyo.test.Test[Any]:
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             AtomicRef.init(-1).map { seenSize =>
-                val record = Observe.init((ai, _) => ai.context.map(ctx => seenSize.set(ctx.messages.size)))
+                val record = Observe.init((ai, _) => ai.context.map(ctx => seenSize.set(ctx.compacted.size)))
                 server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"streamed\"}"))).andThen {
                     LLM.run(config) {
                         AI.initWith { ai =>
                             ai.userMessage("before").andThen {
                                 AI.enable(record)(ai.stream[String].map(_.run)).andThen {
-                                    ai.context.map(after => (after.messages.size))
+                                    ai.context.map(after => (after.compacted.size))
                                 }
                             }
                         }

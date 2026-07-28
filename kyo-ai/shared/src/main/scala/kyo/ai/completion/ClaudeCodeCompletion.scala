@@ -123,7 +123,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 for
                     input <- turnInput(context)
                     _ <- Log.debug(
-                        s"kyo-ai Claude Code mode=result messages=${context.messages.size} tools=${tools.map(_.name).mkString(",")}"
+                        s"kyo-ai Claude Code mode=result messages=${context.compacted.size} tools=${tools.map(_.name).mkString(",")}"
                     )
                     raw <- runClaudeCommand(
                         config,

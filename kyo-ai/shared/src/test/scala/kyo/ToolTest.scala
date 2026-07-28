@@ -60,20 +60,20 @@ class ToolTest extends kyo.test.Test[Any]:
                 )
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs = ctx.raw.toList
             val hasProcessingMsg = msgs.exists {
-                case ToolMessage(cid, content) => cid == callId && content.contains("Processing tool call")
-                case _                         => false
+                case ToolMessage(cid, content, _, _) => cid == callId && content.contains("Processing tool call")
+                case _                               => false
             }
             val assistantHasCall = msgs.exists {
-                case AssistantMessage(_, calls) => calls.exists(_.id == callId)
-                case _                          => false
+                case AssistantMessage(_, calls, _, _) => calls.exists(_.id == callId)
+                case _                                => false
             }
             val hasCorrectiveMsg = msgs.exists {
-                case SystemMessage(content) => content.contains("carefully review its schema")
-                case _                      => false
+                case SystemMessage(content, _, _) => content.contains("carefully review its schema")
+                case _                            => false
             }
-            val corrective = msgs.collect { case SystemMessage(c) => c }.mkString("\n")
+            val corrective = msgs.collect { case SystemMessage(c, _, _) => c }.mkString("\n")
             assert(
                 corrective.contains(s"${call.arguments.length} characters"),
                 s"the model must be told how much it sent: $corrective"
@@ -97,8 +97,8 @@ class ToolTest extends kyo.test.Test[Any]:
                     .andThen(ai.context.map(identity))
             }
         ).map { ctx =>
-            val found = ctx.messages.toList.exists {
-                case ToolMessage(cid, content) =>
+            val found = ctx.raw.toList.exists {
+                case ToolMessage(cid, content, _, _) =>
                     // Names the miss AND the tools that remain callable, which is the part that lets a
                     // model recover rather than repeat the same unavailable call.
                     cid == callId && content.contains("is not available") && content.contains("Available tools:")
@@ -131,17 +131,90 @@ class ToolTest extends kyo.test.Test[Any]:
                     .andThen(ai.context.map(identity))
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs = ctx.raw.toList
             val failMsg = msgs.collect {
-                case ToolMessage(cid, content) if cid == failCallId => content
+                case ToolMessage(cid, content, _, _) if cid == failCallId => content
             }
             val successMsg = msgs.collect {
-                case ToolMessage(cid, content) if cid == successCallId => content
+                case ToolMessage(cid, content, _, _) if cid == successCallId => content
             }
             assert(failMsg.nonEmpty, "failing call should have a tool message")
             assert(failMsg.head.contains("expected run failure") || failMsg.head.contains("failed"), "failure text should appear")
             assert(successMsg.nonEmpty, "succeeding call should have a tool message")
             assert(!successMsg.head.contains("Processing tool call"), "success should replace the processing placeholder")
+        }
+    }
+
+    "a run body failing with a DecodeException routes to the generic failure message, not schema repair" in {
+        val callId = CallId("run-decode-fail-id")
+        val call   = Call(callId, "self-parsing", "7")
+        val tool = Tool.init[Int]("self-parsing") { (_: Int) =>
+            (throw MissingFieldException(Seq("inner"), "field")): Unit
+        }
+        val toolInfo = tool.infos.head.asInstanceOf[Tool.internal.Info[?, ?, LLM]]
+        LLM.run(
+            AI.init.map { ai =>
+                ai.updateContext(
+                    _.assistantMessage("", Chunk(call))
+                ).andThen(
+                    Tool.internal.handle(ai, Chunk(toolInfo), Chunk(call))
+                ).andThen(
+                    ai.context.map(identity)
+                )
+            }
+        ).map { ctx =>
+            val msgs = ctx.raw.toList
+            val toolMsg = msgs.collectFirst {
+                case ToolMessage(cid, content, _, _) if cid == callId => content
+            }
+            val hasRepairMsg = msgs.exists {
+                case SystemMessage(content, _, _) => content.contains("carefully review its schema")
+                case _                            => false
+            }
+            assert(
+                toolMsg.exists(_.contains("Tool 'self-parsing' failed")),
+                s"a run-body DecodeException must produce the generic tool-failure message, got: $toolMsg"
+            )
+            assert(
+                !hasRepairMsg,
+                "a run-body DecodeException must NOT trigger the schema-repair corrective message"
+            )
+        }
+    }
+
+    "a malformed-arguments decode failure routes to the schema-repair message, not the generic failure" in {
+        val callId   = CallId("arg-decode-fail-id")
+        val call     = Call(callId, "adder", "not-json{{{")
+        val tool     = Tool.init[Int]("adder")(n => n + 1)
+        val toolInfo = tool.infos.head.asInstanceOf[Tool.internal.Info[?, ?, LLM]]
+        LLM.run(
+            AI.init.map { ai =>
+                ai.updateContext(
+                    _.assistantMessage("", Chunk(call))
+                ).andThen(
+                    Tool.internal.handle(ai, Chunk(toolInfo), Chunk(call))
+                ).andThen(
+                    ai.context.map(identity)
+                )
+            }
+        ).map { ctx =>
+            val msgs = ctx.raw.toList
+            val hasRepairMsg = msgs.exists {
+                case SystemMessage(content, _, _) => content.contains("carefully review its schema")
+                case _                            => false
+            }
+            val hasGenericFailure = msgs.exists {
+                case ToolMessage(_, content, _, _) => content.contains("Tool 'adder' failed")
+                case _                             => false
+            }
+            assert(
+                hasRepairMsg,
+                "a malformed-arguments decode failure must inject the schema-repair corrective message"
+            )
+            assert(
+                !hasGenericFailure,
+                "a malformed-arguments decode failure must NOT produce the generic tool-failure message"
+            )
         }
     }
 
@@ -181,7 +254,7 @@ class ToolTest extends kyo.test.Test[Any]:
     "a tool's prompt and reminder render as TOOL / TOOL REMINDER blocks in the enriched context" in {
         val tool = Tool.init[Int]("locator", "finds things", prompt = Prompt.init("tool-guidance", "tool-reminder"))(_ => 0)
         LLM.run(Prompt.internal.enrichedContext(Context.empty, tool.infos)).map { ctx =>
-            val contents = ctx.messages.toList.map(_.content)
+            val contents = ctx.raw.toList.map(_.content)
             assert(
                 contents.exists(c => c.contains("TOOL: locator") && c.contains("tool-guidance")),
                 s"the tool's prompt block (with header + description) must reach the context, got: $contents"
@@ -190,6 +263,84 @@ class ToolTest extends kyo.test.Test[Any]:
                 contents.exists(c => c.contains("TOOL REMINDER: locator") && c.contains("tool-reminder")),
                 s"the tool's reminder block must reach the context, got: $contents"
             )
+        }
+    }
+
+    "Tool.init takes no part in supersession, so a plain tool declares nothing about compaction" in {
+        val tool = Tool.init[Int]("t")(_ => 1)
+        val info = tool.infos.head.asInstanceOf[Tool.internal.Info[Int, Int, Any]]
+        assert(info.supersession == Absent, s"a tool built through init must carry no declaration, got: ${info.supersession}")
+        assert(
+            info.supersessionKeyFor("42") == Absent,
+            s"and it must yield no key for any arguments, got: ${info.supersessionKeyFor("42")}"
+        )
+    }
+
+    "Tool.initSuperseding carries the declaration, kind and key together" in {
+        case class FileArg(path: String) derives Schema
+        val tool = Tool.initSuperseding[FileArg](
+            name = "edit",
+            supersession = Tool.Supersession(Tool.Kind.Write, (i: FileArg) => Present(i.path))
+        )(_ => ())
+        val info = tool.infos.head.asInstanceOf[Tool.internal.Info[FileArg, Unit, Any]]
+        assert(info.supersession.isDefined, "the declaration must reach Info")
+        // Read through the arguments, which is how the compactor reads it: the pair arrives together, so
+        // a caller cannot pick up a kind for a call that produced no key.
+        assert(
+            info.supersessionKeyFor("""{"path":"/a"}""") == Present(("/a", Tool.Kind.Write)),
+            s"expected the extractor's key paired with the kind, got: ${info.supersessionKeyFor("""{"path":"/a"}""")}"
+        )
+    }
+
+    "an undecodable argument payload yields no supersession key rather than failing" in {
+        // An unreadable call has no identity, so it must not supersede anything. Silent Absent rather than
+        // an abort: a malformed argument string is the model's error and is already answered elsewhere by
+        // the schema-repair path, so supersession must not turn it into a second failure.
+        case class FileArg(path: String) derives Schema
+        val tool = Tool.initSuperseding[FileArg](
+            name = "edit",
+            supersession = Tool.Supersession(Tool.Kind.Write, (i: FileArg) => Present(i.path))
+        )(_ => ())
+        val info = tool.infos.head.asInstanceOf[Tool.internal.Info[FileArg, Unit, Any]]
+        assert(info.supersessionKeyFor("not json at all") == Absent, "an undecodable payload must yield Absent")
+    }
+
+    "a superseding tool whose extractor declines a call yields no key for it" in {
+        // The extractor is the tool's own judgment: a call it cannot name (a listing with no single
+        // subject, say) must be keyless even though the tool opted in, so the opt-in is per DECLARATION
+        // and the key is per CALL.
+        case class MaybePath(path: String) derives Schema
+        val tool = Tool.initSuperseding[MaybePath](
+            name = "maybe",
+            supersession = Tool.Supersession(Tool.Kind.Read, (i: MaybePath) => if i.path.isEmpty then Absent else Present(i.path))
+        )(_ => ())
+        val info = tool.infos.head.asInstanceOf[Tool.internal.Info[MaybePath, Unit, Any]]
+        assert(info.supersessionKeyFor("""{"path":""}""") == Absent, "the extractor's Absent must pass through")
+        assert(info.supersessionKeyFor("""{"path":"/x"}""") == Present(("/x", Tool.Kind.Read)), "and a named call still keys")
+    }
+
+    "Tool.Kind derives CanEqual and is a closed two-case enum" in {
+        assert(Tool.Kind.Read == Tool.Kind.Read)
+        assert(Tool.Kind.Read != Tool.Kind.Write)
+        assert(Tool.Kind.values.length == 2, s"expected exactly 2 cases, got: ${Tool.Kind.values.length}")
+    }
+
+    "an existing no-metadata Tool.init call site still compiles and behaves unchanged" in {
+        val callId     = CallId("legacy-id")
+        val call       = Call(callId, "legacy", "5")
+        val legacyTool = Tool.init[Int]("legacy", "desc")(n => n + 1)
+        val legacyInfo = legacyTool.infos.head.asInstanceOf[Tool.internal.Info[Int, Int, LLM]]
+        LLM.run(
+            AI.init.map { ai =>
+                Tool.internal.handle(ai, Chunk(legacyInfo), Chunk(call))
+                    .andThen(ai.context.map(identity))
+            }
+        ).map { ctx =>
+            val result = ctx.raw.toList.collectFirst {
+                case ToolMessage(cid, content, _, _) if cid == callId => content
+            }
+            assert(result == Some(Json.encode(6)), s"expected the legacy tool's encoded run result, got: $result")
+            assert(legacyInfo.supersession == Absent, "a tool that declares nothing takes no part in supersession")
         }
     }
 

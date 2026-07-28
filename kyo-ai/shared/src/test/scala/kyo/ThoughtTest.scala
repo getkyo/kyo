@@ -66,7 +66,9 @@ class ThoughtTest extends kyo.test.Test[Any]:
             AtomicRef.init(Maybe.empty[String]).map { aRef =>
                 AtomicRef.init(Maybe.empty[Boolean]).map { bRef =>
                     val opening = Info("A", Position.Opening, summon[Schema[String]], (s: String) => aRef.set(Present(s)))
+                        .asInstanceOf[Info[?, LLM]]
                     val closing = Info("B", Position.Closing, summon[Schema[Boolean]], (b: Boolean) => bRef.set(Present(b)))
+                        .asInstanceOf[Info[?, LLM]]
                     Thought.internal.handleThoughtGroups(
                         Chunk(opening, closing),
                         Present(Structure.Value.Record(Chunk("A" -> Structure.Value.Str("hello")))),
@@ -108,7 +110,9 @@ class ThoughtTest extends kyo.test.Test[Any]:
         LLM.run {
             AtomicRef.init(Chunk.empty[String]).map { order =>
                 val opening = Info("A", Position.Opening, summon[Schema[String]], (_: String) => order.updateAndGet(_ :+ "A").unit)
+                    .asInstanceOf[Info[?, LLM]]
                 val closing = Info("B", Position.Closing, summon[Schema[String]], (_: String) => order.updateAndGet(_ :+ "B").unit)
+                    .asInstanceOf[Info[?, LLM]]
                 Thought.internal.handleThoughtGroups(
                     Chunk(opening, closing),
                     Present(Structure.Value.Record(Chunk("A" -> Structure.Value.Str("o")))),

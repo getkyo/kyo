@@ -68,7 +68,14 @@ object Thought:
             position: Position,
             schema: Schema[A],
             process: A => Unit < (LLM & S)
-        )
+        ):
+            // Existential-closure over this Info's own A: renders its jsonSchema and decodes+processes
+            // its sub-value with the captured schema, so callers need no Schema[Any] cast.
+            def jsonSchema: Json.JsonSchema = Json.jsonSchema(using schema)
+
+            def decodeAndProcess(sub: Structure.Value)(using Frame): Unit < (LLM & S & Abort[DecodeException]) =
+                Abort.get(Structure.decode(sub)(using schema, summon)).map(process)
+        end Info
 
         case class Reflect(
             @doc("Let me reflect if I understand my role, what I need to do, and how I'll proceed")
@@ -85,8 +92,11 @@ object Thought:
         val reflective: Thought[Any] =
             Thought.aggregate(Thought.opening[Reflect], Thought.closing[Check])
 
-        def infos(using Frame): Chunk[Info[?, ?]] < LLM =
-            LLM.env.map(e => e.thoughts.flatMap(_.infos))
+        def infos(using Frame): Chunk[Info[?, LLM]] < LLM =
+            LLM.env.map { e =>
+                val thoughts: Chunk[Thought[LLM]] = e.thoughts
+                thoughts.flatMap(_.infos)
+            }
 
         // Assemble the result-tool parameter schema as a JsonSchema.Obj from each thought's Json.jsonSchema,
         // in opening -> resultValue -> closing order. Assembling per-thought schemas directly preserves each
@@ -95,9 +105,7 @@ object Thought:
             val (opening, closing) = thoughts.partition(_.position == Position.Opening)
             def group(name: String, l: Chunk[Info[?, ?]]): JsonSchema =
                 JsonSchema.Obj(
-                    // cast: each info's existential schema renders its own thought type's jsonSchema; erasing to
-                    // Schema[Any] is sound because jsonSchema reads only the schema's structure, not the value type.
-                    properties = l.toList.map(t => (t.name, Json.jsonSchema(using t.schema.asInstanceOf[Schema[Any]]))),
+                    properties = l.toList.map(t => (t.name, t.jsonSchema)),
                     required = l.toList.map(_.name)
                 )
             // Omit an empty thought group entirely: with no opening (or closing) thoughts the envelope drops
@@ -126,14 +134,9 @@ object Thought:
                     case Absent =>
                         Abort.fail(AIInvalidThoughtException(name))
                     case Present(info) =>
-                        // cast: decode the sub-value with the matched thought's own existential schema and feed it to
-                        // that same thought's process; In is the one erased type the schema produced, so the call is total.
-                        Abort.run[DecodeException](Abort.get(Structure.decode(sub)(using
-                            info.schema.asInstanceOf[Schema[Any]],
-                            summon
-                        ))).map {
-                            case kyo.Result.Success(value) => info.asInstanceOf[Info[Any, Any]].process(value)
-                            case _                         => Abort.fail(AIDecodeException(s"failed to decode thought: $name"))
+                        Abort.run[DecodeException](info.asInstanceOf[Info[Any, Any]].decodeAndProcess(sub)).map {
+                            case kyo.Result.Success(_) => Kyo.unit
+                            case _                     => Abort.fail(AIDecodeException(s"failed to decode thought: $name"))
                         }
             }
         end handleThoughtGroups

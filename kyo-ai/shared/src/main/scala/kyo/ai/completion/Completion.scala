@@ -81,8 +81,8 @@ object Completion:
         if config.systemInstructions == Config.SystemMessages.AllDelivered then messages
         else
             val firstSystem = messages.indexWhere:
-                case SystemMessage(_) => true
-                case _                => false
+                case SystemMessage(_, _, _) => true
+                case _                      => false
             if firstSystem < 0 then messages
             else
                 // The run at the first system message merges into it: contiguous instructions carry no
@@ -92,15 +92,15 @@ object Completion:
                     leadingEnd += 1
                 val merged = messages
                     .slice(firstSystem, leadingEnd + 1)
-                    .collect { case SystemMessage(content) => content }
+                    .collect { case SystemMessage(content, _, _) => content }
                     .mkString("\n\n")
                 messages.zipWithIndex.flatMap { (message, index) =>
                     if index == firstSystem then Chunk(SystemMessage(merged))
                     else if index > firstSystem && index <= leadingEnd then Chunk.empty
                     else
                         message match
-                            case SystemMessage(content) => Chunk(convert(content))
-                            case other                  => Chunk(other)
+                            case SystemMessage(content, _, _) => Chunk(convert(content))
+                            case other                        => Chunk(other)
                 }
             end if
     end fitSystemMessages

@@ -240,8 +240,8 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
             case Result.Success(messages) =>
                 assert(
                     !messages.exists {
-                        case AssistantMessage(_, calls) => calls.exists(_.function == Completion.resultToolName)
-                        case _                          => false
+                        case AssistantMessage(_, calls, _, _) => calls.exists(_.function == Completion.resultToolName)
+                        case _                                => false
                     },
                     s"the stale terminal result string must never be selected as the result: $messages"
                 )
@@ -258,8 +258,8 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
         Abort.run[AIGenException](ClaudeCodeWire.readMessages(output, Present(captured), "seed1")).map {
             case Result.Success(messages) =>
                 val resultCalls = messages.flatMap {
-                    case AssistantMessage(_, calls) => calls.filter(_.function == Completion.resultToolName)
-                    case _                          => Chunk.empty
+                    case AssistantMessage(_, calls, _, _) => calls.filter(_.function == Completion.resultToolName)
+                    case _                                => Chunk.empty
                 }
                 assert(resultCalls.size == 1, s"expected exactly one result_tool call, got: $resultCalls")
                 assert(
@@ -280,8 +280,8 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
         Abort.run[AIGenException](ClaudeCodeWire.readMessages(output, Present(captured), "seed1")).map {
             case Result.Success(messages) =>
                 val lookupCalls = messages.flatMap {
-                    case AssistantMessage(_, calls) => calls.filter(_.function == "lookup")
-                    case _                          => Chunk.empty
+                    case AssistantMessage(_, calls, _, _) => calls.filter(_.function == "lookup")
+                    case _                                => Chunk.empty
                 }
                 assert(lookupCalls.size == 1, s"the intact native call must survive: $messages")
                 messages.lastOption match
@@ -305,8 +305,8 @@ class ClaudeCodeWireTest extends kyo.test.Test[Any]:
         val executed = Chunk(ClaudeCodeWire.ExecutedTool("lookup", Structure.Value.Record(Chunk.empty), "42"))
         def callIds(messages: Chunk[Message]): Chunk[String] =
             messages.flatMap {
-                case AssistantMessage(_, calls) => calls.map(_.id.id)
-                case _                          => Chunk.empty
+                case AssistantMessage(_, calls, _, _) => calls.map(_.id.id)
+                case _                                => Chunk.empty
             }
         Abort.run[AIGenException](ClaudeCodeWire.readMessages("", executed, Present(captured), "gen1")).map { first =>
             Abort.run[AIGenException](ClaudeCodeWire.readMessages("", executed, Present(captured), "gen2")).map { second =>

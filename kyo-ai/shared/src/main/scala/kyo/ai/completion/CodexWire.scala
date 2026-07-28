@@ -65,7 +65,10 @@ private[completion] object CodexWire:
         input: List[TurnInput],
         model: Maybe[String],
         cwd: Maybe[String],
-        approvalPolicy: String
+        approvalPolicy: String,
+        // `turn/start.effort` overrides the reasoning effort for this turn. Absent leaves the harness its own
+        // default, so a config that states nothing sends nothing.
+        effort: Maybe[String] = Absent
     ) derives Schema
     case class TurnId(id: String) derives Schema
     case class TurnStartResponse(turn: TurnId) derives Schema
@@ -167,8 +170,25 @@ private[completion] object CodexWire:
             input = input.toList,
             model = modelOverride(config),
             cwd = Present(workDir.toString),
-            approvalPolicy = "never"
+            approvalPolicy = "never",
+            effort = effortWord(config)
         )
+
+    /** The effort word this request states, or Absent to leave the harness its default.
+      *
+      * Reasoning off sends the entry's declared off word; reasoning on sends a stated level and nothing
+      * otherwise, so an untouched config's turns are byte-identical to before this field existed.
+      */
+    private def effortWord(config: Config): Maybe[String] =
+        if !config.reasoningEnabled then
+            config.reasoningOff match
+                case Config.ReasoningOff.Level(word)           => Present(word)
+                case Config.ReasoningOff.CannotDisable(lowest) => Present(lowest)
+                case _                                         => Absent
+        else
+            config.resolvedAmount match
+                case Present(Config.Amount.Level(value)) => Present(value)
+                case _                                   => Absent
 
     /** The registered tool specs: every kyo tool, the result tool included, as a real dynamic tool. The
       * result tool advertises the require-all envelope (the `StrictSchema.requireAll` shape every backend
@@ -192,9 +212,9 @@ private[completion] object CodexWire:
       * order and no instruction tail is appended.
       */
     private def leadingSystem(context: Context): String =
-        context.messages.headMaybe match
-            case Present(SystemMessage(content)) => content
-            case _                               => ""
+        context.compacted.headMaybe match
+            case Present(SystemMessage(content, _, _)) => content
+            case _                                     => ""
 
     def historyMessages(context: Context): Chunk[Message] =
         val body = conversationBody(context)
@@ -214,7 +234,7 @@ private[completion] object CodexWire:
         val messages = conversationMessages(context)
         val body     = conversationBody(context)
         val request = body.lastMaybe match
-            case Present(UserMessage(content, image)) =>
+            case Present(UserMessage(content, image, _, _)) =>
                 Chunk(TurnInput("text", text = Present(content))).concat(
                     image.map(img => Chunk(TurnInput("image", url = Present(s"data:image/jpeg;base64,${img.base64}")))).getOrElse(
                         Chunk.empty
@@ -225,7 +245,7 @@ private[completion] object CodexWire:
         // The suffix is all SystemMessages by construction (HarnessCompletion.trailingSystemCount),
         // so collect is total here.
         request.concat(messages.drop(body.size).collect {
-            case SystemMessage(content) => TurnInput("text", text = Present(reminderText(content)))
+            case SystemMessage(content, _, _) => TurnInput("text", text = Present(reminderText(content)))
         })
     end turnInput
 
@@ -233,9 +253,9 @@ private[completion] object CodexWire:
     // PLACE (they ride the injected history as user-role reminder items), mirroring the OpenAI
     // request's in-place system messages; trailing directives ride the live turn (see turnInput).
     private def conversationMessages(context: Context): Chunk[Message] =
-        context.messages.headMaybe match
-            case Present(_: SystemMessage) => context.messages.drop(1)
-            case _                         => context.messages
+        context.compacted.headMaybe match
+            case Present(_: SystemMessage) => context.compacted.drop(1)
+            case _                         => context.compacted
 
     // The conversation minus the trailing system directives, which ride the live turn input.
     private def conversationBody(context: Context): Chunk[Message] =
@@ -250,7 +270,7 @@ private[completion] object CodexWire:
 
     def historyItems(messages: Chunk[Message])(using Frame): Chunk[Structure.Value] < Abort[AIGenException] =
         Kyo.foreach(messages) {
-            case SystemMessage(content) =>
+            case SystemMessage(content, _, _) =>
                 // In place, as a USER-role item wrapped in <system-reminder>, the same wrapper the Claude Code
                 // harness uses. The app-server offers no working system carrier (verified live: a system-role
                 // item is accepted by thread/inject_items but never delivered to the model at any position; a
@@ -261,12 +281,12 @@ private[completion] object CodexWire:
                     role = Present("user"),
                     content = Present(List(ContentItem("input_text", text = Present(reminderText(content)))))
                 )))
-            case UserMessage(content, image) =>
+            case UserMessage(content, image, _, _) =>
                 val blocks =
                     List(ContentItem("input_text", text = Present(content))) ++
                         image.toList.map(img => ContentItem("input_image", image_url = Present(s"data:image/jpeg;base64,${img.base64}")))
                 Chunk(Structure.encode(ResponseHistoryItem("message", role = Present("user"), content = Present(blocks))))
-            case AssistantMessage(content, calls) =>
+            case AssistantMessage(content, calls, _, _) =>
                 Kyo.foreach(calls) { call =>
                     Json.decode[Structure.Value](call.arguments) match
                         case Result.Success(_) =>
@@ -291,7 +311,7 @@ private[completion] object CodexWire:
                         else Chunk.empty
                     textItem.concat(callItems)
                 }
-            case ToolMessage(callId, content) =>
+            case ToolMessage(callId, content, _, _) =>
                 Chunk(Structure.encode(ResponseHistoryItem(
                     "function_call_output",
                     call_id = Present(callId.id),

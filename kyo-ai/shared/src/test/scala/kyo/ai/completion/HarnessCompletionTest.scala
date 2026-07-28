@@ -80,23 +80,24 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
             .assistantMessage("", Chunk(Call(CallId("c1"), "lookup", "{}")))
             .toolMessage(CallId("c1"), "42")
         assert(
-            HarnessCompletion.continuationRequest(toolEnded.messages) ==
+            HarnessCompletion.continuationRequest(toolEnded.raw) ==
                 "Continue: complete the original request using the recorded tool results above; do not repeat completed tool calls.",
             "a tool-terminated body must name the recorded results so the model consumes them instead of re-calling"
         )
         val assistantEnded = Context.empty.userMessage("q").assistantMessage("partial answer")
-        assert(HarnessCompletion.continuationRequest(assistantEnded.messages) == "Continue.")
+        assert(HarnessCompletion.continuationRequest(assistantEnded.raw) == "Continue.")
         assert(HarnessCompletion.continuationRequest(Chunk.empty) == "Continue.")
     }
 
     "trailingSystemCount counts only the trailing run of system messages" in {
-        val ctx = Context.empty
-            .systemMessage("ambient")
-            .userMessage("q")
-            .systemMessage("reminder")
-            .systemMessage("finalize")
-        assert(HarnessCompletion.trailingSystemCount(ctx.messages) == 2)
-        assert(HarnessCompletion.trailingSystemCount(Context.empty.userMessage("q").messages) == 0)
+        val ctx =
+            Context.empty
+                .systemMessage("ambient")
+                .userMessage("q")
+                .systemMessage("reminder")
+                .systemMessage("finalize")
+        assert(HarnessCompletion.trailingSystemCount(ctx.raw) == 2)
+        assert(HarnessCompletion.trailingSystemCount(Context.empty.userMessage("q").raw) == 0)
         assert(HarnessCompletion.trailingSystemCount(Chunk.empty) == 0)
     }
 

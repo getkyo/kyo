@@ -9,17 +9,25 @@ import kyo.ai.Context
   * prompts, modes), so it is in-memory only and not serializable; the serializable slice is
   * `session.rawContext`, the conversation history (`Context derives Schema`).
   */
-case class AISession(rawContext: Context, env: AIEnv):
+case class AISession(
+    rawContext: Context,
+    env: AIEnv,
+    compaction: Maybe[Compactor.Seated] = Absent,
+    streamAnchor: Maybe[Compactor.internal.StreamAnchor] = Absent
+):
 
     /** The env a generation for this session runs under: the ambient scope env with this session's
-      * enablements layered on top (instance config override wins; prompts, tools, thoughts, modes, and
-      * observers append) and the default structured-output guidance last. The ONE construction shared by the
-      * eval loop and the faithful [[context]] enrichment, so transcript capture cannot drift from what
-      * generation assembles.
+      * enablements layered on top (instance config override and compactor override win; prompts, tools,
+      * thoughts, modes, and observers append) and the default structured-output guidance last. The ONE
+      * construction shared by the eval loop and the faithful [[context]] enrichment, so transcript capture
+      * cannot drift from what generation assembles.
       */
     private[kyo] def effectiveEnv(scope: AIEnv)(using Frame): AIEnv =
         scope
-            .copy(config = env.config.orElse(scope.config))
+            .copy(
+                config = env.config.orElse(scope.config),
+                compactor = env.compactor.orElse(scope.compactor)
+            )
             .addPrompt(env.prompt)
             .addTools(env.tools)
             .addThoughts(env.thoughts)
@@ -46,6 +54,33 @@ case class AISession(rawContext: Context, env: AIEnv):
 
     /** Sets this instance's config override. */
     def config(config: Config): AISession = copy(env = env.config(config))
+
+    /** Seats this instance's compaction state, the opaque handle the compactor writes its ephemeral work
+      * through: staged summaries, the single-flight preparation fiber, a pending stream re-anchor.
+      *
+      * ONE field where there were two, and opaque where they were the compaction module's own types. The
+      * session carries a handle it cannot read, which is the point: what belongs in it is the compactor's
+      * business, and a new kind of ephemeral state no longer widens this class.
+      *
+      * Never serialized, so a snapshot/recover loses only in-flight preparation, never a surfaced failure
+      * and never a persisted summary (those live on the Context).
+      */
+    private[kyo] def withCompaction(seated: Compactor.Seated): AISession =
+        copy(compaction = Present(seated))
+
+    /** Seats this instance's pending stream re-anchor: the reported-usage sink the streaming SSE
+      * projection writes, plus the sent view and active tokenizer captured when the request was
+      * assembled, consumed at the next turn's start.
+      *
+      * The FRAMEWORK's, not a compactor's, which is why it sits here beside the compaction handle rather
+      * than inside it. Usage anchoring is measurement the seam performs whatever compactor is enabled,
+      * and a compactor that defines its own state would leave the seam nothing it could read.
+      */
+    private[kyo] def withStreamAnchor(anchor: Compactor.internal.StreamAnchor): AISession =
+        copy(streamAnchor = Present(anchor))
+
+    /** Clears the pending stream re-anchor once applied. */
+    private[kyo] def clearStreamAnchor: AISession = copy(streamAnchor = Absent)
 
     /** Layers a tool onto this instance. */
     def addTool(tool: Tool[Any]): AISession = copy(env = env.addTools(Chunk(tool)))

@@ -39,7 +39,15 @@ class CompletionTest extends kyo.test.Test[Any]:
                         OpenAICompletion(config, ctx, Chunk.empty)
                     }
                 }.map { result =>
-                    assert(result.isSuccess)
+                    result match
+                        case Result.Success(res) =>
+                            assert(
+                                res.messages == Chunk(AssistantMessage("hello", Chunk.empty)),
+                                s"expected the decoded assistant message, got: ${res.messages}"
+                            )
+                            assert(res.usage.inputTokens == 0, s"expected unreported usage when the wire omits it, got: ${res.usage}")
+                        case other =>
+                            assert(false, s"expected success, got: $other")
                 }
             }
         }
@@ -80,6 +88,39 @@ class CompletionTest extends kyo.test.Test[Any]:
         }
     }
 
+    "openai-compat usage decoded into the reply's AIStats" in {
+        TestCompletionServer.run { server =>
+            val config = keyedOpenAIConfig(server.baseUrl)
+            val ctx    = Context.empty.userMessage("hello")
+            val body =
+                """{"choices":[{"message":{"role":"assistant","content":"hello","tool_calls":null}}],""" +
+                    """"usage":{"prompt_tokens":120,"completion_tokens":40,"prompt_tokens_details":{"cached_tokens":64}}}"""
+            server.enqueueBody(body).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            OpenAICompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.map { result =>
+                    result match
+                        case Result.Success(Result.Success(res)) =>
+                            assert(
+                                res.usage.inputTokens == 120 && res.usage.outputTokens == 40 &&
+                                    res.usage.cachedInputTokens == Present(64L),
+                                s"expected decoded usage, got: ${res.usage}"
+                            )
+                            assert(
+                                res.messages == Chunk(AssistantMessage("hello", Chunk.empty)),
+                                s"expected the pre-widen decoded assistant message, got: ${res.messages}"
+                            )
+                        case other =>
+                            assert(false, s"expected success, got: $other")
+                }
+            }
+        }
+    }
+
     "classifyHttp maps a client timeout to AICompletionTimeoutException (fail fast)" in {
         // The rendered provider comes from the entry classifyHttp is given, so the expectation reads it
         // from the same place rather than repeating a literal that can drift from it.
@@ -109,11 +150,67 @@ class CompletionTest extends kyo.test.Test[Any]:
         val route = HttpRoute.postRaw("unauthorized").request(_.bodyText).handler { _ => HttpResponse.unauthorized }
         HttpServer.initWith(HttpServerConfig.default)(route) { server =>
             val request = Completion.StreamRequest(s"http://127.0.0.1:${server.port}/unauthorized", Seq.empty, "{}")
-            Completion.sseFragments(Config.OpenAI.default, request, _ => Result.Success(Completion.Delta.Skip), Absent).map { stream =>
+            Completion.sseFragments(
+                Config.OpenAI.default,
+                request,
+                _ => Result.Success(Completion.Delta.Skip),
+                Absent
+            ).map { stream =>
                 Abort.run[AIStreamException](stream.run).map {
                     case Result.Failure(_: AIProviderAuthException) => succeed
                     case other =>
                         fail(s"expected AIProviderAuthException (the same leaf AI.gen types via classifyHttp), got: $other")
+                }
+            }
+        }
+    }
+
+    "anthropic wire usage converted into the reply's AIStats, cachedInputTokens Absent" in {
+        TestCompletionServer.run { server =>
+            val config = Config.Anthropic.default.apiKey("test-key").apiUrl(server.baseUrl)
+            val ctx    = Context.empty.userMessage("hello")
+            val body =
+                """{"id":"msg-1","content":[{"type":"text","text":"ok"}],"model":"claude-sonnet-4-5-20250929",""" +
+                    """"role":"assistant","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":200,"output_tokens":15}}"""
+            server.enqueueBody(body).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            AnthropicCompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.map { result =>
+                    result match
+                        case Result.Success(Result.Success(res)) =>
+                            assert(
+                                res.usage.inputTokens == 200 && res.usage.outputTokens == 15 &&
+                                    res.usage.cachedInputTokens == Absent,
+                                s"expected converted usage with cachedInputTokens Absent, got: ${res.usage}"
+                            )
+                        case other =>
+                            assert(false, s"expected success, got: $other")
+                }
+            }
+        }
+    }
+
+    "a reply with no usage yields Result.usage Absent" in {
+        TestCompletionServer.run { server =>
+            val config = keyedOpenAIConfig(server.baseUrl)
+            val ctx    = Context.empty.userMessage("hello")
+            server.enqueueBody(openAIBody).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            OpenAICompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.map { result =>
+                    result match
+                        case Result.Success(Result.Success(res)) =>
+                            assert(res.usage.inputTokens == 0, s"expected unreported usage when the wire omits it, got: ${res.usage}")
+                        case other =>
+                            assert(false, s"expected success, got: $other")
                 }
             }
         }
@@ -187,8 +284,8 @@ class CompletionTest extends kyo.test.Test[Any]:
             )
             val fitted = Completion.fitSystemMessages(single, messages, convert)
             val systems = fitted.count {
-                case SystemMessage(_) => true
-                case _                => false
+                case SystemMessage(_, _, _) => true
+                case _                      => false
             }
             assert(systems == 1, s"exactly one system message survives: ${roles(fitted)}")
             // The run is contiguous here, so "one" and "two" merge and only "three" converts.

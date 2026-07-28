@@ -372,8 +372,8 @@ class LLMIntegrationTest extends BaseAITest:
                 }
             }
             (before, answer, after) <- unwrap(backend, result)
-            resultCalls = after.messages.drop(before.messages.size).collect {
-                case AssistantMessage(_, calls) => calls.filter(_.function == Completion.resultToolName)
+            resultCalls = after.raw.drop(before.raw.size).collect {
+                case AssistantMessage(_, calls, _, _) => calls.filter(_.function == Completion.resultToolName)
             }.flatten
             _ = assert(answer == ThoughtAnswer(marker, 4), s"generation result mismatch: $answer")
             _ = assert(
@@ -391,8 +391,21 @@ class LLMIntegrationTest extends BaseAITest:
         // The kill timing itself (destroyForcibly on first capture, no follow-up request) is proven at the
         // unit level (ClaudeCodeWireTest's set-once resultCapture semantics, ClaudeCodeCompletionTest's
         // bridge partition). This end-to-end proof is the observable behavioral consequence: a turn that
-        // could attempt a second result call still resolves to exactly the first answer, and an immediate
+        // ATTEMPTS a second result call still resolves to exactly the first answer, and an immediate
         // repeat generation is deterministic (set-once parity holds across turns too).
+        //
+        // Both turns ask for two calls carrying DIFFERENT answers, and that is what makes the assertions
+        // mean anything. Asking for one call, or for two calls with the same answer, leaves 1 the only
+        // value the generation could return, so the test passes identically whether the first capture wins,
+        // the last one does, or the kill never happens. With 1 then 2 requested, a last-wins or
+        // no-kill regression surfaces as the answer 2 and fails here.
+        //
+        // The instruction must also never discourage the call. This test used to tell the model the first
+        // call was final and not to call again, and that clause starved the forced result tool outright:
+        // a command harness cannot compel the call at the wire, so forcing is prompt pressure, and the
+        // generation exhausted its five iterations plus the repair turn having never seen the tool called
+        // (AIEvalExhaustedException with no rejections recorded). Every other live test here asks plainly
+        // and none exhaust.
         for
             marker <- marker
             result <- Abort.run[AIException] {
@@ -400,18 +413,21 @@ class LLMIntegrationTest extends BaseAITest:
                     AI.initWith { ai =>
                         for
                             _ <- ai.userMessage(
-                                s"Return marker $marker and answer 1. Call the result tool exactly once; " +
-                                    "if you are tempted to call it again, do not, the first call is final."
+                                s"Return marker $marker. Call the result tool twice, in this order: " +
+                                    "the first call with answer 1, then a second call with answer 2. Make both calls."
                             )
-                            first  <- ai.gen[ThoughtAnswer]
-                            _      <- ai.userMessage(s"Repeat: return marker $marker and answer 1 again.")
+                            first <- ai.gen[ThoughtAnswer]
+                            _ <- ai.userMessage(
+                                s"Again, marker $marker: call the result tool twice more, first with answer 1, " +
+                                    "then with answer 2."
+                            )
                             second <- ai.gen[ThoughtAnswer]
                         yield (first, second)
                     }
                 }
             }
             (first, second) <- unwrap(backend, result)
-            _ = assert(first == ThoughtAnswer(marker, 1), s"first result mismatch: $first")
+            _ = assert(first == ThoughtAnswer(marker, 1), s"the first capture must win, so answer 2 never lands: $first")
             _ = assert(second == ThoughtAnswer(marker, 1), s"repeat result mismatch (first-wins/set-once parity): $second")
         yield ()
         end for

@@ -89,6 +89,84 @@ class CodexCompletionTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "drainForUsage picks up the tokenUsage notification that lands after the interrupt" in {
+        // Regression for the capture-path usage loss: the app-server emits `thread/tokenUsage/updated`
+        // AFTER `turn/interrupt`, so a gen that ends by result capture reports no tokens at all unless the
+        // trailing events are drained. Verified live before the fix (zero-token turns), which both blanks the
+        // spend report and drops the compaction anchor back to the offline estimate.
+        val noise = CodexWire.RpcEvent("rawResponseItem/completed", Structure.Value.Record(Chunk.empty))
+        val usageEvent = CodexWire.RpcEvent(
+            "thread/tokenUsage/updated",
+            Structure.encode(CodexWire.TokenUsageNotification(
+                "t1",
+                "u1",
+                CodexWire.ThreadTokenUsage(total =
+                    Present(CodexWire.TokenCounts(
+                        inputTokens = Present(1200L),
+                        cachedInputTokens = Present(900L),
+                        outputTokens = Present(340L)
+                    ))
+                )
+            ))
+        )
+        for
+            events <- Channel.init[CodexWire.RpcEvent](16)
+            _      <- events.put(noise)
+            _      <- events.put(usageEvent)
+            found  <- CodexCompletion.drainForUsage(events, "t1", "u1", Absent)
+        yield assert(
+            found.exists(c => c.inputTokens == Present(1200L) && c.outputTokens == Present(340L)),
+            s"the drain must recover the post-interrupt usage, got: $found"
+        )
+        end for
+    }
+
+    "drainForUsage keeps the pre-interrupt usage when the tail carries none" in {
+        // The drain can only ADD information: a turn that already saw its usage before the kill, or one whose
+        // notification never arrives, must come back with exactly what it had rather than losing it.
+        val already = CodexWire.TokenCounts(inputTokens = Present(77L), outputTokens = Present(7L))
+        for
+            events <- Channel.init[CodexWire.RpcEvent](16)
+            turnDone = CodexWire.RpcEvent(
+                "turn/completed",
+                Structure.Value.Record(Chunk(
+                    "threadId" -> Structure.Value.Str("t1"),
+                    "turn"     -> Structure.Value.Record(Chunk("id" -> Structure.Value.Str("u1")))
+                ))
+            )
+            _     <- events.put(turnDone)
+            found <- CodexCompletion.drainForUsage(events, "t1", "u1", Present(already))
+        yield assert(
+            found.exists(c => c.inputTokens == Present(77L) && c.outputTokens == Present(7L)),
+            s"a usage-free tail must preserve what the turn already reported: $found"
+        )
+        end for
+    }
+
+    "every event method the turn loop reads is actually subscribed" in {
+        // The routes decide which notifications reach the event channel; the loop's branches decide what to do
+        // with them. A branch for a method that no route subscribes is dead code, and the failure is silent:
+        // token usage simply never arrives and every turn reports none, which also blanks the usage-anchored
+        // occupancy the compactor depends on. This pins the pairing rather than trusting the two lists to
+        // stay in step.
+        Channel.init[CodexWire.RpcEvent](1).map { events =>
+            val subscribed = CodexCompletion.eventRoutes(events).map(_.name).toSet
+            val required = Set(
+                "item/started",
+                "item/completed",
+                "item/agentMessage/delta",
+                "turn/completed",
+                "thread/tokenUsage/updated",
+                "thread/status/changed",
+                "error"
+            )
+            assert(
+                required.subsetOf(subscribed),
+                s"unsubscribed methods the turn loop reads: ${required.diff(subscribed)}"
+            )
+        }
+    }
+
     "threadStartParams runs the session read-only with approvals off" in {
         val params = CodexWire.threadStartParams(
             Config.Codex.default,

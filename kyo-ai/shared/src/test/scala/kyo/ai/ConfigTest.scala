@@ -129,6 +129,32 @@ class ConfigTest extends kyo.test.Test[Any]:
         )
     }
 
+    "an over-large pin on a stand-in maximum reserves the conservative default so the axis stays constructible" in {
+        // A model whose output maximum is an Unverified stand-in equal to its window: clamping a large
+        // pin to that stand-in would reserve the whole window, zeroing window - reservation and leaving
+        // the occupancy axis unconstructible. The reservation falls back to the conservative default, so
+        // construction succeeds and the over-large ask still rides unclamped for the endpoint to bound.
+        val standIn = Config.Anthropic.default
+            .model(
+                Config.Anthropic,
+                "unverified-model",
+                128000,
+                Config.OutputMaximum.Unverified(128000),
+                Config.ReasoningEncoding.Unavailable,
+                true,
+                true
+            )
+            .maxTokens(999999)
+        assert(
+            standIn.outputReservation == standIn.effectiveMaxOutputTokens,
+            s"the reservation is the ceiling the wire actually sends, the pin clamped to the model's maximum, " +
+                s"got ${standIn.outputReservation}"
+        )
+        // Whether a reservation this large keeps the compaction axis coherent is no longer Config's
+        // question to answer: the fallback lives in Compactor.internal.axis, the only place that knows
+        // both the reservation and the watermarks, and CompactorTest holds that case.
+    }
+
     "a reasoning statement the entry's wire cannot express is reported, and never fails the request" in {
         // Re-aiming one config across providers is the point of the type, so a statement the wire
         // cannot carry must not fail. It must not vanish silently either: a dropped parameter that
@@ -337,18 +363,21 @@ class ConfigTest extends kyo.test.Test[Any]:
     }
 
     "model resets apiUrl to the new provider's baseUrl" in {
+        // A realistic window: every construction path validates the compaction axis, and a toy window a
+        // few hundred tokens wide cannot host the default watermarks (the once-counted output reservation
+        // would exceed it). The window magnitude is incidental to what this test checks: apiUrl reset.
         val cfg =
             Config.OpenAI.default.apiUrl("http://override").model(
                 Config.Anthropic,
                 "claude-x",
-                1000,
+                200000,
                 Config.OutputMaximum.Verified(1000),
                 Config.ReasoningEncoding.Adaptive,
                 false,
                 acceptsImages = true
             )
         assert(cfg.apiUrl == Config.Anthropic.baseUrl, s"apiUrl: ${cfg.apiUrl}")
-        assert(cfg.modelName == "claude-x" && cfg.modelContextWindow == 1000 && cfg.provider.name == "Anthropic")
+        assert(cfg.modelName == "claude-x" && cfg.modelContextWindow == 200000 && cfg.provider.name == "Anthropic")
     }
 
     "every catalog entry declares an output maximum that fits inside its context window" in {
@@ -453,6 +482,39 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.OpenRouter.default.modelName == "deepseek/deepseek-v4-pro")
         assert(Config.ClaudeCode.default.modelName == "sonnet")
         assert(Config.Codex.default.modelName == "")
+    }
+
+    "every catalog Provider.small resolves to its named cheap literal" in {
+        // Each provider's cheap route is the cheapest entry its catalog declares. The literals track the
+        // provider catalog: where a catalog lists no entry cheaper than its default (Codex, whose harness
+        // picks the model), small resolves to that default.
+        assert(Config.Anthropic.small.modelName == "claude-haiku-4-5-20251001" && (Config.Anthropic.small.provider eq Config.Anthropic))
+        assert(Config.OpenAI.small.modelName == "gpt-5.4-mini" && (Config.OpenAI.small.provider eq Config.OpenAI))
+        assert(Config.DeepSeek.small.modelName == "deepseek-v4-flash" && (Config.DeepSeek.small.provider eq Config.DeepSeek))
+        assert(Config.Gemini.small.modelName == "gemini-3.1-flash-lite" && (Config.Gemini.small.provider eq Config.Gemini))
+        assert(Config.Groq.small.modelName == "openai/gpt-oss-20b" && (Config.Groq.small.provider eq Config.Groq))
+        assert(Config.Baseten.small.modelName == "openai/gpt-oss-120b" && (Config.Baseten.small.provider eq Config.Baseten))
+        assert(
+            Config.OpenRouter.small.modelName == "openai/gpt-oss-20b" && (Config.OpenRouter.small.provider eq Config.OpenRouter)
+        )
+        assert(Config.ClaudeCode.small.modelName == "haiku" && (Config.ClaudeCode.small.provider eq Config.ClaudeCode))
+        assert((Config.Codex.small eq Config.Codex.default) && (Config.Codex.small.provider eq Config.Codex))
+    }
+
+    "Provider.small is a distinct accessor from default where the catalog differs" in {
+        assert(Config.Anthropic.small.modelName != Config.Anthropic.default.modelName)
+        assert(Config.OpenAI.small.modelName != Config.OpenAI.default.modelName)
+    }
+
+    "noTokenizer resets a user tokenizer to the provider's offline default (Absent)" in {
+        val custom = Config.Anthropic.default.tokenizer(new Tokenizer:
+            def count(texts: Chunk[String])(using Frame): Chunk[Int] < (LLM & Async & Abort[HttpException | AIGenException]) =
+                Kyo.lift(texts.map(_ => 0)))
+        assert(custom.tokenizer.isDefined, "the tokenizer builder sets a Present tokenizer")
+        assert(
+            custom.noTokenizer.tokenizer == Absent,
+            "noTokenizer returns to the provider default, mirroring noContextCeiling"
+        )
     }
 
     private class TestUnsafeSystem(

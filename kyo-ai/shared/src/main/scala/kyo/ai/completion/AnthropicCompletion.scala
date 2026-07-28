@@ -286,16 +286,16 @@ private[completion] object AnthropicCompletion extends Completion:
                 val fitted =
                     Completion.fitSystemMessages(
                         config,
-                        ctx.messages,
+                        ctx.compacted,
                         content => UserMessage(systemReminder(content), Absent)
                     )
                 val (system, body) =
                     fitted.headMaybe match
-                        case Present(SystemMessage(c)) => (Present(c), fitted.drop(1))
-                        case _                         => (Absent, fitted)
+                        case Present(SystemMessage(c, _, _)) => (Present(c), fitted.drop(1))
+                        case _                               => (Absent, fitted)
                 val mapped =
                     body.map {
-                        case UserMessage(content, Present(image)) =>
+                        case UserMessage(content, Present(image), _, _) =>
                             Message(
                                 Role.User.name,
                                 List(
@@ -303,9 +303,9 @@ private[completion] object AnthropicCompletion extends Completion:
                                     Content("image", source = Present(Source("base64", "image/jpeg", image.base64)))
                                 )
                             )
-                        case UserMessage(content, _) =>
+                        case UserMessage(content, _, _, _) =>
                             Message(Role.User.name, List(Content("text", text = Present(content))))
-                        case AssistantMessage(content, calls) =>
+                        case AssistantMessage(content, calls, _, _) =>
                             Message(
                                 Role.Assistant.name,
                                 List(Content("text", text = Present(content))).filter(_.text.exists(_.nonEmpty))
@@ -318,12 +318,12 @@ private[completion] object AnthropicCompletion extends Completion:
                                         )
                                     ).toList
                             )
-                        case ToolMessage(callId, content) =>
+                        case ToolMessage(callId, content, _, _) =>
                             Message(
                                 Role.User.name,
                                 List(Content("tool_result", tool_use_id = Present(callId.id), content = Present(content)))
                             )
-                        case SystemMessage(content) =>
+                        case SystemMessage(content, _, _) =>
                             // Residual only: the transform converts every non-leading system message, so this
                             // fires just for a system message not at the start (no leading system prompt to lift).
                             Message(Role.User.name, List(Content("text", text = Present(systemReminder(content)))))

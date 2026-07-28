@@ -19,8 +19,9 @@ sealed trait Prompt[-S] extends AI.Enablement[S]:
 
     /** Merges this prompt with another, deduplicating instructions and reminders. */
     final def andThen[S2](other: Prompt[S2])(using Frame): Prompt[S & S2] =
-        // cast: Prompt is contravariant in S, so the identical-prompt fast path widens S to S & S2 safely.
-        if this.equals(other) then this.asInstanceOf[Prompt[S & S2]]
+        // Prompt is contravariant in S; the identical-prompt fast path widens S to S & S2 by
+        // contravariance without a recast.
+        if this.equals(other) then this
         else
             Prompt._init[S & S2](
                 for
@@ -121,8 +122,10 @@ object Prompt:
                 val allPromptMessages   = mainPromptMessages ++ toolPromptMessages
                 val allReminderMessages = mainReminderMessages ++ toolReminderMessages
                 val contextWithPrompts  = allPromptMessages.foldLeft(Context.empty)((ctx, msg) => ctx.systemMessage(msg))
-                val mergedContext       = contextWithPrompts.merge(context)
-                val finalContext        = allReminderMessages.foldLeft(mergedContext)((ctx, msg) => ctx.systemMessage(msg))
+                // Build the request over context.compacted, what providers are actually sent: the
+                // prompt/reminder enrichment wraps the rendered view, not the raw transcript.
+                val mergedContext = Context(contextWithPrompts.compacted.concat(context.compacted))
+                val finalContext  = allReminderMessages.foldLeft(mergedContext)((ctx, msg) => ctx.systemMessage(msg))
                 finalContext
             end for
         end enrichedContext
