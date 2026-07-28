@@ -148,6 +148,23 @@ runs:
         } >> "$GITHUB_ENV"
         gcc --version | head -1
 
+    # kyo-aeron's C shim and libaeron build with MSVC on Windows (aeron supports Windows only under
+    # MSVC). The kyo-ffi plugin invokes `cl` for that library, so cl plus its INCLUDE/LIB must be on
+    # the build step's environment. vcvars64 augments PATH/INCLUDE/LIB/LIBPATH; exporting them to
+    # GITHUB_ENV makes them available to the later sbt build. gcc (used for every other C library)
+    # ignores INCLUDE/LIB and keeps resolving to MinGW, so the two toolchains coexist.
+    - name: Set up MSVC environment (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: cmd
+      run: |
+        for /f "usebackq delims=" %%i in (`"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSROOT=%%i"
+        call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+        echo PATH=%PATH%>>"%GITHUB_ENV%"
+        echo INCLUDE=%INCLUDE%>>"%GITHUB_ENV%"
+        echo LIB=%LIB%>>"%GITHUB_ENV%"
+        echo LIBPATH=%LIBPATH%>>"%GITHUB_ENV%"
+        where cl
+
     - uses: coursier/setup-action@v3.0.0
       with:
         jvm: corretto:25
@@ -208,9 +225,10 @@ runs:
       shell: bash
       run: |
         case "${{ inputs.os }}" in
-          linux-x64)   OS_ARCH=linux-x86_64 ;;
-          linux-arm64) OS_ARCH=linux-aarch64 ;;
-          macos-arm64) OS_ARCH=darwin-aarch64 ;;
+          linux-x64)    OS_ARCH=linux-x86_64 ;;
+          linux-arm64)  OS_ARCH=linux-aarch64 ;;
+          macos-arm64)  OS_ARCH=darwin-aarch64 ;;
+          windows-x64)  OS_ARCH=windows-x86_64 ;;
           *) echo "libaeron not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
         esac
         if [[ "${{ inputs.os }}" == linux-* ]]; then
@@ -218,6 +236,10 @@ runs:
           # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
           # target is not preinstalled. macOS gets uuid from libSystem.
           dpkg -s uuid-dev >/dev/null 2>&1 || bash scripts/apt-install.sh uuid-dev
+        elif [[ "${{ inputs.os }}" == windows-* ]]; then
+          # cmake and MSVC are preinstalled on the Windows runner; build-aeron.sh selects the
+          # Visual Studio generator for this os-arch (aeron supports Windows only under MSVC).
+          command -v cmake >/dev/null 2>&1 || { echo "cmake missing on Windows runner" >&2; exit 1; }
         else
           command -v cmake >/dev/null 2>&1 || brew install cmake
         fi

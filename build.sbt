@@ -1748,6 +1748,7 @@ lazy val `kyo-aeron` =
                 // aarch64-only, where 64-bit atomic_fetch_add lowers to an out-of-line libatomic call.
                 // macOS supplies all of them via libSystem.
                 val aeronArch = hostOsArch.split("-").lastOption.getOrElse("")
+                val isWindows = hostOsArch.startsWith("windows")
                 val linuxSystemLinkFlags =
                     if (hostOsArch.startsWith("linux"))
                         Seq("-lpthread", "-lm", "-ldl", "-luuid") ++ (if (aeronArch == "aarch64") Seq("-latomic") else Nil)
@@ -1765,8 +1766,17 @@ lazy val `kyo-aeron` =
                         // complete client + driver API. Adding aeron_static too duplicates every client
                         // symbol and fails the Darwin ld64 link.
                         linkLibs = Seq("aeron_driver_static"),
+                        // Windows needs aeron's declared winsock stack plus shell32 (SHFileOperation,
+                        // used by aeron's file utils), rendered as `.lib` by the plugin under MSVC.
+                        linkLibsByOs = if (isWindows) Map("windows" -> Seq("ws2_32", "wsock32", "Iphlpapi", "shell32")) else Map.empty,
                         linkFlags = linuxSystemLinkFlags,
-                        staticLink = true
+                        // Aeron supports Windows only under MSVC (its sources gate on _MSC_VER) and forces
+                        // the dynamic CRT (/MD), so on Windows the shim compiles with cl and /MD.
+                        // staticLink=true would add /MT (static CRT) and clash with aeron's /MD; the aeron
+                        // .lib is embedded by the link regardless, so Windows uses staticLink=false.
+                        cFlags = if (isWindows) Seq("/MD") else Nil,
+                        compilerByOs = if (isWindows) Map("windows" -> "cl") else Map.empty,
+                        staticLink = !isWindows
                     )
                 )
             }
