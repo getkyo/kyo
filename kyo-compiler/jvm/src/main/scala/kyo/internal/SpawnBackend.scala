@@ -42,10 +42,29 @@ final private[kyo] class SpawnBackend(
         exchange.close
             .andThen(Sync.Unsafe.defer(aeron.unsafe.close()))
             .andThen(process.destroyForcibly)
+            .andThen(awaitWorkerExit)
+
+    /** Confirms the worker is dead before close returns. Windows completes the exit wait slightly
+      * before `isAlive` flips false, so the wait alone is not proof of death; a closed backend must
+      * never leave a worker alive holding the shared medium files, so liveness is polled (bounded)
+      * after the exit wait.
+      */
+    private def awaitWorkerExit(using Frame): Unit < Async =
+        def poll(attempts: Int): Unit < Async =
+            process.isAlive.map { alive =>
+                if !alive || attempts <= 0 then ()
+                else Async.sleep(10.millis).andThen(poll(attempts - 1))
+            }
+        process.waitFor(SpawnBackend.exitTimeout).andThen(poll(100))
+    end awaitWorkerExit
 
 end SpawnBackend
 
 private[kyo] object SpawnBackend:
+
+    /** Bounds the post-kill exit wait so `close` never blocks unboundedly if the OS is slow to reap the worker. */
+    private[kyo] val exitTimeout: Duration = 10.seconds
+
     /** Spawns the worker JVM, connects the aeron client, wires the Exchange, and wraps all three in a
       * SpawnBackend.
       *

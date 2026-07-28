@@ -16,7 +16,7 @@ import kyo.AllowUnsafe.embrace.danger
   *   - `POST /{prefix}/:name/reload` -- reload a [[DynamicFlag]] from its config source
   *
   * IMPORTANT: PUT body is plain text (the rollout expression), NOT JSON. JSON bodies are detected and rejected with a helpful error
-  * message. Example: `curl -X PUT -d 'true@premium/50%' /flags/myapp.features.newCheckout`.
+  * message. Example: `curl -X PUT -d 'rollout:true@premium/50%' /flags/myapp.features.newCheckout`.
   *
   * Security: token auth via system property `kyo.flag.admin.token`. When set, PUT and POST require `Authorization: Bearer <token>`. GET
   * endpoints are always open. Read-only mode (`readOnly=true`) blocks PUT/POST with 403.
@@ -92,7 +92,7 @@ object FlagAdmin:
                         if body.nonEmpty && (body.charAt(0) == '{' || body.charAt(0) == '[') then
                             errorResp(
                                 HttpStatus.BadRequest,
-                                "Expression must be plain text, not JSON. Send the expression as plain text, e.g.: true@premium/50%"
+                                "Expression must be plain text, not JSON. Send the expression as plain text, e.g.: rollout:true@premium/50%"
                             )
                         else
                             try

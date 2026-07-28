@@ -26,7 +26,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "single path selector match" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.singlePath", "100@enterprise")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.singlePath", "rollout:100@enterprise")
             try {
                 val flag = DynamicFlagTestFlags.singlePath
                 assert(flag("user1", "enterprise") == 100)
@@ -36,7 +36,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "single path selector miss returns default" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.singlePathMiss", "100@enterprise")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.singlePathMiss", "rollout:100@enterprise")
             try {
                 val flag = DynamicFlagTestFlags.singlePathMiss
                 assert(flag("user1", "basic") == 0)
@@ -46,7 +46,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "prefix match — selector shorter than attributes" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.prefixMatch", "100@enterprise")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.prefixMatch", "rollout:100@enterprise")
             try {
                 val flag = DynamicFlagTestFlags.prefixMatch
                 assert(flag("user1", "enterprise", "us") == 100)
@@ -56,7 +56,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "selector longer than attributes returns default" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.selectorLonger", "100@enterprise/us/east")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.selectorLonger", "rollout:100@enterprise/us/east")
             try {
                 val flag = DynamicFlagTestFlags.selectorLonger
                 assert(flag("user1", "enterprise") == 0)
@@ -66,7 +66,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "multiple choices, first match wins" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.firstMatch", "a@x;b@y;c")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.firstMatch", "rollout:a@x;b@y;c")
             try {
                 val flag = DynamicFlagTestFlags.firstMatch
                 assert(flag("user1", "x") == "a")
@@ -80,14 +80,14 @@ class DynamicFlagTest extends AnyFreeSpec {
         "terminal in middle stops evaluation" in {
             val flag = DynamicFlagTestFlags.terminalMiddle
             // Use update() which uses failFast=false (warns instead of throwing on unreachable)
-            flag.update("a@x;fallback;c@y")
+            flag.update("rollout:a@x;fallback;c@y")
             // "y" should match the terminal "fallback" because it comes before "c@y"
             assert(flag("user1", "y") == "fallback")
             assert(flag("user1", "x") == "a")
         }
 
         "no attributes, only terminal matches" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.noAttrsTerminal", "100@enterprise;50")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.noAttrsTerminal", "rollout:100@enterprise;50")
             try {
                 val flag = DynamicFlagTestFlags.noAttrsTerminal
                 assert(flag("user1") == 50)
@@ -97,7 +97,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "no attributes, no terminal, returns default" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.noAttrsNoTerminal", "100@enterprise")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.noAttrsNoTerminal", "rollout:100@enterprise")
             try {
                 val flag = DynamicFlagTestFlags.noAttrsNoTerminal
                 assert(flag("user1") == 0)
@@ -107,7 +107,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "bare percentage" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.barePercent", "true@50%")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.barePercent", "rollout:true@50%")
             try {
                 val flag = DynamicFlagTestFlags.barePercent
                 // Check that keys with known buckets get expected results
@@ -125,7 +125,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "path + percentage" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.pathPercent", "true@prod/50%")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.pathPercent", "rollout:true@prod/50%")
             try {
                 val flag = DynamicFlagTestFlags.pathPercent
                 // Path matches but bucket matters
@@ -141,7 +141,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "wildcard single segment" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.wildcardSingle", "100@*")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.wildcardSingle", "rollout:100@*")
             try {
                 val flag = DynamicFlagTestFlags.wildcardSingle
                 assert(flag("user1", "anything") == 100)
@@ -152,7 +152,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "wildcard in middle" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.wildcardMiddle", "100@enterprise/*/east")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.wildcardMiddle", "rollout:100@enterprise/*/east")
             try {
                 val flag = DynamicFlagTestFlags.wildcardMiddle
                 assert(flag("user1", "enterprise", "us", "east") == 100)
@@ -163,7 +163,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "multiple wildcards" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.multiWild", "100@*/*/az1")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.multiWild", "rollout:100@*/*/az1")
             try {
                 val flag = DynamicFlagTestFlags.multiWild
                 assert(flag("user1", "prod", "us-east-1", "az1") == 100)
@@ -175,7 +175,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "attribute ordering is positional" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.attrOrder", "100@a/b")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.attrOrder", "rollout:100@a/b")
             try {
                 val flag = DynamicFlagTestFlags.attrOrder
                 assert(flag("user1", "a", "b") == 100)
@@ -186,7 +186,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "empty key hashes deterministically" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.emptyKey", "true@50%")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.emptyKey", "rollout:true@50%")
             try {
                 val flag   = DynamicFlagTestFlags.emptyKey
                 val first  = flag.evaluate("")
@@ -198,7 +198,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         }
 
         "percentage determinism — same key always gets same result" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.pctDeterminism", "true@50%")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.pctDeterminism", "rollout:true@50%")
             try {
                 val flag = DynamicFlagTestFlags.pctDeterminism
                 val key  = "stable-user-key"
@@ -215,7 +215,7 @@ class DynamicFlagTest extends AnyFreeSpec {
         "percentage monotonicity — key that matches at 25% also matches at 50%" in {
             // Find a key with bucket < 25
             val lowBucketKey = findKeyWithBucket(10)
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.mono25", "true@25%")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.mono25", "rollout:true@25%")
             try {
                 val flag25 = DynamicFlagTestFlags.mono25
                 assert(flag25.evaluate(lowBucketKey) == true)
@@ -223,7 +223,7 @@ class DynamicFlagTest extends AnyFreeSpec {
                 java.lang.System.clearProperty("kyo.DynamicFlagTestFlags.mono25"): Unit
             }
             // Now test with 50%
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.mono50", "true@50%")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.mono50", "rollout:true@50%")
             try {
                 val flag50 = DynamicFlagTestFlags.mono50
                 assert(flag50.evaluate(lowBucketKey) == true)
@@ -238,7 +238,7 @@ class DynamicFlagTest extends AnyFreeSpec {
             assert(flag("user1") == "default")
 
             // Test with long type
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.longType", "9999@enterprise")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.longType", "rollout:9999@enterprise")
             try {
                 val longFlag = DynamicFlagTestFlags.longType
                 assert(longFlag("user1", "enterprise") == 9999L)
@@ -248,8 +248,18 @@ class DynamicFlagTest extends AnyFreeSpec {
             }
         }
 
+        "plain value containing semicolons and @ resolves verbatim for every key" in {
+            // Without the explicit rollout marker the whole value is the flag's value: the
+            // semicolons and @ never split it into rollout choices.
+            val flag  = DynamicFlagTestFlags.plainSpecials
+            val value = "C:\\a\\x.jar;C:\\b\\y.jar@host"
+            flag.update(value)
+            assert(flag("user1") == value)
+            assert(flag("user2", "enterprise") == value)
+        }
+
         "evaluate() returns same as apply()" in {
-            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.evalVsApply", "a@x;b")
+            java.lang.System.setProperty("kyo.DynamicFlagTestFlags.evalVsApply", "rollout:a@x;b")
             try {
                 val flag = DynamicFlagTestFlags.evalVsApply
                 assert(flag.evaluate("user1", "x") == flag("user1", "x"))
@@ -285,6 +295,7 @@ class DynamicFlagTest extends AnyFreeSpec {
 object DynamicFlagTestFlags {
     object noExpr            extends DynamicFlag[Int](0)
     object plainExpr         extends DynamicFlag[Boolean](false)
+    object plainSpecials     extends DynamicFlag[String]("")
     object singlePath        extends DynamicFlag[Int](0)
     object singlePathMiss    extends DynamicFlag[Int](0)
     object prefixMatch       extends DynamicFlag[Int](0)

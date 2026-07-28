@@ -22,33 +22,34 @@ class CompilerWorkerTest extends kyo.test.Test[Any]:
         java.lang.System.setProperty("kyo.internal.WorkerFlags.scalaVersion", "3.8.4")
         java.lang.System.setProperty("kyo.internal.WorkerFlags.classpath", pcClasspath)
         java.lang.System.setProperty("kyo.internal.WorkerFlags.options", "")
-        for
-            config  <- WorkerConfig.fromEnv()
-            backend <- LocalBackend.init(config)
-            uri = Compiler.Uri("Worker.scala")
+        Scope.run {
+            for
+                config <- WorkerConfig.fromEnv()
+                // Scope-bound so the pc shuts down on every exit path, including a failed assertion.
+                backend <- Scope.acquireRelease(LocalBackend.init(config))(b => Abort.run[Throwable](b.close).unit)
+                uri = Compiler.Uri("Worker.scala")
 
-            typeError <- backend.run(Request.Compile(uri, "val x: Int = \"not an int\""))
-            _ = typeError match
-                case Response.Diagnostics(diags) =>
-                    assert(diags.nonEmpty, s"type-error buffer should yield diagnostics, got empty")
-                    assert(diags.exists(_.severity == Compiler.Severity.Error), s"expected an Error-severity diagnostic, got $diags")
-                case other => assert(false, s"expected Diagnostics, got $other")
+                typeError <- backend.run(Request.Compile(uri, "val x: Int = \"not an int\""))
+                _ = typeError match
+                    case Response.Diagnostics(diags) =>
+                        assert(diags.nonEmpty, s"type-error buffer should yield diagnostics, got empty")
+                        assert(diags.exists(_.severity == Compiler.Severity.Error), s"expected an Error-severity diagnostic, got $diags")
+                    case other => assert(false, s"expected Diagnostics, got $other")
 
-            syntaxError <- backend.run(Request.Compile(uri, "object :"))
-            _ = syntaxError match
-                case Response.Diagnostics(diags) =>
-                    assert(diags.nonEmpty, s"syntax-error buffer should yield diagnostics, got empty")
-                    assert(diags.exists(_.severity == Compiler.Severity.Error), s"expected an Error-severity diagnostic, got $diags")
-                case other => assert(false, s"expected Diagnostics, got $other")
+                syntaxError <- backend.run(Request.Compile(uri, "object :"))
+                _ = syntaxError match
+                    case Response.Diagnostics(diags) =>
+                        assert(diags.nonEmpty, s"syntax-error buffer should yield diagnostics, got empty")
+                        assert(diags.exists(_.severity == Compiler.Severity.Error), s"expected an Error-severity diagnostic, got $diags")
+                    case other => assert(false, s"expected Diagnostics, got $other")
 
-            clean <- backend.run(Request.Compile(uri, "object Main { }"))
-            _ = clean match
-                case Response.Diagnostics(diags) => assert(diags.isEmpty, s"clean buffer should yield no diagnostics, got $diags")
-                case other                       => assert(false, s"expected Diagnostics, got $other")
-
-            _ <- Abort.run[Throwable](backend.close)
-        yield ()
-        end for
+                clean <- backend.run(Request.Compile(uri, "object Main { }"))
+                _ = clean match
+                    case Response.Diagnostics(diags) => assert(diags.isEmpty, s"clean buffer should yield no diagnostics, got $diags")
+                    case other                       => assert(false, s"expected Diagnostics, got $other")
+            yield ()
+            end for
+        }
     }
 
 end CompilerWorkerTest

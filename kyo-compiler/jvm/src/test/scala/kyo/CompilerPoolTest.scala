@@ -48,7 +48,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         instances: Cache[Compiler.Config, Promise[Instance, Abort[CompilerException]]]
     ): CompilerPool < (Sync & Scope) =
         Meter.initSemaphore(settings.maxConcurrentCompiles).map { globalSemaphore =>
-            Scope.acquireRelease(Sync.defer(MediaDriver.launchEmbedded()))(d => Sync.defer(d.close())).map { driver =>
+            Scope.acquireRelease(Sync.defer(CompilerPool.launchDriver()))(d => Sync.defer(d.close())).map { driver =>
                 AtomicInt.init(0).map { streamIdCounter =>
                     new CompilerPool(settings, instances, globalSemaphore, driver, streamIdCounter)
                 }
