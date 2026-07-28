@@ -1429,6 +1429,11 @@ lazy val `kyo-reactive-streams` =
 
 // Host os-arch in the staged/<os-arch>/ naming used by build-boringssl.sh and
 // kyo-aeron/scripts/build-aeron.sh (e.g. "darwin-aarch64").
+// npm is `npm.cmd` on Windows, where CreateProcess resolves only .exe from a bare name;
+// the koffi bootstraps below spawn it directly (not via a shell).
+def npmCommand: String =
+    if (System.getProperty("os.name", "").toLowerCase.contains("win")) "npm.cmd" else "npm"
+
 def hostOsArch: String = {
     val osName = System.getProperty("os.name", "").toLowerCase
     val os =
@@ -1708,7 +1713,7 @@ lazy val `kyo-net` =
                 if (!marker.exists()) {
                     log.info(s"[kyo-net JS] installing koffi@$koffiRange into $targetBase ...")
                     val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
@@ -1864,7 +1869,7 @@ lazy val `kyo-aeron` =
                 if (!marker.exists()) {
                     log.info(s"[kyo-aeron JS] installing koffi@$koffiRange into $targetBase ...")
                     val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
@@ -1919,7 +1924,7 @@ lazy val `kyo-aeron` =
                 if (!marker.exists()) {
                     log.info(s"[kyo-aeron Wasm] installing koffi@$koffiRange into $targetBase ...")
                     val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
