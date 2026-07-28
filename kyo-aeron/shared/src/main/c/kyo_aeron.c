@@ -639,7 +639,7 @@ void* kyo_aeron_async_add_publication(void* client, const char* uri, int32_t str
  * No close_mutex guard is needed: tok->async is an independent heap allocation that aeron_close
  * does not free (it frees the conductor's pointer array, not the async token structs), so a
  * concurrent close leaves the token alive (leaked), never freed under us. */
-long kyo_aeron_async_add_publication_poll(void* async_token)
+int64_t kyo_aeron_async_add_publication_poll(void* async_token)
 {
     kyo_aeron_async_pub_token* tok = (kyo_aeron_async_pub_token*)async_token;
     aeron_publication_t* pub = NULL;
@@ -739,7 +739,7 @@ int kyo_aeron_publication_is_connected(void* pub)
     return r;
 }
 
-long kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t length)
+int64_t kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t length)
 {
     kyo_aeron_publication_bundle* b = (kyo_aeron_publication_bundle*)pub;
     /* Close-mutex guard: see kyo_aeron_publication_is_connected. */
@@ -749,11 +749,11 @@ long kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t lengt
      * AeronSentinels.Closed to TopicPublicationClosedException. */
     if (b->closed || b->client->closing) {
         kyo_mutex_unlock(&b->client->close_mutex);
-        return (long)AERON_PUBLICATION_CLOSED;
+        return (int64_t)AERON_PUBLICATION_CLOSED;
     }
     /* Raw int64_t sentinels pass through unchanged; the Scala side maps them via
      * AeronSentinels. reserved_value_supplier and clientd are NULL. */
-    long r = (long)aeron_publication_offer(
+    int64_t r = (int64_t)aeron_publication_offer(
         b->publication, buffer, (size_t)length, NULL, NULL);
     kyo_mutex_unlock(&b->client->close_mutex);
     return r;
@@ -865,7 +865,7 @@ void* kyo_aeron_async_add_subscription(void* client, const char* uri, int32_t st
 
 /* Async subscription poll (one step, non-blocking). Symmetric to the publication poll,
  * including the reason no close_mutex guard is needed. */
-long kyo_aeron_async_add_subscription_poll(void* async_token)
+int64_t kyo_aeron_async_add_subscription_poll(void* async_token)
 {
     kyo_aeron_async_sub_token* tok = (kyo_aeron_async_sub_token*)async_token;
     aeron_subscription_t* sub = NULL;
@@ -997,17 +997,17 @@ int kyo_aeron_subscription_is_connected(void* sub)
  *           the exact byte count dst must grow to. The message is retained (pending = 1) and
  *           the next call with a large-enough dst copies it out WITHOUT consuming another
  *           message from Aeron, so nothing is lost while the caller's buffer grows. */
-long kyo_aeron_subscription_poll(void* sub, uint8_t* dst, int32_t dst_cap)
+int64_t kyo_aeron_subscription_poll(void* sub, uint8_t* dst, int32_t dst_cap)
 {
     /* Single-poller: see the subscription bundle struct. */
     kyo_aeron_subscription_bundle* b = (kyo_aeron_subscription_bundle*)sub;
     if (b->pending) {
         /* A message reassembled on a prior call did not fit the caller's dst. Do NOT poll Aeron
          * again, which would consume the next message and drop this one. */
-        if (b->slot_len > dst_cap) return -(long)b->slot_len; /* caller must grow further */
+        if (b->slot_len > dst_cap) return -(int64_t)b->slot_len; /* caller must grow further */
         memcpy(dst, b->slot, (size_t)b->slot_len);
         b->pending = 0;
-        return (long)b->slot_len;
+        return (int64_t)b->slot_len;
     }
     /* Reset to empty so stale data from a prior call cannot bleed through if this call
      * receives zero fragments. */
@@ -1030,10 +1030,10 @@ long kyo_aeron_subscription_poll(void* sub, uint8_t* dst, int32_t dst_cap)
     if (b->slot_len > dst_cap) {
         /* Larger than the caller's buffer: retain it and report the required size. */
         b->pending = 1;
-        return -(long)b->slot_len;
+        return -(int64_t)b->slot_len;
     }
     memcpy(dst, b->slot, (size_t)b->slot_len);
-    return (long)b->slot_len;
+    return (int64_t)b->slot_len;
 }
 
 void kyo_aeron_subscription_close(void* sub)

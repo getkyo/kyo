@@ -16,14 +16,14 @@ void    kyo_aeron_client_close(void* client);
  * _err_code / _err_msg, then call _free. On interrupt (Fiber cancellation while Awaiting), call
  * _free. */
 void*   kyo_aeron_async_add_publication(void* client, const char* uri, int32_t stream_id);
-long    kyo_aeron_async_add_publication_poll(void* async_token);
+int64_t    kyo_aeron_async_add_publication_poll(void* async_token);
 void*   kyo_aeron_async_add_publication_get(void* async_token);
 void    kyo_aeron_async_add_publication_free(void* async_token);
 int         kyo_aeron_async_add_publication_err_code(void* async_token);
 const char* kyo_aeron_async_add_publication_err_msg(void* async_token);
 
 int     kyo_aeron_publication_is_connected(void* pub);
-long    kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t length);
+int64_t    kyo_aeron_publication_offer(void* pub, const uint8_t* buffer, int32_t length);
 int32_t kyo_aeron_publication_max_message_length(void* pub);
 void    kyo_aeron_publication_close(void* pub);
 
@@ -31,14 +31,14 @@ void    kyo_aeron_publication_close(void* pub);
  * On _poll returning < 0 the token is NOT freed internally; read err_code / err_msg,
  * then call _free to release. */
 void*   kyo_aeron_async_add_subscription(void* client, const char* uri, int32_t stream_id);
-long    kyo_aeron_async_add_subscription_poll(void* async_token);
+int64_t    kyo_aeron_async_add_subscription_poll(void* async_token);
 void*   kyo_aeron_async_add_subscription_get(void* async_token);
 void    kyo_aeron_async_add_subscription_free(void* async_token);
 int         kyo_aeron_async_add_subscription_err_code(void* async_token);
 const char* kyo_aeron_async_add_subscription_err_msg(void* async_token);
 
 int     kyo_aeron_subscription_is_connected(void* sub);
-long    kyo_aeron_subscription_poll(void* sub, uint8_t* dst, int32_t dst_cap);
+int64_t    kyo_aeron_subscription_poll(void* sub, uint8_t* dst, int32_t dst_cap);
 void    kyo_aeron_subscription_close(void* sub);
 
 /* Error slot accessors: read the fatal error recorded by the non-exiting handler. */
