@@ -1,6 +1,6 @@
 package kyo.internal
 
-class JsonWriterTest extends kyo.test.Test[Any]:
+class JsonWriterJvmTest extends kyo.test.Test[Any]:
 
     "resultString works without opening java.lang" in {
         assert(!classOf[String].getModule.isOpen("java.lang", getClass.getModule))
@@ -13,4 +13,4 @@ class JsonWriterTest extends kyo.test.Test[Any]:
         utf8.string("héllo")
         assert(utf8.resultString == "\"héllo\"")
     }
-end JsonWriterTest
+end JsonWriterJvmTest
