@@ -12,6 +12,8 @@ final class IonBinary extends Codec:
 
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         IonBinaryReader(input)
+
+    override def mediaType: String = "application/vnd.amazon.ion"
 end IonBinary
 
 /** Primary entry point for Amazon Ion Binary serialization.
