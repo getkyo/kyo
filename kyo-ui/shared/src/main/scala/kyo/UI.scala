@@ -682,6 +682,14 @@ object UI:
             def focusTrap(v: Boolean): Self  = withAttrs(attrs.copy(focusTrap = Present(v)))
             def focusGroup(id: String): Self = withAttrs(attrs.copy(focusGroup = Present(id)))
 
+            /** Opt-in per-level event consumption: when the dispatch walk (innermost target first, then ancestors) reaches
+              * this element AND it declared a handler for the event's type, the event stops here so handlers on elements
+              * above do not fire. Only consumes event types this element actually handles; others pass through, and the
+              * default (unset/`false`) keeps bubble-through. Applies to bubbling events (click, keydown, keyup, hover,
+              * unhover, scroll). Typical use: nested overlays where Escape closes only the innermost layer.
+              */
+            def stopPropagation(v: Boolean): Self = withAttrs(attrs.copy(stopPropagation = Present(v)))
+
             /** Runs `action` on click, ignoring the event payload. */
             def onClick(action: => Any < Async): Self = withAttrs(attrs.copy(onClick = Present(Sync.defer(action)(using frame))))
 
@@ -922,6 +930,7 @@ object UI:
             tabIndex: Maybe[Int] = Absent,
             focusTrap: Maybe[Boolean] = Absent,
             focusGroup: Maybe[String] = Absent,
+            stopPropagation: Maybe[Boolean] = Absent,
             uiStyle: Style = Style.empty,
             onClick: Maybe[Any < Async] = Absent,
             onClickEvt: Maybe[MouseEvent => Any < Async] = Absent,
