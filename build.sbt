@@ -1846,7 +1846,9 @@ lazy val `kyo-aeron` =
                     else if (os.contains("win")) "windows"
                     else if (os.contains("linux")) "linux"
                     else os
-                val lib = ffiOut / s"libkyo_aeron-$osDetect-$arch.$ext"
+                // Windows has no `lib` prefix on the shared library, matching the plugin's CCompiler output.
+                val prefix = if (os.contains("win")) "" else "lib"
+                val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120"))
@@ -1901,7 +1903,9 @@ lazy val `kyo-aeron` =
                     else if (os.contains("win")) "windows"
                     else if (os.contains("linux")) "linux"
                     else os
-                val lib = ffiOut / s"libkyo_aeron-$osDetect-$arch.$ext"
+                // Windows has no `lib` prefix on the shared library, matching the plugin's CCompiler output.
+                val prefix = if (os.contains("win")) "" else "lib"
+                val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
