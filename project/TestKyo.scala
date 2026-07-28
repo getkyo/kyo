@@ -24,6 +24,25 @@ object TestKyo {
     // and full-run paths both exclude them and treat any change scoped to one as "run all".
     private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
 
+    // Modules whose native build is not yet supported on Windows: kyo-aeron needs a natively-built
+    // libaeron and its C shim uses POSIX threading (pthread), and kyo-compiler depends on kyo-aeron.
+    // They are skipped on the Windows runner's compile and test phases (all phases route through here)
+    // until the shim is ported; every other platform still builds and tests them.
+    private val windowsUnsupportedModules = Set("kyo-aeron", "kyo-compiler")
+
+    private def onWindows: Boolean =
+        sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+
+    // The cross-project base name, i.e. the ref name with its platform suffix removed
+    // (kyo-aeronJVM -> kyo-aeron). Longer suffixes are tried first so JVM is not mis-stripped.
+    private def moduleBase(name: String): String =
+        Seq("Native", "Wasm", "JVM", "JS").collectFirst {
+            case suffix if name.endsWith(suffix) => name.dropRight(suffix.length)
+        }.getOrElse(name)
+
+    private def supportedOnHost(name: String): Boolean =
+        !(onWindows && windowsUnsupportedModules.contains(moduleBase(name)))
+
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
     /** The per-module sbt task for a phase. compile-main compiles only main sources; compile-test
@@ -133,7 +152,7 @@ object TestKyo {
                 case None    => true
             }
             val matchesScala = versions.contains(scalaVersion)
-            platformMatch && matchesScala
+            platformMatch && matchesScala && supportedOnHost(name)
         }
 
         if (testable.isEmpty) {
@@ -213,7 +232,7 @@ object TestKyo {
         val toTest = (platform match {
             case Some(p) => allAffected.filter(matchesPlatform(_, p))
             case None    => allAffected
-        }).filter { name =>
+        }).filter(supportedOnHost).filter { name =>
             allRefs.find(_.project == name).exists { ref =>
                 (ref / crossScalaVersions).get(structure.data).getOrElse(Nil).contains(scalaVersion)
             }
