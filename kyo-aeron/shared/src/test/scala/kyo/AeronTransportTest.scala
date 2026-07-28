@@ -254,6 +254,35 @@ class AeronTransportTest extends Test:
         end for
     }
 
+    "SCRATCH-probe post-close transport signals" in {
+        val payload = Array[Byte](1, 2, 3, 4)
+        for
+            dir <- Path.tempDir("kyo-aeron-probe")
+            rt  <- AeronPlatform.embedded(dir.unsafe.show)
+            transport = rt.transport
+            pubTok <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, roundTripStreamId))
+            subTok <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, roundTripStreamId))
+            pubMaybe <- pollAddPubUntilDone(transport, pubTok.get, 5000)
+            subMaybe <- pollAddSubUntilDone(transport, subTok.get, 5000)
+            pub = pubMaybe.get
+            sub = subMaybe.get
+            _ <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
+            // Close the CLIENT underneath the live pub/sub (leaked-fiber scenario), without
+            // closing pub/sub first.
+            _ <- Sync.Unsafe.defer(rt.close())
+            _ <- Sync.Unsafe.defer {
+                println(s"PROBE pubIsConnected=${transport.publicationIsConnected(pub)}")
+                println(s"PROBE offer=${transport.offer(pub, payload)}")
+                println(s"PROBE maxMessageLength=${transport.maxMessageLength(pub)}")
+                println(s"PROBE subIsConnected=${transport.subscriptionIsConnected(sub)}")
+                println(s"PROBE pollOne=${transport.pollOne(sub)}")
+                println(s"PROBE fatalError=${transport.fatalError}")
+            }
+            _ <- dir.removeAll
+        yield succeed
+        end for
+    }
+
     "offer to not-connected publication takes the not-connected path" in {
         for
             dir <- Path.tempDir("kyo-aeron-embedded-test")

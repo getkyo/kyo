@@ -4,18 +4,22 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.ffi.FfiNullPointer
 
-/** JS and Wasm platform selector, backed by the C client through kyo-ffi's koffi backend.
+/** Platform selector, backed by the C client through kyo-ffi over the `kyo_aeron.c` shim.
   *
-  * The Scala source is identical to the Native selector; codegen supplies the backend difference
-  * (koffi here, `@extern` there).
+  * One shared source serves every platform; codegen supplies the backend difference (Panama
+  * downcalls on the JVM, `@extern` on Native, koffi on JS and Wasm). The C client and its embedded
+  * driver are the same pinned Aeron across all four, so the transport behaves identically everywhere.
   */
 private[kyo] object AeronPlatformTransport:
 
     /** Starts an embedded media driver in `dir` and connects a client to it.
       *
       * `dir` must be unique per call (callers pass `Path.tempDir`), since Aeron otherwise routes
-      * every runtime through its single default directory. The `@Ffi.blocking` downcalls dispatch
-      * to a libuv worker, leaving the Node event loop free during the ~10s connect.
+      * every runtime through its single default directory. The `@Ffi.blocking` downcalls bridge
+      * through the platform's blocking mechanism (the JVM and Native park the carrier under the
+      * scheduler's blocking monitor; JS and Wasm dispatch to a libuv worker, leaving the event loop
+      * free) rather than stranding the caller during the ~10s connect. The driver is just-launched,
+      * so the connect returns within milliseconds; the NULL path is [[external]]'s concern.
       */
     def embedded(dir: String)(using Frame): AeronRuntime < Async =
         Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
@@ -27,8 +31,9 @@ private[kyo] object AeronPlatformTransport:
                 def close()(using AllowUnsafe): Unit =
                     // Close order is load-bearing: the client holds an open connection to the
                     // conductor, so closing the driver first leaves it in an invalid state. These
-                    // are plain downcalls, so the conductor pthread-join briefly freezes the event
-                    // loop; it is bounded and one-shot, unlike the connect @Ffi.blocking covers.
+                    // are plain downcalls, so the conductor pthread-join runs inline; it is bounded
+                    // and one-shot (it parks the carrier on the JVM and Native, briefly freezes the
+                    // event loop on JS and Wasm), unlike the connect that @Ffi.blocking covers.
                     bindings.clientClose(client)
                     bindings.driverClose(driver)
                 end close
