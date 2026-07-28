@@ -180,8 +180,7 @@ class BrowserLauncherTest extends BaseBrowserTest:
         val timeout = 200.millis
         Scope.run {
             for
-                tmp <- Path.tempDir("kyo-browser-pollDevTools-test-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
+                tmp <- Path.run(Path.tempDir("kyo-browser-pollDevTools-test-"))
                 outcome <- Abort.run[BrowserSetupException] {
                     BrowserLauncher.pollDevToolsActivePort(tmp, timeout, 50.millis)
                 }
@@ -202,9 +201,8 @@ class BrowserLauncherTest extends BaseBrowserTest:
     "pollDevToolsActivePort returns the URL when DevToolsActivePort exists and is well-formed" in {
         Scope.run {
             for
-                tmp <- Path.tempDir("kyo-browser-pollDevTools-happy-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
-                _   <- (tmp / BrowserLauncher.devToolsActivePortFile).write("9222\n/devtools/browser/test-uuid\n")
+                tmp <- Path.run(Path.tempDir("kyo-browser-pollDevTools-happy-"))
+                _   <- Path.run((tmp / BrowserLauncher.devToolsActivePortFile).write("9222\n/devtools/browser/test-uuid\n"))
                 url <- BrowserLauncher.pollDevToolsActivePort(tmp, 5.seconds, 50.millis)
             yield assert(url == "ws://127.0.0.1:9222/devtools/browser/test-uuid")
         }

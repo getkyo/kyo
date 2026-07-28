@@ -116,33 +116,35 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             // reads the SAME machine.cgroup.cpu.quota/cpu.period paths off a genuine live cgroup v2 hierarchy
             // (present on a real Linux CI runner). A uniquely-scoped MachineHandles keeps this fixture's
             // write and poll contained to a path no real reader ever touches.
-            for
-                dir <- Path.tempDir("kyo-stats-machine-linux-cpumax")
-                handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-cpumax-decode"), 8L)
-                file    = dir / "cpu.max"
-                _ <- file.write("50000 100000\n")
-                sampler = new MachineSampler(handles)
-                slot    = sampler.openSlot(file)
-                // Reproduces LinuxCgroup's own decodeCpuMax field shape (a single read decoding both the
-                // quota and the period): LinuxCgroup itself is not test-injectable (its root resolution is
-                // hardcoded to /proc/self/mountinfo and /proc/self/cgroup), so this drives the identical
-                // decode logic through the sampler's own readInto seam instead.
-                decode = new MachineSampler.Decode:
-                    def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit =
-                        callCount += 1
-                        handles.cgCpuQuota.set(LinuxScan.longField(b, n, 0, 0, 1000L))
-                        handles.cgCpuPeriod.set(LinuxScan.longField(b, n, 0, 1, 1000L))
-                    end apply
-                ok     = sampler.readInto(slot, decode)
-                quota  = gaugePath("mlinuxtest-cpumax-decode", "cgroup", "cpu.quota")
-                period = gaugePath("mlinuxtest-cpumax-decode", "cgroup", "cpu.period")
-                _ <- dir.removeAll
-            yield
-                assert(ok)
-                assert(callCount == 1)
-                assert(quota == 50000000.0)
-                assert(period == 100000000.0)
-            end for
+            Scope.run(Path.run {
+                for
+                    dir <- Path.tempDir("kyo-stats-machine-linux-cpumax")
+                    handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-cpumax-decode"), 8L)
+                    file    = dir / "cpu.max"
+                    _ <- file.write("50000 100000\n")
+                    sampler = new MachineSampler(handles)
+                    slot    = sampler.openSlot(file)
+                    // Reproduces LinuxCgroup's own decodeCpuMax field shape (a single read decoding both the
+                    // quota and the period): LinuxCgroup itself is not test-injectable (its root resolution is
+                    // hardcoded to /proc/self/mountinfo and /proc/self/cgroup), so this drives the identical
+                    // decode logic through the sampler's own readInto seam instead.
+                    decode = new MachineSampler.Decode:
+                        def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit =
+                            callCount += 1
+                            handles.cgCpuQuota.set(LinuxScan.longField(b, n, 0, 0, 1000L))
+                            handles.cgCpuPeriod.set(LinuxScan.longField(b, n, 0, 1, 1000L))
+                        end apply
+                    ok     = sampler.readInto(slot, decode)
+                    quota  = gaugePath("mlinuxtest-cpumax-decode", "cgroup", "cpu.quota")
+                    period = gaugePath("mlinuxtest-cpumax-decode", "cgroup", "cpu.period")
+                    _ <- dir.removeAll
+                yield
+                    assert(ok)
+                    assert(callCount == 1)
+                    assert(quota == 50000000.0)
+                    assert(period == 100000000.0)
+                end for
+            })
         }
     }
 
@@ -160,31 +162,33 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             // this module). A uniquely-scoped MachineHandles keeps the fixture write contained; the
             // decode's own parsing is verified directly against the same scan primitive and scale
             // LinuxDecoders.meminfo uses, decoupled from the gauge either way.
-            for
-                dir <- Path.tempDir("kyo-stats-machine-linux-meminfo")
-                handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-decode"), 8L)
-                file    = dir / "meminfo"
-                _ <- file.write(fixture)
-                sampler           = new MachineSampler(handles)
-                slot              = sampler.openSlot(file)
-                memAvailSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "memory", "available").sum
-                memFreeSumBefore  = histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum
-                swapFreeSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum
-                decode = new MachineSampler.Decode:
-                    def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit =
-                        callCount += 1
-                        LinuxDecoders.meminfo(b, n, handles)
-                ok = sampler.readInto(slot, decode)
-                _ <- dir.removeAll
-            yield
-                assert(ok)
-                assert(callCount == 1)
-                assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("MemTotal:"), 0, 1024L) == 16777216L)
-                assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("SwapTotal:"), 0, 1024L) == 2097152L)
-                assert(histogramSummary("mlinuxtest-meminfo-decode", "memory", "available").sum - memAvailSumBefore == 8388608.0)
-                assert(histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum - memFreeSumBefore == 4194304.0)
-                assert(histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum - swapFreeSumBefore == 1048576.0)
-            end for
+            Scope.run(Path.run {
+                for
+                    dir <- Path.tempDir("kyo-stats-machine-linux-meminfo")
+                    handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-decode"), 8L)
+                    file    = dir / "meminfo"
+                    _ <- file.write(fixture)
+                    sampler           = new MachineSampler(handles)
+                    slot              = sampler.openSlot(file)
+                    memAvailSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "memory", "available").sum
+                    memFreeSumBefore  = histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum
+                    swapFreeSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum
+                    decode = new MachineSampler.Decode:
+                        def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit =
+                            callCount += 1
+                            LinuxDecoders.meminfo(b, n, handles)
+                    ok = sampler.readInto(slot, decode)
+                    _ <- dir.removeAll
+                yield
+                    assert(ok)
+                    assert(callCount == 1)
+                    assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("MemTotal:"), 0, 1024L) == 16777216L)
+                    assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("SwapTotal:"), 0, 1024L) == 2097152L)
+                    assert(histogramSummary("mlinuxtest-meminfo-decode", "memory", "available").sum - memAvailSumBefore == 8388608.0)
+                    assert(histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum - memFreeSumBefore == 4194304.0)
+                    assert(histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum - swapFreeSumBefore == 1048576.0)
+                end for
+            })
         }
 
         "a meminfo line missing MemAvailable and missing the swap lines routes those cells to Absent, never a fabricated 0" in {
@@ -193,33 +197,43 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             // See the meminfo-decode leaf above: a uniquely-scoped MachineHandles keeps this fixture's
             // gauge writes from poisoning the shared "machine" scope's memTotal/swapTotal for a sibling
             // suite's later poll.
-            for
-                dir <- Path.tempDir("kyo-stats-machine-linux-meminfo-missing")
-                handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-missing"), 8L)
-                file    = dir / "meminfo"
-                _ <- file.write(fixture)
-                sampler                   = new MachineSampler(handles)
-                slot                      = sampler.openSlot(file)
-                memFreeSumBefore          = histogramSummary("mlinuxtest-meminfo-missing", "memory", "free").sum
-                availCountBefore          = histogramSummary("mlinuxtest-meminfo-missing", "memory", "available").count
-                swapFreeCountBefore       = histogramSummary("mlinuxtest-meminfo-missing", "swap", "free").count
-                swapTotalRegisteredBefore = gaugeRegistered("mlinuxtest-meminfo-missing", "swap", "total")
-                decode = new MachineSampler.Decode:
-                    def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.meminfo(b, n, handles)
-                ok = sampler.readInto(slot, decode)
-                _ <- dir.removeAll
-            yield
-                assert(ok)
-                assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("MemTotal:"), 0, 1024L) == 1073741824L)
-                assert(histogramSummary("mlinuxtest-meminfo-missing", "memory", "free").sum - memFreeSumBefore == 209715200.0)
-                assert(histogramSummary(
-                    "mlinuxtest-meminfo-missing",
-                    "memory",
-                    "available"
-                ).count == availCountBefore)                                                                        // structural absence
-                assert(histogramSummary("mlinuxtest-meminfo-missing", "swap", "free").count == swapFreeCountBefore) // structural absence
-                assert(gaugeRegistered("mlinuxtest-meminfo-missing", "swap", "total") == swapTotalRegisteredBefore) // no new registration
-            end for
+            Scope.run(Path.run {
+                for
+                    dir <- Path.tempDir("kyo-stats-machine-linux-meminfo-missing")
+                    handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-missing"), 8L)
+                    file    = dir / "meminfo"
+                    _ <- file.write(fixture)
+                    sampler                   = new MachineSampler(handles)
+                    slot                      = sampler.openSlot(file)
+                    memFreeSumBefore          = histogramSummary("mlinuxtest-meminfo-missing", "memory", "free").sum
+                    availCountBefore          = histogramSummary("mlinuxtest-meminfo-missing", "memory", "available").count
+                    swapFreeCountBefore       = histogramSummary("mlinuxtest-meminfo-missing", "swap", "free").count
+                    swapTotalRegisteredBefore = gaugeRegistered("mlinuxtest-meminfo-missing", "swap", "total")
+                    decode = new MachineSampler.Decode:
+                        def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.meminfo(b, n, handles)
+                    ok = sampler.readInto(slot, decode)
+                    _ <- dir.removeAll
+                yield
+                    assert(ok)
+                    assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("MemTotal:"), 0, 1024L) == 1073741824L)
+                    assert(histogramSummary("mlinuxtest-meminfo-missing", "memory", "free").sum - memFreeSumBefore == 209715200.0)
+                    assert(histogramSummary(
+                        "mlinuxtest-meminfo-missing",
+                        "memory",
+                        "available"
+                    ).count == availCountBefore) // structural absence
+                    assert(histogramSummary(
+                        "mlinuxtest-meminfo-missing",
+                        "swap",
+                        "free"
+                    ).count == swapFreeCountBefore) // structural absence
+                    assert(gaugeRegistered(
+                        "mlinuxtest-meminfo-missing",
+                        "swap",
+                        "total"
+                    ) == swapTotalRegisteredBefore) // no new registration
+                end for
+            })
         }
     }
 

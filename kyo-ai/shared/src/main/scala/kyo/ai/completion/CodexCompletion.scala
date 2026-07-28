@@ -79,8 +79,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         Kyo.lift(Stream[Completion.StreamElement, Async & Scope & Abort[AIStreamException]] {
             AtomicRef.init("").map { stderrTail =>
                 Abort.run[
-                    CommandException | FileFsException | FileReadException | FileWriteException | JsonRpcError | AIGenException |
-                        Closed
+                    CommandException | FileSystemException | JsonRpcError | AIGenException | Closed
                 ] {
                     for
                         bridge <- initBridge
@@ -141,8 +140,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     meter      <- Meter.initMutex
                     stderrTail <- AtomicRef.init("")
                     result <- Abort.run[
-                        CommandException | FileFsException | FileReadException | FileWriteException | JsonRpcError | AIGenException |
-                            Closed
+                        CommandException | FileSystemException | JsonRpcError | AIGenException | Closed
                     ] {
                         withSession(Seq(toolCallRoute(tools, stateRef, meter, bridge)), stderrTail) {
                             (workDir, handler, events, stderrTail) =>
@@ -184,26 +182,25 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
         f: (Path, JsonRpcHandler, Channel[RpcEvent], AtomicRef[String]) => A < S
     )(using
         Frame
-    ): A < (S & Async & Scope & Abort[
-        CommandException | FileFsException | FileReadException | FileWriteException | JsonRpcError | Closed
-    ]) =
-        for
-            rawWorkDir <- Path.tempDir("kyo-ai-codex-cwd")
-            workDir    <- Scope.acquireRelease(rawWorkDir)(path => Abort.run[FileFsException](path.removeAll).unit)
-            codexHome  <- isolatedCodexHome
-            proc       <- appServerCommand(workDir, codexHome).spawn
-            _          <- Fiber.init(Scope.run(captureStderr(proc, stderrTail)))
-            events     <- Channel.init[RpcEvent](1024)
-            transport  <- JsonRpcTransport.fromWire(processWire(proc), JsonRpcFramer.lineDelimited)
-            handler    <- JsonRpcHandler.init(transport, (eventRoutes(events) ++ toolRoutes)*)
-            _ <- requestAs[Structure.Value, InitializeParams](
-                handler,
-                "initialize",
-                InitializeParams(ClientInfo("kyo-ai", "0"), ClientCapabilities(experimentalApi = true))
-            )
-            _      <- handler.notify("initialized", Structure.Value.Record(Chunk.empty))
-            result <- f(workDir, handler, events, stderrTail)
-        yield result
+    ): A < (S & Async & Scope & Abort[CommandException | FileSystemException | JsonRpcError | Closed]) =
+        Path.run {
+            for
+                workDir   <- Path.tempDir("kyo-ai-codex-cwd")
+                codexHome <- isolatedCodexHome
+                proc      <- appServerCommand(workDir, codexHome).spawn
+                _         <- Fiber.init(Scope.run(captureStderr(proc, stderrTail)))
+                events    <- Channel.init[RpcEvent](1024)
+                transport <- JsonRpcTransport.fromWire(processWire(proc), JsonRpcFramer.lineDelimited)
+                handler   <- JsonRpcHandler.init(transport, (eventRoutes(events) ++ toolRoutes)*)
+                _ <- requestAs[Structure.Value, InitializeParams](
+                    handler,
+                    "initialize",
+                    InitializeParams(ClientInfo("kyo-ai", "0"), ClientCapabilities(experimentalApi = true))
+                )
+                _      <- handler.notify("initialized", Structure.Value.Record(Chunk.empty))
+                result <- f(workDir, handler, events, stderrTail)
+            yield result
+        }
     end withSession
 
     private def captureStderr(proc: Process, tail: AtomicRef[String])(using Frame): Unit < (Sync & Scope) =
@@ -222,18 +219,19 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
 
     private def isolatedCodexHome(using
         Frame
-    ): Path < (Sync & Scope & Abort[FileFsException | FileReadException | FileWriteException]) =
-        for
-            rawIsolated <- Path.tempDir("kyo-ai-codex-home")
-            isolated    <- Scope.acquireRelease(rawIsolated)(path => Abort.run[FileFsException](path.removeAll).unit)
-            real        <- realCodexHome
-            auth   = real / "auth.json"
-            config = real / "config.toml"
-            hasAuth   <- auth.exists
-            hasConfig <- config.exists
-            _         <- if hasAuth then auth.copy(isolated / "auth.json") else Kyo.unit
-            _         <- if hasConfig then config.copy(isolated / "config.toml") else Kyo.unit
-        yield isolated
+    ): Path < (Sync & Scope & Abort[FileSystemException]) =
+        Path.run {
+            for
+                isolated <- Path.tempDir("kyo-ai-codex-home")
+                real     <- realCodexHome
+                auth   = real / "auth.json"
+                config = real / "config.toml"
+                hasAuth   <- auth.exists
+                hasConfig <- config.exists
+                _         <- if hasAuth then auth.copy(isolated / "auth.json") else Kyo.unit
+                _         <- if hasConfig then config.copy(isolated / "config.toml") else Kyo.unit
+            yield isolated
+        }
     end isolatedCodexHome
 
     private def realCodexHome(using Frame): Path < Sync =

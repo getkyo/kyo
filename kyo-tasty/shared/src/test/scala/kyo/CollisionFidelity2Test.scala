@@ -118,15 +118,17 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
 
     "FailFast collision raises TastyError.FullNameCollisionError" in {
         // Write collision bytes to temp dirs: root1 and root2 each contain the same fixtures.
-        Path.tempDir("kyo-col-root1").map { root1 =>
-            Path.tempDir("kyo-col-root2").map { root2 =>
-                Kyo.foreach(Chunk.from(fixtureBytes)) { (name, bytes) =>
-                    (root1 / s"$name.tasty").writeBytes(Span.from(bytes)).map { _ =>
-                        (root2 / s"$name.tasty").writeBytes(Span.from(bytes))
+        Scope.run {
+            Path.run(Path.tempDir("kyo-col-root1")).map { root1 =>
+                Path.run(Path.tempDir("kyo-col-root2")).map { root2 =>
+                    Path.run {
+                        Kyo.foreach(Chunk.from(fixtureBytes)) { (name, bytes) =>
+                            (root1 / s"$name.tasty").writeBytes(Span.from(bytes)).map { _ =>
+                                (root2 / s"$name.tasty").writeBytes(Span.from(bytes))
+                            }
+                        }
                     }
-                }
-                    .map { _ =>
-                        Scope.run {
+                        .map { _ =>
                             Abort.run[TastyError](
                                 ClasspathOrchestrator.init(Seq(root1.toString, root2.toString), Tasty.ErrorMode.FailFast, 1)
                             ).map { result =>
@@ -148,7 +150,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
                                         fail(s"Unexpected panic: ${t.getMessage}")
                             }
                         }
-                    }
+                }
             }
         }
     }

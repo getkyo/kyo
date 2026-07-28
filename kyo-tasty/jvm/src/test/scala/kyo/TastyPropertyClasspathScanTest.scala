@@ -49,7 +49,7 @@ class TastyPropertyClasspathScanTest extends kyo.test.Test[Any]:
             }
         TestClasspaths.all.foreach { root =>
             val dir = Path(root)
-            if dir.unsafe.exists() && dir.unsafe.isDirectory() then recurse(dir)
+            if dir.unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrThrow && dir.unsafe.isDirectory() then recurse(dir)
         }
         accumulator.toList.sorted
     end discoverKyoClasspathRoots

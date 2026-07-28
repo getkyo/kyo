@@ -63,10 +63,10 @@ class ImageTest extends BaseBrowserTest:
 
     "Image.writeFileBinary(path: String) writes binary; re-reading yields identical bytes" in {
         Scope.run {
-            Path.tempScoped("kyo-image-test", ".bin").map { tmp =>
+            Path.run(Path.tempScoped("kyo-image-test", ".bin")).map { tmp =>
                 val pathStr = tmp.unsafe.show
                 fixtureImage.writeFileBinary(pathStr).andThen {
-                    Path(pathStr).readBytes.map { read =>
+                    Path.runReadOnly(Path(pathStr).readBytes).map { read =>
                         assert(read.toArrayUnsafe.sameElements(fixtureBytes))
                     }
                 }
@@ -78,9 +78,9 @@ class ImageTest extends BaseBrowserTest:
 
     "Image.writeFileBinary(path: Path) writes binary; re-reading yields identical bytes" in {
         Scope.run {
-            Path.tempScoped("kyo-image-test", ".bin").map { tmp =>
+            Path.run(Path.tempScoped("kyo-image-test", ".bin")).map { tmp =>
                 fixtureImage.writeFileBinary(tmp).andThen {
-                    tmp.readBytes.map { read =>
+                    Path.runReadOnly(tmp.readBytes).map { read =>
                         assert(read.toArrayUnsafe.sameElements(fixtureBytes))
                     }
                 }
@@ -92,10 +92,10 @@ class ImageTest extends BaseBrowserTest:
 
     "Image.writeFileBase64(path: String) writes base64; re-reading yields original base64 string" in {
         Scope.run {
-            Path.tempScoped("kyo-image-test", ".b64").map { tmp =>
+            Path.run(Path.tempScoped("kyo-image-test", ".b64")).map { tmp =>
                 val pathStr = tmp.unsafe.show
                 fixtureImage.writeFileBase64(pathStr).andThen {
-                    Path(pathStr).read.map { text =>
+                    Path.runReadOnly(Path(pathStr).read).map { text =>
                         assert(text == fixtureBase64)
                     }
                 }
@@ -107,9 +107,9 @@ class ImageTest extends BaseBrowserTest:
 
     "Image.writeFileBase64(path: Path) writes base64; re-reading yields original base64 string" in {
         Scope.run {
-            Path.tempScoped("kyo-image-test", ".b64").map { tmp =>
+            Path.run(Path.tempScoped("kyo-image-test", ".b64")).map { tmp =>
                 fixtureImage.writeFileBase64(tmp).andThen {
-                    tmp.read.map { text =>
+                    Path.runReadOnly(tmp.read).map { text =>
                         assert(text == fixtureBase64)
                     }
                 }

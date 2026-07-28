@@ -19,7 +19,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
 
     "unixDomain binds and accepts a connection" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map { _ =>
@@ -34,11 +34,11 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     }
                 }
             }
-        }
+        })
     }
 
     "unixDomain round-trips one envelope" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map { t =>
@@ -52,22 +52,22 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     }
                 }
             }
-        }
+        })
     }
 
     "unixDomain Scope cleanup deletes socket file" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map(_ => ())
             }.andThen {
                 sock.exists.map(exists => assert(!exists))
             }
-        }
+        })
     }
 
     "unixDomain framer override changes wire shape" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock, framer = JsonRpcFramer.contentLength).map { t =>
@@ -82,7 +82,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     }
                 }
             }
-        }
+        })
     }
 
 end JsonRpcTransportUnixTest

@@ -414,14 +414,14 @@ private[kyo] object ContainerBackend:
                         if paths.isEmpty then Absent
                         else
                             val head = paths.head
-                            Path(head).exists.map { exists =>
+                            Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(head).exists)).map { exists =>
                                 if exists then Present(head)
                                 else findExisting(paths.tail)
                             }
 
                     findExisting(configPaths).map {
                         case Present(configPath) =>
-                            Abort.run[FileReadException](Path(configPath).read).map {
+                            Abort.run[FileSystemException](Path.runReadOnly(Path(configPath).read)).map {
                                 case Result.Success(content) =>
                                     Json.decode[ContainerBackend.AuthConfigJson](content) match
                                         case Result.Success(dto) =>

@@ -47,7 +47,7 @@ class AeronClientTest extends Test:
         )(client => Sync.Unsafe.defer(client.unsafe.close()))
 
     "connect + single Topic.run(client) round-trip: received == Chunk(1L,2L)" in {
-        Path.tempDir("kyo-aeron-client-l1").map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l1")).map { dir =>
             Scope.run {
                 withExternalDriver(dir) {
                     AeronClient.connect(dir).map { client =>
@@ -70,7 +70,7 @@ class AeronClientTest extends Test:
 
     // run(client) does NOT close the client, so one connect backs both scopes.
     "one shared client backs multiple run(client) scopes: Chunk(10L,20L)" in {
-        Path.tempDir("kyo-aeron-client-l2").map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l2")).map { dir =>
             Scope.run {
                 withExternalDriver(dir) {
                     AeronClient.connect(dir).map { client =>
@@ -92,7 +92,7 @@ class AeronClientTest extends Test:
     }
 
     "client closes exactly once on normal Scope exit (close-count == 1)" in {
-        Path.tempDir("kyo-aeron-client-l3").map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l3")).map { dir =>
             AtomicInt.init(0).map { closeCount =>
                 Scope.run {
                     withExternalDriver(dir) {
@@ -126,7 +126,7 @@ class AeronClientTest extends Test:
 
     // The timeout interrupts the stream; the Scope finalizer must still fire and close the client.
     "cancellation/timeout releases the client; close-count == 1" in {
-        Path.tempDir("kyo-aeron-client-l4").map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l4")).map { dir =>
             AtomicInt.init(0).map { closeCount =>
                 Scope.run {
                     withExternalDriver(dir) {
@@ -150,7 +150,7 @@ class AeronClientTest extends Test:
     // A fresh empty tempDir has no driver, so the connect waits out the ~10 s driver-timeout before
     // failing. Same typed failure as Topic.run(absentDir): both go through the shared external primitive.
     "absent-driver connect aborts TopicTransportFailedException (JVM/JS/Native)" in {
-        Path.tempDir("kyo-aeron-absent-client").map { absentDir =>
+        Path.run(Path.tempDir("kyo-aeron-absent-client")).map { absentDir =>
             Scope.run {
                 Abort.run[TopicException] {
                     AeronClient.connect(absentDir).map { client =>

@@ -943,16 +943,16 @@ final private[kyo] class HttpContainerBackend(
         val containerDir  = containerPath.parent.map(_.toString).getOrElse("/")
         val containerFile = containerPath.name.getOrElse(containerPath.toString)
 
-        Abort.run[FileFsException](Path.tempDir(s"kyo-copyto-$uniqueSuffix-")).map {
-            case Result.Failure(e) =>
-                Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
-            case Result.Panic(t) =>
-                Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
-            case Result.Success(tempDir) =>
-                val target = tempDir / containerFile
-                Sync.ensure(tempDir.removeAll.unit) {
-                    Abort.run[FileFsException](
-                        source.copy(target, replaceExisting = true)
+        Scope.run {
+            Abort.run[FileSystemException](Path.run(Path.tempDir(s"kyo-copyto-$uniqueSuffix-"))).map {
+                case Result.Failure(e) =>
+                    Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
+                case Result.Panic(t) =>
+                    Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
+                case Result.Success(tempDir) =>
+                    val target = tempDir / containerFile
+                    Abort.run[FileSystemException](
+                        Path.run(source.copy(target, Path.CopyOptions(replace = Path.Replace.Existing)))
                     ).map {
                         case Result.Failure(e) =>
                             Abort.fail(ContainerOperationException(
@@ -1001,7 +1001,7 @@ final private[kyo] class HttpContainerBackend(
                                 }
                             }
                     }
-                }
+            }
         }
     end copyToWithSuffix
 
@@ -2943,9 +2943,12 @@ private[kyo] object HttpContainerBackend:
                         else
                             xp.toList ++ Seq(defaultSocket) ++ hd.toList
                     // Filter to paths that exist on disk
-                    Kyo.filter(candidates)(path => Path(path).exists).map { staticPaths =>
-                        if staticPaths.nonEmpty then staticPaths
-                        else discoverSocketsViaCli()
+                    Kyo.filter(candidates)(path =>
+                        Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(path).exists))
+                    ).map {
+                        staticPaths =>
+                            if staticPaths.nonEmpty then staticPaths
+                            else discoverSocketsViaCli()
                     }
                 }
             }

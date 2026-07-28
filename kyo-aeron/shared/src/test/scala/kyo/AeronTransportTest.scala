@@ -219,7 +219,7 @@ class AeronTransportTest extends Test:
     "round-trip a known byte payload through AeronPlatform.embedded" in {
         val payload = Array[Byte](1, 2, 3, 4)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, roundTripStreamId))
@@ -246,7 +246,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             java.util.Arrays.equals(bytes, payload),
             s"payload mismatch: ${bytes.toList} != ${payload.toList}"
@@ -256,7 +256,7 @@ class AeronTransportTest extends Test:
 
     "offer to not-connected publication takes the not-connected path" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, notConnectedStreamId))
@@ -279,7 +279,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield
             assert(notConnectedInitially, "Expected publication to be not-connected with no subscriber")
             assert(connectedPosition > 0, s"Expected a positive position after connection; got $connectedPosition")
@@ -287,7 +287,7 @@ class AeronTransportTest extends Test:
 
     "pollOne with zero fragments returns Absent" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, absentStreamId))
@@ -310,13 +310,13 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(result.isEmpty, s"Expected Absent when no message published; got $result")
     }
 
     "close releases resources without leak" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, closeStreamId))
@@ -334,9 +334,9 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(subMaybe.get)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
             // A second embedded() confirms the close was clean.
-            dir2 <- Path.tempDir("kyo-aeron-embedded-test")
+            dir2 <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt2  <- AeronPlatform.embedded(dir2.unsafe.show)
             transport2 = rt2.transport
             pub2TokMaybe <- Sync.Unsafe.defer(transport2.asyncAddPublication(ipcUri, closeStreamId))
@@ -346,7 +346,7 @@ class AeronTransportTest extends Test:
                 transport2.freeAsyncPub(pub2TokMaybe.get)
                 rt2.close()
             }
-            _ <- dir2.removeAll
+            _ <- Path.run(dir2.removeAll)
         // Reaching here without a crash proves the close-and-reopen cycle succeeded.
         yield succeed
     }
@@ -357,7 +357,7 @@ class AeronTransportTest extends Test:
         // defers its FFI offer-sentinel coverage here, keeping only a `.onlyJs` leaf for the koffi
         // BigInt->Long sign-marshalling guard.
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubMaybeResult <- Abort.run[TopicTransportException] {
@@ -376,7 +376,7 @@ class AeronTransportTest extends Test:
                 transport.closePublication(pub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield
             assert(
                 result < 0,
@@ -396,7 +396,7 @@ class AeronTransportTest extends Test:
         val stringId = Tag[String].hash.abs
         val payload  = Array[Byte](99)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubIntTokMaybe    <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, intId))
@@ -430,7 +430,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(subString)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             stringResult.isEmpty,
             s"Expected Absent on String subscription after publishing to Int stream; got $stringResult"
@@ -444,7 +444,7 @@ class AeronTransportTest extends Test:
         val multiFragId = 98 // distinct stream-id; no cross-test bleed
         val payload     = Array.tabulate[Byte](4096)(i => (i & 0xff).toByte)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, multiFragId))
@@ -470,7 +470,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             java.util.Arrays.equals(received.get, payload),
             s"multi-fragment payload mismatch: expected 4096 bytes, got ${received.get.length}"
@@ -483,7 +483,7 @@ class AeronTransportTest extends Test:
         val largeFragId = 99 // distinct stream-id; no cross-test bleed
         val large       = Array.tabulate[Byte](2 * 1024 * 1024)(i => (i & 0xff).toByte)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, largeFragId))
@@ -509,7 +509,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             java.util.Arrays.equals(received.get, large),
             s"2 MiB payload mismatch: expected ${large.length} bytes, got ${received.get.length}"
@@ -523,7 +523,7 @@ class AeronTransportTest extends Test:
         val large         = Array.tabulate[Byte](256 * 1024)(i => ((i * 31) & 0xff).toByte)
         val small         = Array[Byte](9, 8, 7, 6, 5)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, reuseStreamId))
@@ -557,7 +557,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             java.util.Arrays.equals(receivedSmall.get, small),
             s"small payload mismatch after large: expected ${small.toList}, got ${receivedSmall.get.toList}"
@@ -573,7 +573,7 @@ class AeronTransportTest extends Test:
         Loop.indexed { i =>
             if i >= 20 then Loop.done(succeed)
             else
-                Path.tempDir("kyo-aeron-embedded-test").flatMap { dir =>
+                Path.run(Path.tempDir("kyo-aeron-embedded-test")).flatMap { dir =>
                     AeronPlatform.embedded(dir.unsafe.show).map { rt =>
                         Sync.Unsafe.defer {
                             val transport = rt.transport
@@ -589,7 +589,7 @@ class AeronTransportTest extends Test:
                                 subResult.isEmpty,
                                 s"iteration $i: asyncAddSubscription on closed client must return Absent; got $subResult"
                             )
-                        }.andThen(dir.removeAll)
+                        }
                     }
                 }.andThen(Loop.continue)
         }
@@ -665,7 +665,7 @@ class AeronTransportTest extends Test:
     // interruptible.
     "an interrupt during a pending add is honored and does not hang" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             result <- Abort.run[Timeout | TopicTransportException] {
@@ -676,14 +676,14 @@ class AeronTransportTest extends Test:
             // The runtime close cleans up any publication the add produced; the Sync.ensure inside
             // addPublicationDeadline frees the async token if interrupted mid-poll.
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield succeed
     }
 
     "a normal add via addPublicationDeadline completes and round-trips bytes" in {
         val payload = Array[Byte](42, 43, 44)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubMaybeResult <- Abort.run[TopicTransportException] {
@@ -717,7 +717,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             java.util.Arrays.equals(received.get, payload),
             s"round-trip payload mismatch: got ${received.get.toList}"
@@ -796,7 +796,7 @@ class AeronTransportTest extends Test:
             bindings <- Sync.Unsafe.defer(Ffi.load[AeronBindings])
             // A unique per-instance dir rather than null, which would route to Aeron's single
             // shared default directory and risk colliding with a concurrent run.
-            dir <- Path.tempDir("kyo-aeron-uaf-reads")
+            dir <- Path.run(Path.tempDir("kyo-aeron-uaf-reads"))
             // driverStart/clientConnect are @Ffi.blocking, so each yields a Fiber.Unsafe bridged
             // via .safe.get.
             driver   <- Sync.Unsafe.defer(bindings.driverStart(dir.unsafe.show)).flatMap(_.safe.get)
@@ -825,7 +825,7 @@ class AeronTransportTest extends Test:
                 bindings.subscriptionClose(sub)
                 bindings.driverClose(driver)
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield
             assert(pubConnected == 0, s"publicationIsConnected after close must be 0 (not connected); got $pubConnected")
             assert(subConnected == 0, s"subscriptionIsConnected after close must be 0 (not connected); got $subConnected")
@@ -841,7 +841,7 @@ class AeronTransportTest extends Test:
     "UAF-sentinel: an offer on a publication after a concurrent client close returns the safe sentinel" in {
         val payload = Array[Byte](1, 2, 3, 4)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubMaybeResult <- Abort.run[TopicTransportException] {
@@ -860,7 +860,7 @@ class AeronTransportTest extends Test:
             // Release the publication bundle's client-bundle ref (closing=1, so it skips the freed
             // handle and frees the bundle).
             _ <- Sync.Unsafe.defer(transport.closePublication(pub))
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             offerResult == AeronSentinels.Closed,
             s"expected offer on a closed-client publication to return AeronSentinels.Closed (-4); got $offerResult"
@@ -881,7 +881,7 @@ class AeronTransportTest extends Test:
         val oversizeUri = "aeron:ipc?term-length=65536"
         val oversize    = Array.fill[Byte](8193)(0)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(oversizeUri, oversizeJvmStreamId))
@@ -902,7 +902,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield result match
             case Result.Success(r) =>
                 assert(
@@ -921,7 +921,7 @@ class AeronTransportTest extends Test:
         val oversizeUri = "aeron:ipc?term-length=65536"
         val oversize    = Array.fill[Byte](8193)(0)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             pubTokMaybe <- Sync.Unsafe.defer(transport.asyncAddPublication(oversizeUri, oversizeCrossStreamId))
@@ -942,7 +942,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield result match
             case Result.Success(r) =>
                 assert(
@@ -965,7 +965,7 @@ class AeronTransportTest extends Test:
     // proves the recording error handler did not exit() the process.
     "an injected fatal error is recorded in the slot and the process survives" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             _        <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
@@ -975,7 +975,7 @@ class AeronTransportTest extends Test:
                 s"fatalError expected Present('driver timeout') after inject; got $recorded"
             )
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield succeed
         end for
     }
@@ -983,7 +983,7 @@ class AeronTransportTest extends Test:
     // The next offer boundary checks fatalError and aborts, never exits the process.
     "a publish after a recorded fatal error aborts TopicTransportFailedException" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
@@ -993,7 +993,7 @@ class AeronTransportTest extends Test:
                 }
             }
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield result match
             case Result.Failure(f: TopicTransportFailedException) =>
                 assert(
@@ -1012,7 +1012,7 @@ class AeronTransportTest extends Test:
     // Symmetric to the publish path, at the stream's poll boundary.
     "a stream after a recorded fatal error aborts TopicTransportFailedException" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
@@ -1022,7 +1022,7 @@ class AeronTransportTest extends Test:
                 }
             }
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield result match
             case Result.Failure(f: TopicTransportFailedException) =>
                 assert(
@@ -1042,7 +1042,7 @@ class AeronTransportTest extends Test:
     "no recorded error means normal operation, fatalError stays Absent" in {
         val payload = Array[Byte](10, 20, 30)
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             beforeOp <- Sync.Unsafe.defer(transport.fatalError)
@@ -1070,7 +1070,7 @@ class AeronTransportTest extends Test:
                 transport.closeSubscription(sub)
                 rt.close()
             }
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield assert(
             java.util.Arrays.equals(received.get, payload),
             s"round-trip payload mismatch: got ${received.get.toList}"
@@ -1084,7 +1084,7 @@ class AeronTransportTest extends Test:
     // Were presence not the key, an empty-message fatal error would map to Absent and retry forever.
     "empty-message fatal error inject surfaces TopicTransportFailedException with non-empty detail" in {
         for
-            dir <- Path.tempDir("kyo-aeron-embedded-test")
+            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
             transport = rt.transport
             _        <- Sync.Unsafe.defer(transport.injectError(42, ""))
@@ -1103,7 +1103,7 @@ class AeronTransportTest extends Test:
                 }
             }
             _ <- Sync.Unsafe.defer(rt.close())
-            _ <- dir.removeAll
+            _ <- Path.run(dir.removeAll)
         yield result match
             case Result.Failure(f: TopicTransportFailedException) =>
                 assert(

@@ -46,6 +46,10 @@ import scala.util.control.NonFatal
   */
 opaque type Async <: (Sync & Async.Join) = Async.Join & Sync
 
+private[kyo] object async:
+    object concurrency:
+        object default extends StaticFlag[Int](Runtime.getRuntime().availableProcessors() * 2)
+
 object Async extends AsyncPlatformSpecific:
 
     /** Default concurrency level for collection operations.
@@ -72,11 +76,7 @@ object Async extends AsyncPlatformSpecific:
       *
       * Note: This only affects collection processing methods. Operations like race and gather run with unbounded concurrency.
       */
-    val defaultConcurrency =
-        import AllowUnsafe.embrace.danger
-        given Frame = Frame.internal
-        Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
-    end defaultConcurrency
+    val defaultConcurrency: Int = async.concurrency.default()
 
     /** Convenience method for suspending side effects in an Async effect.
       *

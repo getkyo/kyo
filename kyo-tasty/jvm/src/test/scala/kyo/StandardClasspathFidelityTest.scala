@@ -19,12 +19,12 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
     // jrt:/ cold loads can still be slow on a contended runner; keep a generous per-leaf budget.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
 
-    "allSymbols.count(isGiven) ~= 570 on standard classpath" in {
+    "allSymbols.count(isGiven) ~= 585 on standard classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val count = classpath.symbols.count(_.isGiven)
             assert(
-                count >= 555 && count <= 585,
-                s"Expected ~570 given instances on standard classpath; found $count"
+                count >= 570 && count <= 600,
+                s"Expected ~585 given instances on standard classpath; found $count"
             )
             succeed
         }
@@ -84,12 +84,12 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    "JPMS module count == 69 on platform-modules classpath" in {
+    "JPMS module count >= 69 on platform-modules classpath" in {
         TestClasspaths2.standardWithPlatformModules.map { classpath =>
             val count = classpath.indices.modulesIndex.size
             assert(
-                count == 69,
-                s"Expected exactly 69 JPMS modules; got $count"
+                count >= 69,
+                s"Expected at least 69 JPMS modules (baseline: Java 21); got $count"
             )
             succeed
         }

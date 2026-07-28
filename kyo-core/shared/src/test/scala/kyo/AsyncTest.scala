@@ -1819,4 +1819,15 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
     }
 
+    "defaultConcurrency knob" - {
+        val computedDefault = Runtime.getRuntime().availableProcessors() * 2
+
+        "is backed by the kyo.async.concurrency.default StaticFlag" in {
+            val flag: StaticFlag[Int] = kyo.async.concurrency.default
+            assert(flag.name == "kyo.async.concurrency.default")
+            assert(flag.default == computedDefault)
+            assert(Async.defaultConcurrency == flag())
+        }
+    }
+
 end AsyncTest

@@ -168,19 +168,21 @@ class ContainerItTest extends BasePodTest:
 
         "connection refused to valid-looking socket gives clear error" - runBackends {
             val fakePath = Path(s"/tmp/kyo-fake-${java.lang.System.currentTimeMillis}.sock")
-            fakePath.write("not a socket").andThen {
-                Abort.run[ContainerException] {
-                    Container.withBackendConfig(_.UnixSocket(fakePath)) {
-                        Container.init(alpine)
-                    }
-                }.map { result =>
-                    fakePath.remove.andThen {
-                        result match
-                            case Result.Failure(_: ContainerBackendException) =>
-                                succeed(
-                                    "the operation fails with a typed ContainerBackendException (transport message is environment-dependent)"
-                                )
-                            case other => fail(s"Expected backend connection error, got $other")
+            Path.run {
+                fakePath.write("not a socket").andThen {
+                    Abort.run[ContainerException] {
+                        Container.withBackendConfig(_.UnixSocket(fakePath)) {
+                            Container.init(alpine)
+                        }
+                    }.map { result =>
+                        fakePath.remove.andThen {
+                            result match
+                                case Result.Failure(_: ContainerBackendException) =>
+                                    succeed(
+                                        "the operation fails with a typed ContainerBackendException (transport message is environment-dependent)"
+                                    )
+                                case other => fail(s"Expected backend connection error, got $other")
+                        }
                     }
                 }
             }
@@ -889,32 +891,34 @@ class ContainerItTest extends BasePodTest:
             val volName = Container.Volume.Id(uniqueName("kyo-mount-type"))
             val hostDir = Path("/tmp/" + uniqueName("kyo-bind-type"))
             Scope.run {
-                for
-                    _ <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
-                    _ <- hostDir.mkDir
-                    info <- Container.initWith(
-                        alpine
-                            .bind(hostDir, Path("/mnt/bind-target"))
-                            .volume(volName, Path("/mnt/vol-target"))
-                    ) { c =>
-                        c.inspect
-                    }
-                    _ <- hostDir.removeAll
-                yield
-                    assert(info.mounts.size >= 2, s"Expected at least 2 mounts, got ${info.mounts.size}")
-                    val hasBind = info.mounts.exists {
-                        case Container.Config.Mount.Bind(_, target, _) =>
-                            target == Path("/mnt/bind-target")
-                        case _ => false
-                    }
-                    val hasVolume = info.mounts.exists {
-                        case Container.Config.Mount.Volume(_, target, _) =>
-                            target == Path("/mnt/vol-target")
-                        case _ => false
-                    }
-                    assert(hasBind, s"Expected a Bind mount for /mnt/bind-target, got: ${info.mounts}")
-                    assert(hasVolume, s"Expected a Volume mount for /mnt/vol-target, got: ${info.mounts}")
-                end for
+                Path.run {
+                    for
+                        _ <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
+                        _ <- hostDir.mkDir
+                        info <- Container.initWith(
+                            alpine
+                                .bind(hostDir, Path("/mnt/bind-target"))
+                                .volume(volName, Path("/mnt/vol-target"))
+                        ) { c =>
+                            c.inspect
+                        }
+                        _ <- hostDir.removeAll
+                    yield
+                        assert(info.mounts.size >= 2, s"Expected at least 2 mounts, got ${info.mounts.size}")
+                        val hasBind = info.mounts.exists {
+                            case Container.Config.Mount.Bind(_, target, _) =>
+                                target == Path("/mnt/bind-target")
+                            case _ => false
+                        }
+                        val hasVolume = info.mounts.exists {
+                            case Container.Config.Mount.Volume(_, target, _) =>
+                                target == Path("/mnt/vol-target")
+                            case _ => false
+                        }
+                        assert(hasBind, s"Expected a Bind mount for /mnt/bind-target, got: ${info.mounts}")
+                        assert(hasVolume, s"Expected a Volume mount for /mnt/vol-target, got: ${info.mounts}")
+                    end for
+                }
             }
         }
     }
@@ -1351,28 +1355,32 @@ class ContainerItTest extends BasePodTest:
         "copies a local file into the container and content matches" - runBackends {
             val localPath = Path("/tmp/" + uniqueName("kyo-copyto"))
             Container.init(alpine).map { c =>
-                for
-                    _      <- localPath.write("test content 12345")
-                    _      <- c.copyTo(localPath, Path("/tmp/copied"))
-                    result <- c.exec("cat", "/tmp/copied")
-                    _      <- localPath.remove
-                yield
-                    assert(result.isSuccess)
-                    assert(result.stdout.trim == "test content 12345")
+                Path.run {
+                    for
+                        _      <- localPath.write("test content 12345")
+                        _      <- c.copyTo(localPath, Path("/tmp/copied"))
+                        result <- c.exec("cat", "/tmp/copied")
+                        _      <- localPath.remove
+                    yield
+                        assert(result.isSuccess)
+                        assert(result.stdout.trim == "test content 12345")
+                }
             }
         }
 
         "handles empty file" - runBackends {
             val localPath = Path("/tmp/" + uniqueName("kyo-empty"))
             Container.init(alpine).map { c =>
-                for
-                    _      <- localPath.write("")
-                    _      <- c.copyTo(localPath, Path("/tmp/empty"))
-                    result <- c.exec("wc", "-c", "/tmp/empty")
-                    _      <- localPath.remove
-                yield
-                    assert(result.isSuccess)
-                    assert(result.stdout.trim.startsWith("0"))
+                Path.run {
+                    for
+                        _      <- localPath.write("")
+                        _      <- c.copyTo(localPath, Path("/tmp/empty"))
+                        result <- c.exec("wc", "-c", "/tmp/empty")
+                        _      <- localPath.remove
+                    yield
+                        assert(result.isSuccess)
+                        assert(result.stdout.trim.startsWith("0"))
+                }
             }
         }
     }
@@ -1381,12 +1389,14 @@ class ContainerItTest extends BasePodTest:
         "copies a file from container to local and content matches" - runBackends {
             val localPath = Path("/tmp/" + uniqueName("kyo-copyfrom"))
             Container.init(alpine).map { c =>
-                for
-                    _       <- c.exec("sh", "-c", "echo container-data-67890 > /tmp/source")
-                    _       <- c.copyFrom(Path("/tmp/source"), localPath)
-                    content <- localPath.read
-                    _       <- localPath.remove
-                yield assert(content.trim == "container-data-67890")
+                Path.run {
+                    for
+                        _       <- c.exec("sh", "-c", "echo container-data-67890 > /tmp/source")
+                        _       <- c.copyFrom(Path("/tmp/source"), localPath)
+                        content <- localPath.read
+                        _       <- localPath.remove
+                    yield assert(content.trim == "container-data-67890")
+                }
             }
         }
 
@@ -1988,138 +1998,148 @@ class ContainerItTest extends BasePodTest:
         "streams build progress incrementally during multi-step build" - runBackends {
             val dir     = Path("/tmp/" + uniqueName("kyo-build-inc"))
             val imgName = uniqueName("kyo-built-inc")
-            for
-                _ <- dir.mkDir
-                // Two RUN steps with a sleep each — enough to verify first event arrives before the
-                // final event (streaming, not collect-then-emit). Adding a third step would just
-                // extend total time without strengthening the signal.
-                _ <- (dir / "Dockerfile").write(
-                    "FROM alpine:latest\n" +
-                        "RUN sleep 2 && echo step1\n" +
-                        "RUN sleep 2 && echo step2\n"
-                )
-                // Consume the full stream but capture the time of the first event. This avoids closing
-                // the streaming HTTP response early, which would leave the connection in a state kyo-http's
-                // pool can't reuse cleanly for subsequent requests.
-                result <- Scope.run {
-                    for
-                        t0        <- Clock.now
-                        firstTime <- AtomicRef.init(Absent: Maybe[Instant])
-                        _ <- ContainerImage.buildFromPath(
-                            dir,
-                            tags = Chunk(s"$imgName:latest"),
-                            noCache = true
-                        ).foreach { _ =>
-                            firstTime.get.map {
-                                case Absent => Clock.now.map(t => firstTime.set(Present(t)))
-                                case _      => Kyo.unit
+            Path.run {
+                for
+                    _ <- dir.mkDir
+                    // Two RUN steps with a sleep each — enough to verify first event arrives before the
+                    // final event (streaming, not collect-then-emit). Adding a third step would just
+                    // extend total time without strengthening the signal.
+                    _ <- (dir / "Dockerfile").write(
+                        "FROM alpine:latest\n" +
+                            "RUN sleep 2 && echo step1\n" +
+                            "RUN sleep 2 && echo step2\n"
+                    )
+                    // Consume the full stream but capture the time of the first event. This avoids closing
+                    // the streaming HTTP response early, which would leave the connection in a state kyo-http's
+                    // pool can't reuse cleanly for subsequent requests.
+                    result <- Scope.run {
+                        for
+                            t0        <- Clock.now
+                            firstTime <- AtomicRef.init(Absent: Maybe[Instant])
+                            _ <- ContainerImage.buildFromPath(
+                                dir,
+                                tags = Chunk(s"$imgName:latest"),
+                                noCache = true
+                            ).foreach { _ =>
+                                firstTime.get.map {
+                                    case Absent => Clock.now.map(t => firstTime.set(Present(t)))
+                                    case _      => Kyo.unit
+                                }
                             }
-                        }
-                        first <- firstTime.get
-                    yield first.map(t => t.toJava.toEpochMilli - t0.toJava.toEpochMilli)
-                }
-                _ <- Abort.run[ContainerException](ContainerImage.remove(ContainerImage(imgName, "latest"), force = true))
-                _ <- (dir / "Dockerfile").remove
-                _ <- dir.removeAll
-            yield
-                val firstMs = result.getOrElse(fail("Expected at least one build progress event"))
-                // Build takes 4+ seconds (two `sleep 2` steps). If streaming, the first event
-                // arrives well under 3s even with daemon overhead. If events are buffered until
-                // the build completes, the first event would arrive at 4s+.
-                assert(
-                    firstMs < 3000,
-                    s"First build event took ${firstMs}ms — expected < 3000ms for a 4s build. " +
-                        "Events are likely buffered until build completes (not streaming)"
-                )
-            end for
+                            first <- firstTime.get
+                        yield first.map(t => t.toJava.toEpochMilli - t0.toJava.toEpochMilli)
+                    }
+                    _ <- Abort.run[ContainerException](ContainerImage.remove(ContainerImage(imgName, "latest"), force = true))
+                    _ <- (dir / "Dockerfile").remove
+                    _ <- dir.removeAll
+                yield
+                    val firstMs = result.getOrElse(fail("Expected at least one build progress event"))
+                    // Build takes 4+ seconds (two `sleep 2` steps). If streaming, the first event
+                    // arrives well under 3s even with daemon overhead. If events are buffered until
+                    // the build completes, the first event would arrive at 4s+.
+                    assert(
+                        firstMs < 3000,
+                        s"First build event took ${firstMs}ms — expected < 3000ms for a 4s build. " +
+                            "Events are likely buffered until build completes (not streaming)"
+                    )
+                end for
+            }
         }
 
         "builds from local directory and image is inspectable" - runBackends {
             val dir     = Path("/tmp/" + uniqueName("kyo-build"))
             val imgName = uniqueName("kyo-built")
-            for
-                _ <- dir.mkDir
-                _ <- (dir / "Dockerfile").write("FROM alpine:latest\nRUN echo built\n")
-                _ <- Scope.run {
-                    ContainerImage.buildFromPath(dir, tags = Chunk(s"$imgName:latest")).run
-                }
-                i <- ContainerImage.inspect(ContainerImage(imgName, "latest"))
-                _ <- ContainerImage.remove(ContainerImage(imgName, "latest"), force = true)
-                _ <- (dir / "Dockerfile").remove
-                _ <- dir.removeAll
-            yield assert(i.repoTags.exists(_.reference.contains(imgName)))
-            end for
+            Path.run {
+                for
+                    _ <- dir.mkDir
+                    _ <- (dir / "Dockerfile").write("FROM alpine:latest\nRUN echo built\n")
+                    _ <- Scope.run {
+                        ContainerImage.buildFromPath(dir, tags = Chunk(s"$imgName:latest")).run
+                    }
+                    i <- ContainerImage.inspect(ContainerImage(imgName, "latest"))
+                    _ <- ContainerImage.remove(ContainerImage(imgName, "latest"), force = true)
+                    _ <- (dir / "Dockerfile").remove
+                    _ <- dir.removeAll
+                yield assert(i.repoTags.exists(_.reference.contains(imgName)))
+                end for
+            }
         }
 
         "passes buildArgs to the Dockerfile" - runBackends {
             val dir      = Path("/tmp/" + uniqueName("kyo-build-args"))
             val imgName  = uniqueName("kyo-built-args")
             val sentinel = "KYO_ARG_SENTINEL_" + uniqueName("v").replaceAll("[^A-Za-z0-9]", "")
-            for
-                _ <- dir.mkDir
-                _ <- (dir / "Dockerfile").write(
-                    "FROM alpine:latest\n" +
-                        "ARG KYO_VAL\n" +
-                        "RUN echo build-arg=${KYO_VAL}\n"
-                )
-                events <- Scope.run {
-                    ContainerImage.buildFromPath(
-                        dir,
-                        tags = Chunk(s"$imgName:latest"),
-                        buildArgs = Dict("KYO_VAL" -> sentinel)
-                    ).run
-                }
-                _ <- Abort.run[ContainerException](ContainerImage.remove(ContainerImage(imgName, "latest"), force = true))
-                _ <- (dir / "Dockerfile").remove
-                _ <- dir.removeAll
-            yield
-                // The RUN step echoes the build-arg value; it appears in the stream events.
-                assert(
-                    events.exists(_.stream.getOrElse("").contains(sentinel)),
-                    s"expected build-arg sentinel '$sentinel' in stream events; got: ${events.map(_.stream)}"
-                )
-            end for
+            Path.run {
+                for
+                    _ <- dir.mkDir
+                    _ <- (dir / "Dockerfile").write(
+                        "FROM alpine:latest\n" +
+                            "ARG KYO_VAL\n" +
+                            "RUN echo build-arg=${KYO_VAL}\n"
+                    )
+                    events <- Scope.run {
+                        ContainerImage.buildFromPath(
+                            dir,
+                            tags = Chunk(s"$imgName:latest"),
+                            buildArgs = Dict("KYO_VAL" -> sentinel)
+                        ).run
+                    }
+                    _ <- Abort.run[ContainerException](ContainerImage.remove(ContainerImage(imgName, "latest"), force = true))
+                    _ <- (dir / "Dockerfile").remove
+                    _ <- dir.removeAll
+                yield
+                    // The RUN step echoes the build-arg value; it appears in the stream events.
+                    assert(
+                        events.exists(_.stream.getOrElse("").contains(sentinel)),
+                        s"expected build-arg sentinel '$sentinel' in stream events; got: ${events.map(_.stream)}"
+                    )
+                end for
+            }
         }
 
         "failed build (non-zero RUN) surfaces a typed ContainerException" - runBackends {
             val dir     = Path("/tmp/" + uniqueName("kyo-build-err"))
             val imgName = uniqueName("kyo-built-err")
-            for
-                _ <- dir.mkDir
-                _ <- (dir / "Dockerfile").write("FROM alpine:latest\nRUN false\n")
-                result <- Abort.run[ContainerException] {
-                    Scope.run(ContainerImage.buildFromPath(dir, tags = Chunk(s"$imgName:latest")).run)
-                }
-                _ <- Abort.run[ContainerException](ContainerImage.remove(ContainerImage(imgName, "latest"), force = true))
-                _ <- (dir / "Dockerfile").remove
-                _ <- dir.removeAll
-            yield result match
-                case Result.Failure(_: ContainerException) =>
-                    succeed("the operation fails with a typed ContainerException (message is daemon-dependent)")
-                case Result.Success(events) => fail(s"expected build to fail, got success with events: $events")
-                case Result.Panic(e)        => fail(s"expected typed ContainerException, got panic: $e")
-            end for
+            Path.run {
+                for
+                    _ <- dir.mkDir
+                    _ <- (dir / "Dockerfile").write("FROM alpine:latest\nRUN false\n")
+                    result <- Abort.run[ContainerException] {
+                        Scope.run(ContainerImage.buildFromPath(dir, tags = Chunk(s"$imgName:latest")).run)
+                    }
+                    _ <- Abort.run[ContainerException](ContainerImage.remove(ContainerImage(imgName, "latest"), force = true))
+                    _ <- (dir / "Dockerfile").remove
+                    _ <- dir.removeAll
+                yield result match
+                    case Result.Failure(_: ContainerException) =>
+                        succeed("the operation fails with a typed ContainerException (message is daemon-dependent)")
+                    case Result.Success(events) => fail(s"expected build to fail, got success with events: $events")
+                    case Result.Panic(e)        => fail(s"expected typed ContainerException, got panic: $e")
+                end for
+            }
         }
 
         "buildFromPath with non-existent --target stage fails with ContainerBuildFailedException" - runBackends {
             val dir = Path("/tmp/" + uniqueName("kyo-build-fail"))
             val tag = uniqueName("kyo-built-fail") + ":latest"
-            for
-                _ <- dir.mkDir
-                _ <- (dir / "Dockerfile").write("FROM alpine:latest as base\n")
-                r <- Abort.run[ContainerException](
-                    Scope.run {
-                        ContainerImage.buildFromPath(dir, tags = Chunk(tag), target = Present("nonexistent-stage")).discard
-                    }
-                )
-                _ <- dir.removeAll
-            yield r match
-                case Result.Failure(e: ContainerBuildFailedException) =>
-                    assert(e.getMessage.contains("Build failed"))
-                case Result.Failure(_: ContainerOperationException) =>
-                    succeed("the daemon rejected the operation with a typed ContainerOperationException (message is daemon-dependent)")
-                case other => fail(s"expected ContainerBuildFailedException or ContainerOperationException, got $other")
-            end for
+            Path.run {
+                for
+                    _ <- dir.mkDir
+                    _ <- (dir / "Dockerfile").write("FROM alpine:latest as base\n")
+                    r <- Abort.run[ContainerException](
+                        Scope.run {
+                            ContainerImage.buildFromPath(dir, tags = Chunk(tag), target = Present("nonexistent-stage")).discard
+                        }
+                    )
+                    _ <- dir.removeAll
+                yield r match
+                    case Result.Failure(e: ContainerBuildFailedException) =>
+                        assert(e.getMessage.contains("Build failed"))
+                    case Result.Failure(_: ContainerOperationException) =>
+                        succeed("the daemon rejected the operation with a typed ContainerOperationException (message is daemon-dependent)")
+                    case other => fail(s"expected ContainerBuildFailedException or ContainerOperationException, got $other")
+                end for
+            }
         }
     }
 
@@ -2600,55 +2620,61 @@ class ContainerItTest extends BasePodTest:
     "container with mounts" - {
         "bind mount — host file visible in container" - runBackends {
             val hostDir = Path("/tmp/" + uniqueName("kyo-bind"))
-            for
-                _ <- hostDir.mkDir
-                _ <- (hostDir / "data.txt").write("from-host-12345")
-                content <- Scope.run {
-                    Container.initWith(alpine.bind(hostDir, Path("/mnt/data"), readOnly = true)) { c =>
-                        c.exec("cat", "/mnt/data/data.txt").map(_.stdout.trim)
+            Path.run {
+                for
+                    _ <- hostDir.mkDir
+                    _ <- (hostDir / "data.txt").write("from-host-12345")
+                    content <- Scope.run {
+                        Container.initWith(alpine.bind(hostDir, Path("/mnt/data"), readOnly = true)) { c =>
+                            c.exec("cat", "/mnt/data/data.txt").map(_.stdout.trim)
+                        }
                     }
-                }
-                _ <- (hostDir / "data.txt").remove
-                _ <- hostDir.removeAll
-            yield assert(content == "from-host-12345")
-            end for
+                    _ <- (hostDir / "data.txt").remove
+                    _ <- hostDir.removeAll
+                yield assert(content == "from-host-12345")
+                end for
+            }
         }
 
         "bind mount — readOnly prevents writes" - runBackends {
             val hostDir = Path("/tmp/" + uniqueName("kyo-bind-ro"))
-            for
-                _ <- hostDir.mkDir
-                result <- Scope.run {
-                    Container.initWith(alpine.bind(hostDir, Path("/mnt/data"), readOnly = true)) { c =>
-                        c.exec("touch", "/mnt/data/test")
+            Path.run {
+                for
+                    _ <- hostDir.mkDir
+                    result <- Scope.run {
+                        Container.initWith(alpine.bind(hostDir, Path("/mnt/data"), readOnly = true)) { c =>
+                            c.exec("touch", "/mnt/data/test")
+                        }
                     }
-                }
-                _ <- hostDir.removeAll
-            yield assert(!result.isSuccess)
-            end for
+                    _ <- hostDir.removeAll
+                yield assert(!result.isSuccess)
+                end for
+            }
         }
 
         "bind mount from /tmp works on macOS" - runBackends {
             val hostDir  = Path("/tmp/" + uniqueName("kyo-tmp-bind"))
             val filename = "test-data.txt"
-            for
-                _ <- hostDir.mkDir
-                _ <- (hostDir / filename).write("from-tmp-host-path")
-                content <- Scope.run {
-                    Container.initWith(alpine.bind(hostDir, Path("/mnt/tmpdata"), readOnly = true)) { c =>
-                        c.exec("cat", s"/mnt/tmpdata/$filename").map(_.stdout.trim)
+            Path.run {
+                for
+                    _ <- hostDir.mkDir
+                    _ <- (hostDir / filename).write("from-tmp-host-path")
+                    content <- Scope.run {
+                        Container.initWith(alpine.bind(hostDir, Path("/mnt/tmpdata"), readOnly = true)) { c =>
+                            c.exec("cat", s"/mnt/tmpdata/$filename").map(_.stdout.trim)
+                        }
                     }
-                }
-                _ <- (hostDir / filename).remove
-                _ <- hostDir.removeAll
-            yield
-                // On macOS, readlink -f is not available. If the implementation uses readlink -f
-                // to resolve /tmp -> /private/tmp, this test would fail.
-                assert(
-                    content == "from-tmp-host-path",
-                    s"Expected 'from-tmp-host-path' from /tmp bind mount, got '$content'"
-                )
-            end for
+                    _ <- (hostDir / filename).remove
+                    _ <- hostDir.removeAll
+                yield
+                    // On macOS, readlink -f is not available. If the implementation uses readlink -f
+                    // to resolve /tmp -> /private/tmp, this test would fail.
+                    assert(
+                        content == "from-tmp-host-path",
+                        s"Expected 'from-tmp-host-path' from /tmp bind mount, got '$content'"
+                    )
+                end for
+            }
         }
 
         "named volume persists across container recreations" - runBackends {
@@ -2968,14 +2994,16 @@ class ContainerItTest extends BasePodTest:
         "copy file with unicode name roundtrip" - runBackends {
             val localPath = Path("/tmp/" + uniqueName("kyo-unicode"))
             Container.init(alpine).map { c =>
-                for
-                    _      <- localPath.write("unicode content")
-                    _      <- c.copyTo(localPath, Path("/tmp/файл"))
-                    result <- c.exec("cat", "/tmp/файл")
-                    _      <- localPath.remove
-                yield
-                    assert(result.isSuccess)
-                    assert(result.stdout.trim == "unicode content")
+                Path.run {
+                    for
+                        _      <- localPath.write("unicode content")
+                        _      <- c.copyTo(localPath, Path("/tmp/файл"))
+                        result <- c.exec("cat", "/tmp/файл")
+                        _      <- localPath.remove
+                    yield
+                        assert(result.isSuccess)
+                        assert(result.stdout.trim == "unicode content")
+                }
             }
         }
 
@@ -2983,8 +3011,10 @@ class ContainerItTest extends BasePodTest:
             Container.init(alpine.readOnlyFilesystem(true)).map { c =>
                 Abort.run[ContainerException] {
                     val localPath = Path("/tmp/" + uniqueName("kyo-ro"))
-                    localPath.write("data").andThen {
-                        c.copyTo(localPath, Path("/usr/test"))
+                    Path.run {
+                        localPath.write("data").andThen {
+                            c.copyTo(localPath, Path("/usr/test"))
+                        }
                     }
                 }.map {
                     case Result.Failure(_: ContainerException) =>
@@ -2998,14 +3028,16 @@ class ContainerItTest extends BasePodTest:
             val localPath = Path("/tmp/" + uniqueName("kyo-large"))
             val content   = "x" * (128 * 1024) // 128KB
             Container.init(alpine).map { c =>
-                for
-                    _      <- localPath.write(content)
-                    _      <- c.copyTo(localPath, Path("/tmp/large"))
-                    result <- c.exec("wc", "-c", "/tmp/large")
-                    _      <- localPath.remove
-                yield
-                    assert(result.isSuccess)
-                    assert(result.stdout.trim.split("\\s+").head.toInt == 128 * 1024)
+                Path.run {
+                    for
+                        _      <- localPath.write(content)
+                        _      <- c.copyTo(localPath, Path("/tmp/large"))
+                        result <- c.exec("wc", "-c", "/tmp/large")
+                        _      <- localPath.remove
+                    yield
+                        assert(result.isSuccess)
+                        assert(result.stdout.trim.split("\\s+").head.toInt == 128 * 1024)
+                }
             }
         }
     }
@@ -3491,39 +3523,41 @@ class ContainerItTest extends BasePodTest:
 
     "attachById preserves ports, labels, and mounts in returned Config" - runBackends {
         val hostDir = Path("/tmp/" + uniqueName("kyo-attach-bind"))
-        for
-            _ <- hostDir.mkDir
-            result <- Scope.run {
-                Container.initWith(
-                    alpine
-                        .port(80, 18080)
-                        .label("kyo-attach-key", "kyo-attach-value")
-                        .bind(hostDir, Path("/mnt/attach-bind"))
-                ) { created =>
-                    Container.attach(created.id).map { attached =>
-                        val cfg = attached.config
-                        assert(
-                            cfg.ports.exists(_.containerPort == 80),
-                            s"Expected port 80 in reattached config, got: ${cfg.ports}"
-                        )
-                        assert(
-                            cfg.labels.get("kyo-attach-key").contains("kyo-attach-value"),
-                            s"Expected label kyo-attach-key=kyo-attach-value in reattached config, got: ${cfg.labels}"
-                        )
-                        assert(
-                            cfg.mounts.exists {
-                                case Container.Config.Mount.Bind(_, target, _) =>
-                                    target == Path("/mnt/attach-bind")
-                                case _ => false
-                            },
-                            s"Expected bind mount /mnt/attach-bind in reattached config, got: ${cfg.mounts}"
-                        )
+        Path.run {
+            for
+                _ <- hostDir.mkDir
+                result <- Scope.run {
+                    Container.initWith(
+                        alpine
+                            .port(80, 18080)
+                            .label("kyo-attach-key", "kyo-attach-value")
+                            .bind(hostDir, Path("/mnt/attach-bind"))
+                    ) { created =>
+                        Container.attach(created.id).map { attached =>
+                            val cfg = attached.config
+                            assert(
+                                cfg.ports.exists(_.containerPort == 80),
+                                s"Expected port 80 in reattached config, got: ${cfg.ports}"
+                            )
+                            assert(
+                                cfg.labels.get("kyo-attach-key").contains("kyo-attach-value"),
+                                s"Expected label kyo-attach-key=kyo-attach-value in reattached config, got: ${cfg.labels}"
+                            )
+                            assert(
+                                cfg.mounts.exists {
+                                    case Container.Config.Mount.Bind(_, target, _) =>
+                                        target == Path("/mnt/attach-bind")
+                                    case _ => false
+                                },
+                                s"Expected bind mount /mnt/attach-bind in reattached config, got: ${cfg.mounts}"
+                            )
+                        }
                     }
                 }
-            }
-            _ <- hostDir.removeAll
-        yield result
-        end for
+                _ <- hostDir.removeAll
+            yield result
+            end for
+        }
     }
 
     "logs preserves stdout/stderr emission order" - runBackends {

@@ -2,7 +2,6 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Buffer
-import kyo.internal.SystemPlatformSpecific
 
 /** POSIX / io_uring struct types bound through kyo-ffi.
   *
@@ -40,10 +39,9 @@ private[net] case class EpollEvent(events: Int, data: Long) derives CanEqual
   *   - x86_64: `__attribute__((packed))`, 12 bytes, `events` (`uint32_t`) at offset 0 and `data` (`__u64`) at offset 4 with no padding.
   *   - aarch64 (and other naturally-aligned ABIs): 16 bytes, `events` at offset 0 then 4 bytes of padding and `data` at offset 8.
   *
-  * Host architecture is detected once via [[kyo.internal.SystemPlatformSpecific.osArch]] (the same accessor `kyo.System` uses): it returns a
-  * Java-style token on every backend (`os.arch` on JVM/Native, normalised `process.arch` on JS). x86_64 (`x86_64` / `amd64` / `x64`) selects
-  * the packed 12-byte layout; every other arch uses the naturally-aligned 16-byte layout. Encoding is little-endian, matching all current
-  * Linux epoll targets and the byte-addressed [[Buffer]] primitives.
+  * Host architecture is detected once through the public `kyo.System` unsafe integration boundary. x86_64 selects the packed 12-byte
+  * layout; every other architecture uses the naturally-aligned 16-byte layout. Encoding is little-endian, matching all current Linux epoll
+  * targets and the byte-addressed [[Buffer]] primitives.
   */
 private[net] object EpollEvent:
 
@@ -51,9 +49,7 @@ private[net] object EpollEvent:
     val isX86_64: Boolean =
         // Unsafe: this is module-init arch detection running outside any effect, so there is no AllowUnsafe in scope to thread through.
         import AllowUnsafe.embrace.danger
-        SystemPlatformSpecific.osArch().toLowerCase match
-            case "x86_64" | "amd64" | "x64" => true
-            case _                          => false
+        System.live.unsafe.architecture() == System.Arch.X86_64
     end isX86_64
 
     /** Byte offset of the 8-byte `data` field: 4 on packed x86_64, 8 on naturally-aligned arches. */

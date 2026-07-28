@@ -58,22 +58,20 @@ object Topic:
       *   [[TopicTransportFailedException]] instead.
       */
     def run[A, S](v: A < (Topic & S))(using Frame): A < (Async & S) =
-        Abort.run[FileFsException](Path.tempDir("kyo-aeron-embedded")).map {
-            case Result.Success(dir) =>
-                AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
-                    // Teardown order: close the client and driver before deleting the dir (the driver
-                    // writes into it until its conductor threads are joined). Nested finalizers so the
-                    // dir is removed even when the close fails.
-                    Sync.ensure(Abort.run[FileFsException](dir.removeAll).unit) {
+        Scope.run {
+            Abort.run[FileSystemException](Path.run(Path.tempDir("kyo-aeron-embedded"))).map {
+                case Result.Success(dir) =>
+                    AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
+                        // Close the client and driver before the temp-dir scope removes the directory.
                         Sync.ensure(Sync.Unsafe.defer(runtime.close())) {
                             runWith(runtime.transport)(v)
                         }
                     }
-                }
-            case Result.Failure(e) =>
-                Abort.panic(e)
-            case Result.Panic(t) =>
-                Abort.panic(t)
+                case Result.Failure(e) =>
+                    Abort.panic(e)
+                case Result.Panic(t) =>
+                    Abort.panic(t)
+            }
         }
 
     /** Runs `v` against an Aeron media driver already running at `aeronDir`.

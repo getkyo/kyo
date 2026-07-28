@@ -150,8 +150,8 @@ object DigestComputer:
         collectAllFiles(roots).map { files =>
             val sorted = files.sortBy(identity)
             Kyo.foreach(sorted) { path =>
-                Abort.recover[FileReadException](e => Abort.fail(TastyError.SnapshotIoError(s"read $path: ${e.getMessage}"))) {
-                    Path(path).readBytes.map(span => (path, span))
+                Abort.recover[FileSystemException](e => Abort.fail(TastyError.SnapshotIoError(s"read $path: ${e.getMessage}"))) {
+                    Path.runReadOnly(Path(path).readBytes).map(span => (path, span))
                 }
             }.map { pairs =>
                 var acc = 0L
@@ -230,8 +230,8 @@ object DigestComputer:
     )(using Frame): Seq[(String, Long, Long)] < (Sync & Abort[TastyError]) =
         collectFiles(roots).map { files =>
             Kyo.foreach(files) { path =>
-                Abort.recover[FileReadException](e => Abort.fail(TastyError.SnapshotIoError(s"stat $path: ${e.getMessage}"))) {
-                    Path(path).stat.map(st => (path, st.lastModifiedMs, st.sizeBytes))
+                Abort.recover[FileSystemException](e => Abort.fail(TastyError.SnapshotIoError(s"stat $path: ${e.getMessage}"))) {
+                    Path.runReadOnly(Path(path).stat).map(st => (path, st.lastModifiedMs, st.sizeBytes))
                 }
             }
         }
@@ -239,7 +239,7 @@ object DigestComputer:
     /** Collect all .tasty file paths from directory roots via a recursive walk.
       *
       * Uses kyo.Path.exists (no Abort) and a synchronous walk via Path.Unsafe.openWalk, which avoids introducing Scope into the
-      * effect row. The walk handle is released in a finally block before returning. FileFsException from the walk is converted to
+      * effect row. The walk handle is released in a finally block before returning. FileStructureException from the walk is converted to
       * TastyError.SnapshotIoError.
       *
       * Unsafe: the openWalk call is synchronous I/O via AllowUnsafe; the handle is closed in a finally block; no resource leak.
@@ -248,7 +248,7 @@ object DigestComputer:
         roots: Seq[String]
     )(using Frame): Seq[String] < (Sync & Abort[TastyError]) =
         Kyo.foreach(roots) { root =>
-            Path(root).exists.map { ex =>
+            Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(root).exists)).map { ex =>
                 if !ex then Sync.defer(Seq.empty[String])
                 else
                     Sync.Unsafe.defer {
