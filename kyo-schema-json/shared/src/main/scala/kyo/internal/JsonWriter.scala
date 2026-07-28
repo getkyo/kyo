@@ -184,22 +184,10 @@ final class JsonWriter private (
         writeQuotedString(value.toString)
 
     override def resultString: String =
-        val s =
-            if hasNonAscii(buf, pos) then
-                // Non-ASCII: decode UTF-8 directly from buf → String allocates its internal byte[] once.
-                new String(buf, 0, pos, java.nio.charset.StandardCharsets.UTF_8)
-            else
-                // ASCII: trim to exact size, then AsciiStringFactory zero-copy-adopts the byte[].
-                AsciiStringFactory.fromAsciiBytes(java.util.Arrays.copyOf(buf, pos))
+        val result = new String(buf, 0, pos, java.nio.charset.StandardCharsets.UTF_8)
         release()
-        s
+        result
     end resultString
-
-    @tailrec
-    private def hasNonAscii(bs: Array[Byte], len: Int, i: Int = 0): Boolean =
-        if i >= len then false
-        else if bs(i) < 0 then true
-        else hasNonAscii(bs, len, i + 1)
 
     def result(): Span[Byte] =
         val bytes = java.util.Arrays.copyOf(buf, pos)
@@ -215,16 +203,6 @@ final class JsonWriter private (
         java.util.Arrays.fill(needsComma, 0L)
         JsonWriter.cache.set(this)
     end release
-
-    // Zero-copy String: shares byte[] for ASCII on JVM, falls back to copy for non-ASCII
-    private def newString(bytes: Array[Byte]): String =
-        @tailrec def loop(i: Int): String =
-            if i < bytes.length then
-                if bytes(i) < 0 then new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
-                else loop(i + 1)
-            else AsciiStringFactory.fromAsciiBytes(bytes)
-        loop(0)
-    end newString
 
     // Internal: comma tracking per nesting level
     private def maybeComma(): Unit =
