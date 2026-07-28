@@ -1,0 +1,4 @@
+# Pinned BoringSSL revision built with CMake+Go (RI-006/AD-007). Bump deliberately; never floating.
+# BoringSSL ships from master (no releases); this is a concrete master commit, verified to build
+# (CMake 3.28/Go 1.22, static libssl.a + libcrypto.a) on linux-aarch64 in the kyo CI container.
+d84317af2483c47270c95772d256a8916c21f3d9

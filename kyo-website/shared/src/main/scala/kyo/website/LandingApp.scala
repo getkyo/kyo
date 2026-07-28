@@ -533,8 +533,8 @@ object LandingApp:
 
     // The adoption band sits between the foundation and the platforms: it answers the objection the
     // foundation raises ("so do I rewrite everything?") with four concrete entry points. Each path is a
-    // factual interop claim grounded in source: bidirectional ZIO and Cats Effect interop
-    // (ZIOs.get/ZIOs.run, Cats.get/Cats.run, failure and interruption preserved both ways), the
+    // factual interop claim grounded in source: bidirectional ZIO interop
+    // (ZIOs.get/ZIOs.run, failure and interruption preserved both ways), the
     // drop-in scheduler (Scheduler.get.asExecutionContext, the standalone work-stealing pool under an
     // existing service), the standalone modules used as ordinary libraries with no effect system
     // (kyo-data's allocation-light types, one `derives Schema` for JSON/Protobuf/and more), and the
@@ -552,16 +552,15 @@ object LandingApp:
                 ),
                 UI.div.cssClass("paths")(
                     adoptPath(
-                        "Already on ZIO or Cats Effect?",
-                        "Call into Kyo from your effect type and run Kyo as either, both ways. Failure and interruption semantics are preserved across the boundary, so a cancel on one side cancels the other.",
-                        Seq(mod("kyo-zio") -> "zio", mod("kyo-cats") -> "cats")
+                        "Already on ZIO?",
+                        "Call into Kyo from ZIO and run Kyo as a ZIO, both ways. Failure and interruption semantics are preserved across the boundary, so a cancel on one side cancels the other.",
+                        Seq(mod("kyo-zio") -> "zio")
                     ),
                     adoptPath(
                         "Want only the runtime?",
-                        "Install the work-stealing scheduler as the execution context your service already runs on, a drop-in for Cats Effect, ZIO, Pekko, or Finagle. Future-based code gets the same time-slicing and blocking detection underneath, on a pool that sizes itself to the machine.",
+                        "Install the work-stealing scheduler as the execution context your service already runs on, a drop-in for ZIO, Pekko, or Finagle. Future-based code gets the same time-slicing and blocking detection underneath, on a pool that sizes itself to the machine.",
                         Seq(
                             mod("kyo-scheduler")         -> "scheduler",
-                            mod("kyo-scheduler-cats")    -> "cats",
                             mod("kyo-scheduler-zio")     -> "zio",
                             mod("kyo-scheduler-pekko")   -> "pekko",
                             mod("kyo-scheduler-finagle") -> "finagle"
@@ -602,17 +601,16 @@ object LandingApp:
             )
         )
 
-    // A four-line interop receipt, rendered through the shared `editorCard` chrome so it reads as the same
-    // polished editor panel as the hero signature card. Kyo composes with ZIO and Cats Effect BOTH ways:
-    // `ZIOs.get` / `Cats.get` lift a foreign value into a Kyo effect row, and `ZIOs.run` / `Cats.run` turn a
-    // Kyo computation back into a `ZIO[Any, E, A]` or a `cats.effect.IO[A]`. ZIO's typed error survives the
-    // lift (`Abort[E]`); a cats.effect.IO carries no typed error, so its lift is just `Async`. The `=` column
-    // is hand-aligned across the four rows; the leading-name and pre-`=` padding strings hold that alignment.
+    // A two-line interop receipt, rendered through the shared `editorCard` chrome so it reads as the same
+    // polished editor panel as the hero signature card. Kyo composes with ZIO BOTH ways: `ZIOs.get` lifts a
+    // ZIO value into a Kyo effect row, and `ZIOs.run` turns a Kyo computation back into a `ZIO[Any, E, A]`.
+    // ZIO's typed error survives the lift (`Abort[E]`). The `=` column is hand-aligned across the two rows;
+    // the leading-name and pre-`=` padding strings hold that alignment.
     private def adoptCode(using Frame): UI =
         editorCard("adopt-code")(
             UI.pre(
                 UI.code(
-                    tCom("// Kyo composes with ZIO and Cats Effect, both ways"),
+                    tCom("// Kyo composes with ZIO, both ways"),
                     UI.br,
                     UI.br,
                     // ZIO -> Kyo: the typed error E and Async land in the row
@@ -651,33 +649,6 @@ object LandingApp:
                     tOp("="),
                     " ",
                     tType("ZIOs"),
-                    ".run(checkout)",
-                    UI.br,
-                    // Cats Effect -> Kyo: a cats.effect.IO has no typed error, so the lift is just Async
-                    tKey("val"),
-                    " fromCats: ",
-                    tType("User"),
-                    " ",
-                    tOp("<"),
-                    " ",
-                    tType("Async"),
-                    "              ",
-                    tOp("="),
-                    " ",
-                    tType("Cats"),
-                    ".get(cachedUser)",
-                    UI.br,
-                    // Kyo -> Cats Effect
-                    tKey("val"),
-                    " toCats:   ",
-                    tType("IO"),
-                    "[",
-                    tType("Receipt"),
-                    "]",
-                    "               ",
-                    tOp("="),
-                    " ",
-                    tType("Cats"),
                     ".run(checkout)"
                 )
             )

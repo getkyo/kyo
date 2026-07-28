@@ -458,7 +458,7 @@ val doubleShrinks: Chunk[Double] = Shrink.double(2.7) // 2.0 (integral neighbor)
 
 ## Write meaningful tests: no-assertion enforcement
 
-A leaf that runs to completion having evaluated zero assertions is itself a bug: it proves nothing. kyo-test enforces this at run time. After a leaf body joins, the runner counts how many assertions it evaluated; a leaf that would otherwise pass with a count of zero is flipped to `Failed` with the message `leaf passed without evaluating any assertion`. The whole assert family counts: `assert`, `fail`, `intercept`, `assertEventually`, `typeCheck`, `assertSnapshot`, and a property `forAll`. `cancel` and `assume` do not count, because they steer the outcome rather than make a claim.
+A leaf that runs to completion having evaluated zero assertions is itself a bug: it proves nothing. kyo-test enforces this at run time. After a leaf body joins, the runner counts how many assertions it evaluated; a leaf that would otherwise pass with a count of zero is flipped to `Failed` with the message `leaf passed without evaluating any assertion`. The whole assert family counts: `assert`, `fail`, `intercept`, `assertEventually`, `typeCheck`, `assertSnapshot`, `assertSchemaSnapshot`, `assertGoldenSnapshot`, and a property `forAll`. `cancel` and `assume` do not count, because they steer the outcome rather than make a claim.
 
 This is a run-level setting, `failOnNoAssertion`, on by default. ScalaTest forced this at compile time through its `Assertion` return type; kyo-test cannot, because a leaf body is an effectful `Unit < (S & Async & Abort[Any] & Scope)`, so the check runs after the body completes.
 
@@ -509,6 +509,56 @@ end StatementSnapshotTest
 
 > **Caution:** the first run of `assertSnapshot` writes the proposed snapshot file and FAILS with `SnapshotNotFound`; the test passes only on a later run once you have reviewed the written file. To accept new or changed snapshots, run with `KYO_TEST_SNAPSHOT=update` in the environment (or override `snapshotUpdateMode` per suite). Snapshot names may not contain path separators, spaces, `.`, or `..`.
 
+### `assertSchemaSnapshot`: schema-based snapshots
+
+When a `Schema[A]` instance is in scope, reach for `assertSchemaSnapshot(actual, name)` instead. It renders `actual` through its `Schema[A]` using a `SnapshotCodec` (default `SnapshotCodec.Yaml`, a readable field-named format) and stores the result under `${snapshotDir}/${suite}/${name}.snap.yaml`, a distinct extension from `assertSnapshot`'s plain `.snap` so the two never collide on the same name.
+
+```scala
+import kyo.*
+import kyo.test.*
+import kyo.test.snapshot.*
+
+case class Statement(id: Int, balanceCents: Long, generatedAt: Long) derives Schema
+
+class SchemaStatementSnapshotTest extends SnapshotTest[Any]:
+    "monthly statement" in {
+        val statement = Statement(1, balanceCents = 12_300L, generatedAt = java.lang.System.currentTimeMillis())
+        assertSchemaSnapshot(statement, "monthly-schema", _.normalize(_.set(_.generatedAt)(0L)))
+    }
+end SchemaStatementSnapshotTest
+```
+
+The third argument builds a `SnapshotConfig[A]`, the single per-call customization point: `.normalize` scrubs non-deterministic fields (timestamps, ids) before both encoding and comparison, so a repeated run with a fresh timestamp still matches the stored snapshot. A suite that needs a different serialization format overrides the per-suite `snapshotCodec` hook (default `SnapshotCodec.Yaml`); the text presets are `Yaml`, `Json`, and `Ion`, the binary presets (stored as raw wire bytes) are `Protobuf`, `Bson`, `MsgPack`, and `IonBinary`, and `SnapshotCodec.Text`/`Binary` wrap any other kyo-schema `Codec`.
+
+> **Note:** the comparison is structural and format-tolerant: a hand-reformatted stored snapshot that still decodes to an equal value passes. A mismatch reports the changed field paths (dotted for a nested field, e.g. `b.y`) plus a unified text diff for text codecs. A stored snapshot that fails to decode at all (a genuine schema evolution) fails with `SnapshotSchemaEvolution` instead, distinct from a value mismatch.
+
+### `assertGoldenSnapshot`: golden snapshots over a generated spread
+
+When both a `Gen[A]` and a `Schema[A]` are in scope, reach for `assertGoldenSnapshot[A](name)` instead. Where `assertSchemaSnapshot` locks one hand-picked value, golden draws a deterministic spread of `sampleCount` values (default 20) from the generator, normalizes each, and stores the whole spread as ONE document under `${snapshotDir}/${suite}/${name}.golden.${bare}` (for example `event.golden.yaml`), wrapped as a `samples`-keyed object.
+
+```scala
+import kyo.*
+import kyo.test.*
+import kyo.test.prop.*
+import kyo.test.snapshot.*
+
+case class Event(id: Int, kind: String) derives Schema
+
+given Gen[Event] = Gen.derive[Event]
+
+class EventGoldenTest extends SnapshotTest[Any]:
+    "event wire format" in {
+        assertGoldenSnapshot[Event]("event", _.sampleCount(50))
+    }
+end EventGoldenTest
+```
+
+A later run regenerates the same spread and compares it per sample, so a wire-format change to any field the spread exercises is caught and reported as `sample[N].field`, including a field a single hand-written value would never have covered. The optional second argument builds a `GoldenConfig[A]`, the per-call customization point: `.sampleCount`, `.seed`, and `.size` tune the generated spread, and `.normalize` scrubs non-deterministic fields before both encoding and comparison (the same field scrub `assertSchemaSnapshot` uses). Its `golden.*` extension never collides with `assertSnapshot`'s `.snap` or `assertSchemaSnapshot`'s `.snap.*`.
+
+> **Note:** golden shares the first-run write-then-fail and `KYO_TEST_SNAPSHOT=update` bless of the other two assertions: the first run writes the proposed spread and fails with `SnapshotNotFound`, and only a later run against the reviewed, blessed file passes.
+
+Reach for `assertSnapshot` when a `Render` instance is all you need (a quick, flat text snapshot); reach for `assertSchemaSnapshot` when you have a `Schema[A]` and want readable field-named output, field normalization, format-tolerant comparison, or schema-evolution detection on a single value; reach for `assertGoldenSnapshot` when you want to lock a type's wire format across the whole range of values it can hold, so the test survives schema changes without rewriting fixtures.
+
 ## Running and selecting tests
 
 You run a module's suites through sbt; the runner discovers every `Test` subclass, instantiates it, and executes its leaves.
@@ -555,7 +605,7 @@ val config: RunConfig =
 
 `TestFilter` selects leaves: `pathInclude`/`pathExclude` are globs against the dot-joined leaf path, `tagsInclude`/`tagsExclude` are exact tag names. Includes act as allow-lists; excludes apply after. `TestFilter.empty` runs everything. `Verbosity` is `Quiet` / `Normal` / `Verbose`. Two `RunConfig` flags toggle discovery-only modes: `countOnly` reports the leaf count without running bodies, and `listOnly` additionally prints every leaf path (implying count-only). `strictStructure` turns on strict leaf-name-path validation, rejecting duplicate or structurally invalid paths at registration time.
 
-> **Note:** `parallelism = 1` means within-suite sequential (the suite's leaves run one at a time); `0` (the default) and any `N > 1` mean parallel: leaves are pushed to the process-global pool and the pool's `globalK` bound sets the real degree of concurrency; `N > 1` is no longer a per-suite cap. On Scala Native `globalK = 1`, so all leaves run sequentially regardless of the requested value.
+> **Note:** `parallelism = 1` means within-suite sequential (the suite's leaves run one at a time); `0` (the default) and any `N > 1` mean parallel: leaves are pushed to the process-global pool and the pool's `globalK` bound sets the real degree of concurrency; `N > 1` requests parallel leaves bounded by the pool's `globalK`, not a per-suite cap. On Scala Native `globalK = 1`, so all leaves run sequentially regardless of the requested value.
 
 ### Outcomes and counters
 

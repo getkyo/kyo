@@ -636,7 +636,11 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
-        "413 response preserves keep-alive" in {
+        // A 413 declines an over-limit body it never reads. Reusing the connection would let those unconsumed body
+        // bytes be parsed as the next request (the unconsumed-body smuggling class, Undertow CVE-2020-10719, RFC 9112
+        // section 9.3), so the server answers Connection: close and tears the connection down rather than serve a
+        // pipelined follow-up. request2's bytes must NOT be served.
+        "413 response closes the connection instead of reusing it (RFC 9112 section 9.3)" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
             val router  = HttpRouter(Seq(handler), Absent)
 
@@ -646,8 +650,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             // First request: Content-Length exceeds limit (keep-alive is default in HTTP/1.1)
             val request1 = "POST /hello HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\n"
-            // Second request: valid GET (with Connection: close)
-            val request2 = "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            // A pipelined GET that must NOT be served, because the connection is torn down after the 413.
+            val request2 = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(request1.getBytes(StandardCharsets.US_ASCII))))
             discard(inbound.offer(Span.fromUnsafe(request2.getBytes(StandardCharsets.US_ASCII))))
 
@@ -655,10 +659,12 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             collectResponseAsync(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 413 Payload Too Large"), s"First response expected 413, got: $response1")
-                collectResponseAsync(outbound).map { response2 =>
-                    assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
-                    assert(response2.contains("world"), s"Second response expected 'world', got: $response2")
-                }
+                assert(response1.contains("Connection: close"), s"413 must announce Connection: close, got: $response1")
+                // Nothing more is written: the pipelined request2 was not served.
+                val servedFollowUp = outbound.poll() match
+                    case Result.Success(Present(_)) => true
+                    case _                          => false
+                assert(!servedFollowUp, "the pipelined request after a 413 must not be served")
             }
         }
 
@@ -782,9 +788,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "chunked body exceeding max returns 413" in {
-            // TODO: This test verifies that chunked bodies that accumulate beyond maxContentLength
-            // are rejected with 413. This requires chunked body accumulation checks which may not
-            // be implemented yet. The test documents the expected behavior.
+            // A chunked body on a buffered route is dechunked bounded by maxContentLength; a body decoding to more
+            // than the limit is answered 413, not buffered without limit (CWE-400, RFC 9112 section 6.1).
             val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
@@ -795,7 +800,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            // Send a chunked request with body exceeding maxContentLength
+            // Send a chunked request whose decoded body (15 bytes) exceeds maxContentLength (10).
             // Chunk format: hex-size\r\ndata\r\n ... 0\r\n\r\n
             val chunk1 = "a\r\n0123456789\r\n" // 10 bytes (at limit)
             val chunk2 = "5\r\nABCDE\r\n"      // 5 more bytes (over limit)
@@ -806,15 +811,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            // For now, the server may not enforce chunked body limits yet.
-            // This test documents the expectation that eventually it should return 413.
-            // Accept either 413 or 200 (if not yet implemented) — the test is informational.
             collectResponseAsync(outbound).map { response =>
-                // If chunked accumulation check is implemented, expect 413
-                // If not yet, 200 is acceptable (test documents future behavior)
                 assert(
-                    response.contains("413") || response.contains("200"),
-                    s"Expected either 413 (ideal) or 200 (acceptable), got: $response"
+                    response.contains("HTTP/1.1 413 Payload Too Large"),
+                    s"an over-limit chunked body on a buffered route must be 413'd, got: $response"
                 )
             }
         }
@@ -1772,6 +1772,144 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     result match
                         case Result.Failure(_: Closed) => succeed
                         case other                     => assert(false, s"Expected closed after idle timeout, got: $other")
+                }
+            }
+        }
+
+        "hoistedClosureSameDispatch" in {
+            // Two distinct routes, dispatched in sequence on a keep-alive connection using the hoisted
+            // restartParserFn closure. Verifies no stale capture: request B gets handler B's response,
+            // not handler A's.
+            val handlerA = HttpHandler.getText("pathA")(_ => "response-A")
+            val handlerB = HttpHandler.getText("pathB")(_ => "response-B")
+            val router   = HttpRouter(Seq(handlerA, handlerB), Absent)
+
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+
+            // Both requests are keep-alive by default in HTTP/1.1; second closes the connection.
+            val requestA = "GET /pathA HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            val requestB = "GET /pathB HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            sendRequest(inbound, requestA)
+            sendRequest(inbound, requestB)
+
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+            collectResponseAsync(outbound).map { responseA =>
+                assert(responseA.contains("HTTP/1.1 200 OK"), s"Request A expected 200, got: $responseA")
+                assert(
+                    responseA.contains("response-A"),
+                    s"Request A expected body 'response-A' (no stale closure), got: $responseA"
+                )
+                collectResponseAsync(outbound).map { responseB =>
+                    assert(responseB.contains("HTTP/1.1 200 OK"), s"Request B expected 200, got: $responseB")
+                    assert(
+                        responseB.contains("response-B"),
+                        s"Request B expected body 'response-B' (no stale closure), got: $responseB"
+                    )
+                    assert(
+                        !responseB.contains("response-A"),
+                        s"Request B must not contain response-A body (stale capture), got: $responseB"
+                    )
+                }
+            }
+        }
+
+        "closedSingletonNormalOnly" in {
+            // IdleTimerClosed is the shared singleton for the normal idle-timer cancel path.
+            // It must have referential identity and carry an empty details (no error context).
+            val singleton = UnsafeServerDispatch.IdleTimerClosed
+
+            assert(
+                singleton eq UnsafeServerDispatch.IdleTimerClosed,
+                "IdleTimerClosed must be a singleton (referential equality on repeated access)"
+            )
+
+            assert(
+                singleton.getMessage.contains("idle timer"),
+                s"IdleTimerClosed must mention 'idle timer', got: ${singleton.getMessage}"
+            )
+
+            // A fresh Closed (error path) is distinct from the singleton.
+            val errorClosed = new Closed("idle timer", Frame.internal, "connection error")(using Frame.internal)
+            assert(
+                !(singleton eq errorClosed),
+                "Error-path Closed must be a distinct object from IdleTimerClosed singleton"
+            )
+            assert(
+                errorClosed.getMessage.contains("connection error"),
+                s"Error-path Closed must carry its details in getMessage, got: ${errorClosed.getMessage}"
+            )
+        }
+    }
+
+    "ConnectionClose" - {
+
+        "handler parked on a foreign await is interrupted when the connection closes" in {
+            Latch.initWith(1) { started =>
+                Latch.initWith(1) { terminated =>
+                    val handler = HttpHandler.getText("park") { _ =>
+                        // Parks on a promise no one completes: touches neither inbound nor outbound.
+                        Fiber.Promise.init[Unit, Any].map { never =>
+                            Sync.ensure(terminated.release) {
+                                started.release.andThen(never.get).andThen("unreachable")
+                            }
+                        }
+                    }
+                    val router = HttpRouter(Seq(handler), Absent)
+
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                    // The connection's close signal on this bare-channel path (kyo.net.Connection.onClosing in production).
+                    val closing = Promise.Unsafe.init[Unit, Any]()
+                    sendRequest(inbound, "GET /park HTTP/1.1\r\nHost: localhost\r\n\r\n")
+
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, Present(closing))
+
+                    started.await.andThen {
+                        // Fire the connection-close signal, as closeFn does on a real connection.
+                        closing.completeDiscard(Result.succeed(()))
+                        Async.timeout(5.seconds)(terminated.await).andThen(succeed)
+                    }
+                }
+            }
+        }
+
+        "negative guard: a healthy handler is not interrupted by the watcher" in {
+            Latch.initWith(1) { started =>
+                Latch.initWith(1) { terminated =>
+                    Fiber.Promise.init[Unit, Any].map { never =>
+                        val handler = HttpHandler.getText("park") { _ =>
+                            Sync.ensure(terminated.release) {
+                                started.release.andThen(never.get).andThen("completed-normally")
+                            }
+                        }
+                        val router = HttpRouter(Seq(handler), Absent)
+
+                        val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                        val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                        // Watcher IS armed (Present) but the close signal never fires: proves the watcher does not
+                        // spuriously interrupt a handler on a healthy, still-open connection.
+                        val closing = Promise.Unsafe.init[Unit, Any]()
+                        sendRequest(inbound, "GET /park HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+
+                        UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, Present(closing))
+
+                        started.await.andThen {
+                            // The connection stays open (closing never completed): the handler completes
+                            // normally, and the watcher must never have interrupted it.
+                            never.complete(Result.succeed(())).andThen {
+                                Async.timeout(5.seconds)(terminated.await).andThen {
+                                    collectResponseAsync(outbound).map { response =>
+                                        assert(
+                                            response.contains("HTTP/1.1 200 OK") && response.contains("completed-normally"),
+                                            s"Expected 200 OK with a normal completion body from the un-interrupted handler, got: $response"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

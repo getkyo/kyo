@@ -63,6 +63,23 @@ class ConnectionPoolTest extends BaseHttpTest:
         }
     }
 
+    "unreserve" - {
+        // Releasing an in-flight slot frees capacity so a subsequent tryReserve succeeds again.
+        "frees a reserved slot so tryReserve succeeds again" in {
+            val pool = mkPool(2)
+            assert(pool.tryReserve(key1))
+            assert(pool.tryReserve(key1))
+            // At the limit now: the next reserve must fail.
+            assert(!pool.tryReserve(key1))
+            // Release one in-flight slot.
+            pool.unreserve(key1)
+            // Capacity freed: a reserve must now succeed.
+            assert(pool.tryReserve(key1))
+            // And we are at the limit again.
+            assert(!pool.tryReserve(key1))
+        }
+    }
+
     "close" - {
         "returns idle connections" in {
             val pool = mkPool()
@@ -92,6 +109,27 @@ class ConnectionPoolTest extends BaseHttpTest:
         val result = pool.poll(key1)
         assert(result == Present("alive"))
         assert(discardCount.get() == 1)
+    }
+
+    "idle-timeout eviction during poll" in {
+        // Deterministic without sleep: a zero idle timeout means any positive elapsed time evicts.
+        // nanoTime is monotonic, so the elapsed between release (timestamp) and poll (re-read) is
+        // strictly positive, reliably exceeding the zero timeout. The expired conn is discarded and
+        // poll continues to the next slot.
+        val discardCount = new AtomicInteger(0)
+        val pool = ConnectionPool.init[String](
+            2,
+            kyo.Duration.Zero,
+            _ => true,
+            _ => discard(discardCount.incrementAndGet())
+        )
+        pool.release(key1, "stale1")
+        pool.release(key1, "stale2")
+        // Both released conns are immediately past the zero idle timeout: poll evicts+discards each
+        // and finds no live conn left, returning empty.
+        val result = pool.poll(key1)
+        assert(result == Maybe.empty)
+        assert(discardCount.get() == 2)
     }
 
 end ConnectionPoolTest

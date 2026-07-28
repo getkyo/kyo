@@ -49,23 +49,82 @@ end HttpStatus
 
 object HttpStatus:
 
-    private val byCode: Dict[Int, HttpStatus] =
-        val b = DictBuilder.init[Int, HttpStatus]
-        Informational.values.foreach(s => discard(b.add(s.code, s)))
-        Success.values.foreach(s => discard(b.add(s.code, s)))
-        Redirect.values.foreach(s => discard(b.add(s.code, s)))
-        ClientError.values.foreach(s => discard(b.add(s.code, s)))
-        ServerError.values.foreach(s => discard(b.add(s.code, s)))
-        b.result()
-    end byCode
+    /** The standard status for `code`, or `Absent` when no standard status has that code. A primitive `Int` match compiles to a
+      * `lookupswitch`, so this does no `Integer` boxing (which a `Dict[Int, HttpStatus]` key lookup would) and needs no lookup table.
+      */
+    private def standard(code: Int): Maybe[HttpStatus] = code match
+        case 100 => Present(Informational.Continue)
+        case 101 => Present(Informational.SwitchingProtocols)
+        case 102 => Present(Informational.Processing)
+        case 103 => Present(Informational.EarlyHints)
+        case 200 => Present(Success.OK)
+        case 201 => Present(Success.Created)
+        case 202 => Present(Success.Accepted)
+        case 203 => Present(Success.NonAuthoritativeInfo)
+        case 204 => Present(Success.NoContent)
+        case 205 => Present(Success.ResetContent)
+        case 206 => Present(Success.PartialContent)
+        case 300 => Present(Redirect.MultipleChoices)
+        case 301 => Present(Redirect.MovedPermanently)
+        case 302 => Present(Redirect.Found)
+        case 303 => Present(Redirect.SeeOther)
+        case 304 => Present(Redirect.NotModified)
+        case 305 => Present(Redirect.UseProxy)
+        case 307 => Present(Redirect.TemporaryRedirect)
+        case 308 => Present(Redirect.PermanentRedirect)
+        case 400 => Present(ClientError.BadRequest)
+        case 401 => Present(ClientError.Unauthorized)
+        case 402 => Present(ClientError.PaymentRequired)
+        case 403 => Present(ClientError.Forbidden)
+        case 404 => Present(ClientError.NotFound)
+        case 405 => Present(ClientError.MethodNotAllowed)
+        case 406 => Present(ClientError.NotAcceptable)
+        case 407 => Present(ClientError.ProxyAuthRequired)
+        case 408 => Present(ClientError.RequestTimeout)
+        case 409 => Present(ClientError.Conflict)
+        case 410 => Present(ClientError.Gone)
+        case 411 => Present(ClientError.LengthRequired)
+        case 412 => Present(ClientError.PreconditionFailed)
+        case 413 => Present(ClientError.PayloadTooLarge)
+        case 414 => Present(ClientError.URITooLong)
+        case 415 => Present(ClientError.UnsupportedMediaType)
+        case 416 => Present(ClientError.RangeNotSatisfiable)
+        case 417 => Present(ClientError.ExpectationFailed)
+        case 418 => Present(ClientError.ImATeapot)
+        case 421 => Present(ClientError.MisdirectedRequest)
+        case 422 => Present(ClientError.UnprocessableEntity)
+        case 423 => Present(ClientError.Locked)
+        case 424 => Present(ClientError.FailedDependency)
+        case 425 => Present(ClientError.TooEarly)
+        case 426 => Present(ClientError.UpgradeRequired)
+        case 428 => Present(ClientError.PreconditionRequired)
+        case 429 => Present(ClientError.TooManyRequests)
+        case 431 => Present(ClientError.RequestHeaderFieldsTooLarge)
+        case 451 => Present(ClientError.UnavailableForLegalReasons)
+        case 500 => Present(ServerError.InternalServerError)
+        case 501 => Present(ServerError.NotImplemented)
+        case 502 => Present(ServerError.BadGateway)
+        case 503 => Present(ServerError.ServiceUnavailable)
+        case 504 => Present(ServerError.GatewayTimeout)
+        case 505 => Present(ServerError.HTTPVersionNotSupported)
+        case 506 => Present(ServerError.VariantAlsoNegotiates)
+        case 507 => Present(ServerError.InsufficientStorage)
+        case 508 => Present(ServerError.LoopDetected)
+        case 510 => Present(ServerError.NotExtended)
+        case 511 => Present(ServerError.NetworkAuthRequired)
+        case _   => Absent
+    end standard
 
     /** Resolve an HTTP status code. Returns the known enum case if one exists, otherwise wraps in `Custom`. */
     def apply(code: Int): HttpStatus =
         require(code >= 100 && code <= 599, s"Invalid HTTP status code: $code")
-        byCode.getOrElse(code, Custom(code))
+        standard(code) match
+            case Present(s) => s
+            case Absent     => Custom(code)
+    end apply
 
     def resolve(code: Int): Maybe[HttpStatus] =
-        byCode.get(code)
+        standard(code)
 
     /** Status code not covered by the standard enums. */
     final case class Custom(override val code: Int) extends HttpStatus(code)

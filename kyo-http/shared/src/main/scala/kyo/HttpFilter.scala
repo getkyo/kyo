@@ -391,7 +391,13 @@ object HttpFilter:
       *
       * Implementing this trait and registering it in `META-INF/services/kyo.HttpFilter$Factory` is the extension point for cross-cutting
       * concerns such as distributed tracing, metrics collection, authentication, or structured logging. All discovered factories are
-      * loaded once at startup and their filters composed in discovery order — the first factory's filter wraps the second, and so on.
+      * loaded once at startup and their filters composed in discovery order, the first factory's filter wrapping the second, and so on.
+      *
+      * Per-platform discovery differs. On the JVM the provider is found from `META-INF/services/kyo.HttpFilter$Factory` on the classpath.
+      * On Scala.js it is registered explicitly through `kyo.stats.internal.JSServiceLoaderRegistry`. On Scala Native, `ServiceLoader` is
+      * resolved at LINK time, so a `META-INF/services` provider is linked ONLY when it is also enlisted in the Native build via
+      * `nativeConfig.withServiceProviders(Map("kyo.HttpFilter$Factory" -> Seq("your.Factory")))`; without that enlistment the factory is
+      * silently absent and `autoFilters` is a no-op on Native.
       *
       * Override `serverFilter` to install a filter on the server side (applied to every incoming request before the route handler runs).
       * Override `clientFilter` to install a filter on the client side (applied to every outgoing request before it reaches the connection
@@ -416,11 +422,18 @@ object HttpFilter:
         import java.util.ServiceLoader
         import scala.jdk.CollectionConverters.*
 
+        // Scala Native resolves ServiceLoader.load at LINK time by synthesizing a provider-loader def that
+        // reuses the call site's exception handler (scala-native#4087 sibling, unfixed as of 0.5.12). A call
+        // site inside a lazy val body (whose initializer compiles to a try/catch) makes that synthesized def
+        // reference a handler label it does not contain, crashing codegen ("key not found: Local(N)" in Lower).
+        // Keeping the load in a plain method (no unwind at the call site) avoids it: do not inline it back.
+        private def loadFactories(): Iterator[Factory] =
+            ServiceLoader.load(classOf[Factory]).iterator().asScala
+
         private[kyo] lazy val composedServer: HttpFilter.Passthrough[Nothing] =
             given Frame = Frame.internal
             import AllowUnsafe.embrace.danger
-            ServiceLoader.load(classOf[Factory])
-                .iterator().asScala
+            loadFactories()
                 .flatMap(_.serverFilter.toOption)
                 .foldLeft(HttpFilter.noop)(_.andThen(_))
         end composedServer
@@ -428,8 +441,7 @@ object HttpFilter:
         private[kyo] lazy val composedClient: HttpFilter.Passthrough[Nothing] =
             given Frame = Frame.internal
             import AllowUnsafe.embrace.danger
-            ServiceLoader.load(classOf[Factory])
-                .iterator().asScala
+            loadFactories()
                 .flatMap(_.clientFilter.toOption)
                 .foldLeft(HttpFilter.noop)(_.andThen(_))
         end composedClient

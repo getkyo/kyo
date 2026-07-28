@@ -5,9 +5,10 @@ import kyo.*
 
 /** Tracks every live connection a client or server holds so all of them can be closed on shutdown.
   *
-  * The transport's I/O driver is process-global and is never closed, so a connection's close happens here at the kyo-http
-  * layer rather than through the driver. `HttpClientBackend` records the connections it creates and `HttpServer` records
-  * the connections it accepts; both register them here and close the lot when their own `close` runs.
+  * A connection's close happens here at the kyo-http layer, not by relying on the transport: the registry closes each
+  * tracked connection on shutdown, and the client's or server's own transport is closed only afterward. `HttpClientBackend`
+  * records the connections it creates and `HttpServer` records the connections it accepts; both register them here and close
+  * the lot when their own `close` runs.
   *
   * Thread-safety: a connection is closed exactly once even when a registration races `closeAll`. Both the registering
   * caller and `closeAll` claim a connection by `remove`-ing it from the set, and only the caller that wins the remove

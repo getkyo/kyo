@@ -46,6 +46,17 @@ class XXHashTest extends AnyFreeSpec {
             assert(XXHash.hash32("\u6f22\u5b57") == -1761639557)
             assert(XXHash.hash32("emoji \ud83d\ude80") == 687346460)
         }
+
+        "non-empty strings with a zero JLS hash hash as hashInt(0)" in {
+            // "\u0000" is non-empty with JLS hash 0. On Scala Native, String.hashCode re-stores its
+            // cached hash on every call for such strings, which faults for literals interned in
+            // read-only memory; XXHash.hash32 must therefore never call String.hashCode on Native.
+            // Asserting against hashInt(0) rather than "\u0000".hashCode keeps this test from
+            // triggering that store itself.
+            assert(XXHash.hash32("\u0000") == XXHash.hashInt(0))
+            assert(XXHash.hash32("\u0000\u0000\u0000") == XXHash.hashInt(0))
+            assert(XXHash.hash32("") == XXHash.hashInt(0))
+        }
     }
 
     "XXHash.hash64" - {

@@ -9,8 +9,8 @@ import java.nio.charset.StandardCharsets
   *
   *   - Pluggable: implement `newWriter` and `newReader` to support any binary or text format
   *   - Used by [[kyo.Schema]] encode/decode methods to select the target format at the call site
-  *   - Built-in implementations: [[Json]] (JSON), [[Ion]] (Amazon Ion text), [[Yaml]] (YAML), and [[Protobuf]] (Protocol Buffers wire
-  *     format)
+  *   - Built-in implementations: `Json` (JSON), `Ion` (Amazon Ion text), `Yaml` (YAML), and `Protobuf` (Protocol Buffers wire format),
+  *     each published in its own `kyo-schema-<format>` artifact
   *
   * @see
   *   [[Codec.Writer]] for the serialization side
@@ -22,6 +22,26 @@ import java.nio.charset.StandardCharsets
 abstract class Codec:
     def newWriter(): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
+
+    /** Reads one value of `A` from `input` and requires the whole of it to have been consumed.
+      *
+      * Every decode entry point routes through here so the end-of-input requirement cannot be
+      * forgotten by one format while another remembers it. Reading the value and checking what is
+      * left are one operation, not two that a caller is trusted to pair up.
+      */
+    final private[kyo] def decodeFully[A](
+        input: Span[Byte],
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        val reader = newReader(input)
+        reader.resetLimits(maxDepth, maxCollectionSize)
+        Result.catching[DecodeException] {
+            val value = schema.readFrom(reader)
+            reader.requireEndOfInput()
+            value
+        }
+    end decodeFully
 
     /** Validates that `structure` can be canonically represented by this codec before any bytes are written.
       *
@@ -35,6 +55,32 @@ end Codec
 
 object Codec:
 
+    /** Default maximum nesting depth for decoding (DoS limit), shared by every built-in codec. */
+    inline val DefaultMaxDepth = 512
+
+    /** Default maximum number of entries in any single collection or object during decoding (DoS limit), shared by every built-in codec. */
+    inline val DefaultMaxCollectionSize = 100000
+
+    /** Reads one value of `A` from an already-built reader and requires the whole input to be consumed.
+      *
+      * The entry points that construct their own reader (a format with a config-dependent reader, or
+      * one decoding from a source other than a byte span) route through here, so reading the value and
+      * checking what is left stay one operation for every format rather than a pairing each decode is
+      * trusted to remember.
+      */
+    private[kyo] def readFully[A](
+        reader: Codec.Reader,
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        reader.resetLimits(maxDepth, maxCollectionSize)
+        Result.catching[DecodeException] {
+            val value = schema.readFrom(reader)
+            reader.requireEndOfInput()
+            value
+        }
+    end readFully
+
     abstract class Reader:
         /** The source location where this Reader was constructed.
           *
@@ -43,9 +89,23 @@ object Codec:
           */
         def frame: Frame
 
-        private[kyo] var maxDepth: Int          = 512
-        private[kyo] var maxCollectionSize: Int = 100000
+        private[kyo] var maxDepth: Int          = DefaultMaxDepth
+        private[kyo] var maxCollectionSize: Int = DefaultMaxCollectionSize
         private var _depth: Int                 = 0
+
+        /** Fails unless everything left after the decoded root value is insignificant.
+          *
+          * Decoding a value is not the same as decoding the input. A reader that stops at the end of
+          * the first value and never looks further reports success on input it only partly consumed,
+          * so a document holding two values back to back yields the first and discards the rest
+          * without a word, and one trailed by anything else is indistinguishable from a clean parse.
+          *
+          * This is abstract rather than defaulted so that every format has to answer it. A default of
+          * "accept" would let a reader inherit silence, which is exactly the state this exists to end;
+          * a format where the question is meaningless, such as one reading an already-parsed value in
+          * memory, says so by implementing it as a no-op.
+          */
+        private[kyo] def requireEndOfInput(): Unit
 
         /** Reset limits and depth counter. Called on reader reuse. */
         private[kyo] def resetLimits(maxDepth: Int, maxCollectionSize: Int): Unit =
@@ -162,6 +222,31 @@ object Codec:
           */
         def captureValue(): Reader
 
+        /** Whether this codec addresses record fields by numeric id instead of (or in addition to)
+          * name, as Protobuf does. The schema serialization engine gates on this before computing a
+          * schema's field-id override map, which would otherwise pay rename-resolution cost at every
+          * nesting depth of every encode/decode on codecs that cannot use the result.
+          *
+          * Returning `true` obliges overriding BOTH [[withFieldIdOverrides]] and
+          * [[fieldIdOverridesSnapshot]]: the engine saves the snapshot before installing a nested
+          * schema's overrides and restores it afterwards, so leaving either default in place would
+          * capture an empty map as the prior state and silently wipe an ancestor schema's overrides
+          * on restore.
+          */
+        def supportsFieldIdOverrides: Boolean = false
+
+        /** Installs field-name-to-numeric-id overrides for interoperability with wire formats that
+          * carry numeric field ids (e.g. existing `.proto` definitions). No-op by default; a codec
+          * that returns `true` from [[supportsFieldIdOverrides]] must override this mutably and
+          * return `this` for chaining.
+          */
+        def withFieldIdOverrides(overrides: Map[String, Int]): this.type = this
+
+        /** The currently installed field-id override map, read by a caller that is about to replace
+          * it with a nested schema's own overrides so the prior value can be restored afterwards.
+          */
+        def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
+
     end Reader
 
     /** Reader capability for self-describing wire formats that can materialize a value into [[Structure.Value]]
@@ -270,6 +355,31 @@ object Codec:
           * selection with no kyo-schema source change.
           */
         def capabilities: Codec.Capabilities = Codec.Capabilities(canWriteTopLevelNonObject)
+
+        /** Whether this codec addresses record fields by numeric id instead of (or in addition to)
+          * name, as Protobuf does. The schema serialization engine gates on this before computing a
+          * schema's field-id override map, which would otherwise pay rename-resolution cost at every
+          * nesting depth of every encode/decode on codecs that cannot use the result.
+          *
+          * Returning `true` obliges overriding BOTH [[withFieldIdOverrides]] and
+          * [[fieldIdOverridesSnapshot]]: the engine saves the snapshot before installing a nested
+          * schema's overrides and restores it afterwards, so leaving either default in place would
+          * capture an empty map as the prior state and silently wipe an ancestor schema's overrides
+          * on restore.
+          */
+        def supportsFieldIdOverrides: Boolean = false
+
+        /** Installs field-name-to-numeric-id overrides for interoperability with wire formats that
+          * carry numeric field ids (e.g. existing `.proto` definitions). No-op by default; a codec
+          * that returns `true` from [[supportsFieldIdOverrides]] must override this mutably and
+          * return `this` for chaining.
+          */
+        def withFieldIdOverrides(overrides: Map[String, Int]): this.type = this
+
+        /** The currently installed field-id override map, read by a caller that is about to replace
+          * it with a nested schema's own overrides so the prior value can be restored afterwards.
+          */
+        def fieldIdOverridesSnapshot: Map[String, Int] = Map.empty
     end Writer
 
     /** Describes what wire shapes a codec can express, consulted by `Schema.representationFor`

@@ -4,7 +4,7 @@ import kyo.ai.Config
 
 class AIEnvTest extends kyo.test.Test[Any]:
 
-    val base: AIEnv = AIEnv(Present(Config.OpenAI.default), Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty)
+    val base: AIEnv = AIEnv(Present(Config.OpenAI.default), Prompt.empty, Chunk.empty, Chunk.empty, Chunk.empty, Chunk.empty)
 
     "config replaces the config" in {
         val cfg = Config.Anthropic.default

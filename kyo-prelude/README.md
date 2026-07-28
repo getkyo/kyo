@@ -114,6 +114,24 @@ assert(Abort.run(partial).eval == Result.succeed(Result.succeed(1)))
 
 When you want recovery only for declared domain errors and want unexpected panics to escape, use `recover` (leaves `Abort[Nothing]`) or `recoverOrThrow` (throws). When you want to consume the whole result including unexpected exceptions, use `recover(onFail, onPanic)` or `fold(onSuccess, onFail, onPanic)`. The single-handler variants always leave panic in some form; the multi-handler variants consume it. `Abort.recoverError` recovers from any `Error[E]` (both `Failure` and `Panic`) with a single handler. `Abort.foldError` folds over an `Error[E]` alongside a success branch. `Abort.foldOrThrow` folds success and typed failures while rethrowing panics as exceptions.
 
+### Observing a failure without consuming it
+
+`Abort.tap` runs a side effect when a computation fails with an `E` and then re-raises the same failure, so the error stays in the row for a downstream handler to decide its fate; success values and panics pass through without evaluating the observer. `Abort.tapError` additionally observes panics, receiving the full `Error[E]`. They are the non-consuming siblings of `recover` / `recoverError` — use them for intermediate observation such as logging or metrics.
+
+```scala
+import kyo.*
+
+// `tap` runs an observer on a Failure (recorded here via Var) and re-raises it unchanged,
+// so a downstream handler still sees the same failure; `tapError` also observes panics.
+val (seen, result) =
+    Var.runTuple(Maybe.empty[String]) {
+        Abort.run[String](Abort.tap[String](e => Var.set(Present(e): Maybe[String]))(Abort.fail("boom")))
+    }.eval
+
+assert(result == Result.fail("boom"))
+assert(seen == Present("boom"))
+```
+
 ### Singleton-typed errors
 
 `Abort.literal.fail("not_found")` preserves the singleton type `"not_found"` instead of widening to `String`, useful when you want the type system to track exactly which symbolic errors a function can produce.

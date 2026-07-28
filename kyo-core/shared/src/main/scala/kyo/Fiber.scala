@@ -173,7 +173,7 @@ object Fiber:
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
         Isolate.internal.runDetached((trace, context) =>
             isolate.capture { state =>
-                val io = isolate.isolate(state, v).map(r => Kyo.lift(isolate.restore(r)))
+                val io = isolate.isolate(state, v).map(r => isolate.restore(r))
                 IOTask(io, trace, context).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
             }
         )

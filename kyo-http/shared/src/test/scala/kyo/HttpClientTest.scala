@@ -28,7 +28,7 @@ class HttpClientTest extends BaseHttpTest:
     def runServer(handlers: HttpHandler[?, ?, ?]*)(
         test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
-        "plain".notNative in {
+        "plain" in {
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(0, "localhost")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
@@ -37,7 +37,7 @@ class HttpClientTest extends BaseHttpTest:
                 )
             }
         }
-        "tls".notNative in {
+        "tls" in {
             tlsTest(handlers)(test)
         }
     end runServer
@@ -45,7 +45,7 @@ class HttpClientTest extends BaseHttpTest:
     def runServerJvmTls(handlers: HttpHandler[?, ?, ?]*)(
         test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
-        "plain".notNative in {
+        "plain" in {
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(0, "localhost")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
@@ -54,7 +54,7 @@ class HttpClientTest extends BaseHttpTest:
                 )
             }
         }
-        "tls".onlyJvm in {
+        "tls" in {
             tlsTest(handlers)(test)
         }
     end runServerJvmTls
@@ -186,6 +186,37 @@ class HttpClientTest extends BaseHttpTest:
         "maxConnectionsPerHost must be positive" in {
             interceptThrown[IllegalArgumentException] {
                 HttpClient.initUnscoped(maxConnectionsPerHost = 0)
+            }
+        }
+    }
+
+    "init" - {
+
+        "closes the pool once the enclosing Scope exits" in {
+            // Guards the `init` Scope-release resolution: written as `_.closeNow`, the release would resolve (inside HttpClient's own
+            // object) to HttpClientBackend's one-arg `closeNow(conn)` member instead of the zero-arg extension and silently do nothing,
+            // leaving the pool open. Captures the client out of its own nested Scope.run so the pool's closed state can be checked once
+            // that Scope has actually exited.
+            val route                       = HttpRoute.getRaw("ping").response(_.bodyText)
+            val ep                          = route.handler(_ => HttpResponse.ok("pong"))
+            var captured: Maybe[HttpClient] = Absent
+            Scope.run {
+                HttpServer.init(0, "localhost")(ep).map { s =>
+                    val url = HttpUrl.parse(s"http://localhost:${s.port}/ping").getOrThrow
+                    HttpClient.init(defaultTlsConfig = HttpTlsConfig(trustAll = true)).map { hc =>
+                        captured = Present(hc)
+                        HttpClient.let(hc)(HttpClient.getText(url).unit)
+                    }
+                }
+            }.andThen {
+                captured match
+                    case Present(hc) =>
+                        // Unsafe: isPoolClosed is a plain field read, no I/O or unchecked state; AllowUnsafe is required only
+                        // because ConnectionPool's accessors are unconditionally AllowUnsafe-gated (see ConnectionPool.scala).
+                        import AllowUnsafe.embrace.danger
+                        assert(hc.isPoolClosed, "HttpClient.init's Scope release must close the pool once its Scope exits")
+                    case Absent =>
+                        fail("client was not captured")
             }
         }
     }
@@ -989,11 +1020,170 @@ class HttpClientTest extends BaseHttpTest:
                 }.andThen(assert(called))
             }
         }
+
+        // RFC 9110 section 15.4.4: a 303 changes the method to GET, and a GET carries no body. The follow-up request is
+        // built by copying the original, whose body still sits in its fields, so the guarantee rests on the encoder
+        // filtering the body by method rather than on the redirect logic dropping it. There was no 303 coverage at all,
+        // which left that filtering unpinned: a change to it would send the POST body to the redirect target as a GET.
+        "303 See Other becomes a GET and sends no body (RFC 9110 section 15.4.4)" - {
+            val startRoute = HttpRoute.postRaw("start").request(_.bodyText).response(_.bodyText)
+            val seenRoute  = HttpRoute.getRaw("seen").response(_.bodyText)
+            val seenEp = seenRoute.handler { req =>
+                val method = req.method.name
+                val len    = req.headers.get("Content-Length").getOrElse("absent")
+                HttpResponse.ok(s"method=$method contentLength=$len")
+            }
+            val redirectEp = startRoute.handler { _ =>
+                HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/seen"))
+            }
+            runServer(seenEp, redirectEp) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val request = HttpRequest
+                            .postRaw(HttpUrl(url.scheme, url.host, url.port, "/start", Absent))
+                            .addField("body", "this body must not be forwarded")
+                        client.sendWith(startRoute, request) { resp =>
+                            // Either spelling of "no body" is correct: an absent Content-Length, or an explicit zero,
+                            // which RFC 9110 section 8.6 makes a valid way to say the same thing. What must not appear
+                            // is the original body, whose length is nowhere near zero.
+                            val body = resp.fields.body
+                            assert(body.startsWith("method=GET"), s"a 303 must arrive as a GET, got: $body")
+                            assert(
+                                body.endsWith("contentLength=0") || body.endsWith("contentLength=absent"),
+                                s"the original request body must not be forwarded, got: $body"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Credential forwarding across a redirect. A redirect target is chosen by the ORIGIN, not by the caller, so the
+        // Location value is attacker-controlled the moment the origin is malicious, compromised, or merely open. Carrying
+        // the caller's Authorization to whatever authority that value names hands the credential to a third party, so the
+        // decision to forward has to be conditioned on the target, not made unconditionally.
+        //
+        // The collector below reports what the SECOND server actually received, which is what makes the leak observable
+        // rather than inferred: the client returns the second server's body as the final response.
+
+        // The positive control for the two leaves below, and the reason they cannot be satisfied by stripping
+        // unconditionally. A relative Location stays on the origin the caller chose, so the credential is going
+        // exactly where it was already sent and must survive: dropping it here would break every authenticated
+        // redirect. None of the other redirect leaves carry credentials, so without this nothing pins that.
+        "forwards Authorization across a same-origin redirect (GHSA-2rgg-r783-mrx4 control)" - {
+            val startRoute  = HttpRoute.getRaw("start").response(_.bodyText)
+            val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
+            val targetEp = targetRoute.handler { req =>
+                HttpResponse.ok(s"auth=${req.headers.get("Authorization").getOrElse("none")}")
+            }
+            val redirectEp = startRoute.handler(_ => HttpResponse.redirect("/target").addField("body", "redirect"))
+            runServer(targetEp, redirectEp) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val request = HttpRequest
+                            .getRaw(HttpUrl(url.scheme, url.host, url.port, "/start", Absent))
+                            .setHeader("Authorization", "Bearer super-secret")
+                        client.sendWith(targetRoute, request) { resp =>
+                            assert(
+                                resp.fields.body == "auth=Bearer super-secret",
+                                s"a same-origin redirect must keep the caller's credential, got: ${resp.fields.body}"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        "does not forward Authorization across an origin change (GHSA-2rgg-r783-mrx4)" - {
+            val startRoute   = HttpRoute.getRaw("start").response(_.bodyText)
+            val collectRoute = HttpRoute.getRaw("collect").response(_.bodyText)
+            // Both credential-bearing fields are reported, so a fix that drops only Authorization while Cookie still
+            // crosses cannot satisfy this leaf. A cookie is bound to the origin that set it just as an Authorization
+            // value is bound to the origin it was issued for.
+            val collectEp = collectRoute.handler { req =>
+                val auth   = req.headers.get("Authorization").getOrElse("none")
+                val cookie = req.headers.get("Cookie").getOrElse("none")
+                HttpResponse.ok(s"auth=$auth cookie=$cookie")
+            }
+            // The collector runs on its own server, so it is a different port and therefore a different origin
+            // (RFC 6454 section 4 makes origin the scheme/host/port triple, so a port change alone crosses it).
+            "plain" in {
+                initTrustAllClient().map { httpClient =>
+                    HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                        val redirectEp = startRoute.handler { _ =>
+                            HttpResponse.halt(
+                                HttpResponse(HttpStatus.Found)
+                                    .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                            )
+                        }
+                        HttpServer.init(0, "localhost")(redirectEp).map { origin =>
+                            HttpClient.let(httpClient) {
+                                HttpClient.withConfig(noTimeout) {
+                                    val request = HttpRequest
+                                        .getRaw(HttpUrl.parse(s"http://localhost:${origin.port}/start").getOrThrow)
+                                        .setHeader("Authorization", "Bearer super-secret")
+                                        .setHeader("Cookie", "session=super-secret")
+                                    HttpClient.use(_.sendWith(collectRoute, request) { resp =>
+                                        assert(
+                                            resp.fields.body == "auth=none cookie=none",
+                                            s"the redirect target received the caller's credentials: ${resp.fields.body}"
+                                        )
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The scheme half of the same decision, and the more damaging one: here the credential does not merely reach an
+        // unintended party, it reaches the network in cleartext. A caller that chose https did so to keep the header off
+        // the wire, and a Location naming http silently undoes that choice.
+        "does not forward Authorization across an https to http downgrade (GHSA-2rgg-r783-mrx4)" in {
+            val startRoute   = HttpRoute.getRaw("start").response(_.bodyText)
+            val collectRoute = HttpRoute.getRaw("collect").response(_.bodyText)
+            val collectEp = collectRoute.handler { req =>
+                val auth   = req.headers.get("Authorization").getOrElse("none")
+                val cookie = req.headers.get("Cookie").getOrElse("none")
+                HttpResponse.ok(s"auth=$auth cookie=$cookie")
+            }
+            initTrustAllClient().map { httpClient =>
+                // Hop 2 is plaintext; hop 1 below is TLS, so following the Location downgrades the scheme.
+                HttpServer.init(0, "localhost")(collectEp).map { collector =>
+                    val redirectEp = startRoute.handler { _ =>
+                        HttpResponse.halt(
+                            HttpResponse(HttpStatus.Found)
+                                .setHeader("Location", s"http://localhost:${collector.port}/collect")
+                        )
+                    }
+                    HttpServer.init(
+                        HttpServerConfig.default.port(0).host("localhost")
+                            .tls(internal.HttpTestPlatformBackend.serverTlsConfig)
+                    )(redirectEp).map { origin =>
+                        HttpClient.let(httpClient) {
+                            HttpClient.withConfig(noTimeout) {
+                                val request = HttpRequest
+                                    .getRaw(HttpUrl.parse(s"https://localhost:${origin.port}/start").getOrThrow)
+                                    .setHeader("Authorization", "Bearer super-secret")
+                                    .setHeader("Cookie", "session=super-secret")
+                                HttpClient.use(_.sendWith(collectRoute, request) { resp =>
+                                    assert(
+                                        resp.fields.body == "auth=none cookie=none",
+                                        s"an https origin redirected to http and the credentials followed in cleartext: ${resp.fields.body}"
+                                    )
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     "retry" - {
 
-        "on server error".notNative in {
+        "on server error" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("flaky").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1017,7 +1207,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "no retry on client error".notNative in {
+        "no retry on client error" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("bad").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1039,7 +1229,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "no retry after success".notNative in {
+        "no retry after success" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("ok").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1061,7 +1251,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "custom predicate".notNative in {
+        "custom predicate" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("custom").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1090,7 +1280,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "exponential backoff".notNative in {
+        "exponential backoff" in {
             var attempts   = 0
             var timestamps = List.empty[Long]
             val route      = HttpRoute.getRaw("slow").response(_.bodyText)
@@ -1102,7 +1292,12 @@ class HttpClientTest extends BaseHttpTest:
             }
             withServer(ep) { url =>
                 var called = false
-                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(50.millis, 2.0).take(5)))) {
+                // The base must dominate per-retry overhead noise. The delays are measured as wall-clock gaps
+                // between server hits, which include request overhead: the first retry pays connection setup and
+                // JIT warmup while later retries reuse a warm path, so that overhead is non-uniform across retries.
+                // A small base (tens of ms) is smaller than that noise and can invert the comparison; a 500ms base
+                // makes the exponential increment the dominant term so the gap growth reflects the backoff, not jitter.
+                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(500.millis, 2.0).take(5)))) {
                     withClient { client =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
                         client.sendWith(route, request) { resp =>
@@ -1119,7 +1314,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "retry after redirect to flaky endpoint".notNative in {
+        "retry after redirect to flaky endpoint" in {
             var attempts   = 0
             val flakyRoute = HttpRoute.getRaw("flaky").response(_.bodyText)
             val flakyEp = flakyRoute.handler { _ =>
@@ -1147,7 +1342,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "retry gets redirect then succeeds".notNative in {
+        "retry gets redirect then succeeds" in {
             var attempts    = 0
             val route       = HttpRoute.getRaw("ep").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
@@ -1175,7 +1370,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "connection error aborts without retry".notNative in {
+        "connection error aborts without retry" in {
             // Connection errors propagate immediately — retryOn only checks HTTP status
             val route = HttpRoute.getRaw("unreachable").response(_.bodyText)
             HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(3)))) {
@@ -1188,7 +1383,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "exhausted returns last response".notNative in {
+        "exhausted returns last response" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("fail").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1265,7 +1460,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "works after error responses".notNative in {
+        "works after error responses" in {
             var count = 0
             val route = HttpRoute.getRaw("maybe").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1340,21 +1535,29 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    c    <- initTrustAllClient(size)
-                    // Sequentially send 10 requests with different body data through a small pool
-                    // Each reuses a connection — tests mutable var reset in backend
-                    results <- Kyo.foreach(0 until 10) { i =>
-                        val request = HttpRequest.postRaw(
-                            HttpUrl(url.scheme, url.host, url.port, "/echo-reuse", Absent)
-                        ).addField("body", s"data-$i")
-                        HttpClient.withConfig(noTimeout) {
-                            c.sendWith(route, request)(identity)
+                    // Scope.run per branch, so each iteration's client is released before the next one is built. `initTrustAllClient` is
+                    // `HttpClient.init`, whose release registers in the ENCLOSING scope; without this the 2 sizes x 10 repeats = 20 clients
+                    // would all stay open until the leaf ends, and each owns its own transport (ioPoolSize drivers, one poller fd apiece).
+                    _ <- Scope.run {
+                        initTrustAllClient(size).map { c =>
+                            // Sequentially send 10 requests with different body data through a small pool
+                            // Each reuses a connection, which tests the mutable var reset in the backend
+                            Kyo.foreach(0 until 10) { i =>
+                                val request = HttpRequest.postRaw(
+                                    HttpUrl(url.scheme, url.host, url.port, "/echo-reuse", Absent)
+                                ).addField("body", s"data-$i")
+                                HttpClient.withConfig(noTimeout) {
+                                    c.sendWith(route, request)(identity)
+                                }
+                            }.map { results =>
+                                assert(
+                                    results.zipWithIndex.forall { case (r, i) => r.fields.body == s"data-$i" },
+                                    s"Bodies: ${results.map(_.fields.body)}"
+                                )
+                            }
                         }
                     }
-                yield assert(
-                    results.zipWithIndex.forall { case (r, i) => r.fields.body == s"data-$i" },
-                    s"Bodies: ${results.map(_.fields.body)}"
-                ))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1376,20 +1579,28 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    c    <- initTrustAllClient(size)
-                    streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-reuse", Absent))
-                    textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text-reuse", Absent))
-                    // Stream response, fully consume
-                    _ <- HttpClient.withConfig(noTimeout) {
-                        c.sendWith(streamRoute, streamReq) { resp =>
-                            resp.fields.body.run.map(_ => ())
+                    // Scope.run per branch: same reason as "connection reuse with varying data" above. The client's release registers in
+                    // the enclosing scope, so without this every iteration's client (and its transport) stays open until the leaf ends.
+                    _ <- Scope.run {
+                        initTrustAllClient(size).map { c =>
+                            val streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-reuse", Absent))
+                            val textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text-reuse", Absent))
+                            // Stream response, fully consume
+                            HttpClient.withConfig(noTimeout) {
+                                c.sendWith(streamRoute, streamReq) { resp =>
+                                    resp.fields.body.run.map(_ => ())
+                                }
+                            }.andThen {
+                                // Then buffered request on same pool, so the connection is reused
+                                HttpClient.withConfig(noTimeout) {
+                                    c.sendWith(textRoute, textReq)(identity)
+                                }.map { result =>
+                                    assert(result.status == HttpStatus.OK && result.fields.body == "buffered")
+                                }
+                            }
                         }
                     }
-                    // Then buffered request on same pool — connection reused
-                    result <- HttpClient.withConfig(noTimeout) {
-                        c.sendWith(textRoute, textReq)(identity)
-                    }
-                yield assert(result.status == HttpStatus.OK && result.fields.body == "buffered"))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1399,7 +1610,7 @@ class HttpClientTest extends BaseHttpTest:
 
     "close" - {
 
-        "idempotent".notNative in {
+        "idempotent" in {
             initTrustAllClient().map { c =>
                 c.closeNow.andThen(c.closeNow).map(_ => succeed("runs without error: double-close is safe"))
             }
@@ -1477,25 +1688,29 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
-                    fibers <- Kyo.fill(size * 3)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                Abort.run[HttpException](c.sendWith(route, request)(identity))
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
+                            fibers <- Kyo.fill(size * 3)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        Abort.run[HttpException](c.sendWith(route, request)(identity))
+                                    }
+                                )
+                            ))
+                            _       <- latch.release
+                            results <- Kyo.foreach(fibers)(_.get)
+                            successes = results.count(_.isSuccess)
+                            poolExhausted = results.count {
+                                case Result.Failure(_: HttpPoolExhaustedException) => true
+                                case _                                             => false
                             }
-                        )
-                    ))
-                    _       <- latch.release
-                    results <- Kyo.foreach(fibers)(_.get)
-                    successes = results.count(_.isSuccess)
-                    poolExhausted = results.count {
-                        case Result.Failure(_: HttpPoolExhaustedException) => true
-                        case _                                             => false
+                        yield assert(successes + poolExhausted == size * 3 && successes > 0)
                     }
-                yield assert(successes + poolExhausted == size * 3 && successes > 0))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1508,20 +1723,24 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/burst", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(route, request)(identity)
-                            }
-                        )
-                    ))
-                    _       <- latch.release
-                    results <- Kyo.foreach(fibers)(_.get)
-                yield assert(results.forall(_.status == HttpStatus.OK)))
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/burst", Absent))
+                            fibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        c.sendWith(route, request)(identity)
+                                    }
+                                )
+                            ))
+                            _       <- latch.release
+                            results <- Kyo.foreach(fibers)(_.get)
+                        yield assert(results.forall(_.status == HttpStatus.OK))
+                    }
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1540,22 +1759,26 @@ class HttpClientTest extends BaseHttpTest:
                     // so back-to-back bursts at exactly pool capacity occasionally see HttpPoolExhausted
                     // on linux-x64/JVM CI under load. Headroom of 2 absorbs in-flight returns without
                     // changing the test's stress shape (still fires `size` concurrent per batch).
-                    c <- initTrustAllClient(size + 2)
-                    request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stress", Absent))
-                    // Run 5 batches, each batch fires `size` concurrent requests with a latch
-                    _ <- Kyo.foreach(1 to 5) { _ =>
+                    _ <- Scope.run {
                         for
-                            latch <- Latch.init(1)
-                            fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                                latch.await.andThen(
-                                    HttpClient.withConfig(noTimeout) {
-                                        c.sendWith(route, request)(identity)
-                                    }
-                                )
-                            ))
-                            _       <- latch.release
-                            results <- Kyo.foreach(fibers)(_.get)
-                        yield assert(results.forall(_.status == HttpStatus.OK))
+                            c <- initTrustAllClient(size + 2)
+                            request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stress", Absent))
+                            // Run 5 batches, each batch fires `size` concurrent requests with a latch
+                            _ <- Kyo.foreach(1 to 5) { _ =>
+                                for
+                                    latch <- Latch.init(1)
+                                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                        latch.await.andThen(
+                                            HttpClient.withConfig(noTimeout) {
+                                                c.sendWith(route, request)(identity)
+                                            }
+                                        )
+                                    ))
+                                    _       <- latch.release
+                                    results <- Kyo.foreach(fibers)(_.get)
+                                yield assert(results.forall(_.status == HttpStatus.OK))
+                            }
+                        yield ()
                     }
                 yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
@@ -1578,38 +1801,41 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size * 2)
-                    latch <- Latch.init(1)
-                    textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text", Absent))
-                    streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-mix", Absent))
-                    textFibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(textRoute, textReq)(identity)
-                            }
-                        )
-                    ))
-                    streamFibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(streamRoute, streamReq) { resp =>
-                                    resp.fields.body.run.map { chunks =>
-                                        chunks.foldLeft("")((acc, span) =>
-                                            acc + new String(span.toArrayUnsafe, "UTF-8")
-                                        )
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size * 2)
+                            latch <- Latch.init(1)
+                            textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text", Absent))
+                            streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-mix", Absent))
+                            textFibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        c.sendWith(textRoute, textReq)(identity)
                                     }
-                                }
-                            }
-                        )
-                    ))
-                    _           <- latch.release
-                    textResults <- Kyo.foreach(textFibers)(_.get)
-                    streamData  <- Kyo.foreach(streamFibers)(_.get)
-                yield
-                    assert(textResults.forall(_.status == HttpStatus.OK))
-                    assert(streamData.forall(_.contains("chunk1")))
-                )
+                                )
+                            ))
+                            streamFibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        c.sendWith(streamRoute, streamReq) { resp =>
+                                            resp.fields.body.run.map { chunks =>
+                                                chunks.foldLeft("")((acc, span) =>
+                                                    acc + new String(span.toArrayUnsafe, "UTF-8")
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            ))
+                            _           <- latch.release
+                            textResults <- Kyo.foreach(textFibers)(_.get)
+                            streamData  <- Kyo.foreach(streamFibers)(_.get)
+                        yield
+                            assert(textResults.forall(_.status == HttpStatus.OK))
+                            assert(streamData.forall(_.contains("chunk1")))
+                    }
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1631,31 +1857,35 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    fibers <- Kyo.foreach(0 until size) { i =>
-                        Fiber.initUnscoped {
-                            latch.await.andThen {
-                                val marker = s"marker-$i"
-                                val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
-                                    Span.fromUnsafe(s"$marker-a,".getBytes("UTF-8")),
-                                    Span.fromUnsafe(s"$marker-b".getBytes("UTF-8"))
-                                ))
-                                val req = HttpRequest.postRaw(HttpUrl(url.scheme, url.host, url.port, "/echo-body", Absent))
-                                    .addField("body", bodyStream)
-                                HttpClient.withConfig(noTimeout) {
-                                    c.sendWith(postRoute, req) { resp =>
-                                        val body: String = resp.fields.body
-                                        (i, body)
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            fibers <- Kyo.foreach(0 until size) { i =>
+                                Fiber.initUnscoped {
+                                    latch.await.andThen {
+                                        val marker = s"marker-$i"
+                                        val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                                            Span.fromUnsafe(s"$marker-a,".getBytes("UTF-8")),
+                                            Span.fromUnsafe(s"$marker-b".getBytes("UTF-8"))
+                                        ))
+                                        val req = HttpRequest.postRaw(HttpUrl(url.scheme, url.host, url.port, "/echo-body", Absent))
+                                            .addField("body", bodyStream)
+                                        HttpClient.withConfig(noTimeout) {
+                                            c.sendWith(postRoute, req) { resp =>
+                                                val body: String = resp.fields.body
+                                                (i, body)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
+                            _       <- latch.release
+                            results <- Kyo.foreach(fibers)(_.get)
+                        yield assert(results.forall { (i, body) => body.contains(s"marker-$i") })
                     }
-                    _       <- latch.release
-                    results <- Kyo.foreach(fibers)(_.get)
-                yield assert(results.forall { (i, body) => body.contains(s"marker-$i") }))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1671,7 +1901,7 @@ class HttpClientTest extends BaseHttpTest:
                 test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
             )
 
-        "accepts body within limit".notNative in {
+        "accepts body within limit" in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1685,7 +1915,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "rejects body exceeding limit with 413".notNative in {
+        "rejects body exceeding limit with 413" in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1699,7 +1929,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "exact boundary: body equal to limit succeeds".notNative in {
+        "exact boundary: body equal to limit succeeds" in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1713,7 +1943,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "one byte over limit gets 413".notNative in {
+        "one byte over limit gets 413" in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1727,7 +1957,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "empty body always succeeds".notNative in {
+        "empty body always succeeds" in {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
             val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1)
@@ -1738,7 +1968,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "server still works after rejecting oversized request".notNative in {
+        "server still works after rejecting oversized request" in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyText)
                 .response(_.bodyText)
@@ -1902,7 +2132,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "buffered response: connection error is classified as HttpException".notNative in {
+        "buffered response: connection error is classified as HttpException" in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             Abort.run[HttpException] {
                 send(HttpUrl(Present("http"), "localhost", 1, "/", Absent), route, HttpRequest.getRaw(HttpUrl.fromUri("/test")))
@@ -1912,6 +2142,19 @@ class HttpClientTest extends BaseHttpTest:
                         // connection refused: the typed failure carries the target host and port
                         assert(e.host == "localhost" && e.port == 1)
                     case other => fail(s"Expected ConnectionError but got $other")
+            }
+        }
+
+        "buffered response: an unresolvable host is classified as HttpDnsResolutionException" in {
+            // The transport reports a name-resolution failure as NetDnsResolutionException; the client boundary maps it to the matching
+            // HttpDnsResolutionException rather than a generic connection error. `.invalid` (RFC 2606) answers NXDOMAIN on a conformant resolver.
+            val route = HttpRoute.getRaw("test").response(_.bodyText)
+            Abort.run[HttpException] {
+                send(HttpUrl(Present("http"), "nonexistent.invalid", 80, "/", Absent), route, HttpRequest.getRaw(HttpUrl.fromUri("/test")))
+            }.map { result =>
+                result match
+                    case Result.Failure(_: HttpDnsResolutionException) => succeed
+                    case other                                         => fail(s"Expected HttpDnsResolutionException but got $other")
             }
         }
 
@@ -1947,7 +2190,42 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "client close while requests in-flight".notNative in {
+        "streaming request body: write loop aborts when connection closes" in {
+            // Client sends an infinite streaming body. The server reads one chunk then responds
+            // without draining the rest; the client then tears the connection down. The
+            // background write IOTask (streamRequestBody) must abort on the first Closed instead
+            // of looping forever pulling from the infinite stream (leaking the fiber).
+            kyo.Latch.init(1).map { writeDone =>
+                val route = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
+                val ep = route.handler { req =>
+                    req.fields.body.take(1).run.map(_ => HttpResponse.ok("ok"))
+                }
+                withServer(ep) { url =>
+                    client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        val infiniteBody = Stream[Span[Byte], Async] {
+                            Sync.ensure(writeDone.release) {
+                                kyo.Loop.foreach {
+                                    Async.delay(1.millis) {
+                                        kyo.Emit.valueWith(Chunk(Span.fromUnsafe("x".getBytes("UTF-8"))))(kyo.Loop.continue[Unit])
+                                    }
+                                }
+                            }
+                        }
+                        val request = HttpRequest.postRaw(HttpUrl.fromUri("/sink"))
+                            .addField("body", infiniteBody)
+                            .addHeader("Connection", "close")
+                        client.sendWith(conn, route, request) { resp =>
+                            assert(resp.status == HttpStatus.OK)
+                            client.closeNow(conn)
+                        }
+                    }
+                }.andThen {
+                    writeDone.await.unit
+                }
+            }
+        }
+
+        "client close while requests in-flight" in {
             val slowRoute = HttpRoute.getRaw("slow-close").response(_.bodyText)
             // Handler blocks forever — cancelled when client closes
             val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("late")))
@@ -1955,24 +2233,28 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow-close", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                Abort.run[HttpException](c.sendWith(slowRoute, slowReq)(identity))
-                            }
-                        )
-                    ))
-                    _ <- latch.release
-                    // Close immediately — fibers should complete (with errors), not hang
-                    _       <- c.closeNow
-                    results <- Kyo.foreach(fibers)(f => Abort.run[Throwable](f.get))
-                yield
-                    // All fibers must complete (success or failure), not hang
-                    assert(results.size == size))
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow-close", Absent))
+                            fibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        Abort.run[HttpException](c.sendWith(slowRoute, slowReq)(identity))
+                                    }
+                                )
+                            ))
+                            _ <- latch.release
+                            // Close immediately: fibers should complete (with errors), not hang
+                            _       <- c.closeNow
+                            results <- Kyo.foreach(fibers)(f => Abort.run[Throwable](f.get))
+                        yield
+                            // All fibers must complete (success or failure), not hang
+                            assert(results.size == size)
+                    }
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -2699,7 +2981,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "invalid URL returns ParseError".notNative in {
+        "invalid URL returns ParseError" in {
             HttpClient.withConfig(noTimeout) {
                 Abort.run(HttpClient.getText("not a valid url")).map { result =>
                     assert(result.isFailure)
@@ -2751,7 +3033,7 @@ class HttpClientTest extends BaseHttpTest:
 
     "config stacking" - {
 
-        "nested withConfig composes".notNative in {
+        "nested withConfig composes" in {
             val route    = HttpRoute.getRaw("stack").response(_.bodyText)
             var attempts = 0
             val ep = route.handler { _ =>
@@ -2775,7 +3057,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "withConfig transform preserves untouched fields".notNative in {
+        "withConfig transform preserves untouched fields" in {
             val base = HttpUrl(Present("http"), "localhost", 1234, "/", Absent)
             val config = noTimeout.copy(
                 baseUrl = Present(base),
@@ -2796,7 +3078,7 @@ class HttpClientTest extends BaseHttpTest:
 
     "pump pipeline" - {
 
-        "buffered GET response with large body".notNative in {
+        "buffered GET response with large body" in {
             val body100k = "A" * (100 * 1024) // 100KB
             val route    = HttpRoute.getRaw("pump-large-get").response(_.bodyText)
             val ep       = route.handler(_ => HttpResponse.ok(body100k))
@@ -2814,7 +3096,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "buffered POST with request body".notNative in {
+        "buffered POST with request body" in {
             val route = HttpRoute.postRaw("pump-echo")
                 .request(_.bodyJson[User])
                 .response(_.bodyJson[User])
@@ -2836,7 +3118,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "streaming response (chunked)".notNative in {
+        "streaming response (chunked)" in {
             val route = HttpRoute.getRaw("pump-stream").response(_.bodyStream)
             val ep = route.handler { _ =>
                 val chunks = Stream.init(Seq(
@@ -2867,7 +3149,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "connection pool reuse".notNative in {
+        "connection pool reuse" in {
             val route = HttpRoute.getRaw("pump-reuse").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("reused"))
             withServer(ep) { url =>
@@ -2896,7 +3178,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "error response decoding (4xx)".notNative in {
+        "error response decoding (4xx)" in {
             val route = HttpRoute.getRaw("pump-notfound").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.notFound.addField("body", "no such item"))
             withServer(ep) { url =>
@@ -2912,7 +3194,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "error response decoding (5xx)".notNative in {
+        "error response decoding (5xx)" in {
             val route = HttpRoute.getRaw("pump-error").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.serverError.addField("body", "internal failure"))
             withServer(ep) { url =>
@@ -2928,7 +3210,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "concurrent requests to same host".notNative in {
+        "concurrent requests to same host" in {
             val route = HttpRoute.getRaw("pump-parallel").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("parallel-ok"))
             withServer(ep) { url =>
@@ -2947,7 +3229,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "request with custom headers".notNative in {
+        "request with custom headers" in {
             val route = HttpRoute.getRaw("pump-headers")
                 .request(_.header[String]("X-Custom-In"))
                 .response(_.header[String]("X-Custom-Out").bodyText)
@@ -2971,7 +3253,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "response header parsing".notNative in {
+        "response header parsing" in {
             val route = HttpRoute.getRaw("pump-multi-header")
                 .response(_.header[String]("X-First").header[String]("X-Second").bodyText)
             val ep = route.handler { _ =>
@@ -3669,6 +3951,49 @@ class HttpClientTest extends BaseHttpTest:
     }
 
     "connectRaw" - {
+        // connectRaw serializes the caller's path and header block straight through sendDirect, the one client send that
+        // did not pass the header guard. A CRLF in a header value ends the header line early, so "X-Injected: 1" becomes a
+        // header the caller never set (request smuggling). The check must precede the connect: nothing may reach the wire.
+        "a CRLF-bearing header value fails with a typed error and sends nothing" - {
+            val route = HttpRoute.postRaw("raw-inject").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok.addField("body", "ok"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.connectRaw(
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/raw-inject",
+                            headers = Seq("X-Trace" -> "bar\r\nX-Injected: 1")
+                        )
+                    ).map {
+                        case Result.Failure(e: HttpInvalidFieldException) =>
+                            // The structured field names the header but not its value, which can hold a credential and is logged.
+                            assert(e.field == "the value of header 'X-Trace'", s"the failure must name the header, got: ${e.field}")
+                            assert(!e.field.contains("X-Injected"), "the failure must not carry the header value")
+                        case other =>
+                            fail(s"Expected HttpInvalidFieldException for a CRLF-bearing header value, got $other")
+                    }
+                }
+            }
+        }
+
+        // A CRLF in the path splits the request line itself, the same vector on the request target.
+        "a CRLF-bearing path fails with a typed error and sends nothing" - {
+            val route = HttpRoute.postRaw("raw-inject-path").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok.addField("body", "ok"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.connectRaw(url.copy(path = "/raw-inject-path\r\nX-Injected: 1"))
+                    ).map {
+                        case Result.Failure(e: HttpInvalidFieldException) =>
+                            assert(e.field == "the request path", s"the failure must name the request path, got: ${e.field}")
+                        case other =>
+                            fail(s"Expected HttpInvalidFieldException for a CRLF-bearing path, got $other")
+                    }
+                }
+            }
+        }
+
         "fails on non-2xx status" - {
             val route = HttpRoute.postRaw("raw-fail").request(_.bodyBinary).response(_.bodyText)
             val ep = route.handler { _ =>
@@ -3743,7 +4068,7 @@ class HttpClientTest extends BaseHttpTest:
                 val customVal = req.headers.get("X-Custom-Header").getOrElse("missing")
                 HttpResponse.ok.addField("body", customVal)
             }
-            "plain".notNative in {
+            "plain" in {
                 withServer(ep) { url =>
                     HttpClient.withConfig(noTimeout) {
                         // Use the low-level client to verify the header was sent
@@ -3778,7 +4103,7 @@ class HttpClientTest extends BaseHttpTest:
                 // Echo back the received body
                 HttpResponse.ok.addField("body", req.fields.body)
             }
-            "plain".notNative in {
+            "plain" in {
                 withServer(ep) { url =>
                     HttpClient.withConfig(noTimeout) {
                         val rawUrl = url.copy(path = "/raw-body")

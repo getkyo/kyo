@@ -608,7 +608,8 @@ object Chart:
         axisColor: Maybe[Style.Color] = Absent,
         gridColor: Maybe[Style.Color] = Absent,
         fontFamily: Maybe[String] = Absent,
-        fontSize: Maybe[Double] = Absent
+        fontSize: Maybe[Double] = Absent,
+        titleFontSize: Maybe[Double] = Absent
     ) derives CanEqual:
         def light: Theme = copy(isDark = false)
         def dark: Theme  = copy(isDark = true)
@@ -625,8 +626,16 @@ object Chart:
         /** Sets the font family for axis and tick labels. */
         def font(family: String): Theme = copy(fontFamily = Present(family))
 
-        /** Sets the font size (in pixels) for axis and tick labels. */
+        /** Sets the font size (in pixels) for tick labels and legend text, and the fallback for axis
+          * titles when `titleFontSize` is not set.
+          */
         def fontSize(px: Double): Theme = copy(fontSize = Present(px))
+
+        /** Sets the font size (in pixels) for axis titles, independent of the tick-label size. Dense
+          * dashboards read best with small tick labels and slightly larger axis titles; a single shared
+          * size forces one of the two to be wrong. Falls back to `fontSize` when unset.
+          */
+        def titleFontSize(px: Double): Theme = copy(titleFontSize = Present(px))
 
         /** Sets the categorical palette from a named [[Palette]]. */
         def palette(p: Palette): Theme = copy(palette = Present(Palette.colors(p)))

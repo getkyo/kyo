@@ -22,7 +22,7 @@ val api = caliban.graphQL(
     None
 )
 
-val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
+val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(api)
         s           <- Resolvers.run(interpreter, Resolvers.Config.default, caliban.ws.WebSocketHooks.empty[Any, caliban.CalibanError])
@@ -140,14 +140,14 @@ val api = caliban.graphQL(
     None
 )
 
-val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
+val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(api)
         server      <- Resolvers.run(interpreter, Resolvers.Config.default, WebSocketHooks.empty[Any, caliban.CalibanError])
     yield server
 ```
 
-> **Note:** `Resolvers.run` returns `HttpServer < (Async & Scope)`. The server is bound to the surrounding `Scope` and shuts down when it exits. Wrap the whole program in `Scope.run { ... }` (or use the kyo-http server-runner pattern) so the scope outlives every request you intend to handle.
+> **Note:** `Resolvers.run` returns `HttpServer < (Async & Scope & Abort[HttpBindException])`. The server is bound to the surrounding `Scope` and shuts down when it exits. Wrap the whole program in `Scope.run { ... }` (or use the kyo-http server-runner pattern) so the scope outlives every request you intend to handle.
 
 That is the complete server. The default `Config` serves on `/api/graphql`, enables GraphiQL at `/graphiql`, enables introspection, and rejects mutations over GET. Customize via `Resolvers.Config.default.<setter>(...)` (see "Server configuration" below).
 
@@ -289,7 +289,7 @@ val api = caliban.graphQL(
     None
 )
 
-val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
+val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(api)
         server <- Resolvers.run(
@@ -372,7 +372,7 @@ val filter = new HttpFilter.Passthrough[Nothing]:
     )(using Frame): HttpResponse[Out] < (S & Async & Abort[E | HttpResponse.Halt]) =
         next(request).map(_.setHeader("X-Custom", "test-value"))
 
-val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
+val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(caliban.graphQL(
             caliban.RootResolver(Query(
@@ -550,7 +550,7 @@ val hooks = WebSocketHooks.init[Any, caliban.CalibanError] { payload =>
             zio.ZIO.fail(caliban.CalibanError.ExecutionError("invalid token"))
 }
 
-val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
+val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(caliban.graphQL(
             caliban.RootResolver(Query(
@@ -647,14 +647,14 @@ val root = caliban.RootResolver(Query(
 ))
 
 // Default config: serves on /api/graphql with GraphiQL enabled.
-val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
+val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(caliban.graphQL(root, Nil, Nil, None))
         server      <- Resolvers.run(interpreter, Resolvers.Config.default, WebSocketHooks.empty[Any, caliban.CalibanError])
     yield server
 
 // Custom config: different path, GraphiQL off, introspection off.
-val custom: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =
+val custom: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(caliban.graphQL(root, Nil, Nil, None))
         server <- Resolvers.run(

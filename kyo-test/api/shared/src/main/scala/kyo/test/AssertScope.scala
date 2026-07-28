@@ -109,7 +109,7 @@ object AssertScope:
     private[kyo] val noAssertionDiagram: String =
         "leaf passed without evaluating any assertion\n\n" +
             "The leaf body ran to completion and produced no failures, but no assert, intercept, fail,\n" +
-            "assertEventually, typeCheck, assertSnapshot, or forAll call was reached on this run.\n\n" +
+            "assertEventually, typeCheck, assertSnapshot, assertSchemaSnapshot, assertGoldenSnapshot, or forAll call was reached on this run.\n\n" +
             "Fix: add a concrete assertion on the result (preferred), or if the intent is genuinely\n" +
             "'verify it runs without error', write `succeed` (or `succeed(\"why\")`) in the leaf body.\n\n" +
             "To disable this check run-wide: RunConfig.default.failOnNoAssertion(false).\n" +

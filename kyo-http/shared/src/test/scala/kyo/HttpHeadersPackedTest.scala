@@ -208,4 +208,35 @@ class HttpHeadersPackedTest extends BaseHttpTest:
         }
     }
 
+    "invalidField" - {
+
+        // Packed headers are written back as the raw octets they were parsed from. Both parsers reject CR, LF and NUL
+        // before a header reaches this form, so a packed value needs no per-write check and keeps its zero-allocation
+        // write path. Catches a predicate that decodes packed headers and tests them anyway, which would reject a
+        // request whose headers the serializer writes byte-for-byte and break plain proxying.
+        "reports nothing for a packed non-ASCII value the serializer writes as raw bytes" in {
+            val headers = HttpHeaders.fromPacked(buildPackedHeaders("X-Trace" -> "café"))
+            assert(headers.get("X-Trace") == Present("café"), "the packed value must decode to the peer's string")
+            assert(headers.invalidField == Absent)
+        }
+
+        // A modification decodes the packed bytes to Strings and the collection is written char-by-char from then on,
+        // so the check has to follow the representation the serializer will actually write, not the one it was handed.
+        // A peer's obs-text value stays legal across the conversion; only the write path changes.
+        "reports nothing for a non-ASCII value once a modification converts packed to chunk-backed" in {
+            val packed = HttpHeaders.fromPacked(buildPackedHeaders("X-Trace" -> "café"))
+            assert(packed.invalidField == Absent, "the packed form is writable")
+            val modified = packed.add("X-Request-Id", "abc123")
+            assert(modified.invalidField == Absent, "obs-text stays legal once the collection is chunk-backed")
+        }
+
+        // The conversion is what exposes a value the serializer must refuse. A packed CRLF-bearing value cannot arrive
+        // from either parser, but a test can build one, and `add` turns it into the chunk-backed form the check covers.
+        "reports a CRLF-bearing value once a modification converts packed to chunk-backed" in {
+            val packed   = HttpHeaders.fromPacked(buildPackedHeaders("X-Trace" -> "bar\r\nX-Admin: true"))
+            val modified = packed.add("X-Request-Id", "abc123")
+            assert(modified.invalidField == Present("the value of header 'X-Trace'"))
+        }
+    }
+
 end HttpHeadersPackedTest

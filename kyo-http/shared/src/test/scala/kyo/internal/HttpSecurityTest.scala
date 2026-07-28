@@ -10,6 +10,10 @@ import kyo.internal.util.*
   *
   * Tests that FAIL expose real vulnerabilities -- that is the desired outcome. These tests must NOT be weakened to pass.
   */
+/** Which upstream advisory sources have already been swept against kyo-http, and what each yielded, is recorded in
+  * kyo-http/security-sources.md. Read it before starting a new sweep: it records the sources that came back CLEAN as
+  * well as the ones that produced fixes, so the same list is not read twice.
+  */
 class HttpSecurityTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
@@ -76,6 +80,7 @@ class HttpSecurityTest extends kyo.BaseHttpTest:
                 case Result.Panic(_) =>
                     failed = true
             },
+            _ => failed = true,
             _ => failed = true
         )
 
@@ -97,7 +102,8 @@ class HttpSecurityTest extends kyo.BaseHttpTest:
                 case Result.Failure(_) => ()
                 case Result.Panic(_)   => ()
             },
-            _ => tooLarge = true
+            _ => tooLarge = true,
+            _ => ()
         )
         (completed, tooLarge)
     end decodeChunkedCapped

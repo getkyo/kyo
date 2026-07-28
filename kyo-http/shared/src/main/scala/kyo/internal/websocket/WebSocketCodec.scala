@@ -3,6 +3,7 @@ package kyo.internal.websocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import kyo.*
+import kyo.internal.Sha1
 import kyo.internal.transport.*
 import kyo.internal.util.*
 import scala.annotation.tailrec
@@ -20,8 +21,8 @@ import scala.annotation.tailrec
   * readFrame handles Ping/Pong control frames transparently (auto-pong, skip-pong) and fails with Abort[Closed] on Close frames. Fragmented
   * messages are not reassembled — the caller receives each fragment as a separate frame.
   *
-  * Server frames are unmasked (mask=false); client frames are masked (mask=true) per RFC 6455 §5.3. Sha1 is used for accept key computation
-  * (WebSocketCodec.computeAcceptKey) because java.security.MessageDigest is unavailable on Scala Native.
+  * Server frames are unmasked (mask=false); client frames are masked (mask=true) per RFC 6455 §5.3. The shared Sha1 implementation is used
+  * for accept key computation because java.security.MessageDigest is unavailable on Scala Native.
   */
 private[kyo] object WebSocketCodec:
 
@@ -60,7 +61,7 @@ private[kyo] object WebSocketCodec:
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
         Abort.recover[HttpException](_ => Abort.fail(new Closed("HttpWebSocket", summon[Frame]))) {
-            readRawFrameWith(src, maxFrameSize) { (opcode, payload, remaining) =>
+            readRawFrameWith(src, maxFrameSize, expectMasked = !mask) { (opcode, payload, remaining) =>
                 opcode match
                     case OpText   => f(HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
                     case OpBinary => f(HttpWebSocket.Payload.Binary(payload), remaining)
@@ -117,7 +118,10 @@ private[kyo] object WebSocketCodec:
                             case Present(offered) =>
                                 val clientProtocols = offered.split(',').map(_.trim)
                                 val serverSet       = config.subprotocols.toSet
-                                clientProtocols.find(serverSet.contains) match
+                                // The selected value is echoed onto a header line of this handshake, so it goes through the same rule every
+                                // other kyo-http response header follows: a subprotocol is a token (RFC 6455 section 4.1 defines it as one),
+                                // and a name that is not would let a recipient read this line as two.
+                                clientProtocols.find(p => serverSet.contains(p) && HttpHeaders.isToken(p)) match
                                     case Some(selected) =>
                                         discard(response.append("Sec-WebSocket-Protocol: ").append(selected).append("\r\n"))
                                     case None => ()
@@ -130,6 +134,49 @@ private[kyo] object WebSocketCodec:
 
     /** Client: send upgrade request, validate 101 response, pass remaining stream after headers to f. */
     def requestUpgradeWith[A, S](
+        conn: TransportStream,
+        host: String,
+        path: String,
+        headers: HttpHeaders,
+        config: HttpWebSocket.Config
+    )(
+        f: Stream[Span[Byte], Async] => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        unsendableField(path, host, headers) match
+            case Present(ex) => Abort.fail(ex)
+            case Absent =>
+                unsendableSubprotocol(config, headers) match
+                    case Present(ex) => Abort.fail(ex)
+                    case Absent      => writeUpgradeRequestWith(conn, host, path, headers, config)(f)
+
+    /** Names the first element of an upgrade handshake that cannot go on the wire, or `Absent` when all of them can.
+      *
+      * The handshake is its own header serializer: it appends the caller's headers to a request line and encodes the whole thing as UTF-8,
+      * so a CR or an LF in any of them ends a line early and injects a header the caller never set. The rules are the ones every kyo-http
+      * serializer follows: a name is a token, and no field or request-line element carries a control character. A non-ASCII header value is
+      * legal obs-text (RFC 9110 section 5.5) and is sent as UTF-8, which is what this handshake already did for every value.
+      */
+    private def unsendableField(path: String, host: String, headers: HttpHeaders)(using Frame): Maybe[HttpException] =
+        if !HttpHeaders.isControlFree(path) then Present(HttpInvalidFieldException("the request path"))
+        else if !HttpHeaders.isControlFree(host) then Present(HttpInvalidFieldException("the Host header"))
+        else headers.invalidField.map(HttpInvalidFieldException(_))
+
+    /** The failure for a configured subprotocol the client cannot advertise, or `Absent` when it advertises none or all are sendable.
+      *
+      * A subprotocol is a token (RFC 6455 section 4.1). The client writes `config.subprotocols` onto the Sec-WebSocket-Protocol request
+      * line, so a value that is not a token would let a recipient read that line as two, the same injection the server side already refuses
+      * when it echoes a selected subprotocol (`HttpHeaders.isToken`, `acceptUpgrade`). The client advertises its configured list only when the
+      * caller did not supply its own Sec-WebSocket-Protocol header, so that is the only case checked, to avoid rejecting a value that never
+      * reaches the wire. The failure names the field, not the value, which is untrusted and logged.
+      */
+    private def unsendableSubprotocol(config: HttpWebSocket.Config, headers: HttpHeaders)(using Frame): Maybe[HttpException] =
+        val advertisesConfigured = config.subprotocols.nonEmpty && headers.get("Sec-WebSocket-Protocol").isEmpty
+        if advertisesConfigured && !config.subprotocols.forall(p => HttpHeaders.isToken(p)) then
+            Present(HttpInvalidFieldException("a Sec-WebSocket-Protocol subprotocol"))
+        else Absent
+    end unsendableSubprotocol
+
+    private def writeUpgradeRequestWith[A, S](
         conn: TransportStream,
         host: String,
         path: String,
@@ -187,7 +234,7 @@ private[kyo] object WebSocketCodec:
                 }
             }
         }
-    end requestUpgradeWith
+    end writeUpgradeRequestWith
 
     // ── Pure functions (unit testable) ──────────────────────────
 
@@ -290,15 +337,27 @@ private[kyo] object WebSocketCodec:
     // ── Internal I/O ────────────────────────────────────────────
 
     /** Read a single raw frame (handles extended length + masking). */
-    private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int)(
+    private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int, expectMasked: Boolean)(
         inline f: (Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
     )(using inline frame: Frame): A < (S2 & Async & Abort[HttpException]) =
         ByteStream.readExactWith(src, 2) { (header, rem1) =>
             val fh          = parseFrameHeader(header(0), header(1))
             val payloadLen  = fh.payloadLen
             val extLenBytes = if payloadLen == 126 then 2 else if payloadLen == 127 then 8 else 0
+            val isControl   = fh.opcode >= OpClose
 
-            if extLenBytes == 0 then
+            if fh.masked != expectMasked then
+                // A server MUST receive masked frames and a client MUST receive unmasked ones (RFC 6455 section 5.1);
+                // the wrong masking direction is a protocol violation and (server side) a smuggling lever.
+                Abort.fail(HttpProtocolException("HttpWebSocket frame masking violates role (RFC 6455 section 5.1)"))
+            else if isControl && payloadLen > 125 then
+                // A control frame's payload MUST be <= 125 bytes, so its length is never the 126/127 extended form
+                // (RFC 6455 section 5.5).
+                Abort.fail(HttpProtocolException("HttpWebSocket control frame payload exceeds 125 bytes (RFC 6455 section 5.5)"))
+            else if isControl && !fh.fin then
+                // A control frame MUST NOT be fragmented (RFC 6455 section 5.5).
+                Abort.fail(HttpProtocolException("HttpWebSocket control frame is fragmented (RFC 6455 section 5.5)"))
+            else if extLenBytes == 0 then
                 val actualLen = payloadLen.toLong
                 if actualLen > maxFrameSize.toLong then
                     Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))

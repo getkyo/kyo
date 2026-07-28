@@ -4,7 +4,7 @@ import kyo.*
 
 /** The neutral, serializable op request, one case per Compiler op.
   *
-  * Derives [[Compiler.AsMessage]] (the upickle wire codec) so it is the aeron wire request for the
+  * Derives [[Compiler.AsMessage]] (the kyo-schema wire codec) so it is the aeron wire request for the
   * worker, carried by `Topic.publish`/`Topic.stream` inside the [[Envelope]] wrapper. It carries no
   * correlation id (the request/reply id correlation is the transport's, owned by `kyo.Exchange`),
   * so a request case is just the op payload. No lsp4j or scala.meta.pc type appears in any case

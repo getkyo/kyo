@@ -51,7 +51,13 @@ case class HttpResponse[Fields](
 
     def contentDisposition(filename: String, isInline: Boolean = false): HttpResponse[Fields] =
         val disposition = if isInline then "inline" else "attachment"
-        setHeader("Content-Disposition", s"""$disposition; filename="$filename"""")
+        // Escape the quoted-string metacharacters so a filename cannot break out of the quotes and inject a second
+        // disposition parameter (RFC 6266). A raw '"' would close the quoted-string and a filename like
+        // `x"; filename="evil` would smuggle a second filename an intermediary or browser may honour (CVE-2026-59921).
+        // Backslash is escaped first so an existing '\' is not conflated with the escapes added for '"'.
+        val escaped = filename.replace("\\", "\\\\").replace("\"", "\\\"")
+        setHeader("Content-Disposition", s"""$disposition; filename="$escaped"""")
+    end contentDisposition
 
 end HttpResponse
 

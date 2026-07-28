@@ -1431,6 +1431,68 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         }
     }
 
+    "titleFontSize sizes axis titles independently of tick labels and legend text" in {
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(2000), Region.EU)
+        )
+        val spec = Chart(rows)(
+            bar(x = _.month, y = _.revenue, color = _.region)
+        )
+            .yAxis(_.label("Revenue"))
+            .theme(_.fontSize(9).titleFontSize(12))
+            .legend(_.colorScale[Region](Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
+        (spec).lower.map { root =>
+            val yTick = frameTextsIn(root)
+                .find(t =>
+                    t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) &&
+                        t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End)
+                )
+                .getOrElse(fail("Expected a left Y tick label with DominantBaseline.Middle + TextAnchor.End"))
+            assert(
+                yTick.svgAttrs.fontSize.exists(_.toString.contains("9")),
+                s"Y tick label must keep font-size=9px but got ${yTick.svgAttrs.fontSize}"
+            )
+
+            val yTitle = frameTextsIn(root)
+                .find(t => t.svgAttrs.transform.toSeq.exists { case _: Svg.Transform.Rotate => true; case _ => false })
+                .getOrElse(fail("Expected a rotated axis-title text"))
+            assert(
+                yTitle.svgAttrs.fontSize.exists(_.toString.contains("12")),
+                s"Y axis title must carry titleFontSize=12px but got ${yTitle.svgAttrs.fontSize}"
+            )
+
+            val legendLabel = frameTextsIn(root)
+                .find(t =>
+                    t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) &&
+                        !t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
+                        !t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
+                        t.svgAttrs.transform.isEmpty
+                )
+                .getOrElse(fail("Expected a legend label text without End/Start anchor and without Rotate"))
+            assert(
+                legendLabel.svgAttrs.fontSize.exists(_.toString.contains("9")),
+                s"Legend label must keep font-size=9px but got ${legendLabel.svgAttrs.fontSize}"
+            )
+        }
+    }
+
+    "axis titles fall back to fontSize when titleFontSize is unset" in {
+        val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            .yAxis(_.label("Revenue"))
+            .theme(_.fontSize(14))
+        (spec).lower.map { root =>
+            val yTitle = frameTextsIn(root)
+                .find(t => t.svgAttrs.transform.toSeq.exists { case _: Svg.Transform.Rotate => true; case _ => false })
+                .getOrElse(fail("Expected a rotated axis-title text"))
+            assert(
+                yTitle.svgAttrs.fontSize.exists(_.toString.contains("14")),
+                s"Y axis title must fall back to fontSize=14px but got ${yTitle.svgAttrs.fontSize}"
+            )
+        }
+    }
+
     // ---- x tick-label chrome resolved through the shared helper ----
 
     "x tick rotateTicks/anchor/font are applied through the shared helper" in {

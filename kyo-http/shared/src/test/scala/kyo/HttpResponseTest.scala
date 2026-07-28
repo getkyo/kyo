@@ -20,6 +20,22 @@ class HttpResponseTest extends BaseHttpTest:
             assert(res.headers.get("X-Test") == Present("1"))
             assert(res.fields.key == "val")
         }
+
+        // Content-Disposition wraps the filename in a quoted-string, so a '"' in the filename closes it and everything
+        // after is read as additional disposition parameters. Netty CVE-2026-59921 built this header by concatenating
+        // the filename verbatim; a filename like `x"; filename="evil` injects a second filename an intermediary or
+        // browser may honor. The filename must be escaped or refused, not interpolated raw.
+        "contentDisposition does not let a filename inject a disposition parameter (CVE-2026-59921)" in {
+            val res = HttpResponse.ok("body").contentDisposition("report\"; filename=\"evil.exe")
+            res.headers.get("Content-Disposition") match
+                case Present(v) =>
+                    assert(
+                        !v.contains("filename=\"evil.exe"),
+                        s"a '\"' in the filename injected a second filename parameter: $v"
+                    )
+                case Absent => succeed("refusing the filename is acceptable")
+            end match
+        }
     }
 
     "factory methods" - {

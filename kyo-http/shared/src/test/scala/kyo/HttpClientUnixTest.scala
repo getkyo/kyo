@@ -199,7 +199,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "HTTP methods" - {
 
-        "GET returns text body".notNative in {
+        "GET returns text body" in {
             val route   = HttpRoute.getRaw("hello").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("hello world"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -210,7 +210,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "POST echoes request body".notNative in {
+        "POST echoes request body" in {
             val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler(req => HttpResponse.ok(req.fields.body))
             withUnixServer(handler) { (server, sockPath) =>
@@ -221,7 +221,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "PUT updates resource".notNative in {
+        "PUT updates resource" in {
             val route   = HttpRoute.putRaw("data").request(_.bodyText).response(_.bodyText)
             val handler = route.handler(req => HttpResponse.ok(s"updated: ${req.fields.body}"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -232,7 +232,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "DELETE returns confirmation".notNative in {
+        "DELETE returns confirmation" in {
             val route   = HttpRoute.deleteRaw("item").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("deleted"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -243,7 +243,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "PATCH returns partial update".notNative in {
+        "PATCH returns partial update" in {
             val route   = HttpRoute.patchRaw("item").request(_.bodyText).response(_.bodyText)
             val handler = route.handler(req => HttpResponse.ok(s"patched: ${req.fields.body}"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -254,7 +254,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "HEAD returns headers without body".notNative.ignore("intermittent hang under concurrent load; pending HTTP transport rewrite") in {
+        "HEAD returns headers without body" in {
             val route       = HttpRoute.getRaw("hello").response(_.bodyText)
             val handler     = route.handler(_ => HttpResponse.ok("hello world"))
             val headRoute   = HttpRoute.headRaw("hello").response(_.bodyText)
@@ -280,7 +280,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "OPTIONS returns allowed methods".notNative.ignore("intermittent hang under concurrent load; pending HTTP transport rewrite") in {
+        "OPTIONS returns allowed methods" in {
             val getRoute    = HttpRoute.getRaw("multi").response(_.bodyText)
             val postRoute   = HttpRoute.postRaw("multi").request(_.bodyText).response(_.bodyText)
             val getHandler  = getRoute.handler(_ => HttpResponse.ok("get"))
@@ -314,7 +314,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "JSON bodies" - {
 
-        "POST JSON and receive JSON".notNative in {
+        "POST JSON and receive JSON" in {
             val route = HttpRoute.postRaw("users")
                 .request(_.bodyJson[UserInput])
                 .response(_.bodyJson[UserOutput])
@@ -329,7 +329,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "GET JSON response".notNative in {
+        "GET JSON response" in {
             val route = HttpRoute.getRaw("user").response(_.bodyJson[UserOutput])
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField("body", UserOutput(1, "alice"))
@@ -342,7 +342,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "PUT JSON body".notNative in {
+        "PUT JSON body" in {
             val route = HttpRoute.putRaw("user")
                 .request(_.bodyJson[UserInput])
                 .response(_.bodyJson[UserOutput])
@@ -362,7 +362,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "headers and query params" - {
 
-        "custom request headers round-trip".notNative.ignore("intermittent hang under concurrent load; pending HTTP transport rewrite") in {
+        "custom request headers round-trip" in {
             val route = HttpRoute.getRaw("echo-header")
                 .request(_.header[String]("X-Custom"))
                 .response(_.header[String]("X-Echo").bodyText)
@@ -396,7 +396,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "query parameters in URL".notNative in {
+        "query parameters in URL" in {
             val route = HttpRoute.getRaw("search")
                 .request(_.query[String]("q"))
                 .response(_.bodyText)
@@ -411,7 +411,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "path captures".notNative in {
+        "path captures" in {
             val route = HttpRoute.getRaw("users" / Capture[Int]("id")).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(s"user ${req.fields.id}")
@@ -429,7 +429,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "large bodies" - {
 
-        "large text body (100KB)".notNative in {
+        "large text body (100KB)" in {
             val route = HttpRoute.postRaw("big")
                 .request(_.bodyText)
                 .response(_.bodyText)
@@ -450,7 +450,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "binary body round-trip".notNative in {
+        "binary body round-trip" in {
             val route = HttpRoute.postRaw("binary")
                 .request(_.bodyBinary)
                 .response(_.bodyBinary)
@@ -470,7 +470,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "error responses" - {
 
-        "404 for unknown path".notNative in {
+        "404 for unknown path" in {
             val route   = HttpRoute.getRaw("exists").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("found"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -489,7 +489,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "500 for handler error".notNative in {
+        "500 for handler error" in {
             val route = HttpRoute.getRaw("boom").response(_.bodyText)
             val handler = route.handler { _ =>
                 throw new RuntimeException("boom")
@@ -511,7 +511,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "handler returns custom error status".notNative in {
+        "handler returns custom error status" in {
             val route = HttpRoute.getRaw("bad").response(_.bodyText)
             val handler = route.handler { _ =>
                 HttpResponse.halt(HttpResponse(HttpStatus.BadRequest))
@@ -537,7 +537,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "keep-alive and multiple requests" - {
 
-        "multiple sequential requests on same socket".notNative in {
+        "multiple sequential requests on same socket" in {
             val route   = HttpRoute.getRaw("counter").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("data"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -564,7 +564,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "interleaved GET and POST".notNative in {
+        "interleaved GET and POST" in {
             val getRoute    = HttpRoute.getRaw("resource").response(_.bodyText)
             val postRoute   = HttpRoute.postRaw("resource").request(_.bodyText).response(_.bodyText)
             val getHandler  = getRoute.handler(_ => HttpResponse.ok("got"))
@@ -594,7 +594,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "concurrent requests" - {
 
-        "10 concurrent GET requests".notNative in {
+        "10 concurrent GET requests" in {
             val route   = HttpRoute.getRaw("data").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("hello"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -611,7 +611,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "10 concurrent POST requests".notNative in {
+        "10 concurrent POST requests" in {
             val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler(req => HttpResponse.ok(req.fields.body))
             withUnixServer(handler) { (server, sockPath) =>
@@ -628,7 +628,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "mixed concurrent methods".notNative in {
+        "mixed concurrent methods" in {
             val getRoute    = HttpRoute.getRaw("resource").response(_.bodyText)
             val postRoute   = HttpRoute.postRaw("resource").request(_.bodyText).response(_.bodyText)
             val getHandler  = getRoute.handler(_ => HttpResponse.ok("got"))
@@ -656,7 +656,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "connection reuse" - {
 
-        "sequential requests reuse connection".notNative in {
+        "sequential requests reuse connection" in {
             val route   = HttpRoute.getRaw("ping").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("pong"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -673,7 +673,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "rapid sequential requests".notNative in {
+        "rapid sequential requests" in {
             val route   = HttpRoute.getRaw("fast").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("ok"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -695,7 +695,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "client lifecycle" - {
 
-        "HttpClient.init with Unix socket".notNative in {
+        "HttpClient.init with Unix socket" in {
             val route   = HttpRoute.getRaw("pooled").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("pooled-ok"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -716,7 +716,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "multiple clients same server".notNative.ignore("intermittent hang under concurrent load; pending HTTP transport rewrite") in {
+        "multiple clients same server" in {
             val route   = HttpRoute.getRaw("shared").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("shared-ok"))
             withUnixServer(handler) { (server, sockPath) =>
@@ -761,7 +761,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "unix socket error messages" - {
 
-        "unix socket connect failure mentions socket path".notNative in {
+        "unix socket connect failure mentions socket path" in {
             val socketPath = "/tmp/kyo-nonexistent-test.sock"
             val url        = mkUrl(socketPath, "/test")
             Abort.run[HttpException] {
@@ -773,7 +773,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "unix socket connect failure does not say localhost".notNative in {
+        "unix socket connect failure does not say localhost" in {
             val socketPath = "/tmp/kyo-nonexistent-test.sock"
             val url        = mkUrl(socketPath, "/test")
             Abort.run[HttpException] {
@@ -785,7 +785,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "unix socket timeout mentions socket path".notNative in {
+        "unix socket timeout mentions socket path" in {
             val route = HttpRoute.getRaw("slow").response(_.bodyText)
             val handler = route.handler { _ =>
                 Async.sleep(10.seconds).andThen(HttpResponse.ok("done"))
@@ -809,7 +809,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "error recovery" - {
 
-        "server handles client disconnect".notNative in {
+        "server handles client disconnect" in {
             case class Payload(value: String) derives Schema
             val route   = HttpRoute.getRaw("resilient").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("alive"))

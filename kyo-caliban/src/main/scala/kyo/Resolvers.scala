@@ -70,13 +70,13 @@ object Resolvers:
       * @param Frame
       *   Implicit Frame parameter
       * @return
-      *   An HttpServer wrapped in Async and Scope effects
+      *   An HttpServer wrapped in Async and Scope effects, with a recoverable Abort[HttpBindException] when the address cannot be bound
       */
     def run(
         interpreter: GraphQLInterpreter[Any, CalibanError],
         config: Config = Config.default,
         webSocketHooks: WebSocketHooks[Any, CalibanError] = WebSocketHooks.empty[Any, CalibanError]
-    )(using Frame): HttpServer < (Async & Scope) =
+    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         val wrapped = interpreter.wrapExecutionWith(Configurator.locally(toExecutionConfig(config))(_))
         HttpServer.init(buildHandlers(wrapped, config, ZEnvironment.empty, webSocketHooks)*)
     end run
@@ -92,12 +92,12 @@ object Resolvers:
       * @param Frame
       *   Implicit Frame parameter
       * @return
-      *   An HttpServer wrapped in Async and Scope effects
+      *   An HttpServer wrapped in Async and Scope effects, with a recoverable Abort[HttpBindException] when the address cannot be bound
       */
     def run[R](
         interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
         runner: CalibanRunner[R]
-    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         run(interpreter, runner, Config.default, WebSocketHooks.empty[CalibanRunner[R], CalibanError])
 
     /** Runs a GraphQL server with a custom CalibanRunner and a custom configuration.
@@ -113,13 +113,13 @@ object Resolvers:
       * @param Frame
       *   Implicit Frame parameter
       * @return
-      *   An HttpServer wrapped in Async and Scope effects
+      *   An HttpServer wrapped in Async and Scope effects, with a recoverable Abort[HttpBindException] when the address cannot be bound
       */
     def run[R](
         interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
         runner: CalibanRunner[R],
         config: Config
-    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         run(interpreter, runner, config, WebSocketHooks.empty[CalibanRunner[R], CalibanError])
 
     /** Runs a GraphQL server with a custom CalibanRunner, configuration, and WebSocket hooks.
@@ -138,14 +138,14 @@ object Resolvers:
       * @param Frame
       *   Implicit Frame parameter
       * @return
-      *   An HttpServer wrapped in Async and Scope effects
+      *   An HttpServer wrapped in Async and Scope effects, with a recoverable Abort[HttpBindException] when the address cannot be bound
       */
     def run[R](
         interpreter: GraphQLInterpreter[CalibanRunner[R], CalibanError],
         runner: CalibanRunner[R],
         config: Config,
         webSocketHooks: WebSocketHooks[CalibanRunner[R], CalibanError]
-    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope) =
+    )(using zio.Tag[CalibanRunner[R]], Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         val wrapped = interpreter.wrapExecutionWith(Configurator.locally(toExecutionConfig(config))(_))
         HttpServer.init(buildHandlers(wrapped, config, ZEnvironment(runner), webSocketHooks)*)
     end run

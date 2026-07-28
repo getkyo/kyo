@@ -345,6 +345,18 @@ class QueueTest extends kyo.test.Test[Any]:
             assert(closed == Maybe(Seq(5)))
             assert(testUnsafe.close().isEmpty)
         }
+
+        "a hard close aborts a pending closeAwaitEmpty and returns the backlog" in withQueue { testUnsafe =>
+            discard(testUnsafe.offer(1))
+            discard(testUnsafe.offer(2))
+            val await   = testUnsafe.closeAwaitEmpty() // HalfOpen: queue non-empty, so the await parks
+            val backlog = testUnsafe.close()           // escalate HalfOpen -> FullyClosed: abort the await, return the backlog
+            val ar      = await.poll()
+            assert(backlog.contains(Seq(1, 2)), s"close must return the undrained backlog=$backlog")
+            assert(ar.exists { case Result.Success(b) => !b.eval; case _ => false }, s"the aborted await must settle false=$ar")
+            assert(testUnsafe.offer(3).isFailure, "offers fail Closed after the hard close")
+            assert(testUnsafe.poll().isFailure, "polls fail Closed after the hard close")
+        }
     }
 
     "concurrency" - {

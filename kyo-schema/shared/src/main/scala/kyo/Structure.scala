@@ -72,6 +72,92 @@ object Structure:
     inline def typedValue[A](value: A)(using schema: Schema[A], frame: Frame): Structure.TypedValue =
         Structure.TypedValue(schema.structure, schema.toStructureValue(value))
 
+    /** Checks a wire value against a declared wire Type, returning the first violation as a
+      * human-readable path-prefixed message, or Absent when the value conforms.
+      *
+      * This is the enforcement companion of shape-dynamic schemas (`Schema#withStructure` over the open
+      * `Schema[Structure.Value]`): their passthrough codec accepts any shape, so a consumer that
+      * promised a wire structure to a producer validates the produced value here. Deliberately
+      * conservative: it enforces what it models and accepts the rest, so a check can never reject a
+      * value the codec would faithfully round-trip for reasons the model does not capture.
+      *
+      *   - Product: the value must be a Record carrying every non-optional, non-defaulted field;
+      *     present fields are checked recursively. Extra record fields are accepted (readers ignore
+      *     them).
+      *   - Collection: the value must be a Sequence; elements are checked recursively.
+      *   - Primitive: gross kind mismatches are rejected (a boolean where a string was declared);
+      *     numeric kinds accept any numeric value shape, Char accepts its string form, Unit accepts
+      *     anything.
+      *   - Optional: Null conforms; anything else is checked against the inner type.
+      *   - Sum, Mapping, Open: accepted without inspection (not modeled).
+      */
+    private[kyo] def conform(value: Structure.Value, tpe: Structure.Type): Maybe[String] =
+        tpe match
+            case p: Type.Product =>
+                value match
+                    case Value.Record(fields) =>
+                        // Keep-first on duplicate keys, matching reader behavior.
+                        val byName = fields.foldLeft(Map.empty[String, Value]) { (m, kv) =>
+                            if m.contains(kv._1) then m else m + kv
+                        }
+                        p.fields.foldLeft(Maybe.empty[String]) { (acc, f) =>
+                            if acc.nonEmpty then acc
+                            else
+                                byName.get(f.name) match
+                                    case Some(v) =>
+                                        if f.optional && v == Value.Null then Absent
+                                        else conform(v, f.fieldType).map(m => s"${f.name}: $m")
+                                    case None =>
+                                        if f.optional || f.default.nonEmpty then Absent
+                                        else Present(s"missing required field '${f.name}'")
+                        }
+                    case other => Present(s"expected an object for '${p.name}', got ${valueKind(other)}")
+            case c: Type.Collection =>
+                value match
+                    case Value.Sequence(elements) =>
+                        elements.zipWithIndex.foldLeft(Maybe.empty[String]) { (acc, ei) =>
+                            if acc.nonEmpty then acc
+                            else conform(ei._1, c.elementType).map(m => s"[${ei._2}]: $m")
+                        }
+                    case other => Present(s"expected an array for '${c.name}', got ${valueKind(other)}")
+            case pr: Type.Primitive =>
+                (pr.kind, value) match
+                    case (PrimitiveKind.String, _: Value.Str)                                        => Absent
+                    case (PrimitiveKind.Boolean, _: Value.Bool)                                      => Absent
+                    case (PrimitiveKind.Unit, _)                                                     => Absent
+                    case (PrimitiveKind.Char, _: Value.Str) | (PrimitiveKind.Char, _: Value.Integer) => Absent
+                    case (
+                            PrimitiveKind.Int | PrimitiveKind.Long | PrimitiveKind.Short | PrimitiveKind.Byte |
+                            PrimitiveKind.Float | PrimitiveKind.Double | PrimitiveKind.BigInt | PrimitiveKind.BigDecimal,
+                            _: Value.Integer | _: Value.Decimal | _: Value.BigNum
+                        ) => Absent
+                    case (PrimitiveKind.Bytes, _: Value.Bytes)       => Absent
+                    case (PrimitiveKind.Instant, _: Value.Instant)   => Absent
+                    case (PrimitiveKind.Duration, _: Value.Duration) => Absent
+                    case (kind, other)                               => Present(s"expected $kind, got ${valueKind(other)}")
+            case o: Type.Optional =>
+                value match
+                    case Value.Null => Absent
+                    case v          => conform(v, o.innerType)
+            case _ => Absent
+    end conform
+
+    private def valueKind(value: Structure.Value): String =
+        value match
+            case _: Value.Record      => "an object"
+            case _: Value.VariantCase => "a variant"
+            case _: Value.Sequence    => "an array"
+            case _: Value.MapEntries  => "a map"
+            case _: Value.Str         => "a string"
+            case _: Value.Bool        => "a boolean"
+            case _: Value.Integer     => "a number"
+            case _: Value.Decimal     => "a number"
+            case _: Value.BigNum      => "a number"
+            case _: Value.Bytes       => "bytes"
+            case _: Value.Instant     => "an instant"
+            case _: Value.Duration    => "a duration"
+            case Value.Null           => "null"
+
     // --- Type hierarchy ---
 
     /** Structural type descriptor for a Scala type.

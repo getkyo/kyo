@@ -4,7 +4,7 @@ import kyo.*
 
 // RFC 3986: Uniform Resource Identifier (URI): Generic Syntax
 // Tests validate URI parsing behavior per the RFC specification.
-// Failing tests indicate RFC non-compliance — do NOT adjust assertions to match implementation.
+// Failing tests indicate RFC non-compliance, do NOT adjust assertions to match implementation.
 class Rfc3986Test extends BaseHttpTest:
     import HttpPath.*
 
@@ -20,6 +20,27 @@ class Rfc3986Test extends BaseHttpTest:
         )
     }
 
+    "Section 3.1 - non-HTTP scheme is rejected, not dispatched as HTTP (SSRF guard)" in {
+        // A non-HTTP `scheme://` from untrusted input must not silently downgrade to HTTP and reach the authority.
+        // Only http, https, and the urllib3 Unix-socket variants are accepted; everything else fails to parse.
+        def rejects(u: String): Boolean =
+            HttpUrl.parse(u) match
+                case Result.Failure(e: HttpUrlParseException) =>
+                    e.getMessage.contains("unsupported URL scheme") && e.getMessage.contains("allowed:")
+                case _ => false
+        assert(rejects("ftp://internal-service/x"), "ftp:// must be rejected")
+        assert(rejects("gopher://host/"), "gopher:// must be rejected")
+        assert(rejects("file:///etc/passwd"), "file:// must be rejected")
+    }
+
+    "Section 3.1 - supported schemes still parse (allowlist regression)" in {
+        assert(HttpUrl.parse("http://host/p").getOrThrow.scheme.contains("http"))
+        assert(HttpUrl.parse("https://host/p").getOrThrow.scheme.contains("https"))
+        // Unix-socket variants normalize the scheme to http/https and decode the socket path.
+        assert(HttpUrl.parse("http+unix://%2Ftmp%2Fs.sock/p").getOrThrow.unixSocket.nonEmpty)
+        assert(HttpUrl.parse("https+unix://%2Ftmp%2Fs.sock/p").getOrThrow.unixSocket.nonEmpty)
+    }
+
     // ==================== Section 3.2: Authority ====================
 
     "Section 3.2.1 - Userinfo stripped from URL" in {
@@ -27,6 +48,20 @@ class Rfc3986Test extends BaseHttpTest:
         // The parser should strip userinfo when present
         val url = HttpUrl.parse("http://user@host.com/path").getOrThrow
         assert(url.host == "host.com", s"Host should be 'host.com' after stripping userinfo, got: ${url.host}")
+    }
+
+    // An ambiguous authority must not resolve to a host different from what a browser would connect to. Jetty
+    // CVE-2024-6763 parsed a host from a malformed authority that disagreed with the client's, defeating an allow/deny
+    // list keyed on the URL. Whatever host kyo picks (for a client connection), it must not be the attacker's suffix
+    // "evil.example": either the leading authority, or a rejection. This is the SSRF / wrong-host property.
+    "Section 3.2.2 - an ambiguous authority does not resolve to an attacker suffix (CVE-2024-6763)" in {
+        HttpUrl.parse("http://browser.check#@evil.example/") match
+            case Result.Success(url) =>
+                assert(
+                    url.host != "evil.example",
+                    s"the host must not be the attacker suffix after a '#', got: ${url.host}"
+                )
+            case _ => succeed("rejecting the ambiguous authority is acceptable")
     }
 
     "Section 3.2.2 - Host case normalization" in {
@@ -112,9 +147,9 @@ class Rfc3986Test extends BaseHttpTest:
     // ==================== Section 3.4: Query ====================
 
     "Section 3.4 - URL with empty query string" in {
-        // "http://host/path?" — query component present but empty
+        // "http://host/path?", query component present but empty
         val url = HttpUrl.parse("http://host/path?").getOrThrow
-        // Empty query after ? — implementation may set rawQuery to Absent or Present("")
+        // Empty query after ?, implementation may set rawQuery to Absent or Present("")
         assert(url.path == "/path", s"Path should be '/path', got: '${url.path}'")
     }
 
@@ -196,13 +231,13 @@ class Rfc3986Test extends BaseHttpTest:
     }
 
     "Section 3.4 - Query param with = in value" in {
-        // "?key=a=b" — only first = splits key/value
+        // "?key=a=b", only first = splits key/value
         val url = HttpUrl.fromUri("/path?key=a=b")
         assert(url.query("key") == Present("a=b"), s"Value should be 'a=b', got: ${url.query("key")}")
     }
 
     "Section 3.4 - Query param with encoded ampersand" in {
-        // "?key=a%26b" — %26 is encoded &, should decode to "a&b"
+        // "?key=a%26b", %26 is encoded &, should decode to "a&b"
         val url = HttpUrl.fromUri("/path?key=a%26b")
         assert(url.query("key") == Present("a&b"), s"Encoded & should decode, got: ${url.query("key")}")
     }
@@ -237,7 +272,7 @@ class Rfc3986Test extends BaseHttpTest:
     }
 
     "Section 3.4 - Malformed percent-encoding falls back to raw" in {
-        // %GG is not valid hex — should fall back to raw value
+        // %GG is not valid hex, should fall back to raw value
         val url = HttpUrl.fromUri("/path?q=%GG")
         val v   = url.query("q")
         // Should either fail gracefully or return raw value
@@ -245,20 +280,20 @@ class Rfc3986Test extends BaseHttpTest:
     }
 
     "Section 3.4 - Incomplete percent-encoding" in {
-        // %A is incomplete — should fall back to raw value
+        // %A is incomplete, should fall back to raw value
         val url = HttpUrl.fromUri("/path?q=%A")
         val v   = url.query("q")
         assert(v.nonEmpty, s"Incomplete encoding should not crash, got: $v")
     }
 
     "Section 3.4 - Empty query string produces no params" in {
-        // "?" with nothing after — rawQuery may be Absent
+        // "?" with nothing after, rawQuery may be Absent
         val url = HttpUrl.fromUri("/path?")
         assert(url.query("anything") == Absent, s"Empty query should have no params")
     }
 
     "Section 3.4 - Multiple ? in URL" in {
-        // "?a=1?b=2" — second ? is part of the query value
+        // "?a=1?b=2", second ? is part of the query value
         val url = HttpUrl.fromUri("/path?a=1?b=2")
         // The entire query string is "a=1?b=2", so param "a" has value "1?b=2"
         // unless impl splits on second ? differently
@@ -268,7 +303,7 @@ class Rfc3986Test extends BaseHttpTest:
 
     // ==================== Percent-Encoding in Path (via routing) ====================
 
-    "Section 2.1 - Percent-encoded space in path".notNative in {
+    "Section 2.1 - Percent-encoded space in path" in {
         // RFC 3986 §2.1: "A percent-encoding mechanism is used to represent a data octet
         // in a component when that octet's corresponding character is outside the allowed set"
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
@@ -281,7 +316,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 2.1 - Percent-encoded UTF-8 in path".notNative in {
+    "Section 2.1 - Percent-encoded UTF-8 in path" in {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
@@ -293,7 +328,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 2.1 - Unencoded path passthrough".notNative in {
+    "Section 2.1 - Unencoded path passthrough" in {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
@@ -405,7 +440,7 @@ class Rfc3986Test extends BaseHttpTest:
 
     // ==================== Path routing (server, additional) ====================
 
-    "Section 3.3 - Multiple path captures".notNative in {
+    "Section 3.3 - Multiple path captures" in {
         val route = HttpRoute.getRaw("a" / Capture[String]("x") / "b" / Capture[String]("y")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(s"${req.fields.x}-${req.fields.y}"))
         withServer(ep) { port =>
@@ -415,7 +450,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.3 - Path capture with integer".notNative in {
+    "Section 3.3 - Path capture with integer" in {
         val route = HttpRoute.getRaw("items" / Capture[Int]("id")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(s"id=${req.fields.id}"))
         withServer(ep) { port =>
@@ -425,7 +460,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.3 - Static path matching exact".notNative in {
+    "Section 3.3 - Static path matching exact" in {
         val route = HttpRoute.getRaw("exact" / "path").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("matched"))
         withServer(ep) { port =>
@@ -436,7 +471,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 2.1 - Percent-encoded special chars in path capture".notNative in {
+    "Section 2.1 - Percent-encoded special chars in path capture" in {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
@@ -447,7 +482,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.3 - Path not found returns 404".notNative in {
+    "Section 3.3 - Path not found returns 404" in {
         val route = HttpRoute.getRaw("exists").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -457,7 +492,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.4 - Server receives query parameters".notNative in {
+    "Section 3.4 - Server receives query parameters" in {
         val route = HttpRoute.getRaw("search")
             .request(_.query[String]("q"))
             .response(_.bodyText)

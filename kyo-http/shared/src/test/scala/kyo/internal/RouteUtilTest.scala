@@ -12,6 +12,19 @@ class RouteUtilTest extends kyo.BaseHttpTest:
     case class User(name: String, age: Int) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec
 
+    final private class FixedUUIDGenerator(value: UUID) extends UUIDGenerator:
+        var calls = 0
+
+        def v4(using Frame): UUID < Sync =
+            Sync.defer {
+                calls += 1
+                value
+            }
+
+        def v7(using Frame): UUID < Sync =
+            Sync.defer(value)
+    end FixedUUIDGenerator
+
     // ==================== Route inspection ====================
 
     "isStreamingRequest" - {
@@ -59,6 +72,181 @@ class RouteUtilTest extends kyo.BaseHttpTest:
     // ==================== encodeRequest ====================
 
     "encodeRequest" - {
+        "buffered multipart boundary is generated inside the scoped effect" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val parts = Seq(
+                HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
+            )
+            val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
+                .addField("body", parts)
+
+            var callbackInvoked = false
+            var headers         = HttpHeaders.empty
+            var body            = Span.empty[Byte]
+            val encoding: Unit < Sync =
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        callbackInvoked = true
+                        headers = actualHeaders
+                        body =
+                            actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+
+            assert(!callbackInvoked)
+            assert(generator.calls == 0)
+
+            UUID.let(generator)(encoding).map { _ =>
+                val boundary = uuid.show
+                assert(callbackInvoked)
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
+                assert(new String(body.toArrayUnsafe, "UTF-8").contains(s"--$boundary\r\n"))
+            }
+        }
+
+        "streaming multipart boundary is generated inside the scoped effect" in {
+            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route     = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val parts: Stream[HttpRequest.Part, Async] = Stream.init(Seq(
+                HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
+            ))
+            val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
+                .addField("body", parts)
+
+            var callbackInvoked                 = false
+            var headers                         = HttpHeaders.empty
+            var body: Stream[Span[Byte], Async] = Stream.empty
+            val encoding: Unit < Sync =
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => fail("expected streaming"),
+                    onBuffered = (_, _, _) => fail("expected streaming"),
+                    onStreaming = (_, actualHeaders, actualBody) =>
+                        callbackInvoked = true
+                        headers = actualHeaders
+                        body = actualBody
+                )
+
+            assert(!callbackInvoked)
+            assert(generator.calls == 0)
+
+            UUID.let(generator)(encoding).map { _ =>
+                assert(callbackInvoked)
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=${uuid.show}"))
+                body.run.map { chunks =>
+                    val encoded = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8")).mkString
+                    assert(encoded.contains(s"--${uuid.show}\r\n"))
+                    assert(encoded.endsWith(s"--${uuid.show}--\r\n"))
+                }
+            }
+        }
+
+        "buffered multipart uses the boundary supplied in the request Content-Type" in {
+            val suppliedBoundary = "caller:request-boundary"
+            val generated =
+                UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(generated)
+            val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val request = HttpRequest
+                .postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
+                .setHeader("Content-Type", s"multipart/form-data; boundary=\"$suppliedBoundary\"")
+                .addField(
+                    "body",
+                    Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
+                )
+
+            var headers = HttpHeaders.empty
+            var body    = Span.empty[Byte]
+            UUID.let(generator) {
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        headers = actualHeaders
+                        body = actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+            }.map { _ =>
+                val encoded = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 0)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=\"$suppliedBoundary\""))
+                assert(encoded.contains(s"--$suppliedBoundary\r\n"))
+                assert(!encoded.contains(generated.show))
+            }
+        }
+
+        "buffered multipart replaces an invalid quoted request boundary without mismatching the body" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val request = HttpRequest
+                .postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
+                .setHeader("Content-Type", "multipart/form-data; boundary=\"abc;def\"")
+                .addField(
+                    "body",
+                    Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
+                )
+
+            var headers = HttpHeaders.empty
+            var body    = Span.empty[Byte]
+            UUID.let(generator) {
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        headers = actualHeaders
+                        body = actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+            }.map { _ =>
+                val boundary = uuid.show
+                val encoded  = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
+                assert(encoded.contains(s"--$boundary\r\n"))
+                assert(!encoded.contains("--abc"))
+            }
+        }
+
+        "buffered multipart replaces an unquoted request boundary containing a MIME tspecial" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val request = HttpRequest
+                .postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
+                .setHeader("Content-Type", "multipart/form-data; boundary=abc:def")
+                .addField(
+                    "body",
+                    Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
+                )
+
+            var headers = HttpHeaders.empty
+            var body    = Span.empty[Byte]
+            UUID.let(generator) {
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        headers = actualHeaders
+                        body = actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+            }.map { _ =>
+                val boundary = uuid.show
+                val encoded  = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
+                assert(encoded.contains(s"--$boundary\r\n"))
+                assert(!encoded.contains("--abc:def"))
+            }
+        }
+
         "empty body" in {
             val route   = HttpRoute.getRaw("users")
             val request = HttpRequest.getRaw(HttpUrl.parse("http://localhost/users").getOrThrow)
@@ -394,6 +582,219 @@ class RouteUtilTest extends kyo.BaseHttpTest:
     // ==================== encodeResponse ====================
 
     "encodeResponse" - {
+        "buffered multipart boundary is generated inside the scoped effect" in {
+            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
+            val base = HttpRoute.getRaw("download")
+            val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
+                base.method,
+                base.request,
+                HttpRoute.ResponseDef[MultipartOutput](
+                    fields = Chunk(HttpRoute.Field.Body("body", HttpRoute.ContentType.Multipart, ""))
+                )
+            )
+            val response = HttpResponse.ok.addField(
+                "body",
+                Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
+            )
+
+            var callbackInvoked = false
+            var headers         = HttpHeaders.empty
+            var body            = Span.empty[Byte]
+            val encoding: Unit < Sync =
+                RouteUtil.encodeResponse(route, response)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        callbackInvoked = true
+                        headers = actualHeaders
+                        body =
+                            actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+
+            assert(!callbackInvoked)
+            assert(generator.calls == 0)
+
+            UUID.let(generator)(encoding).map { _ =>
+                val boundary = uuid.show
+                val encoded  = new String(body.toArrayUnsafe, "UTF-8")
+                assert(callbackInvoked)
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
+                assert(encoded.contains(s"--$boundary\r\n"))
+                assert(encoded.endsWith(s"--$boundary--\r\n"))
+            }
+        }
+
+        "streaming multipart boundary is generated inside the scoped effect" in {
+            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            type MultipartOutput = "body" ~ Stream[HttpRequest.Part, Async]
+            val base = HttpRoute.getRaw("download")
+            val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
+                base.method,
+                base.request,
+                HttpRoute.ResponseDef[MultipartOutput](
+                    fields = Chunk(HttpRoute.Field.Body("body", HttpRoute.ContentType.MultipartStream, ""))
+                )
+            )
+            val parts = Stream.init[HttpRequest.Part, Async](Seq(
+                HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
+            ))
+            val response = HttpResponse.ok.addField("body", parts)
+
+            var callbackInvoked                 = false
+            var headers                         = HttpHeaders.empty
+            var body: Stream[Span[Byte], Async] = Stream.empty
+            val encoding: Unit < Sync =
+                RouteUtil.encodeResponse(route, response)(
+                    onEmpty = (_, _) => fail("expected streaming"),
+                    onBuffered = (_, _, _) => fail("expected streaming"),
+                    onStreaming = (_, actualHeaders, actualBody) =>
+                        callbackInvoked = true
+                        headers = actualHeaders
+                        body = actualBody
+                )
+
+            assert(!callbackInvoked)
+            assert(generator.calls == 0)
+
+            UUID.let(generator)(encoding).map { _ =>
+                val boundary = uuid.show
+                assert(callbackInvoked)
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
+                body.run.map { chunks =>
+                    val encoded = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8")).mkString
+                    assert(encoded.contains(s"--$boundary\r\n"))
+                    assert(encoded.endsWith(s"--$boundary--\r\n"))
+                }
+            }
+        }
+
+        "buffered multipart uses the boundary supplied in the response Content-Type" in {
+            val suppliedBoundary = "caller:response-boundary"
+            val generated =
+                UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator = new FixedUUIDGenerator(generated)
+            type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
+            val base = HttpRoute.getRaw("download")
+            val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
+                base.method,
+                base.request,
+                HttpRoute.ResponseDef[MultipartOutput](
+                    fields = Chunk(HttpRoute.Field.Body("body", HttpRoute.ContentType.Multipart, ""))
+                )
+            )
+            val response = HttpResponse.ok
+                .setHeader("Content-Type", s"multipart/form-data; boundary=\"$suppliedBoundary\"")
+                .addField(
+                    "body",
+                    Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
+                )
+
+            var headers = HttpHeaders.empty
+            var body    = Span.empty[Byte]
+            UUID.let(generator) {
+                RouteUtil.encodeResponse(route, response)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        headers = actualHeaders
+                        body = actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+            }.map { _ =>
+                val encoded = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 0)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=\"$suppliedBoundary\""))
+                assert(encoded.contains(s"--$suppliedBoundary\r\n"))
+                assert(!encoded.contains(generated.show))
+            }
+        }
+
+        "buffered multipart replaces an invalid quoted response boundary without mismatching the body" in {
+            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
+            val base = HttpRoute.getRaw("download")
+            val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
+                base.method,
+                base.request,
+                HttpRoute.ResponseDef[MultipartOutput](
+                    fields = Chunk(HttpRoute.Field.Body("body", HttpRoute.ContentType.Multipart, ""))
+                )
+            )
+            val response = HttpResponse.ok
+                .setHeader("Content-Type", "multipart/form-data; boundary=\"abc;def\"")
+                .addField(
+                    "body",
+                    Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
+                )
+
+            var headers = HttpHeaders.empty
+            var body    = Span.empty[Byte]
+            UUID.let(generator) {
+                RouteUtil.encodeResponse(route, response)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        headers = actualHeaders
+                        body = actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+            }.map { _ =>
+                val boundary = uuid.show
+                val encoded  = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
+                assert(encoded.contains(s"--$boundary\r\n"))
+                assert(!encoded.contains("--abc"))
+            }
+        }
+
+        "buffered multipart replaces an unquoted response boundary containing whitespace" in {
+            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
+            val base = HttpRoute.getRaw("download")
+            val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
+                base.method,
+                base.request,
+                HttpRoute.ResponseDef[MultipartOutput](
+                    fields = Chunk(HttpRoute.Field.Body("body", HttpRoute.ContentType.Multipart, ""))
+                )
+            )
+            val response = HttpResponse.ok
+                .setHeader("Content-Type", "multipart/form-data; boundary=abc def")
+                .addField(
+                    "body",
+                    Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
+                )
+
+            var headers = HttpHeaders.empty
+            var body    = Span.empty[Byte]
+            UUID.let(generator) {
+                RouteUtil.encodeResponse(route, response)(
+                    onEmpty = (_, _) => fail("expected buffered"),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        headers = actualHeaders
+                        body = actualBody
+                    ,
+                    onStreaming = (_, _, _) => fail("expected buffered")
+                )
+            }.map { _ =>
+                val boundary = uuid.show
+                val encoded  = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 1)
+                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
+                assert(encoded.contains(s"--$boundary\r\n"))
+                assert(!encoded.contains("--abc def"))
+            }
+        }
+
         "json body" in {
             val route    = HttpRoute.getRaw("users").response(_.bodyJson[User])
             val response = HttpResponse.ok.addField("body", User("Bob", 25))
@@ -1191,6 +1592,100 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 case p: Result.Panic     => throw p.exception
             end match
         }
+
+        "decodeBufferedRequest accepts a quoted case-insensitive boundary after another parameter" in {
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val body =
+                "--abc:def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc:def--\r\n"
+            val bytes = Span.fromUnsafe(body.getBytes("UTF-8"))
+            val headers =
+                HttpHeaders.empty.add("Content-Type", "multipart/form-data; charset=utf-8; Boundary=\"abc:def\"")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                case Result.Success(request) =>
+                    val parts = request.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]]
+                    assert(parts.size == 1)
+                    assert(parts.head.name == "field")
+                    assert(new String(parts.head.data.toArrayUnsafe, "UTF-8") == "value")
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "decodeBufferedRequest rejects a quoted boundary containing a parameter separator" in {
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val body =
+                "--abc\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc--\r\n"
+            val bytes = Span.fromUnsafe(body.getBytes("UTF-8"))
+            val headers =
+                HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=\"abc;def\"")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                case Result.Failure(_: HttpMissingBoundaryException) => succeed
+                case other => fail(s"expected an invalid quoted boundary to fail with HttpMissingBoundaryException, got $other")
+            end match
+        }
+
+        "decodeBufferedRequest rejects an unquoted boundary containing a MIME tspecial" in {
+            val route   = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val body    = "--abc:def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc:def--\r\n"
+            val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc:def")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                case Result.Failure(_: HttpMissingBoundaryException) => succeed
+                case other => fail(s"expected an unquoted MIME tspecial to fail with HttpMissingBoundaryException, got $other")
+            end match
+        }
+    }
+
+    "multipart streaming decoding" - {
+        "decodeStreamingRequest accepts a quoted case-insensitive boundary after another parameter" in {
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val body =
+                "--abc:def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc:def--\r\n"
+            val stream = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+            val headers =
+                HttpHeaders.empty.add("Content-Type", "multipart/form-data; charset=utf-8; Boundary=\"abc:def\"")
+
+            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream) match
+                case Result.Success(request) =>
+                    request.fields.body.run.map { parts =>
+                        assert(parts.size == 1)
+                        assert(parts.head.name == "field")
+                        assert(new String(parts.head.data.toArrayUnsafe, "UTF-8") == "value")
+                    }
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "decodeStreamingRequest rejects a quoted boundary with invalid trailing whitespace" in {
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val body =
+                "--abc\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc--\r\n"
+            val stream = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+            val headers =
+                HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=\"abc \"")
+
+            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream) match
+                case Result.Failure(_: HttpMissingBoundaryException) => succeed
+                case other => fail(s"expected an invalid quoted boundary to fail with HttpMissingBoundaryException, got $other")
+            end match
+        }
+
+        "decodeStreamingRequest rejects an unquoted boundary containing whitespace" in {
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val body =
+                "--abc def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc def--\r\n"
+            val stream  = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc def")
+
+            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream) match
+                case Result.Failure(_: HttpMissingBoundaryException) => succeed
+                case other => fail(s"expected unquoted whitespace to fail with HttpMissingBoundaryException, got $other")
+            end match
+        }
     }
 
     // ==================== NDJSON line splitting ====================
@@ -1274,13 +1769,14 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 onEmpty = (_, _) => fail("expected streaming"),
                 onBuffered = (_, _, _) => fail("expected streaming"),
                 onStreaming = (_, _, s) => stream = s
-            )
-            stream.run.map { chunks =>
-                val all = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8")).mkString
-                // Must end with closing boundary
-                assert(all.contains("--"), "should contain boundary markers")
-                val lastBoundaryIdx = all.lastIndexOf("--")
-                assert(all.substring(lastBoundaryIdx - 2).contains("--\r\n"), "should end with closing boundary --boundary--")
+            ).map { _ =>
+                stream.run.map { chunks =>
+                    val all = chunks.toSeq.map(span => new String(span.toArrayUnsafe, "UTF-8")).mkString
+                    // Must end with closing boundary
+                    assert(all.contains("--"), "should contain boundary markers")
+                    val lastBoundaryIdx = all.lastIndexOf("--")
+                    assert(all.substring(lastBoundaryIdx - 2).contains("--\r\n"), "should end with closing boundary --boundary--")
+                }
             }
         }
     }

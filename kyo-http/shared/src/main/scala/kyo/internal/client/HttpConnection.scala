@@ -7,8 +7,8 @@ import kyo.internal.http1.*
   * Declared top-level to avoid path-dependent types that would arise from a nested class inside HttpClientBackend. Held by the
   * ConnectionPool and passed to HttpClientBackend methods for send/close/isAlive operations.
   */
-final private[kyo] class HttpConnection[Handle](
-    val transport: kyo.internal.transport.Connection[Handle],
+final private[kyo] class HttpConnection(
+    val transport: kyo.net.Connection,
     val http1: Http1ClientConnection,
     val targetHost: String,
     val targetPort: Int,

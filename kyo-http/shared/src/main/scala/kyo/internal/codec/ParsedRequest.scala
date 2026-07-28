@@ -32,6 +32,47 @@ private[kyo] object ParsedRequest:
     /** Empty sentinel used as initial value before a request is parsed. */
     val empty: ParsedRequest = Span.empty[Byte]
 
+    /** Decodes percent-escapes in a path segment, total and never throwing.
+      *
+      * Path rules, not query rules: '+' is an ordinary character here (RFC 3986 section 3.3), and a malformed escape is passed through
+      * literally rather than raised, since this sits on a dispatch path with no exception handler. Decoding is byte-wise and the result is
+      * read back as UTF-8, so a multi-byte character split across several escapes reassembles correctly.
+      */
+    private[codec] def decodePathEscapes(raw: String): String =
+        val src = raw.getBytes(StandardCharsets.UTF_8)
+        val out = new Array[Byte](src.length)
+        @tailrec def loop(i: Int, j: Int): Int =
+            if i >= src.length then j
+            else
+                val b = src(i) & 0xff
+                if b == '%' && i + 2 < src.length then
+                    val hi = hexDigit(src(i + 1))
+                    val lo = hexDigit(src(i + 2))
+                    if hi >= 0 && lo >= 0 then
+                        out(j) = ((hi << 4) | lo).toByte
+                        loop(i + 3, j + 1)
+                    else
+                        out(j) = b.toByte
+                        loop(i + 1, j + 1)
+                    end if
+                else
+                    out(j) = b.toByte
+                    loop(i + 1, j + 1)
+                end if
+        val len = loop(0, 0)
+        new String(out, 0, len, StandardCharsets.UTF_8)
+    end decodePathEscapes
+
+    /** Numeric value of a hex digit byte, or -1 when it is not one. */
+    private def hexDigit(b: Byte): Int =
+        val c = b & 0xff
+        if c >= '0' && c <= '9' then c - '0'
+        else if c >= 'a' && c <= 'f' then c - 'a' + 10
+        else if c >= 'A' && c <= 'F' then c - 'A' + 10
+        else -1
+        end if
+    end hexDigit
+
     /** Pre-encoded route segment for zero-alloc matching. */
     opaque type Segment = Array[Byte]
 
@@ -188,14 +229,32 @@ private[kyo] object ParsedRequest:
             end if
         end pathSegmentAsString
 
-        /** Returns path segment `i` as a URL-decoded String. */
+        /** Returns path segment `i` with its percent-escapes decoded.
+          *
+          * Decoding is done here rather than by `java.net.URLDecoder` for three reasons, each of which has bitten this path: URLDecoder
+          * throws on a malformed escape, and this runs inside request dispatch where nothing catches it; it decodes '+' to a space, which is
+          * the query rule (RFC 3986 section 3.4) and not the path rule, where '+' is an ordinary character; and applying it only when a '%'
+          * is present, as this did, made even that inconsistent, so "a+b" and "a+b%20c" disagreed about what '+' meant.
+          *
+          * A malformed escape is emitted literally rather than raised. That is a fallback, not the contract: `Http1Parser` refuses such a
+          * request before routing, so a segment reaching this method has already been validated. It matters only for a segment built
+          * directly, where producing an odd string beats throwing from a total accessor.
+          */
         def pathSegmentAsStringDecoded(i: Int): String =
             val raw = pathSegmentAsString(i)
             if raw.indexOf('%') < 0 then raw
-            else java.net.URLDecoder.decode(raw, "UTF-8")
+            else ParsedRequest.decodePathEscapes(raw)
         end pathSegmentAsStringDecoded
 
-        /** Returns all remaining path segments from index `fromSegment` onward, joined with '/' and URL-decoded. Used for rest captures. */
+        /** Returns all remaining path segments from `fromSegment` onward, decoded and joined with '/'. Used for rest captures.
+          *
+          * The result is a faithful decode: what the client addressed, with escapes resolved. It is NOT a sanitized path. A capture value
+          * may contain a path separator, by design and on both capture kinds: the client percent-encodes a named capture (so a value of
+          * "hello/world" round-trips through "%2F") and appends a rest capture raw. A handler that resolves a capture against a directory
+          * must therefore validate it first, exactly as it would any other request-supplied string.
+          *
+          * Dot segments are already resolved by the parser, so no "." or ".." segment reaches here.
+          */
         def restPathAsString(fromSegment: Int): String =
             val segCount = readShort(self, 14)
             if fromSegment < 0 || fromSegment >= segCount then ""

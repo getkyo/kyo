@@ -4,7 +4,7 @@ import kyo.*
 
 /** Configuration for an [[kyo.HttpClient]], controlling timeouts, retries, redirects, client filters, and base URL resolution.
   *
-  * Applied via `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`. The function overload composes with the current config — nested
+  * Applied via `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`. The function overload composes with the current config, nested
   * `withConfig` calls stack rather than replace each other, so each layer only overrides the fields it changes. To discard the current
   * config entirely, use `HttpClient.withConfig(newConfig) { ... }`.
   *
@@ -17,7 +17,7 @@ import kyo.*
   * retries from running. Retries do not apply to WebSocket or streaming connections.
   *
   * @param baseUrl
-  *   Prefix for path-only request URLs. Absent by default — all URLs must be absolute. When set, requests to `/path` resolve to
+  *   Prefix for path-only request URLs. Absent by default, all URLs must be absolute. When set, requests to `/path` resolve to
   *   `baseUrl + /path`. Requests with a scheme (e.g. `https://...`) ignore this field. Also applied to WebSocket connections.
   * @param timeout
   *   Maximum duration for the entire request lifecycle including retries. Defaults to 5 seconds. Set to `Duration.Infinity` to disable.
@@ -36,11 +36,12 @@ import kyo.*
   * @param retryOn
   *   Predicate that determines which response status codes trigger a retry. Defaults to `_.isServerError` (5xx). Only evaluated when
   *   `retrySchedule` is set.
-  * @param transportConfig
-  *   Low-level I/O tuning: read buffer size, channel capacity, I/O pool size. See [[HttpTransportConfig]].
   * @param tls
   *   TLS settings applied to HTTPS connections made by this client. See [[HttpTlsConfig]]. Per-request TLS overrides can be set via
   *   `HttpClientConfig` on [[HttpClient.init]].
+  * @param transportConfig
+  *   Transport-level tuning applied to connections this client opens: the per-connection buffer sizes, the parser's header cap, and the TLS
+  *   handshake deadline. The TCP connect deadline is not there, it is this config's own `connectTimeout`. See [[HttpTransportConfig]].
   * @param maxResponseLength
   *   Hard cap, in bytes, on a BUFFERED response body the client accumulates in memory. A server (malicious or buggy) that streams an
   *   unbounded chunked or connection-close-framed body, or declares an enormous `Content-Length`, would otherwise grow the client's buffer
@@ -56,8 +57,6 @@ import kyo.*
   *
   * @see
   *   [[kyo.HttpClient.withConfig]] Applies this config to a block of code
-  * @see
-  *   [[kyo.HttpTransportConfig]] Low-level I/O buffer and pool size tuning
   * @see
   *   [[kyo.HttpTlsConfig]] TLS certificate validation settings
   * @see

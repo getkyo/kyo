@@ -54,7 +54,8 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
             checkSockets = false,
             idleBudgetNanos = 200_000_000L,
             settleNanos = 20_000_000L,
-            pollNanos = 5_000_000L
+            pollNanos = 5_000_000L,
+            fdDrainBudgetNanos = 200_000_000L
         )
     end detectFiberReport
 
@@ -98,6 +99,41 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = true, checkFileDescriptors = false).toSet == Set("socket:[99]"))
         // both off: nothing reported
         assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = false, checkFileDescriptors = false).isEmpty)
+    }
+
+    test("awaitFdDrain drops a descriptor that closes within the budget") {
+        // leaksNow reports the socket on the first two samples, then empty: an async deferred close that completes mid-window.
+        var n = 0
+        val out = LeakCheck.awaitFdDrain(
+            () =>
+                val r = if n < 2 then Chunk("socket:[42]") else Chunk.empty
+                n += 1
+                r
+            ,
+            budgetNanos = 1_000_000_000L,
+            settleNanos = 1_000_000L
+        )
+        assert(out.isEmpty, s"a descriptor that closed within the drain budget must not be reported, got $out")
+    }
+
+    test("awaitFdDrain reports a descriptor that never closes within the budget") {
+        // leaksNow always reports the socket: a genuine leak survives every sample through the budget and is returned.
+        val out = LeakCheck.awaitFdDrain(() => Chunk("socket:[99]"), budgetNanos = 50_000_000L, settleNanos = 1_000_000L)
+        assert(out.toSet == Set("socket:[99]"), s"a never-closing descriptor must be reported, got $out")
+    }
+
+    test("awaitFdDrain returns immediately and does not park on an empty first sample") {
+        // A clean run: the first sample is empty, so the loop never runs (zero cost).
+        var calls = 0
+        val out = LeakCheck.awaitFdDrain(
+            () =>
+                calls += 1
+                Chunk.empty
+            ,
+            budgetNanos = 10_000_000_000L,
+            settleNanos = 1_000_000_000L
+        )
+        assert(out.isEmpty && calls == 1, s"a clean run must sample once and not park, got calls=$calls out=$out")
     }
 
     test("openFdTargets enumerates real descriptors and the diff clears on close (Linux only)") {
@@ -315,9 +351,12 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // appears only in the JVM-stack portion suppresses the finding; a pattern in the kyo-trace portion
         // suppresses it too. Driven via the pure match logic because constructing a real NioIoDriver-backed
         // busy worker in a unit test is heavyweight.
+        // The frame a process-lifetime driver actually emits: the marker rides the CYCLE method name, and it is lower-camel, so a frame
+        // naming the ProcessSharedTransport CLASS does not contain the token. This used to pass on the "NioIoDriver" pattern the allowlist
+        // no longer carries, which is exactly the over-broad excuse that narrowing removed.
         val jvmStackPortion =
-            "    at kyo.net.internal.ProcessSharedTransport$$anon$1.pollLoop(ProcessSharedTransport.scala:42)\n" +
-                "    at kyo.http.NioIoDriver.run(NioIoDriver.scala:99)"
+            "    at kyo.net.internal.posix.PollerIoDriver.processSharedTransportCycle(PollerIoDriver.scala:480)\n" +
+                "    at kyo.net.internal.posix.PollerIoDriver$$anon$1.run(PollerIoDriver.scala:478)"
         val matchTextJvmOnly = "" + "\n" + jvmStackPortion
         assert(
             LeakCheck.defaultAllowlist.exists(matchTextJvmOnly.contains),
@@ -327,6 +366,35 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(
             LeakCheck.defaultAllowlist.exists(matchTextKyoOnly.contains),
             s"a default pattern in the kyo-trace portion must suppress; match text was:\n$matchTextKyoOnly"
+        )
+    }
+
+    test("the default allowlist excuses only a process-lifetime driver cycle, and still reports an owned one") {
+        // Both directions of the narrowed allowlist. It used to carry "NioIoDriver", which excused EVERY carrier of that driver, including a
+        // genuinely leaked one from a driver a test built and never closed. It now carries only the process-lifetime marker, so the two frames
+        // must be treated differently, and a regression that re-broadened it would be invisible without the negative direction below.
+        //
+        // Driven through the pure match logic for the same reason the sibling leaf above is: standing up a real driver-backed busy worker in a
+        // unit test is heavyweight, and the predicate is what the runner actually applies.
+        val processLifetimeFrame =
+            "    at kyo.net.internal.posix.PollerIoDriver.processSharedTransportCycle(PollerIoDriver.scala:480)"
+        assert(
+            LeakCheck.defaultAllowlist.exists(processLifetimeFrame.contains),
+            s"a process-lifetime driver cycle is parked by design and must be excused; frame was:\n$processLifetimeFrame"
+        )
+
+        // The negative direction: an owned driver's cycle carries the plain frame, and a leaked one MUST be reported.
+        val ownedDriverFrame =
+            "    at kyo.net.internal.posix.PollerIoDriver.runCycle(PollerIoDriver.scala:538)\n" +
+                "    at kyo.net.internal.posix.PollerIoDriver$$anon$1.run(PollerIoDriver.scala:478)"
+        assert(
+            !LeakCheck.defaultAllowlist.exists(ownedDriverFrame.contains),
+            s"an owned driver's cycle must NOT be excused, or a driver a test never closed leaks silently; frame was:\n$ownedDriverFrame"
+        )
+        val ownedNioFrame = "    at kyo.net.internal.NioIoDriver.runCycle(NioIoDriver.scala:900)"
+        assert(
+            !LeakCheck.defaultAllowlist.exists(ownedNioFrame.contains),
+            s"the allowlist must not excuse a driver by NAME, only by the process-lifetime marker; frame was:\n$ownedNioFrame"
         )
     }
 

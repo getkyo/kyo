@@ -325,7 +325,7 @@ private[kyo] object ChartAxes:
                 val labelElem: Svg.SvgElement =
                     if isRight then
                         val cx = layout.svgW - AxisLabelInset
-                        withFont(
+                        withTitleFont(
                             theme,
                             Svg.text
                                 .x(cx)
@@ -337,7 +337,7 @@ private[kyo] object ChartAxes:
                         ).apply(lbl)
                     else
                         val cx = AxisLabelInset
-                        withFont(
+                        withTitleFont(
                             theme,
                             Svg.text
                                 .x(cx)
@@ -373,6 +373,16 @@ private[kyo] object ChartAxes:
     private[kyo] def withFont(theme: Theme, t: Svg.Text): Svg.Text =
         val t1 = theme.fontFamily.fold(t)(f => t.fontFamily(f))
         theme.fontSize.fold(t1)(px => t1.fontSize(Svg.SvgLength.Px(px)))
+
+    /** Apply theme font family and the axis-title font size to an Svg.Text element.
+      *
+      * Axis titles size from `theme.titleFontSize`, falling back to `theme.fontSize`, so a dense
+      * dashboard can pair small tick labels with readable titles. A no-op (element unchanged) when
+      * the theme sets no font field, matching `withFont`.
+      */
+    private[kyo] def withTitleFont(theme: Theme, t: Svg.Text): Svg.Text =
+        val t1 = theme.fontFamily.fold(t)(f => t.fontFamily(f))
+        theme.titleFontSize.orElse(theme.fontSize).fold(t1)(px => t1.fontSize(Svg.SvgLength.Px(px)))
 
     /** Apply theme font, configured anchor, and configured rotation to a tick-label text element.
       *
@@ -474,7 +484,7 @@ private[kyo] object ChartAxes:
         cfg.axisLabel match
             case Present(lbl) =>
                 val labelElem: Svg.SvgElement =
-                    withFont(
+                    withTitleFont(
                         theme,
                         Svg.text
                             .x(layout.plotX + layout.plotW / 2.0)
