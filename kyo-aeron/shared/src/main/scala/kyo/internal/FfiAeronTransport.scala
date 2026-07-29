@@ -120,6 +120,15 @@ final private[kyo] class FfiAeronTransport(
         //   -1   -> poll error.
         //   -2   -> message exceeds the 16 MiB protocol ceiling (undeliverable).
         //   < -2 -> message retained in the shim slot; -len is the required dst capacity.
+        // The shim guards the handle after a close, but the receive buffer is this side's to own: it is
+        // released by closeSubscription, so polling on regardless would hand the shim freed memory. The
+        // JVM's Panama backend rejects that outright ("Already closed") while Native and JS read the
+        // freed region, which is the use-after-free this guard exists to make impossible everywhere.
+        if sub.isClosed then Absent
+        else pollOpen(sub)
+    end pollOne
+
+    private def pollOpen(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]] =
         val len = bindings.subscriptionPoll(sub.handle, sub.receive, sub.receiveCap)
         if len > 0 then Maybe(Buffer.copyToArray[Byte](sub.receive, 0, len.toInt))
         else if len >= -2 then Absent // 0 (no message), -1 (error), or -2 (ceiling overflow)
@@ -130,7 +139,7 @@ final private[kyo] class FfiAeronTransport(
             if copied > 0 then Maybe(Buffer.copyToArray[Byte](sub.receive, 0, copied.toInt))
             else Absent
         end if
-    end pollOne
+    end pollOpen
 
     def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit =
         bindings.subscriptionClose(sub.handle)
@@ -172,7 +181,18 @@ private[kyo] object FfiAeronTransport:
       * state, so the mutable `receive` buffer is confined to one caller and needs no
       * synchronization. `closeSubscription` releases it via [[close]].
       */
-    final private[kyo] class SubscriptionState private (val handle: Ffi.Handle[AeronSubscription], private var buffer: Buffer[Byte]):
+    final private[kyo] class SubscriptionState private (val handle: Ffi.Handle[AeronSubscription], private var buffer: Buffer[Byte])(
+        using AllowUnsafe
+    ):
+        /** Set by [[close]] before the receive buffer is released, so a poll that races or follows
+          * the close reports "no fragment" instead of handing the shim freed memory. Atomic because
+          * the closing fiber and the polling one need not share a carrier: the single-poller contract
+          * orders polls against each other, not against a close.
+          */
+        private val closedFlag = AtomicBoolean.Unsafe.init(false)
+
+        def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
+
         def receive: Buffer[Byte] = buffer
         def receiveCap: Int       = buffer.size
 
@@ -185,9 +205,14 @@ private[kyo] object FfiAeronTransport:
                 buffer.close()
                 buffer = Buffer.alloc[Byte](required)
 
-        /** Release the reusable receive buffer. Idempotent (`Buffer.close` is). */
+        /** Release the reusable receive buffer. Idempotent (`Buffer.close` is), and marks the state
+          * closed first so no poll can reach the buffer once it is released.
+          */
         // Unsafe: off-heap buffer release; AllowUnsafe scoped to this method.
-        def close()(using AllowUnsafe): Unit = buffer.close()
+        def close()(using AllowUnsafe): Unit =
+            closedFlag.set(true)
+            buffer.close()
+        end close
     end SubscriptionState
 
     private[kyo] object SubscriptionState:
