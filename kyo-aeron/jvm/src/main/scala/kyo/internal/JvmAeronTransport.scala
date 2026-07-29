@@ -23,7 +23,7 @@ import org.agrona.concurrent.UnsafeBuffer
 final private[kyo] class JvmAeronTransport(
     aeron: Aeron,
     errorSlot: AtomicRef.Unsafe[Maybe[String]]
-) extends AeronTransport:
+)(using AllowUnsafe) extends AeronTransport:
     type Publication  = PublicationState
     type Subscription = SubscriptionState
     // The async tokens are the Long registration IDs returned by asyncAdd*.
@@ -39,6 +39,22 @@ final private[kyo] class JvmAeronTransport(
     private val livePubs = java.util.concurrent.ConcurrentHashMap.newKeySet[PublicationState]()
     private val liveSubs = java.util.concurrent.ConcurrentHashMap.newKeySet[SubscriptionState]()
 
+    /** Set before `closeAll` sweeps `livePubs`/`liveSubs`, so a registration that finishes around
+      * the sweep still ends up closed.
+      *
+      * `ConcurrentHashMap`'s iteration is weakly consistent: it is not guaranteed to observe an
+      * insertion that races the traversal, so the sweep alone can miss a handle whose
+      * `pollAddPublication`/`pollAddSubscription` publishes it at that moment. The client unmaps its
+      * buffers right after `closeAll` returns, so a handle missed by the sweep is handed back live
+      * against freed memory. Reading this flag after publishing the handle removes that window: a
+      * reader that sees `true` self-closes, and one that sees `false` published before
+      * `closeAll` set the flag, hence before the sweep, which therefore observes it.
+      *
+      * This is the JVM counterpart of the C shim's g_registry_mutex plus per-bundle `closing` guard,
+      * which covers the same add-versus-close race natively.
+      */
+    private val closing = AtomicBoolean.Unsafe.init(false)
+
     /** Excludes the mapped-memory operations from a concurrent close of the region they write.
       *
       * `offer` copies into a claimed log-buffer region and `pollOne` writes the subscriber position
@@ -46,7 +62,8 @@ final private[kyo] class JvmAeronTransport(
       * and io.aeron's only protection is `closeLingerDurationNs`, which defaults to 0. A bare
       * `isClosed` test is check-then-act, so without this an offer in flight when the client closes
       * writes freed memory and takes a SIGSEGV on the carrier. This is the JVM counterpart of the C
-      * shim's close_mutex + closing guard, giving every platform the same safe-sentinel contract.
+      * shim's per-bundle close_mutex; `closing` above covers the add-versus-close half of the same
+      * contract.
       *
       * `enter` increments then re-reads `closed`, so an operation that raced past the first test
       * backs out and `close` never waits on it. The drain spin is bounded by one offer or poll.
@@ -126,6 +143,7 @@ final private[kyo] class JvmAeronTransport(
             else
                 val state = new PublicationState(pub)
                 discard(livePubs.add(state))
+                if closing.get() then closePublication(state)
                 AeronTransport.AddPoll.Done(state)
             end if
         catch
@@ -215,6 +233,7 @@ final private[kyo] class JvmAeronTransport(
             else
                 val state = new SubscriptionState(sub)
                 discard(liveSubs.add(state))
+                if closing.get() then closeSubscription(state)
                 AeronTransport.AddPoll.Done(state)
             end if
         catch
@@ -261,11 +280,14 @@ final private[kyo] class JvmAeronTransport(
       *
       * The runtime calls this before closing the client, so by the time the client unmaps its
       * buffers no offer or poll can be in flight against them. Fibers still holding a handle then
-      * see the ordinary post-close sentinels rather than freed memory.
+      * see the ordinary post-close sentinels rather than freed memory. The flag is raised first so a
+      * registration finishing alongside the sweep closes itself rather than being handed back live.
       */
     def closeAll()(using AllowUnsafe): Unit =
+        closing.set(true)
         livePubs.forEach(pub => closePublication(pub))
         liveSubs.forEach(sub => closeSubscription(sub))
+    end closeAll
 
     def fatalError(using AllowUnsafe): Maybe[String] =
         // Both writers (the Aeron.Context error handler in AeronPlatformTransport and injectError
