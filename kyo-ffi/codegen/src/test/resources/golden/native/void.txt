@@ -10,7 +10,7 @@ import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class VoidBindingsImpl extends VoidBindings:
-    import `VoidBindings$externs` as ext
+    import `VoidBindings_externs` as ext
 
     def noop()(using kyo.AllowUnsafe): Unit =
         ext.noop()
@@ -24,6 +24,6 @@ end VoidBindingsImpl
 
 @extern
 @link("kyo_void")
-private[example] object `VoidBindings$externs`:
+private[example] object `VoidBindings_externs`:
     def noop(): Unit = extern
-end `VoidBindings$externs`
+end `VoidBindings_externs`

@@ -10,7 +10,7 @@ import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class StructBindingsImpl extends StructBindings:
-    import `StructBindings$externs` as ext
+    import `StructBindings_externs` as ext
 
     def move(p: kyo.example.golden.Point, dx: Int)(using kyo.AllowUnsafe): kyo.example.golden.Point =
         Zone.acquire { implicit z =>
@@ -31,6 +31,6 @@ end StructBindingsImpl
 
 @extern
 @link("kyo_struct")
-private[example] object `StructBindings$externs`:
+private[example] object `StructBindings_externs`:
     def move(out: Ptr[CStruct2[CInt, CInt]], p: Ptr[CStruct2[CInt, CInt]], dx: CInt): Unit = extern
-end `StructBindings$externs`
+end `StructBindings_externs`

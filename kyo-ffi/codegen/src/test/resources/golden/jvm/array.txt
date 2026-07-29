@@ -13,14 +13,14 @@ final class ArrayBindingsImpl extends ArrayBindings:
     import ArrayBindingsImpl.*
 
     def sum(xs: Array[Int], n: Int)(using kyo.AllowUnsafe): Int =
-        val __kyoScratch$ = Scratch.currentFor("kyo.example.ArrayBindings", Scratch.configuredSize)
-        val __kyoMark$ = __kyoScratch$.mark()
+        val __kyoScratch = Scratch.currentFor("kyo.example.ArrayBindings", Scratch.configuredSize)
+        val __kyoMark = __kyoScratch.mark()
         try
             val xsSeg = MemorySegment.ofArray(xs)
-            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.ArrayBindings", "sum")
+            val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.ArrayBindings", "sum")
             val retVal: Int = sumMH.invokeExact(errnoSeg, xsSeg, n)
             retVal
-        finally __kyoScratch$.reset(__kyoMark$)
+        finally __kyoScratch.reset(__kyoMark)
 end ArrayBindingsImpl
 
 object ArrayBindingsImpl:

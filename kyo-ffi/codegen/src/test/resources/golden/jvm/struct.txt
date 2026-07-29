@@ -13,17 +13,17 @@ final class StructBindingsImpl extends StructBindings:
     import StructBindingsImpl.*
 
     def move(p: kyo.example.golden.Point, dx: Int)(using kyo.AllowUnsafe): kyo.example.golden.Point =
-        val __kyoScratch$ = Scratch.currentFor("kyo.example.StructBindings", Scratch.configuredSize)
-        val __kyoMark$ = __kyoScratch$.mark()
+        val __kyoScratch = Scratch.currentFor("kyo.example.StructBindings", Scratch.configuredSize)
+        val __kyoMark = __kyoScratch.mark()
         try
-            val pSeg = __kyoScratch$.alloc(pointLayout.byteSize(), pointLayout.byteAlignment(), "kyo.example.StructBindings", "move")
+            val pSeg = __kyoScratch.alloc(pointLayout.byteSize(), pointLayout.byteAlignment(), "kyo.example.StructBindings", "move")
             pSeg.set(JAVA_INT, 0L, p.x)
             pSeg.set(JAVA_INT, 4L, p.y)
-            val out = __kyoScratch$.alloc(pointLayout.byteSize(), pointLayout.byteAlignment(), "kyo.example.StructBindings", "move")
-            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.StructBindings", "move")
+            val out = __kyoScratch.alloc(pointLayout.byteSize(), pointLayout.byteAlignment(), "kyo.example.StructBindings", "move")
+            val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.StructBindings", "move")
             val _: Unit = moveMH.invokeExact(errnoSeg, out, pSeg, dx)
             kyo.example.golden.Point(out.get(JAVA_INT, 0L), out.get(JAVA_INT, 4L))
-        finally __kyoScratch$.reset(__kyoMark$)
+        finally __kyoScratch.reset(__kyoMark)
 end StructBindingsImpl
 
 object StructBindingsImpl:

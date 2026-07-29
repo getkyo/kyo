@@ -59,7 +59,7 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val src = NativeEmitter.emit(spec)
         assert(src.contains("@extern"))
         assert(src.contains("""@link("kyo_tcp")"""))
-        assert(src.contains("object `TcpBindings$externs`"))
+        assert(src.contains("object `TcpBindings_externs`"))
         assert(src.contains("def tcp_close(fd: CInt): Unit = extern"))
     }
 
@@ -73,7 +73,7 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val src = NativeEmitter.emit(spec)
         assert(src.contains("@extern"))
         assert(!src.contains("@link"))
-        assert(src.contains("object `UringBindings$externs`"))
+        assert(src.contains("object `UringBindings_externs`"))
         assert(src.contains("def uring_close(fd: CInt): Unit = extern"))
     }
 
@@ -87,7 +87,7 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val src = NativeEmitter.emit(spec, headersAvailable = false)
         assert(src.contains("@extern"))
         assert(!src.contains("@link"))
-        assert(src.contains("object `UringBindings$externs`"))
+        assert(src.contains("object `UringBindings_externs`"))
     }
 
     "@blocking annotation propagates to the extern declaration for @Ffi.blocking methods" in {
@@ -637,7 +637,7 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val src = NativeEmitter.emit(spec)
         assert(src.contains("final class TcpBindingsImpl extends TcpBindings:"))
-        assert(src.contains("import `TcpBindings$externs` as ext"))
+        assert(src.contains("import `TcpBindings_externs` as ext"))
         assert(src.contains("end TcpBindingsImpl"))
 
         // Every binding method takes a trailing `(using kyo.AllowUnsafe)`; the three @Ffi.blocking methods return
@@ -1098,8 +1098,8 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         ).copy(headers = Seq("sys/epoll.h"))
         val src = NativeEmitter.emit(spec, headersAvailable = false)
         // The extern object exists but has no method declarations.
-        assert(src.contains("object `EpollBindings$externs`:"))
-        assert(src.contains("end `EpollBindings$externs`"))
+        assert(src.contains("object `EpollBindings_externs`:"))
+        assert(src.contains("end `EpollBindings_externs`"))
         assert(!src.contains("= extern"))
     }
 
