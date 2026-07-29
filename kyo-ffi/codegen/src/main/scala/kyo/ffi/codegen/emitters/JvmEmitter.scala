@@ -71,7 +71,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         sig + "\n" + body + "\n"
     end emitMethod
 
-    /** Emit the body (including the `val __kyoScratch$ = Scratch.current` / try-finally wrapping when needed).
+    /** Emit the body (including the `val __kyoScratch = Scratch.current` / try-finally wrapping when needed).
       *
       * When `method.blocking`, the synchronous body is wrapped in a `kyo.ffi.internal.BlockingBridge.run { ... }` block
       * so the already-computed result is lifted into `kyo.Fiber.Unsafe[<ret>, Any]` (matching the signature emitted by
@@ -117,7 +117,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     List(Marshalled(p.name, "()", Nil))
                 case TypeRef.StringT =>
                     val segN = s"${name}Seg"
-                    List(Marshalled(p.name, segN, List(s"val $segN = __kyoScratch$$.allocUtf8($name, $fqnLit, $methodLit)")))
+                    List(Marshalled(p.name, segN, List(s"val $segN = __kyoScratch.allocUtf8($name, $fqnLit, $methodLit)")))
                 case TypeRef.BufferT(_) =>
                     val segN = s"${name}Seg"
                     // `Buffer.Raw` erases to `AnyRef`; the concrete carrier on JVM is `MemorySegment`.
@@ -145,7 +145,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                         val rawN  = s"${name}Raw"
                         val setup = List(
                             s"val ${name}Bps = ${bps}L",
-                            s"val $segN = __kyoScratch$$.alloc($name.length.toLong * ${name}Bps, ${name}Bps, $fqnLit, $methodLit)",
+                            s"val $segN = __kyoScratch.alloc($name.length.toLong * ${name}Bps, ${name}Bps, $fqnLit, $methodLit)",
                             s"val $rawN = $segN.asInstanceOf[Buffer.Raw]",
                             s"var ${name}I = 0",
                             s"while ${name}I < $name.length do",
@@ -164,7 +164,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     )
                     val segN = s"${name}Seg"
                     val setup =
-                        s"val $segN = __kyoScratch$$.alloc(${layoutConst(sSpec)}.byteSize(), ${layoutConst(sSpec)}.byteAlignment(), $fqnLit, $methodLit)" ::
+                        s"val $segN = __kyoScratch.alloc(${layoutConst(sSpec)}.byteSize(), ${layoutConst(sSpec)}.byteAlignment(), $fqnLit, $methodLit)" ::
                             emitStructWrite(name, segN, sSpec, structsByName, "0L", spec.fqcn, method.scalaName)
                     List(Marshalled(p.name, segN, setup))
                 case TypeRef.UnionT(variants) =>
@@ -346,8 +346,8 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         val scratchSizeExpr = spec.companion.flatMap(_.scratchSize) match
             case Some(n) => s"${n}L"
             case None    => "Scratch.configuredSize"
-        sb ++= s"val __kyoScratch$$ = Scratch.currentFor($fqnLit, $scratchSizeExpr)\n"
-        sb ++= "val __kyoMark$ = __kyoScratch$.mark()\n"
+        sb ++= s"val __kyoScratch = Scratch.currentFor($fqnLit, $scratchSizeExpr)\n"
+        sb ++= "val __kyoMark = __kyoScratch.mark()\n"
 
         // Callback arena. Transient callbacks allocate a per-call `Arena.ofConfined()` closed in finally after scratch reset.
         // Retained callbacks read the arena from the user-supplied Ffi.Guard via JvmGuard.unsafeArena; the guard, not
@@ -392,7 +392,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         method.returnShape match
             case ReturnShape.Struct(sSpec) =>
                 bodyInner ++=
-                    s"val out = __kyoScratch$$.alloc(${layoutConst(sSpec)}.byteSize(), ${layoutConst(sSpec)}.byteAlignment(), $fqnLit, $methodLit)\n"
+                    s"val out = __kyoScratch.alloc(${layoutConst(sSpec)}.byteSize(), ${layoutConst(sSpec)}.byteAlignment(), $fqnLit, $methodLit)\n"
             case _ => ()
         end match
 
@@ -404,9 +404,9 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         // of the downstream `seg.get(JAVA_*, 0L)` / `seg.get(ADDRESS, 0L)` reads are unchanged.
         if outSegs.nonEmpty then
             bodyInner ++=
-                s"val __kyoMultiOut$$ = __kyoScratch$$.alloc(${outBlockSize}L, ${outBlockAlign}L, $fqnLit, $methodLit)\n"
+                s"val __kyoMultiOut = __kyoScratch.alloc(${outBlockSize}L, ${outBlockAlign}L, $fqnLit, $methodLit)\n"
             outSegs.foreach { o =>
-                bodyInner ++= s"val ${o.name} = __kyoMultiOut$$.asSlice(${o.offsetBytes}L, ${o.sizeBytes}L)\n"
+                bodyInner ++= s"val ${o.name} = __kyoMultiOut.asSlice(${o.offsetBytes}L, ${o.sizeBytes}L)\n"
             }
         end if
 
@@ -415,7 +415,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         // running platform supports regardless of which fields were requested: 4 bytes on Linux/macOS ([errno]) but 12 bytes on
         // Windows ([GetLastError, WSAGetLastError, errno]). A hardcoded 4-byte segment overflows the 12-byte Windows capture write,
         // so the size and alignment come from the layout (companion `captureLayout`), correct on every platform.
-        bodyInner ++= s"val errnoSeg = __kyoScratch$$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), $fqnLit, $methodLit)\n"
+        bodyInner ++= s"val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), $fqnLit, $methodLit)\n"
 
         // The invocation.
         bodyInner ++= invokeLine
@@ -430,7 +430,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         // (oversized Buffer[Byte], string, or struct-by-value param), the spill arenas must outlive the method, the C-side retained
         // callback may reference spilled payload memory after the downcall returns. Promote the spill list to the enclosing `Ffi.Guard`
         // so the spill arenas close only when the guard closes. On the callback-free or transient-callback path, spills keep their
-        // method-scoped lifetime (closed by `__kyoScratch$.reset(__kyoMark$)` in `finally`).
+        // method-scoped lifetime (closed by `__kyoScratch.reset(__kyoMark)` in `finally`).
         //
         // Placed after the invoke (so spills covering the C call are intact for the call itself) and before result construction (so
         // result construction runs against an empty spill list, protecting against a hypothetical mid-result-build exception from
@@ -443,13 +443,13 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                         s"Retained callback method '${method.scalaName}' is missing an Ffi.Guard parameter"
                     )
                 )
-                bodyInner ++= "val __kyoSpills$ = __kyoScratch$.takeSpills()\n"
-                bodyInner ++= "if __kyoSpills$.nonEmpty then\n"
-                bodyInner ++= s"    val __kyoGuard$$ = $guardName.asInstanceOf[kyo.ffi.internal.JvmGuard]\n"
-                bodyInner ++= "    var __kyoSpillsI$ = __kyoSpills$\n"
-                bodyInner ++= "    while __kyoSpillsI$.nonEmpty do\n"
-                bodyInner ++= "        __kyoGuard$.adoptArena(__kyoSpillsI$.head)\n"
-                bodyInner ++= "        __kyoSpillsI$ = __kyoSpillsI$.tail\n"
+                bodyInner ++= "val __kyoSpills = __kyoScratch.takeSpills()\n"
+                bodyInner ++= "if __kyoSpills.nonEmpty then\n"
+                bodyInner ++= s"    val __kyoGuard = $guardName.asInstanceOf[kyo.ffi.internal.JvmGuard]\n"
+                bodyInner ++= "    var __kyoSpillsI = __kyoSpills\n"
+                bodyInner ++= "    while __kyoSpillsI.nonEmpty do\n"
+                bodyInner ++= "        __kyoGuard.adoptArena(__kyoSpillsI.head)\n"
+                bodyInner ++= "        __kyoSpillsI = __kyoSpillsI.tail\n"
             case _ => ()
         end match
 
@@ -529,10 +529,10 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         // Retained callbacks leave the arena alone, the guard will close it. All paths reset scratch in finally.
         if needsCbArena && method.callbackKind != CallbackKind.Retained then
             sb ++= "finally\n"
-            sb ++= "    __kyoScratch$.reset(__kyoMark$)\n"
+            sb ++= "    __kyoScratch.reset(__kyoMark)\n"
             sb ++= "    cbArena.close()\n"
         else
-            sb ++= "finally __kyoScratch$.reset(__kyoMark$)\n"
+            sb ++= "finally __kyoScratch.reset(__kyoMark)\n"
         end if
         sb.toString
     end emitPlainMethodBody
@@ -589,7 +589,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     Fixed("JAVA_DOUBLE", s"java.lang.Double.valueOf($name)", Nil)
                 case TypeRef.StringT =>
                     val segN = s"${name}Seg"
-                    Fixed("ADDRESS", segN, List(s"val $segN = __kyoScratch$$.allocUtf8($name, $fqnLit, $methodLit)"))
+                    Fixed("ADDRESS", segN, List(s"val $segN = __kyoScratch.allocUtf8($name, $fqnLit, $methodLit)"))
                 case TypeRef.BufferT(_) =>
                     val segN = s"${name}Seg"
                     Fixed(
@@ -620,8 +620,8 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
             case None    => "Scratch.configuredSize"
 
         val sb = new StringBuilder
-        sb ++= s"val __kyoScratch$$ = Scratch.currentFor($fqnLit, $scratchSizeExpr)\n"
-        sb ++= "val __kyoMark$ = __kyoScratch$.mark()\n"
+        sb ++= s"val __kyoScratch = Scratch.currentFor($fqnLit, $scratchSizeExpr)\n"
+        sb ++= "val __kyoMark = __kyoScratch.mark()\n"
         sb ++= "try\n"
 
         val inner = new StringBuilder
@@ -631,7 +631,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         }
         // Capture-state segment sized from the platform's captureStateLayout() (see emitPlainMethodBody): 4 bytes on
         // Linux/macOS ([errno]), 12 on Windows ([GetLastError, WSAGetLastError, errno]).
-        inner ++= s"val errnoSeg = __kyoScratch$$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), $fqnLit, $methodLit)\n"
+        inner ++= s"val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), $fqnLit, $methodLit)\n"
 
         val fixedLayouts =
             if fixed.isEmpty then "Nil"
@@ -651,7 +651,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                |    $fixedArgsList,
                |    Linker.Option.firstVariadicArg(${fixed.size}),
                |    args,
-               |    __kyoScratch$$,
+               |    __kyoScratch,
                |    "${spec.fqcn}",
                |    "${method.scalaName}"
                |)""".stripMargin
@@ -699,7 +699,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
             sb ++= l
             sb ++= "\n"
         }
-        sb ++= "finally __kyoScratch$.reset(__kyoMark$)\n"
+        sb ++= "finally __kyoScratch.reset(__kyoMark)\n"
         sb.toString
     end emitVariadicMethodBody
 
@@ -744,7 +744,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
       * implementation produces a diagnostic naming the origin.
       *
       * When [[sSpec]] is a pure-primitive struct of byte size ≥ [[structBulkWriteMinBytes]] (default 128 bytes; override via
-      * `-Dkyo.ffi.structBulkWriteMinBytes=`), the emission is preceded by a `// __kyoStructBulkWrite$:` marker comment naming the struct
+      * `-Dkyo.ffi.structBulkWriteMinBytes=`), the emission is preceded by a `// __kyoStructBulkWrite:` marker comment naming the struct
       * and byte size. The marker is a stable emitter signal so downstream snapshot tests and runtime observers can confirm the path
       * selection; field writes themselves remain field-by-field in v1. The threshold plus marker unlock future bulk-copy optimisations
       * (packed-long writes, MemorySegment.copy) without changing the emitter contract.
@@ -764,7 +764,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         if isSimplePrimitiveStruct(sSpec) then
             val byteSize = structByteSize(sSpec, structsByName)
             if byteSize >= structBulkWriteMinBytes then
-                buf += s"// __kyoStructBulkWrite$$: ${sSpec.fqcn} ($byteSize bytes)"
+                buf += s"// __kyoStructBulkWrite: ${sSpec.fqcn} ($byteSize bytes)"
         end if
         structFieldLayouts(sSpec, structsByName, forWrite = true).foreach { case FieldLayout(f, fieldOffset, _) =>
             val offExpr =
@@ -791,7 +791,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     // dots) still yields a legal local identifier, e.g. `contact_address_city_cs` not `contact.address_city_cs`.
                     val tmp = s"${localIdent(access)}_cs"
                     // Thread binding + method context so spill logs identify the struct-field marshalling call site.
-                    buf += s"""val $tmp = __kyoScratch$$.allocUtf8($access, "$bindingFqn", "$methodName")"""
+                    buf += s"""val $tmp = __kyoScratch.allocUtf8($access, "$bindingFqn", "$methodName")"""
                     buf += s"$segExpr.set(ADDRESS, $offExpr, $tmp)"
                 case TypeRef.BufferT(_) =>
                     // Checked unwrap, alien `Buffer.Raw` implementations produce a
@@ -846,7 +846,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
     ): List[String] =
         val (unionSize, unionAlign) = unionSizeAndAlign(variants, structsByName)
         val buf                     = List.newBuilder[String]
-        buf += s"""val $segName = __kyoScratch$$.alloc(${unionSize}L, ${unionAlign}L, "$bindingFqn", "$methodName")"""
+        buf += s"""val $segName = __kyoScratch.alloc(${unionSize}L, ${unionAlign}L, "$bindingFqn", "$methodName")"""
         buf ++= emitUnionVariantMatch(paramName, segName, "0L", variants, structsByName, bindingFqn, methodName)
         buf.result()
     end emitUnionParamWrite
