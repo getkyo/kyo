@@ -207,6 +207,52 @@ class ProcessExitCodeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "waitFor's deadline is driven by the ambient Clock, not by elapsed real time" in {
+        // The deadline used to be a platform timer, correct in wall time but impossible to drive
+        // from a test: the case above can only be written by waiting out a real 200ms, and on a
+        // loaded machine the same code can carry a process past a deadline it meant to control.
+        //
+        // Asserting only that the wait returns Absent does not distinguish the two: a platform timer
+        // reaches the same answer, just by burning the full 30 seconds of real time. What separates
+        // them is that here almost no real time passes, so the elapsed wall clock is the assertion.
+        val budget = 10.seconds
+        Clock.withTimeControl { clock =>
+            Scope.run {
+                for
+                    started <- Clock.live.now
+                    proc    <- Command("sleep", "60").spawn
+                    fiber   <- Fiber.initUnscoped(proc.waitFor(30.seconds))
+                    // Let the fiber reach the point where it arms its deadline before moving the
+                    // clock. Async.timeout arms inside the fiber it starts, so an advance that lands
+                    // first would have the deadline computed from the advanced time, putting it
+                    // permanently out of reach of the advances below.
+                    _ <- clock.advance(Duration.Zero, 100.millis)
+                    // Short of the deadline: the wait is still outstanding.
+                    _        <- clock.advance(29.seconds)
+                    pending  <- fiber.poll
+                    _        <- clock.advance(2.seconds)
+                    result   <- fiber.get
+                    finished <- Clock.live.now
+                    elapsed = finished - started
+                yield assert(
+                    pending.isEmpty && result == Absent && elapsed < budget,
+                    s"expected a clock-driven deadline; pending=$pending result=$result elapsed=$elapsed"
+                )
+            }
+        }
+    }
+
+    "waitFor with an infinite timeout waits for the process rather than expiring" in {
+        // Arming a timer for a non-finite duration is what inverted an unbounded wait into an
+        // instant expiry on JS, where Node clamps an out-of-range delay down to 1ms.
+        Scope.run {
+            for
+                proc   <- Command("true").spawn
+                result <- proc.waitFor(Duration.Infinity)
+            yield assert(result == Present(ExitCode.Success))
+        }
+    }
+
     "envAppend adds and overrides env variables preserving existing ones" in {
         Command("sh", "-c", "echo $KYO_TEST_VAR")
             .envAppend(Map("KYO_TEST_VAR" -> "appended_value"))
