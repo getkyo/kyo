@@ -197,11 +197,10 @@ object Meter:
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
                     Sync.ensure(discard(release()))(v)
-                // A permit is owned by its caller, so an abandoned reservation goes straight back to the
-                // ledger. No handoff: nothing was freed, since this caller never held a permit.
-                def withdraw(): Unit        = returnRegistration()
-                def releaseAcquired(): Unit = discard(release())
-                def onClose(): Unit         = ()
+                def settleWait(acquired: Boolean): Unit =
+                    // Abandoning returns only the registration: nothing was freed, so no handoff.
+                    if acquired then discard(release()) else returnRegistration()
+                def onClose(): Unit = ()
         }
 
     /** Creates a Meter that acts as a rate limiter. Does not ensure meter is cleaned up.
@@ -257,11 +256,9 @@ object Meter:
                     // Don't release a permit since it's managed by the timer task
                     v
 
-                // Permits belong to the clock, not to callers: `replenish` restores the full rate each
-                // period regardless of who consumed it. Neither finishing nor abandoning returns rate
-                // early, matching `dispatch` above; the timer restores it.
-                def withdraw(): Unit        = ()
-                def releaseAcquired(): Unit = ()
+                // Rate belongs to the clock: `replenish` restores it each period regardless of who
+                // consumed it, so neither finishing nor abandoning returns it early.
+                def settleWait(acquired: Boolean): Unit = ()
 
                 @tailrec def replenish(i: Int = 0): Unit =
                     if i < rate && release() then
@@ -384,22 +381,13 @@ object Meter:
         protected def dispatch[A, S](v: => A < S): A < (S & Sync)
         protected def onClose(): Unit
 
-        /** How a caller interrupted while parked gives back what it reserved.
+        /** Settles what a caller owes when its wait ends, having acquired a permit or not.
           *
-          * This is the wait-phase counterpart of [[dispatch]]'s teardown, and it is per-kind for the
-          * same reason `dispatch` is: what a reservation costs differs by meter. A semaphore's permits
-          * are owned by callers, so an abandoned reservation returns to the ledger. A rate limiter's are
-          * owned by the clock and replenished on a schedule, so an abandoned reservation is left for the
-          * timer to restore rather than handed back early.
+          * Per-kind for the same reason [[dispatch]] is: a semaphore's permits are owned by callers, so
+          * both outcomes owe something back, while a rate limiter's are owned by the clock and are
+          * restored by its timer either way.
           */
-        protected def withdraw(): Unit
-
-        /** How a caller that acquired through the wait queue gives its permit back.
-          *
-          * The same teardown [[dispatch]] installs on the immediate-acquisition path, reached instead
-          * through [[settle]] because the wait path needs one teardown covering both outcomes.
-          */
-        protected def releaseAcquired(): Unit
+        protected def settleWait(acquired: Boolean): Unit
 
         private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (Sync & S) =
             if reentrant then
@@ -428,23 +416,19 @@ object Meter:
                         if state.compareAndSet(st, st - 1) then dispatch(withAcquiredMeter(v))
                         else loop()
                     else
-                        // No permit available. The promise is queued BEFORE the reservation is taken,
-                        // so a reservation visible in `state` always has its promise already in the
-                        // queue. That ordering is what lets close drain by emptying the queue and lets
-                        // handoff poll without waiting for an offer that has been promised but not made.
+                        // No permit available. Queue the promise BEFORE reserving, so a reservation
+                        // visible in `state` always has its promise queued already. `close` and
+                        // `handoff` both rely on that: neither has to wait for a pending offer.
                         val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
                         discard(waiters.offer(p))
                         if state.compareAndSet(st, st - 1) then
-                            // One teardown, installed BEFORE the wait, that reads `p` to decide what this
-                            // caller actually owes. Installing it before the wait is what makes it total:
-                            // an interrupt that lands after `p` is completed but before the continuation
-                            // resumes still runs it, so a transferred permit is never stranded. `dispatch`
-                            // is not used on this path because [[settle]] already covers both outcomes.
+                            // The teardown must be installed before the wait, not inside it: an interrupt
+                            // landing after `p` completes but before the continuation resumes would
+                            // otherwise strand the permit `p` just transferred.
                             Sync.ensure(settle(p))(p.safe.use(_ => withAcquiredMeter(v)))
                         else
-                            // The reservation was lost to a concurrent update, so this promise stands for
-                            // nothing. Retire it; handoff and close skip an already-completed promise. It
-                            // is never awaited, so the value it carries is unobservable.
+                            // Reservation lost, so this promise stands for nothing. Retiring it is enough:
+                            // `handoff` and `close` skip completed promises, and it is never awaited.
                             p.completeDiscard(Result.fail(Closed("Meter", initFrame)))
                             loop()
                         end if
@@ -498,12 +482,10 @@ object Meter:
                     val fail = Result.fail(Closed("Meter", initFrame))
                     // Complete the closed promise to fail new operations
                     closed.completeDiscard(fail)
-                    // Drain every queued promise rather than a count derived from `state`: a caller that
-                    // withdrew after being interrupted returned its registration but left its retired
-                    // promise behind, so the queue can hold more entries than `state` accounts for, and
-                    // a count-driven drain could stop on those and leave a live waiter parked forever.
-                    // Emptying the queue is sufficient because a registration is queued before it is
-                    // reserved, so every waiter that reserved before the getAndSet above is already here.
+                    // Drain the whole queue, not a count taken from `state`: retired promises left by
+                    // abandoned reservations make the queue longer than `state`, so a counted drain
+                    // stops early and strands live waiters. Queue-before-reserve makes emptying it
+                    // sufficient, since every waiter reserved before the getAndSet above is here.
                     @tailrec def drain(): Unit =
                         waiters.poll() match
                             case Maybe.Present(waiter) =>
@@ -557,27 +539,16 @@ object Meter:
           */
         @tailrec final protected def returnRegistration(): Unit =
             val st = state.get()
-            if st == Int.MinValue then ()
-            else if !state.compareAndSet(st, st + 1) then returnRegistration()
-            else ()
-            end if
-        end returnRegistration
+            if st != Int.MinValue && !state.compareAndSet(st, st + 1) then returnRegistration()
 
-        /** Teardown for the wait phase, chosen by whether the permit was actually transferred.
-          *
-          * The promise is the handoff token and `completeUnit` has a single winner, so a SUCCESSFUL
-          * completion means a releaser transferred a permit to this caller, which now owes a full
-          * release. Any other outcome (interrupted while parked, or woken by close) means no permit was
-          * ever held, so only the registration is owed.
-          *
-          * Reading the outcome from `p` rather than from the caller's own progress is what makes this
-          * total: the transfer is decided by whoever wins `completeUnit`, so the answer is already
-          * settled by the time any interrupt can be observed here.
+        /** Whether the wait ended in an acquisition, read from the promise rather than from the
+          * caller's own progress: `completeUnit` has a single winner, so the transfer is already decided
+          * however late an interrupt arrives. A failed completion is an interrupt or a close.
           */
         private def settle(p: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe): Unit =
-            p.poll() match
-                case Maybe.Present(r) if r.isSuccess => releaseAcquired()
-                case _                               => withdraw()
+            settleWait(p.poll() match
+                case Maybe.Present(r) => r.isSuccess
+                case Maybe.Absent     => false)
     end Base
 
 end Meter
