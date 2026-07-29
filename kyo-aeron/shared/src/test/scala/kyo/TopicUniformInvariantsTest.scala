@@ -53,35 +53,40 @@ class TopicUniformInvariantsTest extends Test:
 
     // The assertion runs outside Topic.run so the Sync.ensure teardown (including dir.removeAll)
     // has already completed by the time the temp dir is listed.
+    //
+    // The temp dir is shared with the other leaves of this suite, which open their own embedded
+    // drivers under the same name prefix and hold those directories for as long as they run, so an
+    // entry listed right after the runs is not yet a leak. One the teardown failed to remove never
+    // goes away, so the entries this leaf did not start with are polled until they clear, and
+    // whatever is still there when the attempts run out is the leak.
     "no temp-dir leak: zero kyo-aeron-embedded dirs remain after 5 sequential runs" in {
-        val n = 5
-        // Captured before the runs so residual entries from a prior failed run don't cause a spurious
-        // failure.
-        Abort.run[FileFsException](Path.basePaths.tmp.list("kyo-aeron-embedded*")).map { beforeResult =>
-            val before = beforeResult match
-                case Result.Success(dirs) => dirs.size
-                case _                    => 0
-            Loop.indexed { i =>
-                if i >= n then Loop.done(())
+        val n              = 5
+        val settleAttempts = 100
+        // Inability to list the temp dir is a platform limitation, not a leak.
+        def embeddedDirs(using Frame): Set[Path] < Async =
+            Abort.recover[FileFsException](_ => Chunk.empty[Path]) {
+                Path.basePaths.tmp.list("kyo-aeron-embedded*")
+            }.map(_.toSet)
+        for
+            before <- embeddedDirs
+            _ <- Loop.indexed { i =>
+                if i >= n then Loop.done
                 else
                     // An empty body still exercises the full embedded() lifecycle (alloc dir, start
                     // driver, teardown driver, removeAll dir) and needs no subscriber.
                     Topic.run(()).andThen(Loop.continue)
-            }.andThen(
-                Abort.run[FileFsException](Path.basePaths.tmp.list("kyo-aeron-embedded*")).map {
-                    case Result.Success(after) =>
-                        assert(
-                            after.size <= before,
-                            s"expected no new kyo-aeron-embedded dirs after $n runs, but found ${after.size - before} leftover(s): $after"
-                        )
-                    case Result.Failure(_) =>
-                        // Inability to list the temp dir is a platform limitation, not a leak.
-                        succeed
-                    case Result.Panic(t) =>
-                        fail(s"Panic listing temp dir for leak check: $t")
+            }
+            leaked <- Loop.indexed { i =>
+                embeddedDirs.map(_.diff(before)).map { extra =>
+                    if extra.isEmpty || i >= settleAttempts then Loop.done(extra)
+                    else Async.sleep(100.millis).andThen(Loop.continue)
                 }
-            )
-        }
+            }
+        yield assert(
+            leaked.isEmpty,
+            s"expected no kyo-aeron-embedded dirs left after $n runs, but found ${leaked.size} leftover(s): $leaked"
+        )
+        end for
     }
 
     // The per-instance dir allocation stays invisible at the type level: run(v) is A < (Async & S).

@@ -64,7 +64,7 @@ object Topic:
                     // Teardown order: close the client and driver before deleting the dir (the driver
                     // writes into it until its conductor threads are joined). Nested finalizers so the
                     // dir is removed even when the close fails.
-                    Sync.ensure(Abort.run[FileFsException](dir.removeAll).unit) {
+                    Sync.ensure(removeAllRetrying(dir)) {
                         Sync.ensure(Sync.Unsafe.defer(runtime.close())) {
                             runWith(runtime.transport)(v)
                         }
@@ -116,6 +116,27 @@ object Topic:
       */
     private[kyo] def runWith[A, S](transport: AeronTransport)(v: A < (Topic & S))(using Frame): A < (Async & S) =
         Env.run(transport)(v)
+
+    /** Removes the embedded working directory, walking it again when a walk leaves something behind.
+      *
+      * `removeAll` deletes the entries one traversal saw and then the directory itself, so a file the
+      * driver writes between those two steps makes the directory removal fail with the subtree already
+      * gone. A second walk sees that file and takes it, which is why the retries need no delay between
+      * them. Delay is not available here either: this runs as a `Sync.ensure` finalizer, whose row
+      * carries no `Async`.
+      *
+      * A removal that keeps failing is left alone rather than raised. A finalizer that raises replaces
+      * the result of the computation it guards, so reporting an undeletable directory would discard
+      * the body's own value or, worse, the error it failed with.
+      */
+    private def removeAllRetrying(dir: Path)(using Frame): Unit < Sync =
+        Loop.indexed { i =>
+            Abort.run[FileFsException](dir.removeAll).map {
+                case Result.Success(_) => Loop.done
+                case _ if i >= 2       => Loop.done
+                case _                 => Loop.continue
+            }
+        }
 
     /** Publishes a stream of messages to a specified Aeron URI.
       *
