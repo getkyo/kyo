@@ -8,7 +8,7 @@ import org.scalajs.jsenv.nodejs.*
 import sbtdynver.DynVerPlugin.autoImport.*
 import scala.scalanative.build.NativeConfig
 
-val scala3Version    = "3.8.4"
+val scala3Version    = "3.9.0-RC4"
 val scala3LTSVersion = "3.3.8"
 val scala213Version  = "2.13.18"
 
