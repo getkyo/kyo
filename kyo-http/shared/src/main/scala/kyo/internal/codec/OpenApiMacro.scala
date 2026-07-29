@@ -12,9 +12,11 @@ private[kyo] object OpenApiMacro:
     def deriveImpl(path: Expr[String])(using Quotes): Expr[Any] =
         import quotes.reflect.*
 
-        val filePath   = path.valueOrAbort
-        val sourcePath = Position.ofMacroExpansion.sourceFile.getJPath
-        val sourceDir  = sourcePath.map(_.getParent)
+        val filePath = path.valueOrAbort
+        // sourceFile.path is a virtual path when the unit is not on disk (IDE, REPL); the
+        // Files.exists check below rejects that the same way a missing directory would.
+        val sourcePath = Option(Position.ofMacroExpansion.sourceFile.path).map(java.nio.file.Paths.get(_))
+        val sourceDir  = sourcePath.flatMap(p => Option(p.getParent))
 
         val resolved = sourceDir match
             case Some(dir) => dir.resolve(filePath)
