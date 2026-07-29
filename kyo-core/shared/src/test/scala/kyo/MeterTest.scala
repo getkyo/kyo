@@ -317,15 +317,19 @@ class MeterTest extends kyo.test.Test[Any]:
                 meter   <- Meter.initSemaphore(permits)
                 gate    <- Latch.init(1)
                 holders <- Kyo.foreach(1 to permits)(_ => Fiber.initUnscoped(meter.run(gate.await)))
-                _       <- Async.sleep(20.millis)
-                parked  <- Kyo.foreach(1 to waiters)(_ => Fiber.initUnscoped(meter.run(Async.sleep(1.millis))))
-                _       <- Async.sleep(20.millis)
-                _       <- Async.foreach(parked, waiters)(_.interrupt(panic))
-                _       <- gate.release
-                _       <- Kyo.foreach(holders)(_.getResult)
-                _       <- Kyo.foreach(parked)(_.getResult)
-                free    <- Abort.run(meter.availablePermits)
-            yield assert(free == Result.succeed(permits), s"expected $permits permits free at rest, got $free"))
+                // Both states the setup depends on are readable from the meter, so wait for them
+                // rather than for a duration: every permit taken, then every waiter queued behind them.
+                _      <- assertEventually(Abort.run(meter.availablePermits).map(_ == Result.succeed(0)))
+                parked <- Kyo.foreach(1 to waiters)(_ => Fiber.initUnscoped(meter.run(gate.await)))
+                _      <- assertEventually(Abort.run(meter.pendingWaiters).map(_ == Result.succeed(waiters)))
+                _      <- Async.foreach(parked, waiters)(_.interrupt(panic))
+                _      <- gate.release
+                _      <- Kyo.foreach(holders)(_.getResult)
+                _      <- Kyo.foreach(parked)(_.getResult)
+                // A settled fiber does not mean a settled ledger: the teardown that returns a permit
+                // runs as the fiber unwinds, so read until it comes to rest instead of once.
+                _ <- assertEventually(Abort.run(meter.availablePermits).map(_ == Result.succeed(permits)))
+            yield ())
                 .handle(Loop.repeat(20))
                 .unit
         }
