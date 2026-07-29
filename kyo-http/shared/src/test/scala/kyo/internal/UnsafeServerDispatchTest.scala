@@ -16,30 +16,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
-    /** Helper: collect all available response bytes from the outbound channel into a single string. Uses the safe take with Async to wait
-      * for the first chunk, then polls for more.
-      */
-    private def collectResponse(outbound: Channel.Unsafe[Span[Byte]])(using Frame): String < (Async & Abort[Closed]) =
-        outbound.safe.take.map { firstSpan =>
-            val sb = new StringBuilder
-            sb.append(new String(firstSpan.toArray, StandardCharsets.US_ASCII))
-            // Poll for any additional chunks (body, etc.)
-            var done = false
-            while !done do
-                outbound.poll() match
-                    case Result.Success(Present(span)) =>
-                        sb.append(new String(span.toArray, StandardCharsets.US_ASCII))
-                    case _ =>
-                        done = true
-            end while
-            sb.toString
-        }
-    end collectResponse
-
     /** Helper: collect exactly one complete HTTP response from the outbound channel. Reads headers until CRLFCRLF, extracts Content-Length,
       * then reads exactly that many body bytes. Stops after one complete response, leaving subsequent responses in the channel.
       */
-    private def collectResponseAsync(outbound: Channel.Unsafe[Span[Byte]])(using Frame): String < (Async & Abort[Closed]) =
+    private def collectResponse(outbound: Channel.Unsafe[Span[Byte]])(using Frame): String < (Async & Abort[Closed]) =
         val sb = new StringBuilder
 
         def readMore(): String < (Async & Abort[Closed]) =
@@ -66,7 +46,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
 
         readMore()
-    end collectResponseAsync
+    end collectResponse
 
     /** Send a raw HTTP request string to the inbound channel. */
     private def sendRequest(inbound: Channel.Unsafe[Span[Byte]], request: String): Unit =
@@ -88,7 +68,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains("world"), s"Expected body 'world', got: $response")
             }
@@ -146,7 +126,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains("42"), s"Expected body containing '42', got: $response")
             }
@@ -169,7 +149,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains("Hello World"), s"Expected body 'Hello World', got: $response")
             }
@@ -190,10 +170,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
                 assert(response1.contains("world"), s"First response expected 'world', got: $response1")
-                collectResponseAsync(outbound).map { response2 =>
+                collectResponse(outbound).map { response2 =>
                     assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
                     assert(response2.contains("world"), s"Second response expected 'world', got: $response2")
                 }
@@ -212,7 +192,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 // With Connection: close, the parser should not call start() again.
                 // After a brief delay, no more data should be available.
@@ -240,7 +220,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("500"), s"Expected 500 status, got: $response")
             }
         }
@@ -262,7 +242,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains(body), s"Expected body '$body', got: $response")
             }
@@ -290,7 +270,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(
                     response.contains(fullBody),
@@ -327,7 +307,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains(fullBody), s"Expected full body of length ${fullBody.length}")
             }
@@ -353,7 +333,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             // Body chunk arrives after a delay — readBody parks and resumes
             Async.sleep(50.millis).andThen {
                 discard(inbound.offer(Span.fromUnsafe(body.getBytes(StandardCharsets.US_ASCII))))
-                collectResponseAsync(outbound).map { response =>
+                collectResponse(outbound).map { response =>
                     assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                     assert(response.contains(body), s"Expected body '$body', got: $response")
                 }
@@ -379,7 +359,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains(body), s"Expected body '$body', got: $response")
             }
@@ -407,11 +387,11 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
             // First response should echo the 5-byte body
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
                 assert(response1.contains(body1), s"Expected body '$body1' in first response, got: $response1")
                 // Second response should be processed from leftover bytes
-                collectResponseAsync(outbound).map { response2 =>
+                collectResponse(outbound).map { response2 =>
                     assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
                     assert(response2.contains("get-ok"), s"Second response should contain 'get-ok', got: $response2")
                 }
@@ -435,7 +415,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains("len=0"), s"Expected empty body (len=0), got: $response")
             }
@@ -469,7 +449,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val largeConfig = defaultConfig.maxContentLength(totalSize + 1)
             UnsafeServerDispatch.serve(router, inbound, outbound, largeConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains(s"size=$totalSize"), s"Expected size=$totalSize, got: $response")
             }
@@ -532,7 +512,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains("Date: "), s"Expected Date header, got: $response")
             }
@@ -607,7 +587,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK (body at limit), got: $response")
                 assert(response.contains(body), s"Expected body '$body', got: $response")
             }
@@ -630,7 +610,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK (body below limit), got: $response")
                 assert(response.contains(body), s"Expected body '$body', got: $response")
             }
@@ -657,7 +637,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 413 Payload Too Large"), s"First response expected 413, got: $response1")
                 assert(response1.contains("Connection: close"), s"413 must announce Connection: close, got: $response1")
                 // Nothing more is written: the pipelined request2 was not served.
@@ -692,7 +672,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 val first = new String(firstSpan.toArray, StandardCharsets.US_ASCII)
                 assert(first.contains("HTTP/1.1 100 Continue"), s"Expected 100 Continue, got: $first")
                 // Then the final response
-                collectResponseAsync(outbound).map { response =>
+                collectResponse(outbound).map { response =>
                     assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                     assert(response.contains(body), s"Expected body '$body', got: $response")
                 }
@@ -811,7 +791,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(
                     response.contains("HTTP/1.1 413 Payload Too Large"),
                     s"an over-limit chunked body on a buffered route must be 413'd, got: $response"
@@ -831,7 +811,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
                 assert(response.contains("world"), s"Expected body 'world', got: $response")
             }
@@ -904,7 +884,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK (case-insensitive Host), got: $response")
                 assert(response.contains("world"), s"Expected body 'world', got: $response")
             }
@@ -926,9 +906,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 400 Bad Request"), s"First response expected 400, got: $response1")
-                collectResponseAsync(outbound).map { response2 =>
+                collectResponse(outbound).map { response2 =>
                     assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
                     assert(response2.contains("world"), s"Second response expected 'world', got: $response2")
                 }
@@ -1509,10 +1489,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
                 assert(response1.contains(body1), s"First response should contain body1 of ${body1.length} chars")
-                collectResponseAsync(outbound).map { response2 =>
+                collectResponse(outbound).map { response2 =>
                     assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
                     assert(response2.contains(body2), s"Second response should contain body2 of ${body2.length} chars")
                 }
@@ -1541,7 +1521,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
 
                 // Wait longer than idle timeout, then verify connection is closed
@@ -1573,9 +1553,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
             // Both requests should succeed (pipelining — no idle gap)
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 200 OK"), s"First response expected 200, got: $response1")
-                collectResponseAsync(outbound).map { response2 =>
+                collectResponse(outbound).map { response2 =>
                     assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
                 }
             }
@@ -1596,7 +1576,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 200 OK"))
 
                 // Wait less than timeout, then send another request
@@ -1604,7 +1584,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     val request2 = "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
                     sendRequest(inbound, request2)
 
-                    collectResponseAsync(outbound).map { response2 =>
+                    collectResponse(outbound).map { response2 =>
                         assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
                     }
                 }
@@ -1626,7 +1606,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"))
 
                 // Wait for timeout to fire
@@ -1653,7 +1633,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"))
 
                 // Wait a bit — connection should still be open
@@ -1682,7 +1662,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response1 =>
+            collectResponse(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 200 OK"))
 
                 // Wait longer than idle timeout before sending second request
@@ -1720,9 +1700,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             UnsafeServerDispatch.serve(router, inbound2, outbound2, config)
 
             // Collect responses from both
-            collectResponseAsync(outbound1).map { r1 =>
+            collectResponse(outbound1).map { r1 =>
                 assert(r1.contains("HTTP/1.1 200 OK"))
-                collectResponseAsync(outbound2).map { r2 =>
+                collectResponse(outbound2).map { r2 =>
                     assert(r2.contains("HTTP/1.1 200 OK"))
 
                     // Wait for idle timeout to fire
@@ -1763,7 +1743,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            collectResponseAsync(outbound).map { response =>
+            collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
 
                 // After response, wait for idle timeout
@@ -1795,13 +1775,13 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
 
-            collectResponseAsync(outbound).map { responseA =>
+            collectResponse(outbound).map { responseA =>
                 assert(responseA.contains("HTTP/1.1 200 OK"), s"Request A expected 200, got: $responseA")
                 assert(
                     responseA.contains("response-A"),
                     s"Request A expected body 'response-A' (no stale closure), got: $responseA"
                 )
-                collectResponseAsync(outbound).map { responseB =>
+                collectResponse(outbound).map { responseB =>
                     assert(responseB.contains("HTTP/1.1 200 OK"), s"Request B expected 200, got: $responseB")
                     assert(
                         responseB.contains("response-B"),
@@ -1900,7 +1880,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             // normally, and the watcher must never have interrupted it.
                             never.complete(Result.succeed(())).andThen {
                                 Async.timeout(5.seconds)(terminated.await).andThen {
-                                    collectResponseAsync(outbound).map { response =>
+                                    collectResponse(outbound).map { response =>
                                         assert(
                                             response.contains("HTTP/1.1 200 OK") && response.contains("completed-normally"),
                                             s"Expected 200 OK with a normal completion body from the un-interrupted handler, got: $response"
