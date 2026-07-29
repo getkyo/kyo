@@ -1,6 +1,5 @@
 package kyo
 
-import io.aeron.driver.MediaDriver
 import kyo.internal.*
 
 class CompilerPoolTest extends kyo.test.Test[Any]:
@@ -36,19 +35,25 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
     ): CompilerPool < (Sync & Scope) =
         Meter.initSemaphore(settings.maxConcurrentCompiles).map { globalSemaphore =>
             AtomicInt.init(0).map { streamIdCounter =>
-                new CompilerPool(settings.copy(stuckTimeout = stuckTimeout), instances, globalSemaphore, null, streamIdCounter)
+                new CompilerPool(
+                    settings.copy(stuckTimeout = stuckTimeout),
+                    instances,
+                    globalSemaphore,
+                    null.asInstanceOf[AeronDriver],
+                    streamIdCounter
+                )
             }
         }
 
-    /** Like [[makePool]] but with a real shared embedded MediaDriver, for the one leaf that drives the
+    /** Like [[makePool]] but with a real shared embedded driver, for the one leaf that drives the
       * real SpawnBackend (version-mismatch routing); the driver is Scope-closed on exit.
       */
     private def makePoolWithDriver(
         settings: Compiler.Pool.Settings,
         instances: Cache[Compiler.Config, Promise[Instance, Abort[CompilerException]]]
-    ): CompilerPool < (Sync & Scope) =
+    ): CompilerPool < (Async & Scope & Abort[TopicTransportFailedException]) =
         Meter.initSemaphore(settings.maxConcurrentCompiles).map { globalSemaphore =>
-            Scope.acquireRelease(Sync.defer(MediaDriver.launchEmbedded()))(d => Sync.defer(d.close())).map { driver =>
+            AeronDriver.launch(CompilerPool.driverSettings).map { driver =>
                 AtomicInt.init(0).map { streamIdCounter =>
                     new CompilerPool(settings, instances, globalSemaphore, driver, streamIdCounter)
                 }

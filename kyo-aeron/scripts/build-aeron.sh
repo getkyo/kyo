@@ -4,12 +4,12 @@
 # Run once per runner os-arch before the kyo-aeron compile step; produced archives are
 # build artifacts (gitignored), consumed by the kyo_aeron FfiLibrary.
 #
-# Usage: kyo-aeron/scripts/build-aeron.sh <os-arch>   e.g. linux-x86_64 | linux-aarch64 | darwin-aarch64
-# Requires cmake + a C toolchain on PATH (apt: cmake build-essential; brew: cmake).
+# Usage: kyo-aeron/scripts/build-aeron.sh <os-arch>   e.g. linux-x86_64 | linux-aarch64 | darwin-aarch64 | windows-x86_64
+# Requires cmake + a C toolchain on PATH (apt: cmake build-essential; brew: cmake; Windows: MSVC + cmake).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-osArch="${1:?os-arch required, e.g. linux-x86_64 / linux-aarch64 / darwin-aarch64}"
+osArch="${1:?os-arch required, e.g. linux-x86_64 / linux-aarch64 / darwin-aarch64 / windows-x86_64}"
 AERON_VERSION="1.50.2"
 AERON_TAG="$AERON_VERSION"
 
@@ -28,23 +28,41 @@ dest="$here/../build/aeron/staged/$osArch"
 rm -rf "$dest"
 mkdir -p "$dest/lib" "$dest/include/aeron" "$dest/include/aeronmd"
 
-# -DCMAKE_POSITION_INDEPENDENT_CODE=ON: required on Linux aarch64 (non-PIC .a folded
-# into -shared .so fails with R_AARCH64_ADR_PREL_PG_HI21 relocation error).
-# Harmless on darwin (already PIC). Mirrors kyo-net/build/boringssl/build-boringssl.sh.
-cmake -S "$src" -B "$src/build" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    >/dev/null
-
-cmake --build "$src/build" \
-    --target aeron_driver_static \
-    -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-
-# Copy the static archive to staged lib/. Only aeron_driver_static is built and linked: it
-# already embeds the full client, and adding aeron_static would cause duplicate-symbol link
-# errors (see kyo-aeron/CONTRIBUTING.md "The link is driver-only").
-cp "$src/build/lib/libaeron_driver_static.a" "$dest/lib/"
+# Aeron 1.50.2 only supports Windows under MSVC: its sources gate Windows compatibility on
+# `_MSC_VER` (e.g. the sys/uio.h shim), so MinGW cannot build it. On Windows the build therefore
+# uses cmake's default Visual Studio generator (which locates MSVC itself, no vcvars needed) and a
+# multi-config Release build; every other host keeps the single-config Unix Makefiles build with
+# PIC (required on Linux aarch64, harmless elsewhere).
+case "$osArch" in
+    windows-*)
+        cmake -S "$src" -B "$src/build" \
+            -DBUILD_SHARED_LIBS=OFF \
+            >/dev/null
+        cmake --build "$src/build" --target aeron_driver_static --config Release
+        # The Visual Studio generator writes the archive under a per-config subdir; find it rather
+        # than hard-coding the layout, which varies by cmake version.
+        archive="$(find "$src/build" -name "aeron_driver_static.lib" | head -1)"
+        [ -n "$archive" ] || { echo "aeron_driver_static.lib not produced" >&2; exit 1; }
+        cp "$archive" "$dest/lib/aeron_driver_static.lib"
+        ;;
+    *)
+        # -DCMAKE_POSITION_INDEPENDENT_CODE=ON: required on Linux aarch64 (non-PIC .a folded
+        # into -shared .so fails with R_AARCH64_ADR_PREL_PG_HI21 relocation error).
+        # Harmless on darwin (already PIC). Mirrors kyo-net/build/boringssl/build-boringssl.sh.
+        cmake -S "$src" -B "$src/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            >/dev/null
+        cmake --build "$src/build" \
+            --target aeron_driver_static \
+            -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+        # Copy the static archive to staged lib/. Only aeron_driver_static is built and linked: it
+        # already embeds the full client, and adding aeron_static would cause duplicate-symbol link
+        # errors (see kyo-aeron/CONTRIBUTING.md "The link is driver-only").
+        cp "$src/build/lib/libaeron_driver_static.a" "$dest/lib/"
+        ;;
+esac
 
 # Copy Aeron C client headers (aeronc.h + all public client headers) to staged include/aeron/.
 cp "$src/aeron-client/src/main/c/aeronc.h" "$dest/include/aeron/"
@@ -58,7 +76,12 @@ cp "$src/aeron-driver/src/main/c/aeronmd.h" "$dest/include/aeronmd/"
 find "$src/aeron-driver/src/main/c" -name "*.h" ! -name "aeronmd.h" \
     -exec cp {} "$dest/include/aeronmd/" \;
 
+if [ -f "$dest/lib/aeron_driver_static.lib" ]; then
+    staged_lib="$dest/lib/aeron_driver_static.lib"
+else
+    staged_lib="$dest/lib/libaeron_driver_static.a"
+fi
 echo "staged Aeron $AERON_VERSION for $osArch -> $dest"
-echo "  lib/libaeron_driver_static.a $(wc -c <"$dest/lib/libaeron_driver_static.a") bytes"
+echo "  lib archive               $(basename "$staged_lib") ($(wc -c <"$staged_lib") bytes)"
 echo "  include/aeron/aeronc.h       $(test -f "$dest/include/aeron/aeronc.h" && echo present || echo MISSING)"
 echo "  include/aeronmd/aeronmd.h    $(test -f "$dest/include/aeronmd/aeronmd.h" && echo present || echo MISSING)"

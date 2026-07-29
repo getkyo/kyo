@@ -219,6 +219,18 @@ class FrameTest extends kyo.test.Test[Any]:
             assert(Frame.extractCalleeName("val a = `a.b.c`", 15) == "a.b.c")
         }
 
+        // The macro passes the compiler's raw content, so CRLF sources reach the
+        // walker with \r chars in place; each \r must be skipped as whitespace.
+        "extractCalleeName skips CRLF terminators inside a multi-line arg list" in {
+            val src = "val a = foo(\r\n    1,\r\n    2\r\n)"
+            assert(Frame.extractCalleeName(src, src.length) == "foo")
+        }
+
+        "extractCalleeName skips a CRLF break before a chained call" in {
+            val src = "val a = obj\r\n    .method(x)"
+            assert(Frame.extractCalleeName(src, src.length) == "method")
+        }
+
         "extractCalleeName returns '?' for an empty prefix" in {
             assert(Frame.extractCalleeName("", 0) == "?")
         }

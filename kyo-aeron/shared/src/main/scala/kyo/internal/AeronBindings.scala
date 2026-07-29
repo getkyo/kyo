@@ -31,9 +31,12 @@ import kyo.ffi.Ffi
   * ffiGenerate cache is keyed on TASTy and silently drops new methods otherwise.
   */
 private[kyo] trait AeronBindings extends Ffi:
+    /** Timeouts are nanoseconds; `0` leaves the driver's own default in place. */
     @Ffi.blocking
-    def driverStart(dir: String)(using AllowUnsafe): Fiber.Unsafe[Ffi.Handle[AeronDriver], Any]
-    def driverClose(driver: Ffi.Handle[AeronDriver])(using AllowUnsafe): Unit
+    def driverStart(dir: String, clientLivenessNs: Long, publicationUnblockNs: Long)(using
+        AllowUnsafe
+    ): Fiber.Unsafe[Ffi.Handle[AeronDriverHandle], Any]
+    def driverClose(driver: Ffi.Handle[AeronDriverHandle])(using AllowUnsafe): Unit
     @Ffi.blocking
     def clientConnect(dir: String)(using AllowUnsafe): Fiber.Unsafe[Ffi.Handle[AeronClientHandle], Any]
     def clientClose(client: Ffi.Handle[AeronClientHandle])(using AllowUnsafe): Unit
@@ -87,7 +90,7 @@ private[kyo] object AeronBindings extends Ffi.Config(
         nativeBundled = true
     )
 
-final private[kyo] class AeronDriver
+final private[kyo] class AeronDriverHandle
 final private[kyo] class AeronClientHandle
 final private[kyo] class AeronPublication
 final private[kyo] class AeronSubscription

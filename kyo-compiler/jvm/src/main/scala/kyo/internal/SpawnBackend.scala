@@ -1,6 +1,5 @@
 package kyo.internal
 
-import io.aeron.driver.MediaDriver
 import kyo.*
 
 /** The forked-worker backend: drives a per-config worker JVM over an aeron request/response session.
@@ -42,10 +41,29 @@ final private[kyo] class SpawnBackend(
         exchange.close
             .andThen(Sync.Unsafe.defer(aeron.unsafe.close()))
             .andThen(process.destroyForcibly)
+            .andThen(awaitWorkerExit)
+
+    /** Confirms the worker is dead before close returns. Windows completes the exit wait slightly
+      * before `isAlive` flips false, so the wait alone is not proof of death; a closed backend must
+      * never leave a worker alive holding the shared medium files, so liveness is polled (bounded)
+      * after the exit wait.
+      */
+    private def awaitWorkerExit(using Frame): Unit < Async =
+        def poll(attempts: Int): Unit < Async =
+            process.isAlive.map { alive =>
+                if !alive || attempts <= 0 then ()
+                else Async.sleep(10.millis).andThen(poll(attempts - 1))
+            }
+        process.waitFor(SpawnBackend.exitTimeout).andThen(poll(100))
+    end awaitWorkerExit
 
 end SpawnBackend
 
 private[kyo] object SpawnBackend:
+
+    /** Bounds the post-kill exit wait so `close` never blocks unboundedly if the OS is slow to reap the worker. */
+    private[kyo] val exitTimeout: Duration = 10.seconds
+
     /** Spawns the worker JVM, connects the aeron client, wires the Exchange, and wraps all three in a
       * SpawnBackend.
       *
@@ -56,7 +74,7 @@ private[kyo] object SpawnBackend:
       */
     def init(
         config: Compiler.Config,
-        driver: MediaDriver,
+        driver: AeronDriver,
         streamIdBase: Int,
         onSpawn: Process => Unit = _ => (),
         readyTimeout: Duration = 30.seconds
@@ -129,7 +147,7 @@ private[kyo] object SpawnBackend:
       * is spawned unscoped (released in `close`); a `CommandException` launch failure surfaces as
       * CompilerWorkerSpawnException.
       */
-    private[kyo] def spawnWorker(config: Compiler.Config, driver: MediaDriver, reqStreamId: Int, respStreamId: Int)(using
+    private[kyo] def spawnWorker(config: Compiler.Config, driver: AeronDriver, reqStreamId: Int, respStreamId: Int)(using
         Frame
     ): Process < (Sync & Abort[CompilerException]) =
         val targetClasspath =
@@ -142,7 +160,7 @@ private[kyo] object SpawnBackend:
                 Chunk(
                     s"-Dkyo.internal.WorkerFlags.reqStreamId=$reqStreamId",
                     s"-Dkyo.internal.WorkerFlags.respStreamId=$respStreamId",
-                    s"-Dkyo.internal.WorkerFlags.aeronDir=${driver.aeronDirectoryName()}",
+                    s"-Dkyo.internal.WorkerFlags.aeronDir=${driver.directory.unsafe.show}",
                     s"-Dkyo.internal.WorkerFlags.scalaVersion=${config.toolchain.scalaVersion}",
                     s"-Dkyo.internal.WorkerFlags.classpath=${config.classpath.map(_.toString).mkString(Path.pathSeparator)}",
                     s"-Dkyo.internal.WorkerFlags.sourceRoots=${config.sourceRoots.map(_.toString).mkString(Path.pathSeparator)}",
@@ -177,8 +195,8 @@ private[kyo] object SpawnBackend:
     /** Connects an aeron client to the pool's shared driver directory; closed in `close`. Unscoped
       * because the backend owns the client across its whole lifetime and releases it in `close`.
       */
-    private def aeronClient(driver: MediaDriver)(using Frame): AeronClient < (Async & Abort[TopicTransportFailedException]) =
-        AeronClient.connectUnscoped(Path(driver.aeronDirectoryName()))
+    private def aeronClient(driver: AeronDriver)(using Frame): AeronClient < (Async & Abort[TopicTransportFailedException]) =
+        AeronClient.connectUnscoped(driver.directory)
 
     /** Wires the Exchange over the two aeron streams against the captured client: `send` publishes an
       * `Envelope.Req` via `Topic.publish[Envelope]`, `receive` is the reply `Topic.stream[Envelope]`,

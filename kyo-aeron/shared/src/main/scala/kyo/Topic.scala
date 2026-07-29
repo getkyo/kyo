@@ -201,6 +201,12 @@ object Topic:
                                         transport.fatalError match
                                             case Present(detail) =>
                                                 Abort.fail(TopicTransportFailedException(detail))
+                                            case Absent if transport.clientClosed =>
+                                                // Terminal: a closed client reports the same
+                                                // "not connected" as a publication still waiting for
+                                                // a subscriber, so without this the retry below would
+                                                // never stop on a client that can never come back.
+                                                Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
                                             case Absent =>
                                                 val maxLen = transport.maxMessageLength(publication)
                                                 // Checked before connectivity: oversize is terminal regardless of
@@ -277,6 +283,12 @@ object Topic:
                                         transport.fatalError match
                                             case Present(detail) =>
                                                 Abort.fail(TopicTransportFailedException(detail))
+                                            case Absent if transport.clientClosed =>
+                                                // Terminal, for the reason the publish path documents:
+                                                // a closed client is indistinguishable from a
+                                                // subscription still waiting for a publisher, and no
+                                                // amount of retrying revives it.
+                                                Abort.fail(TopicTransportFailedException("aeron client closed"))
                                             case Absent =>
                                                 if !transport.subscriptionIsConnected(subscription) then backpressured
                                                 else
@@ -360,9 +372,25 @@ object Topic:
                                                     tokOwned = false
                                                 }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
                                             case _ => // AeronTransport.AddPoll.Awaiting
-                                                dl.isOverdue.map { over =>
-                                                    if over then Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout))
-                                                    else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                Sync.Unsafe.defer(transport.clientClosed).map { closed =>
+                                                    if closed then
+                                                        // The client went away mid-registration, so the
+                                                        // poll can never confirm. Take the same
+                                                        // closed-client exit as Failed(0, "") instead of
+                                                        // polling on to the deadline: the caller's fiber
+                                                        // may outlive the client (Topic.run's scope can
+                                                        // exit under it), and a registration that cannot
+                                                        // complete must not keep a carrier busy.
+                                                        Sync.Unsafe.defer {
+                                                            transport.freeAsyncPub(tok)
+                                                            tokOwned = false
+                                                        }.andThen(Loop.done[Unit, Maybe[Pub]](Absent))
+                                                    else
+                                                        dl.isOverdue.map { over =>
+                                                            if over then
+                                                                Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout))
+                                                            else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                        }
                                                 }
                                 }
                             }
@@ -413,9 +441,19 @@ object Topic:
                                                     tokOwned = false
                                                 }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
                                             case _ => // AeronTransport.AddPoll.Awaiting
-                                                dl.isOverdue.map { over =>
-                                                    if over then Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout))
-                                                    else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                Sync.Unsafe.defer(transport.clientClosed).map { closed =>
+                                                    if closed then
+                                                        // Same closed-client exit as the publication loop.
+                                                        Sync.Unsafe.defer {
+                                                            transport.freeAsyncSub(tok)
+                                                            tokOwned = false
+                                                        }.andThen(Loop.done[Unit, Maybe[Sub]](Absent))
+                                                    else
+                                                        dl.isOverdue.map { over =>
+                                                            if over then
+                                                                Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout))
+                                                            else Async.sleep(addBackoff).andThen(Loop.continue)
+                                                        }
                                                 }
                                 }
                             }

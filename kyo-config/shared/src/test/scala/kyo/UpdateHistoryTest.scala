@@ -9,10 +9,10 @@ class UpdateHistoryTest extends AnyFreeSpec {
 
         "history records update entry" in {
             val flag = HistoryTestFlags.recordEntry
-            flag.update("new@expr")
+            flag.update("rollout:new@expr")
             val hist = flag.updateHistory
             assert(hist.size == 1)
-            assert(hist.head.newExpression == "new@expr")
+            assert(hist.head.newExpression == "rollout:new@expr")
             assert(hist.head.previousExpression == "")
         }
 
@@ -44,7 +44,7 @@ class UpdateHistoryTest extends AnyFreeSpec {
         "history includes timestamp" in {
             val before = java.lang.System.currentTimeMillis()
             val flag   = HistoryTestFlags.timestamp
-            flag.update("new@expr")
+            flag.update("rollout:new@expr")
             val after = java.lang.System.currentTimeMillis()
             val hist  = flag.updateHistory
             assert(hist.head.timestamp >= before)
@@ -53,13 +53,13 @@ class UpdateHistoryTest extends AnyFreeSpec {
 
         "history includes previous expression" in {
             val flag = HistoryTestFlags.prevExpr
-            flag.update("first@x")
-            flag.update("second@y")
+            flag.update("rollout:first@x")
+            flag.update("rollout:second@y")
             val hist = flag.updateHistory
-            assert(hist(0).previousExpression == "first@x")
-            assert(hist(0).newExpression == "second@y")
+            assert(hist(0).previousExpression == "rollout:first@x")
+            assert(hist(0).newExpression == "rollout:second@y")
             assert(hist(1).previousExpression == "")
-            assert(hist(1).newExpression == "first@x")
+            assert(hist(1).newExpression == "rollout:first@x")
         }
 
         "history survives across multiple updates" in {
@@ -80,7 +80,7 @@ class UpdateHistoryTest extends AnyFreeSpec {
 
         "history not added on failed update" in {
             val flag = HistoryTestFlags.failedUpdate
-            flag.update("100@enterprise")
+            flag.update("rollout:100@enterprise")
             assert(flag.updateHistory.size == 1)
             try flag.update("notanumber")
             catch { case _: FlagException => () }

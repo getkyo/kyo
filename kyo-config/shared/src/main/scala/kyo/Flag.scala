@@ -77,9 +77,17 @@ abstract class Flag[A] private[kyo] (final val default: A, final val validate: A
     /** Raw expression string from system property or environment variable. Empty string when source is Default. */
     private[kyo] val initialExpression: String = resolvedExpression
 
-    /** Returns true if the expression contains rollout DSL syntax (@ or ;). */
+    /** Returns true if the expression opts into rollout DSL interpretation via the `rollout:` marker.
+      *
+      * A plain value is never interpreted as the DSL, so values containing `;` or `@` (Windows path lists, URIs with userinfo) resolve
+      * verbatim; only a `rollout:`-prefixed expression is parsed as choices.
+      */
     private[kyo] def isRollout(expr: String): Boolean =
-        expr.indexOf('@') >= 0 || expr.indexOf(';') >= 0
+        expr.startsWith(Rollout.Marker)
+
+    /** Strips the `rollout:` marker, yielding the expression the DSL parser consumes. Callers must check [[isRollout]] first. */
+    private[kyo] def rolloutPayload(expr: String): String =
+        expr.substring(Rollout.Marker.length)
 
     /** Pre-validated default value, computed once at construction time. */
     private[kyo] val validatedDefault: A =

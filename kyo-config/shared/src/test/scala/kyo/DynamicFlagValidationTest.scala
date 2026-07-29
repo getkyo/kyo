@@ -22,7 +22,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
     "DynamicFlag pre-parsing and validation" - {
 
         "all values parsed at init — bad value fails class load" in {
-            java.lang.System.setProperty("kyo.DynValTestFlags.badValueInit", "1000@enterprise;notanumber;500")
+            java.lang.System.setProperty("kyo.DynValTestFlags.badValueInit", "rollout:1000@enterprise;notanumber;500")
             try {
                 val cause = interceptInitError {
                     DynValTestFlags.badValueInit
@@ -35,7 +35,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         }
 
         "error message includes choice position" in {
-            java.lang.System.setProperty("kyo.DynValTestFlags.choicePos", "1@x;bad;3")
+            java.lang.System.setProperty("kyo.DynValTestFlags.choicePos", "rollout:1@x;bad;3")
             try {
                 val cause = interceptInitError {
                     DynValTestFlags.choicePos
@@ -47,7 +47,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         }
 
         "error message includes full expression" in {
-            java.lang.System.setProperty("kyo.DynValTestFlags.fullExpr", "1@x;bad;3")
+            java.lang.System.setProperty("kyo.DynValTestFlags.fullExpr", "rollout:1@x;bad;3")
             try {
                 val cause = interceptInitError {
                     DynValTestFlags.fullExpr
@@ -83,7 +83,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         }
 
         "validate runs at parse time — value is clamped" in {
-            java.lang.System.setProperty("kyo.DynValTestFlags.validateParse", "0@enterprise;5")
+            java.lang.System.setProperty("kyo.DynValTestFlags.validateParse", "rollout:0@enterprise;5")
             try {
                 val flag = DynValTestFlags.validateParse
                 // "0" with Math.max(1, _) should be clamped to 1
@@ -109,7 +109,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
 
         "whitespace around choices trimmed" in {
             val flag = DynValTestFlags.whitespaceChoices
-            flag.update(" a@x ; b@y ; c ")
+            flag.update("rollout: a@x ; b@y ; c ")
             assert(flag("user1", "x") == "a")
             assert(flag("user1", "y") == "b")
             assert(flag("user1", "z") == "c")
@@ -118,7 +118,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "empty choice throws" in {
             val flag = DynValTestFlags.emptyChoice
             val ex = intercept[FlagException] {
-                flag.update("a@x;;b")
+                flag.update("rollout:a@x;;b")
             }
             assert(ex.getMessage.contains("empty choice"))
         }
@@ -126,7 +126,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "empty selector throws" in {
             val flag = DynValTestFlags.emptySelector
             val ex = intercept[FlagException] {
-                flag.update("a@")
+                flag.update("rollout:a@")
             }
             assert(ex.getMessage.contains("empty selector"))
         }
@@ -134,7 +134,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "double slash throws" in {
             val flag = DynValTestFlags.doubleSlash
             val ex = intercept[FlagException] {
-                flag.update("a@prod//us")
+                flag.update("rollout:a@prod//us")
             }
             assert(ex.getMessage.contains("empty path segment"))
             assert(ex.getMessage.contains("position 2"))
@@ -143,7 +143,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "leading slash throws" in {
             val flag = DynValTestFlags.leadingSlash
             val ex = intercept[FlagException] {
-                flag.update("a@/prod")
+                flag.update("rollout:a@/prod")
             }
             assert(ex.getMessage.contains("empty path segment"))
             assert(ex.getMessage.contains("position 1"))
@@ -152,7 +152,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "trailing slash throws" in {
             val flag = DynValTestFlags.trailingSlash
             val ex = intercept[FlagException] {
-                flag.update("a@prod/")
+                flag.update("rollout:a@prod/")
             }
             assert(ex.getMessage.contains("empty path segment"))
         }
@@ -160,7 +160,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "negative percentage throws" in {
             val flag = DynValTestFlags.negPercent
             val ex = intercept[FlagException] {
-                flag.update("a@prod/-5%")
+                flag.update("rollout:a@prod/-5%")
             }
             assert(ex.getMessage.contains("negative percentage"))
         }
@@ -168,14 +168,14 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "non-numeric percentage throws" in {
             val flag = DynValTestFlags.nonNumericPct
             val ex = intercept[FlagException] {
-                flag.update("a@prod/abc%")
+                flag.update("rollout:a@prod/abc%")
             }
             assert(ex.getMessage.contains("invalid percentage"))
         }
 
         "valid complex expression succeeds" in {
             val flag = DynValTestFlags.validComplex
-            flag.update("50@prod/us-east-1/50%;30@staging;10")
+            flag.update("rollout:50@prod/us-east-1/50%;30@staging;10")
             assert(flag("user1", "staging") == 30)
             assert(flag("user1", "other") == 10)
         }
@@ -183,7 +183,7 @@ class DynamicFlagValidationTest extends AnyFreeSpec {
         "empty value before @ throws" in {
             val flag = DynValTestFlags.emptyValueAt
             val ex = intercept[FlagException] {
-                flag.update("@prod/50%")
+                flag.update("rollout:@prod/50%")
             }
             assert(ex.getMessage.contains("empty value"))
         }

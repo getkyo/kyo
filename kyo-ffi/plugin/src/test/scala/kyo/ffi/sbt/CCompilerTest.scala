@@ -94,6 +94,35 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("-pthread")
     }
 
+    test("buildCommand: MSVC routes /LIBPATH and libs through /link so the linker finds a vendored .lib") {
+        // Regression: `/LIBPATH:` is a linker option cl silently ignores on the compiler command line,
+        // so a vendored library named by linkLibs + libDirs (e.g. aeron_driver_static.lib staged under a
+        // build dir) is unfindable unless the search dir and the lib follow `/link` (LNK1181 otherwise).
+        val src    = new File("/tmp/kyo_aeron.c")
+        val out    = new File("/tmp/kyo_aeron-windows-x86_64.dll")
+        val libDir = new File("/tmp/staged/lib")
+        val cmd = CCompiler.buildCommand(
+            cc = "cl",
+            family = CCompiler.Msvc,
+            cFlags = Seq("/MD"),
+            linkFlags = Nil,
+            linkLibs = Seq("aeron_driver_static", "ws2_32"),
+            sources = Seq(src),
+            includes = Nil,
+            outFile = out,
+            staticLink = false,
+            libDirs = Seq(libDir),
+            os = "windows"
+        )
+        val linkIdx    = cmd.indexOf("/link")
+        val libPathIdx = cmd.indexWhere(_ == "/LIBPATH:" + libDir.getAbsolutePath)
+        val libIdx     = cmd.indexOf("aeron_driver_static.lib")
+        linkIdx should be >= 0
+        libPathIdx should be > linkIdx
+        libIdx should be > linkIdx
+        cmd should contain("ws2_32.lib")
+    }
+
     test("buildCommand: linkFlags (C++ runtime) come AFTER linkLibs so GNU ld resolves archive C++ symbols") {
         // Regression: a vendored C++ static archive (e.g. BoringSSL) needs its C++ runtime (-lstdc++ / -lc++)
         // AFTER the archive on the GNU ld command line; before, ld leaves the archive's C++ symbols undefined
@@ -335,12 +364,14 @@ class CCompilerTest extends AnyFunSuite with Matchers {
 
     test("vendoredArchiveLinkFlags: darwin static links each .a by full path (no -Bstatic)") {
         // ld64 has no -Bstatic; the staged archive is named by full path so the link is static.
+        // The path is a HOST filesystem path (the linker runs on the host), so the expectation
+        // is derived through File rather than a hardcoded separator style.
         val libDir = new File("/tmp/bssl/lib")
         val flags  = CCompiler.vendoredArchiveLinkFlags(Seq(libDir), Seq("ssl", "crypto"), staticLink = true, os = "darwin")
         // Archives are named by absolute path under libDir; no -L, no -Bstatic on darwin.
         flags should have size 2
-        flags(0) should endWith("/tmp/bssl/lib/libssl.a")
-        flags(1) should endWith("/tmp/bssl/lib/libcrypto.a")
+        flags(0) shouldBe new File(libDir, "libssl.a").getAbsolutePath
+        flags(1) shouldBe new File(libDir, "libcrypto.a").getAbsolutePath
         flags should not contain ("-Wl,-Bstatic")
         flags should not contain ("-Wl,-Bdynamic")
         flags.foreach(f => f should not startWith ("-L"))
@@ -379,9 +410,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         val libDir = new File("/tmp/bssl/lib")
         val flags  = CCompiler.vendoredArchiveForceLoadFlags(Seq(libDir), Seq("ssl", "crypto"), staticLink = true, os = "darwin")
         flags should have size 2
-        flags(0) should startWith("-Wl,-force_load,")
-        flags(0) should endWith("/tmp/bssl/lib/libssl.a")
-        flags(1) should endWith("/tmp/bssl/lib/libcrypto.a")
+        flags(0) shouldBe s"-Wl,-force_load,${new File(libDir, "libssl.a").getAbsolutePath}"
+        flags(1) shouldBe s"-Wl,-force_load,${new File(libDir, "libcrypto.a").getAbsolutePath}"
         flags should not contain ("-Wl,--whole-archive")
     }
 
@@ -442,8 +472,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         )
         cmd should contain("-shared")
         cmd.containsSlice(Seq("-I", incDir.getAbsolutePath)) shouldBe true
-        cmd.exists(_.endsWith("/tmp/bssl/lib/libssl.a")) shouldBe true
-        cmd.exists(_.endsWith("/tmp/bssl/lib/libcrypto.a")) shouldBe true
+        cmd should contain(new File(libDir, "libssl.a").getAbsolutePath)
+        cmd should contain(new File(libDir, "libcrypto.a").getAbsolutePath)
         cmd should not contain ("-Wl,-Bstatic")
         cmd should not contain ("-static")
     }

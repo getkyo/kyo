@@ -6,12 +6,14 @@ import scala.annotation.tailrec
 /** Infrastructure-level gradual rollout via a string DSL.
   *
   * Rollout lets configuration values vary by deployment topology (environment, region, cluster) and percentage sampling. A system property
-  * or env var contains a semicolon-separated expression of conditional choices evaluated against the instance's rollout path, configured
-  * via `-Dkyo.rollout.path=prod/us-east-1/az1/pod-abc` or env var `KYO_ROLLOUT_PATH`. When unset, Rollout auto-detects from Kubernetes,
-  * AWS, or GCP environment variables.
+  * or env var opts in with the `rollout:` marker; the rest of the value is a semicolon-separated expression of conditional choices
+  * evaluated against the instance's rollout path, configured via `-Dkyo.rollout.path=prod/us-east-1/az1/pod-abc` or env var
+  * `KYO_ROLLOUT_PATH`. When unset, Rollout auto-detects from Kubernetes, AWS, or GCP environment variables. A value without the marker is
+  * never interpreted as an expression, so plain values containing `;` or `@` resolve verbatim.
   *
-  * Grammar: `expression = choice { ";" choice }`, where `choice = value "@" selector | value` (terminal). Selector = path segments and/or a
-  * trailing `N%`. Choices are evaluated left-to-right; first match wins. Terminal (bare value, no `@`) always matches.
+  * Grammar (after the `rollout:` marker): `expression = choice { ";" choice }`, where `choice = value "@" selector | value` (terminal).
+  * Selector = path segments and/or a trailing `N%`. Choices are evaluated left-to-right; first match wins. Terminal (bare value, no `@`)
+  * always matches.
   *
   * Key capabilities:
   *   - Path-based selectors with wildcard (`*`) and exact-match segments
@@ -19,7 +21,7 @@ import scala.annotation.tailrec
   *   - Expression validation via `validate()` with structured warnings and errors
   *   - Auto-detection of deployment topology from cloud provider env vars
   *
-  * IMPORTANT: Percentages are WEIGHTS, not thresholds. `"a@33%;b@33%"` means a gets 33% and b gets 33% of bucket space. Weights accumulate
+  * IMPORTANT: Percentages are WEIGHTS, not thresholds. `"rollout:a@33%;b@33%"` means a gets 33% and b gets 33% of bucket space. Weights accumulate
   * left-to-right into cumulative thresholds at parse time. Users never do cumulative math.
   *
   * WARNING: Increasing a percentage adds entities; decreasing can REMOVE entities. `50%` -> `75%` adds 25% new entities. `75%` -> `50%`
@@ -38,6 +40,14 @@ import scala.annotation.tailrec
 object Rollout {
 
     // --- Public API ---
+
+    /** The explicit activation marker for rollout expressions.
+      *
+      * Only a property or env var value starting with `rollout:` is parsed as a rollout expression; the remainder of the value is the
+      * expression itself. Any other value is plain and resolves verbatim, so values that happen to contain `;` or `@` (Windows path lists,
+      * URIs with userinfo) are never reinterpreted as DSL choices.
+      */
+    final val Marker: String = "rollout:"
 
     /** Computes the bucket for an arbitrary key string. Useful for debugging: "what bucket does key X fall into?"
       *
@@ -60,9 +70,11 @@ object Rollout {
       *   - Numeric path segments without `%` (warning: "did you mean N%?")
       *   - Empty path segments (double slash)
       */
-    def validate(expression: String): Either[String, List[String]] =
-        if (expression.isEmpty) Right(Nil)
-        else validateNonEmpty(expression)
+    def validate(expression: String): Either[String, List[String]] = {
+        val expr = if (expression.startsWith(Marker)) expression.substring(Marker.length) else expression
+        if (expr.isEmpty) Right(Nil)
+        else validateNonEmpty(expr)
+    }
 
     // --- Internal types ---
 
@@ -153,6 +165,23 @@ object Rollout {
                     }
                 }
             loop(0, 0)
+        }
+    }
+
+    /** Wraps a plain (non-rollout) value as a single terminal choice, running the value validator.
+      *
+      * Used by DynamicFlag for values without the [[Marker]]: the value is taken verbatim, whatever characters it contains, so `;` and `@`
+      * never split a plain value into choices.
+      */
+    private[kyo] def plainChoices(
+        expression: String,
+        valueValidator: (String, Int, Int, String) => Unit = (_, _, _, _) => ()
+    ): Choices = {
+        val expr = expression.trim
+        if (expr.isEmpty) Choices(Array.empty[Choice])
+        else {
+            valueValidator(expr, 1, 1, expression)
+            Choices(Array(Choice(expr, Terminal)))
         }
     }
 

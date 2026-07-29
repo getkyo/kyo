@@ -261,7 +261,15 @@ class LibCTest extends ItTestBase:
     }
 
     "labs" - {
+        // C `long` is 32 bits on Windows (LLP64), so the 64-bit expectations below hold only on
+        // LP64 hosts under Node; the JVM tier resolves a 64-bit-compatible path there. The
+        // does-not-crash leaf stays unconditional.
+        def assumeLp64Long(): Unit =
+            if kyo.internal.Platform.isWindows && !kyo.internal.Platform.isJVM then
+                cancel("C long is 32-bit on Windows (LLP64)")
+
         "labs(Long.MinValue + 1) is Long.MaxValue" in {
+            assumeLp64Long()
             // labs(Long.MinValue) is UB. Long.MinValue + 1 is well-defined and
             // equals Long.MaxValue after abs.
             val libc = Ffi.load[LibCBindings]
@@ -269,6 +277,7 @@ class LibCTest extends ItTestBase:
         }
 
         "labs(Long.MaxValue) is Long.MaxValue" in {
+            assumeLp64Long()
             // D8: Long.MaxValue is positive, labs must return it unchanged.
             val libc = Ffi.load[LibCBindings]
             assert(libc.labs(Long.MaxValue) == Long.MaxValue)
@@ -285,6 +294,7 @@ class LibCTest extends ItTestBase:
 
         // Table-driven labs rows.
         "table-driven: varied signed long inputs" in {
+            assumeLp64Long()
             val libc = Ffi.load[LibCBindings]
             val cases: Seq[(Long, Long)] = Seq(
                 0L                   -> 0L,

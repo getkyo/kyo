@@ -251,26 +251,37 @@ class BrowserLauncherTest extends BaseBrowserTest:
     // for the single-stmt form.
     "killOrphans kills processes matching the kyo-browser user-data-dir pattern" in {
         Scope.run {
-            for
-                n <- Random.nextLong
-                uniqueId = f"$n%016x"
-                pattern  = s"kyo-browser-orphans-test-$uniqueId"
-                script   = s"true; sleep 30 # --user-data-dir=$pattern"
-                proc        <- Command("sh", "-c", script).spawn
-                pid         <- proc.pid
-                aliveBefore <- isPidAlive(pid)
-                _           <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
-                killed <- Loop(0) { attempt =>
-                    isPidAlive(pid).map { alive =>
-                        if !alive then Loop.done(true)
-                        else if attempt >= 5 then Loop.done(false)
-                        else Async.delay(50.millis)(Kyo.unit).andThen(Loop.continue(attempt + 1))
+            System.operatingSystem.map {
+                case System.OS.Windows =>
+                    // The sweep is documented as a silent no-op where pgrep does not exist
+                    // (Windows, minimal Docker). The POSIX sentinel below cannot run here, so
+                    // this platform asserts the production contract instead: the sweep with the
+                    // real `pgrep` command completes without failing.
+                    Abort.run[Throwable](BrowserLauncher.killOrphans("kyo-browser-orphans-test-none", command = "pgrep")).map { result =>
+                        assert(result.isSuccess, s"killOrphans must be a silent no-op without pgrep, got $result")
                     }
-                }
-            yield
-                assert(aliveBefore, s"sentinel pid=$pid should be alive before killOrphans")
-                assert(killed, s"sentinel pid=$pid should be killed by killOrphans within ~250ms")
-            end for
+                case _ =>
+                    for
+                        n <- Random.nextLong
+                        uniqueId = f"$n%016x"
+                        pattern  = s"kyo-browser-orphans-test-$uniqueId"
+                        script   = s"true; sleep 30 # --user-data-dir=$pattern"
+                        proc        <- Command("sh", "-c", script).spawn
+                        pid         <- proc.pid
+                        aliveBefore <- isPidAlive(pid)
+                        _           <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
+                        killed <- Loop(0) { attempt =>
+                            isPidAlive(pid).map { alive =>
+                                if !alive then Loop.done(true)
+                                else if attempt >= 5 then Loop.done(false)
+                                else Async.delay(50.millis)(Kyo.unit).andThen(Loop.continue(attempt + 1))
+                            }
+                        }
+                    yield
+                        assert(aliveBefore, s"sentinel pid=$pid should be alive before killOrphans")
+                        assert(killed, s"sentinel pid=$pid should be killed by killOrphans within ~250ms")
+                    end for
+            }
         }
     }
 

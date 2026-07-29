@@ -21,7 +21,7 @@ import kyo.ffi.Ffi
 final private[kyo] class FfiAeronTransport(
     bindings: AeronBindings,
     client: Ffi.Handle[AeronClientHandle]
-) extends AeronTransport:
+)(using AllowUnsafe) extends AeronTransport:
     type Publication  = Ffi.Handle[AeronPublication]
     type Subscription = FfiAeronTransport.SubscriptionState
     type AsyncPub     = Ffi.Handle[AeronAsyncPub]
@@ -29,8 +29,38 @@ final private[kyo] class FfiAeronTransport(
 
     import FfiAeronTransport.*
 
+    /** Set by [[closeClient]] before the client goes away, and never cleared. Read by every
+      * `Topic` retry decision, so it is atomic: the closing fiber and the fibers still holding
+      * handles run on different carriers.
+      */
+    private val closed = AtomicBoolean.Unsafe.init(false)
+
+    override def clientClosed(using AllowUnsafe): Boolean = closed.get()
+
+    /** Closes the Aeron client, marking the transport permanently closed first so a concurrent
+      * `Topic` retry sees the terminal signal rather than reading the closing client's transient
+      * "not connected".
+      *
+      * The transport owns this rather than the platform selector because it holds the client
+      * handle, so the flag and the handle it describes cannot drift apart.
+      *
+      * Idempotent, and the flag is what makes it so: `kyo_aeron_client_close` calls `aeron_close`
+      * unconditionally, so a second call would tear down an already-freed client and crash the
+      * process. io.aeron's `Aeron.close` absorbed a repeat silently, so callers that close twice
+      * (a resource released on both an error path and its scope exit) were harmless before and are
+      * fatal now. Winning the CAS is what grants the right to close.
+      */
+    def closeClient()(using AllowUnsafe): Unit =
+        if closed.compareAndSet(false, true) then bindings.clientClose(client)
+
     def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] =
-        bindings.asyncAddPublication(client, uri, streamId)
+        // Absent once closed, without the downcall. The shim rejects a registration against a closed
+        // client by looking the bundle up in its live registry, but that lookup is by pointer identity,
+        // so a bundle allocated at the freed one's address while a stale handle survives passes the
+        // check and hands back a live token. Refusing here removes the dangling pointer from the call
+        // entirely, which is this side's job: it owns the handle and knows when it died.
+        if closed.get() then Absent
+        else bindings.asyncAddPublication(client, uri, streamId)
 
     def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
         val r = bindings.asyncAddPublicationPoll(async)
@@ -69,7 +99,9 @@ final private[kyo] class FfiAeronTransport(
         bindings.publicationClose(pub)
 
     def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] =
-        bindings.asyncAddSubscription(client, uri, streamId)
+        // Same closed-client refusal as asyncAddPublication.
+        if closed.get() then Absent
+        else bindings.asyncAddSubscription(client, uri, streamId)
 
     def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
         val r = bindings.asyncAddSubscriptionPoll(async)
@@ -100,6 +132,15 @@ final private[kyo] class FfiAeronTransport(
         //   -1   -> poll error.
         //   -2   -> message exceeds the 16 MiB protocol ceiling (undeliverable).
         //   < -2 -> message retained in the shim slot; -len is the required dst capacity.
+        // The shim guards the handle after a close, but the receive buffer is this side's to own: it is
+        // released by closeSubscription, so polling on regardless would hand the shim freed memory. The
+        // JVM's Panama backend rejects that outright ("Already closed") while Native and JS read the
+        // freed region, which is the use-after-free this guard exists to make impossible everywhere.
+        if sub.isClosed then Absent
+        else pollOpen(sub)
+    end pollOne
+
+    private def pollOpen(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]] =
         val len = bindings.subscriptionPoll(sub.handle, sub.receive, sub.receiveCap)
         if len > 0 then Maybe(Buffer.copyToArray[Byte](sub.receive, 0, len.toInt))
         else if len >= -2 then Absent // 0 (no message), -1 (error), or -2 (ceiling overflow)
@@ -110,7 +151,7 @@ final private[kyo] class FfiAeronTransport(
             if copied > 0 then Maybe(Buffer.copyToArray[Byte](sub.receive, 0, copied.toInt))
             else Absent
         end if
-    end pollOne
+    end pollOpen
 
     def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit =
         bindings.subscriptionClose(sub.handle)
@@ -152,7 +193,18 @@ private[kyo] object FfiAeronTransport:
       * state, so the mutable `receive` buffer is confined to one caller and needs no
       * synchronization. `closeSubscription` releases it via [[close]].
       */
-    final private[kyo] class SubscriptionState private (val handle: Ffi.Handle[AeronSubscription], private var buffer: Buffer[Byte]):
+    final private[kyo] class SubscriptionState private (val handle: Ffi.Handle[AeronSubscription], private var buffer: Buffer[Byte])(
+        using AllowUnsafe
+    ):
+        /** Set by [[close]] before the receive buffer is released, so a poll that races or follows
+          * the close reports "no fragment" instead of handing the shim freed memory. Atomic because
+          * the closing fiber and the polling one need not share a carrier: the single-poller contract
+          * orders polls against each other, not against a close.
+          */
+        private val closedFlag = AtomicBoolean.Unsafe.init(false)
+
+        def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
+
         def receive: Buffer[Byte] = buffer
         def receiveCap: Int       = buffer.size
 
@@ -165,9 +217,14 @@ private[kyo] object FfiAeronTransport:
                 buffer.close()
                 buffer = Buffer.alloc[Byte](required)
 
-        /** Release the reusable receive buffer. Idempotent (`Buffer.close` is). */
+        /** Release the reusable receive buffer. Idempotent (`Buffer.close` is), and marks the state
+          * closed first so no poll can reach the buffer once it is released.
+          */
         // Unsafe: off-heap buffer release; AllowUnsafe scoped to this method.
-        def close()(using AllowUnsafe): Unit = buffer.close()
+        def close()(using AllowUnsafe): Unit =
+            closedFlag.set(true)
+            buffer.close()
+        end close
     end SubscriptionState
 
     private[kyo] object SubscriptionState:

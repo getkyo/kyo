@@ -35,6 +35,9 @@ class AeronTransportTest extends Test:
     val oversizeJvmStreamId   = 104
     val oversizeCrossStreamId = 105
 
+    val closedClientPubStreamId = 115
+    val closedClientSubStreamId = 116
+
     val errorHandlerInjectStreamId     = 106
     val errorHandlerPublishStreamId    = 112
     val errorHandlerRegressionStreamId = 113
@@ -216,6 +219,42 @@ class AeronTransportTest extends Test:
         def fatalError(using AllowUnsafe): Maybe[String] = Absent
     end NeverConfirmTransport
 
+    /** Transport reproducing the state a fiber sees when the client closes underneath it: the
+      * registration never confirms, connectivity reads false, polls come back empty, and the error
+      * slot stays empty, because closing a client is not a conductor error.
+      *
+      * Every one of those signals is also a legitimate transient state (a registration still in
+      * flight, a peer that has not attached yet, a poll with no message), so `clientClosed` is the
+      * only thing separating "wait and retry" from "this can never succeed". Without the
+      * `clientClosed` gates in `Topic`, a fiber holding a handle across a client close retried its
+      * backoff schedule forever, or polled the add loop to its 10s deadline, keeping a carrier busy
+      * long after the client was gone.
+      */
+    final private class ClosedClientTransport extends AeronTransport:
+        type Publication  = Int
+        type Subscription = Int
+        type AsyncPub     = Int
+        type AsyncSub     = Int
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
+            AeronTransport.AddPoll.Awaiting
+        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = ()
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = AeronSentinels.Closed
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
+            AeronTransport.AddPoll.Awaiting
+        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
+        def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean = false
+        def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]]      = Absent
+        def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit          = ()
+        def fatalError(using AllowUnsafe): Maybe[String]                           = Absent
+
+        override def clientClosed(using AllowUnsafe): Boolean = true
+    end ClosedClientTransport
+
     "round-trip a known byte payload through AeronPlatform.embedded" in {
         val payload = Array[Byte](1, 2, 3, 4)
         for
@@ -352,10 +391,9 @@ class AeronTransportTest extends Test:
     }
 
     "offer result maps through AeronSentinels identically on every platform" in {
-        // AeronPlatform.embedded() dispatches to the active platform's transport (JvmAeronTransport on
-        // JVM, FfiAeronTransport on Native/JS), so one leaf exercises every impl. TopicInvariantsTest
-        // defers its FFI offer-sentinel coverage here, keeping only a `.onlyJs` leaf for the koffi
-        // BigInt->Long sign-marshalling guard.
+        // AeronPlatform.embedded() reaches FfiAeronTransport on every platform, so one leaf covers the
+        // single impl. TopicInvariantsTest defers its offer-sentinel coverage here, keeping only a
+        // `.onlyJs` leaf for the koffi BigInt->Long sign-marshalling guard.
         for
             dir <- Path.tempDir("kyo-aeron-embedded-test")
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
@@ -625,6 +663,50 @@ class AeronTransportTest extends Test:
         }
     }
 
+    // Closed-client termination. A fiber can outlive the client it publishes through: Topic.run's scope
+    // can exit while a fiber forked with Fiber.initUnscoped still holds handles, which is exactly what the
+    // UAF leaves below provoke. Every post-close signal the transport can give is also a legitimate
+    // transient one (a registration still awaiting confirmation, a peer that has not attached, a poll with
+    // no message), so before Topic gated these loops on clientClosed such a fiber never stopped: the add
+    // loop polled to its 10s deadline and the publish/stream loops retried their backoff schedule forever,
+    // keeping a carrier busy long after the client was gone. Both watchdogs are far below the 10s add
+    // deadline, so a missing gate surfaces as the Timeout winning rather than as a hang.
+    "a publish whose client is closed aborts terminally instead of polling to the add deadline" in {
+        val transport = new ClosedClientTransport
+        Abort.run[Timeout | TopicException] {
+            Async.timeout(2.seconds) {
+                Topic.runWith(transport) {
+                    Topic.publish[Int](ipcUri, streamId = Present(closedClientPubStreamId))(Stream.init(Seq(1)))
+                }
+            }
+        }.map {
+            case Result.Failure(_: TopicPublicationClosedException) =>
+                succeed
+            case Result.Failure(_: Timeout) =>
+                fail("publish kept polling past the 2s watchdog instead of aborting on the closed client")
+            case other =>
+                fail(s"expected TopicPublicationClosedException, got $other")
+        }
+    }
+
+    "a stream whose client is closed aborts terminally instead of polling to the add deadline" in {
+        val transport = new ClosedClientTransport
+        Abort.run[Timeout | TopicException] {
+            Async.timeout(2.seconds) {
+                Topic.runWith(transport) {
+                    Topic.stream[Int](ipcUri, streamId = Present(closedClientSubStreamId)).take(1).run
+                }
+            }
+        }.map {
+            case Result.Failure(_: TopicBackpressureExhaustedException) =>
+                succeed
+            case Result.Failure(_: Timeout) =>
+                fail("stream kept polling past the 2s watchdog instead of aborting on the closed client")
+            case other =>
+                fail(s"expected TopicBackpressureExhaustedException, got $other")
+        }
+    }
+
     // addPublicationDeadline sleeps between poll steps rather than blocking the carrier, so a concurrent
     // ticker fiber keeps advancing while the add is pending; the deadline and tick counts below leave
     // enough headroom to make that observation reliable.
@@ -731,11 +813,12 @@ class AeronTransportTest extends Test:
 
     // Because the forked fibers are unscoped, Topic.run's body completes and fires runtime.close() while
     // the publish fiber may still be mid-offer and the stream fiber mid-poll. Every platform turns that
-    // into a safe sentinel rather than a UAF: Native and JS through kyo_aeron.c's close_mutex+closing
-    // guard, the JVM through JvmAeronTransport's per-handle OpsGate plus the drain in closeAll. The JVM
-    // is not exempt by virtue of running on a managed heap: offer copies into a claimed log-buffer
-    // region and poll writes the subscriber position into the CnC, both mapped memory that closing the
-    // client unmaps, and io.aeron's own grace for that (closeLingerDurationNs) defaults to 0.
+    // into a safe sentinel rather than a UAF, through kyo_aeron.c's close_mutex+closing guard on every
+    // platform. The JVM is not exempt by virtue of running on a managed heap: offer copies into a claimed
+    // log-buffer region and poll writes the subscriber position into the CnC, both mapped memory that
+    // closing the client unmaps. Running the JVM on the Java client instead is what made this leaf crash:
+    // that path re-derived the guard as a per-handle gate whose drain could miss a publication registered
+    // concurrently, so an offer wrote into a term buffer the close had already unmapped.
     "UAF-loop: a high-iteration forked-then-close loop does not use-after-free" in {
         val iterations = 100
         val messages   = Seq(1, 2, 3)
@@ -785,12 +868,12 @@ class AeronTransportTest extends Test:
         }
     }
 
-    // `.notJvm`: the close_mutex+closing freed-handle guard lives only in kyo_aeron.c (Native and JS share
-    // the same .dylib/.so via koffi); JVM's io.aeron client has no such symbols to guard. The after-close
+    // The close_mutex+closing freed-handle guard lives in kyo_aeron.c, which every platform now reaches,
+    // so this runs on the JVM too rather than being gated off it. The after-close
     // interleaving is deterministic through Scala-side sequencing, not a C-side busy-spin: each read runs
     // only after the client-close downcall already freed the inner handle. The bundles' refcounts keep the
     // client bundle's close_mutex alive across the close, so each guard's acquire is always valid.
-    "UAF-reads: publicationIsConnected/subscriptionIsConnected/subscriptionPoll after a client close return safe sentinels, not a UAF".notJvm in {
+    "UAF-reads: publicationIsConnected/subscriptionIsConnected/subscriptionPoll after a client close return safe sentinels, not a UAF" in {
         val pollDstCap = 64 * 1024
         for
             bindings <- Sync.Unsafe.defer(Ffi.load[AeronBindings])
@@ -799,7 +882,7 @@ class AeronTransportTest extends Test:
             dir <- Path.tempDir("kyo-aeron-uaf-reads")
             // driverStart/clientConnect are @Ffi.blocking, so each yields a Fiber.Unsafe bridged
             // via .safe.get.
-            driver   <- Sync.Unsafe.defer(bindings.driverStart(dir.unsafe.show)).flatMap(_.safe.get)
+            driver   <- Sync.Unsafe.defer(bindings.driverStart(dir.unsafe.show, 0L, 0L)).flatMap(_.safe.get)
             client   <- Sync.Unsafe.defer(bindings.clientConnect(dir.unsafe.show)).flatMap(_.safe.get)
             pubMaybe <- addPublicationRaw(bindings, client, ipcUri, uafStreamId, 5000)
             subMaybe <- addSubscriptionRaw(bindings, client, ipcUri, uafStreamId, 5000)
@@ -873,11 +956,11 @@ class AeronTransportTest extends Test:
     // JVM must not throw IllegalArgumentException.
     // ---------------------------------------------------------------------------
 
-    // JvmAeronTransport.offer catches the IllegalArgumentException checkMaxMessageLength raises on an
-    // oversize payload and converts it to -6 (AeronSentinels.Error), matching the FFI path; without the
-    // catch it would escape Sync.Unsafe.defer as a panic. `.onlyJvm` since FFI already returns -6 natively;
-    // the subscriber and awaited publicationIsConnected are required since an unconnected offer returns -1.
-    "oversize offer on term-length=65536 returns -6, does not throw".onlyJvm in {
+    // The C client returns -6 (AeronSentinels.Error) for an oversize offer on every platform, so this
+    // runs everywhere rather than pinning the JVM-only IllegalArgumentException-to--6 conversion the Java
+    // client needed. The subscriber and awaited publicationIsConnected are required since an unconnected
+    // offer returns -1.
+    "oversize offer on term-length=65536 returns -6, does not throw" in {
         val oversizeUri = "aeron:ipc?term-length=65536"
         val oversize    = Array.fill[Byte](8193)(0)
         for
@@ -960,9 +1043,9 @@ class AeronTransportTest extends Test:
     // Error handler: non-exiting recording handler + TopicTransportFailedException surfacing
     // ---------------------------------------------------------------------------
 
-    // The inject seam fires synchronously: JvmAeronTransport.injectError sets errorSlot directly,
-    // FfiAeronTransport.injectError calls the C kyo_aeron_test_inject_error. Reaching the yield
-    // proves the recording error handler did not exit() the process.
+    // The inject seam fires synchronously: FfiAeronTransport.injectError calls the C
+    // kyo_aeron_test_inject_error. Reaching the yield proves the recording error handler did not
+    // exit() the process.
     "an injected fatal error is recorded in the slot and the process survives" in {
         for
             dir <- Path.tempDir("kyo-aeron-embedded-test")

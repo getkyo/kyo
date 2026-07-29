@@ -9,15 +9,15 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "update() changes apply() result" in {
             val flag = DynUpdateTestFlags.updateChanges
-            flag.update("true@premium")
+            flag.update("rollout:true@premium")
             assert(flag("user1", "premium") == true)
-            flag.update("false@premium")
+            flag.update("rollout:false@premium")
             assert(flag("user1", "premium") == false)
         }
 
         "update() safe rollback on parse error" in {
             val flag = DynUpdateTestFlags.rollbackParse
-            flag.update("100@enterprise")
+            flag.update("rollout:100@enterprise")
             assert(flag("user1", "enterprise") == 100)
             val ex = intercept[FlagException] {
                 flag.update("notanumber")
@@ -28,10 +28,10 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "update() safe rollback on validate error" in {
             val flag = DynUpdateTestFlags.rollbackValidate
-            flag.update("10@enterprise")
+            flag.update("rollout:10@enterprise")
             assert(flag("user1", "enterprise") == 10)
             val ex = intercept[FlagException] {
-                flag.update("0@enterprise") // validate requires > 0
+                flag.update("rollout:0@enterprise") // validate requires > 0
             }
             // Old state preserved
             assert(flag("user1", "enterprise") == 10)
@@ -46,7 +46,7 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "update() clears with empty string" in {
             val flag = DynUpdateTestFlags.clearExpr
-            flag.update("100@enterprise")
+            flag.update("rollout:100@enterprise")
             assert(flag("user1", "enterprise") == 100)
             flag.update("")
             assert(flag("user1", "enterprise") == 0) // validatedDefault
@@ -55,27 +55,27 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "update() expression is reflected" in {
             val flag = DynUpdateTestFlags.exprReflected
-            flag.update("new@expr")
-            assert(flag.expression == "new@expr")
+            flag.update("rollout:new@expr")
+            assert(flag.expression == "rollout:new@expr")
         }
 
         "multiple sequential updates — latest wins" in {
             val flag = DynUpdateTestFlags.seqUpdates
-            flag.update("a@x")
+            flag.update("rollout:a@x")
             assert(flag("user1", "x") == "a")
-            flag.update("b@x")
+            flag.update("rollout:b@x")
             assert(flag("user1", "x") == "b")
-            flag.update("c@x")
+            flag.update("rollout:c@x")
             assert(flag("user1", "x") == "c")
         }
 
         "reload() picks up system property change" in {
-            java.lang.System.setProperty("kyo.DynUpdateTestFlags.reloadProp", "100@enterprise")
+            java.lang.System.setProperty("kyo.DynUpdateTestFlags.reloadProp", "rollout:100@enterprise")
             try {
                 val flag = DynUpdateTestFlags.reloadProp
                 assert(flag("user1", "enterprise") == 100)
                 // Change the property
-                java.lang.System.setProperty("kyo.DynUpdateTestFlags.reloadProp", "200@enterprise")
+                java.lang.System.setProperty("kyo.DynUpdateTestFlags.reloadProp", "rollout:200@enterprise")
                 val result = flag.reload()
                 assert(result.isInstanceOf[Flag.ReloadResult.Updated])
                 assert(flag("user1", "enterprise") == 200)
@@ -85,7 +85,7 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
         }
 
         "reload() returns Unchanged when same expression" in {
-            java.lang.System.setProperty("kyo.DynUpdateTestFlags.reloadUnchanged", "100@enterprise")
+            java.lang.System.setProperty("kyo.DynUpdateTestFlags.reloadUnchanged", "rollout:100@enterprise")
             try {
                 val flag   = DynUpdateTestFlags.reloadUnchanged
                 val result = flag.reload()
@@ -116,7 +116,7 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "toString reflects current state" in {
             val flag = DynUpdateTestFlags.toStringTest
-            flag.update("new@expr")
+            flag.update("rollout:new@expr")
             val str = flag.toString()
             assert(str.contains("DynamicFlag("))
             assert(str.contains("new@expr"))
@@ -129,8 +129,8 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "state consistency — expression matches choices" in {
             val flag = DynUpdateTestFlags.stateConsistency
-            flag.update("100@enterprise;50")
-            assert(flag.expression == "100@enterprise;50")
+            flag.update("rollout:100@enterprise;50")
+            assert(flag.expression == "rollout:100@enterprise;50")
             assert(flag("user1", "enterprise") == 100)
             assert(flag("user1") == 50)
         }
@@ -155,7 +155,7 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "kill switch pattern — update to plain false" in {
             val flag = DynUpdateTestFlags.killSwitch
-            flag.update("true@premium/50%")
+            flag.update("rollout:true@premium/50%")
             // Some calls might return true
             flag.update("false")
             // After kill switch, ALL calls return false

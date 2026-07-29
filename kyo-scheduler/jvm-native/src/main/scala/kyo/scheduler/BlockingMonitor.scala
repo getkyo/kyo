@@ -79,15 +79,29 @@ private[scheduler] class BlockingMonitor(
         else 2000000L                                                                   // test-only constructor
     }
 
+    // The cadence the monitor actually aims for between scans: the configured interval,
+    // floored by the platform's CPU-time counter resolution. Scheduling pressure is
+    // measured against this cadence; measuring against intervalNs alone would read the
+    // counter granularity itself as permanent CPU starvation on platforms where the
+    // resolution exceeds the interval (Windows ticks at ~15.6ms vs the 2ms default),
+    // pinning the block threshold several times above its configured value.
+    private val cadenceNs = Math.max(intervalNs, minIntervalNs)
+
     // Base block threshold: consecutive idle samples required before marking a worker as blocked.
     // Dynamically scaled by scheduling pressure (see effectiveBlockThreshold).
     private val blockThreshold = blockingMonitorBlockThreshold()
 
     // Pre-allocated arrays — reused each cycle, single-threaded access
-    private val threadIds     = new Array[Long](maxWorkers)
-    private val positions     = new Array[Int](maxWorkers)
-    private val tasks         = new Array[Task](maxWorkers)
-    private val userTimes     = new Array[Long](maxWorkers)
+    private val threadIds = new Array[Long](maxWorkers)
+    private val positions = new Array[Int](maxWorkers)
+    private val tasks     = new Array[Task](maxWorkers)
+    private val userTimes = new Array[Long](maxWorkers)
+    // Per-slot sampling state, keyed by worker position (or by batch index in the
+    // detection-only test path). lastThreadIds guards thread identity: the batch order
+    // shifts as workers mount and unmount, and a slot's accumulated state must never be
+    // read against a sample of a different thread: comparing one thread's CPU time to
+    // another's fabricates idle/active verdicts and corrupts blockCounts.
+    private val lastThreadIds = new Array[Long](maxWorkers)
     private val lastUserTimes = Array.fill[Long](maxWorkers)(-1L)
     private val blockedFlags  = new Array[Boolean](maxWorkers)
     private val blockCounts   = new Array[Int](maxWorkers)
@@ -115,7 +129,7 @@ private[scheduler] class BlockingMonitor(
                                 val now     = System.nanoTime()
                                 val elapsed = now - lastCycleNanos
                                 if (elapsed >= minIntervalNs) {
-                                    val pressure = elapsed.toDouble / intervalNs
+                                    val pressure = elapsed.toDouble / cadenceNs
                                     effectiveBlockThreshold = Math.max(blockThreshold, (blockThreshold * pressure).toInt)
                                     cycle()
                                     lastCycleNanos = System.nanoTime()
@@ -151,8 +165,11 @@ private[scheduler] class BlockingMonitor(
     private def cycle(): Unit = {
         cycles += 1
         try {
-            val n     = currentWorkers()
-            val count = collect(n, 0, 0)
+            // Scan every worker slot, not just the first currentWorkers(): the regulator can
+            // shrink the admitted count while workers above it still hold mounted tasks (e.g.
+            // blocked in a syscall), and an unscanned worker is never flagged blocked, never
+            // compensated for, and never receives its requested interrupt.
+            val count = collect(workers.length, 0, 0)
             // Clear task references from positions no longer in use
             clearTasks(lastCount, count)
             lastCount = count
@@ -169,7 +186,7 @@ private[scheduler] class BlockingMonitor(
     /** Samples CPU time and updates blocking state for the given thread IDs. Used by tests to drive the monitor without workers. */
     private[scheduler] def sample(threadIds: Array[Long], count: Int): Unit = {
         ThreadUserTime.userTimes(threadIds, count, userTimes)
-        detectOnly(count, 0)
+        detectOnly(threadIds, count, 0)
     }
 
     /** Whether the thread at this position has unchanged user CPU time. */
@@ -190,6 +207,21 @@ private[scheduler] class BlockingMonitor(
                 collect(n, position + 1, count)
         }
 
+    /** Records the sample `(tid, userTime)` for slot `pos` and returns whether the thread was idle across the last two samples of the same
+      * thread. A change of thread at the slot resets the baseline and the accumulated block count instead of inheriting the previous
+      * occupant's state. Exposed to tests as the single sampling-state transition.
+      */
+    private[scheduler] def updateSlot(pos: Int, tid: Long, userTime: Long): Boolean = {
+        val sameThread = lastThreadIds(pos) == tid
+        val lastTime   = lastUserTimes(pos)
+        lastThreadIds(pos) = tid
+        lastUserTimes(pos) = userTime
+        val idle = sameThread && userTime >= 0 && lastTime >= 0 && userTime == lastTime
+        if (idle) blockCounts(pos) += 1
+        else blockCounts(pos) = 0
+        idle
+    }
+
     // Single pass: detect blocking from CPU time samples, set blocked flags, dispatch interrupts.
     // Requires blockThreshold consecutive idle samples before marking a worker as blocked,
     // preventing false positives from OS timer tick granularity or transient CPU starvation.
@@ -197,16 +229,8 @@ private[scheduler] class BlockingMonitor(
     // based on stale CPU time data if the worker switched tasks between the batch query and now.
     @tailrec private def process(count: Int, i: Int): Unit =
         if (i < count) {
-            val userTime = userTimes(i)
-            val lastTime = lastUserTimes(i)
-            lastUserTimes(i) = userTime
-            val idle = userTime >= 0 && lastTime >= 0 && userTime == lastTime
-            val pos  = positions(i)
-            if (idle) {
-                blockCounts(pos) += 1
-            } else {
-                blockCounts(pos) = 0
-            }
+            val pos     = positions(i)
+            val _       = updateSlot(pos, threadIds(i), userTimes(i))
             val blocked = blockCounts(pos) >= effectiveBlockThreshold
             val worker  = workers(pos)
             worker.blocked = blocked
@@ -233,14 +257,12 @@ private[scheduler] class BlockingMonitor(
             clearTasks(prev, curr + 1)
         }
 
-    // Detection only — used by tests via sample() where there are no workers
-    @tailrec private def detectOnly(count: Int, i: Int): Unit =
+    // Detection only, used by tests via sample() where there are no workers. Slots are
+    // keyed by batch index; the identity guard in updateSlot applies the same way.
+    @tailrec private def detectOnly(tids: Array[Long], count: Int, i: Int): Unit =
         if (i < count) {
-            val userTime = userTimes(i)
-            val lastTime = lastUserTimes(i)
-            lastUserTimes(i) = userTime
-            blockedFlags(i) = userTime >= 0 && lastTime >= 0 && userTime == lastTime
-            detectOnly(count, i + 1)
+            blockedFlags(i) = updateSlot(i, tids(i), userTimes(i))
+            detectOnly(tids, count, i + 1)
         }
 
     def stop(): Unit = if (task ne null) { val _ = task.cancel(true) }

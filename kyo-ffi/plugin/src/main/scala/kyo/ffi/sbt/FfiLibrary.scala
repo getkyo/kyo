@@ -67,7 +67,8 @@ final case class FfiLibrary(
     cFlags: Seq[String] = Nil,
     linkFlags: Seq[String] = Nil,
     staticLink: Boolean = false,
-    dependsOn: Seq[String] = Nil
+    dependsOn: Seq[String] = Nil,
+    compilerByOs: Map[String, String] = Map.empty
 ) {
 
     /** Effective link libraries for the OS being built: the always-on `linkLibs`
@@ -79,5 +80,16 @@ final case class FfiLibrary(
         val key        = if (os == "linux-musl") "linux" else os
         val osSpecific = linkLibsByOs.getOrElse(key, Nil)
         (linkLibs ++ osSpecific).distinct
+    }
+
+    /** The C compiler this library requires for the OS being built, overriding the global
+      * `ffiCCompiler` for that OS only. `linux-musl` resolves the `linux` key. Absent (the default,
+      * empty map) means use the global compiler, so a library that does not set `compilerByOs`
+      * behaves exactly as before on every OS. A vendored library that only builds under a specific
+      * toolchain (e.g. Aeron, which supports Windows only under MSVC) names it here for that OS.
+      */
+    def compilerFor(os: String): Option[String] = {
+        val key = if (os == "linux-musl") "linux" else os
+        compilerByOs.get(key)
     }
 }
