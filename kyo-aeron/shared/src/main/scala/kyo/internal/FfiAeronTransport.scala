@@ -43,11 +43,15 @@ final private[kyo] class FfiAeronTransport(
       *
       * The transport owns this rather than the platform selector because it holds the client
       * handle, so the flag and the handle it describes cannot drift apart.
+      *
+      * Idempotent, and the flag is what makes it so: `kyo_aeron_client_close` calls `aeron_close`
+      * unconditionally, so a second call would tear down an already-freed client and crash the
+      * process. io.aeron's `Aeron.close` absorbed a repeat silently, so callers that close twice
+      * (a resource released on both an error path and its scope exit) were harmless before and are
+      * fatal now. Winning the CAS is what grants the right to close.
       */
     def closeClient()(using AllowUnsafe): Unit =
-        closed.set(true)
-        bindings.clientClose(client)
-    end closeClient
+        if closed.compareAndSet(false, true) then bindings.clientClose(client)
 
     def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] =
         bindings.asyncAddPublication(client, uri, streamId)
