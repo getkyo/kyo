@@ -193,6 +193,35 @@ class MeterTest extends kyo.test.Test[Any]:
                     .unit
             }
 
+            // A caller whose reservation is lost to a concurrent update leaves its promise queued for the
+            // instant it takes to retire it. A releaser polling the queue in that instant hands the permit
+            // to a promise no reservation stands behind, so the waiter it was owed to keeps waiting and the
+            // meter runs one permit short from then on. The last release then sees free permits in the
+            // ledger, skips the handoff, and leaves that waiter parked for good.
+            "sustained contention never strands a queued waiter".onlyJvm in {
+                val permits    = 2
+                val callers    = 8
+                val iterations = 10000
+                (for
+                    meter   <- Meter.initSemaphore(permits)
+                    counter <- AtomicInt.init(0)
+                    settled <- Abort.run[Timeout](Async.timeout(30.seconds)(
+                        Async.foreach(1 to callers, callers)(_ =>
+                            Loop.indexed(idx =>
+                                if idx == iterations then Loop.done
+                                else meter.run(counter.incrementAndGet).map(_ => Loop.continue)
+                            )
+                        )
+                    ))
+                    count <- counter.get
+                yield assert(
+                    settled.isSuccess,
+                    s"a queued waiter was never handed a permit: $count of ${callers * iterations} calls completed"
+                ))
+                    .handle(Loop.repeat(20))
+                    .unit
+            }
+
             "with interruptions".onlyJvm in {
                 (for
                     size    <- Choice.eval(1, 2, 3, 50)

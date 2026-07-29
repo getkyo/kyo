@@ -427,9 +427,12 @@ object Meter:
                             // otherwise strand the permit `p` just transferred.
                             Sync.ensure(settle(p))(p.safe.use(_ => withAcquiredMeter(v)))
                         else
-                            // Reservation lost, so this promise stands for nothing. Retiring it is enough:
-                            // `handoff` and `close` skip completed promises, and it is never awaited.
-                            p.completeDiscard(Result.fail(Closed("Meter", initFrame)))
+                            // Reservation lost, so this promise stands for nothing. Retiring it is what
+                            // keeps `handoff` and `close` from granting to it, and losing that race means
+                            // a permit was already handed to a promise no reservation stands behind. The
+                            // handoff has to be made again or the waiter it was owed to never wakes.
+                            if !p.complete(Result.fail(Closed("Meter", initFrame))) && p.poll().exists(_.isSuccess) then
+                                handoff()
                             loop()
                         end if
                     end if
