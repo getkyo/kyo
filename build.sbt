@@ -1558,7 +1558,7 @@ lazy val `kyo-net` =
         )
         .in(file("kyo-net"))
         .withKyoTest
-        .settings(`kyo-settings`)
+        .settings(`kyo-settings`, foreignRelease)
         .platformsSettings(JVMPlatform, NativePlatform)(
             // Only the io_uring shim needs a declared library (-luring, Linux only via linkLibsByOs; staticLink folds
             // liburing in, RI-003); the socket/epoll/kqueue bindings resolve to system libc. On Native, IoUringBindings
@@ -2962,7 +2962,11 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.
-            "-Dkyo.doctest.runnerCpFile=" + (target.value / "doctest-runner-cp.txt").getAbsolutePath
+            "-Dkyo.doctest.runnerCpFile=" + (target.value / "doctest-runner-cp.txt").getAbsolutePath,
+            // The sub-builds compile against the same Scala the runner classpath was built with.
+            // Pinning it here rather than in each build.sbt keeps the two from drifting apart, which
+            // breaks with a NoSuchMethodError once the two versions disagree on the standard library.
+            "-Dkyo.doctest.scalaVersion=" + scala3Version
         ),
         scriptedBufferLog := false,
         // Provide the kyo-doctest runner's built classpath to the scripted forks without ivy

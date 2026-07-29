@@ -3,7 +3,7 @@
 // The README fence has an unused import. Without -Werror it compiles clean.
 // With -Werror the unused import becomes an error and doctest fails.
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)

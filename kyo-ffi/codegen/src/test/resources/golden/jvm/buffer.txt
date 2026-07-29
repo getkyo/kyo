@@ -14,14 +14,14 @@ final class BufferBindingsImpl extends BufferBindings:
 
     def process(buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Int, Any] =
         kyo.ffi.internal.BlockingBridge.run {
-            val __kyoScratch$ = Scratch.currentFor("kyo.example.BufferBindings", Scratch.configuredSize)
-            val __kyoMark$ = __kyoScratch$.mark()
+            val __kyoScratch = Scratch.currentFor("kyo.example.BufferBindings", Scratch.configuredSize)
+            val __kyoMark = __kyoScratch.mark()
             try
                 val bufSeg = kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](buf.raw.asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "kyo.example.BufferBindings", "process")
-                val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BufferBindings", "process")
+                val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BufferBindings", "process")
                 val retVal: Int = processMH.invokeExact(errnoSeg, bufSeg, len)
                 retVal
-            finally __kyoScratch$.reset(__kyoMark$)
+            finally __kyoScratch.reset(__kyoMark)
         }
 end BufferBindingsImpl
 

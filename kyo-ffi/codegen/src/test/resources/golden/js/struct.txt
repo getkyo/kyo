@@ -15,9 +15,9 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoa
 
     def move(p: kyo.example.golden.Point, dx: Int)(using kyo.AllowUnsafe): kyo.example.golden.Point =
         val pLit = js.Dynamic.literal("x" -> p.x.asInstanceOf[js.Any], "y" -> p.y.asInstanceOf[js.Any])
-        val __kyoStructOut$ = KoffiFacade.outStruct("Point")
-        val _ = facade.move(__kyoStructOut$.buf, pLit, dx)
-        val result = __kyoStructOut$.read()
+        val __kyoStructOut = KoffiFacade.outStruct("Point")
+        val _ = facade.move(__kyoStructOut.buf, pLit, dx)
+        val result = __kyoStructOut.read()
         kyo.example.golden.Point(result.selectDynamic("x").asInstanceOf[Int], result.selectDynamic("y").asInstanceOf[Int])
 end StructBindingsImpl
 

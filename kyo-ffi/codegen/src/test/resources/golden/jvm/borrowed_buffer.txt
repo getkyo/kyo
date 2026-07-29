@@ -13,13 +13,13 @@ final class BorrowedBufferBindingsImpl extends BorrowedBufferBindings:
     import BorrowedBufferBindingsImpl.*
 
     def mallocChunk(n: Long)(using kyo.AllowUnsafe): Ffi.Borrowed[Buffer[Byte]] =
-        val __kyoScratch$ = Scratch.currentFor("kyo.example.BorrowedBufferBindings", Scratch.configuredSize)
-        val __kyoMark$ = __kyoScratch$.mark()
+        val __kyoScratch = Scratch.currentFor("kyo.example.BorrowedBufferBindings", Scratch.configuredSize)
+        val __kyoMark = __kyoScratch.mark()
         try
-            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BorrowedBufferBindings", "mallocChunk")
+            val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BorrowedBufferBindings", "mallocChunk")
             val retVal: MemorySegment = mallocChunkMH.invokeExact(errnoSeg, n)
             Ffi.Borrowed.wrap(if retVal.address() == 0L then null else (if (java.lang.System.getProperty("kyo.ffi.checkedBorrows") == "true") Buffer.Unsafe.wrapBorrowedChecked[Byte](retVal.reinterpret(n.toLong * 1L), n.toInt, kyo.ffi.internal.BufferFactory.currentBorrowOwner()) else Buffer.Unsafe.wrapBorrowed[Byte](retVal.reinterpret(n.toLong * 1L), n.toInt)))
-        finally __kyoScratch$.reset(__kyoMark$)
+        finally __kyoScratch.reset(__kyoMark)
 end BorrowedBufferBindingsImpl
 
 object BorrowedBufferBindingsImpl:

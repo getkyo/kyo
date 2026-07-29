@@ -11,7 +11,7 @@ object TlsTestHelper:
 
     private val childProcess = HttpChildProcess.asInstanceOf[js.Dynamic]
 
-    lazy val (certPath, keyPath): (String, String) =
+    lazy val (certPath, keyPath) =
         val tmpDir   = HttpOs.tmpdir()
         val certFile = HttpNodePath.join(tmpDir, "kyo-tls-cert.pem")
         val keyFile  = HttpNodePath.join(tmpDir, "kyo-tls-key.pem")

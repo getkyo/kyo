@@ -128,7 +128,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
     // Section 4: method body / marshalling
     // -------------------------------------------------------------------------
 
-    "String param body calls __kyoScratch$.allocUtf8 and passes the segment" in {
+    "String param body calls __kyoScratch.allocUtf8 and passes the segment" in {
         val spec = mkTrait(
             "Log",
             "kyo_log",
@@ -144,7 +144,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         val src = JvmEmitter.emit(spec)
         // The allocUtf8 call threads binding FQN + method name so the diagnostic in `FfiErrors.scratchSpilled`
         // names the origin when the oversized-spill log is enabled.
-        assert(src.contains("""val msgSeg = __kyoScratch$.allocUtf8(msg, "kyo.example.Log", "log")"""))
+        assert(src.contains("""val msgSeg = __kyoScratch.allocUtf8(msg, "kyo.example.Log", "log")"""))
         assert(src.contains("logMH.invokeExact(errnoSeg, msgSeg)"))
     }
 
@@ -196,7 +196,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         assert(src.contains("val dataBps = 1L"))
         // alloc takes binding FQN + method name for spill diagnostics.
         assert(src.contains(
-            """val dataSeg = __kyoScratch$.alloc(data.length.toLong * dataBps, dataBps, "kyo.example.Hash", "digestBlocking")"""
+            """val dataSeg = __kyoScratch.alloc(data.length.toLong * dataBps, dataBps, "kyo.example.Hash", "digestBlocking")"""
         ))
         assert(src.contains("val dataRaw = dataSeg.asInstanceOf[Buffer.Raw]"))
         assert(src.contains("while dataI < data.length do"))
@@ -245,15 +245,15 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val src = JvmEmitter.emit(spec)
         // Out-params are coalesced into a single scratch allocation. There is NO per-field
-        // `val pendingOut = __kyoScratch$.alloc(...)`, the former per-field allocator is replaced by a
-        // single `__kyoMultiOut$` block and per-field `asSlice` views anchored at a fixed offset.
-        assert(!src.contains("""val pendingOut = __kyoScratch$.alloc"""))
-        assert(src.contains("""val __kyoMultiOut$ = __kyoScratch$.alloc(4L, 4L, "kyo.example.Tcp", "tcpConnect")"""))
-        assert(src.contains("""val pendingOut = __kyoMultiOut$.asSlice(0L, 4L)"""))
+        // `val pendingOut = __kyoScratch.alloc(...)`, the former per-field allocator is replaced by a
+        // single `__kyoMultiOut` block and per-field `asSlice` views anchored at a fixed offset.
+        assert(!src.contains("""val pendingOut = __kyoScratch.alloc"""))
+        assert(src.contains("""val __kyoMultiOut = __kyoScratch.alloc(4L, 4L, "kyo.example.Tcp", "tcpConnect")"""))
+        assert(src.contains("""val pendingOut = __kyoMultiOut.asSlice(0L, 4L)"""))
         assert(src.contains("kyo.example.ConnectResult(retVal, pendingOut.get(JAVA_INT, 0L))"))
     }
 
-    "multi-value return with 5 trailing out-params uses exactly one __kyoScratch$.alloc for the out-param block" in {
+    "multi-value return with 5 trailing out-params uses exactly one __kyoScratch.alloc for the out-param block" in {
         // 5 trailing fields = 6 total fields in the MultiValue case class; head is primitive-returned, remaining
         // 5 are out-pointer writes. The emitter coalesces them into a single block with per-field offset slices.
         val fiveOut = StructSpec(
@@ -282,21 +282,21 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val src = JvmEmitter.emit(spec)
         val allocSites =
-            raw"__kyoScratch\$$\.alloc\b".r.findAllMatchIn(src).size
+            raw"__kyoScratch\.alloc\b".r.findAllMatchIn(src).size
         // 1 for errnoSeg + 1 coalesced multi-out block = 2 total. The former 5-per-field count would be 6.
         assert(allocSites == 2)
         // Single coalesced block is allocated to hold 5 fields (4 + 8 + 8 + 4 + 8 = 32 bytes natural-aligned).
-        assert(src.contains("""val __kyoMultiOut$ = __kyoScratch$.alloc("""))
+        assert(src.contains("""val __kyoMultiOut = __kyoScratch.alloc("""))
         // Per-field slices anchored on the coalesced block at their natural-alignment offsets.
-        assert(src.contains("""val aOut = __kyoMultiOut$.asSlice(0L, 4L)"""))
+        assert(src.contains("""val aOut = __kyoMultiOut.asSlice(0L, 4L)"""))
         // `b: Long` is 8-aligned → offset 8 (after 4-byte `a` + 4 bytes of padding).
-        assert(src.contains("""val bOut = __kyoMultiOut$.asSlice(8L, 8L)"""))
+        assert(src.contains("""val bOut = __kyoMultiOut.asSlice(8L, 8L)"""))
         // `c: Double` is 8-aligned → offset 16.
-        assert(src.contains("""val cOut = __kyoMultiOut$.asSlice(16L, 8L)"""))
+        assert(src.contains("""val cOut = __kyoMultiOut.asSlice(16L, 8L)"""))
         // `d: Int` → offset 24.
-        assert(src.contains("""val dOut = __kyoMultiOut$.asSlice(24L, 4L)"""))
+        assert(src.contains("""val dOut = __kyoMultiOut.asSlice(24L, 4L)"""))
         // `e: Long` → offset 32 (after 4-byte `d` + 4 bytes of padding).
-        assert(src.contains("""val eOut = __kyoMultiOut$.asSlice(32L, 8L)"""))
+        assert(src.contains("""val eOut = __kyoMultiOut.asSlice(32L, 8L)"""))
     }
 
     "packed struct-by-value uses byte-aligned offsets (no padding between fields)" in {
@@ -387,11 +387,11 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         // The temp for the nested String field uses underscores throughout, and the allocUtf8 still reads from the
         // real dotted access expression `contact.address.city`.
         assert(src.contains(
-            """val contact_address_city_cs = __kyoScratch$.allocUtf8(contact.address.city, "kyo.example.ContactBindings", "contactsRouteCode")"""
+            """val contact_address_city_cs = __kyoScratch.allocUtf8(contact.address.city, "kyo.example.ContactBindings", "contactsRouteCode")"""
         ))
         // The top-level String field keeps its existing flat name.
         assert(src.contains(
-            """val contact_name_cs = __kyoScratch$.allocUtf8(contact.name, "kyo.example.ContactBindings", "contactsRouteCode")"""
+            """val contact_name_cs = __kyoScratch.allocUtf8(contact.name, "kyo.example.ContactBindings", "contactsRouteCode")"""
         ))
         // The broken dotted local name must not appear.
         assert(!src.contains("val contact.address_city_cs"))
@@ -420,7 +420,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val src = JvmEmitter.emit(spec)
         assert(src.contains(
-            """val tsSeg = __kyoScratch$.alloc(timespecLayout.byteSize(), timespecLayout.byteAlignment(), "kyo.example.Time", "sleep")"""
+            """val tsSeg = __kyoScratch.alloc(timespecLayout.byteSize(), timespecLayout.byteAlignment(), "kyo.example.Time", "sleep")"""
         ))
         assert(src.contains("tsSeg.set(JAVA_LONG, 0L, ts.sec)"))
         assert(src.contains("tsSeg.set(JAVA_LONG, 8L, ts.nsec)"))
@@ -478,7 +478,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         // The emitter annotates the bulk-write path with a marker comment naming the struct's FQN and byte
         // size so codegen tests and human readers can spot the path selection. The marker is stable across
         // regen so snapshots don't churn.
-        assert(src.contains("// __kyoStructBulkWrite$: kyo.example.Big (256 bytes)"))
+        assert(src.contains("// __kyoStructBulkWrite: kyo.example.Big (256 bytes)"))
         // Field writes still happen, the bulk path is a marker + predictable field sequence, not a
         // behavioural change. All 32 fields must still be written to the scratch segment.
         assert(src.contains("bSeg.set(JAVA_LONG, 0L, b.f1)"))
@@ -576,7 +576,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         assert(src.contains("cbQsortCmpDesc"))
         // cbArena.close() in finally after scratch reset.
         assert(src.contains("cbArena.close()"))
-        assert(src.contains("__kyoScratch$.reset(__kyoMark$)"))
+        assert(src.contains("__kyoScratch.reset(__kyoMark)"))
         assert(src.contains("qsortMH.invokeExact(errnoSeg, baseSeg, count, elemSize, cmpStub)"))
         // No TransientStubCache references.
         assert(!src.contains("TransientStubCache"))
@@ -612,7 +612,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         // No Arena.ofConfined for retained methods; the guard owns the arena.
         assert(!src.contains("Arena.ofConfined"))
         // Finally remains the single-line form (no cbArena.close(), the guard owns lifetime).
-        assert(src.contains("finally __kyoScratch$.reset(__kyoMark$)"))
+        assert(src.contains("finally __kyoScratch.reset(__kyoMark)"))
     }
 
     "transient callback companion emits MethodHandle with ADDRESS for the function-pointer param" in {
@@ -1281,7 +1281,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
             List(mkMethod("noop", "noop", Nil, ReturnShape.Void))
         )
         val src = JvmEmitter.emit(spec)
-        assert(src.contains("""val __kyoScratch$ = Scratch.currentFor("kyo.example.FqnScratch", Scratch.configuredSize)"""))
+        assert(src.contains("""val __kyoScratch = Scratch.currentFor("kyo.example.FqnScratch", Scratch.configuredSize)"""))
     }
 
     "Ffi.Config.scratchSize = Some(n) emits the literal size into Scratch.currentFor" in {
@@ -1299,7 +1299,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
             companion = Some(cfg)
         )
         val src = JvmEmitter.emit(spec)
-        assert(src.contains("""val __kyoScratch$ = Scratch.currentFor("kyo.example.SizedScratch", 131072L)"""))
+        assert(src.contains("""val __kyoScratch = Scratch.currentFor("kyo.example.SizedScratch", 131072L)"""))
     }
 
     "retained callback method promotes the scratch spill list to the Ffi.Guard" in {
@@ -1322,7 +1322,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val src = JvmEmitter.emit(spec)
         // Spill list is drained AFTER the invoke and before result construction.
-        assert(src.contains("val __kyoSpills$ = __kyoScratch$.takeSpills()"))
+        assert(src.contains("val __kyoSpills = __kyoScratch.takeSpills()"))
         assert(src.contains("adoptArena"))
         assert(src.contains("guard.asInstanceOf[kyo.ffi.internal.JvmGuard]"))
         // Transient + callback-free paths must NOT promote spills.
@@ -1848,9 +1848,9 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         // The companion derives the layout once at class-init.
         assert(src.contains("private val captureLayout = Linker.Option.captureStateLayout()"))
         // The errno segment allocation is sized from the layout, not a literal.
-        assert(src.contains("val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(),"))
+        assert(src.contains("val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(),"))
         // The bug shape (a hardcoded 4-byte errno segment) must not reappear.
-        assert(!src.contains("val errnoSeg = __kyoScratch$.alloc(4L, 4L,"))
+        assert(!src.contains("val errnoSeg = __kyoScratch.alloc(4L, 4L,"))
         // A binding that never reads errno (no Outcome return) does not emit the errnoOffset constant.
         assert(!src.contains("errnoOffset"))
     }
@@ -1865,8 +1865,8 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val src = JvmEmitter.emit(spec)
         assert(src.contains("private val captureLayout = Linker.Option.captureStateLayout()"))
-        assert(src.contains("val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(),"))
-        assert(!src.contains("val errnoSeg = __kyoScratch$.alloc(4L, 4L,"))
+        assert(src.contains("val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(),"))
+        assert(!src.contains("val errnoSeg = __kyoScratch.alloc(4L, 4L,"))
     }
 
     "an Outcome (withError) binding reads errno at its layout offset, not a hardcoded 0" in {

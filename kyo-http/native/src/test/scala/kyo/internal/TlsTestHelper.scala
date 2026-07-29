@@ -59,7 +59,7 @@ nExc1OKAJ9rzBEd8BEySPQ==
 -----END PRIVATE KEY-----
 """
 
-    lazy val (certPath, keyPath): (String, String) =
+    lazy val (certPath, keyPath) =
         val certFile = java.io.File.createTempFile("kyo-tls-cert", ".pem")
         val keyFile  = java.io.File.createTempFile("kyo-tls-key", ".pem")
         certFile.deleteOnExit()

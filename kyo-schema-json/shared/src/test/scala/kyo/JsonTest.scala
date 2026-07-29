@@ -1627,7 +1627,7 @@ class JsonTest extends kyo.test.Test[Any]:
             val result = Json.decode[Byte]("999")
             result match
                 case Result.Success(v) =>
-                    assert(v != -25.toByte, "Must not silently wrap Byte overflow")
+                    assert(v != (-25).toByte, "Must not silently wrap Byte overflow")
                 case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }
@@ -1637,7 +1637,7 @@ class JsonTest extends kyo.test.Test[Any]:
             val result = Json.decode[Short]("99999")
             result match
                 case Result.Success(v) =>
-                    assert(v != -31073.toShort, "Must not silently wrap Short overflow")
+                    assert(v != (-31073).toShort, "Must not silently wrap Short overflow")
                 case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }

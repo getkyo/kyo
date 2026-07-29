@@ -10,7 +10,7 @@ import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class ArrayBindingsImpl extends ArrayBindings:
-    import `ArrayBindings$externs` as ext
+    import `ArrayBindings_externs` as ext
 
     def sum(xs: Array[Int], n: Int)(using kyo.AllowUnsafe): Int =
         Zone.acquire { implicit z =>
@@ -31,6 +31,6 @@ end ArrayBindingsImpl
 
 @extern
 @link("kyo_arr")
-private[example] object `ArrayBindings$externs`:
+private[example] object `ArrayBindings_externs`:
     def sum_ints(xs: Ptr[CInt], n: CInt): CInt = extern
-end `ArrayBindings$externs`
+end `ArrayBindings_externs`
