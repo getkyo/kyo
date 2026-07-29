@@ -12,7 +12,7 @@ import kyo.ai.Context.{Message as ContextMessage, *}
 /** The Anthropic completion backend (the `/messages` API).
   *
   * Serializes the conversation to the Anthropic request shape via typed `Content` DTOs that `Json.encode`
-  * emits directly: the first context message is lifted into the top-level `system` field, the rest map to
+  * emits directly: the first context message is lifted into the top-level `system` block array, the rest map to
   * user/assistant `Message`s, a tool result becomes a USER-role message with a `tool_result` block, and a
   * user image serializes as a multi-part text-then-image content list. A reply's `tool_use.input` is an
   * arbitrary object, carried as a `Structure.Value` and re-encoded to the raw argument JSON the `Call`
@@ -202,8 +202,13 @@ private[completion] object AnthropicCompletion extends Completion:
             // Extended-thinking reply blocks ({"type":"thinking","thinking":...,"signature":...}); decoded so
             // the reply parses, then ignored by `read` (the reasoning is not surfaced as a transcript message).
             thinking: Maybe[String] = Absent,
-            signature: Maybe[String] = Absent
+            signature: Maybe[String] = Absent,
+            // Prompt-cache breakpoint. Anthropic caches a prefix only against an explicit marker on a
+            // block, so this is the only place it can be expressed. Absent everywhere today; the field
+            // exists so the marker HAS a home on the wire.
+            cache_control: Maybe[CacheControl] = Absent
         ) derives Schema
+        case class CacheControl(`type`: String) derives Schema
         case class Source(`type`: String, media_type: String, data: String) derives Schema
         case class Message(role: String, content: List[Content]) derives Schema
         // strict = true enables Anthropic structured outputs: token-level constrained decoding against the
@@ -221,7 +226,10 @@ private[completion] object AnthropicCompletion extends Completion:
         case class Request(
             model: String,
             messages: List[Message],
-            system: Maybe[String],
+            // `string | Array<TextBlockParam>` on the wire, so the field is untyped here and the entry's
+            // declared Config.SystemEncoding decides which of the two is emitted. Only the block form can
+            // carry a per-block `cache_control` breakpoint; the string form cannot express it at all.
+            system: Maybe[Structure.Value],
             max_tokens: Int,
             temperature: Maybe[Double],
             tools: Maybe[List[ToolDefinition]] = Absent,
@@ -289,9 +297,17 @@ private[completion] object AnthropicCompletion extends Completion:
                         ctx.messages,
                         content => UserMessage(systemReminder(content), Absent)
                     )
+                // The encoding is the entry's declared fact, never a provider name read here: an endpoint
+                // that accepts the string form only says so on its config (Config.SystemEncoding).
+                def encodeSystem(content: String): Structure.Value =
+                    config.systemEncoding match
+                        case Config.SystemEncoding.Text =>
+                            Structure.encode(content)
+                        case Config.SystemEncoding.Blocks =>
+                            Structure.encode(List(Content("text", text = Present(content))))
                 val (system, body) =
                     fitted.headMaybe match
-                        case Present(SystemMessage(c)) => (Present(c), fitted.drop(1))
+                        case Present(SystemMessage(c)) => (Present(encodeSystem(c)), fitted.drop(1))
                         case _                         => (Absent, fitted)
                 val mapped =
                     body.map {

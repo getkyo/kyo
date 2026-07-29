@@ -80,12 +80,20 @@ final case class Config private (
     // default applies, so an untouched config states nothing and never warns; a warning fires only on a
     // STATED amount the encoding cannot express. Held rather than dropped where it cannot ride, since
     // one config re-aims across providers, and held while reasoning is off.
-    reasoningAmount: Maybe[Config.Amount] = Absent
+    reasoningAmount: Maybe[Config.Amount] = Absent,
+    // Untyped on the wire (`string | Array<TextBlockParam>` on at least one endpoint); the entry
+    // declares which form it accepts. Defaulted so a positional construction elsewhere is unaffected.
+    systemEncoding: Config.SystemEncoding = Config.SystemEncoding.Text
 ):
-    def apiUrl(url: String): Config              = copy(apiUrl = url)
-    def apiKey(key: String): Config              = copy(apiKey = Present(key))
-    def apiOrg(org: String): Config              = copy(apiOrg = Present(org))
-    def temperature(temperature: Double): Config = copy(temperature = Present(temperature.max(0).min(2)))
+    def apiUrl(url: String): Config = copy(apiUrl = url)
+
+    /** Declares which system-slot encoding this endpoint accepts (see [[Config.SystemEncoding]]). Set it
+      * when `apiUrl` points at an endpoint whose contract differs from the provider's own.
+      */
+    def systemEncoding(encoding: Config.SystemEncoding): Config = copy(systemEncoding = encoding)
+    def apiKey(key: String): Config                             = copy(apiKey = Present(key))
+    def apiOrg(org: String): Config                             = copy(apiOrg = Present(org))
+    def temperature(temperature: Double): Config                = copy(temperature = Present(temperature.max(0).min(2)))
 
     /** The output-token ceiling this request asks for, clamped to the model's declared maximum.
       *
@@ -301,7 +309,8 @@ final case class Config private (
         reasoningOff: Maybe[Config.ReasoningOff] = Absent,
         forcedToolChoice: Maybe[Config.ForcedToolChoice] = Absent,
         systemInstructions: Maybe[Config.SystemMessages] = Absent,
-        invalidToolCalls: Maybe[Config.InvalidToolCalls] = Absent
+        invalidToolCalls: Maybe[Config.InvalidToolCalls] = Absent,
+        systemEncoding: Maybe[Config.SystemEncoding] = Absent
     ): Config =
         copy(
             provider = provider,
@@ -316,6 +325,7 @@ final case class Config private (
             reasoningOff = reasoningOff.getOrElse(provider.reasoningOff),
             forcedToolChoice = forcedToolChoice.getOrElse(provider.forcedToolChoice),
             systemInstructions = systemInstructions.getOrElse(provider.systemInstructions),
+            systemEncoding = systemEncoding.getOrElse(provider.systemEncoding),
             invalidToolCalls = invalidToolCalls.getOrElse(provider.invalidToolCalls)
         )
 
@@ -424,7 +434,8 @@ object Config:
         reasoningOff: Maybe[ReasoningOff] = Absent,
         forcedToolChoice: Maybe[ForcedToolChoice] = Absent,
         systemInstructions: Maybe[SystemMessages] = Absent,
-        invalidToolCalls: Maybe[InvalidToolCalls] = Absent
+        invalidToolCalls: Maybe[InvalidToolCalls] = Absent,
+        systemEncoding: Maybe[SystemEncoding] = Absent
     ): Config =
         Config(
             provider.baseUrl,
@@ -441,7 +452,8 @@ object Config:
             reasoningOff.getOrElse(provider.reasoningOff),
             forcedToolChoice.getOrElse(provider.forcedToolChoice),
             systemInstructions.getOrElse(provider.systemInstructions),
-            invalidToolCalls.getOrElse(provider.invalidToolCalls)
+            invalidToolCalls.getOrElse(provider.invalidToolCalls),
+            systemEncoding = systemEncoding.getOrElse(provider.systemEncoding)
         )
 
     /** A model's maximum output tokens, and whether that number is known or stood in for.
@@ -578,6 +590,26 @@ object Config:
         case FirstOnly
     end SystemMessages
 
+    /** How the out-of-band system slot is encoded on the wire, declared per provider.
+      *
+      * Two endpoints that both accept a system prompt can disagree about its SHAPE: one takes a bare
+      * string, another a list of content blocks. The block form is what carries per-block metadata (a
+      * prompt-cache breakpoint, for instance); the string form cannot express it at all.
+      *
+      * Declared here for the same reason as [[SystemMessages]]: only the provider knows, and the
+      * completion impls must not read a provider name to shape a request. An endpoint reached through
+      * `apiUrl` that accepts the string form only says so on its entry.
+      */
+    enum SystemEncoding derives CanEqual:
+        /** The system prompt rides as a bare string. */
+        case Text
+
+        /** The system prompt rides as a list of content blocks, which is what can carry per-block
+          * metadata such as a cache breakpoint.
+          */
+        case Blocks
+    end SystemEncoding
+
     /** How an endpoint says "do not reason", declared per provider.
       *
       * A wire that reasons by default has to be told to stop, and endpoints disagree about how: one
@@ -662,7 +694,8 @@ object Config:
         val systemInstructions: SystemMessages = SystemMessages.AllDelivered,
         val invalidToolCalls: InvalidToolCalls = InvalidToolCalls.Returned,
         val forcedToolChoice: ForcedToolChoice = ForcedToolChoice.Honored,
-        val usesApiKey: Boolean = true
+        val usesApiKey: Boolean = true,
+        val systemEncoding: SystemEncoding = SystemEncoding.Text
     ):
         val orgKey: String = keyName + "_ORG"
         def default: Config
@@ -716,7 +749,11 @@ object Config:
             forcedToolChoice = ForcedToolChoice.RefusedWhileReasoning,
             // One out-of-band system slot: the leading system run merges into it and later system
             // messages arrive as user turns, the shared transform's job, not this impl's.
-            systemInstructions = SystemMessages.FirstOnly
+            systemInstructions = SystemMessages.FirstOnly,
+            // This wire documents `system` as `string | Array<TextBlockParam>`, and only the block
+            // form can carry a per-block cache breakpoint. An endpoint reached through `apiUrl` that
+            // accepts the string form only overrides this on its entry.
+            systemEncoding = SystemEncoding.Blocks
         ):
         // Declared facts, with provenance. maxOutputTokens comes from the provider's own limit
         // response (a request above it is refused and names the maximum). The thinking kind and
