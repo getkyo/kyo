@@ -18,6 +18,12 @@ val scala213Version  = "2.13.18"
 // SignatureBuilder.content on Linux x86_64 and abort the publish.
 val scaladocVersion = "3.9.0-RC4"
 
+// The scaladoc release used for a module: the fixed one for the current series, the module's own
+// everywhere else. Only the current series can read what the fixed tool carries.
+val scaladocToolVersion = Def.setting {
+    if (scalaVersion.value == scala3Version) scaladocVersion else scalaVersion.value
+}
+
 // Holds the scaladoc tool and its dependencies. Hidden so it stays out of published poms, and
 // separate from the compile classpath so the tool's own Scala version never reaches user code.
 lazy val ScaladocTool = config("scaladocTool").hide
@@ -134,7 +140,15 @@ lazy val `kyo-settings` = Seq(
     // enforcement; compile-time formatting is a local convenience only.
     scalafmtOnCompile := !insideCI.value,
     ivyConfigurations += ScaladocTool,
-    libraryDependencies += "org.scala-lang" % "scaladoc_3" % scaladocVersion % ScaladocTool.name,
+    // The tool ships its own standard library, so it can only read a module whose library it agrees
+    // with. That holds for the current series and not for the LTS one, whose `scala.caps` differs
+    // and leaves two of it on the classpath, at which point resolving anything from `Predef` fails.
+    // The LTS modules therefore document with their own version and forgo the fix, which they have
+    // never needed: the crash it addresses appears in the current series.
+    libraryDependencies ++= (
+        if (!scalaVersion.value.startsWith("3")) Nil
+        else Seq("org.scala-lang" % "scaladoc_3" % scaladocToolVersion.value % ScaladocTool.name)
+    ),
     // Render the API from TASTy with a forked scaladoc rather than sbt's in-process one. Forking is
     // what bounds a tool crash to the module that provoked it: sbt's `doc` shares one JVM across
     // every module, so a single failure there takes the rest of the platform with it.
@@ -149,7 +163,8 @@ lazy val `kyo-settings` = Seq(
         // `products` rather than `classDirectory`: it carries the same directories but is a task, so
         // depending on it is what compiles this module before its TASTy is read.
         val classes = (Compile / products).value
-        val opts    = (Compile / doc / scalacOptions).value
+        val opts        = (Compile / doc / scalacOptions).value
+        val toolVersion = scaladocToolVersion.value
         // This tool reads TASTy, which only the Scala 3 series emits, so the 2.13 and 2.12 modules
         // (the kyo-scheduler family and the sbt plugins) have nothing it can read. They document
         // empty, the same way modules that opt out via `Compile / doc / sources := Seq.empty` do:
@@ -159,7 +174,7 @@ lazy val `kyo-settings` = Seq(
             out
         } else {
             IO.createDirectory(out)
-            log.info(s"Documenting $project with scaladoc $scaladocVersion")
+            log.info(s"Documenting $project with scaladoc $toolVersion")
             val exit = Fork.java(
                 ForkOptions().withRunJVMOptions(Vector("-cp", tool.mkString(sep))),
                 Seq(
