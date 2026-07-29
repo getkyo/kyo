@@ -279,7 +279,9 @@ import scala.quoted.*
         val sym      = tpe.typeSymbol
         val expanded = ExpandMacro.expandType(TypeRepr.of[A])
 
-        val isCaseClass   = sym.isClassDef && sym.flags.is(Flags.Case)
+        rejectAbstractCaseClass(tpe, sym)
+
+        val isCaseClass   = isConstructibleCaseClass(sym)
         val isSealedTrait = sym.flags.is(Flags.Sealed)
 
         expanded.asType match
@@ -1241,6 +1243,12 @@ import scala.quoted.*
       * pattern-matches on container or primitive type symbols; recursive cycles are handled by the
       * by-name `Structure.Field` thunk plus the `lazy val structure` cycle break on the generated
       * Schema's `structure` member.
+      *
+      * The product test comes FIRST, before the sealed test. `sealed` and `case` are independent
+      * flags: `sealed` restricts where subclasses may be declared and does not change a type's shape,
+      * so a `sealed case class` is a product with a public constructor and derives exactly as the same
+      * class without `sealed`. Testing `Flags.Sealed` first sent every such class down the sum path,
+      * where its empty `children` list aborted derivation and reported the class as a sealed trait.
       */
     def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
         import quotes.reflect.*
@@ -1248,15 +1256,17 @@ import scala.quoted.*
         val tpe = TypeRepr.of[A].dealias
         val sym = tpe.typeSymbol
 
-        if sym.isClassDef && sym.flags.is(Flags.Sealed) then
-            emitSealedSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
-        else if sym.isClassDef && sym.flags.is(Flags.Case) then
+        rejectAbstractCaseClass(tpe, sym)
+
+        if isConstructibleCaseClass(sym) then
             rejectPrivateCaseFields(tpe, sym)
             rejectSumOnlyAnnotations(tpe, sym)
             val sourceFieldsExpr: Expr[Seq[kyo.Field[?, ?]]] = Expr.summon[kyo.Fields[A]] match
                 case Some(fieldsExpr) => '{ $fieldsExpr.fields }
                 case None             => '{ Seq.empty[kyo.Field[?, ?]] }
             emitProductSchemaStatic[A](tpe, sym, sourceFields = sourceFieldsExpr, focusedType = tpe)
+        else if sym.isClassDef && sym.flags.is(Flags.Sealed) then
+            emitSealedSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
         else if isOrType(tpe) then
             // Reject sum-representation annotations placed on a union type alias.
             rejectSumOnlyAnnotations(TypeRepr.of[A], TypeRepr.of[A].typeSymbol)
@@ -1452,6 +1462,42 @@ import scala.quoted.*
 
         Block(nameBytesValDefs ++ (selfDef :: variantDefs), selfRef).asExprOf[Schema[A]]
     end emitUnionSchemaStatic
+
+    /** True iff `sym` is a case class whose primary constructor the generated decoder can call.
+      *
+      * `case` and `sealed` are independent: `sealed` restricts where subclasses may be declared and
+      * leaves the shape a product, so a `sealed case class` qualifies. `abstract` does change the
+      * shape: it suppresses `apply`/`copy` synthesis and leaves no constructor the emitted read body
+      * can invoke, so an abstract case class does not qualify and is reported by
+      * [[rejectAbstractCaseClass]].
+      */
+    private[internal] def isConstructibleCaseClass(using Quotes)(sym: quotes.reflect.Symbol): Boolean =
+        import quotes.reflect.*
+        sym.isClassDef && sym.flags.is(Flags.Case) && !sym.flags.is(Flags.Abstract)
+    end isConstructibleCaseClass
+
+    /** Rejects an abstract case class, naming the missing constructor rather than the type's shape.
+      *
+      * `sealed abstract case class R private (v: Int)` is the validating-smart-constructor idiom:
+      * `abstract` deliberately suppresses `apply` and `copy` so the only way to a value is the
+      * companion's constructor. Derived code can reach the fields for encoding but has no route to
+      * construct one, which is a different obstacle from the type having the wrong shape.
+      */
+    private[internal] def rejectAbstractCaseClass(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): Unit =
+        import quotes.reflect.*
+        if sym.isClassDef && sym.flags.is(Flags.Case) && sym.flags.is(Flags.Abstract) then
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: no accessible constructor (abstract case class). " +
+                    "An abstract case class synthesizes no apply, so derived code cannot construct one. " +
+                    "Provide a given Schema explicitly, or derive through its smart constructor."
+            )
+        end if
+    end rejectAbstractCaseClass
 
     /** Rejects case classes with private case-fields (would otherwise leak storage names on the wire). */
     private def rejectPrivateCaseFields(using
@@ -1940,10 +1986,14 @@ import scala.quoted.*
         val childName       = child.name.stripSuffix("$")
         val isSingletonCase = !child.isType || child.flags.is(Flags.Module)
 
-        // Sealed-trait child (an intermediate sealed trait in a multi-level hierarchy): derive its
-        // own Schema[T], which routes back through the static sealed emitter, so the parent sum
-        // delegates to it instead of mis-treating it as a zero-field product.
-        if childSym.flags.is(Flags.Sealed) && childSym.flags.is(Flags.Trait) && !child.flags.is(Flags.Module) then
+        // Sealed intermediate child in a multi-level hierarchy: derive its own Schema[T], which routes
+        // back through the static sealed emitter, so the parent sum delegates to it instead of
+        // mis-treating it as a zero-field product. The child qualifies when it is itself a sealed
+        // parent, whether written as a trait or as an abstract class; a `sealed case class` child is
+        // constructible and takes the product path below.
+        if childSym.flags.is(Flags.Sealed) && !child.flags.is(Flags.Module) && !isConstructibleCaseClass(childSym) &&
+            (childSym.flags.is(Flags.Trait) || childSym.flags.is(Flags.Abstract))
+        then
             '{ kyo.Schema.derived[T] }
         else if isSingletonCase && childSym.caseFields.isEmpty then
             // Case object variant: serialize as empty object

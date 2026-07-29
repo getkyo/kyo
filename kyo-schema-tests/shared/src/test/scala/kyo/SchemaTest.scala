@@ -3416,7 +3416,102 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "sealed case class derivation" - {
+
+        "single-field sealed case class derives as a product, not a sum" in {
+            val schema = Schema.derived[SCCSingle]
+            assert(schema.structure.isInstanceOf[Structure.Type.Product], s"expected a Product structure, got ${schema.structure}")
+            val json = schema.encodeString[Json](SCCSingle(7))
+            assert(json == """{"x":7}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(SCCSingle(7)))
+        }
+
+        "multi-field sealed case class round-trips" in {
+            val schema = Schema.derived[SCCMulti]
+            val value  = SCCMulti("ada", 36)
+            val json   = schema.encodeString[Json](value)
+            assert(json == """{"name":"ada","age":36}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "sealed case class nested as a field of another product round-trips" in {
+            val schema = Schema.derived[SCCHolder]
+            val value  = SCCHolder(1, SCCSingle(2))
+            val json   = schema.encodeString[Json](value)
+            assert(json == """{"id":1,"inner":{"x":2}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "sealed case class wire shape matches the same class without sealed" in {
+            val sealedJson = Schema.derived[SCCSingle].encodeString[Json](SCCSingle(3))
+            val plainJson  = Schema.derived[SCCPlainTwin].encodeString[Json](SCCPlainTwin(3))
+            assert(sealedJson == plainJson, s"sealed=$sealedJson plain=$plainJson")
+        }
+
+        "a genuine sealed hierarchy still derives as a sum" in {
+            val schema = Schema.derived[SCCShape]
+            assert(schema.structure.isInstanceOf[Structure.Type.Sum], s"expected a Sum structure, got ${schema.structure}")
+            val value: SCCShape = SCCShape.Circle(2)
+            val json            = schema.encodeString[Json](value)
+            assert(json == """{"Circle":{"r":2}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "a sealed case class variant of a sealed trait round-trips as that variant's product" in {
+            val schema         = Schema.derived[SCCNode]
+            val value: SCCNode = SCCNode.Leaf(4)
+            val json           = schema.encodeString[Json](value)
+            assert(json == """{"Leaf":{"v":4}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "an intermediate sealed abstract class delegates to its own sum instead of a zero-field product" in {
+            val schema        = Schema.derived[SCCTop]
+            val value: SCCTop = SCCTop.Mid.Concrete(5)
+            val json          = schema.encodeString[Json](value)
+            assert(json == """{"Mid":{"Concrete":{"n":5}}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "an abstract case class reports its missing constructor, not a wrong shape" in {
+            val src  = "sealed abstract case class SCCAbstractProbe(v: Int) derives kyo.Schema"
+            val errs = scala.compiletime.testing.typeCheckErrors(src)
+            assert(errs.nonEmpty)
+            val msg = errs.head.message
+            assert(msg.contains("no accessible constructor"), s"message must name the obstacle: $msg")
+            assert(!msg.contains("sealed trait"), s"message must not misclassify the type: $msg")
+        }
+    }
+
 end SchemaTest
+
+sealed case class SCCSingle(x: Int) derives CanEqual
+sealed case class SCCMulti(name: String, age: Int) derives CanEqual
+case class SCCPlainTwin(x: Int) derives CanEqual
+case class SCCHolder(id: Int, inner: SCCSingle) derives CanEqual
+given Schema[SCCSingle] = Schema.derived
+
+sealed trait SCCShape derives CanEqual
+object SCCShape:
+    case class Circle(r: Int) extends SCCShape
+    case class Square(s: Int) extends SCCShape
+end SCCShape
+
+sealed trait SCCNode derives CanEqual
+object SCCNode:
+    sealed case class Leaf(v: Int) extends SCCNode
+    case class Label(name: String) extends SCCNode
+end SCCNode
+
+sealed trait SCCTop derives CanEqual
+object SCCTop:
+    sealed abstract class Mid extends SCCTop
+    object Mid:
+        case class Concrete(n: Int) extends Mid
+        case class Other(s: String) extends Mid
+    end Mid
+    case class Direct(flag: Boolean) extends SCCTop
+end SCCTop
 
 case class UnionCaseA(label: String, value: Int) derives CanEqual, Schema
 case class UnionCaseB(flag: Boolean) derives CanEqual, Schema
