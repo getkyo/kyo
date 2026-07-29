@@ -391,10 +391,9 @@ class AeronTransportTest extends Test:
     }
 
     "offer result maps through AeronSentinels identically on every platform" in {
-        // AeronPlatform.embedded() dispatches to the active platform's transport (JvmAeronTransport on
-        // JVM, FfiAeronTransport on Native/JS), so one leaf exercises every impl. TopicInvariantsTest
-        // defers its FFI offer-sentinel coverage here, keeping only a `.onlyJs` leaf for the koffi
-        // BigInt->Long sign-marshalling guard.
+        // AeronPlatform.embedded() reaches FfiAeronTransport on every platform, so one leaf covers the
+        // single impl. TopicInvariantsTest defers its offer-sentinel coverage here, keeping only a
+        // `.onlyJs` leaf for the koffi BigInt->Long sign-marshalling guard.
         for
             dir <- Path.tempDir("kyo-aeron-embedded-test")
             rt  <- AeronPlatform.embedded(dir.unsafe.show)
@@ -814,11 +813,12 @@ class AeronTransportTest extends Test:
 
     // Because the forked fibers are unscoped, Topic.run's body completes and fires runtime.close() while
     // the publish fiber may still be mid-offer and the stream fiber mid-poll. Every platform turns that
-    // into a safe sentinel rather than a UAF: Native and JS through kyo_aeron.c's close_mutex+closing
-    // guard, the JVM through JvmAeronTransport's per-handle OpsGate plus the drain in closeAll. The JVM
-    // is not exempt by virtue of running on a managed heap: offer copies into a claimed log-buffer
-    // region and poll writes the subscriber position into the CnC, both mapped memory that closing the
-    // client unmaps, and io.aeron's own grace for that (closeLingerDurationNs) defaults to 0.
+    // into a safe sentinel rather than a UAF, through kyo_aeron.c's close_mutex+closing guard on every
+    // platform. The JVM is not exempt by virtue of running on a managed heap: offer copies into a claimed
+    // log-buffer region and poll writes the subscriber position into the CnC, both mapped memory that
+    // closing the client unmaps. Running the JVM on the Java client instead is what made this leaf crash:
+    // that path re-derived the guard as a per-handle gate whose drain could miss a publication registered
+    // concurrently, so an offer wrote into a term buffer the close had already unmapped.
     "UAF-loop: a high-iteration forked-then-close loop does not use-after-free" in {
         val iterations = 100
         val messages   = Seq(1, 2, 3)
@@ -868,12 +868,12 @@ class AeronTransportTest extends Test:
         }
     }
 
-    // `.notJvm`: the close_mutex+closing freed-handle guard lives only in kyo_aeron.c (Native and JS share
-    // the same .dylib/.so via koffi); JVM's io.aeron client has no such symbols to guard. The after-close
+    // The close_mutex+closing freed-handle guard lives in kyo_aeron.c, which every platform now reaches,
+    // so this runs on the JVM too rather than being gated off it. The after-close
     // interleaving is deterministic through Scala-side sequencing, not a C-side busy-spin: each read runs
     // only after the client-close downcall already freed the inner handle. The bundles' refcounts keep the
     // client bundle's close_mutex alive across the close, so each guard's acquire is always valid.
-    "UAF-reads: publicationIsConnected/subscriptionIsConnected/subscriptionPoll after a client close return safe sentinels, not a UAF".notJvm in {
+    "UAF-reads: publicationIsConnected/subscriptionIsConnected/subscriptionPoll after a client close return safe sentinels, not a UAF" in {
         val pollDstCap = 64 * 1024
         for
             bindings <- Sync.Unsafe.defer(Ffi.load[AeronBindings])
@@ -956,11 +956,11 @@ class AeronTransportTest extends Test:
     // JVM must not throw IllegalArgumentException.
     // ---------------------------------------------------------------------------
 
-    // JvmAeronTransport.offer catches the IllegalArgumentException checkMaxMessageLength raises on an
-    // oversize payload and converts it to -6 (AeronSentinels.Error), matching the FFI path; without the
-    // catch it would escape Sync.Unsafe.defer as a panic. `.onlyJvm` since FFI already returns -6 natively;
-    // the subscriber and awaited publicationIsConnected are required since an unconnected offer returns -1.
-    "oversize offer on term-length=65536 returns -6, does not throw".onlyJvm in {
+    // The C client returns -6 (AeronSentinels.Error) for an oversize offer on every platform, so this
+    // runs everywhere rather than pinning the JVM-only IllegalArgumentException-to--6 conversion the Java
+    // client needed. The subscriber and awaited publicationIsConnected are required since an unconnected
+    // offer returns -1.
+    "oversize offer on term-length=65536 returns -6, does not throw" in {
         val oversizeUri = "aeron:ipc?term-length=65536"
         val oversize    = Array.fill[Byte](8193)(0)
         for
@@ -1043,9 +1043,9 @@ class AeronTransportTest extends Test:
     // Error handler: non-exiting recording handler + TopicTransportFailedException surfacing
     // ---------------------------------------------------------------------------
 
-    // The inject seam fires synchronously: JvmAeronTransport.injectError sets errorSlot directly,
-    // FfiAeronTransport.injectError calls the C kyo_aeron_test_inject_error. Reaching the yield
-    // proves the recording error handler did not exit() the process.
+    // The inject seam fires synchronously: FfiAeronTransport.injectError calls the C
+    // kyo_aeron_test_inject_error. Reaching the yield proves the recording error handler did not
+    // exit() the process.
     "an injected fatal error is recorded in the slot and the process survives" in {
         for
             dir <- Path.tempDir("kyo-aeron-embedded-test")

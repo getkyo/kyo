@@ -392,7 +392,7 @@ class TopicUniformInvariantsTest extends Test:
                 )
                 assert(
                     maxMsgLen == 0,
-                    s"expected maxMessageLength after own close to be 0 (uniform: JVM io.aeron isClosed-guard and the FFI closed-guard both return 0); got $maxMsgLen"
+                    s"expected maxMessageLength after own close to be 0 (the shim's closed-guard returns 0 on every platform); got $maxMsgLen"
                 )
             case other =>
                 fail(s"add/offer round-trip failed before the assertion: $other")
@@ -444,8 +444,8 @@ class TopicUniformInvariantsTest extends Test:
         }
 
     // Symmetric to the publication offer-after-own-close leaf, plus the idempotency guard making a second
-    // close a no-op; without it, a later poll or second close would corrupt the heap on Native/JS. JVM's
-    // pollOne maps any AeronException to Absent; FFI's guard gives the same result and an inert second close.
+    // close a no-op. Two guards meet here: the shim keeps the freed handle inert, and SubscriptionState
+    // reports itself closed so the poll never hands the shim the receive buffer closeSubscription released.
     "poll after the caller's own closeSubscription returns no fragment and a second close is a no-op, no UAF (JVM/JS/Native)" in {
         for
             dir <- Path.tempDir("kyo-aeron-poll-after-close")

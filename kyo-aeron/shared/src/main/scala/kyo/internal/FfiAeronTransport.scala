@@ -54,7 +54,13 @@ final private[kyo] class FfiAeronTransport(
         if closed.compareAndSet(false, true) then bindings.clientClose(client)
 
     def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] =
-        bindings.asyncAddPublication(client, uri, streamId)
+        // Absent once closed, without the downcall. The shim rejects a registration against a closed
+        // client by looking the bundle up in its live registry, but that lookup is by pointer identity,
+        // so a bundle allocated at the freed one's address while a stale handle survives passes the
+        // check and hands back a live token. Refusing here removes the dangling pointer from the call
+        // entirely, which is this side's job: it owns the handle and knows when it died.
+        if closed.get() then Absent
+        else bindings.asyncAddPublication(client, uri, streamId)
 
     def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
         val r = bindings.asyncAddPublicationPoll(async)
@@ -93,7 +99,9 @@ final private[kyo] class FfiAeronTransport(
         bindings.publicationClose(pub)
 
     def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] =
-        bindings.asyncAddSubscription(client, uri, streamId)
+        // Same closed-client refusal as asyncAddPublication.
+        if closed.get() then Absent
+        else bindings.asyncAddSubscription(client, uri, streamId)
 
     def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
         val r = bindings.asyncAddSubscriptionPoll(async)
