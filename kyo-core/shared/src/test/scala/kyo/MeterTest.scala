@@ -219,6 +219,63 @@ class MeterTest extends kyo.test.Test[Any]:
         }
     }
 
+    "semaphore interrupt invariants" - {
+
+        // A permit is held for the whole body, so no more bodies may run concurrently than the
+        // meter has permits. The case under test is a waiter interrupted while parked: it never
+        // acquired a permit, so withdrawing it must not admit anyone.
+        "concurrency never exceeds permits while parked waiters are interrupted".onlyJvm in {
+            val permits = 1
+            val waiters = 32
+            (for
+                meter      <- Meter.initSemaphore(permits)
+                live       <- AtomicInt.init(0)
+                violations <- AtomicInt.init(0)
+                gate       <- Latch.init(1)
+                body =
+                    for
+                        n <- live.incrementAndGet
+                        _ <- if n > permits then violations.incrementAndGet.map(_ => ()) else Sync.defer(())
+                        _ <- Async.sleep(1.millis)
+                        _ <- live.decrementAndGet
+                    yield ()
+                holder <- Fiber.initUnscoped(meter.run(gate.await.andThen(body)))
+                _      <- Async.sleep(20.millis)
+                parked <- Kyo.foreach(1 to waiters)(_ => Fiber.initUnscoped(meter.run(body)))
+                _      <- Async.sleep(20.millis)
+                _      <- Async.foreach(parked.take(waiters / 2), waiters / 2)(_.interrupt(panic))
+                _      <- gate.release
+                _      <- holder.getResult
+                _      <- Kyo.foreach(parked)(_.getResult)
+                bad    <- violations.get
+            yield assert(bad == 0, s"observed $bad moments with more than $permits concurrent holders"))
+                .handle(Loop.repeat(20))
+                .unit
+        }
+
+        // After every fiber has settled, the permit ledger must be back to full. An interrupted
+        // waiter that over-returns would show up here as more free permits than the meter has.
+        "permits return to full after parked waiters are interrupted".onlyJvm in {
+            val permits = 2
+            val waiters = 16
+            (for
+                meter   <- Meter.initSemaphore(permits)
+                gate    <- Latch.init(1)
+                holders <- Kyo.foreach(1 to permits)(_ => Fiber.initUnscoped(meter.run(gate.await)))
+                _       <- Async.sleep(20.millis)
+                parked  <- Kyo.foreach(1 to waiters)(_ => Fiber.initUnscoped(meter.run(Async.sleep(1.millis))))
+                _       <- Async.sleep(20.millis)
+                _       <- Async.foreach(parked, waiters)(_.interrupt(panic))
+                _       <- gate.release
+                _       <- Kyo.foreach(holders)(_.getResult)
+                _       <- Kyo.foreach(parked)(_.getResult)
+                free    <- Abort.run(meter.availablePermits)
+            yield assert(free == Result.succeed(permits), s"expected $permits permits free at rest, got $free"))
+                .handle(Loop.repeat(20))
+                .unit
+        }
+    }
+
     def loop(meter: Meter, ch: Channel[Unit]): Unit < (Async & Abort[Closed]) =
         meter.run(ch.put(())).andThen(loop(meter, ch))
 
