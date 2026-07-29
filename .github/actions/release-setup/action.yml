@@ -1,0 +1,44 @@
+name: release-setup
+description: >-
+  Provision a job that builds kyo's publishable artifacts: the coursier cache, the Linux
+  native build dependencies, the staged BoringSSL and libaeron trees, and the JDK plus sbt.
+  Shared by the release workflow and the release probe, so the probe builds in exactly the
+  environment it vouches for; a native dependency added for publishing reaches both at once.
+  Assumes a linux x64 runner. Checkout is the caller's responsibility.
+runs:
+  using: composite
+  steps:
+    - uses: coursier/cache-action@v8.1.1
+
+    # liburing rides along with the other native build deps: the kyo-net io_uring shim
+    # (kyo_uring.c) statically links -luring, and publishing compiles it like any other build.
+    - name: Install Dependencies
+      shell: bash
+      run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 liburing-dev
+
+    # Stage the vendored BoringSSL static archives before any build: without the staged tree,
+    # build.sbt silently compiles the c-boringssl-stub shim into kyo-net (probe_available -> 0,
+    # BoringSslProvider unavailable at runtime), so the published artifact would ship without
+    # BoringSSL TLS.
+    - name: Prepare BoringSSL
+      shell: bash
+      run: |
+        command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
+        command -v go >/dev/null 2>&1 || bash scripts/apt-install.sh golang-go
+        bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
+
+    # The staged libaeron tree is gitignored, so anything that compiles kyo-aeron's C shim has to
+    # build it first: the shim statically links -laeron_driver_static.
+    - name: Prepare libaeron
+      shell: bash
+      run: |
+        command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
+        # The Aeron driver links -luuid on Linux and the package providing the libuuid.so link
+        # target is not preinstalled.
+        dpkg -s uuid-dev >/dev/null 2>&1 || bash scripts/apt-install.sh uuid-dev
+        bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
+
+    - uses: coursier/setup-action@v3.0.0
+      with:
+        jvm: corretto:25
+        apps: sbt
