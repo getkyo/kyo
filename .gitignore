@@ -19,3 +19,6 @@ test-output
 .DS_Store
 .jvmopts
 node_modules
+
+# Local analysis notes, never committed
+analysis-*.md
