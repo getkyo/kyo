@@ -704,7 +704,10 @@ lazy val `kyo-schema-json` =
         .in(file("kyo-schema-json"))
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(
+            mimaCheck(false),
+            Test / javaOptions ~= (_.filterNot(_ == "--add-opens=java.base/java.lang=ALL-UNNAMED"))
+        )
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)

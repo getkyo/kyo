@@ -1828,8 +1828,8 @@ cs.applyTo(alice) // Result.Success(renamed)
 
 ## Cross-platform behavior
 
-kyo-schema runs on JVM, Scala.js, Scala Native, and WASM, but two areas behave differently across platforms:
+kyo-schema runs on JVM, Scala.js, Scala Native, and WASM. Runtime format implementations are shared across these platforms. JSON output strings are constructed from the written byte range with the public UTF-8 `String` constructor in the shared `JsonWriter`, providing consistent behavior without platform-specific runtime code.
 
-- **ASCII bytes to String conversion**: the JVM uses a zero-copy path that constructs `String` directly from the underlying byte array via the private LATIN1 String constructor, sharing the array without copying. Scala.js, Scala Native, and WASM copy the bytes via `new String(bytes, StandardCharsets.US_ASCII)`. This is an implementation detail that does not affect correctness, but may appear in allocations-per-request profiling on high-throughput JVM workloads.
+One API area depends on platform emulation:
 
 - **Regex support in `checkPattern`**: `checkPattern` uses `java.util.regex.Pattern`. Scala.js, Scala Native, and WASM emulate this API but do not support all JVM regex features. Features unavailable off-JVM include possessive quantifiers (`a++`, `a*+`), atomic groups (`(?>...)`), some Unicode property classes (`\p{...}`), and lookbehind on older JS engines. For cross-platform constraints, stick to POSIX features: character classes, anchors, alternation, basic quantifiers, capture groups, backreferences, and simple lookahead.
