@@ -253,6 +253,32 @@ class MeterTest extends kyo.test.Test[Any]:
                 .unit
         }
 
+        // Closing must complete EVERY parked waiter, including ones queued behind a waiter that was
+        // interrupted first. A close that drains a count derived from `state` stops on the retired
+        // promise the interrupted waiter left behind and strands the live ones, which hangs here.
+        "close completes waiters queued behind an interrupted waiter".onlyJvm in {
+            val permits = 1
+            val waiters = 8
+            (for
+                meter  <- Meter.initSemaphore(permits)
+                gate   <- Latch.init(1)
+                holder <- Fiber.initUnscoped(meter.run(gate.await))
+                _      <- Async.sleep(20.millis)
+                parked <- Kyo.foreach(1 to waiters)(_ => Fiber.initUnscoped(meter.run(Async.sleep(1.millis))))
+                _      <- Async.sleep(20.millis)
+                // Interrupt the FIRST waiter, so its retired promise sits at the head of the queue
+                // ahead of every still-parked waiter behind it.
+                _       <- parked.head.interrupt(panic)
+                _       <- Async.sleep(10.millis)
+                _       <- meter.close
+                _       <- gate.release
+                _       <- holder.getResult
+                settled <- Kyo.foreach(parked)(_.getResult)
+            yield assert(settled.size == waiters, s"expected all $waiters waiters to settle, got ${settled.size}"))
+                .handle(Loop.repeat(20))
+                .unit
+        }
+
         // After every fiber has settled, the permit ledger must be back to full. An interrupted
         // waiter that over-returns would show up here as more free permits than the meter has.
         "permits return to full after parked waiters are interrupted".onlyJvm in {
