@@ -162,7 +162,7 @@ lazy val `kyo-settings` = Seq(
         val deps    = (Compile / dependencyClasspath).value.map(_.data)
         // `products` rather than `classDirectory`: it carries the same directories but is a task, so
         // depending on it is what compiles this module before its TASTy is read.
-        val classes = (Compile / products).value
+        val classes     = (Compile / products).value
         val opts        = (Compile / doc / scalacOptions).value
         val toolVersion = scaladocToolVersion.value
         // This tool reads TASTy, which only the Scala 3 series emits, so the 2.13 and 2.12 modules
