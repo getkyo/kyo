@@ -1,6 +1,5 @@
 package kyo
 
-import io.aeron.driver.MediaDriver
 import kyo.internal.*
 
 class SpawnBackendTest extends kyo.test.Test[Any]:
@@ -46,18 +45,22 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     private val javaBin =
         Path(java.lang.System.getProperty("java.home"), "bin", "java").toString
 
-    /** Runs `f` against a fresh embedded MediaDriver, closed on scope exit. */
-    private def withDriver[A](f: MediaDriver => A < (Async & Abort[CompilerException] & Scope))(using
+    /** Runs `f` against a fresh embedded driver, closed on scope exit. */
+    private def withDriver[A](f: AeronDriver => A < (Async & Abort[CompilerException] & Scope))(using
         Frame
     ): A < (Async & Abort[CompilerException]) =
-        Scope.run(Scope.acquireRelease(Sync.defer(CompilerPool.launchDriver()))(d => Sync.defer(d.close())).map(f))
+        Scope.run(Abort.run[TopicTransportFailedException](AeronDriver.launch(CompilerPool.driverSettings)).map {
+            case Result.Success(driver) => f(driver)
+            case Result.Failure(e)      => Abort.panic(e)
+            case Result.Panic(t)        => Abort.panic(t)
+        })
 
     /** Scope-binds a spawned backend so its close runs on every exit path: an assertion failure
       * mid-test must never leak the worker process or its aeron client (a leaked client's conductor
       * thread is non-daemon and keeps the forked test JVM alive past the suite). Close is safe to run
       * twice, so tests that close mid-body as part of their scenario still hold.
       */
-    private def scopedSpawn(config: Compiler.Config, driver: MediaDriver, streamIdBase: Int)(using
+    private def scopedSpawn(config: Compiler.Config, driver: AeronDriver, streamIdBase: Int)(using
         Frame
     ): SpawnBackend < (Async & Abort[CompilerException] & Scope) =
         Scope.acquireRelease(SpawnBackend.init(config, driver, streamIdBase))(b => Abort.run[Throwable](b.close).unit)
@@ -222,13 +225,17 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         }
     }
 
-    "one shared MediaDriver per pool: two Spawn workers both reach it; the driver closes on scope close" in {
+    "one shared driver per pool: two Spawn workers both reach it; the driver closes on scope close" in {
         val launched = new java.util.concurrent.atomic.AtomicInteger(0)
         val closed   = new java.util.concurrent.atomic.AtomicInteger(0)
         Scope.run {
             Scope.acquireRelease(
-                Sync.defer { discard(launched.incrementAndGet()); CompilerPool.launchDriver() }
-            )(d => Sync.defer { discard(closed.incrementAndGet()); d.close() }).map { driver =>
+                Abort.run[TopicTransportFailedException](AeronDriver.launchUnscoped(CompilerPool.driverSettings)).map {
+                    case Result.Success(d) => discard(launched.incrementAndGet()); d
+                    case Result.Failure(e) => Abort.panic(e)
+                    case Result.Panic(t)   => Abort.panic(t)
+                }
+            )(d => Sync.Unsafe.defer { discard(closed.incrementAndGet()); d.unsafe.close() }).map { driver =>
                 for
                     // Two distinct configs force two distinct worker sessions over the one shared driver;
                     // distinct stream-id bases (0, 1) keep their req/resp streams disjoint.

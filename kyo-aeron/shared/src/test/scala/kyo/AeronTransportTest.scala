@@ -882,7 +882,7 @@ class AeronTransportTest extends Test:
             dir <- Path.tempDir("kyo-aeron-uaf-reads")
             // driverStart/clientConnect are @Ffi.blocking, so each yields a Fiber.Unsafe bridged
             // via .safe.get.
-            driver   <- Sync.Unsafe.defer(bindings.driverStart(dir.unsafe.show)).flatMap(_.safe.get)
+            driver   <- Sync.Unsafe.defer(bindings.driverStart(dir.unsafe.show, 0L, 0L)).flatMap(_.safe.get)
             client   <- Sync.Unsafe.defer(bindings.clientConnect(dir.unsafe.show)).flatMap(_.safe.get)
             pubMaybe <- addPublicationRaw(bindings, client, ipcUri, uafStreamId, 5000)
             subMaybe <- addSubscriptionRaw(bindings, client, ipcUri, uafStreamId, 5000)

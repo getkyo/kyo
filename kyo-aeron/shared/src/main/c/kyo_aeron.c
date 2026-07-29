@@ -375,11 +375,19 @@ static void kyo_aeron_fragment_handler(
     b->slot_len = (int32_t)length;  /* length <= slot_cap <= KYO_AERON_SLOT_MAX_CAP <= INT32_MAX */
 }
 
-void* kyo_aeron_driver_start(const char* dir)
+void* kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_t publication_unblock_ns)
 {
     aeron_driver_context_t* ctx = NULL;
     if (aeron_driver_context_init(&ctx) < 0) return NULL;
     if (dir != NULL) aeron_driver_context_set_dir(ctx, dir);
+    /* A caller that shares one driver across many clients raises these: the defaults assume a
+     * client conductor that gets CPU promptly, and a loaded host can stall one past the liveness
+     * timeout, which the driver treats as client death. <= 0 keeps the driver's own default.
+     * Aeron requires the unblock timeout to exceed client liveness, which the caller enforces. */
+    if (client_liveness_ns > 0)
+        aeron_driver_context_set_client_liveness_timeout_ns(ctx, (uint64_t)client_liveness_ns);
+    if (publication_unblock_ns > 0)
+        aeron_driver_context_set_publication_unblock_timeout_ns(ctx, (uint64_t)publication_unblock_ns);
     /* Delete the Aeron directory on start so successive embedded() calls initialize from a
      * clean state (no stale CnC file). dir_delete_on_shutdown is deliberately NOT set. */
     aeron_driver_context_set_dir_delete_on_start(ctx, true);

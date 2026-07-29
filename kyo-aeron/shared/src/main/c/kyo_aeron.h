@@ -5,7 +5,8 @@
 
 #include <stdint.h>
 
-void*   kyo_aeron_driver_start(const char* dir);
+/* Timeouts are nanoseconds; <= 0 leaves the driver's own default in place. */
+void*   kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_t publication_unblock_ns);
 void    kyo_aeron_driver_close(void* driver);
 void*   kyo_aeron_client_connect(const char* dir);
 void    kyo_aeron_client_close(void* client);

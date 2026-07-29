@@ -41,6 +41,18 @@ jobs:
           command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
           command -v go >/dev/null 2>&1 || bash scripts/apt-install.sh golang-go
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
+      # Stage libaeron for the same reason, and with the same consequence if skipped: kyo-aeron's shim
+      # statically links -laeron_driver_static, the staged tree is gitignored, and ffiCompile hard-errors
+      # on a failed link, so without this the publish fails partway through with `cannot find
+      # -laeron_driver_static` after earlier modules have already staged. Same staging as
+      # .github/actions/setup; this runner is always linux x64.
+      - name: Prepare libaeron
+        run: |
+          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
+          # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
+          # target is not preinstalled.
+          dpkg -s uuid-dev >/dev/null 2>&1 || bash scripts/apt-install.sh uuid-dev
+          bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
       - uses: coursier/setup-action@v3.0.0
         with:
           jvm: corretto:25

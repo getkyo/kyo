@@ -1788,17 +1788,14 @@ lazy val `kyo-aeron` =
         )
         .jvmSettings(
             mimaCheck(false),
+            foreignRelease,
             fork := true,
-            javaOptions ++= Seq(
-                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
-                "--add-opens=java.base/java.lang=ALL-UNNAMED",
-                "--add-opens=java.base/java.nio=ALL-UNNAMED",
-                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
-            ),
-            libraryDependencies ++= Seq(
-                "io.aeron" % "aeron-driver" % "1.50.2",
-                "io.aeron" % "aeron-client" % "1.50.2"
-            )
+            // The four --add-opens this used to need were io.aeron's: its embedded Java MediaDriver
+            // reaches into jdk.internal.misc, java.lang, java.nio, and sun.nio.ch, and Topic.run failed
+            // at driver launch without them. The JVM now drives the same C client and embedded C driver
+            // as every other platform through Panama, which needs no add-opens; --enable-native-access
+            // only silences the restricted-method warning.
+            javaOptions += "--enable-native-access=ALL-UNNAMED"
         )
         .nativeSettings(
             `native-settings`,
@@ -1945,12 +1942,9 @@ lazy val `kyo-compiler` =
         .settings(
             `kyo-settings`,
             fork := true,
-            javaOptions ++= Seq(
-                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
-                "--add-opens=java.base/java.lang=ALL-UNNAMED",
-                "--add-opens=java.base/java.nio=ALL-UNNAMED",
-                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
-            ),
+            // These were io.aeron's requirement, dropped with it: the pool's shared driver is now
+            // kyo-aeron's AeronDriver, the same C driver every platform runs, reached through Panama.
+            javaOptions += "--enable-native-access=ALL-UNNAMED",
             libraryDependencies ++= Seq(
                 "org.scala-lang" %% "scala3-presentation-compiler" % scalaVersion.value
             )

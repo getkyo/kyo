@@ -1,6 +1,5 @@
 package kyo.internal
 
-import io.aeron.driver.MediaDriver
 import kyo.*
 
 /** The forked-worker backend: drives a per-config worker JVM over an aeron request/response session.
@@ -75,7 +74,7 @@ private[kyo] object SpawnBackend:
       */
     def init(
         config: Compiler.Config,
-        driver: MediaDriver,
+        driver: AeronDriver,
         streamIdBase: Int,
         onSpawn: Process => Unit = _ => (),
         readyTimeout: Duration = 30.seconds
@@ -148,7 +147,7 @@ private[kyo] object SpawnBackend:
       * is spawned unscoped (released in `close`); a `CommandException` launch failure surfaces as
       * CompilerWorkerSpawnException.
       */
-    private[kyo] def spawnWorker(config: Compiler.Config, driver: MediaDriver, reqStreamId: Int, respStreamId: Int)(using
+    private[kyo] def spawnWorker(config: Compiler.Config, driver: AeronDriver, reqStreamId: Int, respStreamId: Int)(using
         Frame
     ): Process < (Sync & Abort[CompilerException]) =
         val targetClasspath =
@@ -161,7 +160,7 @@ private[kyo] object SpawnBackend:
                 Chunk(
                     s"-Dkyo.internal.WorkerFlags.reqStreamId=$reqStreamId",
                     s"-Dkyo.internal.WorkerFlags.respStreamId=$respStreamId",
-                    s"-Dkyo.internal.WorkerFlags.aeronDir=${driver.aeronDirectoryName()}",
+                    s"-Dkyo.internal.WorkerFlags.aeronDir=${driver.directory.unsafe.show}",
                     s"-Dkyo.internal.WorkerFlags.scalaVersion=${config.toolchain.scalaVersion}",
                     s"-Dkyo.internal.WorkerFlags.classpath=${config.classpath.map(_.toString).mkString(Path.pathSeparator)}",
                     s"-Dkyo.internal.WorkerFlags.sourceRoots=${config.sourceRoots.map(_.toString).mkString(Path.pathSeparator)}",
@@ -196,8 +195,8 @@ private[kyo] object SpawnBackend:
     /** Connects an aeron client to the pool's shared driver directory; closed in `close`. Unscoped
       * because the backend owns the client across its whole lifetime and releases it in `close`.
       */
-    private def aeronClient(driver: MediaDriver)(using Frame): AeronClient < (Async & Abort[TopicTransportFailedException]) =
-        AeronClient.connectUnscoped(Path(driver.aeronDirectoryName()))
+    private def aeronClient(driver: AeronDriver)(using Frame): AeronClient < (Async & Abort[TopicTransportFailedException]) =
+        AeronClient.connectUnscoped(driver.directory)
 
     /** Wires the Exchange over the two aeron streams against the captured client: `send` publishes an
       * `Envelope.Req` via `Topic.publish[Envelope]`, `receive` is the reply `Topic.stream[Envelope]`,

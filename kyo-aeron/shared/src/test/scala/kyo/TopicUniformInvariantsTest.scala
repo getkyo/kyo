@@ -284,20 +284,26 @@ class TopicUniformInvariantsTest extends Test:
         }
     }
 
-    // The public API takes only kyo types (a Path or an AeronClient): the ascription type-checks only if
-    // AeronClient's surface is free of io.aeron types; the typeCheckFailure snippets pin the absence of
-    // any io.aeron-typed run overload.
-    "no io.aeron on public surface; no MediaDriver/Aeron run overload; AeronClient is opaque" in {
+    // The public API takes only kyo types: a Path, an AeronClient, or an AeronDriver, each of which the
+    // ascriptions below pin. The io.aeron-typed overloads this used to rule out cannot exist now that no
+    // platform depends on io.aeron at all, so what is worth pinning is the shape that replaced them: the
+    // driver is a kyo type carrying a kyo Path, and a raw directory String is still not a Topic.run
+    // argument (a driver directory reaches the API as a Path, never as a String).
+    "public surface takes only kyo types: Path, AeronClient, AeronDriver; no String-typed run overload" in {
         val _: AeronClient < (Scope & Async & Abort[TopicTransportFailedException]) =
             AeronClient.connect(Path("/dev/shm", "type-probe-inv002"))
+        val _: AeronDriver < (Scope & Async & Abort[TopicTransportFailedException]) =
+            AeronDriver.launch()
+        val _: Path => Path = (d: Path) => d
         typeCheckFailure("""
             import kyo.*
-            // MediaDriver and Aeron are JVM-only symbols; the Topic surface takes only kyo types.
-            Topic.run(null.asInstanceOf[io.aeron.driver.MediaDriver])(())
+            Topic.run("/dev/shm/type-probe-inv002")(())
         """)
         typeCheckFailure("""
             import kyo.*
-            Topic.run(null.asInstanceOf[io.aeron.Aeron])(())
+            // The driver exposes its directory as a Path; there is no String-typed accessor to pass on.
+            val d: AeronDriver = null.asInstanceOf[AeronDriver]
+            Topic.run(d.directory.unsafe.show)(())
         """)
         succeed
     }

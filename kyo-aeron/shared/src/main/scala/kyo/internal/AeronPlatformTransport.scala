@@ -24,7 +24,7 @@ private[kyo] object AeronPlatformTransport:
     def embedded(dir: String)(using Frame): AeronRuntime < Async =
         Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
             for
-                driver <- Sync.Unsafe.defer(bindings.driverStart(dir)).flatMap(_.safe.get)
+                driver <- Sync.Unsafe.defer(bindings.driverStart(dir, 0L, 0L)).flatMap(_.safe.get)
                 client <- Sync.Unsafe.defer(bindings.clientConnect(dir)).flatMap(_.safe.get)
                 runtime <- Sync.Unsafe.defer {
                     val ffiTransport = new FfiAeronTransport(bindings, client)
@@ -44,6 +44,25 @@ private[kyo] object AeronPlatformTransport:
             yield runtime
         }
     end embedded
+
+    /** Starts an embedded media driver in `dir` without connecting a client, for a caller that
+      * connects its own clients to the directory (see [[kyo.AeronDriver]]).
+      *
+      * Timeouts are nanoseconds and `0` keeps the driver's default; the caller validates their
+      * relationship before reaching here.
+      */
+    def driver(dir: String, clientLivenessNs: Long, publicationUnblockNs: Long)(using Frame): AeronDriverRuntime < Async =
+        Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
+            Sync.Unsafe.defer(bindings.driverStart(dir, clientLivenessNs, publicationUnblockNs)).flatMap(_.safe.get).map {
+                started =>
+                    Sync.Unsafe.defer {
+                        new AeronDriverRuntime:
+                            def close()(using AllowUnsafe): Unit = bindings.driverClose(started)
+                        end new
+                    }
+            }
+        }
+    end driver
 
     /** Connects a client to a caller-owned external driver at `aeronDir`.
       *

@@ -1,12 +1,11 @@
 package kyo.internal
 
-import io.aeron.driver.MediaDriver
 import kyo.*
 
 /** The internal implementation of the locked `Compiler.Pool` abstract class.
   *
   * Owns the live pc instances in a close-on-evict `Cache[Config, Promise[Instance]]`, the global
-  * compile-cap `Meter`, and the one shared embedded `MediaDriver` every Spawn worker session connects
+  * compile-cap `Meter`, and the one shared embedded `AeronDriver` every Spawn worker session connects
   * to. A `compiler(config)` is a `Sync` resolve returning a thin view; the instance is created
   * single-flight on the first op via the cache's own promise registry, with the backend chosen by
   * `effectiveIsolate`. Each op runs under the per-instance mutex held inside the global semaphore.
@@ -16,7 +15,7 @@ final private[kyo] class CompilerPool(
     settings: Compiler.Pool.Settings,
     instances: Cache[Compiler.Config, Promise[Instance, Abort[CompilerException]]],
     globalSemaphore: Meter,
-    driver: MediaDriver,
+    driver: AeronDriver,
     // A pool-owned monotonic counter: each created worker gets a unique stream-id base, so distinct
     // configs land on provably-distinct aeron streams (a 32-bit config.hashCode could collide and
     // silently mis-route one worker's reply to another host's request on the shared medium).
@@ -168,22 +167,18 @@ private[kyo] object CompilerPool:
       */
     val ownVersion: String = "3.8.4"
 
-    /** Launches the pool's embedded MediaDriver with a client-liveness timeout sized for loaded CI hosts: the aeron default (10s)
-      * assumes dedicated cores, and a compile burst can stall a client conductor past it, which the driver treats as client death.
+    /** The pool's driver timeouts, sized for loaded CI hosts: Aeron's 10s client-liveness default
+      * assumes dedicated cores, and a compile burst can stall a client conductor past it, which the
+      * driver treats as client death.
       */
-    private[kyo] def launchDriver(): MediaDriver =
-        MediaDriver.launchEmbedded(
-            new MediaDriver.Context()
-                .clientLivenessTimeoutNs(java.util.concurrent.TimeUnit.SECONDS.toNanos(30))
-                // aeron requires the unblock timeout to exceed client liveness.
-                .publicationUnblockTimeoutNs(java.util.concurrent.TimeUnit.SECONDS.toNanos(40))
-        )
+    private[kyo] val driverSettings: AeronDriver.Settings =
+        AeronDriver.Settings(clientLivenessTimeout = 30.seconds, publicationUnblockTimeout = 40.seconds)
 
     /** Opens a pool: allocates the global compile-cap Meter, the one shared embedded MediaDriver,
       * and the close-on-evict instance cache (the finalizer closes every evicted instance and
       * force-kills every evicted worker). Scope-managed.
       */
-    def init(settings: Compiler.Pool.Settings)(using Frame): Compiler.Pool < (Sync & Scope) =
+    def init(settings: Compiler.Pool.Settings)(using Frame): Compiler.Pool < (Async & Scope) =
         Meter.initSemaphore(settings.maxConcurrentCompiles).map { globalSemaphore =>
             Cache.initWithFinalizer[Compiler.Config, Promise[Instance, Abort[CompilerException]]](
                 settings.maxLiveCompilers,
@@ -194,10 +189,15 @@ private[kyo] object CompilerPool:
                     case _                        => ()
                 }
             ).map { instances =>
-                Scope.acquireRelease(Sync.defer(launchDriver()))(d => Sync.defer(d.close())).map { driver =>
-                    AtomicInt.init(0).map { streamIdCounter =>
-                        new CompilerPool(settings, instances, globalSemaphore, driver, streamIdCounter): Compiler.Pool
-                    }
+                // A driver that cannot start is a defect for the pool, as the throwing launch it
+                // replaced was, so the typed abort is re-raised as a panic rather than widening the row.
+                Abort.run[TopicTransportFailedException](AeronDriver.launch(driverSettings)).map {
+                    case Result.Success(driver) =>
+                        AtomicInt.init(0).map { streamIdCounter =>
+                            new CompilerPool(settings, instances, globalSemaphore, driver, streamIdCounter): Compiler.Pool
+                        }
+                    case Result.Failure(e) => Abort.panic(e)
+                    case Result.Panic(t)   => Abort.panic(t)
                 }
             }
         }
