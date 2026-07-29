@@ -436,8 +436,9 @@ private[runner] object LeakCheck:
             s"kyo-test leak check failed:$report\n\nThese resources outlived the test run; a leaked fiber, thread, or descriptor means a " +
                 "test (or the code under test) did not release a resource. To attribute each leaked descriptor to the test that opened it, " +
                 "re-run with KYO_TEST_LEAK_DEBUG=1 (runs leaves serially and appends `opened by test: <leaf>` to each descriptor). Disable " +
-                "for a suite with `override def config = super.config.leakCheck(false)`, or excuse one expected resource with " +
-                "`super.config.leakCheckAllowlist(\"<stack-or-target-substring>\")`."
+                "for a suite with `override def config = super.config.leakCheck(false)`. A fiber or thread finding can be excused with " +
+                "`super.config.leakCheckAllowlist(\"<stack-substring>\")`, which matches stack frames; a socket cannot, since its target is " +
+                "an inode that changes every run, so exempt that category with `super.config.leakCheckSockets(false)` instead."
         )
 
 end LeakCheck
