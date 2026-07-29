@@ -12,16 +12,6 @@ val scala3Version    = "3.8.4"
 val scala3LTSVersion = "3.3.8"
 val scala213Version  = "2.13.18"
 
-// Scaladoc runs from a newer release than the compiler that produced the code. It reads TASTy, and
-// TASTy is backward compatible, so the tool version moves independently of `scala3Version`. This one
-// carries scala/scala3#25779, without which rendering a method signature can fail with a null
-// SignatureBuilder.content on Linux x86_64 and abort the publish.
-val scaladocVersion = "3.9.0-RC4"
-
-// Holds the scaladoc tool and its dependencies. Hidden so it stays out of published poms, and
-// separate from the compile classpath so the tool's own Scala version never reaches user code.
-lazy val ScaladocTool = config("scaladocTool").hide
-
 val zioVersion       = "2.1.26"
 val catsVersion      = "3.7.0"
 val oxVersion        = "1.0.5"
@@ -65,10 +55,13 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 
-// Cap concurrent scaladoc runs. Each one is a forked JVM holding a whole module's TASTy graph
-// (see `Compile / doc` in kyo-settings), so a handful in parallel is enough to exhaust a 16GB
-// runner. Every project tags its `Compile / doc` with DocTag and concurrentRestrictions caps it
-// at 1, so docs build one module at a time while compilation and tests stay parallel.
+// Serialize scaladoc generation. Scala 3 dottydoc runs in-process (the `doc` task is not
+// forked) and is not safe to run concurrently within one sbt JVM: parallel per-module `doc`
+// runs intermittently corrupt shared compiler state and crash with a null
+// SignatureBuilder.content() NPE while rendering method signatures. That surfaced as flaky
+// `ci-release` failures on main (the per-module Native javadoc step). Every project tags its
+// `Compile / doc` with DocTag (see kyo-settings) and concurrentRestrictions caps it at 1, so
+// docs build one module at a time while compilation and tests stay parallel.
 lazy val DocTag = Tags.Tag("doc")
 
 // CI concurrency controls:
@@ -106,8 +99,8 @@ Global / concurrentRestrictions := {
         // concurrentRestrictions wholesale, so we restate it here. See
         // KyoDoctestPlugin.scala for the tag's role.
         Tags.limit(DoctestTag, 2),
-        // Serialize scaladoc: each run is a forked JVM sized by the module it documents.
-        // See DocTag above.
+        // Serialize scaladoc: dottydoc shares mutable compiler state across concurrent in-JVM
+        // `doc` runs and NPEs intermittently under parallelism. See DocTag above.
         Tags.limit(DocTag, 1)
     )
 }
@@ -133,48 +126,9 @@ lazy val `kyo-settings` = Seq(
     // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
     // enforcement; compile-time formatting is a local convenience only.
     scalafmtOnCompile := !insideCI.value,
-    ivyConfigurations += ScaladocTool,
-    libraryDependencies += "org.scala-lang" % "scaladoc_3" % scaladocVersion % ScaladocTool.name,
-    // Render the API from TASTy with a forked scaladoc rather than sbt's in-process one. Forking is
-    // what bounds a tool crash to the module that provoked it: sbt's `doc` shares one JVM across
-    // every module, so a single failure there takes the rest of the platform with it.
-    Compile / doc := Def.task {
-        val out     = (Compile / doc / target).value
-        val log     = streams.value.log
-        val project = name.value
-        val srcs    = (Compile / doc / sources).value
-        val sep     = java.io.File.pathSeparator
-        val tool    = update.value.select(configurationFilter(ScaladocTool.name))
-        val deps    = (Compile / dependencyClasspath).value.map(_.data)
-        // `products` rather than `classDirectory`: it carries the same directories but is a task, so
-        // depending on it is what compiles this module before its TASTy is read.
-        val classes = (Compile / products).value
-        val opts    = (Compile / doc / scalacOptions).value
-        // Modules that opt out set `Compile / doc / sources := Seq.empty`; honor that.
-        if (srcs.isEmpty) out
-        else {
-            IO.createDirectory(out)
-            log.info(s"Documenting $project with scaladoc $scaladocVersion")
-            val exit = Fork.java(
-                ForkOptions().withRunJVMOptions(Vector("-cp", tool.mkString(sep))),
-                Seq(
-                    "dotty.tools.scaladoc.Main",
-                    "-d",
-                    out.getAbsolutePath,
-                    "-project",
-                    project,
-                    "-classpath",
-                    deps.mkString(sep)
-                ) ++ opts ++ classes.map(_.getAbsolutePath)
-            )
-            if (exit != 0) sys.error(s"scaladoc failed for $project")
-            // Scaladoc exits 0 when handed nothing to read, so success alone does not mean a module
-            // was documented. Without this an empty api directory reaches the published javadoc jar.
-            if (PathFinder(out).allPaths.get.forall(!_.getName.endsWith(".html")))
-                sys.error(s"scaladoc produced no pages for $project")
-            out
-        }
-    }.tag(DocTag).value,
+    // Tag the doc task so concurrentRestrictions can serialize scaladoc across modules; dottydoc
+    // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
+    Compile / doc := (Compile / doc).tag(DocTag).value,
     scalacOptions += compilerOptionFailDiscard,
     // Treat compiler warnings as errors on the Scala 3 series. The Scala 2.13 cross-builds (the kyo-scheduler
     // family) carry a different, noisier warning set that is out of scope, so the flag is gated on Scala 3.
