@@ -71,9 +71,24 @@ object Process:
         /** Suspends the current fiber until the process exits or `timeout` elapses.
           *
           * Returns `Present(exitCode)` on normal exit or `Absent` on timeout.
+          *
+          * The deadline is measured against the ambient `Clock` rather than by a platform timer, so it is uniform across platforms and
+          * moves under `Clock.withTimeControl`. A timed wait that could only be driven by real elapsed time was both untestable and
+          * load-sensitive, since a busy machine could carry a process past a deadline the test believed it controlled. A non-finite
+          * timeout arms no timer at all and waits indefinitely.
+          *
+          * The process is left running when the deadline expires; only the wait is abandoned.
           */
         def waitFor(timeout: Duration)(using Frame): Maybe[ExitCode] < Async =
-            Sync.Unsafe.defer(self.unsafe.waitFor(timeout).safe.get)
+            // Bound to a local rather than calling the untimed overload: inside the extension body
+            // `waitFor` resolves to the Unsafe member, not to this extension's own no-arg version.
+            val untimed: ExitCode < Async = Sync.Unsafe.defer(self.unsafe.waitFor().safe.get)
+            Abort.run[Timeout](Async.timeout(timeout)(untimed)).map {
+                case Result.Success(code)       => Present(code)
+                case Result.Failure(_: Timeout) => Absent
+                case Result.Panic(error)        => Abort.panic(error)
+            }
+        end waitFor
 
         /** Polls the process's current exit status without suspending.
           *
@@ -217,7 +232,11 @@ object Process:
         /** Suspends until the process exits and completes the returned `Fiber.Unsafe` with the exit code. */
         def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any]
 
-        /** Suspends until the process exits or `timeout` elapses; completes the fiber with `Absent` on timeout. */
+        /** Suspends until the process exits or `timeout` elapses; completes the fiber with `Absent` on timeout.
+          *
+          * This tier measures the deadline with a platform timer against real elapsed time. It is outside the effect system and so cannot
+          * consult the ambient `Clock`, which is why the safe `waitFor(timeout)` builds its deadline from `Clock` instead of calling this.
+          */
         def waitFor(timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[ExitCode], Any]
 
         /** Non-blocking poll. Returns `Absent` if still running. */

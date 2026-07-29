@@ -189,9 +189,14 @@ final private[kyo] class NodeProcessUnsafe(
         val p        = Promise.Unsafe.init[Process.ExitCode, Any]()
         var resolved = false
         val ec       = child.exitCode
-        if ec != null && !js.isUndefined(ec) then
+        val sc       = child.signalCode
+        // Both are consulted, because Node leaves exitCode null for a signalled death and records
+        // the signal in signalCode instead. Checking exitCode alone missed a process that had
+        // already been killed: the 'exit' event had fired before the listener below was attached,
+        // so nothing ever completed the promise and the wait hung.
+        if (ec != null && !js.isUndefined(ec)) || (sc != null && !js.isUndefined(sc)) then
             resolved = true
-            p.completeDiscard(Result.succeed(Process.ExitCode(ec.asInstanceOf[Int])))
+            p.completeDiscard(Result.succeed(exitCodeFrom(ec, sc)))
         end if
         if !resolved then
             discard(child.on(
