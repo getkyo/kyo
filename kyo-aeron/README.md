@@ -52,19 +52,15 @@ Topic.run {
 
 The `Topic` effect is discharged by `run`; what remains in the row is `Async` (because Aeron polling is suspended on the fiber scheduler) and the `Abort` channels each call carries.
 
-The zero-arg `Topic.run(v)` carries no `Abort` for startup: an embedded-startup defect (a temp dir that cannot be allocated, or an embedded driver that fails to launch, e.g. a missing `--add-opens` below) surfaces as a panic, not a recoverable abort, because it is an environment defect rather than a per-call condition. The external overloads (`Topic.run(aeronDir)` and `AeronClient.connect`) instead surface a missing external driver as a typed `Abort[TopicTransportFailedException]`, because that connect failure is a per-call recoverable condition.
+The zero-arg `Topic.run(v)` carries no `Abort` for startup: an embedded-startup defect (a temp dir that cannot be allocated, or an embedded driver that fails to launch, e.g. a native library that cannot be loaded) surfaces as a panic, not a recoverable abort, because it is an environment defect rather than a per-call condition. The external overloads (`Topic.run(aeronDir)` and `AeronClient.connect`) instead surface a missing external driver as a typed `Abort[TopicTransportFailedException]`, because that connect failure is a per-call recoverable condition.
 
-> **Note:** On the JVM, any build that hosts an embedded Aeron driver must set `fork := true` and pass four `--add-opens` flags, because Aeron's off-heap log buffers reach into JDK internals:
+> **Note:** Every platform runs Aeron's C client and embedded C media driver through kyo-ffi, so the native library must be loadable at runtime. It ships inside the artifact per os-arch and is extracted on first use; point `-Dkyo.ffi.kyo_aeron.path=<file>` at your own build to override that. On Linux the driver links `libuuid` dynamically (plus `libatomic` on aarch64), so a minimal container image needs those present.
+>
+> On the JVM the downcalls go through `java.lang.foreign`, which warns about restricted methods unless you add:
 > ```
-> fork := true
-> javaOptions ++= Seq(
->   "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
->   "--add-opens=java.base/java.lang=ALL-UNNAMED",
->   "--add-opens=java.base/java.nio=ALL-UNNAMED",
->   "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
-> )
+> javaOptions += "--enable-native-access=ALL-UNNAMED"
 > ```
-> Without these, `Topic.run` fails when it launches the embedded media driver. Scala Native and Scala.js run an embedded C media driver through kyo-ffi and need no `--add-opens`.
+> The flag is advisory on JDK 25 (the call works without it), but a future JDK is expected to require it.
 
 ### Publishing
 
@@ -453,7 +449,7 @@ If you need to share publishing or subscribing logic across modules, write metho
 
 ## Cross-platform backends
 
-The same `Topic` API (`run`, `publish[A: Schema]`, `stream[A: Schema]`, `AeronClient.connect`) compiles and runs identically on JVM, Scala Native, Scala.js, and Wasm. Only the transport underneath differs. On the JVM it uses the pure-Java `io.aeron` client and launches an embedded `MediaDriver`. On Scala Native, Scala.js, and Wasm it uses Aeron's C client and an embedded C media driver, bound through kyo-ffi and statically linked from libaeron built for the target (JS and Wasm share the same koffi-on-Node backend). Native, JS, and Wasm therefore require libaeron staged for the target at build time. The external-driver path (`Topic.run(aeronDir)` and `AeronClient.connect(aeronDir)`) works on all four platforms with the same `kyo.Path` type and the same `Abort[TopicTransportFailedException]` failure channel. The wire format, MsgPack envelopes, is byte-identical across platforms, so a JVM publisher and a Native subscriber on the same Aeron URI interoperate.
+The same `Topic` API (`run`, `publish[A: Schema]`, `stream[A: Schema]`, `AeronClient.connect`) compiles and runs identically on JVM, Scala Native, Scala.js, and Wasm, on one transport: Aeron's C client and an embedded C media driver, bound through kyo-ffi and statically linked from libaeron built for the target. Only the binding backend differs (Panama on the JVM, `@extern` on Native, koffi-on-Node for JS and Wasm), so behavior does not vary by platform. Every platform therefore requires libaeron staged for the target at build time. The external-driver path (`Topic.run(aeronDir)` and `AeronClient.connect(aeronDir)`) works on all four platforms with the same `kyo.Path` type and the same `Abort[TopicTransportFailedException]` failure channel. The wire format, MsgPack envelopes, is byte-identical across platforms, so a JVM publisher and a Native subscriber on the same Aeron URI interoperate.
 
 ## Putting it together
 
