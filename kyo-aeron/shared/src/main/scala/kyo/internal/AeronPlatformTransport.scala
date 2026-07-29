@@ -26,17 +26,22 @@ private[kyo] object AeronPlatformTransport:
             for
                 driver <- Sync.Unsafe.defer(bindings.driverStart(dir)).flatMap(_.safe.get)
                 client <- Sync.Unsafe.defer(bindings.clientConnect(dir)).flatMap(_.safe.get)
-            yield new AeronRuntime:
-                val transport: AeronTransport = new FfiAeronTransport(bindings, client)
-                def close()(using AllowUnsafe): Unit =
-                    // Close order is load-bearing: the client holds an open connection to the
-                    // conductor, so closing the driver first leaves it in an invalid state. These
-                    // are plain downcalls, so the conductor pthread-join runs inline; it is bounded
-                    // and one-shot (it parks the carrier on the JVM and Native, briefly freezes the
-                    // event loop on JS and Wasm), unlike the connect that @Ffi.blocking covers.
-                    bindings.clientClose(client)
-                    bindings.driverClose(driver)
-                end close
+                runtime <- Sync.Unsafe.defer {
+                    val ffiTransport = new FfiAeronTransport(bindings, client)
+                    new AeronRuntime:
+                        val transport: AeronTransport = ffiTransport
+                        def close()(using AllowUnsafe): Unit =
+                            // Close order is load-bearing: the client holds an open connection to the
+                            // conductor, so closing the driver first leaves it in an invalid state. These
+                            // are plain downcalls, so the conductor pthread-join runs inline; it is bounded
+                            // and one-shot (it parks the carrier on the JVM and Native, briefly freezes the
+                            // event loop on JS and Wasm), unlike the connect that @Ffi.blocking covers.
+                            ffiTransport.closeClient()
+                            bindings.driverClose(driver)
+                        end close
+                    end new
+                }
+            yield runtime
         }
     end embedded
 
@@ -59,10 +64,13 @@ private[kyo] object AeronPlatformTransport:
                 onFail = (never: Nothing) => never,
                 onPanic = mapConnectPanic
             )(connect).map { client =>
-                new AeronRuntime:
-                    val transport: AeronTransport        = new FfiAeronTransport(bindings, client)
-                    def close()(using AllowUnsafe): Unit = bindings.clientClose(client)
-                end new
+                Sync.Unsafe.defer {
+                    val ffiTransport = new FfiAeronTransport(bindings, client)
+                    new AeronRuntime:
+                        val transport: AeronTransport        = ffiTransport
+                        def close()(using AllowUnsafe): Unit = ffiTransport.closeClient()
+                    end new
+                }
             }
         }
     end external

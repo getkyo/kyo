@@ -35,6 +35,9 @@ class AeronTransportTest extends Test:
     val oversizeJvmStreamId   = 104
     val oversizeCrossStreamId = 105
 
+    val closedClientPubStreamId = 115
+    val closedClientSubStreamId = 116
+
     val errorHandlerInjectStreamId     = 106
     val errorHandlerPublishStreamId    = 112
     val errorHandlerRegressionStreamId = 113
@@ -216,6 +219,42 @@ class AeronTransportTest extends Test:
         def fatalError(using AllowUnsafe): Maybe[String] = Absent
     end NeverConfirmTransport
 
+    /** Transport reproducing the state a fiber sees when the client closes underneath it: the
+      * registration never confirms, connectivity reads false, polls come back empty, and the error
+      * slot stays empty, because closing a client is not a conductor error.
+      *
+      * Every one of those signals is also a legitimate transient state (a registration still in
+      * flight, a peer that has not attached yet, a poll with no message), so `clientClosed` is the
+      * only thing separating "wait and retry" from "this can never succeed". Without the
+      * `clientClosed` gates in `Topic`, a fiber holding a handle across a client close retried its
+      * backoff schedule forever, or polled the add loop to its 10s deadline, keeping a carrier busy
+      * long after the client was gone.
+      */
+    final private class ClosedClientTransport extends AeronTransport:
+        type Publication  = Int
+        type Subscription = Int
+        type AsyncPub     = Int
+        type AsyncSub     = Int
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
+            AeronTransport.AddPoll.Awaiting
+        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = ()
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = AeronSentinels.Closed
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
+            AeronTransport.AddPoll.Awaiting
+        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
+        def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean = false
+        def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]]      = Absent
+        def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit          = ()
+        def fatalError(using AllowUnsafe): Maybe[String]                           = Absent
+
+        override def clientClosed(using AllowUnsafe): Boolean = true
+    end ClosedClientTransport
+
     "round-trip a known byte payload through AeronPlatform.embedded" in {
         val payload = Array[Byte](1, 2, 3, 4)
         for
@@ -251,35 +290,6 @@ class AeronTransportTest extends Test:
             java.util.Arrays.equals(bytes, payload),
             s"payload mismatch: ${bytes.toList} != ${payload.toList}"
         )
-        end for
-    }
-
-    "SCRATCH-probe post-close transport signals" in {
-        val payload = Array[Byte](1, 2, 3, 4)
-        for
-            dir <- Path.tempDir("kyo-aeron-probe")
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubTok <- Sync.Unsafe.defer(transport.asyncAddPublication(ipcUri, roundTripStreamId))
-            subTok <- Sync.Unsafe.defer(transport.asyncAddSubscription(ipcUri, roundTripStreamId))
-            pubMaybe <- pollAddPubUntilDone(transport, pubTok.get, 5000)
-            subMaybe <- pollAddSubUntilDone(transport, subTok.get, 5000)
-            pub = pubMaybe.get
-            sub = subMaybe.get
-            _ <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
-            // Close the CLIENT underneath the live pub/sub (leaked-fiber scenario), without
-            // closing pub/sub first.
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Sync.Unsafe.defer {
-                println(s"PROBE pubIsConnected=${transport.publicationIsConnected(pub)}")
-                println(s"PROBE offer=${transport.offer(pub, payload)}")
-                println(s"PROBE maxMessageLength=${transport.maxMessageLength(pub)}")
-                println(s"PROBE subIsConnected=${transport.subscriptionIsConnected(sub)}")
-                println(s"PROBE pollOne=${transport.pollOne(sub)}")
-                println(s"PROBE fatalError=${transport.fatalError}")
-            }
-            _ <- dir.removeAll
-        yield succeed
         end for
     }
 
@@ -651,6 +661,50 @@ class AeronTransportTest extends Test:
                 fail(s"expected TopicAddTimeoutException, got ${other.getClass.getSimpleName}")
             case Result.Panic(t) =>
                 fail(s"unexpected panic: ${t.getClass.getSimpleName}")
+        }
+    }
+
+    // Closed-client termination. A fiber can outlive the client it publishes through: Topic.run's scope
+    // can exit while a fiber forked with Fiber.initUnscoped still holds handles, which is exactly what the
+    // UAF leaves below provoke. Every post-close signal the transport can give is also a legitimate
+    // transient one (a registration still awaiting confirmation, a peer that has not attached, a poll with
+    // no message), so before Topic gated these loops on clientClosed such a fiber never stopped: the add
+    // loop polled to its 10s deadline and the publish/stream loops retried their backoff schedule forever,
+    // keeping a carrier busy long after the client was gone. Both watchdogs are far below the 10s add
+    // deadline, so a missing gate surfaces as the Timeout winning rather than as a hang.
+    "a publish whose client is closed aborts terminally instead of polling to the add deadline" in {
+        val transport = new ClosedClientTransport
+        Abort.run[Timeout | TopicException] {
+            Async.timeout(2.seconds) {
+                Topic.runWith(transport) {
+                    Topic.publish[Int](ipcUri, streamId = Present(closedClientPubStreamId))(Stream.init(Seq(1)))
+                }
+            }
+        }.map {
+            case Result.Failure(_: TopicPublicationClosedException) =>
+                succeed
+            case Result.Failure(_: Timeout) =>
+                fail("publish kept polling past the 2s watchdog instead of aborting on the closed client")
+            case other =>
+                fail(s"expected TopicPublicationClosedException, got $other")
+        }
+    }
+
+    "a stream whose client is closed aborts terminally instead of polling to the add deadline" in {
+        val transport = new ClosedClientTransport
+        Abort.run[Timeout | TopicException] {
+            Async.timeout(2.seconds) {
+                Topic.runWith(transport) {
+                    Topic.stream[Int](ipcUri, streamId = Present(closedClientSubStreamId)).take(1).run
+                }
+            }
+        }.map {
+            case Result.Failure(_: TopicBackpressureExhaustedException) =>
+                succeed
+            case Result.Failure(_: Timeout) =>
+                fail("stream kept polling past the 2s watchdog instead of aborting on the closed client")
+            case other =>
+                fail(s"expected TopicBackpressureExhaustedException, got $other")
         }
     }
 

@@ -21,13 +21,33 @@ import kyo.ffi.Ffi
 final private[kyo] class FfiAeronTransport(
     bindings: AeronBindings,
     client: Ffi.Handle[AeronClientHandle]
-) extends AeronTransport:
+)(using AllowUnsafe) extends AeronTransport:
     type Publication  = Ffi.Handle[AeronPublication]
     type Subscription = FfiAeronTransport.SubscriptionState
     type AsyncPub     = Ffi.Handle[AeronAsyncPub]
     type AsyncSub     = Ffi.Handle[AeronAsyncSub]
 
     import FfiAeronTransport.*
+
+    /** Set by [[closeClient]] before the client goes away, and never cleared. Read by every
+      * `Topic` retry decision, so it is atomic: the closing fiber and the fibers still holding
+      * handles run on different carriers.
+      */
+    private val closed = AtomicBoolean.Unsafe.init(false)
+
+    override def clientClosed(using AllowUnsafe): Boolean = closed.get()
+
+    /** Closes the Aeron client, marking the transport permanently closed first so a concurrent
+      * `Topic` retry sees the terminal signal rather than reading the closing client's transient
+      * "not connected".
+      *
+      * The transport owns this rather than the platform selector because it holds the client
+      * handle, so the flag and the handle it describes cannot drift apart.
+      */
+    def closeClient()(using AllowUnsafe): Unit =
+        closed.set(true)
+        bindings.clientClose(client)
+    end closeClient
 
     def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] =
         bindings.asyncAddPublication(client, uri, streamId)
