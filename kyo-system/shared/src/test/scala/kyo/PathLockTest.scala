@@ -56,6 +56,41 @@ class HostPathLockTest extends FileSystemLockTestSuite:
             use(FileSystem.host, handle.path / "target.bin")
         }
 
+    "repeated interrupted acquisitions leave the path acquirable" in {
+        // What this pins: interrupting an acquisition repeatedly must not accumulate claims, so the
+        // path is still acquirable afterwards.
+        //
+        // What it does NOT pin, stated because the name would otherwise imply it: this does not
+        // reach the acquire-then-register window that motivated the current implementation. An
+        // interrupt issued straight after Fiber.initUnscoped lands before the OS claim is made, so
+        // the interval between claiming and registering is never entered. Reverting the
+        // implementation to Scope.acquireRelease leaves this case green, which was verified rather
+        // than assumed.
+        //
+        // Reaching that interval needs an injection point inside the acquisition, the same
+        // requirement D22 ran into for commit. Until one exists, the window is closed by
+        // construction rather than by test: the finalizer is registered before anything is claimed,
+        // and the claim and its recording share one node with no safepoint between them.
+        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-interrupt"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
+            val target = handle.path / "contended.bin"
+            Loop.indexed { i =>
+                if i >= 200 then Loop.done
+                else
+                    Fiber.initUnscoped(Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_ => ())))
+                        .map(_.interrupt)
+                        .andThen(Loop.continue)
+            }.andThen {
+                // Retried rather than attempted once. Interrupting a fiber starts its finalizer but
+                // does not wait for it, so the last release may still be in flight; that is a lock
+                // briefly held, not a stranded one. A stranded lock never becomes available, so only
+                // the retry distinguishes the two.
+                assertEventually {
+                    Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined))
+                }
+            }
+        }
+    }
+
     "failed raw release remains retryable" in {
         AtomicInt.init(0).map { releases =>
             val raw = new Path.RawLock:

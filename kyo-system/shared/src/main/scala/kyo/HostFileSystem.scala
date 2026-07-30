@@ -340,14 +340,40 @@ private[kyo] object HostFileSystem:
         def tryLock(path: Path, mode: Path.LockMode)(using
             Frame
         ): Maybe[Path.Lock] < (Sync & Scope & Abort[FileLockException]) =
-            val acquire = Scope.acquireRelease(
-                // Unsafe: acquires and wraps the raw claim in one suspended acquisition.
-                Sync.Unsafe.defer {
-                    Abort.get(path.unsafe.lock(mode)).map { raw =>
-                        lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
+            // Deliberately not Scope.acquireRelease. That runs acquire, then registers the finalizer
+            // in a continuation, and an interrupt landing between the two leaves the OS lock held and
+            // the registry entry installed with nothing in existence able to release either: the path
+            // is unacquirable for the life of the process and a descriptor leaks.
+            //
+            // Registering first inverts the problem. The finalizer exists before anything is claimed
+            // and releases whatever it finds recorded, so an interrupt before the claim finds nothing
+            // to do, and one after it finds a lock the finalizer already owns. The claim and its
+            // recording sit in a single unsafe node with no safepoint between them, which is the only
+            // interval that would otherwise be exposed.
+            //
+            // The general form of this belongs in Scope.acquireRelease, which has the same window for
+            // every caller in kyo. Widening that signature to carry Async.mask is a kyo-core change
+            // with a far wider blast radius than this defect, so it is left for its own work.
+            val acquire =
+                Sync.defer(new java.util.concurrent.atomic.AtomicReference[Maybe[Path.Lock]](Absent)).map { holder =>
+                    Scope.ensure {
+                        Sync.Unsafe.defer(holder.getAndSet(Absent)).map {
+                            case Present(lock) => lock.release(lock.ownership)
+                            case Absent        => ()
+                        }
+                    }.andThen {
+                        // Unsafe: the raw claim and the record of it are plain statements in one node,
+                        // so no interrupt can observe a claim that the finalizer cannot see.
+                        Sync.Unsafe.defer {
+                            path.unsafe.lock(mode) match
+                                case Result.Success(raw) =>
+                                    val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
+                                    holder.set(Present(lock))
+                                    Abort.get(Result.succeed(lock))
+                                case failed => Abort.get(failed.map(_ => null.asInstanceOf[Path.Lock]))
+                        }
                     }
-                }
-            )(lock => lock.release(lock.ownership)).map(Maybe(_))
+                }.map(Maybe(_))
             Abort.recover[FileLockUnavailableException](_ => Absent)(acquire)
         end tryLock
 
