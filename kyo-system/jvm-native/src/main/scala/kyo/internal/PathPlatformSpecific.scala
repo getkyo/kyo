@@ -360,9 +360,34 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     // in-process FileLockTable). NioPathLockRegistry enforces same-process exclusion explicitly on
     // every platform, mirroring kyo.internal.FileJournalCore's heldRoots registry (kyo-eventlog);
     // the platform tryLock call still provides genuine cross-process exclusion underneath it.
+    // The registry key has to name the file, not the route taken to it. Path.make already normalizes
+    // away "." and ".." segments, so the remaining way to reach one file under two names is a
+    // symbolic link, and an unresolved key gives each name an entry of its own. Two shared claims
+    // arriving under different names then open two channels to one file, which the JVM refuses as an
+    // overlapping claim: a lock the contract grants, denied.
+    //
+    // toRealPath resolves links but requires the file to exist, and lock() creates it. Falling back
+    // to the parent's real path plus the file name covers the not-yet-created case, since a link in
+    // the ancestry still collapses. When neither resolves, the normalized absolute path is the best
+    // name available and matches the previous behaviour.
+    private def registryKey(using AllowUnsafe): String =
+        val absolute = jpath.toAbsolutePath.normalize()
+        try absolute.toRealPath().toString
+        catch
+            case _: IOException =>
+                val parent = absolute.getParent
+                val name   = absolute.getFileName
+                if parent == null || name == null then absolute.toString
+                else
+                    try parent.toRealPath().resolve(name).toString
+                    catch case _: IOException => absolute.toString
+                end if
+        end try
+    end registryKey
+
     def lock(mode: Path.LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
         val isExclusive = mode == Path.LockMode.Exclusive
-        val key         = jpath.toString
+        val key         = registryKey
         NioPathLockRegistry.reserve(key, isExclusive) match
             case NioPathLockRegistry.Reservation.Denied => Result.fail(FileLockUnavailableException(safe))
             case NioPathLockRegistry.Reservation.SharedExisting =>
