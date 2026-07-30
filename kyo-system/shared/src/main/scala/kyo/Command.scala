@@ -68,7 +68,12 @@ object Command:
             Sync.Unsafe.defer {
                 Abort.get(self.unsafe.spawn()).map { proc =>
                     Scope.acquireRelease(proc.safe) { p =>
-                        Sync.Unsafe.defer(if p.unsafe.isAlive() then p.unsafe.destroyForcibly())
+                        Sync.Unsafe.defer {
+                            // Feeds are stopped unconditionally: the process may have exited
+                            // while a feed is still parked reading its own source.
+                            p.unsafe.stopInputFeeds()
+                            if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
+                        }
                     }
                 }
             }
@@ -94,7 +99,12 @@ object Command:
                     Abort.get(self.unsafe.spawn()).map { proc =>
                         val safeProc = proc.safe
                         Scope.acquireRelease(safeProc) { p =>
-                            Sync.Unsafe.defer(if p.unsafe.isAlive() then p.unsafe.destroyForcibly())
+                            Sync.Unsafe.defer {
+                                // Feeds are stopped unconditionally: the process may have exited
+                                // while a feed is still parked reading its own source.
+                                p.unsafe.stopInputFeeds()
+                                if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
+                            }
                         }.map { p =>
                             p.stdout.emit
                         }
@@ -124,7 +134,12 @@ object Command:
                     proc <- Sync.Unsafe.defer {
                         Abort.get(self.unsafe.spawn()).map { p =>
                             Scope.acquireRelease(p.safe) { p =>
-                                Sync.Unsafe.defer(if p.unsafe.isAlive() then p.unsafe.destroyForcibly())
+                                Sync.Unsafe.defer {
+                                    // Feeds are stopped unconditionally: the process may have exited
+                                    // while a feed is still parked reading its own source.
+                                    p.unsafe.stopInputFeeds()
+                                    if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
+                                }
                             }
                         }
                     }

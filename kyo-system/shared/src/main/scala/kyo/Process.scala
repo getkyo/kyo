@@ -239,6 +239,13 @@ object Process:
           */
         def waitFor(timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[ExitCode], Any]
 
+        /** Stops any background feed writing into this process's stdin.
+          *
+          * Idempotent, and safe to call after the process has exited: a feed can still be parked reading its source when the child is
+          * already gone. Platforms that feed stdin without a thread of their own do not need to do anything here.
+          */
+        def stopInputFeeds()(using AllowUnsafe): Unit = ()
+
         /** Non-blocking poll. Returns `Absent` if still running. */
         def exitCode()(using AllowUnsafe): Maybe[ExitCode]
 
