@@ -3601,6 +3601,19 @@ class SchemaTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "a generic case class derives through a constructor at a concrete type argument" in {
+            val schema = summon[Schema[DVNonEmpty[Int]]]
+            val value  = DVNonEmpty.make(Chunk(1, 2)).toMaybe.get
+            val json   = schema.encodeString[Json](value)
+            assert(json == """{"items":[1,2]}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+            schema.decodeString[Json]("""{"items":[]}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.getMessage.contains("must not be empty"), s"message: ${e.getMessage}")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
         "a constructor whose arity does not match the case fields is a compile error naming them" in {
             val errs = scala.compiletime.testing.typeCheckErrors(
                 "kyo.Schema.derivedVia((a: Int, b: Int) => kyo.DVEven(a)): kyo.Schema[kyo.DVEven]"
@@ -3635,6 +3648,15 @@ end DVPort
 case class DVPortTwin(value: Int) derives CanEqual
 
 case class DVListener(name: String, port: DVPort) derives CanEqual, Schema
+
+case class DVNonEmpty[A](items: Chunk[A]) derives CanEqual
+object DVNonEmpty:
+    def make[A](items: Chunk[A]): Result[String, DVNonEmpty[A]] =
+        if items.nonEmpty then Result.succeed(DVNonEmpty(items))
+        else Result.fail("must not be empty")
+
+    given nonEmptySchema[A](using Schema[A]): Schema[DVNonEmpty[A]] = Schema.derivedVia(make[A])
+end DVNonEmpty
 
 sealed abstract case class DVRange private (low: Int, high: Int) derives CanEqual
 object DVRange:
