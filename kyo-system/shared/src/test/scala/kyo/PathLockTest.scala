@@ -56,21 +56,57 @@ class HostPathLockTest extends FileSystemLockTestSuite:
             use(FileSystem.host, handle.path / "target.bin")
         }
 
+    "an interrupt delivered once the lock is held still releases it" in {
+        // The acquisition interrupts its own fiber from inside the claim node, via the hook
+        // HostFileSystem exposes for exactly this. The request is made with the OS lock already
+        // held, and delivery happens at the next safepoint, so the interrupt lands after the
+        // acquisition produced the lock rather than before it started. That instant is the whole
+        // defect: with the finalizer registered in a continuation after acquire, nothing capable of
+        // releasing the claim exists yet, and the path stays unacquirable for the life of the
+        // process.
+        //
+        // Mutation-checked rather than assumed: rewriting tryLock as Scope.acquireRelease, with the
+        // hook in the same position inside acquire, fails this case on the retry below. An earlier
+        // version of this test interrupted from outside the fiber and passed under both orderings,
+        // because that interrupt is delivered before the claim is ever made.
+        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-window"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
+            val target = handle.path / "windowed.bin"
+            Scope.ensure(Sync.defer(HostFileSystem.afterClaimHook = () => ())).andThen {
+                Fiber.Promise.init[Fiber[Unit, Any], Any].map { handoff =>
+                    Fiber.initUnscoped {
+                        handoff.get.map { self =>
+                            Sync.defer {
+                                import AllowUnsafe.embrace.danger
+                                HostFileSystem.afterClaimHook = () => discard(self.unsafe.interrupt())
+                            }.andThen {
+                                Abort.run[FileReadException | FileLockException](
+                                    Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).unit)
+                                ).unit
+                            }
+                        }
+                    }.map { fiber =>
+                        handoff.complete(Result.succeed(fiber)).andThen(fiber.getResult)
+                    }
+                }.andThen {
+                    Sync.defer(HostFileSystem.afterClaimHook = () => ())
+                }.andThen {
+                    // Retried rather than attempted once. Interrupting a fiber starts its finalizer
+                    // but does not wait for it, so a correct release may still be in flight; that is
+                    // a lock briefly held, not a stranded one. A stranded lock never becomes
+                    // available, so only the retry distinguishes the two.
+                    assertEventually {
+                        Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined))
+                    }
+                }
+            }
+        }
+    }
+
     "repeated interrupted acquisitions leave the path acquirable" in {
-        // What this pins: interrupting an acquisition repeatedly must not accumulate claims, so the
-        // path is still acquirable afterwards.
-        //
-        // What it does NOT pin, stated because the name would otherwise imply it: this does not
-        // reach the acquire-then-register window that motivated the current implementation. An
-        // interrupt issued straight after Fiber.initUnscoped lands before the OS claim is made, so
-        // the interval between claiming and registering is never entered. Reverting the
-        // implementation to Scope.acquireRelease leaves this case green, which was verified rather
-        // than assumed.
-        //
-        // Reaching that interval needs an injection point inside the acquisition, the same
-        // requirement D22 ran into for commit. Until one exists, the window is closed by
-        // construction rather than by test: the finalizer is registered before anything is claimed,
-        // and the claim and its recording share one node with no safepoint between them.
+        // Interrupting from outside the fiber, which lands before the claim is made. That is the
+        // opposite end of the acquisition from the case above and is worth holding separately: it
+        // pins that an acquisition abandoned before it claims anything leaves nothing behind, so
+        // repeated attempts cannot accumulate claims.
         Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-interrupt"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
             val target = handle.path / "contended.bin"
             Loop.indexed { i =>
@@ -80,10 +116,6 @@ class HostPathLockTest extends FileSystemLockTestSuite:
                         .map(_.interrupt)
                         .andThen(Loop.continue)
             }.andThen {
-                // Retried rather than attempted once. Interrupting a fiber starts its finalizer but
-                // does not wait for it, so the last release may still be in flight; that is a lock
-                // briefly held, not a stranded one. A stranded lock never becomes available, so only
-                // the retry distinguishes the two.
                 assertEventually {
                     Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined))
                 }

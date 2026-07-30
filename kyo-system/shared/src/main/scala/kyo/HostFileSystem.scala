@@ -8,6 +8,18 @@ private[kyo] object HostFileSystem:
 
     def apply(): FileSystem.Write[Sync] & FileSystem.Watch[Sync] = new HostFileSystem
 
+    // Fires inside the claim node in tryLock, once the OS lock is held and recorded and before
+    // tryLock returns. Default no-op; private[kyo] so tests in this package can reach it, and
+    // single-writer, meaning one test sets and clears it at a time.
+    //
+    // The position is the whole point. An interrupt requested here is delivered at the next
+    // safepoint, which is after the acquisition has produced the lock, and that is the only
+    // instant at which registering the finalizer before the claim differs observably from
+    // registering it afterwards. Without an injection point here a test can only interrupt from
+    // outside, where the interrupt lands before the claim is ever made and every ordering looks
+    // alike.
+    private[kyo] var afterClaimHook: () => Unit = () => ()
+
     /** Determines case sensitivity by asking the volume rather than the operating system.
       *
       * The two are not the same question. macOS default volumes are case-insensitive while the
@@ -369,6 +381,7 @@ private[kyo] object HostFileSystem:
                                 case Result.Success(raw) =>
                                     val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
                                     holder.set(Present(lock))
+                                    afterClaimHook()
                                     Abort.get(Result.succeed(lock))
                                 case failed => Abort.get(failed.map(_ => null.asInstanceOf[Path.Lock]))
                         }
