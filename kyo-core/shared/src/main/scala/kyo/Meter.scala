@@ -406,7 +406,7 @@ object Meter:
 
         final def run[A, S](v: => A < S)(using Frame) =
             withReentry(v) {
-                @tailrec def loop(): A < (S & Async & Abort[Closed]) =
+                def loop(): A < (S & Async & Abort[Closed]) =
                     val st = state.get()
                     if st == Int.MinValue then
                         // Meter is closed
@@ -416,25 +416,35 @@ object Meter:
                         if state.compareAndSet(st, st - 1) then dispatch(withAcquiredMeter(v))
                         else loop()
                     else
-                        // No permit available. Queue the promise BEFORE reserving, so a reservation
-                        // visible in `state` always has its promise queued already. `close` and
-                        // `handoff` both rely on that: neither has to wait for a pending offer.
+                        // No permit available. The teardown is installed before the promise is queued and
+                        // the reservation is taken, and those two run in one step: an interrupt landing
+                        // between the reservation and its teardown installation would otherwise leak the
+                        // registration and leave the queued promise pending, and a later handoff would hand
+                        // a real permit to the interrupted caller. Queueing still precedes reserving within
+                        // the step, so a reservation visible in `state` always has its promise queued;
+                        // `close` and `handoff` rely on that.
                         val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                        discard(waiters.offer(p))
-                        if state.compareAndSet(st, st - 1) then
-                            // The teardown must be installed before the wait, not inside it: an interrupt
-                            // landing after `p` completes but before the continuation resumes would
-                            // otherwise strand the permit `p` just transferred.
-                            Sync.ensure(settle(p))(p.safe.use(_ => withAcquiredMeter(v)))
-                        else
-                            // Reservation lost, so this promise stands for nothing. Retiring it is what
-                            // keeps `handoff` and `close` from granting to it, and losing that race means
-                            // a permit was already handed to a promise no reservation stands behind. The
-                            // handoff has to be made again or the waiter it was owed to never wakes.
-                            if !p.complete(Result.fail(Closed("Meter", initFrame))) && p.poll().exists(_.isSuccess) then
-                                handoff()
-                            loop()
-                        end if
+                        // Written in the same step as the reservation CAS and read only by `settle`, which
+                        // runs on this fiber strictly after that step: the fiber's own scheduling orders it.
+                        var reserved = false
+                        Sync.ensure(settle(p, reserved)) {
+                            Sync.Unsafe.defer {
+                                discard(waiters.offer(p))
+                                if state.compareAndSet(st, st - 1) then
+                                    reserved = true
+                                    p.safe.use(_ => withAcquiredMeter(v))
+                                else
+                                    // Reservation lost, so this promise stands for nothing. Retiring it is
+                                    // what keeps `handoff` and `close` from granting to it, and losing that
+                                    // race means a permit was already handed to a promise no reservation
+                                    // stands behind. The handoff has to be made again or the waiter it was
+                                    // owed to never wakes.
+                                    if !p.complete(Result.fail(Closed("Meter", initFrame))) && p.poll().exists(_.isSuccess) then
+                                        handoff()
+                                    loop()
+                                end if
+                            }
+                        }
                     end if
                 end loop
                 loop()
@@ -544,14 +554,20 @@ object Meter:
             val st = state.get()
             if st != Int.MinValue && !state.compareAndSet(st, st + 1) then returnRegistration()
 
-        /** Whether the wait ended in an acquisition, read from the promise rather than from the
-          * caller's own progress: `completeUnit` has a single winner, so the transfer is already decided
-          * however late an interrupt arrives. A failed completion is an interrupt or a close.
+        /** Settles the wait's promise and ledger once the wait ends, however it ends.
+          *
+          * Retires the promise first: completion has a single winner, so either this retirement wins (the
+          * wait never acquired, and no later `handoff` can grant to it) or a completion already decided the
+          * outcome and is read from the promise. Without the retirement, a wait interrupted between reserving
+          * and parking leaves a pending promise queued, and a later `handoff` hands a real permit to a caller
+          * that already settled. `reserved` is false when the wait ended before the reservation CAS: nothing
+          * was taken, so nothing is owed and the promise, if it was ever queued, is retired harmlessly.
           */
-        private def settle(p: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe): Unit =
-            settleWait(p.poll() match
-                case Maybe.Present(r) => r.isSuccess
-                case Maybe.Absent     => false)
+        private def settle(p: Promise.Unsafe[Unit, Abort[Closed]], reserved: Boolean)(using AllowUnsafe): Unit =
+            if p.complete(Result.fail(Closed("Meter", initFrame))) then
+                if reserved then settleWait(false)
+            else if reserved then
+                settleWait(p.poll().exists(_.isSuccess))
     end Base
 
 end Meter
