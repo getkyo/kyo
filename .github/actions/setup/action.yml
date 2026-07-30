@@ -82,7 +82,19 @@ runs:
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
-      run: bash scripts/apt-install.sh podman uidmap runc
+      run: |
+        bash scripts/apt-install.sh podman uidmap
+        # Install runc separately, and only when the runner has none. Ubuntu's runc package Conflicts
+        # with Docker's containerd.io, so `apt-get install runc` resolves the conflict by REMOVING
+        # containerd.io and docker-ce. That leaves no Docker daemon, which fails the `docker version`
+        # probe below and costs the kyo-pod suite the half of its container cases that run against
+        # docker. The runners already carry a runc binary alongside containerd.io, so this normally
+        # installs nothing.
+        if command -v runc >/dev/null 2>&1; then
+          echo "runc already present at $(command -v runc)"
+        else
+          bash scripts/apt-install.sh runc
+        fi
 
     - name: Start podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
@@ -129,7 +141,18 @@ runs:
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
         podman info | grep -iE 'cgroup|rootless' || true
         podman version
-        docker version
+        # Which OCI runtime podman resolved. Printed rather than asserted on: containers.conf above
+        # pins runc, and a silent fall back to crun shows up downstream as "crun: unknown version
+        # specified" on every kyo-pod container test, which this line attributes.
+        podman info | grep -iE 'ociRuntime|runc|crun' || true
+        # docker is load-bearing too, and it has been removed out from under this step before, so name
+        # what broke rather than letting `set -e` end the step on a bare exit code.
+        if ! docker version; then
+          echo "docker daemon unreachable. The kyo-pod suite runs its container cases against docker as" >&2
+          echo "well as podman, so this is fatal. Check the apt output in the podman install step: the" >&2
+          echo "ubuntu runc package Conflicts with containerd.io, and installing it removes docker-ce." >&2
+          exit 1
+        fi
 
     - uses: coursier/setup-action@v3.0.0
       with:

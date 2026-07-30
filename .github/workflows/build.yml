@@ -109,6 +109,17 @@ jobs:
       # platform's user cache dir; the setup action restores it. The action also installs Node, the native
       # libraries, and podman conditionally on the target and os, and provisions corretto:25 + sbt.
 
+      # Guards issue #1821. The `native-settings` hook drops each module's Scala Native work directory
+      # right after its test binary links, to keep the row's ~40 modules inside the runner's disk; a
+      # drop that leaves state describing the deleted IR makes the next link hand clang object paths
+      # for files nobody wrote, and the row dies an hour in on a missing .ll.o with no diagnostic.
+      # kyo-data is the cheapest module with a Native test binary, and the row reuses the binary linked
+      # here, so the guard costs the row a couple of minutes and fails fast when it trips.
+      - name: native relink guard (${{ inputs.os }})
+        if: ${{ matrix.target == 'Native' }}
+        shell: bash
+        run: ./scripts/native-relink-selftest.sh
+
       - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
