@@ -3416,7 +3416,331 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "sealed case class derivation" - {
+
+        "single-field sealed case class derives as a product, not a sum" in {
+            val schema = Schema.derived[SCCSingle]
+            assert(schema.structure.isInstanceOf[Structure.Type.Product], s"expected a Product structure, got ${schema.structure}")
+            val json = schema.encodeString[Json](SCCSingle(7))
+            assert(json == """{"x":7}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(SCCSingle(7)))
+        }
+
+        "multi-field sealed case class round-trips" in {
+            val schema = Schema.derived[SCCMulti]
+            val value  = SCCMulti("ada", 36)
+            val json   = schema.encodeString[Json](value)
+            assert(json == """{"name":"ada","age":36}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "sealed case class nested as a field of another product round-trips" in {
+            val schema = Schema.derived[SCCHolder]
+            val value  = SCCHolder(1, SCCSingle(2))
+            val json   = schema.encodeString[Json](value)
+            assert(json == """{"id":1,"inner":{"x":2}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "sealed case class wire shape matches the same class without sealed" in {
+            val sealedJson = Schema.derived[SCCSingle].encodeString[Json](SCCSingle(3))
+            val plainJson  = Schema.derived[SCCPlainTwin].encodeString[Json](SCCPlainTwin(3))
+            assert(sealedJson == plainJson, s"sealed=$sealedJson plain=$plainJson")
+        }
+
+        "a genuine sealed hierarchy still derives as a sum" in {
+            val schema = Schema.derived[SCCShape]
+            assert(schema.structure.isInstanceOf[Structure.Type.Sum], s"expected a Sum structure, got ${schema.structure}")
+            val value: SCCShape = SCCShape.Circle(2)
+            val json            = schema.encodeString[Json](value)
+            assert(json == """{"Circle":{"r":2}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "a sealed case class variant of a sealed trait round-trips as that variant's product" in {
+            val schema         = Schema.derived[SCCNode]
+            val value: SCCNode = SCCNode.Leaf(4)
+            val json           = schema.encodeString[Json](value)
+            assert(json == """{"Leaf":{"v":4}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "an intermediate sealed abstract class delegates to its own sum instead of a zero-field product" in {
+            val schema        = Schema.derived[SCCTop]
+            val value: SCCTop = SCCTop.Mid.Concrete(5)
+            val json          = schema.encodeString[Json](value)
+            assert(json == """{"Mid":{"Concrete":{"n":5}}}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+        }
+
+        "an abstract case class reports its missing constructor, not a wrong shape" in {
+            val src  = "sealed abstract case class SCCAbstractProbe(v: Int) derives kyo.Schema"
+            val errs = scala.compiletime.testing.typeCheckErrors(src)
+            assert(errs.nonEmpty)
+            val msg = errs.head.message
+            assert(msg.contains("no accessible constructor"), s"message must name the obstacle: $msg")
+            assert(!msg.contains("sealed trait"), s"message must not misclassify the type: $msg")
+        }
+    }
+
+    "derivedVia" - {
+
+        "a sealed abstract case class round-trips through its smart constructor" in {
+            val schema = summon[Schema[DVPort]]
+            val port   = DVPort.make(8080).toMaybe.get
+            val json   = schema.encodeString[Json](port)
+            assert(json == """{"value":8080}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(port))
+        }
+
+        "the wire shape is the same as the plain case class with the same field" in {
+            val viaJson   = summon[Schema[DVPort]].encodeString[Json](DVPort.make(443).toMaybe.get)
+            val plainJson = Schema.derived[DVPortTwin].encodeString[Json](DVPortTwin(443))
+            assert(viaJson == plainJson, s"via=$viaJson plain=$plainJson")
+        }
+
+        "the derived structure is a Product over the case fields" in {
+            summon[Schema[DVPort]].structure match
+                case product: Structure.Type.Product =>
+                    assert(product.fields.map(_.name) == Chunk("value"), s"fields: ${product.fields}")
+                case other => fail(s"expected a Product structure, got $other")
+        }
+
+        "a rejected value decodes to a ConstructorRejectedException carrying the constructor's reason" in {
+            summon[Schema[DVPort]].decodeString[Json]("""{"value":0}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.typeName == "DVPort")
+                    assert(e.getMessage.contains("port out of range: 0"), s"message: ${e.getMessage}")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+        }
+
+        "the invariant holds on every codec, not just Json" in {
+            val schema = summon[Schema[DVPort]]
+            val port   = DVPort.make(22).toMaybe.get
+            assert(schema.decode[Protobuf](schema.encode[Protobuf](port)) == Result.succeed(port))
+            assert(schema.decode[MsgPack](schema.encode[MsgPack](port)) == Result.succeed(port))
+            val rejected = schema.decode[Protobuf](Schema.derived[DVPortTwin].encode[Protobuf](DVPortTwin(-1)))
+            assert(rejected.isFailure, s"a negative port must not decode: $rejected")
+        }
+
+        "a two-argument constructor takes the case fields in declaration order" in {
+            val schema = summon[Schema[DVRange]]
+            val range  = DVRange.make(1, 9).toMaybe.get
+            val json   = schema.encodeString[Json](range)
+            assert(json == """{"low":1,"high":9}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(range))
+            assert(schema.decodeString[Json]("""{"low":9,"high":1}""").isFailure)
+        }
+
+        "a total constructor applies on decode, so the decoded value is the constructed one" in {
+            val schema = summon[Schema[DVUpper]]
+            assert(schema.decodeString[Json]("""{"name":"ada"}""") == Result.succeed(DVUpper("ADA")))
+            assert(schema.encodeString[Json](DVUpper("ADA")) == """{"name":"ADA"}""")
+        }
+
+        "an Option constructor reports absence as a decode failure" in {
+            val schema = summon[Schema[DVEven]]
+            assert(schema.decodeString[Json]("""{"n":4}""") == Result.succeed(DVEven(4)))
+            schema.decodeString[Json]("""{"n":5}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.getMessage.contains("returned None"), s"message: ${e.getMessage}")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
+        "a Maybe constructor reports absence as a decode failure" in {
+            val schema = summon[Schema[DVPositive]]
+            assert(schema.decodeString[Json]("""{"v":3}""") == Result.succeed(DVPositive(3L)))
+            schema.decodeString[Json]("""{"v":0}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.getMessage.contains("returned Absent"), s"message: ${e.getMessage}")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
+        "an Either constructor carries its Left value into the decode failure" in {
+            val schema = summon[Schema[DVCode]]
+            assert(schema.decodeString[Json]("""{"code":"sku"}""") == Result.succeed(DVCode("sku")))
+            schema.decodeString[Json]("""{"code":""}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.getMessage.contains("empty code"), s"message: ${e.getMessage}")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
+        "a Try constructor carries its exception into the decode failure as the cause" in {
+            val schema = summon[Schema[DVShort]]
+            assert(schema.decodeString[Json]("""{"raw":"abc"}""") == Result.succeed(DVShort("abc")))
+            schema.decodeString[Json]("""{"raw":"abcd"}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.getMessage.contains("too long"), s"message: ${e.getMessage}")
+                    assert(e.getCause.isInstanceOf[IllegalArgumentException], s"cause: ${e.getCause}")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
+        "an Option field keeps its optional wire treatment when decoding through a constructor" in {
+            val schema = summon[Schema[DVTagged]]
+            assert(schema.decodeString[Json]("""{"id":1,"label":"x"}""") == Result.succeed(DVTagged(1, Some("x"))))
+            assert(schema.decodeString[Json]("""{"id":1}""") == Result.succeed(DVTagged(1, None)))
+        }
+
+        "the constructed type is inferred from the constructor with no expected type to pin it" in {
+            val schema: Schema[DVPort] = Schema.derivedVia(DVPort.make)
+            assert(schema.encodeString[Json](DVPort.make(80).toMaybe.get) == """{"value":80}""")
+        }
+
+        "a derivedVia type nested as a field decodes through its constructor, not around it" in {
+            val schema = Schema.derived[DVListener]
+            assert(schema.encodeString[Json](DVListener("api", DVPort.make(80).toMaybe.get)) == """{"name":"api","port":{"value":80}}""")
+            assert(schema.decodeString[Json]("""{"name":"api","port":{"value":80}}""").isSuccess)
+            schema.decodeString[Json]("""{"name":"api","port":{"value":-1}}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.typeName == "DVPort", s"typeName: ${e.typeName}")
+                case other => fail(s"a nested rejection must fail the outer decode, got $other")
+            end match
+        }
+
+        "a generic case class derives through a constructor at a concrete type argument" in {
+            val schema = summon[Schema[DVNonEmpty[Int]]]
+            val value  = DVNonEmpty.make(Chunk(1, 2)).toMaybe.get
+            val json   = schema.encodeString[Json](value)
+            assert(json == """{"items":[1,2]}""", s"wire: $json")
+            assert(schema.decodeString[Json](json) == Result.succeed(value))
+            schema.decodeString[Json]("""{"items":[]}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.getMessage.contains("must not be empty"), s"message: ${e.getMessage}")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
+        "a constructor whose arity does not match the case fields is a compile error naming them" in {
+            val errs = scala.compiletime.testing.typeCheckErrors(
+                "kyo.Schema.derivedVia((a: Int, b: Int) => kyo.DVEven(a)): kyo.Schema[kyo.DVEven]"
+            )
+            assert(errs.nonEmpty)
+            val msg = errs.map(_.message).mkString("\n")
+            assert(msg.contains("expects a constructor of 1 argument"), s"message: $msg")
+            assert(msg.contains("(n: scala.Int)"), s"message: $msg")
+        }
+
+        "a constructor argument that does not accept its case field is a compile error naming the field" in {
+            val errs = scala.compiletime.testing.typeCheckErrors(
+                "kyo.Schema.derivedVia((s: String) => kyo.DVEven(s.length)): kyo.Schema[kyo.DVEven]"
+            )
+            assert(errs.nonEmpty)
+            val msg = errs.map(_.message).mkString("\n")
+            assert(msg.contains("case field 'n'"), s"message: $msg")
+        }
+    }
+
 end SchemaTest
+
+sealed abstract case class DVPort private (value: Int) derives CanEqual
+object DVPort:
+    def make(value: Int): Result[String, DVPort] =
+        if value > 0 && value < 65536 then Result.succeed(new DVPort(value) {})
+        else Result.fail(s"port out of range: $value")
+
+    given Schema[DVPort] = Schema.derivedVia(make)
+end DVPort
+
+case class DVPortTwin(value: Int) derives CanEqual
+
+case class DVListener(name: String, port: DVPort) derives CanEqual, Schema
+
+case class DVNonEmpty[A](items: Chunk[A]) derives CanEqual
+object DVNonEmpty:
+    def make[A](items: Chunk[A]): Result[String, DVNonEmpty[A]] =
+        if items.nonEmpty then Result.succeed(DVNonEmpty(items))
+        else Result.fail("must not be empty")
+
+    given nonEmptySchema[A](using Schema[A]): Schema[DVNonEmpty[A]] = Schema.derivedVia(make[A])
+end DVNonEmpty
+
+sealed abstract case class DVRange private (low: Int, high: Int) derives CanEqual
+object DVRange:
+    def make(low: Int, high: Int): Result[String, DVRange] =
+        if low <= high then Result.succeed(new DVRange(low, high) {})
+        else Result.fail(s"low $low exceeds high $high")
+
+    given Schema[DVRange] = Schema.derivedVia(make)
+end DVRange
+
+case class DVUpper(name: String) derives CanEqual
+object DVUpper:
+    def make(name: String): DVUpper = DVUpper(name.toUpperCase)
+
+    given Schema[DVUpper] = Schema.derivedVia(make)
+end DVUpper
+
+case class DVEven(n: Int) derives CanEqual
+object DVEven:
+    def make(n: Int): Option[DVEven] = if n % 2 == 0 then Some(DVEven(n)) else None
+
+    given Schema[DVEven] = Schema.derivedVia(make)
+end DVEven
+
+case class DVPositive(v: Long) derives CanEqual
+object DVPositive:
+    def make(v: Long): Maybe[DVPositive] = if v > 0 then Present(DVPositive(v)) else Absent
+
+    given Schema[DVPositive] = Schema.derivedVia(make)
+end DVPositive
+
+case class DVCode(code: String) derives CanEqual
+object DVCode:
+    def make(code: String): Either[String, DVCode] =
+        if code.nonEmpty then Right(DVCode(code)) else Left("empty code")
+
+    given Schema[DVCode] = Schema.derivedVia(make)
+end DVCode
+
+case class DVShort(raw: String) derives CanEqual
+object DVShort:
+    def make(raw: String): scala.util.Try[DVShort] =
+        scala.util.Try:
+            require(raw.length <= 3, s"too long: $raw")
+            DVShort(raw)
+
+    given Schema[DVShort] = Schema.derivedVia(make)
+end DVShort
+
+case class DVTagged(id: Int, label: Option[String]) derives CanEqual
+object DVTagged:
+    def make(id: Int, label: Option[String]): Result[String, DVTagged] =
+        if id > 0 then Result.succeed(DVTagged(id, label)) else Result.fail("id must be positive")
+
+    given Schema[DVTagged] = Schema.derivedVia(make)
+end DVTagged
+
+sealed case class SCCSingle(x: Int) derives CanEqual
+sealed case class SCCMulti(name: String, age: Int) derives CanEqual
+case class SCCPlainTwin(x: Int) derives CanEqual
+case class SCCHolder(id: Int, inner: SCCSingle) derives CanEqual
+given Schema[SCCSingle] = Schema.derived
+
+sealed trait SCCShape derives CanEqual
+object SCCShape:
+    case class Circle(r: Int) extends SCCShape
+    case class Square(s: Int) extends SCCShape
+end SCCShape
+
+sealed trait SCCNode derives CanEqual
+object SCCNode:
+    sealed case class Leaf(v: Int) extends SCCNode
+    case class Label(name: String) extends SCCNode
+end SCCNode
+
+sealed trait SCCTop derives CanEqual
+object SCCTop:
+    sealed abstract class Mid extends SCCTop
+    object Mid:
+        case class Concrete(n: Int) extends Mid
+        case class Other(s: String) extends Mid
+    end Mid
+    case class Direct(flag: Boolean) extends SCCTop
+end SCCTop
 
 case class UnionCaseA(label: String, value: Int) derives CanEqual, Schema
 case class UnionCaseB(flag: Boolean) derives CanEqual, Schema

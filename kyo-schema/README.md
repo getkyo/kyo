@@ -865,6 +865,53 @@ object Username:
 end Username
 ```
 
+### Validating smart constructors
+
+`derives Schema` emits a decoder that calls the type's primary constructor. For a type whose invariant lives in a smart constructor that is the wrong route: decoding would construct a value the constructor would have rejected. `Schema.derivedVia` takes the constructor and routes decoding through it. Encoding is untouched, so the wire shape stays the one the same fields would have on a plain case class.
+
+The `sealed abstract case class` idiom is the clearest case, since `abstract` suppresses `apply` and `copy` so the companion's constructor is the only route to a value at all:
+
+```scala
+sealed abstract case class Port private (value: Int)
+
+object Port:
+    def make(value: Int): Result[String, Port] =
+        if value > 0 && value < 65536 then Result.succeed(new Port(value) {})
+        else Result.fail(s"port out of range: $value")
+
+    given Schema[Port] = Schema.derivedVia(make)
+end Port
+
+Port.make(8080).map(Json.encode(_))
+// Result.Success({"value":8080})
+
+Json.decode[Port]("""{"value":0}""")
+// Result.Failure(ConstructorRejectedException(Nil, "Port", "port out of range: 0"))
+```
+
+A rejection is a `ConstructorRejectedException`, which subtypes `DecodeException`, so it arrives as the same `Result.Failure` any other malformed input arrives as rather than as a thrown exception or a silently bypassed check.
+
+The constructor takes the case fields one for one in declaration order, up to eight of them; a mismatch in arity or in a field's type is a compile error naming the field. Its result may be the constructed type itself or any shape `Schema.Constructed` reads a value out of: `Result`, `Maybe`, `Option`, `Either`, or `Try`. Any other outcome type works once it has its own `given Schema.Constructed` instance.
+
+Nothing about this is specific to types with no usable constructor. A refined type, a newtype carrying an invariant, or a domain primitive that rejects bad input all have public constructors that decoding should not reach for:
+
+```scala
+case class Slug(value: String)
+
+object Slug:
+    def make(value: String): Option[Slug] =
+        Option.when(value.nonEmpty && value.forall(c => c.isLetterOrDigit || c == '-'))(Slug(value))
+
+    given Schema[Slug] = Schema.derivedVia(make)
+end Slug
+
+Json.decode[Slug]("""{"value":"hello-world"}""")
+// Result.Success(Slug("hello-world"))
+
+Json.decode[Slug]("""{"value":"hello world"}""")
+// Result.Failure(ConstructorRejectedException(Nil, "Slug", "the constructor returned None"))
+```
+
 ## Annotations
 
 Everything the serialization sections configure with builder calls (variant representations, field and variant renaming, decode aliases, conditional omission, custom field codecs) can also be declared inline on the type with annotations from `kyo.schema`. `derives Schema` reads them and desugars each onto the same programmatic configuration, so an annotated type and the equivalent builder chain produce identical schemas. Annotations are opt-in: a type with none derives a byte-identical schema, and when an annotation and a programmatic call configure the same field, the programmatic call wins.
@@ -1785,6 +1832,7 @@ Errors raised by the schema core and schema codecs extend the sealed `SchemaExce
 | `TrailingInputException` | decode finishes one complete value but the input still contains extra content |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
 | `RangeException` | a numeric value overflows the target type |
+| `ConstructorRejectedException` | a `Schema.derivedVia` decode reaches the smart constructor and the constructor refuses the decoded fields; carries the `typeName` and the constructor's own rejection |
 | `ValidationFailedException` | a `.check` / `checkMin` / ... predicate fails |
 | `TransformFailedException` | a schema transform cannot complete |
 | `PathNotFoundException` | a `Structure.Path` segment does not exist |

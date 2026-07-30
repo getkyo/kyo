@@ -155,6 +155,26 @@ case class RangeException(value: Long, targetType: String, min: Long, max: Long)
     extends SchemaException(s"Value $value out of range for $targetType ($min to $max)")
     with DecodeException derives CanEqual
 
+/** Thrown when a smart constructor refuses the decoded fields.
+  *
+  * Raised only by schemas built with `Schema.derivedVia`, at the point a plain derived schema would
+  * have called the primary constructor. The fields themselves decoded successfully; the type's own
+  * invariant is what rejected them, so this is a decode failure and not a panic: it surfaces as the
+  * `Result.Failure` every other malformed-input outcome surfaces as.
+  *
+  * `rejection` carries whatever the constructor reported: the error value of a `Result` or `Either`
+  * failure, the exception of a `Try` failure, or a fixed description when the constructor reports
+  * absence with no detail (`Option` / `Maybe`).
+  */
+case class ConstructorRejectedException(path: Seq[String], typeName: String, rejection: String | Throwable)(using Frame)
+    extends SchemaException(
+        s"Constructor rejected the decoded value for '$typeName'" + SchemaException.pathSuffix(path) +
+            s": ${String.valueOf(rejection)}. The fields decoded successfully; the smart constructor refused them. " +
+            "Correct the input, or decode with a schema whose constructor accepts it.",
+        rejection
+    )
+    with DecodeException
+
 // --- Validation ---
 
 /** Thrown when a user-defined validation check fails on a field or root value. */
