@@ -1624,7 +1624,7 @@ lazy val `kyo-net` =
         )
         .in(file("kyo-net"))
         .withKyoTest
-        .settings(`kyo-settings`, foreignRelease)
+        .settings(`kyo-settings`)
         .platformsSettings(JVMPlatform, NativePlatform)(
             // Only the io_uring shim needs a declared library (-luring, Linux only via linkLibsByOs; staticLink folds
             // liburing in, RI-003); the socket/epoll/kqueue bindings resolve to system libc. On Native, IoUringBindings
