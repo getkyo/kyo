@@ -13,12 +13,17 @@ private[kyo] object AeronPlatformTransport:
       *
       * `dir` must be unique per call (callers pass `Path.tempDir`), since Aeron otherwise routes
       * every runtime through the same CnC file; `dirDeleteOnStart` clears a stale one left by a
-      * prior run.
+      * prior run, and `dirDeleteOnShutdown` removes this run's own once the conductor has stopped.
+      * The driver is the only party that knows when nothing will write into the directory again, so
+      * deleting it from the outside races whatever the conductor has yet to flush.
       */
     def embedded(dir: String)(using Frame): AeronRuntime < Async =
         Sync.Unsafe.defer {
             val driver = MediaDriver.launchEmbedded(
-                new io.aeron.driver.MediaDriver.Context().aeronDirectoryName(dir).dirDeleteOnStart(true)
+                new io.aeron.driver.MediaDriver.Context()
+                    .aeronDirectoryName(dir)
+                    .dirDeleteOnStart(true)
+                    .dirDeleteOnShutdown(true)
             )
             // The recording error handler captures fatal conductor conditions (driver timeout,
             // conductor service timeout, buffer full) into errorSlot, which fatalError reads at the
