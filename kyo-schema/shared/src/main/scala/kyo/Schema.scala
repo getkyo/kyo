@@ -2066,7 +2066,7 @@ object Schema:
             "Result[E, ${A}], Maybe[${A}], Option[${A}], Either[E, ${A}], and Try[${A}]. " +
             "For any other shape, provide a given Schema.Constructed[${R}, ${A}]."
     )
-    trait Constructed[R, A]:
+    abstract class Constructed[R, A]:
         /** Reports the constructor's outcome as a Result: a success carries the value, a failure carries whatever the constructor rejected
           * it with.
           */
@@ -2090,33 +2090,21 @@ object Schema:
         given fromResult[E, A]: Constructed[Result[E, A], A] with
             def asResult(outcome: Result[E, A]): Result[Any, A] = outcome
 
+        // Absence carries no error value, so these two supply the description the message reports;
+        // the other shapes already carry one and convert through Result's own constructors.
         given fromMaybe[A]: Constructed[Maybe[A], A] with
             def asResult(outcome: Maybe[A]): Result[Any, A] =
-                outcome match
-                    case Present(value) => Result.succeed(value)
-                    case _              => Result.fail("the constructor returned Absent")
-        end fromMaybe
+                outcome.toResult(Result.fail("the constructor returned Absent"))
 
         given fromOption[A]: Constructed[Option[A], A] with
             def asResult(outcome: Option[A]): Result[Any, A] =
-                outcome match
-                    case Some(value) => Result.succeed(value)
-                    case None        => Result.fail("the constructor returned None")
-        end fromOption
+                Maybe.fromOption(outcome).toResult(Result.fail("the constructor returned None"))
 
         given fromEither[E, A]: Constructed[Either[E, A], A] with
-            def asResult(outcome: Either[E, A]): Result[Any, A] =
-                outcome match
-                    case Right(value) => Result.succeed(value)
-                    case Left(error)  => Result.fail(error)
-        end fromEither
+            def asResult(outcome: Either[E, A]): Result[Any, A] = Result.fromEither(outcome)
 
         given fromTry[A]: Constructed[scala.util.Try[A], A] with
-            def asResult(outcome: scala.util.Try[A]): Result[Any, A] =
-                outcome match
-                    case scala.util.Success(value)     => Result.succeed(value)
-                    case scala.util.Failure(exception) => Result.fail(exception)
-        end fromTry
+            def asResult(outcome: scala.util.Try[A]): Result[Any, A] = Result.fromTry(outcome)
 
     end Constructed
 
