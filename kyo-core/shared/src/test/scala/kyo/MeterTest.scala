@@ -333,6 +333,31 @@ class MeterTest extends kyo.test.Test[Any]:
                 .handle(Loop.repeat(20))
                 .unit
         }
+
+        // A caller interrupted between reserving a slot and parking used to leave its pending promise
+        // queued: a later handoff would "grant" the freed permit to the dead caller and stop, so the
+        // live waiter behind it was never woken. Many contenders are interrupted mid-approach (racing
+        // the reserve-before-park window), then settled; the victim queued behind them must always be
+        // granted the permit the holder frees.
+        "interrupt racing the acquisition never strands a later waiter".onlyJvm in {
+            val contenders = 30
+            (for
+                meter   <- Meter.initSemaphore(1)
+                gate    <- Latch.init(1)
+                holder  <- Fiber.initUnscoped(meter.run(gate.await))
+                _       <- assertEventually(Abort.run(meter.availablePermits).map(_ == Result.succeed(0)))
+                cs      <- Kyo.foreach(1 to contenders)(_ => Fiber.initUnscoped(meter.run(())))
+                _       <- Async.foreach(cs, contenders)(_.interrupt(panic))
+                _       <- Kyo.foreach(cs)(_.getResult)
+                victim  <- Fiber.initUnscoped(meter.run(()))
+                _       <- assertEventually(Abort.run(meter.pendingWaiters).map(_.exists(_ >= 1)))
+                _       <- gate.release
+                _       <- holder.getResult
+                granted <- Abort.run[Timeout](Async.timeout(5.seconds)(victim.getResult))
+            yield assert(granted.isSuccess, "the waiter behind interrupted callers was never handed the permit"))
+                .handle(Loop.repeat(200))
+                .unit
+        }
     }
 
     def loop(meter: Meter, ch: Channel[Unit]): Unit < (Async & Abort[Closed]) =

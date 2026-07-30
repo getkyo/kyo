@@ -283,8 +283,11 @@ object System:
         given Parser[URISyntaxException, java.net.URI] =
             Parser(v => Result.catching[URISyntaxException](new java.net.URI(v)))
 
+        // java.net.URL(String) is deprecated since JDK 20. Its URI-based replacement throws
+        // URISyntaxException or IllegalArgumentException rather than MalformedURLException, which would
+        // change this Parser's failure type; the constructor is deprecated, not removed, so it is kept.
         given Parser[MalformedURLException, java.net.URL] =
-            Parser(v => Result.catching[MalformedURLException](new java.net.URL(v)))
+            Parser(v => Result.catching[MalformedURLException]((new java.net.URL(v)): @scala.annotation.nowarn("cat=deprecation")))
 
         given [E, A](using p: Parser[E, A], frame: Frame): Parser[E, Seq[A]] =
             Parser(v => Result.collect(Chunk.from(v.split(",")).map(v => p(v.trim()))))

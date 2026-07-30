@@ -988,17 +988,17 @@ class SignalTest extends kyo.test.Test[Any]:
                 _ <- parent.set(3)
                 _ <- assertEventually(parent.current.map(_ == 3))
                 _ <- assertEventually(live.get.map(_ == 1))
-                // An observer that died mid-`f` leaves `live` at the value the increment produced and `peak`
-                // never updated, which reads exactly like the ordering violation `peak` is here to catch.
-                // The two are told apart here: `observe` runs until interrupted, so a settled result at this
-                // point is a failure carrying the frame that ended the loop. A poll rather than a get,
-                // because a healthy loop never settles.
+                // No value changes after set(3), so the last value's `f` runs to completion and `peak`
+                // settles at 1. Reading `peak` once here races that `f` and can see 0; wait for it to
+                // settle instead. A `peak` above 1 would mean two per-value scopes overlapped, which this
+                // still catches: it would never settle at 1. A `peak` stuck at 0 means the observer never
+                // ran `f` to the update, caught by the same wait rather than passing silently.
+                _ <- assertEventually(peak.get.map(_ == 1))
+                // The loop runs until interrupted, so a settled result now is a failure carrying the frame
+                // that ended it. A poll rather than a get, because a healthy loop never settles.
                 ended <- fiber.poll
-                p     <- peak.get
                 _     <- fiber.interrupt
-            yield
-                assert(ended.isEmpty, s"the observer loop ended before the test interrupted it: $ended")
-                assert(p == 1)
+            yield assert(ended.isEmpty, s"the observer loop ended before the test interrupted it: $ended")
         }
 
         "interrupts a child forked in f when the value changes" in {

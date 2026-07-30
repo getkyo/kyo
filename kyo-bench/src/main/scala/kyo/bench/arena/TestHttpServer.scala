@@ -42,7 +42,7 @@ object TestHttpServer:
 
     def waitForServer(url: String, port: Int): Boolean =
         def tryConnect(): Try[Boolean] = Try {
-            val connection = new URL(url).openConnection().asInstanceOf[HttpURLConnection]
+            val connection = java.net.URI.create(url).toURL().openConnection().asInstanceOf[HttpURLConnection]
             connection.setRequestMethod("GET")
             connection.setConnectTimeout(1000)
             connection.setReadTimeout(1000)

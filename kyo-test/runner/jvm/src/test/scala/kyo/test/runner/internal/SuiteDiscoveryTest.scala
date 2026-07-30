@@ -27,12 +27,9 @@ class SuiteDiscoveryTest extends kyo.test.Test[Any]:
 
         override def getResources(name: String): java.util.Enumeration[URL] =
             if name == ServiceFile then
-                // Provide a synthetic in-memory resource using a custom URL
-                val url = new URL(
-                    "jar", // protocol placeholder (unused, just needs a scheme)
-                    null,
-                    0,
-                    "synthetic-service-file",
+                // Provide a synthetic in-memory resource using a custom URL stream handler.
+                val url = URL.of(
+                    java.net.URI.create("jar:synthetic-service-file"),
                     new java.net.URLStreamHandler:
                         def openConnection(u: URL): java.net.URLConnection =
                             new java.net.URLConnection(u):
@@ -180,11 +177,8 @@ class SuiteDiscoveryTest extends kyo.test.Test[Any]:
             override def close(): Unit = closeCount.incrementAndGet(): Unit
 
         // Build a URL whose openStream() returns the stream above.
-        val url = new URL(
-            "jar",
-            null,
-            0,
-            "failing-stream",
+        val url = URL.of(
+            java.net.URI.create("jar:failing-stream"),
             new java.net.URLStreamHandler:
                 def openConnection(u: URL): java.net.URLConnection =
                     new java.net.URLConnection(u):

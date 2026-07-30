@@ -43,7 +43,7 @@ val compilerOptions = Set(
     ScalacOptions.warnValueDiscard,
     ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
-    ScalacOptions.release("17"),
+    ScalacOptions.release("25"),
     ScalacOptions.advancedKindProjector
 )
 
@@ -118,14 +118,13 @@ Global / concurrentRestrictions := {
     )
 }
 
-// java.lang.foreign (the Foreign Function and Memory API) is final in JDK 22, so modules that use it
-// cannot target Java 17. They override the project-wide `-release 17` (added by kyo-settings) with
-// `-release 25` (current LTS). Because `-release 25` requires a JDK >= 25 to compile, the whole build
-// requires JDK 25 (see the Global/onLoad guard and the CI setup action). Modules that do not use the
-// API keep `-release 17`.
-lazy val foreignRelease = Seq(
-    scalacOptions --= scalacOptionTokens(Set(ScalacOptions.release("17"))).value,
-    scalacOptions ++= scalacOptionTokens(Set(ScalacOptions.release("25"))).value
+// The build targets `-release 25` (JDK 25), set globally in compilerOptions. It is required, not a
+// choice: kyo-data and the other foreign modules call java.lang.foreign, final in JDK 22, so the
+// whole build needs a JDK >= 25 to compile (see the Global/onLoad guard and the CI setup action).
+// Modules that must hold their own API surface to JDK 17 override back with release17.
+lazy val release17 = Seq(
+    scalacOptions --= scalacOptionTokens(Set(ScalacOptions.release("25"))).value,
+    scalacOptions ++= scalacOptionTokens(Set(ScalacOptions.release("17"))).value
 )
 
 lazy val `kyo-settings` = Seq(
@@ -245,8 +244,8 @@ Global / onLoad := {
 
     val javaVersion  = System.getProperty("java.version")
     val majorVersion = javaVersion.split("\\.")(0).toInt
-    // The foreign-API modules (kyo-data, kyo-ffi, kyo-offheap, kyo-tasty) compile at -release 25, which
-    // requires a JDK >= 25; the rest of the build stays at -release 17. So the whole build needs JDK 25.
+    // The build compiles at -release 25, which requires a JDK >= 25 (the foreign modules call
+    // java.lang.foreign, final in JDK 22). So the whole build needs JDK 25.
     if (majorVersion < 25) {
         throw new IllegalStateException(
             s"Java version $javaVersion is not supported. Please use Java 25 (LTS) or higher."
@@ -595,6 +594,7 @@ lazy val `kyo-scheduler` =
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions := List(scala3LTSVersion, scala213Version)
@@ -621,6 +621,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     .dependsOn(`kyo-scheduler`)
     .settings(
         `kyo-settings`,
+        release17,
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions                      := List(scala3LTSVersion, scala213Version),
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
@@ -639,6 +640,7 @@ lazy val `kyo-scheduler-pekko` =
         .in(file("kyo-scheduler-pekko"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.6.0",
             libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.6.0"          % Test,
             libraryDependencies += "org.scalatest"    %%% "scalatest"     % scalaTestVersion % Test
@@ -655,6 +657,7 @@ lazy val `kyo-scheduler-finagle` =
         .in(file("kyo-scheduler-finagle"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             libraryDependencies ++= {
                 if (scalaVersion.value == scala213Version)
@@ -690,7 +693,6 @@ lazy val `kyo-data` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            foreignRelease,
             libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.6",
             libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.9" % Test
         )
@@ -899,7 +901,7 @@ lazy val `kyo-offheap` =
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
         .withKyoTest
-        .settings(`kyo-settings`, foreignRelease)
+        .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .jvmConfigure(_.settings(
             doctestScalacOptions := Seq("-release", "25")
@@ -915,7 +917,7 @@ lazy val `kyo-ffi` =
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
         .withKyoTest
-        .settings(`kyo-settings`, foreignRelease)
+        .settings(`kyo-settings`)
         .jvmSettings(
             mimaCheck(false),
             doctestScalacOptions := Seq("-release", "25"),
@@ -956,7 +958,6 @@ lazy val `kyo-ffi-it` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            foreignRelease,
             publish / skip := true,
             // In-repo bootstrap: hand the plugin the codegen project's own classpath so a cold
             // `kyo-ffi-it/test` builds the codegen first and generates the impls directly, with no
@@ -1053,7 +1054,6 @@ lazy val `kyo-ffi-codegen` =
         .dependsOn(`kyo-ffi`.jvm % Test)
         .settings(
             `kyo-settings`,
-            foreignRelease,
             libraryDependencies += "org.scala-lang" %% "scala3-tasty-inspector" % scalaVersion.value,
             libraryDependencies += "org.scala-lang" %% "scala3-compiler"        % scalaVersion.value % Test,
             // kyo-test framework wiring (the JVM-only equivalent of .withKyoTest, which only applies to crossProjects).
@@ -1147,7 +1147,6 @@ lazy val `kyo-ffi-bench` =
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
-            foreignRelease,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
             run / fork := true
@@ -1208,7 +1207,6 @@ lazy val `kyo-tasty` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            foreignRelease,
             doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*")
         )
         .jvmSettings(
@@ -1285,6 +1283,7 @@ lazy val `kyo-stats-registry` =
         .in(file("kyo-stats-registry"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions := List(scala3LTSVersion, scala213Version)
@@ -1300,6 +1299,7 @@ lazy val `kyo-config` =
         .in(file("kyo-config"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions := List(scala3LTSVersion, scala213Version)
@@ -2206,6 +2206,7 @@ lazy val `kyo-compat-future` =
         .in(file("kyo-compat/bindings/future"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             // Default compile under scala3Version so unidoc reads consistent TASTy with the rest of the build.
             // `+publish` still only emits LTS artifacts (crossScalaVersions + publish/skip guard).
@@ -2275,6 +2276,7 @@ lazy val `kyo-compat-zio` =
         .in(file("kyo-compat/bindings/zio"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala3LTSVersion),
             publish / skip                          := scalaVersion.value != scala3LTSVersion,
@@ -2309,6 +2311,7 @@ lazy val `kyo-compat-ox` =
         .in(file("kyo-compat/bindings/ox"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala3LTSVersion),
             publish / skip                          := scalaVersion.value != scala3LTSVersion,
@@ -2338,6 +2341,7 @@ lazy val `kyo-compat-twitter-future` =
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala3LTSVersion),
             publish / skip                          := scalaVersion.value != scala3LTSVersion,
@@ -2373,6 +2377,7 @@ lazy val `kyo-compat-tests` =
         .disablePlugins(KyoDoctestPlugin)
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
             scalaVersion                           := scala3LTSVersion,
             crossScalaVersions                     := List(scala3LTSVersion),
