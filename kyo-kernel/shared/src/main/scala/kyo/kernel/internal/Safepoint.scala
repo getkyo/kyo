@@ -28,8 +28,12 @@ final class Safepoint private () extends Trace.Owner with Serializable:
     private var interceptor: Interceptor = null
 
     private[kernel] def enter(frame: Frame, value: Any): Boolean =
-        val state    = this.state
-        val threadId = Thread.currentThread().threadId()
+        val state = this.state
+        // Thread.getId is deprecated since JDK 19, but its replacement threadId() is absent from the
+        // Scala.js javalib and fails JS and Wasm linking (it type-checks against the JDK, then breaks at
+        // link). getId is deprecated-not-removed and returns the same identifier, so it is kept with the
+        // -release 25 deprecation suppressed. This is shared code, so it must link on every platform.
+        val threadId = Thread.currentThread().getId(): @scala.annotation.nowarn("cat=deprecation")
         val proceed =
             state.depth <= maxStackDepth &&
                 state.threadId == threadId &&
@@ -79,7 +83,8 @@ object Safepoint:
         require(maxStackDepth <= 65536)
 
         inline def init(): State =
-            (Thread.currentThread().threadId() << 17) & ThreadIdMask
+            // getId, not threadId, so shared code links on Scala.js and Wasm; see `enter` above.
+            ((Thread.currentThread().getId(): @scala.annotation.nowarn("cat=deprecation")) << 17) & ThreadIdMask
 
         extension (state: State)
             def depth: Int              = (state & DepthMask).toInt
