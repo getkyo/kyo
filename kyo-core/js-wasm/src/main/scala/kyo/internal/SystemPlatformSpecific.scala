@@ -11,12 +11,17 @@ import scala.scalajs.js
   */
 private[kyo] object SystemPlatformSpecific:
     def env(name: String)(using AllowUnsafe): String =
-        val proc = js.Dynamic.global.process
-        if js.typeOf(proc) == "undefined" || js.typeOf(proc.env) == "undefined" then null
+        // The `typeof` guard must stay INLINE on the global selection: binding `js.Dynamic.global.process`
+        // to a val first emits a bare `process` read, which throws ReferenceError in browsers.
+        if js.typeOf(js.Dynamic.global.process) == "undefined" then null
         else
-            val value = proc.env.selectDynamic(name)
-            if js.isUndefined(value) || value == null then null
-            else value.asInstanceOf[String]
+            val proc = js.Dynamic.global.process
+            if js.typeOf(proc.env) == "undefined" then null
+            else
+                val value = proc.env.selectDynamic(name)
+                if js.isUndefined(value) || value == null then null
+                else value.asInstanceOf[String]
+            end if
         end if
     end env
 
