@@ -120,10 +120,17 @@ object FileSystem:
         /** Opens `path` for positioned reads. The channel is closed when the current [[Scope]] exits. */
         def openReadChannel(path: Path)(using Frame): Path.ReadChannel[S] < (S & Scope & Abort[FileReadException])
 
-        /** Attempts to acquire a scoped advisory lock without waiting. */
+        /** Attempts to acquire a scoped advisory lock without waiting for a conflicting holder.
+          *
+          * `Async` is in the row because "without waiting" is about conflicting holders, not about
+          * suspension: a backend that merges same-process claims onto one platform lock has a span
+          * in which a compatible claim is being taken but is not yet shareable, and answering during
+          * it would deny a lock the contract grants. Waiting out that span is bounded and does not
+          * depend on any holder releasing, unlike [[lock]], which waits for exactly that.
+          */
         def tryLock(path: Path, mode: Path.LockMode)(using
             Frame
-        ): Maybe[Path.Lock] < (S & Sync & Scope & Abort[FileReadException | FileLockException])
+        ): Maybe[Path.Lock] < (S & Sync & Async & Scope & Abort[FileReadException | FileLockException])
 
         /** Acquires a scoped advisory lock according to `wait`. Waiting modes suspend the fiber. */
         def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait = Path.LockWait.UntilAvailable)(using

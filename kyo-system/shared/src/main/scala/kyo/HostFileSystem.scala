@@ -20,6 +20,12 @@ private[kyo] object HostFileSystem:
     // alike.
     private[kyo] var afterClaimHook: () => Unit = () => ()
 
+    // The window a pending reservation waits on is one channel open plus one platform lock call, so
+    // it clears in well under a millisecond. The budget is generous against that rather than tuned:
+    // its job is to terminate at all when an entry is never going to resolve, not to time the window.
+    private val pendingLockRetries: Int         = 100
+    private val pendingLockRetryDelay: Duration = 1.milli
+
     /** Determines case sensitivity by asking the volume rather than the operating system.
       *
       * The two are not the same question. macOS default volumes are case-insensitive while the
@@ -351,7 +357,7 @@ private[kyo] object HostFileSystem:
 
         def tryLock(path: Path, mode: Path.LockMode)(using
             Frame
-        ): Maybe[Path.Lock] < (Sync & Scope & Abort[FileLockException]) =
+        ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileLockException]) =
             // Deliberately not Scope.acquireRelease. That runs acquire, then registers the finalizer
             // in a continuation, and an interrupt landing between the two leaves the OS lock held and
             // the registry entry installed with nothing in existence able to release either: the path
@@ -374,17 +380,40 @@ private[kyo] object HostFileSystem:
                             case Absent        => ()
                         }
                     }.andThen {
-                        // Unsafe: the raw claim and the record of it are plain statements in one node,
-                        // so no interrupt can observe a claim that the finalizer cannot see.
-                        Sync.Unsafe.defer {
-                            path.unsafe.lock(mode) match
-                                case Result.Success(raw) =>
-                                    val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
-                                    holder.set(Present(lock))
-                                    afterClaimHook()
-                                    Abort.get(Result.succeed(lock))
+                        // A shared claim can arrive while another shared claim is between reserving
+                        // its registry entry and installing the platform lock behind it. The two are
+                        // compatible, so refusing there denies a lock the contract grants; the entry
+                        // simply has nothing to share yet. The backend reports that as pending and
+                        // this retries, since it clears without anyone releasing anything.
+                        //
+                        // Bounded on purpose. An acquisition interrupted after it reserves but before
+                        // it can withdraw leaves an entry nothing else clears, and an unbounded retry
+                        // would turn a permanent denial into a permanent hang. Exhausting the budget
+                        // reports the claim unavailable, which is what this returned before.
+                        //
+                        // The attempt returns a Result rather than branching after the node: the
+                        // claim and its recording have to stay in one node with no safepoint between
+                        // them, so the decision to retry has to leave the node as a value.
+                        def attempt(remaining: Int): Path.Lock < (Sync & Async & Abort[FileLockException]) =
+                            // Unsafe: the raw claim and the record of it are plain statements in one
+                            // node, so no interrupt can observe a claim the finalizer cannot see.
+                            Sync.Unsafe.defer {
+                                path.unsafe.lockAttempt(mode) match
+                                    case Path.LockAttempt.Acquired(raw) =>
+                                        val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
+                                        holder.set(Present(lock))
+                                        afterClaimHook()
+                                        Result.succeed(Present(lock))
+                                    case Path.LockAttempt.Pending       => Result.succeed(Absent)
+                                    case Path.LockAttempt.Failed(error) => error
+                            }.map {
+                                case Result.Success(Present(lock)) => lock
+                                case Result.Success(Absent) =>
+                                    if remaining <= 0 then Abort.fail(FileLockUnavailableException(path))
+                                    else Async.sleep(pendingLockRetryDelay).andThen(attempt(remaining - 1))
                                 case failed => Abort.get(failed.map(_ => null.asInstanceOf[Path.Lock]))
-                        }
+                            }
+                        attempt(pendingLockRetries)
                     }
                 }.map(Maybe(_))
             Abort.recover[FileLockUnavailableException](_ => Absent)(acquire)
@@ -613,7 +642,7 @@ private[kyo] object HostFileSystem:
             FileSystem.durableReplace[Any](this, target, bytes)
         def tryLock(path: Path, mode: Path.LockMode)(using
             Frame
-        ): Maybe[Path.Lock] < (Sync & Scope & Abort[FileReadException | FileLockException]) =
+        ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
             confined(path, FileSystemOperation.Lock).andThen(host.tryLock(path, mode))
         def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait)(using
             Frame

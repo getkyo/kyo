@@ -597,7 +597,7 @@ object Path extends PathPlatformSpecific:
         }
     end restoreRead
 
-    private[kyo] def suspendTryLock(path: Path, mode: LockMode)(using Frame): Maybe[Lock] < (PathRead & Sync & Scope) =
+    private[kyo] def suspendTryLock(path: Path, mode: LockMode)(using Frame): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
         ArrowEffect.suspend(Tag[PathRead], Op.CurrentReadService()).map { service =>
             restoreRead(Abort.run[FileSystemException](service.tryLock(path, mode)))
         }
@@ -896,8 +896,14 @@ object Path extends PathPlatformSpecific:
 
         /** Attempts to acquire a scoped advisory lock, returning `Absent` when an incompatible
           * claim is already held.
+          *
+          * Never waits for that claim to be released, which is what [[lock]] is for. `Async` is in
+          * the row for a different reason: a backend that merges same-process claims onto one
+          * platform lock has a span in which a compatible claim is being taken but is not yet
+          * shareable, and answering during it would report a conflict that does not exist. Waiting
+          * out that span is bounded and needs no holder to release anything.
           */
-        def tryLock(mode: LockMode)(using Frame): Maybe[Lock] < (PathRead & Sync & Scope) =
+        def tryLock(mode: LockMode)(using Frame): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
             suspendTryLock(self, mode)
 
         /** Acquires a scoped advisory lock according to `wait`. */
@@ -1533,6 +1539,19 @@ object Path extends PathPlatformSpecific:
           */
         def lock(mode: LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock]
 
+        /** Attempts the lock, distinguishing a conflict from an answer that is not settled yet.
+          *
+          * `lock` collapses both onto a failure, which is the right shape for a caller that cannot
+          * wait. A backend that merges same-process claims onto one platform lock has a span in
+          * which a compatible claim is being taken but is not yet shareable, and refusing there
+          * denies a lock the contract grants. Backends with no such span keep the default.
+          */
+        private[kyo] def lockAttempt(mode: LockMode)(using AllowUnsafe, Frame): Path.LockAttempt =
+            lock(mode) match
+                case Result.Success(raw)   => Path.LockAttempt.Acquired(raw)
+                case Result.Failure(error) => Path.LockAttempt.Failed(Result.Failure(error))
+                case panic: Result.Panic   => Path.LockAttempt.Failed(panic)
+
         /** Lifts this `Unsafe` value back into the safe `Path` opaque type. */
         def safe: Path = this
 
@@ -1706,5 +1725,25 @@ object Path extends PathPlatformSpecific:
         /** Releases the lock, freeing it for another acquirer. */
         def release()(using AllowUnsafe, Frame): Result[FileLockException, Unit]
     end RawLock
+
+    /** The outcome of a single non-blocking lock attempt.
+      *
+      * Separates "no" from "not yet", which `Result` alone cannot carry. Only [[Pending]] is worth
+      * retrying on its own: a conflict clears when the holder releases, which is the waiting
+      * caller's concern, while a pending answer clears without anyone releasing anything.
+      */
+    private[kyo] enum LockAttempt derives CanEqual:
+        /** The platform claim was taken and is held. */
+        case Acquired(raw: RawLock)
+
+        /** A compatible claim is mid-acquisition, so the answer is not settled. Asking again once
+          * that acquisition finishes yields a real answer; the retry must be bounded, since an
+          * acquisition interrupted before it can withdraw leaves an entry nothing else clears.
+          */
+        case Pending
+
+        /** A definite answer: an incompatible holder, or the attempt failed outright. */
+        case Failed(error: Result[FileLockException, Nothing])
+    end LockAttempt
 
 end Path

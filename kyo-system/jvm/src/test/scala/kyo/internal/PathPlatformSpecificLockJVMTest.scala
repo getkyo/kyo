@@ -99,3 +99,93 @@ class PathPlatformSpecificLockJVMTest extends kyo.test.Test[Any]:
     }
 
 end PathPlatformSpecificLockJVMTest
+
+/** The interval between a reservation being taken and its underlying lock being installed.
+  *
+  * `reserve` returns `First` and the caller then opens a channel and takes the platform lock, so
+  * for that span the entry exists with no resource behind it. A shared request arriving in that
+  * span is compatible with the shared acquisition already under way, and the contract grants it.
+  */
+class PathPlatformSpecificLockInstallWindowJVMTest extends kyo.test.Test[Any]:
+
+    "a shared request during another shared acquisition's install window is not denied" in {
+        Sync.Unsafe.defer {
+            val key = Files.createTempFile("kyo-lock-window-", ".bin").toString
+            try
+                // The first shared acquisition reserves and has not installed yet, which is exactly
+                // the state the caller is in while it opens its channel.
+                assert(NioPathLockRegistry.reserve(key, false) == NioPathLockRegistry.Reservation.First)
+
+                // A second shared request lands here. It is compatible with the first, so denying it
+                // refuses a lock the contract grants. Pending says the answer is not settled yet.
+                val second = NioPathLockRegistry.reserve(key, false)
+                assert(
+                    second == NioPathLockRegistry.Reservation.Pending,
+                    s"a compatible shared request in the install window got $second"
+                )
+
+                // An exclusive request in the same window genuinely conflicts with the shared
+                // acquisition under way, so it stays denied rather than becoming pending.
+                assert(
+                    NioPathLockRegistry.reserve(key, true) == NioPathLockRegistry.Reservation.Denied,
+                    "an exclusive request was told to wait for a shared acquisition it conflicts with"
+                )
+            finally
+                NioPathLockRegistry.abort(key)
+                discard(Files.deleteIfExists(java.nio.file.Path.of(key)))
+            end try
+        }
+    }
+
+    "a shared request during an exclusive acquisition's install window stays denied" in {
+        Sync.Unsafe.defer {
+            val key = Files.createTempFile("kyo-lock-window-excl-", ".bin").toString
+            try
+                assert(NioPathLockRegistry.reserve(key, true) == NioPathLockRegistry.Reservation.First)
+                assert(
+                    NioPathLockRegistry.reserve(key, false) == NioPathLockRegistry.Reservation.Denied,
+                    "a shared request was told to wait for an exclusive acquisition it conflicts with"
+                )
+            finally
+                NioPathLockRegistry.abort(key)
+                discard(Files.deleteIfExists(java.nio.file.Path.of(key)))
+            end try
+        }
+    }
+    "a pending reservation is waited out rather than reported as a conflict" in {
+        Sync.Unsafe.defer {
+            val file = Files.createTempFile("kyo-lock-pending-", ".bin")
+            // Matches the key tryLock derives, which resolves the path. The file exists, so the
+            // resolved form is its real path.
+            (file, file.toRealPath().toString, Path.of(file))
+        }.map { (file, key, path) =>
+            // Stands in for an acquisition that has reserved its entry and is still opening its
+            // channel. Driving it from the registry rather than from a second fiber keeps the window
+            // open for as long as the assertions need, with nothing parked on a thread to hold it.
+            Sync.Unsafe.defer(NioPathLockRegistry.reserve(key, false)).map { reserved =>
+                assert(reserved == NioPathLockRegistry.Reservation.First)
+                Fiber.initUnscoped(Scope.run(FileSystem.host.tryLock(path, Path.LockMode.Shared).map(_.isDefined))).map { fiber =>
+                    Async.sleep(20.millis).andThen(fiber.poll).map { answered =>
+                        // Answering here is the defect: the claim under way is shared, this request
+                        // is shared, and the two are compatible. Absent would be a conflict reported
+                        // where none exists.
+                        assert(answered.isEmpty, "tryLock answered while a compatible claim was still installing")
+                        Sync.Unsafe.defer {
+                            val channel = FileChannel.open(file, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                            NioPathLockRegistry.install(key, channel.tryLock(0L, Long.MaxValue, true), channel)
+                        }.andThen(fiber.get).map { acquired =>
+                            assert(acquired, "the retry did not pick up the claim once it was installed")
+                        }
+                    }
+                }
+            }.map { result =>
+                // The manual reservation above is still counted; drop it so the entry does not
+                // outlive the test.
+                Sync.Unsafe.defer {
+                    discard(NioPathLockRegistry.release(key, false))
+                    discard(Files.deleteIfExists(file))
+                }.andThen(result)
+            }
+        }
+    }
+end PathPlatformSpecificLockInstallWindowJVMTest

@@ -385,51 +385,69 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         end try
     end registryKey
 
+    // Collapses the pending answer onto a failure, which is all a caller that cannot wait can do
+    // with it. Callers that can wait take lockAttempt instead.
     def lock(mode: Path.LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
+        lockAttempt(mode) match
+            case Path.LockAttempt.Acquired(raw) => Result.succeed(raw)
+            case Path.LockAttempt.Pending       => Result.fail(FileLockUnavailableException(safe))
+            case Path.LockAttempt.Failed(error) => error
+
+    override private[kyo] def lockAttempt(mode: Path.LockMode)(using AllowUnsafe, Frame): Path.LockAttempt =
         val isExclusive = mode == Path.LockMode.Exclusive
         val key         = registryKey
+        def settled(result: Result[FileLockException, Path.RawLock]): Path.LockAttempt =
+            result match
+                case Result.Success(raw)   => Path.LockAttempt.Acquired(raw)
+                case Result.Failure(error) => Path.LockAttempt.Failed(Result.Failure(error))
+                case panic: Result.Panic   => Path.LockAttempt.Failed(panic)
         NioPathLockRegistry.reserve(key, isExclusive) match
-            case NioPathLockRegistry.Reservation.Denied => Result.fail(FileLockUnavailableException(safe))
+            case NioPathLockRegistry.Reservation.Denied  => Path.LockAttempt.Failed(Result.fail(FileLockUnavailableException(safe)))
+            case NioPathLockRegistry.Reservation.Pending => Path.LockAttempt.Pending
             case NioPathLockRegistry.Reservation.SharedExisting =>
-                Result.succeed(new NioRawLock(key, isExclusive))
+                Path.LockAttempt.Acquired(new NioRawLock(key, isExclusive))
             case NioPathLockRegistry.Reservation.First =>
-                try
-                    ensureParent(jpath)
-                    val ch = FileChannel.open(jpath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                settled {
                     try
-                        val fl =
-                            try ch.tryLock(0L, Long.MaxValue, !isExclusive)
-                            catch case _: OverlappingFileLockException => null
-                        if fl == null then
-                            ch.close()
-                            NioPathLockRegistry.abort(key)
-                            Result.fail(FileLockUnavailableException(safe))
-                        else
-                            NioPathLockRegistry.install(key, fl, ch)
-                            Result.succeed(new NioRawLock(key, isExclusive))
-                        end if
+                        ensureParent(jpath)
+                        val ch =
+                            FileChannel.open(jpath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                        try
+                            val fl =
+                                try ch.tryLock(0L, Long.MaxValue, !isExclusive)
+                                catch case _: OverlappingFileLockException => null
+                            if fl == null then
+                                ch.close()
+                                NioPathLockRegistry.abort(key)
+                                Result.fail(FileLockUnavailableException(safe))
+                            else
+                                NioPathLockRegistry.install(key, fl, ch)
+                                Result.succeed(new NioRawLock(key, isExclusive))
+                            end if
+                        catch
+                            case e: IOException if NioExceptionBoundary.isInterrupted(e) =>
+                                discard(Result.catching[Throwable](ch.close()))
+                                NioPathLockRegistry.abort(key)
+                                Result.panic(e)
+                            case e: IOException =>
+                                ch.close()
+                                NioPathLockRegistry.abort(key)
+                                Result.fail(FileIOException(safe, FileSystemOperation.Lock, e))
+                        end try
                     catch
                         case e: IOException if NioExceptionBoundary.isInterrupted(e) =>
-                            discard(Result.catching[Throwable](ch.close()))
                             NioPathLockRegistry.abort(key)
                             Result.panic(e)
                         case e: IOException =>
-                            ch.close()
                             NioPathLockRegistry.abort(key)
                             Result.fail(FileIOException(safe, FileSystemOperation.Lock, e))
+                        case e: Throwable =>
+                            NioPathLockRegistry.abort(key)
+                            Result.panic(e)
                     end try
-                catch
-                    case e: IOException if NioExceptionBoundary.isInterrupted(e) =>
-                        NioPathLockRegistry.abort(key)
-                        Result.panic(e)
-                    case e: IOException =>
-                        NioPathLockRegistry.abort(key)
-                        Result.fail(FileIOException(safe, FileSystemOperation.Lock, e))
-                    case e: Throwable =>
-                        NioPathLockRegistry.abort(key)
-                        Result.panic(e)
+                }
         end match
-    end lock
+    end lockAttempt
 
     // --- Helpers ---
 
@@ -683,6 +701,14 @@ private[kyo] object NioPathLockRegistry:
         case Denied
         case First
         case SharedExisting
+
+        /** A compatible acquisition holds the entry but has not installed its resource yet.
+          *
+          * Distinct from `Denied`, which reports a genuine conflict: this says the answer is not
+          * settled rather than negative, and the caller resolves it by asking again once the
+          * installer has either installed or aborted.
+          */
+        case Pending
     end Reservation
 
     // Unsafe: one process-wide registry must exist before any concurrent acquisition can race.
@@ -700,7 +726,14 @@ private[kyo] object NioPathLockRegistry:
             case Some(Entry(false, count, Present(resource))) if !isExclusive && !resource.cleaning =>
                 val next = snap.updated(key, Entry(false, count + 1, Present(resource)))
                 if held.compareAndSet(snap, next) then Reservation.SharedExisting else reserve(key, isExclusive)
-            case _ => Reservation.Denied
+            // A shared acquisition holds the entry and is still opening its channel. This request is
+            // shared too, so the two are compatible and the contract grants both; the only reason an
+            // answer cannot be given yet is that the resource to share does not exist. Reported as
+            // pending rather than joined here: joining would hand back a claim on a lock that may
+            // still fail to be taken, leaving the joiner believing it holds cross-process exclusion
+            // it never had. The caller asks again once the installer has installed or aborted.
+            case Some(Entry(false, _, Absent)) if !isExclusive => Reservation.Pending
+            case _                                             => Reservation.Denied
         end match
     end reserve
 

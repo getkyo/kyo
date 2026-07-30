@@ -1794,7 +1794,7 @@ private[kyo] class OverlayFileSystem[S](
 
     def tryLock(path: Path, mode: Path.LockMode)(using
         Frame
-    ): Maybe[Path.Lock] < (S & Sync & Scope & Abort[FileReadException | FileLockException]) =
+    ): Maybe[Path.Lock] < (S & Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
         lower.tryLock(path, mode)
 
     def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait)(using
@@ -2482,7 +2482,7 @@ final private[kyo] class ForwardingLowerFileSystem extends FileSystem.Write[Path
         ArrowEffect.suspend(Tag[PathWrite], Path.Op.SyncDirectory(path))
     def tryLock(path: Path, mode: Path.LockMode)(using
         Frame
-    ): Maybe[Path.Lock] < (PathWrite & Sync & Scope & Abort[FileLockException]) =
+    ): Maybe[Path.Lock] < (PathWrite & Sync & Async & Scope & Abort[FileLockException]) =
         Path.suspendTryLock(path, mode)
 
     def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait)(using

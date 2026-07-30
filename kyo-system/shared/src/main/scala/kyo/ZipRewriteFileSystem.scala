@@ -449,7 +449,7 @@ final private[kyo] class ZipRewriteFileSystem(
         FileSystem.durableReplace[Any](this, target, bytes)
     def tryLock(path: Path, mode: Path.LockMode)(using
         Frame
-    ): Maybe[Path.Lock] < (Sync & Scope & Abort[FileReadException | FileLockException]) =
+    ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
         upper.tryLock(path, mode)
     def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait)(using
         Frame

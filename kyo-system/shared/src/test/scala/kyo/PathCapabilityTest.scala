@@ -16,7 +16,12 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     val mixed: String < PathWrite                              = somePath.read.map(s => otherPath.write(s).andThen(s))
     val readRuns: String < (Sync & Abort[FileSystemException]) = Path.runReadOnly(readOnly)
     val writeRuns: Unit < (Sync & Abort[FileSystemException])  = Path.run(write)
-    val tryLockRow: Maybe[Path.Lock] < (PathRead & Sync & Scope) =
+    // Async is in tryLock's row deliberately, and this ascription is what states it. It does not
+    // mean tryLock waits for a conflicting holder, which is still lock's job alone: it means the
+    // host backend may have to wait out the span in which a compatible same-process claim is being
+    // taken but is not yet shareable, since answering during it would report a conflict that does
+    // not exist.
+    val tryLockRow: Maybe[Path.Lock] < (PathRead & Sync & Async & Scope) =
         somePath.tryLock(Path.LockMode.Shared)
     val lockRow: Path.Lock < (PathRead & Async & Scope) =
         somePath.lock(Path.LockMode.Exclusive, Path.LockWait.UntilAvailable)
