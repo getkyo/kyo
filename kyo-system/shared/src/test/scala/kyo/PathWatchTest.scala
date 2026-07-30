@@ -57,12 +57,19 @@ class PathWatchTest extends FileSystemWatchTestSuite:
             PathWatch.polling(this, path, options)
     end FaultRead
 
+    /** One flag arms both faults, deliberately.
+      *
+      * The observation fault and the existence-check fault were separate flags, set as two effects
+      * with the watcher already open. A poll landing between them saw the pair half-applied: `stat`
+      * failing while `exists` still succeeded takes a different recovery path than the one the test
+      * asserts on. They are only ever armed together, so one flag removes the intermediate state
+      * rather than relying on nothing observing it.
+      */
     final private class RecoveryFaultRead(
         delegate: FileSystem.Write[Sync],
         child: Path,
-        failObservation: AtomicBoolean,
+        faults: AtomicBoolean,
         panicCheck: java.util.concurrent.atomic.AtomicBoolean,
-        failCheck: AtomicBoolean,
         panic: Throwable
     ) extends FileSystem.Read[Sync], FileSystem.Watch[Sync]:
         export delegate.{exists as _, stat as _, *}
@@ -71,7 +78,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
             if panicCheck.get() && path == child then
                 Abort.fail(FileIOException(path, FileSystemOperation.Inspect, new java.io.IOException("observation failed")))
             else
-                failObservation.get.map {
+                faults.get.map {
                     case true if path == child =>
                         Abort.fail(FileIOException(path, FileSystemOperation.Inspect, new java.io.IOException("observation failed")))
                     case _ => delegate.stat(path)
@@ -86,7 +93,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                 if panicCheck.get() then
                     Abort.panic[FileReadException](panic)
                 else
-                    failCheck.get.map {
+                    faults.get.map {
                         case true  => Abort.fail(FileIOException(path, FileSystemOperation.Exists, new java.io.IOException("check failed")))
                         case false => delegate.exists(path, followLinks)
                     }
@@ -657,14 +664,15 @@ class PathWatchTest extends FileSystemWatchTestSuite:
             FileSystem.inMemory.map { delegate =>
                 val root  = Path("recovery-failure-root")
                 val child = root / "child.txt"
-                AtomicBoolean.init(false).map { failObservation =>
+                AtomicBoolean.init(false).map { faults =>
                     val panicCheck = new java.util.concurrent.atomic.AtomicBoolean(false)
                     Kyo.unit.map { _ =>
-                        AtomicBoolean.init(false).map { failCheck =>
-                            val fs = new RecoveryFaultRead(delegate, child, failObservation, panicCheck, failCheck, new RuntimeException)
+                        Kyo.unit.map { _ =>
+                            val fs = new RecoveryFaultRead(delegate, child, faults, panicCheck, new RuntimeException)
                             delegate.write(child, "value", Path.WriteOptions()).andThen {
                                 fs.openWatcher(root, WatchOptions()).map { watcher =>
-                                    failObservation.set(true).andThen(failCheck.set(true)).andThen {
+                                    // Armed in one step, after the watcher's clean initial snapshot.
+                                    faults.set(true).andThen {
                                         Fiber.initUnscoped(Scope.run(Abort.run[FileWatchException](watcher.events.run))).map { fiber =>
                                             clock.advance(10.millis).andThen(fiber.get).map {
                                                 case Result.Failure(error: FileIOException) =>
@@ -689,9 +697,9 @@ class PathWatchTest extends FileSystemWatchTestSuite:
             val child      = root / "child.txt"
             val marker     = new RuntimeException("check panic")
             val panicCheck = new java.util.concurrent.atomic.AtomicBoolean(true)
-            AtomicBoolean.init(false).map { failObservation =>
-                AtomicBoolean.init(false).map { failCheck =>
-                    val fs = new RecoveryFaultRead(delegate, child, failObservation, panicCheck, failCheck, marker)
+            AtomicBoolean.init(false).map { faults =>
+                Kyo.unit.map { _ =>
+                    val fs = new RecoveryFaultRead(delegate, child, faults, panicCheck, marker)
                     delegate.write(child, "value", Path.WriteOptions()).andThen {
                         Abort.run[FileWatchException](fs.openWatcher(root, WatchOptions())).map {
                             case Result.Panic(error) => assert(error eq marker)
