@@ -12,6 +12,22 @@ val scala3Version    = "3.8.4"
 val scala3LTSVersion = "3.3.8"
 val scala213Version  = "2.13.18"
 
+// Scaladoc runs from a newer release than the compiler that produced the code. It reads TASTy, and
+// TASTy is backward compatible, so the tool version moves independently of `scala3Version`. This one
+// carries scala/scala3#25779, without which rendering a method signature can fail with a null
+// SignatureBuilder.content on Linux x86_64 and abort the publish.
+val scaladocVersion = "3.9.0-RC4"
+
+// The scaladoc release used for a module: the fixed one for the current series, the module's own
+// everywhere else. Only the current series can read what the fixed tool carries.
+val scaladocToolVersion = Def.setting {
+    if (scalaVersion.value == scala3Version) scaladocVersion else scalaVersion.value
+}
+
+// Holds the scaladoc tool and its dependencies. Hidden so it stays out of published poms, and
+// separate from the compile classpath so the tool's own Scala version never reaches user code.
+lazy val ScaladocTool = config("scaladocTool").hide
+
 val zioVersion       = "2.1.26"
 val catsVersion      = "3.7.0"
 val oxVersion        = "1.0.5"
@@ -27,7 +43,7 @@ val compilerOptions = Set(
     ScalacOptions.warnValueDiscard,
     ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
-    ScalacOptions.release("17"),
+    ScalacOptions.release("25"),
     ScalacOptions.advancedKindProjector
 )
 
@@ -55,13 +71,10 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 
-// Serialize scaladoc generation. Scala 3 dottydoc runs in-process (the `doc` task is not
-// forked) and is not safe to run concurrently within one sbt JVM: parallel per-module `doc`
-// runs intermittently corrupt shared compiler state and crash with a null
-// SignatureBuilder.content() NPE while rendering method signatures. That surfaced as flaky
-// `ci-release` failures on main (the per-module Native javadoc step). Every project tags its
-// `Compile / doc` with DocTag (see kyo-settings) and concurrentRestrictions caps it at 1, so
-// docs build one module at a time while compilation and tests stay parallel.
+// Cap concurrent scaladoc runs. Each one is a forked JVM holding a whole module's TASTy graph
+// (see `Compile / doc` in kyo-settings), so a handful in parallel is enough to exhaust a 16GB
+// runner. Every project tags its `Compile / doc` with DocTag and concurrentRestrictions caps it
+// at 1, so docs build one module at a time while compilation and tests stay parallel.
 lazy val DocTag = Tags.Tag("doc")
 
 // CI concurrency controls:
@@ -99,20 +112,19 @@ Global / concurrentRestrictions := {
         // concurrentRestrictions wholesale, so we restate it here. See
         // KyoDoctestPlugin.scala for the tag's role.
         Tags.limit(DoctestTag, 2),
-        // Serialize scaladoc: dottydoc shares mutable compiler state across concurrent in-JVM
-        // `doc` runs and NPEs intermittently under parallelism. See DocTag above.
+        // Serialize scaladoc: each run is a forked JVM sized by the module it documents.
+        // See DocTag above.
         Tags.limit(DocTag, 1)
     )
 }
 
-// java.lang.foreign (the Foreign Function and Memory API) is final in JDK 22, so modules that use it
-// cannot target Java 17. They override the project-wide `-release 17` (added by kyo-settings) with
-// `-release 25` (current LTS). Because `-release 25` requires a JDK >= 25 to compile, the whole build
-// requires JDK 25 (see the Global/onLoad guard and the CI setup action). Modules that do not use the
-// API keep `-release 17`.
-lazy val foreignRelease = Seq(
-    scalacOptions --= scalacOptionTokens(Set(ScalacOptions.release("17"))).value,
-    scalacOptions ++= scalacOptionTokens(Set(ScalacOptions.release("25"))).value
+// The build targets `-release 25` (JDK 25), set globally in compilerOptions. It is required, not a
+// choice: kyo-data and the other foreign modules call java.lang.foreign, final in JDK 22, so the
+// whole build needs a JDK >= 25 to compile (see the Global/onLoad guard and the CI setup action).
+// Modules that must hold their own API surface to JDK 17 override back with release17.
+lazy val release17 = Seq(
+    scalacOptions --= scalacOptionTokens(Set(ScalacOptions.release("25"))).value,
+    scalacOptions ++= scalacOptionTokens(Set(ScalacOptions.release("17"))).value
 )
 
 lazy val `kyo-settings` = Seq(
@@ -126,9 +138,62 @@ lazy val `kyo-settings` = Seq(
     // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
     // enforcement; compile-time formatting is a local convenience only.
     scalafmtOnCompile := !insideCI.value,
-    // Tag the doc task so concurrentRestrictions can serialize scaladoc across modules; dottydoc
-    // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
-    Compile / doc := (Compile / doc).tag(DocTag).value,
+    ivyConfigurations += ScaladocTool,
+    // The tool ships its own standard library, so it can only read a module whose library it agrees
+    // with. That holds for the current series and not for the LTS one, whose `scala.caps` differs
+    // and leaves two of it on the classpath, at which point resolving anything from `Predef` fails.
+    // The LTS modules therefore document with their own version and forgo the fix, which they have
+    // never needed: the crash it addresses appears in the current series.
+    libraryDependencies ++= (
+        if (!scalaVersion.value.startsWith("3")) Nil
+        else Seq("org.scala-lang" % "scaladoc_3" % scaladocToolVersion.value % ScaladocTool.name)
+    ),
+    // Render the API from TASTy with a forked scaladoc rather than sbt's in-process one. Forking is
+    // what bounds a tool crash to the module that provoked it: sbt's `doc` shares one JVM across
+    // every module, so a single failure there takes the rest of the platform with it.
+    Compile / doc := Def.task {
+        val out     = (Compile / doc / target).value
+        val log     = streams.value.log
+        val project = name.value
+        val srcs    = (Compile / doc / sources).value
+        val sep     = java.io.File.pathSeparator
+        val tool    = update.value.select(configurationFilter(ScaladocTool.name))
+        val deps    = (Compile / dependencyClasspath).value.map(_.data)
+        // `products` rather than `classDirectory`: it carries the same directories but is a task, so
+        // depending on it is what compiles this module before its TASTy is read.
+        val classes     = (Compile / products).value
+        val opts        = (Compile / doc / scalacOptions).value
+        val toolVersion = scaladocToolVersion.value
+        // This tool reads TASTy, which only the Scala 3 series emits, so the 2.13 and 2.12 modules
+        // (the kyo-scheduler family and the sbt plugins) have nothing it can read. They document
+        // empty, the same way modules that opt out via `Compile / doc / sources := Seq.empty` do:
+        // Maven Central requires a javadoc artifact to exist, not to have content.
+        if (srcs.isEmpty || !scalaVersion.value.startsWith("3")) {
+            IO.createDirectory(out)
+            out
+        } else {
+            IO.createDirectory(out)
+            log.info(s"Documenting $project with scaladoc $toolVersion")
+            val exit = Fork.java(
+                ForkOptions().withRunJVMOptions(Vector("-cp", tool.mkString(sep))),
+                Seq(
+                    "dotty.tools.scaladoc.Main",
+                    "-d",
+                    out.getAbsolutePath,
+                    "-project",
+                    project,
+                    "-classpath",
+                    deps.mkString(sep)
+                ) ++ opts ++ classes.map(_.getAbsolutePath)
+            )
+            if (exit != 0) sys.error(s"scaladoc failed for $project")
+            // Scaladoc exits 0 when handed nothing to read, so success alone does not mean a module
+            // was documented. Without this an empty api directory reaches the published javadoc jar.
+            if (PathFinder(out).allPaths.get.forall(!_.getName.endsWith(".html")))
+                sys.error(s"scaladoc produced no pages for $project")
+            out
+        }
+    }.tag(DocTag).value,
     scalacOptions += compilerOptionFailDiscard,
     // Treat compiler warnings as errors on the Scala 3 series. The Scala 2.13 cross-builds (the kyo-scheduler
     // family) carry a different, noisier warning set that is out of scope, so the flag is gated on Scala 3.
@@ -179,8 +244,8 @@ Global / onLoad := {
 
     val javaVersion  = System.getProperty("java.version")
     val majorVersion = javaVersion.split("\\.")(0).toInt
-    // The foreign-API modules (kyo-data, kyo-ffi, kyo-offheap, kyo-tasty) compile at -release 25, which
-    // requires a JDK >= 25; the rest of the build stays at -release 17. So the whole build needs JDK 25.
+    // The build compiles at -release 25, which requires a JDK >= 25 (the foreign modules call
+    // java.lang.foreign, final in JDK 22). So the whole build needs JDK 25.
     if (majorVersion < 25) {
         throw new IllegalStateException(
             s"Java version $javaVersion is not supported. Please use Java 25 (LTS) or higher."
@@ -529,6 +594,7 @@ lazy val `kyo-scheduler` =
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions := List(scala3LTSVersion, scala213Version)
@@ -555,6 +621,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     .dependsOn(`kyo-scheduler`)
     .settings(
         `kyo-settings`,
+        release17,
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions                      := List(scala3LTSVersion, scala213Version),
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
@@ -573,6 +640,7 @@ lazy val `kyo-scheduler-pekko` =
         .in(file("kyo-scheduler-pekko"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.6.0",
             libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.6.0"          % Test,
             libraryDependencies += "org.scalatest"    %%% "scalatest"     % scalaTestVersion % Test
@@ -589,6 +657,7 @@ lazy val `kyo-scheduler-finagle` =
         .in(file("kyo-scheduler-finagle"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             libraryDependencies ++= {
                 if (scalaVersion.value == scala213Version)
@@ -624,7 +693,6 @@ lazy val `kyo-data` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            foreignRelease,
             libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.6",
             libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.9" % Test
         )
@@ -833,7 +901,7 @@ lazy val `kyo-offheap` =
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
         .withKyoTest
-        .settings(`kyo-settings`, foreignRelease)
+        .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .jvmConfigure(_.settings(
             doctestScalacOptions := Seq("-release", "25")
@@ -849,7 +917,7 @@ lazy val `kyo-ffi` =
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
         .withKyoTest
-        .settings(`kyo-settings`, foreignRelease)
+        .settings(`kyo-settings`)
         .jvmSettings(
             mimaCheck(false),
             doctestScalacOptions := Seq("-release", "25"),
@@ -890,7 +958,6 @@ lazy val `kyo-ffi-it` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            foreignRelease,
             publish / skip := true,
             // In-repo bootstrap: hand the plugin the codegen project's own classpath so a cold
             // `kyo-ffi-it/test` builds the codegen first and generates the impls directly, with no
@@ -987,7 +1054,6 @@ lazy val `kyo-ffi-codegen` =
         .dependsOn(`kyo-ffi`.jvm % Test)
         .settings(
             `kyo-settings`,
-            foreignRelease,
             libraryDependencies += "org.scala-lang" %% "scala3-tasty-inspector" % scalaVersion.value,
             libraryDependencies += "org.scala-lang" %% "scala3-compiler"        % scalaVersion.value % Test,
             // kyo-test framework wiring (the JVM-only equivalent of .withKyoTest, which only applies to crossProjects).
@@ -1081,7 +1147,6 @@ lazy val `kyo-ffi-bench` =
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
-            foreignRelease,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
             run / fork := true
@@ -1142,7 +1207,6 @@ lazy val `kyo-tasty` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            foreignRelease,
             doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*")
         )
         .jvmSettings(
@@ -1219,6 +1283,7 @@ lazy val `kyo-stats-registry` =
         .in(file("kyo-stats-registry"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions := List(scala3LTSVersion, scala213Version)
@@ -1234,6 +1299,7 @@ lazy val `kyo-config` =
         .in(file("kyo-config"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions := List(scala3LTSVersion, scala213Version)
@@ -1791,7 +1857,6 @@ lazy val `kyo-aeron` =
         )
         .jvmSettings(
             mimaCheck(false),
-            foreignRelease,
             fork := true,
             // The four --add-opens this used to need were io.aeron's: its embedded Java MediaDriver
             // reaches into jdk.internal.misc, java.lang, java.nio, and sun.nio.ch, and Topic.run failed
@@ -2153,6 +2218,7 @@ lazy val `kyo-compat-future` =
         .in(file("kyo-compat/bindings/future"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             // Default compile under scala3Version so unidoc reads consistent TASTy with the rest of the build.
             // `+publish` still only emits LTS artifacts (crossScalaVersions + publish/skip guard).
@@ -2222,6 +2288,7 @@ lazy val `kyo-compat-zio` =
         .in(file("kyo-compat/bindings/zio"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala3LTSVersion),
             publish / skip                          := scalaVersion.value != scala3LTSVersion,
@@ -2256,6 +2323,7 @@ lazy val `kyo-compat-ox` =
         .in(file("kyo-compat/bindings/ox"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala3LTSVersion),
             publish / skip                          := scalaVersion.value != scala3LTSVersion,
@@ -2285,6 +2353,7 @@ lazy val `kyo-compat-twitter-future` =
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala3LTSVersion),
             publish / skip                          := scalaVersion.value != scala3LTSVersion,
@@ -2320,6 +2389,7 @@ lazy val `kyo-compat-tests` =
         .disablePlugins(KyoDoctestPlugin)
         .settings(
             `kyo-settings`,
+            release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
             scalaVersion                           := scala3LTSVersion,
             crossScalaVersions                     := List(scala3LTSVersion),

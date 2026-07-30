@@ -33,10 +33,11 @@ outside `kyo/internal/` is not an established pattern here.
 
 ### The module compiles at `-release 25`
 
-kyo-data is a foreign-API module: it and `kyo-ffi`, `kyo-offheap`, and `kyo-tasty` compile at
-`-release 25` [build.sbt:594, build.sbt:112-115] while the rest of the build stays at
-`-release 17` [build.sbt:172-173]. Java APIs newer than 17 are available in this module and are
-not available to most callers of it.
+kyo-data is a foreign-API module: its JVM `UnsafeBuffer` is backed by `java.lang.foreign`
+(Panama), final in JDK 22. Because a foreign-API module cannot target Java 17, the whole build
+compiles at `-release 25` by default [build.sbt:46]. A few standalone modules that reach no
+foreign module (the `kyo-scheduler` cluster and the `kyo-compat` bindings) override back to
+`-release 17` with `release17` [build.sbt:125-127]; kyo-data is not one of them.
 
 ## The headline invariant: a dual representation that switches at 8 entries
 

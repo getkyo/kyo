@@ -61,9 +61,11 @@ object Topic:
         Abort.run[FileFsException](Path.tempDir("kyo-aeron-embedded")).map {
             case Result.Success(dir) =>
                 AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
-                    // Teardown order: close the client and driver before deleting the dir (the driver
-                    // writes into it until its conductor threads are joined). Nested finalizers so the
-                    // dir is removed even when the close fails.
+                    // The driver deletes its own directory on close, once its conductor has stopped.
+                    // This removal is the backstop for the paths that leaves behind: a driver that
+                    // failed to launch, or one whose close did not complete. It is expected to find
+                    // nothing, and a finalizer that raises would replace the result of the body it
+                    // guards, so its outcome is dropped rather than reported.
                     Sync.ensure(Abort.run[FileFsException](dir.removeAll).unit) {
                         Sync.ensure(Sync.Unsafe.defer(runtime.close())) {
                             runWith(runtime.transport)(v)

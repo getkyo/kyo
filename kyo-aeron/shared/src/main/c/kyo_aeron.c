@@ -388,9 +388,14 @@ void* kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_
         aeron_driver_context_set_client_liveness_timeout_ns(ctx, (uint64_t)client_liveness_ns);
     if (publication_unblock_ns > 0)
         aeron_driver_context_set_publication_unblock_timeout_ns(ctx, (uint64_t)publication_unblock_ns);
-    /* Delete the Aeron directory on start so successive embedded() calls initialize from a
-     * clean state (no stale CnC file). dir_delete_on_shutdown is deliberately NOT set. */
+    /* Delete the Aeron directory on start so successive driver_start() calls initialize from a
+     * clean state (no stale CnC file), and on shutdown so the driver removes the directory it owns
+     * once its conductor has stopped. The driver is the only party that knows when nothing will
+     * write into the directory again, so deleting it from the outside races whatever the conductor
+     * has yet to flush; the Scala finalizer's removeAll stays only as a backstop for a driver that
+     * failed to launch or whose close did not complete. */
     aeron_driver_context_set_dir_delete_on_start(ctx, true);
+    aeron_driver_context_set_dir_delete_on_shutdown(ctx, true);
     aeron_driver_t* driver = NULL;
     if (aeron_driver_init(&driver, ctx) < 0) {
         aeron_driver_context_close(ctx);
