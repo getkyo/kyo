@@ -784,7 +784,10 @@ object UI:
               * synchronously for the navigation keys so the browser does not ALSO scroll the page; the keydown is
               * still forwarded, so this element's own `onKeyDown` (e.g. moving an option highlight) runs unchanged.
               *
-              * Vertical keys (`ArrowUp`/`ArrowDown`/`PageUp`/`PageDown`) are always suppressed. Horizontal/edge keys
+              * Vertical keys (`ArrowUp`/`ArrowDown`/`PageUp`/`PageDown`) are suppressed unless the focused target
+              * consumes them itself (`textarea`, `select`, contenteditable — there the browser default is caret line
+              * movement or an option change, not a page scroll). A single-line input stays suppressed for vertical keys:
+              * that is the combobox case where `ArrowDown` drives the listbox highlight. Horizontal/edge keys
               * (`ArrowLeft`/`ArrowRight`/`Home`/`End`) are suppressed only when the focused target is NOT a text-editable
               * field, so caret movement inside a filter input keeps working.
               *

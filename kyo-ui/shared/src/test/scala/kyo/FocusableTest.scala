@@ -715,4 +715,18 @@ class FocusableTest extends UITest:
         }
     }
 
+    "preventScrollKeys keeps caret line movement in a textarea inside the region" in {
+        // A textarea consumes vertical keys itself (caret line movement), so the region must not suppress them there.
+        withUI(UI.div.preventScrollKeys(
+            UI.textarea.id("ta")
+        )) {
+            for
+                _   <- Browser.fill(Selector.id("ta"), "first\nsecond")
+                _   <- Browser.evalDiscard("var t=document.getElementById('ta');t.focus();t.setSelectionRange(0,0)")
+                _   <- Browser.press(Selector.id("ta"), Key.ArrowDown)
+                pos <- Browser.evalInt("document.getElementById('ta').selectionStart")
+            yield assert(pos >= 6) // caret left line 1 ("first\n" is 6 chars), so ArrowDown was not preventDefault-ed
+        }
+    }
+
 end FocusableTest

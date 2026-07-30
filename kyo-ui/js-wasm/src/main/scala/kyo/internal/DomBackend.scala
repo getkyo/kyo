@@ -762,17 +762,18 @@ private[kyo] object DomBackend:
         end if
 
     /** True when `key` is a page-scrolling navigation key a `preventScrollKeys` region should suppress on `target`.
-      * Vertical keys are always suppressed; horizontal/edge keys only when `target` is not text-editable, so a filter
-      * input keeps caret movement.
+      * Vertical keys are exempt when `target` consumes them itself (caret line movement, option change) — there the
+      * browser default is not a page scroll, so there is nothing to suppress. A single-line input stays suppressed for
+      * vertical keys on purpose: that is the combobox case where `ArrowDown` drives the listbox highlight.
+      * Horizontal/edge keys are exempt for any text-editable target, so a filter input keeps caret movement.
       */
     private def scrollKeyPrevented(key: String, target: dom.Element): Boolean =
-        def editable =
-            val tag = target.tagName
-            tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT" ||
-            target.asInstanceOf[scalajs.js.Dynamic].isContentEditable.asInstanceOf[Boolean]
-        end editable
+        val tag              = target.tagName
+        def contentEditable  = target.asInstanceOf[scalajs.js.Dynamic].isContentEditable.asInstanceOf[Boolean]
+        def editable         = tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT" || contentEditable
+        def verticalConsumer = tag == "TEXTAREA" || tag == "SELECT" || contentEditable
         key match
-            case "ArrowUp" | "ArrowDown" | "PageUp" | "PageDown" => true
+            case "ArrowUp" | "ArrowDown" | "PageUp" | "PageDown" => !verticalConsumer
             case "ArrowLeft" | "ArrowRight" | "Home" | "End"     => !editable
             case _                                               => false
         end match
