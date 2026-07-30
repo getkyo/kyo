@@ -2942,16 +2942,29 @@ lazy val `native-settings-base` = Seq(
 )
 
 lazy val `native-settings` = `native-settings-base` ++ Seq(
-    // Drop this module's LLVM intermediates the moment its test binary links. Scala Native keeps
-    // <target>/native-test/generated (IR plus objects: 526MB of kyo-core's 665MB workspace) so a LATER
-    // invocation can relink incrementally. CI links each module exactly once, and the ~13GB the ~40
-    // modules of a Native row accumulate is what carries the row's peak past the free disk of a runner
-    // image that started small, killing the runner mid-link with no log at all. Deleting them forces no
-    // relink: sbt caches the nativeLink result and the binary itself is untouched. Reads the environment
-    // rather than insideCI because a value transform sees no other settings; a local build keeps its
-    // intermediates for the next incremental link.
+    // Drop this module's Scala Native work directory the moment its test binary links. Scala Native
+    // keeps <target>/native-test (IR, objects, unpacked native libraries: 526MB of kyo-core's 665MB
+    // workspace) so a LATER invocation can relink incrementally, and the ~13GB the ~40 modules of a
+    // Native row accumulate is what carries the row's peak past the free disk of a runner image that
+    // started small, killing the runner mid-link with no log at all.
+    //
+    // Everything except `build-checksum` goes. That file and the linked binary (which sits one level
+    // up, outside the work directory) are the entire input to Scala Native's "Build skipped" check, so
+    // a repeat link still short-circuits; dropping the rest wholesale is what keeps the directory
+    // self-consistent. Deleting only `generated/` did not: it left `package2hash`, the incremental
+    // codegen state naming those IR files, behind. A later link that missed the checksum (CI relinks a
+    // module whenever the test phase recompiles one of its dependencies) then trusted that state,
+    // skipped regenerating every unit whose NIR was unchanged, and handed clang object paths for files
+    // nobody had written. Codegen and compilation both reported success and the link died on missing
+    // .ll.o with no diagnostic. See issue #1821.
+    //
+    // Reads the environment rather than insideCI because a value transform sees no other settings; a
+    // local build keeps its intermediates for the next incremental link.
     Test / nativeLink ~= { binary =>
-        if (sys.env.contains("CI")) IO.delete(binary.getParentFile / "native-test" / "generated")
+        if (sys.env.contains("CI")) {
+            val workDir = binary.getParentFile / "native-test"
+            IO.listFiles(workDir).filterNot(_.getName == "build-checksum").foreach(IO.delete)
+        }
         binary
     }
 )
