@@ -13,6 +13,23 @@ import scala.jdk.CollectionConverters.*
 
 final private[kyo] class JvmProcessUnsafe(private[internal] val jp: JProcess) extends Process.Unsafe:
 
+    // Threads feeding this process's stdin. Retained so the feed can be stopped with the process
+    // rather than running on after it, which is what an unheld thread does.
+    private val inputFeeds = new java.util.concurrent.ConcurrentLinkedQueue[Thread]()
+
+    private[internal] def registerInputFeed(t: Thread): Unit = discard(inputFeeds.add(t))
+
+    /** Stops every stdin feed. Idempotent, and safe to call after the process has already exited:
+      * a feed can still be parked reading its source even when the child is gone.
+      */
+    override def stopInputFeeds()(using AllowUnsafe): Unit =
+        var t = inputFeeds.poll()
+        while t != null do
+            if t.isAlive() then t.interrupt()
+            t = inputFeeds.poll()
+        end while
+    end stopInputFeeds
+
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[ExitCode, Any] =
         val p = Promise.Unsafe.init[ExitCode, Any]()
         discard(jp.onExit().whenComplete { (exitedProcess, error) =>
@@ -259,32 +276,41 @@ final private[kyo] class JvmCommandUnsafe(
         end match
     end toJProcessBuilder
 
-    /** Feeds an InputStream into a process's stdin on a daemon thread, closing when done. */
-    private def feedInputStream(is: InputStream, processStdin: OutputStream): Unit =
+    /** Feeds an InputStream into a process's stdin on a daemon thread, closing when done.
+      *
+      * Returns the thread so the caller can retain it and stop the feed. A feed that nothing holds
+      * cannot be cancelled: interrupting the fiber that spawned the process would leave it reading
+      * its source and writing to the child for as long as the source produced bytes.
+      */
+    private def feedInputStream(is: InputStream, processStdin: OutputStream): Thread =
         val t = new Thread(() =>
             try
                 val buf = new Array[Byte](8192)
                 var n   = is.read(buf)
-                while n >= 0 do
+                while n >= 0 && !Thread.currentThread().isInterrupted() do
                     processStdin.write(buf, 0, n)
                     n = is.read(buf)
                 processStdin.close()
             catch
-                case _: IOException => ()
+                // An interrupt closes the streams underneath the read, so the resulting IOException
+                // is the ordinary way this thread stops and is not an error to report.
+                case _: IOException          => ()
+                case _: InterruptedException => ()
             finally
                 try is.close()
                 catch case _: IOException => ()
         )
         t.setDaemon(true)
         t.start()
+        t
     end feedInputStream
 
     /** Drains a Stream[Byte, Sync] into a process's stdin on a daemon thread, closing when done.
       *
       * The stream is evaluated eagerly (it is Sync-only), then the bytes are written in a background thread so that the caller (spawn) is
-      * not blocked by the write.
+      * not blocked by the write. Returns the thread for the same reason as [[feedInputStream]].
       */
-    private def feedStream(stream: Stream[Byte, Sync], processStdin: OutputStream)(using AllowUnsafe, Frame): Unit =
+    private def feedStream(stream: Stream[Byte, Sync], processStdin: OutputStream)(using AllowUnsafe, Frame): Thread =
         val chunk = Abort.run[Nothing](Sync.Unsafe.run(stream.run)).eval.getOrThrow
         val bytes = chunk.toArray
         val t = new Thread(() =>
@@ -292,10 +318,12 @@ final private[kyo] class JvmCommandUnsafe(
                 processStdin.write(bytes)
                 processStdin.close()
             catch
-                case _: IOException => ()
+                case _: IOException          => ()
+                case _: InterruptedException => ()
         )
         t.setDaemon(true)
         t.start()
+        t
     end feedStream
 
     /** Reads all bytes from an InputStream and closes it. */
@@ -372,12 +400,13 @@ final private[kyo] class JvmCommandUnsafe(
                                 val proc = new JvmProcessUnsafe(jp)
                                 // Feed stdin if needed
                                 stdinStream match
-                                    case Present(s) => feedStream(s, jp.getOutputStream)
+                                    case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
                                     case Absent =>
                                         stdinSource match
-                                            case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
-                                            case Process.Input.Inherit        => ()
-                                            case Process.Input.Pipe           => ()
+                                            case Process.Input.FromStream(is) =>
+                                                proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
+                                            case Process.Input.Inherit => ()
+                                            case Process.Input.Pipe    => ()
                                 end match
                                 Result.succeed(proc)
                             catch
@@ -417,12 +446,13 @@ final private[kyo] class JvmCommandUnsafe(
                         val jp   = pb.start()
                         val proc = new JvmProcessUnsafe(jp)
                         firstCmd.stdinStream match
-                            case Present(s) => feedStream(s, jp.getOutputStream)
+                            case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
                             case Absent =>
                                 firstCmd.stdinSource match
-                                    case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
-                                    case Process.Input.Inherit        => ()
-                                    case Process.Input.Pipe           => ()
+                                    case Process.Input.FromStream(is) =>
+                                        proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
+                                    case Process.Input.Inherit => ()
+                                    case Process.Input.Pipe    => ()
                                 end match
                         end match
                         Result.succeed(proc)
