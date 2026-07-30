@@ -82,7 +82,7 @@ runs:
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
-      run: bash scripts/apt-install.sh podman uidmap
+      run: bash scripts/apt-install.sh podman uidmap runc
 
     - name: Start podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
@@ -99,6 +99,12 @@ runs:
           exit 1
         fi
         export XDG_RUNTIME_DIR="/run/user/$uid"
+        # Force the runc OCI runtime. The crun shipped on the runners fails to start containers with
+        # "crun: unknown version specified" (an OCI config version it rejects), which fails every
+        # kyo-pod container integration test. runc accepts the config podman writes, so the service and
+        # every container it starts use runc instead.
+        mkdir -p "$HOME/.config/containers"
+        printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the
