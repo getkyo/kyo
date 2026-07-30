@@ -19,4 +19,12 @@ object SchemaDerivedMacro:
     def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
         FocusMacro.derivedImpl[A]
 
+    def derivedViaImpl[A: Type, R: Type](using
+        Quotes
+    )(
+        construct: Expr[Any],
+        constructed: Expr[Schema.Constructed[R, A]]
+    ): Expr[Schema[A]] =
+        FocusMacro.derivedViaImpl[A, R](construct, constructed)
+
 end SchemaDerivedMacro

@@ -2,8 +2,10 @@ package kyo.internal
 
 import kyo.Codec.Reader
 import kyo.Codec.Writer
+import kyo.ConstructorRejectedException
 import kyo.Frame
 import kyo.Present
+import kyo.Result
 import kyo.Schema
 import scala.compiletime.erasedValue
 
@@ -52,6 +54,25 @@ inline def readField[A](inline s: Schema[A], r: Reader): A =
         case _: Byte    => r.byte().asInstanceOf[A]
         case _: Char    => r.char().asInstanceOf[A]
         case _          => s.serializeRead(r)
+
+// Smart-constructor fold for `Schema.derivedVia`-generated decoders.
+//
+// The generated read body decodes every field exactly as a plain product does, then hands the
+// constructor's outcome here instead of calling the primary constructor. A rejection becomes a
+// `ConstructorRejectedException`, which is a `DecodeException`, so it surfaces through
+// `Schema.decode`'s `Result.catching[DecodeException]` as a `Result.Failure` like any other decode
+// failure instead of escaping as a raw throw. The error branch is matched before unwrapping, and the
+// success branch goes through `getOrThrow` so a success value that is itself a `Result.Error` (kyo
+// nests those as `SuccessError`) unnests correctly rather than being read as a rejection.
+def constructedOrThrow[A](outcome: Result[Any, A], typeName: String)(using Frame): A =
+    outcome match
+        case error: Result.Error[Any] @unchecked =>
+            val rejection: String | Throwable = error.failureOrPanic match
+                case throwable: Throwable => throwable
+                case other                => String.valueOf(other)
+            throw ConstructorRejectedException(Seq.empty, typeName, rejection)
+        case success =>
+            success.asInstanceOf[Result[Nothing, A]].getOrThrow
 
 inline def absentDefaultSeed[A](inline s: Schema[A]): A =
     s.absentDefaultValue match
