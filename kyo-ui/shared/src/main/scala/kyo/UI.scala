@@ -78,17 +78,21 @@ object UI:
         def foreach[C <: UI](render: A => C)(using Frame): Foreach[A, C] = Foreach[A, C](signal, Absent, (_, a) => render(a))
 
         /** Like [[foreach]] but `render` also receives each element's index. */
-        def foreachIndexed[C <: UI](render: (Int, A) => C)(using Frame): Foreach[A, C] = Foreach[A, C](signal, Absent, render)
+        def foreachIndexed[C <: UI](render: (Int, A) => C)(using Frame): Foreach[A, C] =
+            Foreach[A, C](signal, Absent, render, indexed = true)
 
         /** Renders one child per element, identifying elements by `key` so reorders and insertions reuse the matching existing nodes
-          * instead of re-rendering positionally.
+          * instead of re-rendering positionally. Rows whose key persists across list changes keep their live subscriptions and are
+          * neither re-rendered nor re-walked while their item value is unchanged (value equality).
           */
         def foreachKeyed[C <: UI](key: A => String)(render: A => C)(using Frame): Foreach[A, C] =
             Foreach[A, C](signal, Present(key), (_, a) => render(a))
 
-        /** Keyed [[foreachKeyed]] whose `render` also receives each element's index. */
+        /** Keyed [[foreachKeyed]] whose `render` also receives each element's index. Because the index is baked into each row's
+          * content, rows are re-rendered on every list change (no cross-emission row reuse).
+          */
         def foreachKeyedIndexed[C <: UI](key: A => String)(render: (Int, A) => C)(using Frame): Foreach[A, C] =
-            Foreach[A, C](signal, Present(key), render)
+            Foreach[A, C](signal, Present(key), render, indexed = true)
     end extension
 
     // ---- Factory constructors ----
@@ -1412,8 +1416,14 @@ object UI:
         /** A keyed list driven by a `Signal[Chunk[A]]`: renders one child per element, reconciling by `key` when present. The type
           * parameter `C` is a phantom bound that records the content type at the construction site; it erases to `UI` at runtime.
           */
-        case class Foreach[A, C <: UI](signal: Signal[Chunk[A]], key: Maybe[A => String], render: (Int, A) => UI)(using val frame: Frame)
-            extends UI:
+        case class Foreach[A, C <: UI](
+            signal: Signal[Chunk[A]],
+            key: Maybe[A => String],
+            render: (Int, A) => UI,
+            // True for the *Indexed variants: the index is baked into row content, so a row cannot be reused
+            // across emissions even when its key and item are unchanged.
+            indexed: Boolean = false
+        )(using val frame: Frame) extends UI:
             /** Apply a polymorphic continuation with the typed members of this Foreach.
               *
               * Callers that match on `Foreach[?, ?]` (existential) lose the type parameters. This method re-introduces A in a single
