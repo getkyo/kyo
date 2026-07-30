@@ -34,6 +34,10 @@ object Index:
         Sync.defer(Live(file)).now
     }
 
+    // This example drives a memory-mapped ledger through sun.misc.Unsafe, whose memory-access
+    // methods are deprecated under JDK 25. The modern equivalent is java.lang.foreign (Panama),
+    // as in kyo-data's UnsafeBuffer; the raw-Unsafe form is kept here as the illustrative demo.
+    @scala.annotation.nowarn("cat=deprecation")
     final class Live(file: FileChannel) extends Index:
         private val descSize           = 10
         private val transactionSize    = 32

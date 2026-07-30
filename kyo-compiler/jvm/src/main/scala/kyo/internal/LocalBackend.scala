@@ -1,6 +1,5 @@
 package kyo.internal
 
-import Compiler.*
 import dotty.tools.pc.ScalaPresentationCompiler
 import java.util.concurrent.CompletableFuture
 import kyo.*

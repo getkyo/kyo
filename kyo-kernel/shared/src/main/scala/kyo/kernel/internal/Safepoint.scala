@@ -29,7 +29,7 @@ final class Safepoint private () extends Trace.Owner with Serializable:
 
     private[kernel] def enter(frame: Frame, value: Any): Boolean =
         val state    = this.state
-        val threadId = Thread.currentThread().getId()
+        val threadId = Thread.currentThread().threadId()
         val proceed =
             state.depth <= maxStackDepth &&
                 state.threadId == threadId &&
@@ -79,7 +79,7 @@ object Safepoint:
         require(maxStackDepth <= 65536)
 
         inline def init(): State =
-            (Thread.currentThread().getId() << 17) & ThreadIdMask
+            (Thread.currentThread().threadId() << 17) & ThreadIdMask
 
         extension (state: State)
             def depth: Int              = (state & DepthMask).toInt
