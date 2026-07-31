@@ -515,4 +515,181 @@ class FocusableTest extends UITest:
         }
     }
 
+    // focusAuto/focusRestore over the server-push transport in real Chrome. The DomBackend SPA mirror has
+    // no browser harness (Node test env has no DOM); it is kept in sync by construction.
+    "focusAuto and focusRestore emit their data attributes; absent by default and when set to false" in {
+        val app: UI < Async = UI.div(
+            UI.div("seed").tabIndex(-1).focusAuto(true).focusRestore(true).id("seeded"),
+            UI.div("off").tabIndex(-1).focusAuto(false).focusRestore(false).id("off"),
+            UI.div("plain").id("plain")
+        )
+        withUI(app) {
+            for
+                _ <- Browser.assertAttribute(Selector.id("seeded"), "data-kyo-focus-auto", "1")
+                _ <- Browser.assertAttribute(Selector.id("seeded"), "data-kyo-focus-restore", "1")
+                // An explicit false emits nothing, so it cannot be seeded either.
+                _ <- Browser.assertNoAttribute(Selector.id("off"), "data-kyo-focus-auto")
+                _ <- Browser.assertNoAttribute(Selector.id("off"), "data-kyo-focus-restore")
+                _ <- Browser.assertNoAttribute(Selector.id("plain"), "data-kyo-focus-auto")
+                _ <- Browser.assertNoAttribute(Selector.id("plain"), "data-kyo-focus-restore")
+                _ <- Browser.assertFocused(Selector.id("seeded"))
+                _ <- Browser.assertNotFocused(Selector.id("off"))
+            yield ()
+        }
+    }
+
+    "opening a panel seeds focus into the focus-auto element (winning over restore-to-trigger)" in {
+        val app: UI < Async =
+            for showPanel <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("Open").id("trigger").onClick(showPanel.set(true)),
+                UI.when(showPanel)(
+                    UI.div(
+                        UI.button("Inside").id("inside")
+                    ).id("panel").tabIndex(-1).focusAuto(true)
+                )
+            )
+        withUI(app) {
+            for
+                // The trigger is focused when the panel appears; without seeding, focus restore would keep it there.
+                _ <- Browser.click(Selector.id("trigger"))
+                _ <- Browser.assertVisible(Selector.id("panel"))
+                _ <- Browser.assertFocused(Selector.id("panel"))
+            yield ()
+        }
+    }
+
+    "a re-render of an already-open focus-auto element does not steal the user's focus" in {
+        // The focus-auto panel is seeded on initial load. Bumping re-renders the whole region with
+        // identical paths: the panel must NOT re-seed, and focus restore must keep focus on the inner button.
+        val app: UI < Async =
+            for n <- Signal.initRef(0)
+            yield UI.div(
+                n.map(i =>
+                    UI.div(
+                        UI.button(s"Inner").id("inner"),
+                        UI.div("seed").tabIndex(-1).focusAuto(true).id("panel"),
+                        UI.span(s"n=$i").id("status")
+                    )
+                ),
+                UI.button("Bump").id("bump").onClick(n.getAndUpdate(_ + 1).unit)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertFocused(Selector.id("panel"))
+                _ <- Browser.click(Selector.id("inner"))
+                _ <- Browser.assertFocused(Selector.id("inner"))
+                // Synthetic JS click so the click itself does not move focus; the region re-renders with the same paths.
+                _ <- Browser.evalDiscard("document.getElementById('bump').click()")
+                _ <- Browser.assertText(Selector.id("status"), "n=1")
+                // No re-seed: focus stays on the inner button.
+                _ <- Browser.assertFocused(Selector.id("inner"))
+                _ <- Browser.assertNotFocused(Selector.id("panel"))
+            yield ()
+        }
+    }
+
+    "closing a focus-restore panel returns focus to the previously focused element" in {
+        val app: UI < Async =
+            for showPanel <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("Open").id("trigger").onClick(showPanel.set(true)),
+                UI.when(showPanel)(
+                    UI.div(
+                        UI.button("Close").id("close").onClick(showPanel.set(false))
+                    ).id("panel").tabIndex(-1).focusAuto(true).focusRestore(true)
+                )
+            )
+        withUI(app) {
+            for
+                // Opening seeds focus into the panel and records the trigger as the return target.
+                _ <- Browser.click(Selector.id("trigger"))
+                _ <- Browser.assertFocused(Selector.id("panel"))
+                // Closing removes the seeded element, so the sweep restores focus to the trigger.
+                _ <- Browser.click(Selector.id("close"))
+                _ <- Browser.assertNotExists(Selector.id("panel"))
+                _ <- Browser.assertFocused(Selector.id("trigger"))
+            yield ()
+        }
+    }
+
+    "an older panel closing does not pull focus from a newer open one, nor override its return target" in {
+        // Two independent focus-restore panels. Closing the older one while the newer is still open must not
+        // return focus to the older trigger (that would yank focus out of the open panel), and its stale entry
+        // must not fire later and override the newer panel's own return.
+        val app: UI < Async =
+            for
+                showA <- Signal.initRef(false)
+                showB <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("Open A").id("triggerA").onClick(showA.set(true)),
+                UI.button("Open B").id("triggerB").onClick(showB.set(true)),
+                UI.when(showA)(
+                    UI.div(
+                        UI.button("Close A").id("closeA").onClick(showA.set(false))
+                    ).id("panelA").tabIndex(-1).focusAuto(true).focusRestore(true)
+                ),
+                UI.when(showB)(
+                    UI.div(
+                        UI.button("Close B").id("closeB").onClick(showB.set(false))
+                    ).id("panelB").tabIndex(-1).focusAuto(true).focusRestore(true)
+                )
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("triggerA"))
+                _ <- Browser.assertFocused(Selector.id("panelA"))
+                _ <- Browser.click(Selector.id("triggerB"))
+                _ <- Browser.assertFocused(Selector.id("panelB"))
+                // Synthetic JS click so closing A does not move focus by itself.
+                _ <- Browser.evalDiscard("document.getElementById('closeA').click()")
+                _ <- Browser.assertNotExists(Selector.id("panelA"))
+                // A's entry is stale but B is still seeded: the sweep stops on B, focus stays inside it.
+                _ <- Browser.assertFocused(Selector.id("panelB"))
+                _ <- Browser.evalDiscard("document.getElementById('closeB').click()")
+                _ <- Browser.assertNotExists(Selector.id("panelB"))
+                // Exactly one return, and it is B's trigger: A's stale entry unwinds without restoring.
+                _ <- Browser.assertFocused(Selector.id("triggerB"))
+            yield ()
+        }
+    }
+
+    "a focus-restore panel whose return target left the document unwinds without focusing anything" in {
+        // The trigger is removed while the panel is open, so the recorded return path no longer resolves.
+        // The entry must be dropped silently: no focus move, and the session keeps processing events.
+        val app: UI < Async =
+            for
+                showPanel   <- Signal.initRef(false)
+                showTrigger <- Signal.initRef(true)
+                bumps       <- Signal.initRef(0)
+            yield UI.div(
+                UI.when(showTrigger)(UI.button("Open").id("trigger").onClick(showPanel.set(true))),
+                UI.button("Drop").id("drop").onClick(showTrigger.set(false)),
+                UI.button("Bump").id("bump").onClick(bumps.getAndUpdate(_ + 1).unit),
+                bumps.map(n => UI.span(s"bumps=$n").id("bumps")),
+                UI.when(showPanel)(
+                    UI.div(
+                        UI.button("Close").id("close").onClick(showPanel.set(false))
+                    ).id("panel").tabIndex(-1).focusAuto(true).focusRestore(true)
+                )
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("trigger"))
+                _ <- Browser.assertFocused(Selector.id("panel"))
+                // Synthetic clicks so neither removing the trigger nor closing moves focus by itself.
+                _ <- Browser.evalDiscard("document.getElementById('drop').click()")
+                _ <- Browser.assertNotExists(Selector.id("trigger"))
+                _ <- Browser.evalDiscard("document.getElementById('close').click()")
+                _ <- Browser.assertNotExists(Selector.id("panel"))
+                // Nothing was focused in place of the vanished trigger.
+                _ <- Browser.assertNotFocused(Selector.id("drop"))
+                _ <- Browser.assertNotFocused(Selector.id("bump"))
+                // The sweep did not throw: the client still applies patches.
+                _ <- Browser.evalDiscard("document.getElementById('bump').click()")
+                _ <- Browser.assertText(Selector.id("bumps"), "bumps=1")
+            yield ()
+        }
+    }
+
 end FocusableTest

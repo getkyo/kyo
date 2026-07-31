@@ -61,6 +61,7 @@ Every `Element` carries an `Attrs` record. The chainable setters are:
 - `.hidden(v: Boolean)`: hide the element. The `Signal[Boolean]` overload exists but lives under "Reactivity" below because it changes the return type.
 - `.style(v: Style)` / `.style(f: Style.type => Style)`: attach styling, see [Styles](#styles).
 - `.tabIndex(v)`, `.focusTrap(v)`, `.focusGroup(id)`: focus order and grouping for keyboard navigation.
+- `.focusAuto(v: Boolean)`, `.focusRestore(v: Boolean)`: declarative focus management. `focusAuto` calls `.focus()` once when a re-render newly inserts the element (like native `autofocus`, but re-render-aware: an echo re-render of an already-visible element never re-steals focus); `focusRestore` returns focus to the element focused before seeding when the seeded element leaves the document (the modal-returns-focus-to-its-trigger pattern). Pair with `tabIndex(-1)` for elements that are not natively focusable.
 
 ```scala
 import UI.*
