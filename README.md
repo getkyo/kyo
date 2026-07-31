@@ -295,6 +295,7 @@ The vertical an application developer assembles: HTTP services and clients, deri
 | [kyo-flow](kyo-flow/README.md)               | ✅  | ✅  | ✅     | ✅   | Durable workflow engine (Temporal/Cadence/ZIO-Flow space); value-replay execution, auto-generated REST     |
 | [kyo-ui](kyo-ui/README.md)                   | ✅  | ✅  | ✅     | ✅   | Web UIs as pure values: Scala.js DOM app, server HTML-over-SSE or SSR stream with first-class reactivity   |
 | [kyo-markdown](kyo-markdown/README.md)       | ✅  | ✅  | ✅     | ✅   | Markdown to a kyo-ui article tree plus a heading outline; pure, total, no third-party Markdown dependency  |
+| [kyo-i18n](kyo-i18n/README.md)               | ✅  | ✅  | ✅     | ✅   | Translate from `.ftl` bundles; active locale as a `Signal` drives reactive `t` leaves; pure Fluent subset  |
 | [kyo-ai](kyo-ai/README.md)                   | ✅  | ✅  | ✅     | ✅   | Typed LLM programs: prompts, tools, thoughts, agents, streaming, provider backends                         |
 | [kyo-caliban](kyo-caliban/README.md)         | ✅  |     |        |      | Caliban GraphQL mounted on kyo-http: typed Kyo effects in resolvers, WebSocket subscriptions               |
 

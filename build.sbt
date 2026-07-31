@@ -375,6 +375,7 @@ lazy val kyoJVM: Project = project
         `kyo-slack`.jvm,
         `kyo-ui`.jvm,
         `kyo-markdown`.jvm,
+        `kyo-i18n`.jvm,
         `kyo-case-app`.jvm,
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
@@ -449,6 +450,7 @@ lazy val kyoJS = project
         `kyo-slack`.js,
         `kyo-ui`.js,
         `kyo-markdown`.js,
+        `kyo-i18n`.js,
         `kyo-website`.js,
         `kyo-website-bundle`.js,
         `kyo-pod`.js,
@@ -515,6 +517,7 @@ lazy val kyoNative = project
         `kyo-slack`.native,
         `kyo-ui`.native,
         `kyo-markdown`.native,
+        `kyo-i18n`.native,
         `kyo-pod`.native,
         `kyo-compat-future`.native,
         `kyo-compat-kyo`.native,
@@ -579,6 +582,7 @@ lazy val kyoWasm = project
         `kyo-slack`.wasm,
         `kyo-ui`.wasm,
         `kyo-markdown`.wasm,
+        `kyo-i18n`.wasm,
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
@@ -2625,6 +2629,18 @@ lazy val `kyo-markdown` =
             // downstream test link must match its module kind.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-i18n` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-i18n"))
+        .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-ui` =
