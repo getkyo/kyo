@@ -213,10 +213,10 @@ private[kyo] object HtmlRenderer:
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
         ta.value match
-            case Present(Bound.Const(s)) => w(sb, esc(s))
+            case Present(Bound.Const(s)) => w(sb, esc(masked(ta.inputMask, s)))
             case Present(Bound.Ref(ref)) =>
                 for str <- ref.get
-                yield w(sb, esc(str))
+                yield w(sb, esc(masked(ta.inputMask, str)))
             case _ => ()
 
     // ---- Dropdown (custom div-based overlay) ----
@@ -415,7 +415,20 @@ private[kyo] object HtmlRenderer:
 
     // ---- Element-specific attributes ----
 
+    /** The typing constraints, read client-side by the `beforeinput` capture listener.
+      *
+      * Only [[kyo.UI.Ast.ConstrainedInput]] carries these, so they are emitted here rather than with the universal
+      * attributes: a `div` or a chart datum has no use for them.
+      */
+    private def renderInputConstraints(sb: StringBuilder, ci: ConstrainedInput): Unit =
+        ci.inputFilter.foreach(f => w(sb, s""" data-kyo-filter="${esc(InputMasking.filterWire(f))}""""))
+        ci.inputMask.foreach(m => w(sb, s""" data-kyo-mask="${esc(m)}""""))
+    end renderInputConstraints
+
     private def renderElementAttrs(sb: StringBuilder, elem: Element)(using Frame): Unit < Sync =
+        elem match
+            case ci: ConstrainedInput => renderInputConstraints(sb, ci)
+            case _                    => ()
         elem match
             case b: Button =>
                 w(sb, " type=\"submit\"")
@@ -432,42 +445,42 @@ private[kyo] object HtmlRenderer:
                 }
             case i: Input =>
                 w(sb, " type=\"text\"");
-                renderValueAttr(sb, i.value)
+                renderValueAttr(sb, i.value, i.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", i.disabled); boolAttr(sb, "readonly", i.readOnly);
                         i.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case p: PasswordInput =>
                 w(sb, " type=\"password\"");
-                renderValueAttr(sb, p.value)
+                renderValueAttr(sb, p.value, p.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", p.disabled); boolAttr(sb, "readonly", p.readOnly);
                         p.placeholder.foreach(p2 => w(sb, s""" placeholder="${esc(p2)}""""))
                     }
             case e: EmailInput =>
                 w(sb, " type=\"email\"");
-                renderValueAttr(sb, e.value)
+                renderValueAttr(sb, e.value, e.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", e.disabled); boolAttr(sb, "readonly", e.readOnly);
                         e.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case t: TelInput =>
                 w(sb, " type=\"tel\"");
-                renderValueAttr(sb, t.value)
+                renderValueAttr(sb, t.value, t.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", t.disabled); boolAttr(sb, "readonly", t.readOnly);
                         t.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case u: UrlInput =>
                 w(sb, " type=\"url\"");
-                renderValueAttr(sb, u.value)
+                renderValueAttr(sb, u.value, u.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", u.disabled); boolAttr(sb, "readonly", u.readOnly);
                         u.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
                     }
             case s: SearchInput =>
                 w(sb, " type=\"search\"");
-                renderValueAttr(sb, s.value)
+                renderValueAttr(sb, s.value, s.inputMask)
                     .andThen {
                         boolAttr(sb, "disabled", s.disabled); boolAttr(sb, "readonly", s.readOnly);
                         s.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
@@ -584,6 +597,8 @@ private[kyo] object HtmlRenderer:
                 lbl.forId.foreach(f => w(sb, s""" for="${esc(f)}""""))
             case e: Svg.SvgElement => renderSvgAttrs(sb, e)
             case _                 => ()
+        end match
+    end renderElementAttrs
 
     private def boolAttr(sb: StringBuilder, name: String, value: Maybe[Boolean]): Unit =
         value.foreach(v => if v then w(sb, s" $name"))
@@ -597,12 +612,28 @@ private[kyo] object HtmlRenderer:
             case _ => ()
 
     /** Render a value attribute, reading SignalRef if needed. */
-    private def renderValueAttr(sb: StringBuilder, value: Maybe[Bound[String]])(using Frame): Unit < Sync =
+    /** Formats a value about to be displayed through the element's mask, if it carries one.
+      *
+      * A mask is a display format, so a masked field has to show a masked value whoever set it. Client-side
+      * enforcement only ever sees typing: a value bound to a [[SignalRef]], a server-side transform of what was
+      * typed, and the initial render all reach the field without a `beforeinput` event. Formatting here covers
+      * every one of them at once, in both transports and on both the morph and the replace path, which no amount
+      * of client-side patching would.
+      *
+      * A value the mask already formatted comes back unchanged, so the keystroke echo of a two-way binding still
+      * compares equal and leaves the caret where it is.
+      */
+    private def masked(mask: Maybe[String], value: String): String =
+        mask.fold(value)(InputMasking.maskNormalize(_, value))
+
+    private def renderValueAttr(sb: StringBuilder, value: Maybe[Bound[String]], mask: Maybe[String] = Absent)(using
+        Frame
+    ): Unit < Sync =
         value match
-            case Present(Bound.Const(s)) => w(sb, s""" value="${esc(s)}"""")
+            case Present(Bound.Const(s)) => w(sb, s""" value="${esc(masked(mask, s))}"""")
             case Present(Bound.Ref(ref)) =>
                 for s <- ref.get
-                yield w(sb, s""" value="${esc(s)}"""")
+                yield w(sb, s""" value="${esc(masked(mask, s))}"""")
             case _ => ()
 
     private def renderPickerAttrs(sb: StringBuilder, pi: PickerInput)(using Frame): Unit < Sync =
@@ -698,7 +729,7 @@ private[kyo] object HtmlRenderer:
     // U+2028 -> U+2028  (LINE SEPARATOR, JS line terminator)
     // U+2029 -> U+2029  (PARAGRAPH SEPARATOR, JS line terminator)
     //  </  -> <\/  (prevents </script> from closing the element; < alone is harmless in JS)
-    private def jsStr(s: String): String =
+    private[kyo] def jsStr(s: String): String =
         val sb = new StringBuilder(s.length)
         @scala.annotation.tailrec
         def loop(i: Int): Unit =
@@ -737,10 +768,60 @@ private[kyo] object HtmlRenderer:
 
     // ---- Client JS ----
 
+    /** The pure half of the client-side input filter and mask: the JavaScript mirror of [[InputMasking]].
+      *
+      * Kept out of [[clientJs]] as a named fragment for two reasons. It is the part that has an exact Scala
+      * counterpart, so having it standalone lets `InputMaskingJsParityTest` load it into a page and drive the same
+      * case table through both implementations, which is what keeps the two from drifting. And unlike [[clientJs]]
+      * this is not an interpolated string, so a backslash written here is the backslash the browser sees; inlined,
+      * the mask parser's escape had to be doubled, and getting that wrong produced an unterminated JavaScript
+      * literal that took down the whole client script.
+      *
+      * Only DOM-free functions belong here. Everything that touches an element stays in [[clientJs]].
+      */
+    private[kyo] val inputMaskJs: String =
+        """// Mirrors kyo.internal.InputMasking.filterStr: keep the two in step.
+          |// An unrecognized wire value admits everything, so a page cached from an older build stays usable.
+          |function kyoFilterStr(pat,str,cur){
+          |  var isChars=pat.indexOf("chars:")===0;var allowed=isChars?pat.slice(6):"";
+          |  if(!isChars&&pat!=="digits"&&pat!=="decimal")return str;
+          |  var out="";var hasSep=(pat==="decimal")&&(cur.indexOf(".")>=0||cur.indexOf(",")>=0);
+          |  for(var i=0;i<str.length;i++){var ch=str.charAt(i);
+          |    if(isChars){if(allowed.indexOf(ch)>=0)out+=ch;}
+          |    else if(pat==="digits"){if(ch>="0"&&ch<="9")out+=ch;}
+          |    else if(ch>="0"&&ch<="9")out+=ch;
+          |    else if((ch==="."||ch===",")&&!hasSep){out+=ch;hasSep=true;}}
+          |  return out;
+          |}
+          |// Mirrors kyo.internal.InputMasking.parseMask: the mask is parsed once into positions, {k:class} or
+          |// {l:literal}, so the backslash escape is handled in one place rather than in every function.
+          |function kyoMaskParse(mask){var ts=[];for(var i=0;i<mask.length;){var c=mask.charAt(i);
+          |  if(c==="\\"&&i+1<mask.length){ts.push({l:mask.charAt(i+1)});i+=2;}
+          |  else{if(c==="9"||c==="a"||c==="*")ts.push({k:c});else ts.push({l:c});i++;}}
+          |  return ts;}
+          |function kyoMaskClassAt(ts,idx){var c=0;for(var i=0;i<ts.length;i++){if(ts[i].k!==undefined){if(c===idx)return ts[i].k;c++;}}return null;}
+          |function kyoMaskOk(cls,ch){if(cls==="9")return ch>="0"&&ch<="9";if(cls==="a")return (ch>="a"&&ch<="z")||(ch>="A"&&ch<="Z");return (ch>="0"&&ch<="9")||(ch>="a"&&ch<="z")||(ch>="A"&&ch<="Z");}
+          |function kyoMaskFormat(ts,raw){var out="";var ri=0;for(var i=0;i<ts.length;i++){
+          |  if(ts[i].k!==undefined){if(ri<raw.length){out+=raw.charAt(ri);ri++;}else break;}
+          |  else{if(ri<raw.length)out+=ts[i].l;else break;}}
+          |  return out;}
+          |function kyoMaskRaw(ts,val){var raw="";var vi=0;for(var i=0;i<ts.length&&vi<val.length;i++){
+          |  if(ts[i].k!==undefined){raw+=val.charAt(vi);vi++;}
+          |  else{if(val.charAt(vi)===ts[i].l)vi++;else{raw+=val.charAt(vi);vi++;}}}
+          |  return raw;}
+          |// Mirrors kyo.internal.InputMasking.maskNormalize.
+          |function kyoMaskNormalize(mask,val){var ts=kyoMaskParse(mask);return kyoMaskFormat(ts,kyoMaskRaw(ts,val));}""".stripMargin
+
     private def clientJs(basePath: String): String =
         s"""(function(){
            |var base="$basePath";
            |var __q=[];
+           |// Mirrors DomBackend.setSelection: the one place that knows the two ways a caret move can be a no-op.
+           |// Elements outside input and textarea (select, contenteditable) have no setSelectionRange at all, and
+           |// on input types without a text selection (email, number) it throws InvalidStateError; in both cases
+           |// the value is set and only the caret stays put. Every other exception is a real failure and propagates.
+           |function kyoSetCaret(t,s,e){if(typeof t.setSelectionRange!=="function")return;
+           |  try{t.setSelectionRange(s,e);}catch(er){if(er.name!=="InvalidStateError")throw er;}}
            |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
            |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
            |ws.onmessage=function(e){
@@ -784,7 +865,7 @@ private[kyo] object HtmlRenderer:
            |      var __fa=focusAutoPaths(el);
            |      el.outerHTML=op.Replace.html;
            |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
-           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
+           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null)kyoSetCaret(rf,ss,se);}}
            |      // Seed AFTER focus/caret restore so a newly-appeared focus-auto element wins restore-to-trigger (the morph path never seeds).
            |      if(nel){kyoEnterSeed(nel,__en);seedFocusAuto(nel,__fa);}
            |      kyoSpawnGhosts(__gh);
@@ -1196,10 +1277,64 @@ private[kyo] object HtmlRenderer:
            |  // Do NOT auto-call preventDefault: leave native-scroll suppression to the handler, matching DomBackend. Server-side rendering cannot synchronously decline the event, so the default is to NOT prevent.
            |  else if(t==="wheel"&&he(el,"wheel")){var whtid=e.target&&e.target.id?e.target.id:null;var sc={path:p,deltaX:e.deltaX,deltaY:e.deltaY,modifiers:{ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey}};if(whtid)sc.targetId=whtid;post({Scroll:sc});}
            |}
+           |// ---- client-local input filter/mask (document-level beforeinput capture listener) ----
+           |$inputMaskJs
+           |function kyoSetVal(t,v){t.value=v;kyoSetCaret(t,v.length,v.length);t.dispatchEvent(new Event("input",{bubbles:true}));}
+           |function kyoSetValAt(t,txt,s,en){var v=t.value;t.value=v.slice(0,s)+txt+v.slice(en);var np=s+txt.length;kyoSetCaret(t,np,np);t.dispatchEvent(new Event("input",{bubbles:true}));}
+           |function kyoBeforeInput(e){
+           |  var t=e.target;if(!t||!t.getAttribute)return;
+           |  // Interactive.data lets any element carry data-kyo-filter, and everything below assumes a value
+           |  // property and a text selection. Throwing from a beforeinput capture listener would break typing
+           |  // for the whole page, so anything but a text field is left alone.
+           |  if(t.tagName!=="INPUT"&&t.tagName!=="TEXTAREA")return;
+           |  var filt=t.getAttribute("data-kyo-filter");var mask=t.getAttribute("data-kyo-mask");
+           |  if(!filt&&!mask)return;
+           |  var it=e.inputType||"";
+           |  // insertCompositionText is deliberately absent below: preventDefault on it does not filter the input,
+           |  // it aborts the composition, which breaks CJK input, dead keys and mobile autocorrect. Composition is
+           |  // let through and the finished text is corrected in kyoCompositionEnd instead.
+           |  if(filt){
+           |    if(it.indexOf("delete")===0)return;
+           |    if(it==="insertText"||it==="insertReplacementText"){
+           |      var data=e.data;if(data==null)return;
+           |      var f1=kyoFilterStr(filt,data,t.value);
+           |      if(f1!==data){e.preventDefault();if(f1){var s=(typeof t.selectionStart==="number")?t.selectionStart:t.value.length;var en=(typeof t.selectionEnd==="number")?t.selectionEnd:s;kyoSetValAt(t,f1,s,en);}}
+           |    }else if(it==="insertFromPaste"||it==="insertFromDrop"){
+           |      e.preventDefault();var pasted=e.dataTransfer?e.dataTransfer.getData("text"):(e.data||"");
+           |      var f2=kyoFilterStr(filt,pasted,t.value);if(f2){var s2=(typeof t.selectionStart==="number")?t.selectionStart:t.value.length;var e2=(typeof t.selectionEnd==="number")?t.selectionEnd:s2;kyoSetValAt(t,f2,s2,e2);}
+           |    }
+           |    return;
+           |  }
+           |  if(mask){
+           |    var mts=kyoMaskParse(mask);
+           |    if(it.indexOf("delete")===0){e.preventDefault();var raw=kyoMaskRaw(mts,t.value);raw=raw.slice(0,raw.length-1);kyoSetVal(t,kyoMaskFormat(mts,raw));return;}
+           |    if(it==="insertText"||it==="insertReplacementText"||it==="insertFromPaste"||it==="insertFromDrop"){
+           |      e.preventDefault();var ins=e.data;if((it==="insertFromPaste"||it==="insertFromDrop")&&e.dataTransfer)ins=e.dataTransfer.getData("text");if(ins==null)ins="";
+           |      var raw2=kyoMaskRaw(mts,t.value);
+           |      for(var ci=0;ci<ins.length;ci++){var cls=kyoMaskClassAt(mts,raw2.length);if(cls===null)break;var ch=ins.charAt(ci);if(kyoMaskOk(cls,ch))raw2+=ch;}
+           |      kyoSetVal(t,kyoMaskFormat(mts,raw2));return;
+           |    }
+           |  }
+           |}
+           |// Corrects the whole value once a composition finishes. Mirrors DomBackend's compositionend listener:
+           |// the composed text is only known when it ends, so it is filtered or formatted here rather than
+           |// per keystroke. Writing back only on a change keeps a conforming composition free of a caret jump.
+           |function kyoCompositionEnd(e){
+           |  var t=e.target;if(!t||!t.getAttribute)return;
+           |  if(t.tagName!=="INPUT"&&t.tagName!=="TEXTAREA")return;
+           |  var filt=t.getAttribute("data-kyo-filter");var mask=t.getAttribute("data-kyo-mask");
+           |  var v=t.value;var nv;
+           |  if(filt)nv=kyoFilterStr(filt,v,"");
+           |  else if(mask)nv=kyoMaskNormalize(mask,v);
+           |  else return;
+           |  if(nv!==v)kyoSetVal(t,nv);
+           |}
            |["click","input","change","submit","keydown","keyup","focus","blur","mouseover","mouseout"].forEach(function(t){
            |  document.body.addEventListener(t,handle,true);
            |});
            |document.body.addEventListener("wheel",handle,{capture:true,passive:false});
+           |document.body.addEventListener("beforeinput",kyoBeforeInput,true);
+           |document.body.addEventListener("compositionend",kyoCompositionEnd,true);
            |})();""".stripMargin
 
     // ---- SVG tag and attribute rendering ----

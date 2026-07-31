@@ -823,6 +823,15 @@ class HtmlRendererTest extends UITest:
 
     "clientJs transport" - {
 
+        "the mask parser emits a well-formed backslash literal" in {
+            // The mask escape is the one place the client script needs a backslash, and getting it wrong yields an
+            // unterminated string literal that stops the entire blob from parsing, disabling every client behavior
+            // at once rather than just the escape. `inputMaskJs` is kept uninterpolated so the source reads as the
+            // browser sees it; this pins the emitted form against anyone folding it back into the interpolated blob.
+            val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
+            assert(page.contains("""if(c==="\\"&&i+1<mask.length)"""))
+        }
+
         "rendered page opens a WebSocket and carries no EventSource or fetch-POST queue" in {
             val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
             assert(page.contains("new WebSocket("))

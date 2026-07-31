@@ -61,6 +61,7 @@ private[kyo] object DomBackend:
             _    <- Sync.defer(seedEnter(container, Set.empty))
             _    <- Sync.defer(seedFocusAuto(container, Set.empty))
             _    <- Sync.defer(beginAnimationsSync(container))
+            _    <- setupInputMasking()
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
             // Single-consumer drain owned by the ambient page Scope: every JS event effect is run by a
@@ -168,22 +169,8 @@ private[kyo] object DomBackend:
                 else located
             val _ = focusTarget.asInstanceOf[scalajs.js.Dynamic].focus()
             (selStart, selEnd) match
-                case (Present(s), Present(e)) =>
-                    val dyn = focusTarget.asInstanceOf[scalajs.js.Dynamic]
-                    if scalajs.js.typeOf(dyn.setSelectionRange) == "function" then
-                        try
-                            val _ = dyn.setSelectionRange(s, e)
-                        catch
-                            // setSelectionRange throws InvalidStateError on input types that do not
-                            // support text selection (e.g. email, number). Mirrors HtmlRenderer.clientJs:583:
-                            // `catch(e){if(e.name!=='InvalidStateError')throw e;}`. Re-throw any other
-                            // JS exception so genuine failures are not silently dropped.
-                            case ex: scalajs.js.JavaScriptException
-                                if ex.exception.asInstanceOf[scalajs.js.Dynamic].name.asInstanceOf[String] == "InvalidStateError" =>
-                                ()
-                    end if
-                case _ => ()
-            end match
+                case (Present(s), Present(e)) => setSelection(focusTarget, s, e)
+                case _                        => ()
         end if
     end restoreFocus
 
@@ -256,6 +243,25 @@ private[kyo] object DomBackend:
             true
         end if
     end focusIfPresent
+
+    /** Moves the caret on `el`, tolerating the two documented ways that is a no-op.
+      *
+      * Elements outside input and textarea (select, contenteditable) have no `setSelectionRange` at all, and on
+      * input types without a text selection (email, number, both of which kyo-ui offers as text inputs) it throws
+      * `InvalidStateError`. In either case the value is already set and only the caret stays put. Any other
+      * JavaScript exception is a real failure and propagates rather than being swallowed. Mirrored by
+      * `kyoSetCaret` in `HtmlRenderer.clientJs`.
+      */
+    private def setSelection(el: dom.Element, start: Int, end: Int): Unit =
+        val dyn = el.asInstanceOf[scalajs.js.Dynamic]
+        if scalajs.js.typeOf(dyn.setSelectionRange) == "function" then
+            try discard(dyn.setSelectionRange(start, end))
+            catch
+                case ex: scalajs.js.JavaScriptException
+                    if ex.exception.asInstanceOf[scalajs.js.Dynamic].name.asInstanceOf[String] == "InvalidStateError" =>
+                    ()
+        end if
+    end setSelection
 
     // Bridge a Kyo Async computation from a JS callback boundary by offering it to the page-scoped drain
     // channel. The single AllowUnsafe site narrows to the offer crossing (the JS callback has no Kyo
@@ -618,5 +624,133 @@ private[kyo] object DomBackend:
             discard(dom.window.setTimeout(to, 1000.0))
         }
     end spawnGhosts
+
+    // ---- input filter/mask (SPA transport) ----
+    // The character-level decisions live in the shared InputMasking so they are testable without a DOM;
+    // what stays here is the DOM wiring.
+
+    private def dispatchInput(t: dom.EventTarget): Unit =
+        val ctor = scalajs.js.Dynamic.global.Event
+        val ev   = scalajs.js.Dynamic.newInstance(ctor)("input", scalajs.js.Dynamic.literal(bubbles = true))
+        discard(t.asInstanceOf[scalajs.js.Dynamic].dispatchEvent(ev))
+    end dispatchInput
+
+    private def setValue(t: dom.html.Input, v: String): Unit =
+        t.value = v
+        setSelection(t, v.length, v.length)
+        dispatchInput(t)
+    end setValue
+
+    private def setFilteredAt(t: dom.html.Input, txt: String, s: Int, e: Int): Unit =
+        val v = t.value
+        t.value = v.substring(0, s) + txt + v.substring(e)
+        val np = s + txt.length
+        setSelection(t, np, np)
+        dispatchInput(t)
+    end setFilteredAt
+
+    private def setupInputMasking()(using Frame): Unit < Sync = Sync.defer {
+        val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
+            val tRaw = e.target
+            if tRaw != null then
+                val el = tRaw.asInstanceOf[dom.Element]
+                // Interactive.data lets any element carry data-kyo-filter, and everything below assumes a value
+                // property and a text selection. Throwing from a beforeinput capture listener would break typing
+                // for the whole page, so anything but a text field is left alone.
+                val isTextField = el.tagName == "INPUT" || el.tagName == "TEXTAREA"
+                val filt        = if isTextField then el.getAttribute("data-kyo-filter") else null
+                val mask        = if isTextField then el.getAttribute("data-kyo-mask") else null
+                if filt != null || mask != null then
+                    val t   = tRaw.asInstanceOf[dom.html.Input]
+                    val dyn = e.asInstanceOf[scalajs.js.Dynamic]
+                    val it  = if scalajs.js.typeOf(dyn.inputType) == "string" then dyn.inputType.asInstanceOf[String] else ""
+                    def selStart: Int =
+                        val d = t.asInstanceOf[scalajs.js.Dynamic]
+                        if scalajs.js.typeOf(d.selectionStart) == "number" then d.selectionStart.asInstanceOf[Int] else t.value.length
+                    def selEnd: Int =
+                        val d = t.asInstanceOf[scalajs.js.Dynamic]
+                        if scalajs.js.typeOf(d.selectionEnd) == "number" then d.selectionEnd.asInstanceOf[Int] else selStart
+                    def transferText: String =
+                        val dt = dyn.dataTransfer
+                        if dt != null && scalajs.js.typeOf(dt) == "object" then dt.getData("text").asInstanceOf[String]
+                        else if scalajs.js.typeOf(dyn.data) == "string" then dyn.data.asInstanceOf[String]
+                        else ""
+                    end transferText
+                    // insertCompositionText is deliberately absent below: preventDefault on it does not filter the
+                    // input, it aborts the composition, which breaks CJK input, dead keys and mobile autocorrect.
+                    // Composition is let through and the finished text is corrected by the compositionend listener.
+                    if filt != null then
+                        if it.startsWith("delete") then ()
+                        else if it == "insertText" || it == "insertReplacementText" then
+                            if scalajs.js.typeOf(dyn.data) == "string" then
+                                val ds = dyn.data.asInstanceOf[String]
+                                val f1 = InputMasking.filterStr(filt, ds, t.value)
+                                if f1 != ds then
+                                    e.preventDefault()
+                                    if f1.nonEmpty then setFilteredAt(t, f1, selStart, selEnd)
+                        else if it == "insertFromPaste" || it == "insertFromDrop" then
+                            e.preventDefault()
+                            val f2 = InputMasking.filterStr(filt, transferText, t.value)
+                            if f2.nonEmpty then setFilteredAt(t, f2, selStart, selEnd)
+                        end if
+                    else if mask != null then
+                        val tokens = InputMasking.parseMask(mask)
+                        if it.startsWith("delete") then
+                            e.preventDefault()
+                            val raw = InputMasking.maskRaw(tokens, t.value)
+                            val nr  = if raw.nonEmpty then raw.substring(0, raw.length - 1) else raw
+                            setValue(t, InputMasking.maskFormat(tokens, nr))
+                        else if it == "insertText" || it == "insertReplacementText" ||
+                            it == "insertFromPaste" || it == "insertFromDrop"
+                        then
+                            e.preventDefault()
+                            val ins = if it == "insertFromPaste" || it == "insertFromDrop" then transferText
+                            else if scalajs.js.typeOf(dyn.data) == "string" then dyn.data.asInstanceOf[String]
+                            else ""
+                            var raw2 = InputMasking.maskRaw(tokens, t.value)
+                            var ci   = 0
+                            var full = false
+                            while ci < ins.length && !full do
+                                InputMasking.maskClassAt(tokens, raw2.length) match
+                                    case Present(cls) =>
+                                        val ch = ins.charAt(ci)
+                                        if InputMasking.maskOk(cls, ch) then raw2 = raw2 + ch
+                                    case Absent => full = true
+                                end match
+                                ci += 1
+                            end while
+                            setValue(t, InputMasking.maskFormat(tokens, raw2))
+                        end if
+                    end if
+                end if
+            end if
+        document.body.addEventListener("beforeinput", handler, true)
+        document.body.addEventListener("compositionend", compositionEndHandler, true)
+    }
+    end setupInputMasking
+
+    /** Corrects the whole value once a composition finishes.
+      *
+      * An IME, a dead key or mobile autocorrect produces its text only when the composition ends, so there is no
+      * per-character event to constrain; the finished value is filtered or formatted here instead. Writing back only
+      * on a change keeps a composition that already conforms free of a caret jump and of a spurious input event.
+      * Mirrored by `kyoCompositionEnd` in `HtmlRenderer.clientJs`.
+      */
+    private val compositionEndHandler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
+        val tRaw = e.target
+        if tRaw != null then
+            val el = tRaw.asInstanceOf[dom.Element]
+            if el.tagName == "INPUT" || el.tagName == "TEXTAREA" then
+                val t    = tRaw.asInstanceOf[dom.html.Input]
+                val filt = el.getAttribute("data-kyo-filter")
+                val mask = el.getAttribute("data-kyo-mask")
+                val v    = t.value
+                val nv =
+                    if filt != null then InputMasking.filterStr(filt, v, "")
+                    else if mask != null then InputMasking.maskNormalize(mask, v)
+                    else v
+                if nv != v then setValue(t, nv)
+            end if
+        end if
 
 end DomBackend
