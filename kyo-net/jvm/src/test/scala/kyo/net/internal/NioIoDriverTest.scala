@@ -388,6 +388,82 @@ class NioIoDriverTest extends Test:
         }
     }
 
+    "staged grace-probe bytes racing a fresh read arm are never stranded" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        discard(driver.start())
+
+        // The strand this reproduces: a standing grace probe holds OP_READ, fresh bytes arrive, and the probe's dispatch stages them in the
+        // window between awaitRead's staging pre-check (which saw Absent) and armRead installing the pump cell. The staged bytes then sit
+        // against an armed read that nothing completes: the socket is empty so the selector never fires again, and no path re-checks staging
+        // after the arm. Each iteration below re-runs the race; the randomized sub-selector-latency spin scans the alignment between the
+        // probe's dispatch and the arm so the overlap lands within the iteration budget. A bounded read that never completes while
+        // stagedBytes is non-empty is the strand.
+        val sentinel   = Array[Byte](9)
+        val payload    = Array[Byte](4, 5, 6)
+        val iterations = 600
+        val rng        = new java.util.Random(0x57a11)
+
+        def readBytes(iter: Int, bound: Duration): Maybe[Array[Byte]] < Async =
+            val p = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
+                case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
+                case Result.Failure(_: Timeout)              => Absent
+                case other =>
+                    assert(false, s"iteration $iter: unexpected read outcome $other")
+                    Absent
+            }
+        end readBytes
+
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            Loop(0) { iter =>
+                if iter == iterations then Loop.done(succeed)
+                else
+                    // Arm (or re-arm) the grace probe and prove it is staging: the sentinel must land in graceStaging, which also leaves the
+                    // probe re-armed as a standing FIN watch holding OP_READ (the n == 0 re-install after the staging read drains the socket).
+                    discard(driver.isPeerClosed(handle))
+                    discard(sv.write(ByteBuffer.wrap(sentinel)))
+                    awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
+                        assert(
+                            staged,
+                            s"iteration $iter: the probe never staged the sentinel " +
+                                s"(pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)})"
+                        )
+                    }.andThen {
+                        readBytes(iter, 4.seconds).map { got =>
+                            assert(got.exists(_.toList == sentinel.toList), s"iteration $iter: sentinel drain got $got")
+                        }
+                    }.andThen {
+                        // The race: fresh bytes toward a socket whose standing probe holds OP_READ, then a pump arm on this carrier.
+                        discard(sv.write(ByteBuffer.wrap(payload)))
+                        val spinUntil = java.lang.System.nanoTime() + rng.nextInt(60000).toLong
+                        while java.lang.System.nanoTime() < spinUntil do ()
+                        Loop(0) { received =>
+                            if received >= payload.length then Loop.done(())
+                            else
+                                readBytes(iter, 2.seconds).map {
+                                    case Present(bytes) => Loop.continue(received + bytes.length)
+                                    case Absent =>
+                                        assert(
+                                            false,
+                                            s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}; " +
+                                                "staged grace-probe bytes stranded against an armed read"
+                                        )
+                                        Loop.done(())
+                                }
+                        }
+                    }.andThen(Loop.continue(iter + 1))
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // awaitWritable: registers interest and completes promise when writable
     // -----------------------------------------------------------------------
