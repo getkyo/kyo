@@ -434,7 +434,9 @@ class NioIoDriverTest extends Test:
                         assert(
                             staged,
                             s"iteration $iter: the probe never staged the sentinel " +
-                                s"(pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)})"
+                                s"(pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)}, " +
+                                s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}, " +
+                                s"peerClosed=${handle.peerClosed})"
                         )
                     }.andThen {
                         readBytes(iter, 4.seconds).map { got =>
