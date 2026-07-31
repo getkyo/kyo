@@ -711,6 +711,129 @@ class NioIoDriverTest extends Test:
         }
     }
 
+    "an arm during a pre-detach upgrade window is not spuriously failed" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        discard(driver.start())
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            // The transport sets upgrading BEFORE the state CAS and the detach sweep. A pump arm landing in that pre-CAS window must stay
+            // armed (failing it here lets the pump's teardown closeFn win Established -> Closing and abort a healthy upgrade); the detach
+            // sweep is what fails it, post-CAS.
+            handle.upgrading = true
+            val p = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            Async.sleep(100.millis).andThen {
+                assert(
+                    !p.done(),
+                    "pre-CAS arm was spuriously completed: nothing may fail a read before the upgrade's state CAS and sweep have run"
+                )
+                driver.detachForUpgrade(handle)
+                awaitOutcome(p, 2.seconds).map {
+                    case Present(Result.Failure(_)) => succeed
+                    case Absent                     => assert(false, "pre-CAS arm was stranded: the detach sweep did not fail it")
+                    case other                      => assert(false, s"unexpected outcome $other")
+                }
+            }
+        }
+    }
+
+    "a stray arm after the upgrade sweep does not disturb the armed producer" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        discard(driver.start())
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            // Mid-handshake: the producer owns the read (cell + pendingReads entry + OP_READ). A late stray pump re-arm must be failed
+            // WITHOUT touching that shared state: clobbering the producer cell or removing the entry silently disconnects the handshake
+            // from the selector, and its demand-driven waiter never retries.
+            handle.upgrading = true
+            driver.detachForUpgrade(handle)
+            driver.armUpgradeProducerRead(handle)
+            awaitCondition(2.seconds)(driver.hasPendingRead(handle)).map { applied =>
+                assert(applied, "the producer arm was never applied on the poll carrier")
+            }.andThen {
+                val p = new IOPromise[Closed, ReadOutcome]
+                driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                awaitOutcome(p, 2.seconds).map {
+                    case Present(Result.Failure(_)) => succeed
+                    case Absent                     => assert(false, "the stray mid-handshake arm was stranded")
+                    case other                      => assert(false, s"unexpected outcome $other")
+                }
+            }.andThen {
+                discard(sv.write(ByteBuffer.wrap(Array[Byte](0x16, 3, 1))))
+                awaitCondition(2.seconds) {
+                    handle.upgradeHandoff.get() match
+                        case NioHandle.UpgradeHandoff.Carryover(bytes) => bytes.nonEmpty
+                        case _                                         => false
+                }.map { delivered =>
+                    assert(
+                        delivered,
+                        "the producer lost the read to the stray arm: the peer flight never reached the upgrade handoff " +
+                            s"(handoff=${handle.upgradeHandoff.get()}, pendingRead=${driver.hasPendingRead(handle)}, " +
+                            s"arm=${driver.readArmState(handle)})"
+                    )
+                }
+            }
+        }
+    }
+
+    "a read consumed by the upgrade producer dispatch is failed, not stranded" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        discard(driver.start())
+        val flight = Array[Byte](0x16, 3, 3, 0, 1)
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            // A pump read armed before the upgrade, consumed by the producer dispatch once the handshake owns the reads (upgrading and
+            // handshakeReading both set): the dispatch CASes the cell out and delivers the flight into the handoff; the promise it consumed
+            // must be failed, since the sweep can no longer see the cell and nothing else ever completes it.
+            val p = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            handle.upgrading = true
+            handle.handshakeReading = true
+            discard(sv.write(ByteBuffer.wrap(flight)))
+            awaitCondition(2.seconds) {
+                handle.upgradeHandoff.get() match
+                    case NioHandle.UpgradeHandoff.Carryover(bytes) => bytes.length == flight.length
+                    case _                                         => false
+            }.map { consumed =>
+                assert(
+                    consumed,
+                    s"the producer dispatch never delivered the flight (handoff=${handle.upgradeHandoff.get()}, arm=${driver.readArmState(handle)})"
+                )
+            }.andThen {
+                awaitOutcome(p, 2.seconds).map {
+                    case Present(Result.Failure(_)) =>
+                        handle.upgradeHandoff.get() match
+                            case NioHandle.UpgradeHandoff.Carryover(bytes) =>
+                                assert(bytes.toList == flight.toList, s"handoff bytes ${bytes.toList} != ${flight.toList}")
+                            case other =>
+                                assert(false, s"the flight must stay staged in the handoff; got $other")
+                    case Absent =>
+                        assert(false, "read consumed by the producer dispatch was stranded: nothing completed it")
+                    case other =>
+                        assert(false, s"unexpected outcome $other")
+                }
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // awaitWritable: registers interest and completes promise when writable
     // -----------------------------------------------------------------------
