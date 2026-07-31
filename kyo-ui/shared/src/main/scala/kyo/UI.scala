@@ -670,6 +670,23 @@ object UI:
               */
             def cssClass(name: String): Self = withAttrs(attrs.copy(cssClasses = attrs.cssClasses :+ name))
 
+            /** Declarative ENTER transition (client-local): when a patch inserts this element newly into the DOM (its
+              * `data-kyo-path` was not present before, or at initial mount), the client adds the space-separated `classes`
+              * after insertion, forces a reflow, then removes them next frame, so a CSS transition runs from the enter-from
+              * state the classes describe. An echo re-render of an already-present element does not replay. Emits
+              * `data-kyo-enter="..."`.
+              */
+            def enterTransition(classes: String): Self = withAttrs(attrs.copy(enterTransition = Present(classes)))
+
+            /** Declarative LEAVE transition (client-local): when a Replace/Remove removes this element, the client captures
+              * its `getBoundingClientRect` before applying the patch (nothing crosses the wire), then appends a visual GHOST
+              * (deep clone, `position:fixed` at the captured rect, `pointer-events:none`) to `document.body` with these
+              * classes added next frame; the ghost is removed on `transitionend`/`animationend` or a 1s safety timeout. Only
+              * the outermost removed leave-element per patch spawns a ghost. The ghost is visual-only: its identifying
+              * `data-kyo-*`/`id` attributes are stripped from the clone. Emits `data-kyo-leave="..."`.
+              */
+            def leaveTransition(classes: String): Self = withAttrs(attrs.copy(leaveTransition = Present(classes)))
+
             // Internal JS property setter (used by Checkbox.indeterminate, etc.)
             private[kyo] def jsProp(name: String, value: String): Self =
                 withAttrs(attrs.copy(jsProps = attrs.jsProps.updated(name, value)))
@@ -932,6 +949,8 @@ object UI:
             focusTrap: Maybe[Boolean] = Absent,
             focusGroup: Maybe[String] = Absent,
             stopPropagation: Maybe[Boolean] = Absent,
+            enterTransition: Maybe[String] = Absent,
+            leaveTransition: Maybe[String] = Absent,
             uiStyle: Style = Style.empty,
             onClick: Maybe[Any < Async] = Absent,
             onClickEvt: Maybe[MouseEvent => Any < Async] = Absent,
