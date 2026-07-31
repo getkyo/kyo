@@ -1581,7 +1581,7 @@ final private[net] class PosixTransport private[posix] (
                 //     flips when the handshake takes the read (awaitReadCiphertext).
                 handle.upgradeActive = true
                 handle.upgrading =
-                    true // durable across the whole window (upgradeActive clears mid-handshake); io_uring read-routing reads it
+                    true // durable across the whole window, cleared with upgradeActive at onFinished; io_uring read-routing reads it
                 posixConn.detachForUpgrade() match
                     case Absent =>
                         // The claim above was won, so no other upgrade can be in flight: losing the detach CAS here means the connection

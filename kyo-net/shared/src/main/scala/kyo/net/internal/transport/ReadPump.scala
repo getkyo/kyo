@@ -116,10 +116,13 @@ final private[kyo] class ReadPump[Handle](
     private def requestNextRead()(using AllowUnsafe, Frame): Unit =
         // Always re-arm. A re-arm that races a STARTTLS upgrade on the same handle is intercepted at the driver's read
         // layer, not gated here: on NIO the selector carrier stashes the read into the handle's upgrade salvage while
-        // `upgrading && !handshakeReading` (NioIoDriver.dispatchReadPlain), and on the pollers the poll carrier rejects the
-        // stray read registration while `upgradeActive && !handshakeReading` (PollerIoDriver). Either way the pump's bytes are
-        // salvaged or its promise failed for teardown, so the re-arm can neither steal the read from the handshake nor drop
-        // the peer's first TLS flight.
+        // `upgrading && !handshakeReading` (NioIoDriver.dispatchReadPlain), and a post-detach re-arm is rejected typed at
+        // NioIoDriver.awaitRead's `upgrading && upgradeSwept` gate; on the pollers the poll carrier rejects the stray read
+        // registration while `upgradeActive && !handshakeReading` (PollerIoDriver), and the deposited promise is failed by
+        // the detach sweep, the arm's own post-marker re-check, or the first producer arm's occupant fail (io_uring's
+        // single-recv gate takes the same deposit-and-fail path). Either way the pump's bytes are salvaged or its promise
+        // failed for teardown, so the re-arm can neither steal the read from the handshake nor drop the peer's first TLS
+        // flight, and no ordering leaves the promise uncompleted.
         discard(becomeAvailable())
         driver.awaitRead(handle, self)
     end requestNextRead

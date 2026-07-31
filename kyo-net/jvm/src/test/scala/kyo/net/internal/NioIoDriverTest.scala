@@ -587,8 +587,8 @@ class NioIoDriverTest extends Test:
         }) {
             // The transport's upgrade order (NioTransport.upgradeToTls): upgrading = true, then detachForUpgrade. The pump's re-arm has no
             // connection-state gate (ReadPump.requestNextRead delegates interception to the driver), so an arm can land strictly after the
-            // detach's cleanupPending swept, which is the extreme point of the window: the sweep is keyed on the pendingReads entry, and
-            // this arm re-adds cell and entry after it ran. The driver must still fail the read; a promise nothing completes is the strand.
+            // detach's slot-first cleanupPending sweep, which is the extreme point of the window: whatever the sweep took, this arm installs
+            // a fresh cell after it ran. The driver must still fail the read; a promise nothing completes is the strand.
             handle.upgrading = true
             driver.detachForUpgrade(handle)
             val p = new IOPromise[Closed, ReadOutcome]

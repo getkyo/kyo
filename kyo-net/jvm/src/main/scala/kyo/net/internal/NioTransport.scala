@@ -1455,6 +1455,12 @@ final private[kyo] class NioTransport private (
                         // Failure / interrupt: close the handoff window so a torn-down handle never lingers mid-upgrade, then release the fd.
                         handle.upgrading = false
                         handle.handshakeReading = false
+                        // Abort-path sweep (the posix releaseFailedUpgrade dual): a stray pump arm that landed in the sweep-to-marker gap
+                        // installed a cell only the handshake's first producer arm would have failed, and an upgrade that aborts before that
+                        // arm never runs it. cancel's slot-first cleanupPending takes whatever cell is armed, so no read promise (or its
+                        // pendingReads entry and buffer) outlives the aborted upgrade. Idempotent on the pre-detach abort orderings, where
+                        // the close path that won the state CAS runs the same sweep.
+                        driver.cancel(handle)
                         closeQuietly(handle.channel)
                 }
                 // `promise` owns the detached channel for the whole upgrade (the onComplete failure arm above is what releases it), so route a
