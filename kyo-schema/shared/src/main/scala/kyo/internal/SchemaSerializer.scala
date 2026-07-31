@@ -1608,9 +1608,14 @@ private[kyo] object SchemaSerializer:
                     // Wire-format-agnostic fallback: when the underlying inner reader is wire-format-tagged
                     // (e.g. Protobuf, which reports fields by their numeric tag id), the buffered "name" is a
                     // numeric string. Match it against CodecMacro.fieldId(expected) to align with the way
-                    // the macro-generated case-class read body matches fields downstream.
-                    try parsed.toInt == CodecMacro.fieldId(expected)
-                    catch case _: NumberFormatException => false
+                    // the macro-generated case-class read body matches fields downstream. wireFieldId
+                    // classifies without throwing: the common token here is a plain field NAME, and paying
+                    // a NumberFormatException per non-id token is not merely slow on Scala Native, it is
+                    // fatal on some stacks: collecting the exception's stack trace walks the frames via
+                    // libunwind, which can segfault on deep continuation stacks (kyo-browser native suite,
+                    // SN 0.5.12: null read in CFI_Parser::decodeFDE during fillInStackTrace). fieldId is
+                    // always positive, so wireFieldId's -1 non-id sentinel never matches.
+                    wireFieldId(parsed) == CodecMacro.fieldId(expected)
                 end if
         end matchField
 
