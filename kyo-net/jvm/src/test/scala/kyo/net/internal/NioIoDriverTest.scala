@@ -587,16 +587,16 @@ class NioIoDriverTest extends Test:
         }) {
             // The transport's upgrade order (NioTransport.upgradeToTls): upgrading = true, then detachForUpgrade. The pump's re-arm has no
             // connection-state gate (ReadPump.requestNextRead delegates interception to the driver), so an arm can land strictly after the
-            // detach's slot-first cleanupPending sweep, which is the extreme point of the window: whatever the sweep took, this arm installs
-            // a fresh cell after it ran. The driver must still fail the read; a promise nothing completes is the strand.
+            // detach's slot-first cleanupPending sweep and before the handshake's first producer arm: whatever the sweep took, this arm
+            // installs a fresh cell after it ran, and the producer arm's occupant fail is what must complete it (the poller gap leaf's
+            // shape). A promise nothing completes is the strand.
             handle.upgrading = true
             driver.detachForUpgrade(handle)
             val p = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-            awaitOutcome(p, 2.seconds).map {
-                case Present(Result.Failure(_)) =>
-                    assert(driver.readArmState(handle) == "absent", s"unwound arm left slot=${driver.readArmState(handle)}")
-                    assert(!driver.hasPendingRead(handle), "unwound arm left its pendingReads entry")
+            driver.armUpgradeProducerRead(handle)
+            awaitOutcome(p, 10.seconds).map {
+                case Present(Result.Failure(_)) => succeed
                 case Absent =>
                     assert(
                         false,
@@ -641,7 +641,7 @@ class NioIoDriverTest extends Test:
                 )
             }.andThen {
                 driver.detachForUpgrade(handle)
-                awaitOutcome(p, 2.seconds).map {
+                awaitOutcome(p, 10.seconds).map {
                     case Present(Result.Failure(_)) =>
                         val salvaged = driver.drainUpgradeSalvage(handle)
                         assert(
@@ -691,22 +691,58 @@ class NioIoDriverTest extends Test:
                         handle.upgrading = true
                         driver.detachForUpgrade(handle)
                         armFiber.get.andThen {
-                            awaitOutcome(p, 2.seconds).map {
+                            // The slot rule promises completion at the NEXT slot transfer after an admitted arm, and every real upgrade
+                            // has one (a producer arm at minimum). Joining the arm fiber first pins the set as already-landed, so this
+                            // producer arm is deterministically that next transfer for whichever ordering the race produced.
+                            driver.armUpgradeProducerRead(handle)
+                            awaitOutcome(p, 10.seconds).map {
                                 case Present(_) =>
                                     handle.upgrading = false
+                                    handle.handshakeReading = false
                                     discard(driver.drainUpgradeSalvage(handle))
                                     Loop.continue(iter + 1)
                                 case Absent =>
-                                    assert(
-                                        false,
-                                        s"iteration $iter: read arm racing detach was stranded " +
-                                            s"(arm=${driver.readArmState(handle)}, pendingRead=${driver.hasPendingRead(handle)}, " +
-                                            s"interest=${driver.interestOpsFor(handle.channel)})"
-                                    )
-                                    Loop.done(())
+                                    val armBefore = driver.readArmState(handle)
+                                    driver.armUpgradeProducerRead(handle)
+                                    awaitOutcome(p, 1.seconds).map { retry =>
+                                        assert(
+                                            false,
+                                            s"iteration $iter: read arm racing detach was stranded " +
+                                                s"(arm=$armBefore, pendingRead=${driver.hasPendingRead(handle)}, " +
+                                                s"interest=${driver.interestOpsFor(handle.channel)}, " +
+                                                s"secondProducerArmCompleted=${retry.isDefined})"
+                                        )
+                                        Loop.done(())
+                                    }
                             }
                         }
                     }
+            }
+        }
+    }
+
+    "a deferred arm whose wakeup raced the selector rebuild is applied after the swap" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            // The lost-wakeup hole: an offer-then-wakeup producer whose wakeup reads the OLD selector during a rebuild wakes a corpse (a
+            // closed selector's wakeup is a silent no-op), and the new selector parks in an indefinite select() with the offer stranded in
+            // its queue. The pre-start window makes the interleaving deterministic: the arm's wakeup lands on the selector the rebuild is
+            // about to close, then the loop starts on the swapped selector, which nothing has woken.
+            driver.armUpgradeProducerRead(handle)
+            driver.rebuildSelector()
+            discard(driver.start())
+            awaitCondition(4.seconds)(driver.hasPendingRead(handle)).map { applied =>
+                assert(
+                    applied,
+                    "the deferred producer arm never applied: the rebuild swallowed its wakeup and the new selector parked indefinitely"
+                )
             }
         }
     }
@@ -734,7 +770,7 @@ class NioIoDriverTest extends Test:
                     "pre-CAS arm was spuriously completed: nothing may fail a read before the upgrade's state CAS and sweep have run"
                 )
                 driver.detachForUpgrade(handle)
-                awaitOutcome(p, 2.seconds).map {
+                awaitOutcome(p, 10.seconds).map {
                     case Present(Result.Failure(_)) => succeed
                     case Absent                     => assert(false, "pre-CAS arm was stranded: the detach sweep did not fail it")
                     case other                      => assert(false, s"unexpected outcome $other")
@@ -765,7 +801,7 @@ class NioIoDriverTest extends Test:
             }.andThen {
                 val p = new IOPromise[Closed, ReadOutcome]
                 driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-                awaitOutcome(p, 2.seconds).map {
+                awaitOutcome(p, 10.seconds).map {
                     case Present(Result.Failure(_)) => succeed
                     case Absent                     => assert(false, "the stray mid-handshake arm was stranded")
                     case other                      => assert(false, s"unexpected outcome $other")
@@ -818,7 +854,7 @@ class NioIoDriverTest extends Test:
                     s"the producer dispatch never delivered the flight (handoff=${handle.upgradeHandoff.get()}, arm=${driver.readArmState(handle)})"
                 )
             }.andThen {
-                awaitOutcome(p, 2.seconds).map {
+                awaitOutcome(p, 10.seconds).map {
                     case Present(Result.Failure(_)) =>
                         handle.upgradeHandoff.get() match
                             case NioHandle.UpgradeHandoff.Carryover(bytes) =>

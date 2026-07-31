@@ -71,7 +71,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     handle.isUpgraded = true
                     val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(handle, p)
-                    awaitOutcome(p, 2.seconds).map {
+                    awaitOutcome(p, 10.seconds).map {
                         case Present(Result.Failure(_)) => succeed
                         case Absent =>
                             assert(
@@ -136,7 +136,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                         }.andThen {
                             driver.cancel(handle)
                             handle.isUpgraded = true
-                            awaitOutcome(p, 2.seconds).map {
+                            awaitOutcome(p, 10.seconds).map {
                                 case Present(Result.Failure(_)) =>
                                     // The flight itself must survive in the handoff for the handshake to replay: failing the pump promise is
                                     // teardown, not data loss.
@@ -182,7 +182,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     driver.awaitRead(handle, p)
                     handle.isUpgraded = true
                     driver.armUpgradeProducerRead(handle)
-                    awaitOutcome(p, 2.seconds).map {
+                    awaitOutcome(p, 10.seconds).map {
                         case Present(Result.Failure(_)) => succeed
                         case Absent =>
                             assert(

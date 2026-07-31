@@ -124,11 +124,19 @@ class NioTransportTest extends Test:
             acceptThread.start()
 
             transport.connect("127.0.0.1", port).safe.get.map { conn =>
-                // The post-first-upgrade state: the upgraded connection reuses the handle (existingHandle in startTlsHandshake), whose
-                // upgradeSwept marker is durable. Reopening the upgrade window over it would let awaitRead's stray-arm reject fire before
-                // the new upgrade's state CAS, so the transport must reject the re-upgrade typed and fast, before any detach.
+                // The engine-carrying state every re-upgrade shape shares: a completed STARTTLS reuses the handle (existingHandle in
+                // startTlsHandshake) and attaches its engine, and a connectTls/listenTls connection is born with one. The handle has one
+                // engine slot, so the transport must reject a second upgrade typed and fast, before any detach.
                 // Safe: NioTransport.connect builds its connections as internal Connection[NioHandle] (the same narrowing upgradeToTls does).
-                conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle.upgradeSwept = true
+                val handle = conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle
+                val engine = javax.net.ssl.SSLContext.getDefault.createSSLEngine()
+                engine.setUseClientMode(true)
+                handle.tls = Present(NioTlsState(
+                    engine,
+                    ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
+                    ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
+                    ByteBuffer.allocate(engine.getSession.getApplicationBufferSize)
+                ))
                 Abort.run[kyo.net.NetException | Timeout](
                     Async.timeout(5.seconds)(
                         transport.upgradeToTls(conn, kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")), 16).safe.get

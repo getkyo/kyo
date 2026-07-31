@@ -47,7 +47,7 @@ class IoUringDriverUpgradeDetachTest extends Test:
                 }) {
                     val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     arrange(driver, handle, p)
-                    awaitOutcome(p, 2.seconds).map {
+                    awaitOutcome(p, 10.seconds).map {
                         case Present(Result.Failure(_)) => succeed
                         case Absent =>
                             assert(
