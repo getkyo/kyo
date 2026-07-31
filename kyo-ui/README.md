@@ -356,6 +356,8 @@ Input elements share three capability traits.
 
 `BooleanInput`: boolean-shaped fields with `.checked`, disabled, and a `Boolean => Unit < Async` Change handler. Implementations: `UI.checkbox`, `UI.radio`.
 
+`ConstrainedInput`: the `TextInput` variants that accept typing constraints, adding `.inputFilter(v: InputFilter)` and `.inputMask(v: String)`. Implementations: every `TextInput` except `UI.numberInput`, which constrains its content through `type="number"` plus `.min` / `.max` / `.step` instead. See [Typing constraints](#typing-constraints).
+
 ### Two-way binding via `SignalRef`
 
 The most useful API on every input is `.value(ref: SignalRef[String])` (text and picker) or `.checked(ref: SignalRef[Boolean])` (boolean). Passing a `SignalRef` activates two-way binding: the framework writes `ref.set(newValue)` BEFORE invoking any user-supplied `onInput` or `onChange`. By the time your handler runs, the ref already reflects the new value.
@@ -515,6 +517,39 @@ val sortByCustom: UI < Async =
 
 Use `Select` when you want native browser controls (keyboard navigation, screen-reader semantics) and the default chrome. Use `Dropdown` when you want to style the overlay yourself with `.style(...)`.
 
+### Typing constraints
+
+`ConstrainedInput` fields accept two declarative constraints, both enforced in the browser as the reader types, pastes or drops.
+
+`.inputFilter(v: InputFilter)` restricts which characters the field admits. The rejected character never enters the field, so there is no flicker and the caret does not jump.
+
+```scala
+import UI.*
+import kyo.*
+
+val pin: UI < Async =
+    for code <- Signal.initRef("")
+    yield input.id("pin").inputFilter(InputFilter.Digits).value(code)
+```
+
+`.inputMask(v: String)` formats the field progressively against a fixed pattern. `9` is a digit, `a` an ASCII letter, `*` either; every other character is a literal the mask inserts on its own. A backslash escapes the next character, so a literal `9` stays literal.
+
+```scala
+import UI.*
+import kyo.*
+
+val phone: UI < Async =
+    for number <- Signal.initRef("")
+    yield div(
+        input.id("phone").inputMask("(999) 999-9999").value(number),
+        input.id("intl").inputMask("+4\\9 999 999")
+    )
+```
+
+Three things are worth knowing. The mask governs display and not only typing: the initial value and a value bound to a `SignalRef` are formatted as they render, so a masked field never shows an unformatted value whoever set it, and a value the mask cannot hold is truncated at its capacity. A composition (IME, dead key, mobile autocorrect) is let through and corrected once it finishes, rather than being cancelled mid-composition. And both constraints are typing conveniences, not validation boundaries: any client can submit any value, so server-side checks still apply.
+
+`UI.numberInput` deliberately does not implement `ConstrainedInput`; calling either setter on it is a compile error. Its content is already constrained by `type="number"` plus `.min` / `.max` / `.step`, its `value` reads empty while the content is not a valid number, and a mask's own literals are never valid there.
+
 ### Domain enums for attributes
 
 Several attributes accept typed enums rather than raw strings.
@@ -556,6 +591,16 @@ val dataUri: UI = img(ImgSrc.Data("image/svg+xml", "<svg ... />"), "inline")
 `ImageExt`: `Png`, `Jpeg`, `Webp`, `Gif`, `Svg`, `Avif`. Used inside `FileAccept.Image(ext)`.
 
 `FileAccept`: `AnyImage`, `AnyVideo`, `AnyAudio`, `Pdf`, `Image(ext)`, plus string escape hatches `Extension(ext: String)` and `MediaType(mime: String)` for arbitrary extensions / MIME types.
+
+`InputFilter` for `ConstrainedInput.inputFilter`: `Digits`, `Decimal` (digits plus at most one `.` or `,`), and the escape hatch `Allowed(chars: String)` for an arbitrary character set. The escape hatch is explicit so a set can never be read as a keyword: `Allowed("int")` admits `i`, `n` and `t`, which a stringly-typed attribute could not express. See [Typing constraints](#typing-constraints).
+
+```scala
+import UI.*
+import kyo.*
+
+val amount: UI = input.id("amount").inputFilter(InputFilter.Decimal)
+val hex: UI    = input.id("hex").inputFilter(InputFilter.Allowed("0123456789abcdef"))
+```
 
 `Keyboard` and `KeyboardEvent`: the value handed to `onKeyDown` / `onKeyUp`. `Keyboard` is an enum of named keys (`Enter`, `Tab`, `Escape`, `Space`, arrow keys, function keys) plus `Char(c: scala.Char)` for printable characters and `Unknown(raw: String)` for everything else.
 
