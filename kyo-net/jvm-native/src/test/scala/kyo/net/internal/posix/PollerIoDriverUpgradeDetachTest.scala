@@ -105,39 +105,55 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     // the flight into the upgrade handoff and consumes the promise out of pendingReadPromise, so the sweep finds Absent.
                     val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(handle, p)
-                    handle.upgradeActive = true
-                    handle.upgrading = true
-                    assert(driver.write(clientH, Span.fromUnsafe(flight), 0) == WriteResult.Done)
-                    awaitCondition(2.seconds) {
-                        handle.upgradeHandoff.get() match
-                            case PosixHandle.UpgradeHandoff.Carryover(bytes) => bytes.length == flight.length
-                            case _                                           => false
-                    }.map { consumed =>
-                        assert(
-                            consumed,
-                            "the upgrade-window dispatch never routed the flight into the handoff " +
-                                s"(handoff=${handle.upgradeHandoff.get()}, pendingReadPromise=${handle.pendingReadPromise.isDefined})"
-                        )
+                    // Applied barrier: the arm above must be APPLIED on the poll carrier before the window opens, or the registration apply
+                    // rejects it as a stray (the shape under test needs an armed-then-consumed read, not a rejected arm). Registrations
+                    // drain FIFO, so a completed round-trip on a second pair armed AFTER the main read proves the main registration is in.
+                    PosixTestSockets.loopbackPair().map { case (bClient, bAccepted) =>
+                        val bHandle  = PosixHandle.socket(bAccepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val bClientH = PosixHandle.socket(bClient, PosixHandle.DefaultReadBufferSize, Absent)
+                        val bp       = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                        driver.awaitRead(bHandle, bp)
+                        assert(driver.write(bClientH, Span.fromUnsafe(Array[Byte](1)), 0) == WriteResult.Done)
+                        bp.safe.get.map { barrier =>
+                            driver.closeHandle(bHandle)
+                            discard(sock.close(bClient).poll())
+                            assert(barrier.isInstanceOf[ReadOutcome.Bytes], s"barrier round-trip got $barrier")
+                        }
                     }.andThen {
-                        driver.cancel(handle)
-                        handle.isUpgraded = true
-                        awaitOutcome(p, 2.seconds).map {
-                            case Present(Result.Failure(_)) =>
-                                // The flight itself must survive in the handoff for the handshake to replay: failing the pump promise is
-                                // teardown, not data loss.
-                                handle.upgradeHandoff.get() match
-                                    case PosixHandle.UpgradeHandoff.Carryover(bytes) =>
-                                        assert(bytes.toList == flight.toList, s"handoff bytes ${bytes.toList} != ${flight.toList}")
-                                    case other =>
-                                        assert(false, s"the flight must stay staged in the handoff; got $other")
-                            case Absent =>
-                                assert(
-                                    false,
-                                    "pump read consumed by the upgrade window was stranded: the sweep missed it " +
-                                        s"(pendingReadPromise=${handle.pendingReadPromise.isDefined})"
-                                )
-                            case other =>
-                                assert(false, s"unexpected outcome $other")
+                        handle.upgradeActive = true
+                        handle.upgrading = true
+                        assert(driver.write(clientH, Span.fromUnsafe(flight), 0) == WriteResult.Done)
+                        awaitCondition(2.seconds) {
+                            handle.upgradeHandoff.get() match
+                                case PosixHandle.UpgradeHandoff.Carryover(bytes) => bytes.length == flight.length
+                                case _                                           => false
+                        }.map { consumed =>
+                            assert(
+                                consumed,
+                                "the upgrade-window dispatch never routed the flight into the handoff " +
+                                    s"(handoff=${handle.upgradeHandoff.get()}, pendingReadPromise=${handle.pendingReadPromise.isDefined})"
+                            )
+                        }.andThen {
+                            driver.cancel(handle)
+                            handle.isUpgraded = true
+                            awaitOutcome(p, 2.seconds).map {
+                                case Present(Result.Failure(_)) =>
+                                    // The flight itself must survive in the handoff for the handshake to replay: failing the pump promise is
+                                    // teardown, not data loss.
+                                    handle.upgradeHandoff.get() match
+                                        case PosixHandle.UpgradeHandoff.Carryover(bytes) =>
+                                            assert(bytes.toList == flight.toList, s"handoff bytes ${bytes.toList} != ${flight.toList}")
+                                        case other =>
+                                            assert(false, s"the flight must stay staged in the handoff; got $other")
+                                case Absent =>
+                                    assert(
+                                        false,
+                                        "pump read consumed by the upgrade window was stranded: the sweep missed it " +
+                                            s"(pendingReadPromise=${handle.pendingReadPromise.isDefined})"
+                                    )
+                                case other =>
+                                    assert(false, s"unexpected outcome $other")
+                            }
                         }
                     }
                 }

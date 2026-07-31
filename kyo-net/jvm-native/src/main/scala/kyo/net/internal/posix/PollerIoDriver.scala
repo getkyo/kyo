@@ -722,6 +722,14 @@ final private[net] class PollerIoDriver private[posix] (
             handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
             handle.pendingReadPromise = Absent
         end if
+        // Post-deposit upgrade re-check, pairing with detachForUpgrade's isUpgraded write (set strictly after the promise sweep): a stray
+        // pump re-arm deposited after the sweep is otherwise never failed, since the registration apply rejects it without failing it and
+        // defers to a sweep that already ran. isUpgraded gates the fail to post-detach orderings only: failing a pre-detach deposit could
+        // tear the pump down while the connection state is still Established, letting its closeFn abort the upgrade (the registration
+        // apply's documented hazard). A pre-detach deposit is failed by the sweep instead, and a deposit in the sweep-to-marker gap by the
+        // handshake's first armUpgradeProducerRead occupant sweep, so every ordering reaches exactly one of the three.
+        if handle.upgradeActive && handle.isUpgraded then
+            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"fd=${handle.readFd} detached for upgrade")))
     end awaitRead
 
     /** Whether the peer has closed (a FIN) or the connection hit a hard error (RST), read WITHOUT a syscall. The standing edge-triggered
@@ -739,6 +747,14 @@ final private[net] class PollerIoDriver private[posix] (
       * `upgradeActive && !handshakeReading`). Demand-driven: the handshake calls this once per read, so the producer arms one read per peer flight.
       */
     override def armUpgradeProducerRead(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        // Fail the occupant this producer arm replaces: a stray pump re-arm deposited in the gap between detachForUpgrade's sweep and the
+        // isUpgraded write is invisible to both (the sweep already ran, the arm's own re-check saw the marker unset), so this overwrite is
+        // the last point that can complete it. Idempotent against a promise the sweep or the re-check already failed.
+        handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(Closed(
+            label,
+            summon[Frame],
+            s"fd=${handle.readFd} detached for upgrade"
+        ))))
         val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         handle.pendingReadPromise = Present(producer)
         handle.handshakeReading = true
@@ -1862,10 +1878,12 @@ final private[net] class PollerIoDriver private[posix] (
             deliverToUpgradeHandoff(handle, arr)
             // Demand-driven: do NOT re-arm here. The handshake parks the next waiter and re-arms via armUpgradeProducerRead. endDispatch releases the
             // dispatch guard (and runs the deferred free if a close raced, which fails the just-handed waiter via freeResources).
+            failConsumedUpgradeRead(handle, promise)
             discard(handle.endDispatch())
         else if n == 0 then
             handle.readMightHaveMore = false
             failUpgradeHandoff(handle, eof = true, errno = 0)
+            failConsumedUpgradeRead(handle, promise)
             discard(handle.endDispatch())
         else if isWouldBlock(result.errorCode) then
             // Socket confirmed empty: the peer flight has not arrived yet. Keep the producer armed (re-deposit the vehicle promise) so the next
@@ -1875,9 +1893,22 @@ final private[net] class PollerIoDriver private[posix] (
         else
             handle.readMightHaveMore = false
             failUpgradeHandoff(handle, eof = false, errno = result.errorCode)
+            failConsumedUpgradeRead(handle, promise)
             discard(handle.endDispatch())
         end if
     end dispatchUpgradeRead
+
+    /** Fail the promise an upgrade-window dispatch consumed out of `pendingReadPromise`. When the pump's read was armed before the upgrade
+      * and the peer flight arrived in the detach window, `promise` is the retiring plaintext pump's read: [[dispatchRead]] cleared it from
+      * the handle before routing here, so detachForUpgrade's later sweep finds Absent and this dispatch is the last owner that can complete
+      * it. Failing it is the pump's teardown signal, not data loss (the flight itself was delivered into the upgrade handoff above). When
+      * `promise` is a producer vehicle from [[armUpgradeProducerRead]] this is a harmless completion nobody observes.
+      */
+    private def failConsumedUpgradeRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
+        promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"fd=${handle.readFd} detached for upgrade")))
 
     /** Deliver `arr` (one peer ciphertext flight, read on the poll carrier or salvaged by [[onInboundClosedDuringRead]] on whatever arbitrary
       * carrier the scheduler resumes the parked put on) into the handle's [[PosixHandle.upgradeHandoff]] slot: fulfil a parked handshake
@@ -2346,9 +2377,10 @@ final private[net] class PollerIoDriver private[posix] (
                     // stray never owns the fd; the handshake's own arm (handshakeReading set in awaitReadCiphertext) is admitted by the branch below.
                     // Do NOT fail the pump's pendingReadPromise here: upgradeActive is set BEFORE detachForUpgrade flips the connection state to
                     // Upgrading, so failing the promise on this carrier could tear the pump down while the state is still Established, letting its
-                    // closeFn win Established->Closing and close the fd the upgrade reuses (the peer then reads EOF mid-handshake). detachForUpgrade's
-                    // deregisterFds fails the pump promise AFTER the state is Upgrading, where closeFn is a no-op, so leaving the promise to it keeps
-                    // the teardown safe. This is the poller dual of NioIoDriver's dispatchReadPlain upgrade guard.
+                    // closeFn win Established->Closing and close the fd the upgrade reuses (the peer then reads EOF mid-handshake). The promise is
+                    // failed post-CAS instead, by whichever of the three sweeps its deposit ordering reaches: deregisterFds (deposit before the
+                    // sweep), awaitRead's own isUpgraded re-check (deposit after the marker), or armUpgradeProducerRead's occupant fail (deposit in
+                    // the sweep-to-marker gap). This is the poller dual of NioIoDriver's dispatchReadPlain upgrade guard.
                     PollScratch.IdNoCheck
                 else
                     kind match
