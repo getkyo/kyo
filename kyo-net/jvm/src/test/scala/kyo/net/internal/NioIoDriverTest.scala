@@ -559,6 +559,159 @@ class NioIoDriverTest extends Test:
     }
 
     // -----------------------------------------------------------------------
+    // detachForUpgrade vs awaitRead: a read the upgrade sweep missed must still be failed
+    // -----------------------------------------------------------------------
+
+    /** Bounded await on a read promise: Present(outcome) when it completes, Absent when nothing completes it within `bound`. */
+    private def awaitOutcome(p: IOPromise[Closed, ReadOutcome], bound: Duration)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Maybe[Result[Closed, ReadOutcome]] < Async =
+        Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
+            case Result.Success(outcome)        => Present(Result.succeed(outcome))
+            case Result.Failure(_: Timeout)     => Absent
+            case Result.Failure(closed: Closed) => Present(Result.fail(closed))
+            case Result.Panic(e)                => Present(Result.panic(e))
+        }
+
+    "an awaitRead armed after detachForUpgrade is failed, not stranded" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        discard(driver.start())
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            // The transport's upgrade order (NioTransport.upgradeToTls): upgrading = true, then detachForUpgrade. The pump's re-arm has no
+            // connection-state gate (ReadPump.requestNextRead delegates interception to the driver), so an arm can land strictly after the
+            // detach's cleanupPending swept, which is the extreme point of the window: the sweep is keyed on the pendingReads entry, and
+            // this arm re-adds cell and entry after it ran. The driver must still fail the read; a promise nothing completes is the strand.
+            handle.upgrading = true
+            driver.detachForUpgrade(handle)
+            val p = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            awaitOutcome(p, 2.seconds).map {
+                case Present(Result.Failure(_)) =>
+                    assert(driver.readArmState(handle) == "absent", s"unwound arm left slot=${driver.readArmState(handle)}")
+                    assert(!driver.hasPendingRead(handle), "unwound arm left its pendingReads entry")
+                case Absent =>
+                    assert(
+                        false,
+                        "read armed after detachForUpgrade was stranded: nothing completed it " +
+                            s"(arm=${driver.readArmState(handle)}, pendingRead=${driver.hasPendingRead(handle)}, " +
+                            s"interest=${driver.interestOpsFor(handle.channel)}, upgrading=${handle.upgrading})"
+                    )
+                case other =>
+                    assert(false, s"unexpected outcome $other")
+            }
+        }
+    }
+
+    "a read consumed into upgrade salvage is failed by detach, not stranded" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        discard(driver.start())
+        val flight = Array[Byte](1, 2, 3)
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            // The pump is legitimately armed BEFORE the upgrade starts, then the peer's first TLS flight lands in the detach window (the
+            // server-side STARTTLS shape: the ClientHello rides right behind the negotiation byte). dispatchRead consumes the pendingReads
+            // entry and routes the bytes to the upgrade salvage WITHOUT completing the promise, leaving it for detach's cleanupPending; a
+            // map-keyed sweep then misses the cell (the entry is already gone) and the promise is never completed by anything.
+            val p = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            handle.upgrading = true
+            discard(sv.write(ByteBuffer.wrap(flight)))
+            awaitCondition(2.seconds) {
+                !driver.hasPendingRead(handle) && driver.readArmState(handle) == "pump" && !handle.upgradeSalvage.get().isEmpty
+            }.map { orphaned =>
+                assert(
+                    orphaned,
+                    "salvage-consumed orphan state not reached " +
+                        s"(pendingRead=${driver.hasPendingRead(handle)}, arm=${driver.readArmState(handle)}, " +
+                        s"salvage=${handle.upgradeSalvage.get().size})"
+                )
+            }.andThen {
+                driver.detachForUpgrade(handle)
+                awaitOutcome(p, 2.seconds).map {
+                    case Present(Result.Failure(_)) =>
+                        val salvaged = driver.drainUpgradeSalvage(handle)
+                        assert(
+                            salvaged.exists(_.toList == flight.toList),
+                            s"the peer flight must survive in the upgrade salvage; got $salvaged"
+                        )
+                    case Absent =>
+                        assert(
+                            false,
+                            "salvage-consumed read was stranded: detach failed nothing " +
+                                s"(arm=${driver.readArmState(handle)}, pendingRead=${driver.hasPendingRead(handle)})"
+                        )
+                    case other =>
+                        assert(false, s"unexpected outcome $other")
+                }
+            }
+        }
+    }
+
+    "a read arm racing detachForUpgrade is never stranded" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        driver.registerChannel(handle)
+        discard(driver.start())
+        val iterations = 400
+        val rng        = new java.util.Random(0xde7ac4)
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+        }) {
+            // The concurrent crossings between the deterministic endpoints: a forked arm and an inline detach jitter across each other with
+            // independent sub-microsecond spins. Whatever the interleaving, the promise must complete (Closed on every path here: no bytes
+            // are in flight), on pain of the strand the two deterministic leaves pin at their extremes.
+            Loop(0) { iter =>
+                if iter == iterations then Loop.done(succeed)
+                else
+                    val p = new IOPromise[Closed, ReadOutcome]
+                    Fiber.initUnscoped(Sync.defer {
+                        val spinUntil = java.lang.System.nanoTime() + rng.nextInt(2000).toLong
+                        while java.lang.System.nanoTime() < spinUntil do ()
+                        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                    }).map { armFiber =>
+                        val spinUntil = java.lang.System.nanoTime() + rng.nextInt(2000).toLong
+                        while java.lang.System.nanoTime() < spinUntil do ()
+                        handle.upgrading = true
+                        driver.detachForUpgrade(handle)
+                        armFiber.get.andThen {
+                            awaitOutcome(p, 2.seconds).map {
+                                case Present(_) =>
+                                    handle.upgrading = false
+                                    discard(driver.drainUpgradeSalvage(handle))
+                                    Loop.continue(iter + 1)
+                                case Absent =>
+                                    assert(
+                                        false,
+                                        s"iteration $iter: read arm racing detach was stranded " +
+                                            s"(arm=${driver.readArmState(handle)}, pendingRead=${driver.hasPendingRead(handle)}, " +
+                                            s"interest=${driver.interestOpsFor(handle.channel)})"
+                                    )
+                                    Loop.done(())
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // awaitWritable: registers interest and completes promise when writable
     // -----------------------------------------------------------------------
 
