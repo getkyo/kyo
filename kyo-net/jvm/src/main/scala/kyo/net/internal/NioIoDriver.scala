@@ -111,7 +111,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // Concurrent-collection audit: staged-delivery checks deferred to the poll carrier, so a pump arm that observes leftover grace staging
     // AFTER installing its cell (armRead's post-arm re-check) gets the staged bytes delivered selector-confined rather than racing the probe
     // dispatch for them cross-carrier. Same raw-ConcurrentLinkedQueue no-equivalent exception as pendingGraceProbeArms above: producers are
-    // caller carriers (offer), the single consumer is the poll carrier (drainStagedDeliveries), offer is the happens-before barrier.
+    // caller carriers (armRead's re-check) plus the poll carrier itself (deliverStagedToArm's engine-gate-busy re-offer); the single
+    // consumer is the poll carrier (drainStagedDeliveries), and offer is the happens-before barrier for the cross-carrier producers.
     private val pendingStagedDeliveries =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 

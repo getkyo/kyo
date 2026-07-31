@@ -132,7 +132,7 @@ scripts/build.sh --env podman test JVM                 # Linux container over a 
 scripts/build.sh --env podman-ci --arch arm sbt 'kyo-netJVM/testOnly kyo.net.internal.NioIoDriverTest'
 ```
 
-- `--env direct` runs host sbt. `--env podman` runs a Linux container over a clean git-archived snapshot of the working tree (uncommitted changes are applied via patch; the container never touches the tree). `--env podman-ci` adds the CI resource caps (4 vCPU, 16 GB), `CI=true`, and the CI driver heap, reproducing a CI run.
+- `--env direct` runs host sbt. `--env podman` runs a Linux container over a clean git-archived snapshot of the working tree (uncommitted changes to tracked files are applied via patch, so a new file must be at least `git add`ed to reach the container; the container never touches the tree). `--env podman-ci` adds the CI resource caps (4 vCPU, 16 GB), `CI=true`, `SBT_TASK_LIMIT=1`, and the CI driver heap, reproducing a CI run.
 - `--arch native|x86|arm` picks the container architecture for the podman envs (`x86` = linux/amd64, `arm` = linux/arm64, qemu-emulated when it differs from the host). This is the way to reproduce an arch-specific CI failure, e.g. a linux-arm64 test failure, from a mac.
 - Actions: `test`, `testDiff`, `compile`, `link` plus one or more platforms (`JVM JS Native Wasm all`), or `sbt <raw command>` to run one arbitrary sbt command in the selected env.
 

@@ -6,7 +6,10 @@ import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
+import javax.net.ssl.SSLEngine
+import javax.net.ssl.SSLEngineResult
 import kyo.*
+import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
@@ -388,19 +391,26 @@ class NioIoDriverTest extends Test:
         }
     }
 
-    "staged grace-probe bytes racing a fresh read arm are never stranded" in {
-        val driver       = NioIoDriver.init()
-        val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+    /** Shared body for the staging-vs-arm race leaves (plain and TLS).
+      *
+      * The strand this reproduces: a standing grace probe holds OP_READ, fresh bytes arrive, and the probe's dispatch stages them in the
+      * window between awaitRead's staging pre-check (which saw Absent) and armRead installing the pump cell. The staged bytes then sit
+      * against an armed read that nothing completes: the socket is empty so the selector never fires again, and no path re-checks staging
+      * after the arm. Each iteration re-runs the race; the randomized sub-selector-latency spin scans the alignment between the probe's
+      * dispatch and the arm so the overlap lands within the iteration budget. A bounded read that never completes while stagedBytes is
+      * non-empty is the strand.
+      *
+      * `encode` turns the plaintext the peer sends into its wire bytes: identity for plain TCP, one wrapped TLS record for TLS. On the TLS
+      * leaf the probe therefore stages CIPHERTEXT and delivery must route it through the engine (feed + unwrap); reads always assert the
+      * decoded plaintext.
+      */
+    private def stagingRaceLoop(driver: NioIoDriver, handle: NioHandle, sv: SocketChannel, encode: Array[Byte] => Array[Byte])(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < Async =
         driver.registerChannel(handle)
         discard(driver.start())
 
-        // The strand this reproduces: a standing grace probe holds OP_READ, fresh bytes arrive, and the probe's dispatch stages them in the
-        // window between awaitRead's staging pre-check (which saw Absent) and armRead installing the pump cell. The staged bytes then sit
-        // against an armed read that nothing completes: the socket is empty so the selector never fires again, and no path re-checks staging
-        // after the arm. Each iteration below re-runs the race; the randomized sub-selector-latency spin scans the alignment between the
-        // probe's dispatch and the arm so the overlap lands within the iteration budget. A bounded read that never completes while
-        // stagedBytes is non-empty is the strand.
         val sentinel   = Array[Byte](9)
         val payload    = Array[Byte](4, 5, 6)
         val iterations = 600
@@ -429,7 +439,7 @@ class NioIoDriverTest extends Test:
                     // Arm (or re-arm) the grace probe and prove it is staging: the sentinel must land in graceStaging, which also leaves the
                     // probe re-armed as a standing FIN watch holding OP_READ (the n == 0 re-install after the staging read drains the socket).
                     discard(driver.isPeerClosed(handle))
-                    discard(sv.write(ByteBuffer.wrap(sentinel)))
+                    discard(sv.write(ByteBuffer.wrap(encode(sentinel))))
                     awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
                         assert(
                             staged,
@@ -444,14 +454,16 @@ class NioIoDriverTest extends Test:
                         }
                     }.andThen {
                         // The race: fresh bytes toward a socket whose standing probe holds OP_READ, then a pump arm on this carrier.
-                        discard(sv.write(ByteBuffer.wrap(payload)))
+                        discard(sv.write(ByteBuffer.wrap(encode(payload))))
                         val spinUntil = java.lang.System.nanoTime() + rng.nextInt(60000).toLong
                         while java.lang.System.nanoTime() < spinUntil do ()
-                        Loop(0) { received =>
-                            if received >= payload.length then Loop.done(())
+                        Loop(Array.emptyByteArray) { received =>
+                            if received.length >= payload.length then
+                                assert(received.toList == payload.toList, s"iteration $iter: payload round-trip got ${received.toList}")
+                                Loop.done(())
                             else
                                 readBytes(iter, 2.seconds).map {
-                                    case Present(bytes) => Loop.continue(received + bytes.length)
+                                    case Present(bytes) => Loop.continue(received ++ bytes)
                                     case Absent =>
                                         assert(
                                             false,
@@ -464,6 +476,86 @@ class NioIoDriverTest extends Test:
                     }.andThen(Loop.continue(iter + 1))
             }
         }
+    end stagingRaceLoop
+
+    /** A handshaked client/server JDK SSLEngine pair, driven engine-to-engine in memory so the socket never carries handshake bytes.
+      * TLSv1.2 keeps the exchange free of post-handshake records (a TLS 1.3 NewSessionTicket would ride ahead of the first application
+      * record). One wrap or one unwrap per engine per round; a partial flight resurfaces as NEED_UNWRAP and continues on a later round.
+      */
+    private def handshakedEnginePair()(using kyo.test.AssertScope): (SSLEngine, SSLEngine) =
+        val serverCtx = NioTransport.createSslContext(
+            NetTlsConfig(certChainPath = Present(TlsTestCert.certPath), privateKeyPath = Present(TlsTestCert.keyPath)),
+            isServer = true
+        )
+        val clientCtx = NioTransport.createSslContext(NetTlsConfig(trustAll = true), isServer = false)
+        val client    = clientCtx.createSSLEngine()
+        val server    = serverCtx.createSSLEngine()
+        client.setUseClientMode(true)
+        server.setUseClientMode(false)
+        client.setEnabledProtocols(Array("TLSv1.2"))
+        server.setEnabledProtocols(Array("TLSv1.2"))
+        val cToS  = ByteBuffer.allocate(client.getSession.getPacketBufferSize * 2)
+        val sToC  = ByteBuffer.allocate(server.getSession.getPacketBufferSize * 2)
+        val cApp  = ByteBuffer.allocate(client.getSession.getApplicationBufferSize)
+        val sApp  = ByteBuffer.allocate(server.getSession.getApplicationBufferSize)
+        val empty = ByteBuffer.allocate(0)
+        client.beginHandshake()
+        server.beginHandshake()
+        def runTasks(engine: SSLEngine): Unit =
+            var task = engine.getDelegatedTask
+            while task ne null do
+                task.run()
+                task = engine.getDelegatedTask
+        end runTasks
+        // Java enums (SSLEngineResult.HandshakeStatus) have no Scala CanEqual, so compare by reference identity (eq), the JdkSslEngine pattern.
+        def step(engine: SSLEngine, out: ByteBuffer, in: ByteBuffer, app: ByteBuffer): Unit =
+            val hs = engine.getHandshakeStatus
+            if hs eq SSLEngineResult.HandshakeStatus.NEED_TASK then runTasks(engine)
+            else if hs eq SSLEngineResult.HandshakeStatus.NEED_WRAP then discard(engine.wrap(empty, out))
+            else if hs eq SSLEngineResult.HandshakeStatus.NEED_UNWRAP then
+                in.flip()
+                if in.hasRemaining then discard(engine.unwrap(in, app))
+                discard(in.compact())
+            end if
+        end step
+        def handshaken(engine: SSLEngine): Boolean =
+            engine.getHandshakeStatus eq SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING
+        var rounds = 0
+        while rounds < 200 && !(handshaken(client) && handshaken(server)) do
+            rounds += 1
+            step(client, cToS, sToC, cApp)
+            step(server, sToC, cToS, sApp)
+        end while
+        assert(handshaken(client) && handshaken(server), s"in-memory TLS handshake did not complete after $rounds rounds")
+        (client, server)
+    end handshakedEnginePair
+
+    /** Wrap `plain` into one TLS record with `engine` (the test peer's outbound encryption). */
+    private def wrapRecord(engine: SSLEngine, plain: Array[Byte])(using kyo.test.AssertScope): Array[Byte] =
+        val out    = ByteBuffer.allocate(engine.getSession.getPacketBufferSize)
+        val result = engine.wrap(ByteBuffer.wrap(plain), out)
+        assert(result.getStatus eq SSLEngineResult.Status.OK, s"wrap failed: $result")
+        out.flip()
+        val arr = new Array[Byte](out.remaining())
+        out.get(arr)
+        arr
+    end wrapRecord
+
+    "staged grace-probe bytes racing a fresh read arm are never stranded" in {
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity)
+        stagingRaceLoop(driver, handle, sv, identity)
+    }
+
+    "staged grace-probe ciphertext racing a fresh TLS read arm is never stranded" in {
+        val (clientEngine, serverEngine) = handshakedEnginePair()
+        val driver                       = NioIoDriver.init()
+        val (client, sv)                 = openLoopbackPair()
+        // The handle unwraps with the server engine; the raw test peer encrypts with the client engine, so the probe stages ciphertext and
+        // delivery must route it through the engine gate, the TLS arm of the staged handoff.
+        val handle = NioHandle.initTls(client, 4096, serverEngine, Duration.Infinity)
+        stagingRaceLoop(driver, handle, sv, wrapRecord(clientEngine, _))
     }
 
     // -----------------------------------------------------------------------
