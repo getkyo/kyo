@@ -308,6 +308,7 @@ private[kyo] object HtmlRenderer:
         case _: Ul             => "ul"
         case _: Ol             => "ol"
         case _: Table          => "table"
+        case _: Tbody          => "tbody"
         case _: H1             => "h1"
         case _: H2             => "h2"
         case _: H3             => "h3"

@@ -116,6 +116,7 @@ object UI:
     def blockquote(using Frame): Blockquote       = Blockquote()
     def code(using Frame): Code                   = Code()
     def table(using Frame): Table                 = Table()
+    def tbody(using Frame): Tbody                 = Tbody()
     def tr(using Frame): Tr                       = Tr()
     def td(using Frame): Td                       = Td()
     def th(using Frame): Th                       = Th()
@@ -1083,6 +1084,18 @@ object UI:
             def withAttrs(a: Attrs): Table      = copy(attrs = a)
             def apply(cs: HtmlChildVal*): Table = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Table
+
+        /** Explicit table row group. The HTML parser only synthesizes an implicit `<tbody>` while PARSING row
+          * content; rows patched into a live table programmatically (a reactive region between comment markers)
+          * become direct `<table>` children, which renders fine but breaks `tbody`-scoped selectors and
+          * semantics. Wrap a row region in `UI.tbody` to get a real row group.
+          */
+        final case class Tbody(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
+            with Interactive:
+            type Self = Tbody
+            def withAttrs(a: Attrs): Tbody      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Tbody = copy(children = children ++ Chunk.from(cs.map(_.value)))
+        end Tbody
 
         // ====== Headings (Block) ======
 
