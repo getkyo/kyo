@@ -19,6 +19,14 @@ runs:
       with:
         node-version: '24'
 
+    # jsdom for the DOM-backed Scala.js unit tests (kyo-ui DomTestEnv); loaded lazily via require,
+    # so only suites that install the DOM need it. JS only: the helper lives in the js-only test tree.
+    # The repo ignores *.json, so the version is pinned here rather than in a package.json.
+    - name: Install Node.js test dependencies
+      if: ${{ inputs.target == 'JS' }}
+      shell: bash
+      run: npm install --no-save --no-fund --no-audit jsdom@^30
+
     - uses: actions/cache@v5
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

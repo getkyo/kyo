@@ -229,15 +229,38 @@ private[kyo] object DomBackend:
         end if
     end beginAnimationsSync
 
+    /** True when `start` or any of its ancestors below `document.body` declares event type `t` in `data-kyo-ev`.
+      *
+      * ReactiveUI.dispatchToElement bubbles an event to every ancestor that declared a handler for its type, so the
+      * SPA forwarding gate must forward when ANY ancestor declared it, not just the target (checking only the
+      * target's own data-kyo-ev would drop e.g. a keydown meant for an ancestor panel before bubble dispatch runs).
+      */
+    private[kyo] def declaredInChain(start: dom.Element, t: String): Boolean =
+        var n: dom.Element = start
+        var found          = false
+        while !found && n != null && (n ne document.body) do
+            val ev = n.getAttribute("data-kyo-ev")
+            if ev != null && ev.split(",").contains(t) then found = true
+            else
+                n = n.parentNode match
+                    case p: dom.Element => p
+                    case _              => null
+            end if
+        end while
+        found
+    end declaredInChain
+
     /** Set up capture-phase event delegation on document.body. */
     private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async, events: Channel[Unit < Async])(using
         Frame
     ): Unit < Sync = Sync.defer {
+        final class ChainTypes(target: dom.Element):
+            def contains(t: String): Boolean = declaredInChain(target, t)
+
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
             findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
-                val evAttr  = target.getAttribute("data-kyo-ev")
-                val evTypes = if evAttr != null then evAttr.split(",").toSet else Set.empty[String]
+                val evTypes = ChainTypes(target)
                 val t       = e.`type`
 
                 val event: Maybe[UIEvent] =
