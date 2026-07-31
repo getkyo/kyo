@@ -1436,6 +1436,11 @@ final private[kyo] class NioTransport private (
             // first upgrade's channel) and, via the unguarded detach fallthrough, drive a second handshake over a channel the first upgrade
             // still owns.
             if !nioConn.claimUpgrade() then promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+            // One upgrade per HANDLE, not just per connection: the upgraded connection is a fresh Connection over the same handle with its
+            // own claim, so without this a TLS-over-TLS re-upgrade would reopen the handle's upgrade window with the durable upgradeSwept
+            // marker already set, letting the driver's stray-arm reject fire before the new upgrade's state CAS. The handle's upgrade
+            // machinery (engine attachment, salvage, handoff) is single-shot by design; reject a second upgrade typed.
+            else if handle.upgradeSwept then promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
             else
                 // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT
                 // closing it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the

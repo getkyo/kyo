@@ -53,7 +53,7 @@ class IoUringDriverUpgradeDetachTest extends Test:
                             assert(
                                 false,
                                 s"$name: the stray read promise was stranded, nothing completed it " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.isDefined}, upgradeActive=${handle.upgradeActive})"
+                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined}, upgradeActive=${handle.upgradeActive})"
                             )
                         case other =>
                             assert(false, s"unexpected outcome $other")

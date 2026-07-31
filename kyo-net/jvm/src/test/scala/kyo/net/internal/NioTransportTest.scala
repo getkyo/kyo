@@ -105,6 +105,50 @@ class NioTransportTest extends Test:
         }
     }
 
+    "a second upgradeToTls on an already-upgraded handle fails typed" in {
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val latch      = new java.util.concurrent.CountDownLatch(1)
+            val serverSock = java.nio.channels.ServerSocketChannel.open()
+            serverSock.configureBlocking(true)
+            serverSock.bind(new InetSocketAddress("127.0.0.1", 0))
+            val port = serverSock.socket().getLocalPort
+            val acceptThread = new Thread(() =>
+                try
+                    val accepted = serverSock.accept()
+                    latch.await()
+                    accepted.close()
+                catch case _: Exception => ()
+            )
+            acceptThread.setDaemon(true)
+            acceptThread.start()
+
+            transport.connect("127.0.0.1", port).safe.get.map { conn =>
+                // The post-first-upgrade state: the upgraded connection reuses the handle (existingHandle in startTlsHandshake), whose
+                // upgradeSwept marker is durable. Reopening the upgrade window over it would let awaitRead's stray-arm reject fire before
+                // the new upgrade's state CAS, so the transport must reject the re-upgrade typed and fast, before any detach.
+                // Safe: NioTransport.connect builds its connections as internal Connection[NioHandle] (the same narrowing upgradeToTls does).
+                conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle.upgradeSwept = true
+                Abort.run[kyo.net.NetException | Timeout](
+                    Async.timeout(5.seconds)(
+                        transport.upgradeToTls(conn, kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")), 16).safe.get
+                    )
+                ).map { second =>
+                    latch.countDown()
+                    conn.close()
+                    serverSock.close()
+                    second match
+                        case Result.Failure(_: kyo.net.NetException) => succeed
+                        case Result.Failure(_: Timeout) =>
+                            assert(false, "the re-upgrade hung instead of failing typed (the reject is missing)")
+                        case other =>
+                            assert(false, s"a second upgrade of an upgraded handle must fail typed; got $other")
+                    end match
+                }
+            }
+        }
+    }
+
     "connect returns Closed failure for unreachable port" in {
         given Frame = Frame.internal
         mkTransport().map { transport =>

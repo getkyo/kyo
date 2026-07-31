@@ -48,6 +48,14 @@ final private[net] class PosixHandle private (
     // while the handshake (having read Absent) parks its waiter, stranding the bytes against a waiter that nothing fulfils and hanging the
     // upgrade. The close path (freeResources) swings it to Idle and fails any parked waiter Closed.
     val upgradeHandoff: AtomicRef.Unsafe[PosixHandle.UpgradeHandoff],
+    // The pending read promise for this fd, stored directly on the handle rather than as a `(promise, handle)` pair in the `pendingReads`
+    // map. Deposited by `awaitRead`/`rearmOwned` (and, during a STARTTLS upgrade window, by io_uring's rejected stray arm and the pollers'
+    // `armUpgradeProducerRead`); TAKEN atomically wherever ownership transfers: `dispatchRead`'s consume, every close/cancel/detach sweep,
+    // and the upgrade-window occupant sweeps all `getAndSet` so a fail-then-clear can never clobber a deposit that lands between the two
+    // (the stranded-read fix's covering-sweep argument depends on every sweep being an atomic take). The visibility barrier toward the
+    // change worker's `rc < 0` failure path is unchanged: the deposit happens-before the `changeQueue.offer` that follows it. Multiple
+    // carriers write during the upgrade window, which is exactly why this is an atomic reference and not a plain volatile field.
+    val pendingReadPromise: AtomicRef.Unsafe[Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]]],
     // The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
     // flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
     // chunk. A one-shot claim, not a plain snapshot: feedCoalescedHandshake and the upgrade-handoff salvage hooks (PollerIoDriver /
@@ -114,8 +122,13 @@ final private[net] class PosixHandle private (
       * either interleaves its ciphertext with the post-upgrade `ReadPump`'s own (concurrent) recv -- both target the SAME cached staging buffer,
       * see [[IoUringDriver.recvStagingFor]] -- or silently drops the decoded plaintext onto the orphan's own throwaway producer promise, which
       * nothing observes. `false` for a fresh (non-STARTTLS) handshake's `handshakeOwned` recvs, so they are unaffected: `tls` stays `Absent` for
-      * those until their own `onFinished` runs, and this flag was never set. io_uring-only (the poller's synchronous reads hold no kernel-owned
-      * recv that could outlive `onFinished` this way); harmless if read on a poller, where nothing sets it.
+      * those until their own `onFinished` runs, and this flag was never set.
+      *
+      * Second, load-bearing role on EVERY posix backend since the stranded-read fixes: the post-detach marker for the drivers' stray-arm
+      * handling. It is written strictly after `detachForUpgrade` returns (state CAS and promise sweep both done, `PosixTransport.upgradeRole`),
+      * so a fail gated on it can never fire before the upgrade's state CAS; the pollers' `awaitRead` re-check and io_uring's upgrade-window
+      * deposit re-check both gate on it. Never cleared, which is also why `upgradeRole` rejects a second upgrade of an already-upgraded handle:
+      * a reopened window with this marker already set would defeat the pre-CAS guarantee.
       */
     @volatile var isUpgraded: Boolean = false
 
@@ -424,16 +437,6 @@ final private[net] class PosixHandle private (
             false
     end growReadBufferForFullRead
 
-    /** The pending read promise for this fd, stored directly on the handle rather than as a `(promise, handle)` pair in the `pendingReads`
-      * map. Written by the driver carrier under `awaitRead`/`rearmOwned`; read and cleared by the driver on `dispatchRead`. The `@volatile`
-      * ensures the store is visible to the change worker that may fail the promise on `rc < 0` (the happens-before barrier is the
-      * `changeQueue.offer` that follows the store: the `MpscLongQueue.offer` tail swap happens-before any subsequent poll by the change
-      * worker). Single owner for the write side: only the call path through `awaitRead` or `rearmOwned` writes this field, and those two
-      * paths never run concurrently on the same handle (at most one read dispatch is in flight per handle at a time, enforced by
-      * `beginDispatch`/`endDispatch`).
-      */
-    @volatile var pendingReadPromise: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
-
     /** The pending accept promise for this fd, stored directly on the handle. Mirrors [[pendingReadPromise]] for the listen-fd accept path
       * (`awaitAccept` / `dispatchAccept`). Written before the corresponding change command is enqueued (the `changeQueue.offer` is the
       * happens-before barrier for the change worker's `rc < 0` failure path). Single owner for the write side: only `awaitAccept` writes
@@ -660,6 +663,7 @@ private[net] object PosixHandle:
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
+            pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
         )
 
@@ -677,6 +681,7 @@ private[net] object PosixHandle:
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
+            pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
         )
 
@@ -784,7 +789,7 @@ private[net] object PosixHandle:
         end match
         h.queuedRecv = PosixHandle.QueuedRecv.None
         // Clear promise fields: these are on-heap references with no native close needed; setting to Absent drops the reference.
-        h.pendingReadPromise = Absent
+        h.pendingReadPromise.set(Absent)
         h.pendingAcceptPromise = Absent
         h.pendingWritablePromise = Absent
         // Run the deferred real close(fd) LAST: this method is the exactly-once, zero-holders point that just freed the engine and buffers

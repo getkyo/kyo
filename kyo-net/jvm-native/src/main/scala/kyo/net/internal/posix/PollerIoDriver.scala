@@ -702,7 +702,7 @@ final private[net] class PollerIoDriver private[posix] (
     end terminalTeardown
 
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        handle.pendingReadPromise = Present(promise)
+        handle.pendingReadPromise.set(Present(promise))
         // The activeFds + pendingReads puts are applied on the poll fiber (single-writer): enqueue the registration, then submit the
         // change command. The poll fiber drains regIntake before processing the register command, so the map entry is in place when dispatchCmd
         // runs (the registration is published before the command via the change-queue happens-before, and the intake drain precedes the command).
@@ -719,8 +719,7 @@ final private[net] class PollerIoDriver private[posix] (
         // completing it. This drives the existing onFailed -> teardown() -> closeHandle -> self-close chain end-to-end for free.
         if terminal.get() then
             val closed = Closed(label, summon[Frame], s"fd=${handle.readFd} driver closed")
-            handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-            handle.pendingReadPromise = Absent
+            handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         end if
         // Post-deposit upgrade re-check, pairing with detachForUpgrade's isUpgraded write (set strictly after the promise sweep): a stray
         // pump re-arm deposited after the sweep is otherwise never failed, since the registration apply rejects it without failing it and
@@ -747,16 +746,16 @@ final private[net] class PollerIoDriver private[posix] (
       * `upgradeActive && !handshakeReading`). Demand-driven: the handshake calls this once per read, so the producer arms one read per peer flight.
       */
     override def armUpgradeProducerRead(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        // Fail the occupant this producer arm replaces: a stray pump re-arm deposited in the gap between detachForUpgrade's sweep and the
-        // isUpgraded write is invisible to both (the sweep already ran, the arm's own re-check saw the marker unset), so this overwrite is
-        // the last point that can complete it. Idempotent against a promise the sweep or the re-check already failed.
-        handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(Closed(
+        // Atomically swap in the producer and fail the occupant it replaces: a stray pump re-arm deposited in the gap between
+        // detachForUpgrade's sweep and the isUpgraded write is invisible to both (the sweep already ran, the arm's own re-check saw the
+        // marker unset), so this swap is the last point that can complete it. The single getAndSet leaves no window for a deposit to land
+        // between the fail and the store. Idempotent against a promise the sweep or the re-check already failed.
+        val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+        handle.pendingReadPromise.getAndSet(Present(producer)).foreach(_.completeDiscard(Result.fail(Closed(
             label,
             summon[Frame],
             s"fd=${handle.readFd} detached for upgrade"
         ))))
-        val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-        handle.pendingReadPromise = Present(producer)
         handle.handshakeReading = true
         // Edge-triggered recovery for the upgrade producer, on BOTH poller backends: a peer handshake flight ALREADY buffered when this arms
         // produces no fresh readiness edge that would re-dispatch the read, so the read never fires and the upgrade strands to the leaf timeout.
@@ -1228,8 +1227,7 @@ final private[net] class PollerIoDriver private[posix] (
             submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
         end if
         val closed = Closed(label, summon[Frame], s"fd=${handle.readFd}/${handle.writeFd} canceled")
-        handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-        handle.pendingReadPromise = Absent
+        handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
         handle.pendingWritablePromise = Absent
         handle.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
@@ -1399,8 +1397,7 @@ final private[net] class PollerIoDriver private[posix] (
     private def closeTeardown(closed: Closed)(using AllowUnsafe): Unit =
         flushRegIntakeToLiveTables()
         pendingReads.foreach { (_, h) =>
-            h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-            h.pendingReadPromise = Absent
+            h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         }
         pendingReads.clear()
         pendingWritables.foreach { (_, entry) =>
@@ -1547,8 +1544,7 @@ final private[net] class PollerIoDriver private[posix] (
                 Maybe(pendingReads.get(fd)).foreach { h =>
                     if (h.id.packed & 0xffffffffL) == staleId then
                         discard(pendingReads.remove(fd))
-                        h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(staleErr)))
-                        h.pendingReadPromise = Absent
+                        h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(staleErr)))
                 }
                 Maybe(pendingAccepts.get(fd)).foreach { h =>
                     if (h.id.packed & 0xffffffffL) == staleId then
@@ -1612,8 +1608,7 @@ final private[net] class PollerIoDriver private[posix] (
         if soError(fd) != 0 then
             val closed = Closed(label, summon[Frame], s"error event fd=$fd")
             Maybe(pendingReads.remove(fd)).foreach { h =>
-                h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                h.pendingReadPromise = Absent
+                h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
             }
             Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
             // Latch peer-closed on a hard error too: a peer RST fires EPOLLHUP/EV_ERROR, not the EOF edge, so it never reaches the EOF capture, and
@@ -1646,17 +1641,16 @@ final private[net] class PollerIoDriver private[posix] (
     private def dispatchRead(fd: Int, eofPending: Boolean = false, fromKernelEdge: Boolean = false)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingReads.remove(fd)) match
             case Present(handle) =>
-                val promise = handle.pendingReadPromise
+                // Atomic take: every branch below transfers ownership of the promise away from the handle, so consume it in one getAndSet
+                // (a read-then-clear could clobber a deposit landing between the two).
+                val promise = handle.pendingReadPromise.getAndSet(Absent)
                 if isStaleId(handle.readFd, handle.id) then
                     // Stale event: this fd was closed and recycled into a different handle. Drop it; do not deliver to the new handle.
                     promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale read event fd=$fd"))))
-                    handle.pendingReadPromise = Absent
                 else if !handle.beginDispatch() then
                     // The handle was closed (resources freed) before this dispatch acquired them; bail without touching them (race fix).
                     promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read on closed handle fd=$fd"))))
-                    handle.pendingReadPromise = Absent
                 else
-                    handle.pendingReadPromise = Absent // clear before dispatch (the promise is now in-flight)
                     // Ownership of the read buffer + engine is held until finishDispatch / rearmOwned releases it, so a concurrent
                     // closeHandle defers its free and never races the in-flight recv / engine feed below.
                     promise match
@@ -1726,7 +1720,7 @@ final private[net] class PollerIoDriver private[posix] (
         if handle.endDispatch() then
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read on closed handle fd=$fd")))
         else
-            handle.pendingReadPromise = Present(promise)
+            handle.pendingReadPromise.set(Present(promise))
             // Poll-fiber-confined: rearmOwned runs only from the dispatch paths on the poll-loop carrier, so this re-deposit is a direct put.
             // activeFds(fd) is still set from the original awaitRead, so no re-put is needed.
             pendingReads.put(fd, handle)
@@ -2359,8 +2353,7 @@ final private[net] class PollerIoDriver private[posix] (
                     val closed = Closed(label, summon[Frame], s"register on closing handle fd=$fd")
                     kind match
                         case RegKind.Read =>
-                            handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                            handle.pendingReadPromise = Absent
+                            handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
                         case RegKind.Accept =>
                             handle.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
                             handle.pendingAcceptPromise = Absent
@@ -2445,8 +2438,7 @@ final private[net] class PollerIoDriver private[posix] (
                     val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
                     if rc < 0 then
                         Maybe(pendingReads.remove(fd)).foreach { h =>
-                            h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                            h.pendingReadPromise = Absent
+                            h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
                         }
                     else
                         // Consumer-paced drain: re-dispatch immediately when the kernel may hold bytes with no new ET edge pending. Two cases:
@@ -2508,8 +2500,7 @@ final private[net] class PollerIoDriver private[posix] (
                             // re-arms a read on it, which this must NOT kill; the synchronous fail already handled the read present at cancel time.
                             // completeDiscard is idempotent with the synchronous fail.
                             val closed = Closed(label, summon[Frame], s"fd=$fd closed")
-                            h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                            h.pendingReadPromise = Absent
+                            h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
                             h.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
                             h.pendingWritablePromise = Absent
                             h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))

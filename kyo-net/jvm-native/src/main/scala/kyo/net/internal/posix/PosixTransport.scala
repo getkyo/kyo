@@ -1554,6 +1554,13 @@ final private[net] class PosixTransport private[posix] (
                 // the first upgrade's fd, and re-arm the handle flags on a window it does not own.
                 if !posixConn.claimUpgrade() then
                     return Fiber.Unsafe.fromResult(Result.fail(NetAlreadyDetachedException()))
+                // One upgrade per HANDLE, not just per connection: the upgraded connection is a fresh Connection over the same handle with
+                // its own claim, so without this a TLS-over-TLS re-upgrade would reopen the upgrade window with the durable isUpgraded
+                // marker already set, letting the drivers' stray-arm re-check fire before the new upgrade's state CAS. The handle's upgrade
+                // machinery (engine attachment, salvage, handoff, the io_uring single-recv ordering) is single-shot by design; reject a
+                // second upgrade typed.
+                if posixConn.handle.isUpgraded then
+                    return Fiber.Unsafe.fromResult(Result.fail(NetAlreadyDetachedException()))
                 val out    = new IOPromise[NetException, Connection]
                 val handle = posixConn.handle
                 // `out` owns the detached fd for the whole upgrade (see the `out.onComplete` owner below), so route a close() of the plaintext

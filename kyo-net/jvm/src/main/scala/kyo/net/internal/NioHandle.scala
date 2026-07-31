@@ -69,6 +69,14 @@ final private[kyo] class NioHandle private (
     // DROP the peer's first flight). HANDSHAKE phase (`handshakeReading`): the pump is gone and a dispatched read completes the handshake's read
     // normally. Cleared with `upgrading` at handshake completion.
     @volatile var handshakeReading: Boolean = false
+    // Post-sweep upgrade marker: set at the END of NioIoDriver.detachForUpgrade, strictly after the connection's state CAS to Upgrading and
+    // after cleanupPending's promise sweep, and never cleared (a handle upgrades at most once; NioTransport.upgradeToTls rejects a second
+    // upgrade on it). The one-sided implication is the point: upgradeSwept visible implies the sweep has run, so awaitRead can fail a stray
+    // pump re-arm on it without ever firing pre-CAS (failing earlier would let the pump's teardown closeFn win Established -> Closing and
+    // abort a healthy upgrade). The reverse ordering (arm before the marker is visible) is covered by the sweep itself (slot-first, it takes
+    // whatever cell is armed) or, in the sweep-to-marker gap, by applyUpgradeArm failing the occupant it replaces. Mirrors
+    // PosixHandle.isUpgraded's role in the posix drivers' gate.
+    @volatile var upgradeSwept: Boolean = false
     // Set true at STARTTLS completion (the FINISHED branch) so the upgraded connection's FIRST ReadPump read arm forces an unconditional
     // selector.wakeup(). That arm's OP_READ set is a cross-carrier interestOps read-modify-write that can be lost to the selector's own write
     // (the JDK selector is level-triggered, so a lost OP_READ means the channel is simply never reported); the normal recovery is the poll

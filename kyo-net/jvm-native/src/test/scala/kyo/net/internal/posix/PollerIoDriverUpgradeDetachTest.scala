@@ -77,7 +77,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                             assert(
                                 false,
                                 "read deposited after the upgrade sweep was stranded: nothing completed it " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.isDefined}, upgradeActive=${handle.upgradeActive})"
+                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined}, upgradeActive=${handle.upgradeActive})"
                             )
                         case other =>
                             assert(false, s"unexpected outcome $other")
@@ -131,7 +131,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                             assert(
                                 consumed,
                                 "the upgrade-window dispatch never routed the flight into the handoff " +
-                                    s"(handoff=${handle.upgradeHandoff.get()}, pendingReadPromise=${handle.pendingReadPromise.isDefined})"
+                                    s"(handoff=${handle.upgradeHandoff.get()}, pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
                             )
                         }.andThen {
                             driver.cancel(handle)
@@ -149,7 +149,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                                     assert(
                                         false,
                                         "pump read consumed by the upgrade window was stranded: the sweep missed it " +
-                                            s"(pendingReadPromise=${handle.pendingReadPromise.isDefined})"
+                                            s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
                                     )
                                 case other =>
                                     assert(false, s"unexpected outcome $other")
@@ -188,7 +188,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                             assert(
                                 false,
                                 "stray deposit in the sweep-to-marker gap was stranded: the producer arm did not fail the occupant " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.isDefined})"
+                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined})"
                             )
                         case other =>
                             assert(false, s"unexpected outcome $other")

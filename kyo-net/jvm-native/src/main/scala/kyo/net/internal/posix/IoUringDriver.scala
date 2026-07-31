@@ -189,7 +189,7 @@ final private[net] class IoUringDriver private[posix] (
         // STARTTLS single-recv gate. While `upgradeActive` is set the handshake owns the fd's read side exclusively: the only recv that may be in
         // flight is the one the plaintext ReadPump armed BEFORE the upgrade (kernel-owned, uncancellable, carrying the peer's first post-signal
         // flight), which the reap routes through `upgradeHandoff`. Any recv arm REQUESTED while the flag is set is a stray plaintext-ReadPump re-arm
-        // racing the upgrade (the ReadPump's last plaintext read re-armed after detachForUpgrade cancelled it, on its reused callback-less promise);
+        // racing the upgrade (the ReadPump's last plaintext read re-armed after detachForUpgrade cancelled it);
         // arming it would put a second recv on the fd that wins the peer's flight and drops the bytes onto the dead promise, stranding the handshake
         // (the STARTTLS upgrade stall). Never arm it, but never DROP it either: the pump tears down by observing this promise fail, so a silently
         // dropped promise parks the retiring pump forever. Deposit it on the handle and fail it post-CAS by whichever of the three sweeps the
@@ -199,7 +199,7 @@ final private[net] class IoUringDriver private[posix] (
         // The handshake's own ciphertext recv never enters here: it arms via awaitReadHandshake (which does not gate). False on the pollers
         // (upgradeActive is never set there: synchronous reads hold no kernel-owned recv), so this is io_uring-only.
         if handle.upgradeActive then
-            handle.pendingReadPromise = Present(promise)
+            handle.pendingReadPromise.set(Present(promise))
             if handle.isUpgraded then
                 promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"fd=${handle.readFd} detached for upgrade")))
         else submitDeferredRecv(handle, promise, handshakeOwned = false)
@@ -221,15 +221,15 @@ final private[net] class IoUringDriver private[posix] (
       * `upgradeActive` gate in [[awaitRead]] does not drop it. Demand-driven: `driveUpgradeRead` calls this once per read it needs.
       */
     override def armUpgradeProducerRead(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        // Fail a stray pump re-arm deposited in the gap between detachForUpgrade's cancel sweep and the isUpgraded write (awaitRead's
-        // upgrade-window deposit): invisible to both, so this first producer arm is the last point that can complete it. This driver never
-        // arms through pendingReadPromise itself, so the field is cleared, not replaced. Idempotent against an already-failed deposit.
-        handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(Closed(
+        // Atomically take and fail a stray pump re-arm deposited in the gap between detachForUpgrade's cancel sweep and the isUpgraded write
+        // (awaitRead's upgrade-window deposit): invisible to both, so this first producer arm is the last point that can complete it. This
+        // driver never arms through pendingReadPromise itself, so the field is cleared, not replaced. Idempotent against an already-failed
+        // deposit.
+        handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(Closed(
             label,
             summon[Frame],
             s"fd=${handle.readFd} detached for upgrade"
         ))))
-        handle.pendingReadPromise = Absent
         val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         awaitReadHandshake(handle, producer)
     end armUpgradeProducerRead
@@ -899,11 +899,10 @@ final private[net] class IoUringDriver private[posix] (
         pending.forEach { (_, op) =>
             if op.handle.id.packed == handle.id.packed then op.failPromise(closed)
         }
-        // Fail a stray pump re-arm the STARTTLS single-recv gate deposited on the handle (awaitRead's upgrade-window branch): it was never
-        // armed, so it is in neither `pending` nor `stalledSubmits`, and this sweep is what covers a deposit that landed before the
-        // upgrade's detach reached this cancel. Idempotent against the deposit's own isUpgraded re-check.
-        handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-        handle.pendingReadPromise = Absent
+        // Atomically take and fail a stray pump re-arm the STARTTLS single-recv gate deposited on the handle (awaitRead's upgrade-window
+        // branch): it was never armed, so it is in neither `pending` nor `stalledSubmits`, and this sweep is what covers a deposit that
+        // landed before the upgrade's detach reached this cancel. Idempotent against the deposit's own isUpgraded re-check.
+        handle.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(closed)))
         // Fail any WritePump promise parked at the write-backpressure high-water bound. It is held on the handle (a tail-bound park, not a pending
         // SQE), so it is not in `pending`; releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
         handle.backpressurePromise.foreach(_.completeDiscard(Result.fail(closed)))
@@ -940,8 +939,9 @@ final private[net] class IoUringDriver private[posix] (
       * `stalledSubmits`, so a `pending`-only check would answer "no stale recv coming" while one genuinely is, and the upgrade would clear
       * `upgradeActive` and arm a racing recv, stranding the re-armed stale recv's flight on the now-normal read path (the upgrade stall under load).
       * A stray ReadPump re-arm requested DURING the upgrade can never register a competing recv: `awaitRead`'s single-recv gate rejects any arm
-      * requested while `upgradeActive` is set (the promise is deposited on the handle and failed post-CAS, never armed), so it reaches neither queue. Both queues are touched only on the reap carrier (this runs there), so the scan is
-      * race-free. Close-path cost, not the hot read path; a handle has at most one recv in flight at a time.
+      * requested while `upgradeActive` is set (the promise is deposited on the handle and failed post-CAS, never armed), so it reaches neither
+      * queue. Both queues are touched only on the reap carrier (this runs there), so the scan is race-free. Close-path cost, not the hot read
+      * path; a handle has at most one recv in flight at a time.
       */
     override def hasInFlightRead(handle: PosixHandle)(using AllowUnsafe): Boolean =
         def isReadFor(op: PendingOp): Boolean = op match
