@@ -23,6 +23,7 @@ import kyo.scheduler.util.Sleep
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
@@ -423,8 +424,26 @@ final class Scheduler(
       *   - Maintains count between minWorkers and maxWorkers
       */
     private def updateWorkers(delta: Int) = {
-        currentWorkers = Math.max(minWorkers, Math.min(maxWorkers, currentWorkers + delta))
+        // Blocked-carrier floor: never let the worker count sit below the number of blocked carriers plus minWorkers, so
+        // blocked carriers (parked I/O drivers, blocking fibers) cannot starve runnable work even when the concurrency
+        // regulator, reading host jitter, would otherwise fail to grow or shrink the pool below the blocked count. When
+        // nothing is blocked the floor is minWorkers (the unchanged idle sizing).
+        val floor = Math.min(maxWorkers, blockedWorkerCount() + minWorkers)
+        currentWorkers = Math.max(floor, Math.min(maxWorkers, currentWorkers + delta))
         ensureWorkers()
+    }
+
+    /** Counts the active workers currently flagged blocked (parked in a syscall or on a lock), as maintained by the
+      * BlockingMonitor. Read by updateWorkers to floor the worker count at blocked + minWorkers.
+      */
+    private def blockedWorkerCount(): Int = {
+        @tailrec def loop(i: Int, acc: Int): Int =
+            if (i >= currentWorkers) acc
+            else {
+                val w = workers(i)
+                loop(i + 1, if ((w ne null) && w.blocked) acc + 1 else acc)
+            }
+        loop(0, 0)
     }
 
     /** Ensures required number of workers are allocated and initialized.
