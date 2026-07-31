@@ -108,6 +108,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private val pendingGraceProbeArms =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 
+    // Concurrent-collection audit: staged-delivery checks deferred to the poll carrier, so a pump arm that observes leftover grace staging
+    // AFTER installing its cell (armRead's post-arm re-check) gets the staged bytes delivered selector-confined rather than racing the probe
+    // dispatch for them cross-carrier. Same raw-ConcurrentLinkedQueue no-equivalent exception as pendingGraceProbeArms above: producers are
+    // caller carriers (armRead's re-check) plus the poll carrier itself (deliverStagedToArm's engine-gate-busy re-offer); the single
+    // consumer is the poll carrier (drainStagedDeliveries), and offer is the happens-before barrier for the cross-carrier producers.
+    private val pendingStagedDeliveries =
+        new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
+
     // Diagnostics dump so a connection this driver still holds shows up in kyo-test's end-of-run leak report (LeakCheck reads Diagnostics.dumpAll).
     // NIO was the one backend that registered nothing, so a leaked NIO connection was unattributable. The dump surfaces the pending-op maps AND every
     // channel still registered with the selector, by local->remote address (a backpressured connection holds a registered key with no pending op,
@@ -261,6 +269,20 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     end terminal
 
     def awaitRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        // Stray-arm reject for the STARTTLS handshake window, BEFORE any state is touched: once the handshake owns reads, a pump re-arm
+        // would clobber the producer's cell and shared pendingReads entry, disconnecting the handshake from the selector (its demand-driven
+        // waiter never retries), so it is failed here first, leaving the producer's state untouched. handshakeReading is the same predicate
+        // the dispatch routes on, and it is set only post-detach (armUpgradeProducerRead), strictly after the connection's state CAS to
+        // Upgrading, so this can never fire pre-CAS and a pre-detach arm is never spuriously failed: that arm is taken by the detach sweep,
+        // or, landing between the sweep and the first producer arm, by applyUpgradeArm's occupant fail. upgrading scopes the reject to the
+        // window: it clears at handshake completion, so the upgraded connection's own reads pass.
+        if handle.upgrading && handle.handshakeReading then
+            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade")))
+        else
+            awaitReadAdmitted(handle, promise)
+    end awaitRead
+
+    private def awaitReadAdmitted(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // Check for buffered TLS data before registering with selector.
         // After handshake, netInBuf may already contain application data.
         handle.tls match
@@ -289,7 +311,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         if handle.peerClosed then promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                         else armRead(handle, promise)
         end match
-    end awaitRead
+    end awaitReadAdmitted
 
     // Install a fresh ReadArmCell into the read-arm owner slot and register selector interest. Each arm
     // wraps the caller's promise in a freshly allocated ReadArmCell object; the selector carrier completes
@@ -298,21 +320,39 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // same promise), so its CAS fails.
     private def armRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         val newCell = Present(ReadArmCell(promise))
-        handle.readArm.set(newCell)
+        // getAndSet, not set: fail the occupant this arm replaces. The occupant is normally Absent, or a standing grace probe whose promise
+        // is a throwaway; the case that matters is a stray pre-upgrade pump cell a stalled carrier left behind after every upgrade-window
+        // catcher ran, for which this overwrite is the last owner. Idempotent against occupants already completed elsewhere. Displacing a
+        // still-armed live cell surfaces promptly as a typed Closed its owner handles as teardown, rather than as a silent hang.
+        handle.readArm.getAndSet(newCell).foreach { previous =>
+            previous.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} read arm replaced")))
+        }
         pendingReads.put(handle.channel, handle)
         Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
         if !registerInterest(handle.channel, SelectionKey.OP_READ) then
             discard(handle.readArm.compareAndSet(newCell, Absent))
             discard(pendingReads.remove(handle.channel))
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"registerRead failed for ${handleLabel(handle)}")))
-        else if handle.forceReadArmWakeup then
-            // First post-STARTTLS read arm (NioHandle.forceReadArmWakeup): registerInterest's cross-carrier OP_READ set can be lost to the
-            // selector's own interestOps write and its guarded wakeup can coalesce, so on a selector quiescing between repeated upgrades the
-            // reassert backstop never runs and this read strands. Force an UNCONDITIONAL selector.wakeup() (Netty's cross-thread discipline:
-            // never rely on a coalesced wakeup for a one-shot arm) so the poll carrier runs one cycle and reassertPendingInterest re-applies
-            // OP_READ on the selector carrier. One-shot: cleared here so steady-state reads keep the coalesced wakeup.
-            handle.forceReadArmWakeup = false
-            discard(selector.wakeup())
+        else
+            if handle.forceReadArmWakeup then
+                // First post-STARTTLS read arm (NioHandle.forceReadArmWakeup): registerInterest's cross-carrier OP_READ set can be lost to the
+                // selector's own interestOps write and its guarded wakeup can coalesce, so on a selector quiescing between repeated upgrades the
+                // reassert backstop never runs and this read strands. Force an UNCONDITIONAL selector.wakeup() (Netty's cross-thread discipline:
+                // never rely on a coalesced wakeup for a one-shot arm) so the poll carrier runs one cycle and reassertPendingInterest re-applies
+                // OP_READ on the selector carrier. One-shot: cleared here so steady-state reads keep the coalesced wakeup.
+                handle.forceReadArmWakeup = false
+                discard(selector.wakeup())
+            end if
+            // Post-arm staging re-check (pump side of the staging handoff). awaitRead's staging pre-check and this arm are not atomic against
+            // the probe dispatch: a probe holding OP_READ can consume fresh socket bytes into graceStaging between the pre-check (which saw
+            // Absent) and the readArm.set above, after which nothing fires (the socket is empty) and the staged bytes would strand against
+            // this armed read forever. Re-checking AFTER the arm closes that window from this side: the probe stashes then reads the arm slot
+            // (dispatchGraceProbe's tail deliverStagedToArm), this carrier arms then re-reads staging, so one of the two always observes the
+            // other. Delivery is deferred to the poll carrier (selector-confined, like the probe arms themselves) with an UNCONDITIONAL
+            // wakeup: there is no socket readiness to ride, so a coalesced wakeup lost to an in-flight select would strand the delivery.
+            if !handle.upgrading && !handle.graceStaging.get().isEmpty then
+                discard(pendingStagedDeliveries.offer(handle))
+                discard(selector.wakeup())
         end if
     end armRead
 
@@ -394,8 +434,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * `pendingReads` entry and fail any parked handshake waiter Closed so the handshake tears down rather than stranding. Poll-carrier-only.
       */
     private def applyUpgradeArm(handle: NioHandle)(using AllowUnsafe): Unit =
+        given Frame  = Frame.internal
         val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-        handle.readArm.set(Present(ReadArmCell(producer)))
+        // getAndSet, not set: fail the occupant this producer arm replaces. A stray pump re-arm admitted between the detach sweep and this
+        // first producer arm escaped the sweep (awaitRead's reject fires only once handshakeReading is set), so this swap is the last point
+        // that can complete it. A probe occupant's promise is a throwaway; failing it is harmless.
+        handle.readArm.getAndSet(Present(ReadArmCell(producer))).foreach { previous =>
+            previous.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade")))
+        }
         pendingReads.put(handle.channel, handle)
         val registered = registerInterest(handle.channel, SelectionKey.OP_READ)
         if !registered then
@@ -430,6 +476,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         handle.readArm.get() match
             case Present(cell) => cell.probe
             case Absent        => false
+
+    /** Test-observability seam: the current read-arm slot state as a label ("absent", "probe", or "pump"). Read-only, no mutation. */
+    private[net] def readArmState(handle: NioHandle)(using AllowUnsafe): String =
+        handle.readArm.get() match
+            case Present(cell) => if cell.probe then "probe" else "pump"
+            case Absent        => "absent"
 
     /** Append one probe chunk. Selector-carrier single appender; the CAS loop only guards a concurrent drainer's getAndSet. */
     private def stashGraceBytes(handle: NioHandle, arr: Array[Byte])(using AllowUnsafe): Unit =
@@ -485,11 +537,13 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
 
     /** Install one peer-close grace probe read-arm on the SELECTOR carrier (deferred here by [[isPeerClosed]]): a fresh PROBE cell routing a readiness
       * dispatch to [[dispatchGraceProbe]], a `pendingReads` entry, and OP_READ. The cell CAS is against `Absent`: a parked pump leaves the slot Absent;
-      * a pump re-arm or upgrade arm that won the slot owns the read, so skip. On a dead key (connection closed between kick and drain), unwind.
+      * a pump re-arm or upgrade arm that won the slot owns the read, so the CAS fails and the probe yields. The slot alone gates the arm; a
+      * `pendingReads` pre-check must NOT: armRead's cell set and entry put are not atomic, so a dispatch that completes a just-set cell can leave the
+      * arm's entry behind (dispatch removed the entry before the put landed), and a stale entry blocking probes here silently loses the FIN watch
+      * until the entry happens to be consumed. On a dead key (connection closed between kick and drain), unwind.
       */
     private def applyGraceProbeArm(handle: NioHandle)(using AllowUnsafe): Unit =
         if handle.upgrading || handle.peerClosed ||
-            pendingReads.containsKey(handle.channel) ||
             stagedBytes(handle) >= NioIoDriver.GraceProbeStagingCap
         then ()
         else
@@ -548,8 +602,89 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     handle.peerClosed = true
                     handle.tls.foreach(tls => if !tls.peerCleanClose then tls.peerEof = true)
             end try
+            // Probe side of the staging handoff (see armRead's post-arm re-check): after the last stash, a pump arm that raced this dispatch
+            // may own the slot with its staging pre-check already behind it, so hand the staged bytes over now. Same-carrier with every other
+            // dispatch, so this cannot race a pump dispatch for the cell.
+            deliverStagedToArm(handle)
         end if
     end dispatchGraceProbe
+
+    /** Poll-carrier drain of the deferred staged-delivery checks (the [[drainGraceProbeArms]] twin). */
+    private def drainStagedDeliveries()(using AllowUnsafe): Unit =
+        var handle = pendingStagedDeliveries.poll()
+        while handle ne null do
+            deliverStagedToArm(handle)
+            handle = pendingStagedDeliveries.poll()
+        end while
+    end drainStagedDeliveries
+
+    /** Deliver grace-probe-staged bytes to an armed pump read. SELECTOR-CARRIER ONLY (reached from drainStagedDeliveries and
+      * dispatchGraceProbe's tail), so it never races a dispatch for the cell; the only concurrent slot writer is a close/cancel
+      * cleanupPending, which the ownership CAS settles. This is the delivery half of the staging handoff: staging is stashed exclusively on
+      * this carrier, the pump arms on caller carriers, and both sides act-then-check (stash then read the slot here, arm then re-read staging
+      * in armRead), so staged bytes present while a pump cell is armed always reach exactly one of the two checks. Without it they strand:
+      * the probe consumed the socket, so no readiness ever fires for the armed cell, and every other staging drain sits on a read path that
+      * parked before the stash.
+      *
+      * Plain: take the cell, drain the staging, complete. A drain that comes up empty after winning the cell means a concurrent
+      * detachForUpgrade salvaged the staging; its cleanupPending found the slot already taken here, so complete the promise Closed the way
+      * that cleanup would have (the plaintext pump must tear down for the upgrade).
+      *
+      * TLS: staged bytes are ciphertext; feed them to the engine and complete only if a full record unwraps (or the records ended in the
+      * peer's close_notify). A partial record stays parked in netInBuf for the next socket read to extend, exactly like dispatchReadTls's
+      * need-more-data path. The engine gate is tried, not spun: a writeTls holding it means retry on a later cycle via re-offer (there is no
+      * socket readiness to re-arm against).
+      */
+    private def deliverStagedToArm(handle: NioHandle)(using AllowUnsafe): Unit =
+        given Frame = Frame.internal
+        if !handle.upgrading && !handle.graceStaging.get().isEmpty then
+            val cell = handle.readArm.get()
+            cell match
+                case Present(armCell) if !armCell.probe =>
+                    handle.tls match
+                        case Absent =>
+                            if handle.readArm.compareAndSet(cell, Absent) then
+                                discard(pendingReads.remove(handle.channel))
+                                drainGraceStaging(handle) match
+                                    case Present(staged) =>
+                                        armCell.promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(staged))))
+                                    case Absent =>
+                                        armCell.promise.completeDiscard(Result.fail(Closed(
+                                            label,
+                                            summon[Frame],
+                                            s"${handleLabel(handle)} detached for upgrade during staged delivery"
+                                        )))
+                                end match
+                        case Present(tls) =>
+                            if !handle.engineGate.compareAndSet(false, true) then
+                                discard(pendingStagedDeliveries.offer(handle))
+                                discard(selector.wakeup())
+                            else
+                                // Completion thunk pattern: release the gate BEFORE the promise completes, so synchronous teardown callbacks
+                                // on the promise can re-acquire it (the dispatchReadTls discipline).
+                                var complete: () => Unit = () => ()
+                                try
+                                    feedGraceStaging(handle, tls)
+                                    tryUnwrapBuffered(tls) match
+                                        case Present(plaintext) =>
+                                            if handle.readArm.compareAndSet(cell, Absent) then
+                                                discard(pendingReads.remove(handle.channel))
+                                                complete =
+                                                    () => armCell.promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(plaintext)))
+                                        case Absent if tls.peerCleanClose =>
+                                            if handle.readArm.compareAndSet(cell, Absent) then
+                                                discard(pendingReads.remove(handle.channel))
+                                                complete = () => armCell.promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
+                                        case Absent => ()
+                                    end match
+                                finally
+                                    handle.engineGate.set(false)
+                                end try
+                                complete()
+                case _ => ()
+            end match
+        end if
+    end deliverStagedToArm
 
     /** STARTTLS upgrade producer (selector carrier): read at most one buffer of peer ciphertext and hand it to the handshake through the handle's
       * [[NioHandle.upgradeHandoff]] slot, so the handshake fiber never reads the socket itself. The producer read-arm cell is CAS-cleared (the orphan
@@ -573,9 +708,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     // Demand-driven: the producer read exactly one flight and stops here. It does NOT re-arm itself; the handshake's next NEED_UNWRAP
                     // park re-arms it via armUpgradeProducerRead. Not self-re-arming is what prevents the over-read past FINISHED: the handshake stops
                     // parking once it completes, so no arm is issued after the last handshake read and the upgraded ReadPump owns post-FINISHED reads.
+                    failConsumedUpgradeRead(handle, cell)
                 end if
             else if n < 0 then
-                if handle.readArm.compareAndSet(cell, Absent) then failUpgradeHandoff(handle)
+                if handle.readArm.compareAndSet(cell, Absent) then
+                    failUpgradeHandoff(handle)
+                    failConsumedUpgradeRead(handle, cell)
             else
                 // n == 0: spurious selector wakeup, no data ready. Keep the producer armed (re-register on the selector carrier) for the real edge.
                 pendingReads.put(channel, handle)
@@ -583,9 +721,21 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             end if
         catch
             case _: IOException =>
-                if handle.readArm.compareAndSet(cell, Absent) then failUpgradeHandoff(handle)
+                if handle.readArm.compareAndSet(cell, Absent) then
+                    failUpgradeHandoff(handle)
+                    failConsumedUpgradeRead(handle, cell)
         end try
     end dispatchUpgradeRead
+
+    /** Fail the promise of the cell an upgrade-producer dispatch consumed. When a pump read armed before the upgrade window is the cell the
+      * dispatch took (the pump's last plaintext arm, with the handshake already owning reads), its bytes were delivered into the upgrade
+      * handoff above and the detach sweep can no longer see the cell, so this dispatch is the last owner that can complete the promise.
+      * Failing it is the pump's teardown signal, not data loss. For the handshake's own producer vehicle this is a harmless completion
+      * nobody observes. The poller dual is `PollerIoDriver.failConsumedUpgradeRead`.
+      */
+    private def failConsumedUpgradeRead(handle: NioHandle, cell: Maybe[ReadArmCell])(using AllowUnsafe): Unit =
+        given Frame = Frame.internal
+        cell.foreach(_.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade"))))
 
     /** Deliver `arr` (one peer ciphertext flight read on the selector carrier) into the handle's [[NioHandle.upgradeHandoff]] slot: fulfil a parked
       * handshake waiter, or stage a Carryover the handshake's next read consumes. Demand-driven, the producer arms only after the park has already
@@ -635,7 +785,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * cross-carrier completion the next dispatch is a no-op and the bytes wait in the socket for the ReadPump's own arm in connection.start().
       */
     override def stopUpgradeProducer(handle: NioHandle)(using AllowUnsafe): Unit =
-        discard(handle.readArm.getAndSet(Absent))
+        given Frame = Frame.internal
+        // Fail the retired occupant instead of discarding it: normally the producer's throwaway vehicle (a harmless completion nobody
+        // observes), but a stray pump arm whose carrier stalled across the whole handshake can be the occupant here, and this retire is the
+        // last catcher on that ordering. Runs at FINISHED before completeConnect starts the upgraded pump, so the occupant is never the new
+        // connection's arm.
+        handle.readArm.getAndSet(Absent).foreach { cell =>
+            cell.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"${handleLabel(handle)} detached for upgrade")))
+        }
         discard(pendingReads.remove(handle.channel))
         val key = handle.channel.keyFor(selector)
         if (key ne null) && key.isValid then
@@ -805,10 +962,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 if pendingConnects.containsKey(handle.channel) then 1 else 0
             }")
         val closed = Closed(label, summon[Frame], s"${handleLabel(handle)} closed")
-        Maybe(pendingReads.remove(handle.channel)).foreach { h =>
-            h.readArm.getAndSet(Absent).foreach { armCell =>
-                armCell.promise.completeDiscard(Result.fail(closed))
-            }
+        // The read sweep is slot-first, never keyed on the pendingReads entry: a dispatch that consumed the entry without completing the
+        // promise (the STARTTLS salvage branch) or an arm whose entry put raced this remove leaves a live cell with no entry, and a
+        // map-keyed sweep misses it, stranding a promise nothing else ever completes. getAndSet is exactly-once against every completer
+        // (they all CAS on their read cell); taking a probe cell fails only its throwaway promise. stopUpgradeProducer is the in-file
+        // precedent for slot-first sweeping.
+        discard(pendingReads.remove(handle.channel))
+        handle.readArm.getAndSet(Absent).foreach { armCell =>
+            armCell.promise.completeDiscard(Result.fail(closed))
         }
         // Fail a STARTTLS handshake parked on the upgrade handoff. A no-op during detachForUpgrade (the slot is Idle: the handshake parks only after
         // detach) and for non-upgrade teardowns; on a real close mid-upgrade it releases the parked waiter so the handshake tears down instead of
@@ -905,6 +1066,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 s"$label closing driver, failing ${pendingReads.size()} reads, ${pendingWritables.size()} writes, ${pendingConnects.size()} connects, ${pendingAccepts.size()} accepts"
             )
             val closed = Closed(label, summon[Frame], "driver closed")
+            // This sweep iterates the pendingReads map, unlike cleanupPending's slot-first per-handle sweep: an armed cell whose entry a
+            // dispatch consumed (the STARTTLS salvage shape) is invisible here. Covered in practice because the transport's close cancels
+            // every connection (cleanupPending) before the driver close runs; this map walk is the backstop for entries those closes missed.
             pendingReads.forEach { (_, h) =>
                 h.readArm.getAndSet(Absent).foreach { armCell =>
                     armCell.promise.completeDiscard(Result.fail(closed))
@@ -1141,6 +1305,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             drainUpgradeArms()
             // selector-confined like drainUpgradeArms above
             drainGraceProbeArms()
+            // deferred staged-bytes deliveries for armed pump reads (armRead's post-arm re-check enqueues; selector-confined like the probe arms)
+            drainStagedDeliveries()
             // Re-assert armed interest from the pending-op maps (the source of truth): restores any OP_READ/OP_WRITE/OP_CONNECT bit dropped by a
             // cross-carrier interestOps race (a dispatch-clear racing an arm) or a coalesced/lost wakeup. This is the liveness backstop:
             // an armed op whose interest bit was lost is re-armed within one cycle so it is visible on the next select().
@@ -1381,6 +1547,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
 
                 selector = newSelector
                 zeroKeyReturns = 0
+                // The swap invalidates any wakeup a concurrent offer-then-wakeup producer aimed at the old selector (a closed selector's
+                // wakeup is a silent no-op), and a coalesced wakeup lost that way would leave wakeupPending latched true with no select
+                // return to clear it, suppressing every future guarded wakeup. Reset the gate and issue one compensating sticky wakeup on
+                // the new selector, so its first select() returns immediately and pollOnce runs every deferred drain once post-swap. That
+                // drain necessarily sees any offer whose wakeup was lost: the offer precedes the wakeup's selector read, which preceded the
+                // swap in the volatile synchronization order.
+                wakeupPending.set(false)
+                discard(newSelector.wakeup())
 
                 // Re-register every channel on the new selector, restoring its armed interest from the
                 // pending-op maps so an in-flight read, write, connect, or accept survives the rebuild.
@@ -1525,7 +1699,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     // the socket while the upgrade is detaching. Completing it would let the pump either offer to the now-closed inbound (DROP) or
                     // re-arm and STEAL the read the handshake is about to issue on the same handle. Instead SALVAGE the bytes for the handshake to
                     // replay (startTlsHandshake feeds the salvage into the engine), and leave the pump's read promise to be failed by detach's
-                    // cleanupPending so the pump tears down without re-arming.
+                    // cleanupPending so the pump tears down without re-arming. That handoff only holds because cleanupPending's read sweep is
+                    // slot-first: this dispatch has just consumed the pendingReads entry, so a map-keyed sweep would miss the still-armed cell
+                    // and strand the promise forever.
                     stashUpgradeBytes(handle, arr)
                     // TOCTOU close (stash-after-drain): the guard above observed handshakeReading=false, but startTls (which sets
                     // handshakeReading BEFORE its one-shot drainUpgradeSalvage) can flip it true and drain in the window between that guard

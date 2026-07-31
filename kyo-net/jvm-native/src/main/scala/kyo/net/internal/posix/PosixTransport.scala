@@ -1554,6 +1554,13 @@ final private[net] class PosixTransport private[posix] (
                 // the first upgrade's fd, and re-arm the handle flags on a window it does not own.
                 if !posixConn.claimUpgrade() then
                     return Fiber.Unsafe.fromResult(Result.fail(NetAlreadyDetachedException()))
+                // One upgrade per HANDLE, not just per connection: the handle has one engine slot, so its upgrade machinery (engine
+                // attachment, salvage, handoff, the io_uring single-recv ordering) is single-shot. isUpgraded covers the upgraded STARTTLS
+                // connection (a fresh Connection over the same handle, whose reopened window would meet the stale durable marker and defeat
+                // the drivers' post-CAS re-check guarantee); tls.isDefined additionally covers a connectTls/listenTls connection, whose
+                // upgradeFn is wired too and would otherwise drive a raw-mode STARTTLS over engine-routed reads.
+                if posixConn.handle.isUpgraded || posixConn.handle.tls.isDefined then
+                    return Fiber.Unsafe.fromResult(Result.fail(NetAlreadyDetachedException()))
                 val out    = new IOPromise[NetException, Connection]
                 val handle = posixConn.handle
                 // `out` owns the detached fd for the whole upgrade (see the `out.onComplete` owner below), so route a close() of the plaintext
@@ -1574,7 +1581,7 @@ final private[net] class PosixTransport private[posix] (
                 //     flips when the handshake takes the read (awaitReadCiphertext).
                 handle.upgradeActive = true
                 handle.upgrading =
-                    true // durable across the whole window (upgradeActive clears mid-handshake); io_uring read-routing reads it
+                    true // durable across the whole window, cleared with upgradeActive at onFinished; io_uring read-routing reads it
                 posixConn.detachForUpgrade() match
                     case Absent =>
                         // The claim above was won, so no other upgrade can be in flight: losing the detach CAS here means the connection
