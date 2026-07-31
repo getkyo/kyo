@@ -3267,8 +3267,9 @@ object Browser:
       * responsible for driving the visual change to record.
       *
       * Each frame carries its `Image`, an `offsetMs` relative to the cast start (from the screencast metadata `timestamp` when present,
-      * else a wall-clock fallback), and the page scroll offset at capture. Frames arrive in delivery order, so `offsetMs` is
-      * non-decreasing.
+      * else a wall-clock fallback), and the page scroll offset at capture. Frames arrive in delivery order and the recorder floors each
+      * frame's `offsetMs` at the previous frame's (see `appendScreencastFrame`), so `offsetMs` is non-decreasing even when a cast mixes
+      * capture-stamped and fallback-stamped frames.
       *
       * Two bounds protect against an unbounded recording, checked frame-count-first: when the recorded frame count exceeds `maxFrames`,
       * or the elapsed wall-clock time exceeds `maxDurationMs`, the cast is poisoned and the call aborts
@@ -3318,7 +3319,7 @@ object Browser:
                                         Abort.run[BrowserReadException](
                                             CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
                                         ).unit
-                                    ).andThen(collected.updateAndGet(_.append(frame))).map { cur =>
+                                    ).andThen(collected.updateAndGet(appendScreencastFrame(_, frame))).map { cur =>
                                         def poison(cap: (Int, Int)): Unit < Sync =
                                             poisoned.updateAndGet(prev => if prev.isDefined then prev else Present(cap)).unit
                                         if cur.size > maxFrames then poison((maxFrames, cur.size))
@@ -3384,8 +3385,9 @@ object Browser:
 
     /** Decodes a `Page.screencastFrame` event into a `(ScreenshotFrame, sessionId)` pair. Returns `Absent` on a wrong-method event or any
       * decode failure (never aborts). `offsetMs` is `round(timestamp * 1000) - t0` when the metadata carries a `timestamp`, else the
-      * wall-clock fallback `now - t0`. Distinct from the routing-layer `parseScreencastFrame`, which decodes only the wire
-      * record; this variant materialises the `Image` and the public `ScreenshotFrame`.
+      * wall-clock fallback `now - t0`; the value is the raw per-frame candidate, and the recorder reconciles it into a non-decreasing
+      * series at append time (see `appendScreencastFrame`). Distinct from the routing-layer `parseScreencastFrame`, which decodes only the
+      * wire record; this variant materialises the `Image` and the public `ScreenshotFrame`.
       */
     private def parseScreencastFrame(ev: CdpEvent.Generic, t0: Instant)(using
         Frame
@@ -3416,6 +3418,21 @@ object Browser:
                 }
             case _ => Absent
     end parseScreencastFrame
+
+    /** Appends a decoded frame to a recorded cast, flooring its `offsetMs` at the previous frame's so the recorded series is non-decreasing
+      * in delivery order. The floor reconciles the two clocks one cast can mix: a frame whose screencast metadata carries a `timestamp` is
+      * stamped on Chrome's capture clock, while a frame without one falls back to the local wall clock at decode time, which trails capture
+      * by the delivery and decode lag. A capture-stamped frame arriving right after a fallback-stamped one can therefore carry a smaller raw
+      * offset (Chrome on Windows delivers the first frame of a cast without a metadata timestamp, which is how this surfaced); casts whose
+      * frames all share one clock are already monotonic and pass through unchanged.
+      */
+    private[kyo] def appendScreencastFrame(
+        cast: Chunk[Browser.ScreenshotFrame],
+        frame: Browser.ScreenshotFrame
+    ): Chunk[Browser.ScreenshotFrame] =
+        cast.lastMaybe match
+            case Present(prev) if frame.offsetMs < prev.offsetMs => cast.append(frame.copy(offsetMs = prev.offsetMs))
+            case _                                               => cast.append(frame)
 
     // --- Cookies ---
 
@@ -3804,8 +3821,9 @@ object Browser:
     final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
 
     /** One frame recorded by [[screenshotFrames]]. `image` is the captured frame; `offsetMs` is `round(timestamp * 1000) - t0` from the
-      * screencast metadata (with a wall-clock fallback), relative to the cast start; `scrollOffset` is the page scroll at capture. Carries
-      * an `Image`, so derives only `CanEqual`.
+      * screencast metadata (with a wall-clock fallback), relative to the cast start and floored at the previous frame's offset so a
+      * recorded cast is non-decreasing in delivery order; `scrollOffset` is the page scroll at capture. Carries an `Image`, so derives
+      * only `CanEqual`.
       */
     final case class ScreenshotFrame(image: Image, offsetMs: Long, scrollOffset: Browser.ScrollPosition) derives CanEqual
 
