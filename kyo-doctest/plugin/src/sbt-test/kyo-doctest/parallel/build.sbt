@@ -2,7 +2,7 @@
 //
 // Two passing fences run serially (parallel=1). Both pass, doctest exits 0.
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)

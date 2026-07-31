@@ -1,6 +1,6 @@
 // Scripted test: one failing fence, doctest exits 1.
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)

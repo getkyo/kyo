@@ -10,7 +10,7 @@ import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class HandleBindingsImpl extends HandleBindings:
-    import `HandleBindings$externs` as ext
+    import `HandleBindings_externs` as ext
 
     def open(path: String)(using kyo.AllowUnsafe): Ffi.Handle[kyo.example.golden.MyHandle] =
         Zone.acquire { implicit z =>
@@ -32,7 +32,7 @@ end HandleBindingsImpl
 
 @extern
 @link("kyo_handle")
-private[example] object `HandleBindings$externs`:
+private[example] object `HandleBindings_externs`:
     def open(path: CString): Ptr[Byte] = extern
     def close(h: Ptr[Byte]): Unit = extern
-end `HandleBindings$externs`
+end `HandleBindings_externs`

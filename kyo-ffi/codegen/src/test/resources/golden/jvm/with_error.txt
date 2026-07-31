@@ -13,15 +13,15 @@ final class WithErrorBindingsImpl extends WithErrorBindings:
     import WithErrorBindingsImpl.*
 
     def failable(x: Int)(using kyo.AllowUnsafe): Ffi.Outcome[Int] =
-        val __kyoScratch$ = Scratch.currentFor("kyo.example.WithErrorBindings", Scratch.configuredSize)
-        val __kyoMark$ = __kyoScratch$.mark()
+        val __kyoScratch = Scratch.currentFor("kyo.example.WithErrorBindings", Scratch.configuredSize)
+        val __kyoMark = __kyoScratch.mark()
         try
-            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.WithErrorBindings", "failable")
+            val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.WithErrorBindings", "failable")
             val retVal: Int = failableMH.invokeExact(errnoSeg, x)
             val __errno = errnoSeg.get(JAVA_INT, errnoOffset)
             val __kyoResult = retVal
             Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)
-        finally __kyoScratch$.reset(__kyoMark$)
+        finally __kyoScratch.reset(__kyoMark)
 end WithErrorBindingsImpl
 
 object WithErrorBindingsImpl:

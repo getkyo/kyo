@@ -146,14 +146,14 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         // Compose fixed-arg pass list + marshalled varargs via JsVariadicMarshaller. koffi's bound `func`
         // is a JS function; apply it via `applyDynamic` so we can splat a single variable-length JS array
         // of args (Scala can't mix named fixed params and a repeated-seq splat in one call).
-        sb ++= s"""val __kyoVarargs$$ = kyo.ffi.internal.JsVariadicMarshaller.marshalVarargs(args, "${spec.fqcn}", "${method.scalaName}")\n"""
+        sb ++= s"""val __kyoVarargs = kyo.ffi.internal.JsVariadicMarshaller.marshalVarargs(args, "${spec.fqcn}", "${method.scalaName}")\n"""
         val fixedPassList = marshalled.map(m => s"${m.passExpr}.asInstanceOf[js.Any]")
-        sb ++= s"val __kyoAllArgs$$ = js.Array[js.Any](${fixedPassList.mkString(", ")})\n"
-        sb ++= "var __kyoVI$ = 0\n"
-        sb ++= "while __kyoVI$ < __kyoVarargs$.length do\n"
-        sb ++= "    val _ = __kyoAllArgs$.push(__kyoVarargs$(__kyoVI$))\n"
-        sb ++= "    __kyoVI$ += 1\n"
-        val callExpr = s"""facade.applyDynamic("${method.scalaName}")(__kyoAllArgs$$.toSeq*)"""
+        sb ++= s"val __kyoAllArgs = js.Array[js.Any](${fixedPassList.mkString(", ")})\n"
+        sb ++= "var __kyoVI = 0\n"
+        sb ++= "while __kyoVI < __kyoVarargs.length do\n"
+        sb ++= "    val _ = __kyoAllArgs.push(__kyoVarargs(__kyoVI))\n"
+        sb ++= "    __kyoVI += 1\n"
+        val callExpr = s"""facade.applyDynamic("${method.scalaName}")(__kyoAllArgs.toSeq*)"""
 
         val fqnLit    = s""""${spec.fqcn}""""
         val methodLit = s""""${method.scalaName}""""
@@ -324,7 +324,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         // and the body decodes the filled buffer back into the case class (the same out-pointer convention struct
         // PARAMETERS already use, and the same out-first order as the JVM and Native emitters). This avoids koffi's
         // native by-value struct return so the ABI is identical across all three backends.
-        val structOutName = "__kyoStructOut$"
+        val structOutName = "__kyoStructOut"
         val structOutCell: Option[String] = method.returnShape match
             case ReturnShape.Struct(sSpec) => Some(s"""KoffiFacade.outStruct("${sSpec.simpleName}")""")
             case _                         => None

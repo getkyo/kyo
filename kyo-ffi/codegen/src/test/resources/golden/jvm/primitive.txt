@@ -13,13 +13,13 @@ final class PrimitiveBindingsImpl extends PrimitiveBindings:
     import PrimitiveBindingsImpl.*
 
     def add(a: Int, b: Int)(using kyo.AllowUnsafe): Int =
-        val __kyoScratch$ = Scratch.currentFor("kyo.example.PrimitiveBindings", Scratch.configuredSize)
-        val __kyoMark$ = __kyoScratch$.mark()
+        val __kyoScratch = Scratch.currentFor("kyo.example.PrimitiveBindings", Scratch.configuredSize)
+        val __kyoMark = __kyoScratch.mark()
         try
-            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.PrimitiveBindings", "add")
+            val errnoSeg = __kyoScratch.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.PrimitiveBindings", "add")
             val retVal: Int = addMH.invokeExact(errnoSeg, a, b)
             retVal
-        finally __kyoScratch$.reset(__kyoMark$)
+        finally __kyoScratch.reset(__kyoMark)
 end PrimitiveBindingsImpl
 
 object PrimitiveBindingsImpl:

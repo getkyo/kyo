@@ -10,7 +10,7 @@ import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class BufferBindingsImpl extends BufferBindings:
-    import `BufferBindings$externs` as ext
+    import `BufferBindings_externs` as ext
 
     def process(buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Int, Any] =
         kyo.ffi.internal.BlockingBridge.run {
@@ -27,6 +27,6 @@ end BufferBindingsImpl
 
 @extern
 @link("kyo_buf")
-private[example] object `BufferBindings$externs`:
+private[example] object `BufferBindings_externs`:
     @blocking def process(buf: Ptr[Byte], len: CInt): CInt = extern
-end `BufferBindings$externs`
+end `BufferBindings_externs`

@@ -109,7 +109,10 @@ class FrameTest extends kyo.test.Test[Any]:
         def takeTypeArg[A](arg: A)(using f: Frame): Frame                 = f
         def takeCurried(a: Int)(b: Int)(using f: Frame): Frame            = f
         def under_score(using f: Frame): Frame                            = f
-        def with$Dollar(using f: Frame): Frame                            = f
+        // The `$` is the point: calleeName must survive an identifier containing one. Scala 3.9
+        // warns that `$` is reserved, so silence it here rather than lose the coverage.
+        @annotation.nowarn("msg=should not contain")
+        def with$Dollar(using f: Frame): Frame = f
 
         "bare call (no explicit args, only implicit Frame)" in {
             assert(captureFrame.calleeName == "captureFrame")

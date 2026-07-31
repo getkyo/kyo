@@ -10,7 +10,7 @@ import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class BorrowedBufferBindingsImpl extends BorrowedBufferBindings:
-    import `BorrowedBufferBindings$externs` as ext
+    import `BorrowedBufferBindings_externs` as ext
 
     def mallocChunk(n: Long)(using kyo.AllowUnsafe): Ffi.Borrowed[Buffer[Byte]] =
         val retVal = ext.malloc_chunk(n)
@@ -24,6 +24,6 @@ end BorrowedBufferBindingsImpl
 
 @extern
 @link("kyo_borrowed_buf")
-private[example] object `BorrowedBufferBindings$externs`:
+private[example] object `BorrowedBufferBindings_externs`:
     def malloc_chunk(n: CLongLong): Ptr[Byte] = extern
-end `BorrowedBufferBindings$externs`
+end `BorrowedBufferBindings_externs`

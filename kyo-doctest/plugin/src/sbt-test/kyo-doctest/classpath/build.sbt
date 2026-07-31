@@ -3,7 +3,7 @@
 // We add scalatest as a Test dependency; the fence imports org.scalatest.Assertions.
 // If the classpath is wired correctly the fence compiles.
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)
