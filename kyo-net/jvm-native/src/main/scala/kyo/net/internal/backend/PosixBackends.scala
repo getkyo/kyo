@@ -10,6 +10,7 @@ import kyo.net.internal.posix.KqueueBindings
 import kyo.net.internal.posix.PollerIoDriver
 import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixHandle
+import kyo.net.internal.posix.PosixShimBindings
 import kyo.net.internal.posix.PosixTransport
 import kyo.net.internal.posix.SocketBindings
 import kyo.net.internal.transport.IoDriver
@@ -34,6 +35,7 @@ private[net] object EpollBackend extends PosixIoBackend:
             val ep = Ffi.load[EpollBindings]
             val fd = ep.epoll_create1(0).value
             if fd >= 0 then
+                requirePosixShim(fd)
                 discard(Ffi.load[SocketBindings].close(fd))
                 true
             else false
@@ -51,6 +53,7 @@ private[net] object KqueueBackend extends PosixIoBackend:
             val kq = Ffi.load[KqueueBindings]
             val fd = kq.kqueue().value
             if fd >= 0 then
+                requirePosixShim(fd)
                 discard(Ffi.load[SocketBindings].close(fd))
                 true
             else false
@@ -83,6 +86,16 @@ end IoUringBackend
 private def probe(test: => Boolean): Boolean =
     try test
     catch case _: Throwable => false
+
+/** Exercise the bundled `kyonet_posix_uring` shim (a read-only `F_GETFL` on an already-open fd) as part of a backend probe. The epoll and
+  * kqueue probes otherwise touch only libc (`epoll_create1` / `kqueue`), which resolves on a host whose BUNDLED native is absent, so those
+  * backends would report available and then crash at the first socket op (`PosixTransport.prepareClientSocket` -> `kyo_posix_set_nonblocking`).
+  * Loading the shim here throws when the bundled native is missing for this platform; the enclosing `probe { ... }` catches it and demotes the
+  * backend, so selection falls to the NIO floor instead. Only that the shim LOADS matters, the returned flags are ignored. `IoUringBackend` needs
+  * no equivalent: its probe already loads the same bundled library.
+  */
+private def requirePosixShim(fd: Int)(using AllowUnsafe): Unit =
+    discard(Ffi.load[PosixShimBindings].kyo_posix_get_flags(fd))
 
 /** A selectable registry entry: the identity `IoBackend.select` reads (`name` / `priority` / `isAvailable`), plus a `build` thunk that
   * constructs and starts the entry's transport. `build` is invoked only once selection wins, so an unavailable entry never constructs a driver.
