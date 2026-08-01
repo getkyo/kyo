@@ -1,0 +1,17 @@
+# ffiPrebuiltDir merges natives built elsewhere into this build's packaged resources.
+# Each staged artifact lands under the <os>-<arch> ITS OWN filename declares, never the build host's:
+# a darwin-x86_64 dylib copied into the host's directory (the pre-existing behavior for anything not
+# compiled here) keeps its full platform suffix and no runtime lookup ever resolves it.
+> ffiPackage
+# Each prebuilt is in its own directory, canonically named (the -<os>-<arch> suffix stripped).
+$ exists target/scala-3.8.3/resource_managed/main/META-INF/native/darwin-x86_64/libforeign.dylib
+$ exists target/scala-3.8.3/resource_managed/main/META-INF/native/linux-musl-aarch64/libforeign.so
+# The locally compiled library still lands under the build's own target (the host here).
+$ exec sh -c 'set -eu; res=target/scala-3.8.3/resource_managed/main/META-INF/native; find "$res" -type f \( -name "liblocal.*" -o -name "local.dll" \) | grep -q . || { echo "locally compiled library missing from $res" >&2; find "$res" -type f >&2; exit 1; }'
+# Each prebuilt exists ONCE, in its own directory: staging must not also drop a copy into the
+# build's own target directory, where a foreign native is dead weight the runtime never loads.
+$ exec sh -c 'set -eu; res=target/scala-3.8.3/resource_managed/main/META-INF/native; n=$(find "$res" -type f -name "libforeign.*" | wc -l | tr -d "[:space:]"); [ "$n" -eq 2 ] || { echo "expected exactly 2 packaged foreign natives, found $n" >&2; find "$res" -type f >&2; exit 1; }'
+# The library-state manifest tells a completeness check what to expect per id: `local` is built here,
+# `foreign` is supplied by the staging input, and neither reads as a failed build.
+> Compile/managedResources
+$ exec sh -c 'set -eu; s=$(find target/scala-3.8.3/resource_managed/main/META-INF/kyo-ffi/library-state -type f -name "*.state" | head -n1); [ -n "$s" ] || { echo "no library-state manifest emitted" >&2; exit 1; }; cat "$s"; grep -qx "local=native" "$s"; grep -qx "foreign=prebuilt" "$s"'

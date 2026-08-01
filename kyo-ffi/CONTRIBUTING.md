@@ -66,6 +66,41 @@ thrown inside `FfiReflect.instantiate`; `FfiReflectCore.instantiate` wraps only 
 class-not-found `None` case into `ImplNotFound`). The `Ffi.load` `@throws` scaladoc
 and README name BOTH `FfiLoadError` and `java.lang.IllegalStateException`.
 
+## Native library loading
+
+A binding trait's generated `<T>Impl` binds its C symbols in a class initializer, so
+a missing bundled native historically surfaced as an opaque `<clinit>` symbol-lookup
+crash (a `NoSuchElementException` from deep inside the impl companion) at the first
+call, past the point any caller could catch it or degrade. kyo-ffi negotiates the load
+BEFORE that initializer runs, from build-emitted DATA rather than reflection:
+
+- **Per-module native manifest.** The plugin emits
+  `META-INF/kyo-ffi/native-manifest/<module>.manifest` (resource generator
+  `ffiNativeManifestGenerator`): one block per bundled library id (`<id>.platforms` =
+  the `<os>-<arch>` set the native ships for, `<id>.version`, `<id>.minRuntime`) plus a
+  reflection-free `trait.<binding-FQN>=<id>` index. The index carries the id explicitly
+  because the Scala 3 backend elides a field reflected off the generated companion.
+- **Direct-load pre-check.** `Ffi.load[T]` reads the manifest (`NativeManifest`) and,
+  when the trait maps to a bundled id, verifies the runtime floor
+  (`AbiCheck.verifyRuntimeFloor`) and that the native is bundled for the current
+  `<os>-<arch>` BEFORE instantiating the impl. A genuinely missing native fails with a
+  catchable `FfiLoadError.LibraryNotFound` naming the platform; a native below
+  `minRuntime` fails `AbiMismatch`. A runtime with no manifest on the classpath (an
+  unmigrated module, a test binding) skips the pre-check and loads as before.
+- **System libraries are absence-expected.** `SystemLibraries.isSystem` is the single
+  source of truth for the ids resolved from the process-default symbol scope (`c`, `m`,
+  `pthread`, `dl`, `rt`); no `META-INF/native/<os>-<arch>/lib<id>.<ext>` is packaged for
+  them, so the pre-check and both the JVM and JS loaders treat their absence as expected,
+  never `LibraryNotFound`. Classification lives in `SystemLibraries` so the two loaders
+  cannot drift; only the per-OS RESOLUTION (a null default-scope handle on POSIX,
+  `ucrtbase.dll` on Windows) stays in each loader.
+
+On the build side, `ffiStubLibraries` declares which libraries ship as build-time stubs
+rather than real natives, and the `library-state` manifest records each library's state
+(stub / native / prebuilt / absent). A native reaches consumers as an `<os>-<arch>`
+classifier jar carrying the `META-INF/native/<os>-<arch>/` tree; `ffiHostOsArch` resolves
+the host tag both the build and the packaged layout name the native by.
+
 ## Thread-blocking substrate
 
 The no-blocking rule bans thread parking by semantic intent. kyo-ffi has a SMALL,

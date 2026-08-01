@@ -3,15 +3,16 @@ package kyo.ffi.it
 import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
-/** POSIX process / time bindings exercised on JVM + Native only (Scala.js lacks portable POSIX for `process.h`-family calls). Lives in
-  * `jvm-native/src/main/` so the JS cross-subproject never sees it.
+/** POSIX process / time bindings, shared across platforms. Exercised on the Unix JVM, Native, and Node targets; every Windows target cancels
+  * because the bare POSIX names (`getpid`, `time`) are absent from the Windows CRT exports, which carry only `_getpid` / `_time64` (see
+  * `PosixTest`).
   *
   * `getenv` is bound here via `Borrowed[String]` to exercise top-level borrowed-String returns. The C signature is
   * `char* getenv(const char*)`; the pointer is owned by the environment and must not be freed, so the generator wraps the return with
   * `Scratch.readCStringBounded` which COPIES the bytes into a Scala String. The borrowed original C memory remains the environment's.
   *
-  * Every method is part of the unsafe FFI tier and takes a trailing `(using AllowUnsafe)`. The 6 POSIX assertions are extended with getenv
-  * coverage by `PosixSpec`.
+  * Every method is part of the unsafe FFI tier and takes a trailing `(using AllowUnsafe)`. The getpid and time assertions are extended with
+  * getenv coverage in `PosixTest`.
   */
 trait PosixBindings extends Ffi:
     /** Current process id. */

@@ -17,9 +17,10 @@ import kyo.ffi.Ffi
   */
 class KqueueTest extends ItTestBase:
 
-    private val isMacOrBsd: Boolean =
-        val os = java.lang.System.getProperty("os.name", "").toLowerCase
-        os.contains("mac") || os.contains("bsd")
+    // `kyo.internal.Platform.isMacOrBsd` reads `os.name` on JVM and `process.platform` on JS/Wasm (and a
+    // link-time constant on Native), so this test runs the real koffi `kevent` on Node too, not just JVM/Native.
+    // `System.getProperty("os.name")` is empty under Scala.js, which used to cancel every case on JS.
+    private val isMacOrBsd: Boolean = kyo.internal.Platform.isMacOrBsd
 
     private def assumeKqueue(): Unit =
         if !isMacOrBsd then cancel("kqueue is macOS/BSD-only")

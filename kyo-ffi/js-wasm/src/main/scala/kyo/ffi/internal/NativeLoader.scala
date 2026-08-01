@@ -1,5 +1,6 @@
 package kyo.ffi.internal
 
+import kyo.Chunk
 import kyo.ffi.FfiLoadError
 import scala.scalajs.js
 import scala.util.Try
@@ -26,21 +27,69 @@ object NativeLoader:
         // 32-bit host rejection runs on every jsResolve call; the `platformChecked` flag keeps the work to a
         // single successful check process-wide. `process.arch` identifies 32-bit Node targets (e.g. `ia32`, `x32`, `arm`, `mips`).
         ensurePlatformChecked()
-        // 1. Env-var override (operator-controlled).
+        // Each branch is now a REAL presence check, not a blind candidate: an unresolvable library id raises
+        // FfiLoadError.LibraryNotFound instead of returning a name koffi.load later fails on cryptically. This is
+        // the JS half of the manifest-driven pre-check (the manifest id is the `libraryId` the generated impl was
+        // emitted with). JS module init is not permanently poisoned by a throwing initializer the way a JVM
+        // `<clinit>` is, so raising the catchable error here from the impl's load path is sufficient.
+        val candidates = scala.collection.mutable.Buffer.empty[String]
+
+        // 1. Env-var override (operator-controlled) -- honored only when it points at a file that exists.
         // security: do not set from untrusted input, resolves a filesystem path to load as native code.
         val envKey = s"KYO_FFI_${libraryId.toUpperCase.replace('-', '_')}_PATH"
         val env    = js.Dynamic.global.process.env.selectDynamic(envKey)
         if !js.isUndefined(env) && env != null then
-            return env.asInstanceOf[String]
+            val p = env.asInstanceOf[String]
+            candidates += s"env $envKey=$p"
+            if fileExists(p) then return p
+        end if
 
-        // 2. Best-effort npm package lookup via require.resolve. Silently swallow any failure (require missing, package missing, etc.)
-        // so we gracefully fall through to the bare-name path.
+        // 2. Best-effort npm package lookup via require.resolve. `require.resolve` is itself a presence check (it
+        // throws when the file is absent), so a resolved path is genuinely present.
         val packagePrefix = sys.props.getOrElse("kyo.ffi.js.packagePrefix", "@kyo/ffi-native")
         val os            = detectOs()
         val arch          = detectArch()
         val ext           = osExt(os)
         val resolvePath   = s"$packagePrefix/native/$os-$arch/lib$libraryId.$ext"
-        val resolved = Try {
+        candidates += s"require.resolve $resolvePath"
+        requireResolve(resolvePath) match
+            case Some(path) => return path
+            case None       => ()
+
+        // 3. Known system libraries (libc, libm, ...) cannot be loaded by their bare name on every host:
+        // the bare name "c" is not a loadable object on Linux glibc (the SONAME is `libc.so.6`), and the
+        // GNU ld linker script `libc.so` is rejected by dlopen. Resolve these to koffi's process-default
+        // scope instead. See `resolveSystemLib`.
+        resolveSystemLib(libraryId, os) match
+            case Some(resolution) => return resolution
+            case None             => ()
+
+        // 4. Bare library name, gated by an actual koffi.load probe: koffi resolves an installed system library
+        // (by SONAME / default search path) here, so a name that loads is present. A name that does not load is
+        // genuinely absent.
+        candidates += s"""koffi.load("$libraryId")"""
+        if tryKoffiLoad(libraryId) then return libraryId
+
+        // 5. Nothing resolved: the native is not present for this runtime.
+        throw new FfiLoadError.LibraryNotFound(
+            libraryId,
+            Chunk.from(candidates),
+            s"Native library '$libraryId' could not be resolved on this JS runtime. Set KYO_FFI_" +
+                s"${libraryId.toUpperCase.replace('-', '_')}_PATH to an absolute path, install the '$packagePrefix' " +
+                s"package for $os-$arch, or install the '$libraryId' system library. Tried, in order: " +
+                s"${candidates.mkString("; ")}.",
+            null
+        )
+    end jsResolve
+
+    /** `true` when `path` exists on the filesystem (Node `fs.existsSync`); `false` on any error. */
+    private def fileExists(path: String): Boolean =
+        try NodeFs.existsSync(path)
+        catch case _: Throwable => false
+
+    /** `require.resolve(resolvePath)` if `require` is available and the path resolves, else `None`. */
+    private def requireResolve(resolvePath: String): Option[String] =
+        Try {
             val req = js.Dynamic.global.selectDynamic("require")
             if js.isUndefined(req) || req == null then null
             else
@@ -49,21 +98,27 @@ object NativeLoader:
                 else r.asInstanceOf[String]
             end if
         }.toOption.flatMap(Option(_))
-        resolved match
-            case Some(path) => return path
-            case None       => ()
 
-        // 3. Known system libraries (libc, libm, ...) cannot be loaded by their bare name on every host:
-        // the bare name "c" is not a loadable object on Linux glibc (the SONAME is `libc.so.6`), and the
-        // GNU ld linker script `libc.so` is rejected by dlopen. Resolve these to koffi's process-default
-        // scope instead. See `resolveSystemLib`.
-        resolveSystemLib(libraryId, detectOs()) match
-            case Some(resolution) => return resolution
-            case None             => ()
-
-        // 4. Fall back to the bare library name.
-        libraryId
-    end jsResolve
+    /** Probe whether koffi can load `name` (an installed system library by SONAME / default search). `false` when
+      * koffi is unavailable or the load fails. Used only as the last presence gate; the caller loads for real.
+      *
+      * koffi is required DYNAMICALLY (`require("koffi")`), not through the static `@JSImport` facade, so this
+      * loader keeps no static dependency on the koffi package: a runtime with no koffi installed just makes the
+      * probe return `false` instead of failing to load this module.
+      */
+    private def tryKoffiLoad(name: String): Boolean =
+        Try {
+            val req = js.Dynamic.global.selectDynamic("require")
+            if js.isUndefined(req) || req == null then false
+            else
+                val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
+                if js.isUndefined(koffi) || koffi == null then false
+                else
+                    val lib = koffi.applyDynamic("load")(name)
+                    !js.isUndefined(lib) && lib != null
+                end if
+            end if
+        }.getOrElse(false)
 
     /** koffi-loadable resolution for known system libraries (libc, libm, pthread, dl, rt).
       *
@@ -89,20 +144,20 @@ object NativeLoader:
       */
     def resolveSystemLib(libraryId: String, os: String): Option[String] =
         // security: only well-known, fixed system-library names map to a system resolution; everything else
-        // (including operator-supplied ids) keeps the bare-name / explicit-path resolution above.
-        libraryId match
-            case "c" | "m" if os == "windows" =>
-                // Windows has no RTLD_DEFAULT-style process scope koffi can bind portably; the universal
-                // C runtime carries the standard C and math symbols (abs, floor, memcpy, strlen, getenv,
-                // pow, ...) for both families. POSIX-only names (getpid, time) exist there only as their
-                // underscore-prefixed CRT variants and fail at symbol lookup.
-                Some("ucrtbase.dll")
-            case "c" | "m" | "pthread" | "dl" | "rt" =>
-                // `null` tells koffi to bind against the process default symbol scope (RTLD_DEFAULT). The value is
-                // intentionally null, not the bare name, so glibc / musl / macOS are all covered without a SONAME.
-                Some(null)
-            case _ =>
-                None
+        // (including operator-supplied ids) keeps the bare-name / explicit-path resolution above. The
+        // CLASSIFICATION (which ids are system) comes from the shared `SystemLibraries` set so the JVM and JS
+        // loaders agree on what counts as "absence expected"; only the per-OS RESOLUTION lives here.
+        if !SystemLibraries.isSystem(libraryId) then None
+        else if (libraryId == "c" || libraryId == "m") && os == "windows" then
+            // Windows has no RTLD_DEFAULT-style process scope koffi can bind portably; the universal
+            // C runtime carries the standard C and math symbols (abs, floor, memcpy, strlen, getenv,
+            // pow, ...) for both families. POSIX-only names (getpid, time) exist there only as their
+            // underscore-prefixed CRT variants and fail at symbol lookup.
+            Some("ucrtbase.dll")
+        else
+            // `null` tells koffi to bind against the process default symbol scope (RTLD_DEFAULT). The value is
+            // intentionally null, not the bare name, so glibc / musl / macOS are all covered without a SONAME.
+            Some(null)
     end resolveSystemLib
 
     // --- Platform detection ---

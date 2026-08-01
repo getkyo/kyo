@@ -1,0 +1,16 @@
+# ffiTargetOsArch decides the artifact name AND the resource directory.
+# Unset, both are the host's, which is the behavior every existing build depends on. Set, both move
+# to the target, together: the packaged path is what NativeLoader looks a library up by at runtime,
+# so a cross-built artifact left under the host's directory (the previous behavior) is invisible to
+# the platform it was built for, with no error anywhere.
+> writeTags
+> hostDefault/ffiCompile
+> hostDefault/ffiPackage
+> crossed/ffiCompile
+> crossed/ffiPackage
+# Unset target: the compiled artifact and its resource directory are the host's, and nothing else exists.
+$ exec sh -c 'set -eu; host=$(head -n1 target/tags.txt); res=host-default/target/scala-3.8.3/resource_managed/main/META-INF/native; find "$res/$host" -maxdepth 1 -type f \( -name "libtgt.*" -o -name "tgt.dll" \) | grep -q . || { echo "no host-target artifact under $res/$host" >&2; find "$res" -type f >&2; exit 1; }; dirs=$(ls "$res"); [ "$dirs" = "$host" ] || { echo "expected only $host under $res, found: $dirs" >&2; exit 1; }'
+# Set target: the artifact carries the TARGET suffix, not the host's.
+$ exec sh -c 'set -eu; cross=$(tail -n1 target/tags.txt); find crossed/target/ffi -maxdepth 1 -type f -name "*-$cross.*" | grep -q . || { echo "no artifact named for $cross under crossed/target/ffi" >&2; ls crossed/target/ffi >&2; exit 1; }'
+# Set target: the resource directory is the TARGET's, canonically named, and the host's is absent.
+$ exec sh -c 'set -eu; host=$(head -n1 target/tags.txt); cross=$(tail -n1 target/tags.txt); res=crossed/target/scala-3.8.3/resource_managed/main/META-INF/native; find "$res/$cross" -maxdepth 1 -type f \( -name "libtgt.*" -o -name "tgt.dll" \) | grep -q . || { echo "no artifact under $res/$cross" >&2; find "$res" -type f >&2; exit 1; }; [ ! -d "$res/$host" ] || { echo "cross-targeted build also wrote the host directory $res/$host" >&2; exit 1; }'

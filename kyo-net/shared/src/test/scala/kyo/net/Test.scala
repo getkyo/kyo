@@ -95,7 +95,7 @@ abstract class Test extends kyo.test.Test[Any]:
       * provider via [[Transport.supportedTlsProviders]] (the posix transport drives every registered engine provider; the NIO floor drives only
       * `jdk` inline; JS only `node`) and CANCELS when it cannot, so the valid-combination knowledge lives in production and evolves with the
       * transports rather than as a fixed table in the tests. A cell also cancels when its backend is unavailable on the host, or when the
-      * provider's library is not staged ([[TlsProvider.isAvailable]]) -- so an absent BoringSSL bundle shows up as canceled cells, not failures.
+      * provider's capability probe reports it unavailable -- so an absent BoringSSL bundle shows up as canceled cells, not failures.
       * Transport lifecycle matches [[eachBackend]] (visible cancel, one process-lifetime transport per backend); the cert is written cross-platform through
       * [[TlsTestCertShared.writePems]].
       */
@@ -152,7 +152,7 @@ abstract class Test extends kyo.test.Test[Any]:
         do
             s"[${entry.name} / ${provider.name}]" in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
-                else if !provider.isAvailable then cancel(s"TLS impl ${provider.name} not available on this host")
+                else if !provider.probe.isAvailable then cancel(s"TLS impl ${provider.name} not available on this host")
                 else
                     // Per-cell skip: a test pins a documented reason for ONE genuinely-broken (backend, provider) cell while every other cell still
                     // runs, so a single bad cell does not drop coverage on the passing pairs. Default is run-everywhere; the skipped cell reports

@@ -48,6 +48,8 @@ object StubSocketBindings extends SocketBindings:
         Ffi.Outcome.fromValueErrno[Long](0L, 0)
     override def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
         Ffi.Outcome.fromValueErrno[Int](0L, 0)
+    override def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
+        Ffi.Outcome.fromValueErrno[Int](0L, 0)
     override def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         Fiber.Unsafe.fromResult(Result.succeed(Ffi.Outcome.fromValueErrno[Long](0L, 0)))
     override def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =

@@ -576,4 +576,109 @@ class CCompilerTest extends AnyFunSuite with Matchers {
     test("detectOs: windows unaffected by musl probe") {
         CCompiler.detectOsWith("Windows 11", _ => true) shouldBe "windows"
     }
+
+    // --- Target os/arch resolution --------------------------------------------
+    //
+    // The target is what names the artifact and its resource directory. Unset means the host, so an
+    // ordinary build is unchanged; set means a cross-build or a foreign staging lands where the
+    // runtime for THAT platform looks, not where this machine's runtime would.
+
+    test("resolveTargetOsArch: None is the build host") {
+        CCompiler.resolveTargetOsArch(None) shouldBe ((CCompiler.detectOs(), CCompiler.detectArch()))
+    }
+
+    test("resolveTargetOsArch: an explicit tag overrides the host") {
+        CCompiler.resolveTargetOsArch(Some("darwin-x86_64")) shouldBe (("darwin", "x86_64"))
+        CCompiler.resolveTargetOsArch(Some("linux-aarch64")) shouldBe (("linux", "aarch64"))
+    }
+
+    test("parseOsArch: splits at the last hyphen so linux-musl keeps its own hyphen") {
+        CCompiler.parseOsArch("linux-musl-x86_64") shouldBe (("linux-musl", "x86_64"))
+        CCompiler.parseOsArch("linux-musl-aarch64") shouldBe (("linux-musl", "aarch64"))
+        CCompiler.parseOsArch("linux-x86_64") shouldBe (("linux", "x86_64"))
+        CCompiler.parseOsArch("windows-x86_64") shouldBe (("windows", "x86_64"))
+    }
+
+    test("parseOsArch: an unsupported tag is a hard error, never a plausible-looking guess") {
+        // Silently accepting `linux-armv7` would name an artifact no NativeLoader lookup resolves.
+        val e = intercept[RuntimeException](CCompiler.parseOsArch("linux-armv7"))
+        e.getMessage should include("linux-armv7")
+        intercept[RuntimeException](CCompiler.parseOsArch("solaris-x86_64"))
+        intercept[RuntimeException](CCompiler.parseOsArch("x86_64"))
+        intercept[RuntimeException](CCompiler.parseOsArch(""))
+    }
+
+    test("supportedOsArchTags: the full matrix, in os-then-arch order") {
+        CCompiler.supportedOsArchTags shouldBe Seq(
+            "linux-x86_64",
+            "linux-aarch64",
+            "linux-musl-x86_64",
+            "linux-musl-aarch64",
+            "darwin-x86_64",
+            "darwin-aarch64",
+            "windows-x86_64",
+            "windows-aarch64"
+        )
+    }
+
+    // --- Artifact naming ------------------------------------------------------
+
+    test("libExtension: linux-musl shares linux's .so (the diagnostic task used to reject it)") {
+        CCompiler.libExtension("linux") shouldBe "so"
+        CCompiler.libExtension("linux-musl") shouldBe "so"
+        CCompiler.libExtension("darwin") shouldBe "dylib"
+        CCompiler.libExtension("windows") shouldBe "dll"
+        intercept[RuntimeException](CCompiler.libExtension("solaris"))
+    }
+
+    test("artifactName: names the output for the TARGET os/arch, not the host") {
+        CCompiler.artifactName("kyo_tcp", "linux", "x86_64") shouldBe "libkyo_tcp-linux-x86_64.so"
+        CCompiler.artifactName("kyo_tcp", "linux-musl", "aarch64") shouldBe "libkyo_tcp-linux-musl-aarch64.so"
+        CCompiler.artifactName("kyo_tcp", "darwin", "x86_64") shouldBe "libkyo_tcp-darwin-x86_64.dylib"
+        CCompiler.artifactName("kyo_tcp", "darwin", "aarch64") shouldBe "libkyo_tcp-darwin-aarch64.dylib"
+        // Windows drops the `lib` prefix.
+        CCompiler.artifactName("kyo_tcp", "windows", "x86_64") shouldBe "kyo_tcp-windows-x86_64.dll"
+    }
+
+    test("artifactName: the unset-target name is the host's, unchanged from the host-only behavior") {
+        val (os, arch) = CCompiler.resolveTargetOsArch(None)
+        val expected   = s"${CCompiler.libPrefix(os)}kyo_tcp-$os-$arch.${CCompiler.libExtension(os)}"
+        CCompiler.artifactName("kyo_tcp", os, arch) shouldBe expected
+        // And an override moves the name off the host (checked against a target this host is not).
+        val foreign      = if (os == "darwin") "linux-x86_64" else "darwin-aarch64"
+        val (fOs, fArch) = CCompiler.parseOsArch(foreign)
+        CCompiler.artifactName("kyo_tcp", fOs, fArch) should not be expected
+    }
+
+    // --- Artifact-name parsing (attributing a staged prebuilt) -----------------
+
+    test("parseArtifactName: round-trips every supported tag") {
+        CCompiler.supportedOsArchTags.foreach { tag =>
+            val (os, arch) = CCompiler.parseOsArch(tag)
+            val name       = CCompiler.artifactName("kyo_tcp", os, arch)
+            CCompiler.parseArtifactName(name) shouldBe Some(("kyo_tcp", os, arch))
+        }
+    }
+
+    test("parseArtifactName: prefers the longest tag so linux-musl is not read as linux") {
+        CCompiler.parseArtifactName("libkyo_tcp-linux-musl-x86_64.so") shouldBe Some(("kyo_tcp", "linux-musl", "x86_64"))
+    }
+
+    test("parseArtifactName: rejects a name whose extension contradicts its os") {
+        // `libfoo-darwin-x86_64.so` is not something the plugin produces; treating it as a darwin
+        // artifact would package a .so under darwin-x86_64/.
+        CCompiler.parseArtifactName("libfoo-darwin-x86_64.so") shouldBe None
+        CCompiler.parseArtifactName("libfoo-linux-x86_64.dylib") shouldBe None
+    }
+
+    test("parseArtifactName: None for names outside the convention") {
+        CCompiler.parseArtifactName("libfoo.so") shouldBe None
+        CCompiler.parseArtifactName("libfoo-linux-armv7.so") shouldBe None
+        CCompiler.parseArtifactName("lib-linux-x86_64.so") shouldBe None // empty library id
+        CCompiler.parseArtifactName("README") shouldBe None
+    }
+
+    test("parseArtifactName: a library id containing a hyphen is preserved") {
+        CCompiler.parseArtifactName("libkyo-tcp-linux-x86_64.so") shouldBe Some(("kyo-tcp", "linux", "x86_64"))
+    }
 }

@@ -22,34 +22,49 @@ import sbt.IO
   * The compile output carries a disambiguating suffix (`libkyo_tcp-linux-x86_64.so`);
   * this stripper restores the canonical name `NativeLoader`/koffi look up at runtime
   * (`libkyo_tcp.so`).
+  *
+  * `{os}-{arch}` is a PARAMETER, not the build host: it is the platform the artifact being copied
+  * is for. The plugin passes the resolved build target (`ffiTargetOsArch`, defaulting to the host)
+  * for locally-compiled artifacts, and the pair parsed from the filename for a prebuilt staged via
+  * `ffiPrebuiltDir`. A foreign artifact therefore lands in its own directory with its own suffix
+  * stripped, instead of under the host's directory with a suffix no runtime lookup resolves.
   */
 private[sbt] object Packager {
 
-    /** Platform-aware artifact copy. Dispatches to `copyForCurrentPlatform` (JVM) or
-      * `copyForJs` (JS); Native returns `Nil` because C sources are linked by Scala
-      * Native itself, not packaged as resources.
+    /** Platform-aware artifact copy. Dispatches to `copyForJvm` or `copyForJs`; Native returns
+      * `Nil` because C sources are linked by Scala Native itself, not packaged as resources.
       */
-    def copyForPlatform(platform: String, artifacts: Seq[File], resDir: File, libraryId: String): Seq[File] =
+    def copyForPlatform(
+        platform: String,
+        artifacts: Seq[File],
+        resDir: File,
+        libraryId: String,
+        os: String,
+        arch: String
+    ): Seq[File] =
         platform match {
             case "Native" => Nil
-            case "JS"     => copyForJs(artifacts, resDir, libraryId)
-            case _        => copyForCurrentPlatform(artifacts, resDir, libraryId)
+            case "JS"     => copyForJs(artifacts, resDir, libraryId, os, arch)
+            case _        => copyForJvm(artifacts, resDir, libraryId, os, arch)
         }
 
     /** Multi-library variant: take a sequence of `(libraryId, artifacts)` tuples and
       * dispatch each through `copyForPlatform`. Returns the concatenated list of
-      * destination files.
+      * destination files. Every artifact in the call is for the same `os`-`arch`.
       */
     def copyForPlatformMulti(
         platform: String,
         libs: Seq[(String, Seq[File])],
-        resDir: File
+        resDir: File,
+        os: String,
+        arch: String
     ): Seq[File] =
-        libs.flatMap { case (id, artifacts) => copyForPlatform(platform, artifacts, resDir, id) }
+        libs.flatMap { case (id, artifacts) => copyForPlatform(platform, artifacts, resDir, id, os, arch) }
 
-    def copyForCurrentPlatform(artifacts: Seq[File], resDir: File, libraryId: String): Seq[File] = {
-        val os      = CCompiler.detectOs()
-        val arch    = CCompiler.detectArch()
+    /** JVM variant: copy into `<resDir>/<os>-<arch>/`, the subtree `NativeLoader.resourcePath`
+      * looks the library up in at runtime.
+      */
+    def copyForJvm(artifacts: Seq[File], resDir: File, libraryId: String, os: String, arch: String): Seq[File] = {
         val destDir = new File(resDir, s"$os-$arch")
         IO.createDirectory(destDir)
         artifacts.map { a =>
@@ -66,9 +81,7 @@ private[sbt] object Packager {
       * `resDir` here is the project's managed-resource dir; we produce `kyo-ffi/native/...`
       * underneath that so Scala.js's linker picks it up and ships it alongside the JS output.
       */
-    def copyForJs(artifacts: Seq[File], resDir: File, libraryId: String): Seq[File] = {
-        val os   = CCompiler.detectOs()
-        val arch = CCompiler.detectArch()
+    def copyForJs(artifacts: Seq[File], resDir: File, libraryId: String, os: String, arch: String): Seq[File] = {
         // Replace the leading META-INF/native segment with kyo-ffi/native so Node-side
         // resolution is straightforward. `resDir` is `<resourceManaged>/META-INF/native`
         // when invoked from the plugin; swap the top two segments.
@@ -84,6 +97,8 @@ private[sbt] object Packager {
 
     // Strip platform suffix for the canonical runtime-expected name:
     //   libkyo_tcp-linux-x86_64.so -> libkyo_tcp.so
+    // `os`/`arch` are the artifact's own platform, so the suffix of a cross-built or staged
+    // foreign artifact is stripped as reliably as a host-built one's.
     private def canonicalName(name: String, os: String, arch: String): String = {
         val dot = name.lastIndexOf('.')
         if (dot < 0) name

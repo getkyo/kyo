@@ -1,32 +1,115 @@
 package kyo.ffi.internal
 
+import kyo.Chunk
 import kyo.ffi.FfiLoadError
 import scala.scalajs.js
-import scala.scalajs.js.annotation.*
 
 /** Thin Scala.js facade over the [koffi](https://koffi.dev) npm package. koffi is the runtime native-call dispatcher for the kyo-ffi JS
   * backend, a pure JS FFI alternative to N-API.
   *
-  * The `native`-marked `Koffi` object maps to the `koffi` module's `module.exports` via a DEFAULT import. koffi is a CommonJS native addon:
-  * under every module kind kyo-ffi links against (ESModule for its own js and wasm axes, CommonJS for consumers such as kyo-stats-machine),
-  * a default import binds `module.exports`, which carries koffi's members (`.load`, `.func`, `.version`, ...). A NAMESPACE import instead
-  * yields an empty binding under Node's ESModule→CommonJS interop, because `cjs-module-lexer` cannot statically detect koffi's
-  * imperatively-built exports, so `Koffi.version` and every method read as `undefined` at runtime. Members mirror the real koffi API surface
-  * used by generated code and by user-facing helpers
-  * in [[KoffiFacade]]. Runtime correctness (semantics, out-param marshalling, callback lifetime) is validated only in the scripted
-  * integration tests against a real Node + koffi install; the tests in this module exercise only structural shape (no calls into koffi) so
-  * they are runnable without koffi installed.
+  * koffi is resolved DYNAMICALLY on first use ([[dynamic]]), NOT through a static `@JSImport` object. Scala.js emits any linked reference to
+  * a `@JSImport` binding as a module-level `require("koffi")` / `import ... from "koffi"` that Node evaluates at bundle LOAD, before any Scala
+  * code runs. A static import would make merely LINKING a koffi-using module (kyo-net's posix transport, and every module that transitively
+  * depends on it) crash at load on a host without koffi installed, and it would defeat the degrade-to-Node-floor contract: the failure
+  * happens before any Scala frame exists, so it cannot reach the [[kyo.net.internal.backend.CapabilityProbe]] that classifies an
+  * [[FfiLoadError]] into a backend demotion. So the koffi module is required at the first call the same way [[NativeLoader.tryKoffiLoad]]
+  * does, and a missing koffi surfaces as a catchable [[FfiLoadError.LibraryNotFound]] (libraryId "koffi"). The resolved value is koffi's
+  * `module.exports` (a CommonJS native addon); its members (`.load`, `.func`, `.version`, ...) are read off it directly.
+  *
+  * Members mirror the real koffi API surface used by generated code and by user-facing helpers in [[KoffiFacade]]. Runtime correctness
+  * (semantics, out-param marshalling, callback lifetime) is validated only in the scripted integration tests against a real Node + koffi
+  * install; the tests in this module exercise only structural shape (no calls into koffi) so they are runnable without koffi installed.
   */
-@js.native
-@JSImport("koffi", JSImport.Default)
-private[ffi] object Koffi extends js.Object:
+private[ffi] object Koffi:
+
+    // Resolved koffi module, cached after the first successful resolution. `null` until first use, so nothing forces an eager module-load.
+    private var cached: js.Dynamic = null
+
+    /** The koffi module, resolved dynamically on first use. Throws [[FfiLoadError.LibraryNotFound]] (libraryId "koffi") when koffi is not
+      * installed / resolvable, which [[kyo.net.internal.backend.CapabilityProbe]] classifies as a NotBundled demotion to the Node floor.
+      */
+    private[ffi] def dynamic: js.Dynamic =
+        if cached == null then cached = resolve()
+        cached
+
+    private def resolve(): js.Dynamic =
+        var lastErr: Throwable | Null = null
+        def attempt(f: () => js.Dynamic): js.Dynamic =
+            try
+                val k = f()
+                if js.isUndefined(k) || k == null then null else k
+            catch
+                case t: Throwable =>
+                    lastErr = t
+                    null
+        // CommonJSModule leg: `require` is available as a process global. ESModule leg (every Wasm axis, kyo-ffi's own js axis): no `require`
+        // global, so build one from `node:module`.createRequire anchored at cwd; NODE_PATH supplies the resolution search path for the Wasm
+        // test env. createRequire also works under CommonJS, so it is a universal fallback when the `require` global is absent.
+        val loaded = attempt(cjsRequire) match
+            case null => attempt(esmRequire)
+            case k    => k
+        if loaded != null then
+            configureAsyncPool(loaded)
+            loaded
+        else
+            throw new FfiLoadError.LibraryNotFound(
+                "koffi",
+                Chunk("require(\"koffi\")", "createRequire(process.cwd())(\"koffi\")"),
+                "the koffi npm package is not installed or not resolvable; install it (npm i koffi) to use the native FFI backend",
+                lastErr
+            )
+        end if
+    end resolve
+
+    /** Configure koffi's async-call pool once, immediately after resolution and before the first `koffi.load` (which permanently locks
+      * config), then finalize the [[BlockingMeter]] bound. The pool is set to `maxBlockingCalls * maxBlockingCallsFactor` (clamped to koffi's
+      * 4096 hard max) -- a factor above the meter bound so koffi never throws "Too many asynchronous calls are running" before the meter
+      * queues. If koffi rejects config because another koffi user in this process already loaded a library, the meter bound is instead
+      * lowered below koffi's effective pool so a burst still cannot exhaust it.
+      */
+    private def configureAsyncPool(koffi: js.Dynamic): Unit =
+        val n    = kyo.ffi.maxBlockingCalls()
+        val f    = kyo.ffi.maxBlockingCallsFactor()
+        val pool = math.min(n.toLong * f.toLong, 4096L).toInt
+        try
+            val _ = koffi.applyDynamic("config")(js.Dynamic.literal(max_async_calls = pool))
+            BlockingMeter.bound = n
+        catch
+            case _: Throwable =>
+                val effective =
+                    try koffi.applyDynamic("config")().selectDynamic("max_async_calls").asInstanceOf[Int]
+                    catch case _: Throwable => 256
+                BlockingMeter.bound = math.min(n, math.max(1, effective / 2))
+                val _ = js.Dynamic.global.console.applyDynamic("warn")(
+                    s"[kyo-ffi] koffi.config was already locked by another koffi user; metering @Ffi.blocking dispatches below the effective max_async_calls=$effective"
+                )
+        end try
+    end configureAsyncPool
+
+    private def cjsRequire(): js.Dynamic =
+        val req = js.Dynamic.global.selectDynamic("require")
+        if js.isUndefined(req) || req == null then null
+        else req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
+    end cjsRequire
+
+    private def esmRequire(): js.Dynamic =
+        val proc = js.Dynamic.global.selectDynamic("process")
+        if js.isUndefined(proc) || proc == null then null
+        else
+            val nodeModule = proc.applyDynamic("getBuiltinModule")("node:module")
+            val cwd        = proc.applyDynamic("cwd")().asInstanceOf[String]
+            val require =
+                nodeModule.applyDynamic("createRequire")((cwd + "/").asInstanceOf[js.Any]).asInstanceOf[js.Function1[String, js.Dynamic]]
+            require("koffi")
+        end if
+    end esmRequire
 
     /** koffi 2.x helper that pins a JS value to a specific koffi type. Used for variadic call sites where each vararg must be typed at call
       * time rather than the prototype.
       *
       * koffi signature: `koffi.as(value, type): unknown`.
       */
-    def as(value: js.Any, tpe: String): js.Any = js.native
+    def as(value: js.Any, tpe: String): js.Any = dynamic.applyDynamic("as")(value, tpe)
 
     /** Load a native shared library (`.so`/`.dylib`/`.dll`). Returns a koffi "library" handle that exposes `.func(...)` and friends.
       *
@@ -36,34 +119,34 @@ private[ffi] object Koffi extends js.Object:
       *
       * koffi signature: `koffi.load(path: string | null): IKoffiLib`.
       */
-    def load(path: String): js.Dynamic = js.native
+    def load(path: String): js.Dynamic = dynamic.applyDynamic("load")(path.asInstanceOf[js.Any])
 
     /** Last captured errno from the most recent koffi call on the current thread. koffi captures errno automatically when the binding is
       * declared with `captureErrno: true`, we use that on every binding.
       *
       * koffi signature: `koffi.errno(): number`.
       */
-    def errno(): Int = js.native
+    def errno(): Int = dynamic.applyDynamic("errno")().asInstanceOf[Int]
 
     /** Allocate a typed buffer for out-params of the given koffi type. `count` defaults to `1`. The resulting buffer is passed by reference
       * to a C function that writes through an out-pointer, then read back via [[decode]].
       *
       * koffi signature: `koffi.alloc(type: string, count?: number): Buffer`.
       */
-    def alloc(tpe: String, count: Int): js.Dynamic = js.native
+    def alloc(tpe: String, count: Int): js.Dynamic = dynamic.applyDynamic("alloc")(tpe, count)
 
     /** Decode a value of the given koffi type name out of a buffer previously populated by a native call.
       *
       * koffi signature: `koffi.decode(buf, type: string, ?offset: number): unknown`.
       */
-    def decode(buf: js.Any, tpe: String): js.Dynamic = js.native
+    def decode(buf: js.Any, tpe: String): js.Dynamic = dynamic.applyDynamic("decode")(buf, tpe)
 
     /** Decode an array of `count` elements of `tpe` starting at the pointer `ptr`. Used for borrowed-Buffer returns where a top-level C
       * pointer is returned with a known element count.
       *
       * koffi signature: `koffi.decode(ptr, type: string, count: number): Array | TypedArray`.
       */
-    def decode(ptr: js.Any, tpe: String, count: Int): js.Dynamic = js.native
+    def decode(ptr: js.Any, tpe: String, count: Int): js.Dynamic = dynamic.applyDynamic("decode")(ptr, tpe, count)
 
     /** Write a JS value as `tpe` into the buffer `ref` at byte `offset`. Inverse of [[decode]]; used to serialize a struct
       * union variant into the union's byte buffer with full ABI fidelity, including pointer fields, which a manual
@@ -71,7 +154,9 @@ private[ffi] object Koffi extends js.Object:
       *
       * koffi signature: `koffi.encode(ref, offset: number, type, value): void`.
       */
-    def encode(ref: js.Any, offset: Int, tpe: js.Any, value: js.Any): Unit = js.native
+    def encode(ref: js.Any, offset: Int, tpe: js.Any, value: js.Any): Unit =
+        val _ = dynamic.applyDynamic("encode")(ref, offset, tpe, value)
+        ()
 
     /** Declare a C function-pointer prototype. koffi's docs describe the return as "a string identifier usable as a `koffi.pointer(...)`
       * argument", but on koffi 2.x the concrete value is an opaque `IKoffiCType` (Scala.js runtime rejects a `String` cast). Returning
@@ -79,7 +164,8 @@ private[ffi] object Koffi extends js.Object:
       *
       * koffi signature: `koffi.proto(name: string, returnType: string, argTypes: string[]): IKoffiCType`.
       */
-    def proto(name: String, returnType: String, argTypes: js.Array[String]): js.Any = js.native
+    def proto(name: String, returnType: String, argTypes: js.Array[String]): js.Any =
+        dynamic.applyDynamic("proto")(name, returnType, argTypes)
 
     /** koffi pointer-to-X type name helper. Used both for out-params (`koffi.pointer("int")`) and for callback signatures in combination
       * with [[proto]] (`koffi.pointer(koffi.proto(...))`). koffi accepts either a string type name or an opaque `IKoffiCType` handle and
@@ -88,7 +174,7 @@ private[ffi] object Koffi extends js.Object:
       *
       * koffi signature: `koffi.pointer(typeName: string | IKoffiCType): string | IKoffiCType`.
       */
-    def pointer(tpe: js.Any): js.Any = js.native
+    def pointer(tpe: js.Any): js.Any = dynamic.applyDynamic("pointer")(tpe)
 
     /** Register a Scala/JS callback as a C-callable function pointer, tying it to a koffi prototype previously declared via [[proto]]. The
       * returned pointer is passed to C; its lifetime is user-managed.
@@ -99,39 +185,41 @@ private[ffi] object Koffi extends js.Object:
       *
       * koffi signature: `koffi.register(callback: Function, prototype: string | IKoffiCType): IKoffiCType`.
       */
-    def register(cb: js.Function, prototype: js.Any): js.Dynamic = js.native
+    def register(cb: js.Function, prototype: js.Any): js.Dynamic = dynamic.applyDynamic("register")(cb.asInstanceOf[js.Any], prototype)
 
     /** Reverse of [[register]], releases the C-callable wrapper. After this call the pointer must not be invoked from C.
       *
       * koffi signature: `koffi.unregister(ptr: IKoffiCType): undefined`.
       */
-    def unregister(ptr: js.Any): Unit = js.native
+    def unregister(ptr: js.Any): Unit =
+        val _ = dynamic.applyDynamic("unregister")(ptr)
+        ()
 
     /** Declare a koffi struct type with natural alignment. Keyed by name; referenced from `func(...)` arg/result strings as the same name.
       *
       * koffi signature: `koffi.struct(name: string, fields: Record<string, string>): IKoffiCType`.
       */
-    def struct(name: String, fields: js.Dynamic): js.Dynamic = js.native
+    def struct(name: String, fields: js.Dynamic): js.Dynamic = dynamic.applyDynamic("struct")(name, fields)
 
     /** Declare a **packed** koffi struct type, identical to [[struct]] but alignment collapses to 1 per field, matching `#pragma pack(1)`.
       *
       * koffi signature: `koffi.pack(name: string, fields: Record<string, string>): IKoffiCType`.
       */
-    def pack(name: String, fields: js.Dynamic): js.Dynamic = js.native
+    def pack(name: String, fields: js.Dynamic): js.Dynamic = dynamic.applyDynamic("pack")(name, fields)
 
     /** Declare a koffi union type, every variant overlays at offset 0, `sizeof == max(fieldSizes)`, `alignof == max(fieldAlignments)`.
       * Used by `@Ffi.Union` case classes.
       *
       * koffi signature: `koffi.union(name: string, fields: Record<string, string>): IKoffiCType`.
       */
-    def union(name: String, fields: js.Dynamic): js.Dynamic = js.native
+    def union(name: String, fields: js.Dynamic): js.Dynamic = dynamic.applyDynamic("union")(name, fields)
 
     /** Return the byte size of a koffi-registered type. Accepts either a type name string (e.g. `"int"`) or an opaque `IKoffiCType` handle
       * returned by [[struct]] / [[pack]]. Used by the struct-ABI self-check to compare against the code generator's expected size.
       *
       * koffi signature: `koffi.sizeof(type: string | IKoffiCType): number`.
       */
-    def sizeof(tpe: js.Any): Int = js.native
+    def sizeof(tpe: js.Any): Int = dynamic.applyDynamic("sizeof")(tpe).asInstanceOf[Int]
 end Koffi
 
 /** Description of one koffi-mediated function binding, as produced by [[kyo.ffi.codegen.emitters.JsEmitter]]. Used by [[KoffiFacade.load]]

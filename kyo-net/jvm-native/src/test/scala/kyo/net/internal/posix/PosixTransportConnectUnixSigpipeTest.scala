@@ -88,6 +88,8 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
             real.recvNow(fd, buf, len, flags)
         def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             real.acceptNow(fd, addr, addrlen)
+        def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
+            real.connectNow(fd, addr, addrlen)
         def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
             real.read(fd, buf, count)
         def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =

@@ -9,7 +9,7 @@ import kyo.net.Test
 
 /** The io_uring availability probe is invoked at the production queue depth `max(256, ioPoolSize * 64)`, not a fixed 256.
   *
-  * `IoUringBackend.isAvailable` computes `depth = max(256, kyo.net.ioPoolSize() * 64)` and passes it to
+  * `IoUringBackend`'s probe computes `depth = max(256, kyo.net.ioPoolSize() * 64)` and passes it to
   * `kyo_uring_probe_available(depth)`, so the probe exercises the same ring size the driver actually builds. The deterministic local unit
   * asserted here is the depth-threading: a capturing `IoUringBindings` records the depth argument, and invoking the probe through it with the
   * backend's formula records exactly that value. A probe that took no depth (signature
@@ -80,7 +80,7 @@ class IoUringProbeDepthTest extends Test:
 
     "the probe is invoked with the production depth max(256, ioPoolSize*64), not the hardcoded 256" in {
         val bindings = new CapturingBindings
-        // Drive the probe exactly as IoUringBackend.isAvailable does: with the backend's computed depth.
+        // Drive the probe exactly as IoUringBackend's doProbe does: with the backend's computed depth.
         val depth = productionDepth
         discard(bindings.kyo_uring_probe_available(depth))
         assert(bindings.lastDepth.get() == depth, s"probe received ${bindings.lastDepth.get()}, expected the production depth $depth")

@@ -5,13 +5,14 @@ import kyo.*
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsConfigException
 import kyo.net.internal.NioTransport
+import kyo.net.internal.backend.CapabilityOutcome
 
 /** JVM-only pure-JDK TLS floor provider (priority-10 `jdk`), the SSLEngine fallback when BoringSSL is not staged/loadable or `-Dkyo.net.tls=jdk`
   * is forced.
   *
-  * JVM ONLY because it imports `javax.net.ssl` (absent on Native/JS). `isAvailable = true` is sound ONLY here; Native falls to system OpenSSL,
-  * JS to Node tls. `createEngine` builds a [[JdkSslEngine]] over an `SSLEngine` configured from the [[NetTlsConfig]] via the existing
-  * `NioTransport.createSslContext` (the same context-building the inline NIO path uses, reused 1:1).
+  * JVM ONLY because it imports `javax.net.ssl` (absent on Native/JS). An unconditionally available probe is sound ONLY here; Native falls to
+  * system OpenSSL, JS to Node tls. `createEngine` builds a [[JdkSslEngine]] over an `SSLEngine` configured from the [[NetTlsConfig]] via the
+  * existing `NioTransport.createSslContext` (the same context-building the inline NIO path uses, reused 1:1).
   */
 private[net] object SslEngineProvider extends TlsEngineProvider:
 
@@ -19,12 +20,15 @@ private[net] object SslEngineProvider extends TlsEngineProvider:
 
     def priority = 10
 
+    /** Pure JDK: no native library to stage, so nothing can be missing for this host. */
+    def libraryIds: Chunk[String] = Chunk.empty
+
     // JVM-only TLS floor: pure JDK, always available.
-    def isAvailable(using AllowUnsafe): Boolean =
+    private[net] def doProbe(using AllowUnsafe): CapabilityOutcome =
         // Touch the JDK TLS stack so the probe reflects an actually-usable provider.
         val _ = SSLContext.getDefault()
-        true
-    end isAvailable
+        CapabilityOutcome.Available
+    end doProbe
 
     def createEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
         val sslContext = NioTransport.createSslContext(config, isServer)

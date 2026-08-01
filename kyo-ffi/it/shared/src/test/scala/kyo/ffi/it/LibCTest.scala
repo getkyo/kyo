@@ -261,11 +261,13 @@ class LibCTest extends ItTestBase:
     }
 
     "labs" - {
-        // C `long` is 32 bits on Windows (LLP64), so the 64-bit expectations below hold only on
-        // LP64 hosts under Node; the JVM tier resolves a 64-bit-compatible path there. The
-        // does-not-crash leaf stays unconditional.
+        // C `long` is 32 bits on Windows (LLP64) for both tiers: Panama binds C `long` to a 32-bit
+        // layout there and koffi does the same, so a 64-bit argument is truncated to its low 32 bits
+        // (labs(Long.MaxValue) returns 1). The fixed-value 64-bit expectations below therefore hold
+        // only on LP64 hosts, so they cancel on every Windows target. The does-not-crash leaf and the
+        // labs(x) == labs(-x) invariant (symmetric under truncation) stay unconditional.
         def assumeLp64Long(): Unit =
-            if kyo.internal.Platform.isWindows && !kyo.internal.Platform.isJVM then
+            if kyo.internal.Platform.isWindows then
                 cancel("C long is 32-bit on Windows (LLP64)")
 
         "labs(Long.MinValue + 1) is Long.MaxValue" in {

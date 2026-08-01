@@ -36,8 +36,10 @@ import kyo.scheduler.Task
   * carrier (no fiber safepoints for `doPreempt` to reclaim) and a continuation completed inline could strand on that carrier's queue, which is the
   * concurrent-STARTTLS hang this shape exists to prevent.
   *
-  * `backend.poll` returns a `Fiber.Unsafe` wrapping the `@Ffi.blocking` `epoll_wait` / `kevent`, which on jvm-native completes inline, so the fiber
-  * is always already `done()` and the calling carrier is the one parked in the syscall for the wait's duration. (JS uses a separate driver.)
+  * `backend.poll` returns a `Fiber.Unsafe` wrapping the `@Ffi.blocking` `epoll_wait` / `kevent`. On JVM/Native it completes inline, so the fiber
+  * is always already `done()` and the calling carrier is the one parked in the syscall for the wait's duration. On JS/Wasm the wait dispatches on
+  * a libuv worker, so the fiber is genuinely pending and the loop continues through the `waitFiber.onComplete` arm when the worker completes
+  * (the poll timeout is bounded there so the worker is released periodically).
   *
   * Ordered interest changes: `epoll_ctl` and kqueue's `EV_ADD` / `EV_DELETE` are last-write-wins per fd+filter, so an interest change that runs
   * out of order can clobber a live one. Concretely, a STARTTLS upgrade detaches the plaintext pump (which `cancel`s the fd, i.e. submits a
@@ -550,7 +552,12 @@ final private[net] class PollerIoDriver private[posix] (
                 // here after the flush and before the wait returns; Worker.checkAvailability drains that residue once the blocking
                 // monitor flags this worker.
                 Scheduler.get.flush()
-                val waitFiber = backend.poll(pollerFd, timeoutMs = -1, clBuf, clN, pollScratch)
+                // On JS the poll runs on a libuv worker (default pool of 4); an indefinite park would hold that worker for the process
+                // lifetime and could starve a `@Ffi.blocking` close/connect. Bound it so the worker is released at least every
+                // `JsPollBudgetMs`; readiness is level-triggered, so a ready fd returns the poll immediately, well before the budget elapses
+                // (the timeout only caps the IDLE wait). JVM/Native park indefinitely on their own threads (the J libuv-budget design).
+                val timeoutMs = if kyo.internal.Platform.isJS then PollerIoDriver.JsPollBudgetMs else -1
+                val waitFiber = backend.poll(pollerFd, timeoutMs, clBuf, clN, pollScratch)
                 val self      = task
                 waitFiber.poll() match
                     case Present(Result.Success(_)) =>
@@ -1499,7 +1506,7 @@ final private[net] class PollerIoDriver private[posix] (
 
     /** Drain all ready events from one poll result, dispatching reads, writables, and error-only events in order.
       *
-      * Called from the poll task's run after `backend.poll` completes (always inline on jvm-native). Each event:
+      * Called from the poll task's run after `backend.poll` completes (inline on JVM/Native; through the pending `onComplete` arm on JS/Wasm). Each event:
       *   - Dispatches read-ready events to `dispatchRead` (or `dispatchAccept` for listen fds); under edge-triggered the fd is persistently
       *     armed and there is no survivor re-arm to submit.
       *   - Dispatches write-ready events to `dispatchWritable`.
@@ -2640,6 +2647,12 @@ final private[net] class PollerIoDriver private[posix] (
 end PollerIoDriver
 
 private[net] object PollerIoDriver:
+
+    /** JS-only idle-poll budget in milliseconds. The poll runs on a libuv worker; bounding the wait to this releases the worker at least this
+      * often so a concurrent `@Ffi.blocking` close/connect can never starve, while readiness (level-triggered) still returns immediately. 50ms
+      * is the idle-release cadence; the real concurrency knob is `UV_THREADPOOL_SIZE` (documented for high-concurrency Node deployments).
+      */
+    private[posix] val JsPollBudgetMs = 50
 
     // Wake-guard encoding (see PollerIoDriver.wakeGuard, acquireWake/releaseWake/closeWakeGuarded): the low WakeHolderMask bits count the in-flight
     // backend.wake calls touching the wake fd, WakeClosingBit records that the wake-fd teardown has begun, and WakeClosed is the terminal value once

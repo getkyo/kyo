@@ -38,8 +38,9 @@ import sbt._
   *   system libraries to link against on every OS (no `lib` prefix, no
   *   extension).
   * @param linkLibsByOs
-  *   OS-specific link libraries, keyed by the platform name `CCompiler.detectOs`
-  *   resolves (`"linux"`, `"darwin"`, `"windows"`). The `"linux"` key also
+  *   OS-specific link libraries, keyed by the resolved TARGET platform name
+  *   (`ffiTargetOsArch`, defaulting to the host `CCompiler.detectOs`:
+  *   `"linux"`, `"darwin"`, `"windows"`). The `"linux"` key also
   *   covers `linux-musl`. Merged with `linkLibs` for the building OS only, so a
   *   library that links a Linux-only system lib (e.g. `uring`) leaves the macOS
   *   and Windows builds untouched. A binding whose C is header-gated to a stub
@@ -72,8 +73,9 @@ final case class FfiLibrary(
 ) {
 
     /** Effective link libraries for the OS being built: the always-on `linkLibs`
-      * plus the entry in `linkLibsByOs` for `os` (the value `CCompiler.detectOs`
-      * returns). `linux-musl` resolves the `linux` key. Order is stable:
+      * plus the entry in `linkLibsByOs` for `os` (the resolved TARGET os,
+      * `ffiTargetOsArch` defaulting to the host `CCompiler.detectOs`).
+      * `linux-musl` resolves the `linux` key. Order is stable:
       * always-on libs first, then OS-specific, deduplicated.
       */
     def resolvedLinkLibs(os: String): Seq[String] = {

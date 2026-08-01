@@ -3,19 +3,20 @@ package kyo.ffi.it
 import kyo.ffi.Ffi
 import kyo.internal.Platform
 
-/** POSIX bindings spec, shared across platforms. On Windows the leaves run only on the JVM, whose default lookup resolves the POSIX
-  * names; the CRT exports only underscore-prefixed variants (`_getpid`, `_time64`), so the Node targets cancel there.
+/** POSIX bindings spec, shared across platforms. The bindings resolve the bare POSIX names (`getpid`, `time`) through the native linker's
+  * default lookup; the Windows CRT exports these only under underscore-prefixed variants (`_getpid`, `_time64`), and neither Panama's (JVM)
+  * nor koffi's (Node) default lookup finds the bare names there, so every Windows target cancels. The leaves run on the Unix JVM, Native, and
+  * Node targets.
   *
-  * Six assertions spanning `getpid` and `time`. `getenv` coverage is deferred; see `PosixBindings` for the rationale (kyo-ffi codegen does
-  * not yet support `String` or borrowed `Buffer[Byte]` as a top-level return, which is what a stock `getenv` binding needs).
-  *
-  * Extends getpid stability + time monotonicity to more iterations and cross-call invariants.
+  * Covers `getpid` (positive, stable across two calls, a tight loop, and a longer burst), `time` (positive, monotonic non-decreasing, and
+  * close to the JVM wall clock), and `getenv` (borrowed-String return round-tripped against `java.lang.System.getenv`), extending the
+  * stability and cross-call invariants over longer iteration counts.
   */
 class PosixTest extends ItTestBase:
 
     private def assumePosixSymbols(): Unit =
-        if Platform.isWindows && !Platform.isJVM then
-            cancel("POSIX symbol names are unavailable in Windows CRT exports")
+        if Platform.isWindows then
+            cancel("bare POSIX symbol names are unavailable in Windows CRT exports")
 
     "getpid" - {
         "returns a positive process id" in {
