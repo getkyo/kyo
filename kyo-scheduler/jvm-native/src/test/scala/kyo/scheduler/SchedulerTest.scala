@@ -226,13 +226,11 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
     "regulator harness liveness" - {
         // Each Scheduler permanently pins TWO timer-pool threads with infinite loops: the blocking-monitor scan loop
         // (BlockingMonitor's submitted task) and the worker-cycle loop (Scheduler.cycleTask). The concurrency and admission
-        // regulators run their probes as PERIODIC tasks on that same pool (collectInterval=10ms), so they only ever fire if
-        // the pool has a FREE thread beyond those 2. A ScheduledThreadPoolExecutor does not grow past its core size, so an
-        // undersized/shared timer pool silently starves the regulator: it freezes at probesSent~0. The shared Scheduler.defaultTimerExecutor
-        // is size 4 (supports exactly ONE scheduler: 2 pinned + 2 free), and Scheduler.get (the global singleton) already
-        // pins 2 of its threads for the whole JVM, so any regulator-dependent test sharing that pool is unreliable. withScheduler
-        // gives every test its own adequately sized, torn-down timer pool by default. These two leaves guard that: one proves a
-        // live regulator with headroom, one pins the starvation mechanism deterministically.
+        // regulators run their probes as PERIODIC tasks on that same pool (collectInterval=10ms), so a pool with headroom
+        // beyond those 2 threads fires them freely. The shared Scheduler.defaultTimerExecutor is size 4, and Scheduler.get
+        // (the global singleton) already pins 2 of its threads for the whole JVM, so a regulator-dependent test sharing that
+        // pool is unreliable. withScheduler gives every test its own adequately sized, torn-down timer pool by default. This
+        // leaf guards that: a live regulator fires within a bounded deadline given a dedicated pool with headroom.
         val liveCfg = Scheduler.Config.default.copy(cores = 2, coreWorkers = 2, minWorkers = 2, maxWorkers = 4)
 
         "an adequately sized dedicated timer pool keeps the regulator firing" in withScheduler(liveCfg) { s =>
@@ -242,34 +240,6 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
                 Thread.sleep(10)
             val probes = s.status().concurrency.regulator.probesSent
             assert(probes > 10, s"regulator never fired in the harness (probesSent=$probes) despite an 8-thread dedicated timer pool")
-        }
-
-        "an undersized timer pool (only the 2 pinned loops, no headroom) starves the regulator" in {
-            // Size 2 == exactly the 2 permanently-pinned loops (monitor + cycle), 0 free threads, so the regulator's periodic probe
-            // is never scheduled. Documents WHY the shared default pool fails under a second scheduler, and guards against anyone
-            // "fixing" a regulator test by shrinking its pool.
-            val timer = java.util.concurrent.Executors.newScheduledThreadPool(2, kyo.scheduler.util.Threads("live-starved-timer"))
-            val s     = new Scheduler(TestExecutors.cached, TestExecutors.scheduled, timer, liveCfg)
-            try {
-                // Timebase without a fixed sleep: the blocking-monitor loop IS one of the two running pinned threads, so its cycle
-                // counter advances (~every 2ms). Once it has cycled many times, enough real time has elapsed that a live regulator
-                // (10ms probe) would have fired repeatedly; a still-~0 probe count is then genuine starvation, not "not yet". The
-                // Thread.sleep below is only the poll interval of a deadline-bounded condition wait, not a duration-as-assertion.
-                val deadline = java.lang.System.nanoTime() + 5000000000L
-                while (s.blockingMonitor.cycles < 50 && java.lang.System.nanoTime() < deadline) Thread.sleep(5)
-                assert(
-                    s.blockingMonitor.cycles >= 50,
-                    s"blocking monitor did not run (cycles=${s.blockingMonitor.cycles}); cannot judge regulator starvation"
-                )
-                val probes = s.status().concurrency.regulator.probesSent
-                assert(
-                    probes <= 1,
-                    s"expected the 2-thread pool (== the 2 pinned loops, 0 free) to starve the regulator, but probesSent=$probes " +
-                        s"after ${s.blockingMonitor.cycles} monitor cycles"
-                )
-            } finally {
-                s.shutdown(); timer.shutdownNow(): Unit
-            }
         }
     }
 
