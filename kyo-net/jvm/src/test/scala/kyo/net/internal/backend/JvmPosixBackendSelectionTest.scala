@@ -76,7 +76,11 @@ class JvmPosixBackendSelectionTest extends Test:
         // posix backend WINS selection, so a run that forces the nio floor (KYO_NET_ONLY=nio or -Dkyo.net.backend=nio, the cell-isolation and
         // forced-backend CI legs) has deliberately removed the thing under test; cancel rather than report a failure the run itself caused.
         if IoBackendPlatform.selected.name == "nio" then cancel("nio is forced; this leaf asserts posix wins selection")
-        val unsafe = IoBackendPlatform.transport()
+        // `transport()` builds a FRESH transport (it calls the entry's `build()`); it does not hand back the shared
+        // `NetPlatform.transport`. A transport has no close, so this one lives for the rest of the fork, which is exactly what the
+        // process-lifetime marker describes. Without it the driver's poll carrier is an unmarked busy fiber at the fork's end-of-run leak
+        // check. Same reasoning, and same call, as TestBackends.Entry.transport.
+        val unsafe = kyo.net.internal.ProcessSharedTransport.whileBuilding(IoBackendPlatform.transport())
         assert(unsafe.isInstanceOf[PosixTransport], s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport")
         val payload = "posix-echo".getBytes
         echoRoundTrip(unsafe, payload).map { got =>
@@ -99,7 +103,9 @@ class JvmPosixBackendSelectionTest extends Test:
         ).getOrThrow
         assert(forced.name == "nio", s"forced selected=${forced.name}")
         // The forced floor must build the NioTransport, not a PosixTransport, and that floor must round-trip as production.
-        val unsafe = forced.build()
+        // Process-lifetime for the same reason as the posix build above: `build()` returns a fresh transport that nothing can close, so its
+        // NioIoDriver poll carrier must be marked or it reads as a leaked fiber at the fork's end-of-run check.
+        val unsafe = kyo.net.internal.ProcessSharedTransport.whileBuilding(forced.build())
         assert(!unsafe.isInstanceOf[PosixTransport], "forced-nio transport is a PosixTransport, expected NioTransport")
         val payload = "nio-floor-echo".getBytes
         echoRoundTrip(unsafe, payload).map { got =>
