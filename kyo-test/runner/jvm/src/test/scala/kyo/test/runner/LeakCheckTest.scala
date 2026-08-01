@@ -136,6 +136,79 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(out.isEmpty && calls == 1, s"a clean run must sample once and not park, got calls=$calls out=$out")
     }
 
+    test("awaitSchedulerIdle returns Accounted without spending the budget when every busy worker is allowlisted") {
+        // The process-lifetime transport case: load never reaches zero, but the only carrier holding it is allowlisted. Before quiescence
+        // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway, once per forked JVM.
+        val budget  = 2_000_000_000L
+        val started = java.lang.System.nanoTime()
+        val verdict = LeakCheck.awaitSchedulerIdle(
+            budgetNanos = budget,
+            settleNanos = 20_000_000L,
+            pollNanos = 1_000_000L,
+            loadNow = () => 1.0,
+            allAccounted = () => true
+        )
+        val elapsed = java.lang.System.nanoTime() - started
+        val ok = verdict match
+            case LeakCheck.IdleResult.Accounted(la) => la == 1.0
+            case _                                  => false
+        assert(ok, s"work whose carriers are all allowlisted must read as Accounted, got $verdict")
+        assert(elapsed < budget / 2, s"Accounted must settle without spending the budget, took ${elapsed / 1000000}ms")
+    }
+
+    test("awaitSchedulerIdle still spends the budget and reports Busy when work is unaccounted") {
+        // The leak this check exists to find: nothing accounts for the running work, so the full settle budget is spent before the verdict.
+        val budget  = 200_000_000L
+        val started = java.lang.System.nanoTime()
+        val verdict = LeakCheck.awaitSchedulerIdle(
+            budgetNanos = budget,
+            settleNanos = 20_000_000L,
+            pollNanos = 1_000_000L,
+            loadNow = () => 2.0,
+            allAccounted = () => false
+        )
+        val elapsed = java.lang.System.nanoTime() - started
+        val ok = verdict match
+            case LeakCheck.IdleResult.Busy(la, _) => la == 2.0
+            case _                                => false
+        assert(ok, s"unaccounted work must still be reported as Busy, got $verdict")
+        assert(elapsed >= budget, s"an unaccounted fork must still get its full budget, took ${elapsed / 1000000}ms")
+    }
+
+    test("awaitSchedulerIdle reports Idle at zero load without consulting the accounted probe") {
+        // busyFiberTraces renders a trace per busy worker, so the expensive branch must stay off the clean path entirely.
+        var probed = 0
+        val verdict = LeakCheck.awaitSchedulerIdle(
+            budgetNanos = 2_000_000_000L,
+            settleNanos = 20_000_000L,
+            pollNanos = 1_000_000L,
+            loadNow = () => 0.0,
+            allAccounted = () =>
+                probed += 1
+                true
+        )
+        assert(verdict == LeakCheck.IdleResult.Idle, s"zero load must read as Idle, got $verdict")
+        assert(probed == 0, s"the accounted probe must not run while load is zero, ran $probed times")
+    }
+
+    test("awaitSchedulerIdle requires the accounted state to hold for a full settle window") {
+        // Unaccounted on the first probe, accounted after: the window restarts, so a single favourable sample cannot end the wait early.
+        var n = 0
+        val verdict = LeakCheck.awaitSchedulerIdle(
+            budgetNanos = 5_000_000_000L,
+            settleNanos = 30_000_000L,
+            pollNanos = 1_000_000L,
+            loadNow = () => 1.0,
+            allAccounted = () =>
+                n += 1
+                n > 1
+        )
+        val ok = verdict match
+            case LeakCheck.IdleResult.Accounted(_) => true
+            case _                                 => false
+        assert(ok && n >= 2, s"the settle window must restart after an unaccounted sample, got $verdict after $n probes")
+    }
+
     test("openFdTargets enumerates real descriptors and the diff clears on close (Linux only)") {
         LeakCheck.openFdTargets() match
             case Maybe.Absent =>
@@ -179,7 +252,8 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = 300_000_000L,
             settleNanos = 150_000_000L,
-            pollNanos = 10_000_000L
+            pollNanos = 10_000_000L,
+            allowlist = Chunk.empty
         )
         // Tear the spinner down BEFORE asserting so a failed assertion never leaves it pegging a worker.
         stop.set(true)
@@ -194,6 +268,9 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
                 assert(frame.isDefined, "a busy worker should surface a stack frame for the spinning fiber")
             case LeakCheck.IdleResult.Idle =>
                 fail(s"expected Busy while a fiber was spinning, got Idle (ambient=$ambient)")
+            case LeakCheck.IdleResult.Accounted(la) =>
+                // The allowlist is empty here, so nothing can account for the spinner: Accounted would mean the predicate excused a leak.
+                fail(s"expected Busy while a fiber was spinning, got Accounted($la) under an empty allowlist (ambient=$ambient)")
         end match
         assert(drained <= ambient + 0.5, s"after cleanup the spinner's load should be gone (ambient=$ambient drained=$drained)")
     }
