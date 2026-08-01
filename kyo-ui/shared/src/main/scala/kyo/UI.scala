@@ -778,6 +778,25 @@ object UI:
 
             /** Runs `f` when the mouse wheel is used over this element, receiving the [[kyo.UI.WheelEvent]] payload. */
             def onScroll(f: WheelEvent => Any < Async): Self = withAttrs(attrs.copy(onScrollEvt = Present(f)))
+
+            /** Marks this element (and its subtree) as a keyboard-navigation region whose page-scrolling keys are
+              * suppressed. While focus is on this element or a descendant, the client calls `preventDefault()`
+              * synchronously for the navigation keys so the browser does not ALSO scroll the page; the keydown is
+              * still forwarded, so this element's own `onKeyDown` (e.g. moving an option highlight) runs unchanged.
+              *
+              * Vertical keys (`ArrowUp`/`ArrowDown`/`PageUp`/`PageDown`) are suppressed unless the focused target
+              * consumes them itself (`textarea`, `select`, contenteditable — there the browser default is caret line
+              * movement or an option change, not a page scroll). A single-line input stays suppressed for vertical keys:
+              * that is the combobox case where `ArrowDown` drives the listbox highlight. Horizontal/edge keys
+              * (`ArrowLeft`/`ArrowRight`/`Home`/`End`) are suppressed only when the focused target is NOT a text-editable
+              * field, so caret movement inside a filter input keeps working.
+              *
+              * Declarative by necessity: a kyo-ui handler runs asynchronously (and remotely on the server-push
+              * transport), so it cannot decline the browser default in time. Both transports therefore read the emitted
+              * `data-kyo-scroll-keys` attribute in the browser before posting the event — the framework's equivalent of
+              * the imperative `event.preventDefault()` a component library calls in every arrow-key handler.
+              */
+            def preventScrollKeys: Self = withAttrs(attrs.copy(dataAttrs = attrs.dataAttrs.updated("kyo-scroll-keys", "1")))
         end Interactive
 
         // ---- Layout traits ----

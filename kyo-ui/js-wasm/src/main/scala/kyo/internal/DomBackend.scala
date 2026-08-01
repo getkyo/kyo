@@ -362,6 +362,14 @@ private[kyo] object DomBackend:
         var clickSubmitGuard = false
 
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
+            // Runs before path resolution so it fires even when the focused descendant is not a path element;
+            // the keydown is still forwarded below, so the region's own onKeyDown runs (see `scrollKeyPrevented`).
+            if e.`type` == "keydown" then
+                val ke  = e.asInstanceOf[dom.KeyboardEvent]
+                val tgt = e.target.asInstanceOf[dom.Element]
+                if tgt != null && scrollKeyPrevented(ke.key, tgt) && tgt.closest("[data-kyo-scroll-keys]") != null then
+                    e.preventDefault()
+            end if
             findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
                 val evTypes = ChainTypes(target)
@@ -752,5 +760,23 @@ private[kyo] object DomBackend:
                 if nv != v then setValue(t, nv)
             end if
         end if
+
+    /** True when `key` is a page-scrolling navigation key a `preventScrollKeys` region should suppress on `target`.
+      * Vertical keys are exempt when `target` consumes them itself (caret line movement, option change) — there the
+      * browser default is not a page scroll, so there is nothing to suppress. A single-line input stays suppressed for
+      * vertical keys on purpose: that is the combobox case where `ArrowDown` drives the listbox highlight.
+      * Horizontal/edge keys are exempt for any text-editable target, so a filter input keeps caret movement.
+      */
+    private def scrollKeyPrevented(key: String, target: dom.Element): Boolean =
+        val tag              = target.tagName
+        def contentEditable  = target.asInstanceOf[scalajs.js.Dynamic].isContentEditable.asInstanceOf[Boolean]
+        def editable         = tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT" || contentEditable
+        def verticalConsumer = tag == "TEXTAREA" || tag == "SELECT" || contentEditable
+        key match
+            case "ArrowUp" | "ArrowDown" | "PageUp" | "PageDown" => !verticalConsumer
+            case "ArrowLeft" | "ArrowRight" | "Home" | "End"     => !editable
+            case _                                               => false
+        end match
+    end scrollKeyPrevented
 
 end DomBackend

@@ -692,4 +692,41 @@ class FocusableTest extends UITest:
         }
     }
 
+    "preventScrollKeys suppresses the browser's native page scroll for a nav key, still firing onKeyDown" in {
+        // A tall page so PageDown CAN scroll it natively; the focused button opts into preventScrollKeys.
+        val app: UI < Async =
+            for log <- Signal.initRef("")
+            yield UI.div(
+                UI.button("nav").id("nav").tabIndex(0).preventScrollKeys
+                    .onKeyDown((_: KeyboardEvent) => log.set("pressed")),
+                UI.span(log).id("log"),
+                UI.div("spacer").style(Style.height(Length.Px(3000)))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("nav"))
+                _ <- Browser.assertFocused(Selector.id("nav"))
+                _ <- Browser.assertAttribute(Selector.id("nav"), "data-kyo-scroll-keys", "1")
+                _ <- Browser.press(Selector.id("nav"), Key.PageDown)
+                // The keydown is suppressed for scrolling, not swallowed: onKeyDown still ran...
+                _  <- Browser.assertText(Selector.id("log"), "pressed")
+                sp <- Browser.scrollPosition
+            yield assert(sp.y == 0) // ...and the page did not scroll
+        }
+    }
+
+    "preventScrollKeys keeps caret line movement in a textarea inside the region" in {
+        // A textarea consumes vertical keys itself (caret line movement), so the region must not suppress them there.
+        withUI(UI.div.preventScrollKeys(
+            UI.textarea.id("ta")
+        )) {
+            for
+                _   <- Browser.fill(Selector.id("ta"), "first\nsecond")
+                _   <- Browser.evalDiscard("var t=document.getElementById('ta');t.focus();t.setSelectionRange(0,0)")
+                _   <- Browser.press(Selector.id("ta"), Key.ArrowDown)
+                pos <- Browser.evalInt("document.getElementById('ta').selectionStart")
+            yield assert(pos >= 6) // caret left line 1 ("first\n" is 6 chars), so ArrowDown was not preventDefault-ed
+        }
+    }
+
 end FocusableTest
