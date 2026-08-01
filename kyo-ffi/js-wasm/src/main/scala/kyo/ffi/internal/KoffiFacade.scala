@@ -48,7 +48,9 @@ private[ffi] object Koffi:
         val loaded = attempt(cjsRequire) match
             case null => attempt(esmRequire)
             case k    => k
-        if loaded != null then loaded
+        if loaded != null then
+            configureAsyncPool(loaded)
+            loaded
         else
             throw new FfiLoadError.LibraryNotFound(
                 "koffi",
@@ -58,6 +60,31 @@ private[ffi] object Koffi:
             )
         end if
     end resolve
+
+    /** Configure koffi's async-call pool once, immediately after resolution and before the first `koffi.load` (which permanently locks
+      * config), then finalize the [[BlockingMeter]] bound. The pool is set to `maxBlockingCalls * maxBlockingCallsFactor` (clamped to koffi's
+      * 4096 hard max) -- a factor above the meter bound so koffi never throws "Too many asynchronous calls are running" before the meter
+      * queues. If koffi rejects config because another koffi user in this process already loaded a library, the meter bound is instead
+      * lowered below koffi's effective pool so a burst still cannot exhaust it.
+      */
+    private def configureAsyncPool(koffi: js.Dynamic): Unit =
+        val n    = kyo.ffi.maxBlockingCalls()
+        val f    = kyo.ffi.maxBlockingCallsFactor()
+        val pool = math.min(n.toLong * f.toLong, 4096L).toInt
+        try
+            val _ = koffi.applyDynamic("config")(js.Dynamic.literal(max_async_calls = pool))
+            BlockingMeter.bound = n
+        catch
+            case _: Throwable =>
+                val effective =
+                    try koffi.applyDynamic("config")().selectDynamic("max_async_calls").asInstanceOf[Int]
+                    catch case _: Throwable => 256
+                BlockingMeter.bound = math.min(n, math.max(1, effective / 2))
+                val _ = js.Dynamic.global.console.applyDynamic("warn")(
+                    s"[kyo-ffi] koffi.config was already locked by another koffi user; metering @Ffi.blocking dispatches below the effective max_async_calls=$effective"
+                )
+        end try
+    end configureAsyncPool
 
     private def cjsRequire(): js.Dynamic =
         val req = js.Dynamic.global.selectDynamic("require")
