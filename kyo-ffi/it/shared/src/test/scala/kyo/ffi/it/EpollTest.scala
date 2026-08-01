@@ -16,8 +16,10 @@ import kyo.ffi.Ffi
   */
 class EpollTest extends ItTestBase:
 
-    private val isLinux: Boolean =
-        java.lang.System.getProperty("os.name", "").toLowerCase.contains("linux")
+    // `kyo.internal.Platform.isLinux` reads `os.name` on JVM and `process.platform` on JS/Wasm (and a link-time
+    // constant on Native), so this test runs the real koffi `epoll_wait` on Node too, not just JVM/Native.
+    // `System.getProperty("os.name")` is empty under Scala.js, which used to cancel every case on JS.
+    private val isLinux: Boolean = kyo.internal.Platform.isLinux
 
     private def assumeEpoll(): Unit =
         if !isLinux then cancel("epoll is Linux-only")
@@ -30,8 +32,15 @@ class EpollTest extends ItTestBase:
     //   uint32_t     events;  // offset 0, 4 bytes
     //   epoll_data_t data;    // offset EPOLL_DATA_OFFSET, 8 bytes (union, we use the u64 member)
     private val isX86_64: Boolean =
-        val arch = java.lang.System.getProperty("os.arch", "").toLowerCase
-        arch == "amd64" || arch == "x86_64" || arch == "x64"
+        // `os.arch` is empty under Scala.js, so `System.getProperty("os.arch")` made JS+x86_64 misdetect as
+        // non-x86_64 and read/write the epoll_event at the aarch64 offsets (data@8, size 16) instead of the
+        // packed x86_64 layout (data@4, size 12). SystemPlatformSpecific.osArch reads `process.arch` on JS (and
+        // `os.arch` on JVM/Native), the same accessor the real driver's EpollEvent layout uses (PosixStructs).
+        import AllowUnsafe.embrace.danger
+        kyo.internal.SystemPlatformSpecific.osArch().toLowerCase match
+            case "x86_64" | "amd64" | "x64" => true
+            case _                          => false
+    end isX86_64
     private val EPOLL_DATA_OFFSET = if isX86_64 then 4 else 8
     private val EPOLL_EVENT_SIZE  = if isX86_64 then 12 else 16
 

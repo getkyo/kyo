@@ -3,11 +3,13 @@ package kyo.net.internal.transport
 import kyo.*
 import kyo.net.Connection
 import kyo.net.Test
+import kyo.net.Transport
 
 /** Invariant tests for the single-field [[HalfCloseState]] state machine via [[Connection.status]].
   *
   * All three tests drive a real TLS session through [[eachBackendTls]], so every registered backend x TLS-implementation cell is covered.
-  * JS never wires `statusFn` on its connections, so every JS leaf asserts [[Connection.Status.Active]].
+  * A transport reports the close reason only when it terminates TLS in-process (posix on every platform including JS, NIO on JVM); the Node
+  * transport delegates TLS to Node, never sees the close_notify, and its connections always read [[Connection.Status.Active]].
   *
   * The three scenarios are:
   *   - `clean-close`: server calls `close()` (sends TLS close_notify); client drains inbound; expects [[Connection.Status.CleanClose]].
@@ -30,11 +32,17 @@ class HalfCloseStateTest extends Test:
     private def drainInbound(conn: Connection)(using Frame): Unit < (Async & Abort[Closed]) =
         Abort.run[Closed](Loop.foreach(conn.inbound.safe.take.map(_ => Loop.continue))).map(_ => ())
 
-    /** Expected [[Connection.Status]] on this platform for a given scenario reason. JS never wires `statusFn`, so every JS leaf
-      * sees [[Connection.Status.Active]]. On JVM and Native the engine path wires the fn and reports the true reason.
+    /** Whether this cell's transport reports the TLS close reason through [[Connection.status]]. The Node transport terminates TLS in Node and
+      * never observes the close_notify, so it wires no `statusFn` and its connections always read [[Connection.Status.Active]]; the in-process
+      * engine transports (posix on every platform including JS, NIO on JVM) see the close_notify in the decrypt path and report the true reason.
+      * The Node transport is exactly the one driving the `node` TLS provider.
       */
-    private def expected(reason: Connection.Status): Connection.Status =
-        if kyo.internal.Platform.isJS then Connection.Status.Active else reason
+    private def reportsCloseReason(transport: Transport): Boolean =
+        !transport.supportedTlsProviders.contains("node")
+
+    /** Expected [[Connection.Status]] for a scenario reason on this cell: the true reason on a transport that reports it, else Active. */
+    private def expected(transport: Transport, reason: Connection.Status): Connection.Status =
+        if reportsCloseReason(transport) then reason else Connection.Status.Active
 
     "clean-close: server close_notify gives CleanClose on inbound drain" - eachBackendTls {
         (transport, serverTls, clientTls) =>
@@ -58,8 +66,8 @@ class HalfCloseStateTest extends Test:
                 client.close()
                 listener.close()
                 assert(
-                    reason == expected(Connection.Status.CleanClose),
-                    s"expected ${expected(Connection.Status.CleanClose)} after server TLS close_notify; got $reason"
+                    reason == expected(transport, Connection.Status.CleanClose),
+                    s"expected ${expected(transport, Connection.Status.CleanClose)} after server TLS close_notify; got $reason"
                 )
                 succeed
             end for
@@ -86,8 +94,8 @@ class HalfCloseStateTest extends Test:
                 serverConn.close()
                 listener.close()
                 assert(
-                    reason == expected(Connection.Status.LocalClose),
-                    s"expected ${expected(Connection.Status.LocalClose)} after client local close; got $reason"
+                    reason == expected(transport, Connection.Status.LocalClose),
+                    s"expected ${expected(transport, Connection.Status.LocalClose)} after client local close; got $reason"
                 )
                 succeed
             end for
@@ -130,8 +138,8 @@ class HalfCloseStateTest extends Test:
                 client.close()
                 listener.close()
                 assert(
-                    reason == expected(Connection.Status.CleanClose),
-                    s"status after server TLS close_notify must be ${expected(Connection.Status.CleanClose)}; got $reason. " +
+                    reason == expected(transport, Connection.Status.CleanClose),
+                    s"status after server TLS close_notify must be ${expected(transport, Connection.Status.CleanClose)}; got $reason. " +
                         s"Truncated would indicate a torn read of the half-close state."
                 )
                 succeed

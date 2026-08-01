@@ -19,6 +19,12 @@ class Scheduler {
                 schedule(t)
         }
 
+    // The jvm-native scheduler schedules onto a worker OTHER than the caller's so the task is not picked up
+    // re-entrantly on the current worker. On JS the scheduler is single-threaded and `schedule` always defers
+    // to the macrotask queue (never runs the task inline on the caller's stack), so there is no current worker
+    // to exclude: `scheduleExcludingCurrent` is `schedule`.
+    def scheduleExcludingCurrent(t: Task): Unit = schedule(t)
+
     def asExecutionContext: ExecutionContext = MacrotaskExecutor
 
     def flush(): Unit = {}

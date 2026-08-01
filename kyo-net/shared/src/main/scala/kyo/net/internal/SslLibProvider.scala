@@ -3,36 +3,34 @@ package kyo.net.internal
 import kyo.*
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsConfigException
+import kyo.net.internal.backend.CapabilityOutcome
+import kyo.net.internal.backend.CapabilityProbe
 
 /** Shared base for the two native TLS providers ([[BoringSslProvider]], [[SystemOpenSslProvider]]): one body over the backend-neutral
-  * [[SslLibBindings]], so the BoringSSL primary and the system-OpenSSL fallback share their engine construction, config application, client
-  * identity binding, and availability memo, and differ only in the backing library, name, and priority.
+  * [[SslLibBindings]], so the BoringSSL primary and the system-OpenSSL fallback share their engine construction, config application, and
+  * client identity binding, and differ only in the backing library, name, and priority.
   *
-  * A concrete provider supplies [[lib]] (the loaded [[SslLibBindings]]), [[name]], and [[priority]]. [[isAvailable]] runs the one-call
-  * `probeAvailable` probe (allocate + free an `SSL_CTX`), collapsing any load failure (missing staged archive / symbol / no system OpenSSL)
-  * into `false`: the registry contract requires a probe never throws, and a host without the backend simply falls through to whatever else is
-  * registered. [[createEngine]] applies the [[NetTlsConfig]] to a fresh `SSL_CTX`, wires an `SSL` with its two memory BIOs, selects the
-  * connect/accept role, and returns a [[NativeSslEngine]] over the same backend.
+  * A concrete provider supplies [[lib]] (the loaded [[SslLibBindings]]), [[name]], [[priority]], and its library id. [[doProbe]] runs the
+  * one-call `probeAvailable` probe (allocate + free an `SSL_CTX`) and classifies any load failure (missing staged archive / symbol / no
+  * system OpenSSL) rather than collapsing it: a host without the backend still falls through to whatever else is registered, and now says
+  * which library it was missing. [[createEngine]] applies the [[NetTlsConfig]] to a fresh `SSL_CTX`, wires an `SSL` with its two memory BIOs,
+  * selects the connect/accept role, and returns a [[NativeSslEngine]] over the same backend.
   */
 abstract private[net] class SslLibProvider extends TlsEngineProvider:
 
     /** The backing TLS library binding (BoringSSL or system OpenSSL). */
     private[internal] def lib(using AllowUnsafe): SslLibBindings
 
-    // Memoized: the probe builds and frees an SSL_CTX, and the result (does the backend load on this host) is host-static. Running it on every
-    // TLS connect/listen meant many concurrent SSL_CTX_new/SSL_CTX_free calls across scheduler carriers, multiplying the surface for any
-    // OpenSSL/BoringSSL global-state contention; the answer never changes, so compute it once. The `@volatile Boolean` caches the result after
-    // the first successful probe (JVM publishes it; on Native the value is host-fixed so a benign re-probe before the first publish is harmless).
-    @volatile private var probed: Maybe[Boolean] = Absent
-    def isAvailable(using AllowUnsafe): Boolean =
-        probed match
-            case Present(v) => v
-            case Absent =>
-                val v =
-                    try lib.probeAvailable()
-                    catch case _: Throwable => false
-                probed = Present(v)
-                v
+    /** Allocate and free an `SSL_CTX` through the backing library. Memoized by `CapabilityDescriptor.probe`, which matters here beyond the
+      * general host-static argument: running this per TLS connect/listen meant many concurrent `SSL_CTX_new`/`SSL_CTX_free` calls across
+      * scheduler carriers, multiplying the surface for any OpenSSL/BoringSSL global-state contention. That memo replaces the `@volatile`
+      * Boolean this class used to hold, and unlike the Boolean it keeps the reason the probe gave.
+      */
+    private[net] def doProbe(using AllowUnsafe): CapabilityOutcome =
+        CapabilityProbe.run(libraryIds) {
+            if lib.probeAvailable() then CapabilityOutcome.Available
+            else CapabilityOutcome.Unavailable(s"the '$name' TLS library is present but its SSL_CTX probe reported it unusable")
+        }
 
     def createEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
         val l   = lib
@@ -125,10 +123,14 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
       */
     private def readPem(path: Maybe[String])(using AllowUnsafe, Frame): Maybe[String] =
         path.map { p =>
-            try new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(p)), java.nio.charset.StandardCharsets.UTF_8)
-            catch
-                case t: Throwable =>
-                    throw NetTlsConfigException(new java.io.IOException(s"configured PEM file could not be read: $p", t))
+            // kyo.Path, not java.nio.file: the readiness path is shared across JVM/Native/JS, and java.nio.file does not link on Scala.js.
+            // Path.read defaults to UTF-8 on every platform (Files.readString on the JDK, readFileSync(_, "utf8") on Node), matching the
+            // charset this used to pass explicitly, and it captures the I/O failure in a Result rather than throwing, so the fail-closed
+            // wrap below is the only place a read error escapes.
+            Path(p).unsafe.read().foldError(
+                identity,
+                err => throw NetTlsConfigException(new java.io.IOException(s"configured PEM file could not be read: $p", err.exception))
+            )
         }
 
 end SslLibProvider

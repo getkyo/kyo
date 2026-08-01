@@ -34,14 +34,15 @@ class JvmNativeLoaderTest extends Test:
         assert(lookup.find("malloc").isPresent == true)
     }
 
-    // A genuinely-missing NAMED library no longer throws LibraryNotFound at load time. Because libc and
-    // friends legitimately live in the native linker's default lookup (and bundled libraries are resolved
-    // earlier via the resource path), the loader returns the default lookup as the final fallback. The
-    // absence of a named library therefore surfaces as a symbol-not-found at first `find`, not an exception
-    // at load. This test documents and pins that new contract: load succeeds, but the bogus symbol is absent.
-    "load of a missing named library returns the default lookup and reports the symbol absent" in {
+    // A genuinely-missing NAMED library surfaces a declared FfiLoadError.LibraryNotFound at first `find`, not the
+    // opaque NoSuchElementException the generated `orElseThrow` used to leak. `NativeLoader.load` returns a wrapping
+    // lookup over the native linker's default lookup (libc and friends still resolve there); a symbol that lookup
+    // cannot resolve, for a non-system library id, raises LibraryNotFound naming the library and the searched path.
+    // The corrected fallback contract is covered in depth by NativeLoaderMissingNativeTest; pinned here too.
+    "load of a missing named library raises FfiLoadError.LibraryNotFound at first find" in {
         val lookup = NativeLoader.load("kyo_ffi_does_not_exist_no_really_not")
         assert(lookup != null)
-        assert(lookup.find("kyo_ffi_symbol_that_does_not_exist_anywhere").isPresent == false)
+        val ex = intercept[FfiLoadError.LibraryNotFound](lookup.find("kyo_ffi_symbol_that_does_not_exist_anywhere"))
+        assert(ex.getMessage.contains("kyo_ffi_does_not_exist_no_really_not"))
     }
 end JvmNativeLoaderTest

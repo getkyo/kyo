@@ -1548,7 +1548,13 @@ final private[net] class IoUringDriver private[posix] (
                 // op has no pending CQE to re-drive it, so it needs a bounded turn to reach reArmStalled), and IORING_FEAT_NODROP is confirmed
                 // (the kernel never drops the wake CQE). Bounded otherwise, so a missing wake can never hang the chain.
                 val hasStalled = !stalledSends.isEmpty || !stalledSubmits.isEmpty
-                val timeout    = if wakePollArmed && !hasStalled && nodropAvailable then Long.MaxValue else ReapTimeoutNs
+                // On JS the wait runs on a libuv worker; force the already-existing bounded branch (`ReapTimeoutNs`) so the worker is
+                // released periodically and cannot be held for the process lifetime (the J libuv-budget design). This uses the same finite
+                // path the wake-poll/stall logic already handles, so it does not defeat that machinery; JVM/Native keep the indefinite park.
+                val timeout =
+                    if kyo.internal.Platform.isJS then ReapTimeoutNs
+                    else if wakePollArmed && !hasStalled && nodropAvailable then Long.MaxValue
+                    else ReapTimeoutNs
                 // Hand off everything this carrier is holding BEFORE parking in the wait below. The park pins this worker for the whole
                 // duration of the wait, and a task sitting in its local queue cannot run while it is pinned: nothing else frees a parked
                 // worker's queue, since a steal is opportunistic and preemption is deliberately withheld from a worker whose task is

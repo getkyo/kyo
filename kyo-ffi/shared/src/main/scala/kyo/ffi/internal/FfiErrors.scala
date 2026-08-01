@@ -62,6 +62,12 @@ private[ffi] object FfiErrors:
             s"but the runtime is ABI v$runtimeAbi. " +
             s"Regenerate with `sbt clean compile`, or align versions."
 
+    /** Message for a bundled native requiring a newer kyo-ffi runtime than the one present. */
+    def runtimeVersionTooOld(bindingFqn: String, minRuntime: String, runtimeVersion: String): String =
+        s"The bundled native for binding '$bindingFqn' requires kyo-ffi runtime $minRuntime or newer, " +
+            s"but the runtime is $runtimeVersion. " +
+            s"Upgrade the kyo-ffi runtime to at least $minRuntime, or use a native built for $runtimeVersion."
+
     /** Message for struct byte-size mismatch between generated impl and platform measurement. */
     def structAbiMismatch(traitFqn: String, structName: String, expectedSize: Long, actualSize: Long): String =
         s"[kyo-ffi] Struct ABI mismatch for '$structName' in binding '$traitFqn': expected $expectedSize bytes " +

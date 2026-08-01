@@ -35,7 +35,7 @@ class IoBackendStaleErrnoTest extends Test:
     "every available I/O backend builds a working transport after a prior syscall left errno non-zero" - {
         IoBackendPlatform.registered.foreach { entry =>
             s"backend=${entry.name}" in {
-                if !entry.isAvailable then cancel(s"backend ${entry.name} is not available on this host")
+                if !entry.probe.isAvailable then cancel(s"backend ${entry.name} is not available on this host: ${entry.probe.describe}")
                 else
                     // Dirty errno on THIS thread, then build synchronously: the driver init reads errno at queue_init and must ignore it.
                     val dirty = sock.socket(-1, -1, -1)

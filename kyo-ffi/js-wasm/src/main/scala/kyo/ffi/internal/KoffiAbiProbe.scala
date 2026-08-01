@@ -36,10 +36,12 @@ private[ffi] object KoffiAbiProbe:
 
     @volatile private var probed: Boolean = false
 
-    /** Probe the real `Koffi` object once per process. First call validates; subsequent calls are a single volatile read. */
+    /** Probe the real `Koffi` object once per process. First call validates; subsequent calls are a single volatile read. Reading
+      * [[Koffi.dynamic]] resolves the koffi module dynamically and raises [[FfiLoadError.LibraryNotFound]] when koffi is absent.
+      */
     def probeOnce(): Unit =
         if !probed then
-            probe(Koffi.asInstanceOf[js.Dynamic])
+            probe(Koffi.dynamic)
             probed = true
         end if
     end probeOnce

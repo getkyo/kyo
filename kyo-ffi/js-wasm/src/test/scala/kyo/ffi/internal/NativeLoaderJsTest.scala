@@ -2,17 +2,21 @@ package kyo.ffi.internal
 
 import kyo.*
 import kyo.discard
+import kyo.ffi.FfiLoadError
 import kyo.ffi.Test
 import scala.scalajs.js as sjs
 
-/** Validates the JS-side resolver precedence:
+/** Validates the JS-side resolver precedence, now that each branch is a REAL presence check (not a blind
+  * candidate):
   *
-  *   1. `process.env.KYO_FFI_<LIBID>_PATH` wins if defined.
-  *   2. `require.resolve('<packagePrefix>/native/<os>-<arch>/lib<id>.<ext>')`, uses the `kyo.ffi.js.packagePrefix` sys prop.
-  *   3. Falls back to the bare library id for koffi's system-path search.
+  *   1. `process.env.KYO_FFI_<LIBID>_PATH` wins WHEN the file it names exists.
+  *   2. `require.resolve('<packagePrefix>/native/<os>-<arch>/lib<id>.<ext>')` (uses `kyo.ffi.js.packagePrefix`).
+  *   3. Known system libraries resolve to the process-default scope.
+  *   4. A `koffi.load` probe of the bare id (an installed system library resolves here).
+  *   5. None of the above: [[FfiLoadError.LibraryNotFound]].
   *
-  * The test environment has no installed `@kyo/ffi-native` npm package (or the override we set), so path 2 always misses and we can observe
-  * path 3 indirectly by asserting the bare id is returned when there is no env override.
+  * The test environment has no installed `@kyo/ffi-native` package and no `koffi`, and the fixture ids name no
+  * installed library, so an unresolvable id raises `LibraryNotFound` rather than silently returning a bad name.
   */
 class NativeLoaderJsTest extends Test:
 
@@ -20,6 +24,10 @@ class NativeLoaderJsTest extends Test:
     private val envKey      = s"KYO_FFI_${libId.toUpperCase.replace('-', '_')}_PATH"
     private val prefixProp  = "kyo.ffi.js.packagePrefix"
     private val savedPrefix = sys.props.get(prefixProp)
+
+    // A path that is guaranteed to exist on the Node host: the running node binary itself.
+    private def existingPath: String =
+        sjs.Dynamic.global.process.execPath.asInstanceOf[String]
 
     // Each leaf mutates the resolver env var + package-prefix sys prop; clear/save before the body and restore after,
     // isolating leaves (the kyo-test equivalent of the old beforeEach/afterEach pair).
@@ -36,29 +44,39 @@ class NativeLoaderJsTest extends Test:
             }.andThen(body)
         }
 
-    "env var KYO_FFI_<ID>_PATH wins over everything else" in {
-        // Even with an obviously missing package prefix, the env var short-circuits resolution.
+    "env var KYO_FFI_<ID>_PATH wins when the file it names exists" in {
+        // Even with an obviously missing package prefix, an existing env-path short-circuits resolution.
         sys.props.update(prefixProp, "@nope/never-installed")
-        setEnv(envKey, "/abs/path/to/libkyo_test_loader.so")
-        assert(NativeLoader.jsResolve(libId) == "/abs/path/to/libkyo_test_loader.so")
+        setEnv(envKey, existingPath)
+        assert(NativeLoader.jsResolve(libId) == existingPath)
     }
 
-    "without env var, unresolvable package prefix falls back to the bare id" in {
+    "env var pointing at a missing file is not honored; an unresolvable id raises LibraryNotFound" in {
         sys.props.update(prefixProp, "@nope/never-installed")
-        assert(NativeLoader.jsResolve(libId) == libId)
+        setEnv(envKey, "/abs/path/that/does/not/exist/libkyo_test_loader.so")
+        val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        assert(ex.libraryId == libId)
+        assert(ex.candidates.nonEmpty)
     }
 
-    "default package prefix is also unresolvable in this test env and still falls back to the bare id" in {
-        // No env, no override, default is `@kyo/ffi-native` which is not present in node_modules for tests.
-        assert(NativeLoader.jsResolve(libId) == libId)
+    "without env var, an unresolvable package prefix raises LibraryNotFound (no blind bare-name fallback)" in {
+        sys.props.update(prefixProp, "@nope/never-installed")
+        val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        assert(ex.libraryId == libId)
+    }
+
+    "the default package prefix is also unresolvable in this test env and raises LibraryNotFound" in {
+        // No env, no override; default is `@kyo/ffi-native`, absent from node_modules for tests.
+        val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        assert(ex.libraryId == libId)
     }
 
     "envKey computation uppercases and replaces hyphens with underscores" in {
         val id         = "my-lib-x"
         val expectedEv = "KYO_FFI_MY_LIB_X_PATH"
-        setEnv(expectedEv, "/override")
+        setEnv(expectedEv, existingPath)
         try
-            assert(NativeLoader.jsResolve(id) == "/override")
+            assert(NativeLoader.jsResolve(id) == existingPath)
         finally
             clearEnv(expectedEv)
         end try
@@ -103,11 +121,11 @@ class NativeLoaderJsTest extends Test:
         assert(NativeLoader.jsResolve("c") == expected)
     }
 
-    "jsResolve env-var override still wins over system-library resolution for 'c'" in {
+    "jsResolve env-var override still wins over system-library resolution for 'c' when the file exists" in {
         val cEnvKey = "KYO_FFI_C_PATH"
-        setEnv(cEnvKey, "/custom/libc.so")
+        setEnv(cEnvKey, existingPath)
         try
-            assert(NativeLoader.jsResolve("c") == "/custom/libc.so")
+            assert(NativeLoader.jsResolve("c") == existingPath)
         finally
             clearEnv(cEnvKey)
         end try

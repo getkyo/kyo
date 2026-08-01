@@ -4,6 +4,7 @@ import java.io.File
 import java.io.InputStream
 import java.lang.foreign.Arena
 import java.lang.foreign.Linker
+import java.lang.foreign.MemorySegment
 import java.lang.foreign.SymbolLookup
 import java.lang.foreign.ValueLayout
 import java.nio.channels.FileChannel
@@ -14,8 +15,10 @@ import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
+import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kyo.Chunk
 import kyo.ffi.FfiLoadError
 
 /** JVM native library loader. Detects OS/arch, extracts bundled libraries with content-hash naming and advisory locking, falls back to
@@ -124,9 +127,7 @@ object NativeLoader:
     private def loadFromResourceOrSystem(id: String): SymbolLookup =
         val os   = detectOs
         val arch = detectArch
-        val ext  = os.libExtension
-        val pfx  = os.libPrefix
-        val path = s"/META-INF/native/${os.tagName}-${arch.tagName}/$pfx$id.$ext"
+        val path = resourcePath(id, os, arch)
         // Track every candidate we try so a final not-found error can list them in order.
         val candidates = scala.collection.mutable.Buffer.empty[String]
         candidates += s"resource path: $path"
@@ -141,14 +142,12 @@ object NativeLoader:
             // `libc.so` is a GNU ld linker script that dlopen rejects (the loadable object is
             // `libc.so.6`); the default lookup reaches libc directly.
             //
-            // Trade-off: a genuinely-missing NAMED library now surfaces as a symbol-not-found at
-            // first `find` rather than a `LibraryNotFound` at load time. This is accepted because
-            // bundled libraries are already resolved earlier via the resource path, and system
-            // libraries (the common case: libc) legitimately live in the default lookup.
-            def tryLookup(name: String): Option[SymbolLookup] =
-                try Some(SymbolLookup.libraryLookup(name, Arena.global()).nn)
-                catch case _: IllegalArgumentException => None
-
+            // The default lookup is wrapped by `defaultLookupOrThrow`: a symbol it CANNOT resolve
+            // raises a declared `FfiLoadError.LibraryNotFound` (naming the library, the `<os>-<arch>`,
+            // and the searched resource path) instead of the opaque `NoSuchElementException` the
+            // generated `find(sym).orElseThrow()` would otherwise leak. Real system symbols that DO
+            // resolve in the default lookup are returned unchanged, so libc / libm bindings are
+            // unaffected.
             candidates += s"system library: $id"
             val named: Option[SymbolLookup] =
                 tryLookup(id).orElse {
@@ -161,15 +160,101 @@ object NativeLoader:
                 }
             named.getOrElse {
                 candidates += "native linker default lookup"
-                Linker.nativeLinker().nn.defaultLookup().nn
+                defaultLookupOrThrow(id, os, arch, path, Chunk.from(candidates))
             }
         else
             try
-                val tmp = extractToTemp(stream, pfx, id, ext)
+                val tmp = extractToTemp(stream, os.libPrefix, id, os.libExtension)
                 SymbolLookup.libraryLookup(tmp, Arena.global()).nn
             finally stream.close()
         end if
     end loadFromResourceOrSystem
+
+    /** Resource path a bundled native occupies for `id` on the given platform, e.g. `/META-INF/native/darwin-aarch64/libfoo.dylib`. */
+    private def resourcePath(id: String, os: Os, arch: Arch): String =
+        s"/META-INF/native/${os.tagName}-${arch.tagName}/${os.libPrefix}$id.${os.libExtension}"
+
+    /** Assert that a library id the native manifest declares bundled for the current `<os>-<arch>` is actually
+      * present, driving the reflection-free direct-load pre-check (`Ffi.load[T]` before the generated impl
+      * companion initializes). This is needed because [[load]] itself does NOT throw for a missing bundled native:
+      * it returns the [[defaultLookupOrThrow]] wrapper and the error only fires on the first failed `find(symbol)`,
+      * which happens deep inside the impl's `<clinit>` where a throw poisons the class.
+      *
+      * Passes when the id is a system library (absence expected), when the manifest does not list the current
+      * platform among `bundledPlatforms` (the native was never meant to be here, a graceful demote-to-fallback),
+      * when a readable `-Dkyo.ffi.<id>.path` override is given, or when the bundled resource exists. Nothing else
+      * passes.
+      *
+      * @throws kyo.ffi.FfiLoadError.LibraryNotFound
+      *   when the manifest claims the native is bundled here but neither the resource nor an override accounts for it.
+      */
+    private[ffi] def assertBundledPresent(libraryId: String, bundledPlatforms: Set[String]): Unit =
+        if SystemLibraries.isSystem(libraryId) then ()
+        else
+            val os     = detectOs
+            val arch   = detectArch
+            val osArch = s"${os.tagName}-${arch.tagName}"
+            if !bundledPlatforms.contains(osArch) then ()
+            else
+                val overridePath = sys.props.get(s"kyo.ffi.$libraryId.path")
+                val overrideOk   = overridePath.exists(p => Files.exists(Paths.get(p)))
+                val path         = resourcePath(libraryId, os, arch)
+                val stream       = getClass.getResourceAsStream(path)
+                val resourceOk   = stream != null
+                if stream != null then stream.close()
+                if overrideOk || resourceOk then ()
+                else
+                    val overrideCandidate = overridePath match
+                        case Some(p) => s"override -Dkyo.ffi.$libraryId.path=$p (file missing)"
+                        case None    => s"override -Dkyo.ffi.$libraryId.path (unset)"
+                    val candidates = Chunk(s"resource path: $path", overrideCandidate)
+                    val msg =
+                        s"Native library '$libraryId' is declared bundled for $osArch by the kyo-ffi native manifest, but its " +
+                            s"resource '$path' is not on the classpath and no readable -Dkyo.ffi.$libraryId.path override was given. " +
+                            s"Add the native artifact (or the platform classifier dependency) for $osArch, or set " +
+                            s"-Dkyo.ffi.$libraryId.path=<absolute path>."
+                    throw new FfiLoadError.LibraryNotFound(libraryId, candidates, msg, null)
+                end if
+            end if
+        end if
+    end assertBundledPresent
+
+    /** `dlopen` `name` into the global arena, returning `None` when the platform linker rejects it. */
+    private def tryLookup(name: String): Option[SymbolLookup] =
+        try Some(SymbolLookup.libraryLookup(name, Arena.global()).nn)
+        catch case _: IllegalArgumentException => None
+
+    /** Wrap the native linker's default lookup so a symbol it cannot resolve raises a declared [[kyo.ffi.FfiLoadError.LibraryNotFound]]
+      * instead of leaking the `NoSuchElementException` produced by the generated `find(sym).orElseThrow()`. A symbol the default
+      * lookup DOES carry (libc: socket, epoll_create1, kqueue, malloc, ...) is returned unchanged.
+      *
+      * The raised message distinguishes two causes: for a bundled/named library that no candidate resolved, the native is missing for
+      * this platform, so the message carries the `<os>-<arch>`, the searched resource path, and the `-Dkyo.ffi.<id>.path` remediation;
+      * for a known system library that resolved here, a failed `find` is a genuine absent symbol, reported as such.
+      */
+    private def defaultLookupOrThrow(id: String, os: Os, arch: Arch, path: String, candidates: Chunk[String]): SymbolLookup =
+        val defaultLookup = Linker.nativeLinker().nn.defaultLookup().nn
+        val platform      = s"${os.tagName}-${arch.tagName}"
+        val systemLib     = SystemLibraries.isSystem(id)
+        new SymbolLookup:
+            def find(name: String): Optional[MemorySegment] =
+                val found = defaultLookup.find(name).nn
+                if found.isPresent then found
+                else
+                    val msg =
+                        if systemLib then
+                            s"Symbol '$name' is absent from system library '$id' on $platform. The library resolved via the native " +
+                                "linker's default lookup, so this is a missing symbol, not a missing library."
+                        else
+                            s"Native library '$id' is not bundled for $platform (searched resource path '$path') and no system " +
+                                s"library named '$id' could be loaded; symbol '$name' is also absent from the native linker's default " +
+                                s"lookup. Bundle or install the '$id' native for $platform, or override the search with " +
+                                s"-Dkyo.ffi.$id.path=<absolute path>. Tried, in order: ${candidates.mkString("; ")}."
+                    throw new FfiLoadError.LibraryNotFound(id, candidates, msg, null)
+                end if
+            end find
+        end new
+    end defaultLookupOrThrow
 
     /** Resolve extraction directory: `-Dkyo.ffi.extractDir=` → `-Dkyo.ffi.tmpdir=/kyo-ffi` → `java.io.tmpdir/kyo-ffi`. */
     def resolveExtractDir(): Path =

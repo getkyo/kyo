@@ -96,9 +96,12 @@ class BrowserDetectionTest extends Test:
             assert(ex.getMessage.contains("browser"))
         }
 
-        "does not throw in Node (process defined)" in {
-            // Just confirm no FfiLoadError.Unsupported is raised, actual path resolution is covered by NativeLoaderJsSpec.
-            discard(NativeLoader.load("any_lib_id"))
+        "does not raise the browser gate in Node (process defined)" in {
+            // In Node the browser gate is off, so load does not raise the browser FfiLoadError.Unsupported. An arbitrary
+            // unresolvable id still fails with LibraryNotFound (real path resolution is covered by NativeLoaderJsSpec); that
+            // is expected and tolerated here, the point is only that the browser gate does not trigger.
+            try discard(NativeLoader.load("any_lib_id"))
+            catch case _: FfiLoadError.LibraryNotFound => ()
             succeed
         }
     }

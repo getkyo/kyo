@@ -940,8 +940,9 @@ lazy val `kyo-ffi` =
         )
         .jsSettings(
             `js-settings`,
-            // koffi and the node:fs mmap facade are @JSImport modules, so the JS backend needs a module kind
-            // (the default NoModule cannot link an @JSImport). Use ESModule to match the wasm backend: under a
+            // The node:fs mmap facade is an @JSImport module (koffi itself is resolved dynamically, not via
+            // @JSImport), so the JS backend needs a module kind (the default NoModule cannot link an @JSImport).
+            // Use ESModule to match the wasm backend: under a
             // CommonJS module Node keeps `require` module-scoped, which the browser-gate reads (and its
             // BrowserDetectionTest simulation) cannot observe, whereas ESModule has no `require` and the gate
             // behaves identically to the wasm axis.
@@ -1455,7 +1456,10 @@ lazy val `kyo-stats-machine` =
                         ))
                         .withEnv(Map(
                             "KYO_MACHINE_DISABLED"       -> "true",
-                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
+                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath,
+                            // Wasm (ESModule) has no `require` global; KoffiFacade resolves koffi via
+                            // node:module.createRequire, which searches NODE_PATH for the bootstrapped package.
+                            "NODE_PATH" -> (target.value / "node_modules").getAbsolutePath
                         ))
                 )
             },
@@ -1500,26 +1504,19 @@ lazy val `kyo-reactive-streams` =
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
-// Host os-arch in the staged/<os-arch>/ naming used by build-boringssl.sh and
-// kyo-aeron/scripts/build-aeron.sh (e.g. "darwin-aarch64").
 // npm is `npm.cmd` on Windows, where CreateProcess resolves only .exe from a bare name;
 // the koffi bootstraps below spawn it directly (not via a shell).
 def npmCommand: String =
     if (System.getProperty("os.name", "").toLowerCase.contains("win")) "npm.cmd" else "npm"
 
-def hostOsArch: String = {
-    val osName = System.getProperty("os.name", "").toLowerCase
-    val os =
-        if (osName.contains("mac")) "darwin"
-        else if (osName.contains("win")) "windows"
-        else "linux"
-    val arch = System.getProperty("os.arch", "") match {
-        case "x86_64" | "amd64"  => "x86_64"
-        case "aarch64" | "arm64" => "aarch64"
-        case other               => other
-    }
-    s"$os-$arch"
-}
+// Host os-arch in the staged/<os-arch>/ naming used by build-boringssl.sh and
+// kyo-aeron/scripts/build-aeron.sh (e.g. "darwin-aarch64"). Delegates to the kyo-ffi plugin's host
+// resolver (KyoFfiPlugin.autoImport.ffiHostOsArch), the same one ffiCompile and the Packager resolve
+// the target from, so this build and the packaged resource layout can never name the host
+// differently. That matters on musl: this used to answer "linux-x86_64" on Alpine while the plugin
+// packaged into META-INF/native/linux-musl-x86_64/, so a musl leg that staged BoringSSL under its
+// runtime-correct name was not found here and the build silently fell back to the TLS stub.
+def hostOsArch: String = ffiHostOsArch
 
 // The staged BoringSSL tree for the host os-arch, present only after build-boringssl.sh ran.
 def boringSslStagedDir(baseDir: File): File =
@@ -1555,10 +1552,6 @@ def systemOpensslPrefix: Option[File] = {
 // codegen probe must find openssl/ssl.h here, or it emits a throwing stub instead of an @extern binding.
 def systemOpensslIncludeDirs: Seq[File] =
     systemOpensslPrefix.map(p => Seq(p / "include")).getOrElse(Seq(new java.io.File("/usr/include")))
-
-// -L lib search dirs for the system-OpenSSL archives/dylibs. Empty on Linux (default link path).
-def systemOpensslLibDirs: Seq[File] =
-    systemOpensslPrefix.map(p => Seq(p / "lib")).getOrElse(Nil)
 
 // The exact flags `openssl-native-settings` appends for system OpenSSL; factored out so
 // `stripSystemOpensslForStagedBoringSsl` can undo them by exact subsequence match (a bare -lssl/-lcrypto
@@ -1613,28 +1606,81 @@ def stagedBoringSslForceLoadLinkOpts(kyoNetBase: File): Seq[String] =
         forceLoad ++ boringSslCxxRuntimeFlags
     }
 
+// Koffi bootstrap for the Node-run test platforms. Both JS and Wasm run the koffi posix transport on Node and resolve koffi dynamically at
+// first native-load (the Wasm/ESModule leg via NODE_PATH; see kyoNetFfiEnvMap), so both need koffi installed in the target's node_modules
+// before tests run. Hooked on Test / compile (not Test / test) so test, testOnly,
+// and testQuick all trigger it, and it re-runs after a clean. Idempotent on the marker.
+val kyoNetKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
+    val log        = streams.value.log
+    val targetBase = target.value
+    val nodeMods   = targetBase / "node_modules"
+    val marker     = nodeMods / "koffi" / "package.json"
+    val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
+    val pjContent  = s"""{"name":"kyo-net-node-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+    val pj         = targetBase / "package.json"
+    if (!pj.exists() || IO.read(pj) != pjContent) {
+        IO.createDirectory(targetBase)
+        IO.write(pj, pjContent)
+    }
+    if (!marker.exists()) {
+        log.info(s"[kyo-net] installing koffi@$koffiRange into $targetBase ...")
+        val rc = scala.sys.process.Process(
+            Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
+            targetBase
+        ).!
+        if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+    }
+}
+
+// The plugin-compiled native paths for the koffi posix transport and its BoringSSL TLS, exported via KYO_FFI_<LIBID>_PATH to the Node/Wasm
+// test runtime. The plugin owns the artifact-naming convention and the host os/arch (musl probe included); re-deriving them here is how the
+// path resolves `-linux-musl-x86_64.so` on Alpine where a naive `-linux-x86_64.so` would miss. ffiCompile always emits both artifacts (the
+// real staged lib when BoringSSL is staged for this host, else the probe-unavailable stub), so pointing koffi at them is safe either way:
+// on a staged host the `[posix / boringssl]` TLS cells run, on a non-staged host they cancel via the probe, matching JVM/Native.
+def kyoNetFfiEnvMap(targetDir: File): Map[String, String] = {
+    val ffiOut = targetDir / "ffi"
+    Map(
+        "KYO_FFI_KYONET_POSIX_URING_PATH" -> (ffiOut / ffiArtifactName("kyonet_posix_uring", ffiHostOsArch)).getAbsolutePath,
+        "KYO_FFI_KYONET_BORINGSSL_PATH"   -> (ffiOut / ffiArtifactName("kyonet_boringssl", ffiHostOsArch)).getAbsolutePath,
+        // The Wasm (ESModule) leg has no `require` global, so KoffiFacade resolves koffi via
+        // node:module.createRequire, which searches NODE_PATH. Point it at the target's node_modules where the
+        // koffi bootstrap installs the package. Harmless on the CommonJS (js) leg, which uses the `require` global.
+        "NODE_PATH" -> (targetDir / "node_modules").getAbsolutePath
+    )
+}
+
+// P2b completeness guard (DECISION-P2b-classifier.md Decision 5, layout-first per DECISION-P1 §6): a native
+// classifier jar must carry a real native for every library id the P1 library-state manifest records as `native`
+// or `prebuilt`, and must never ship a `stub`. Keys on the state manifest
+// (META-INF/kyo-ffi/library-state/<module>.state, states native/stub/prebuilt/absent) plus the resource layout
+// (META-INF/native/<os>-<arch>/lib<id>.<ext>). JVM only: JS/Wasm ship natives via the env/npm path and Native links
+// them directly. When M lands it adds the manifest-equals-support-set check on top.
+val kyoNetNativeClassifierGuard = taskKey[Unit](
+    "Assert every library-state `native`/`prebuilt` id has a real native artifact in the resource layout, and no `stub` ships."
+)
+
+// P2b classifier slice: the per-os-arch native classifier jars + the all-natives aggregator, appended to
+// `Compile / packagedArtifacts` (via `++=`, never a self-referential `:=`). Separate task so the extension is
+// non-cyclic. DECISION-P2b-classifier.md Decisions 1 + 3.
+val kyoNetClassifierArtifacts = taskKey[Map[Artifact, File]](
+    "Per-os-arch native classifier jars (transport-native `<os-arch>`, vendored-BoringSSL `<os-arch>-boringssl`) + the `all-natives` aggregator."
+)
+
 lazy val `kyo-net` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
+        .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-core`, `kyo-config`)
-        // FFI (Panama on JVM, Scala Native @extern) backs the posix transport on JVM and Native only; JS and
-        // Wasm use the Node backend. So KyoFfiPlugin, the kyo-ffi dependency, and the C-shim ffiLibraries are
-        // scoped here. ffiCodegenClasspath feeds the plugin the codegen classpath for in-build gen (mirrors
-        // kyo-ffi-it).
-        .jvmConfigure(
-            _.enablePlugins(KyoFfiPlugin)
-                .dependsOn(`kyo-ffi`.jvm)
-                .settings(ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data))
-        )
-        .nativeConfigure(
-            _.enablePlugins(KyoFfiPlugin)
-                .dependsOn(`kyo-ffi`.native)
-                .settings(ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data))
-        )
+        .dependsOn(`kyo-ffi`)
         .in(file("kyo-net"))
         .withKyoTest
-        .settings(`kyo-settings`)
-        .platformsSettings(JVMPlatform, NativePlatform)(
+        // FFI backs the posix transport and BoringSSL TLS on ALL FOUR platforms (Panama on JVM, Scala Native
+        // @extern, koffi-on-Node on JS and Wasm), so KyoFfiPlugin, the kyo-ffi dependency, and the C-shim
+        // ffiLibraries are uniform (mirrors kyo-aeron / kyo-ffi-it). The bindings + drivers live in `shared`.
+        // ffiCodegenClasspath feeds the plugin the codegen classpath for in-build gen.
+        .settings(
+            `kyo-settings`,
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
             // Only the io_uring shim needs a declared library (-luring, Linux only via linkLibsByOs; staticLink folds
             // liburing in, RI-003); the socket/epoll/kqueue bindings resolve to system libc. On Native, IoUringBindings
             // is nativeBundled: the plugin copies kyo_uring.c in; only -luring reaches the final link (Linux).
@@ -1666,14 +1712,14 @@ lazy val `kyo-net` =
                             id = "kyonet_boringssl",
                             cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get
                         )
-                // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, the system-OpenSSL twin (macOS openssl@3,
-                // Linux libssl-dev). Its kyo_ossl_* prefix keeps it distinct from kyo_bssl_* in the one Native binary.
-                // includeDirs gate the Native probe; on Native the SSL_* are already linked by openssl-native-settings, so
-                // this adds no link flags. Absent headers -> the probe stubs the binding.
+                // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, registered only in the Native TLS registry
+                // (SystemOpenSslProvider). It is a REAL binding only on Native when the openssl headers are present; on the
+                // JVM (where BoringSslProvider over the JDK SSLEngine floor covers TLS and no code path loads it), and on
+                // Native without headers, it is declared as a STUB with no C sources, so no static OpenSSL blob is bundled.
+                // The stub still declares the library id, so the FFI codegen's library-id validation passes for the
+                // always-present OpenSslBindings trait; the JVM jar simply no longer carries the ~6.5MB dead-weight archive.
                 val openSsl =
-                    if (!systemOpensslIncludeDirs.exists(d => (d / "openssl" / "ssl.h").exists()))
-                        FfiLibrary(id = "kyonet_openssl", cSources = Nil)
-                    else if (isNative)
+                    if (isNative && systemOpensslIncludeDirs.exists(d => (d / "openssl" / "ssl.h").exists()))
                         FfiLibrary(
                             id = "kyonet_openssl",
                             cSources = (sharedBase / "src" / "main" / "c-openssl" ** "*.c").get,
@@ -1681,15 +1727,7 @@ lazy val `kyo-net` =
                             includeDirs = systemOpensslIncludeDirs
                         )
                     else
-                        FfiLibrary(
-                            id = "kyonet_openssl",
-                            cSources = (sharedBase / "src" / "main" / "c-openssl" ** "*.c").get,
-                            cHeaders = (sharedBase / "src" / "main" / "c-openssl" ** "*.h").get,
-                            includeDirs = systemOpensslIncludeDirs,
-                            libDirs = systemOpensslLibDirs,
-                            linkLibs = Seq("ssl", "crypto"),
-                            staticLink = true
-                        )
+                        FfiLibrary(id = "kyonet_openssl", cSources = Nil)
                 Seq(
                     FfiLibrary(
                         id = "kyonet_posix_uring",
@@ -1700,9 +1738,106 @@ lazy val `kyo-net` =
                     boringSsl,
                     openSsl
                 )
+            },
+            // The BoringSSL stub declares (placeholder) C sources, so KyoFfiPlugin's library-state manifest cannot tell it from a
+            // real build (it records any library with C sources as `native`). Declare it a stub on a non-staged host so the manifest
+            // records `kyonet_boringssl=stub`, and the completeness guard rejects a stub jar; empty on a staged host, where the real
+            // BoringSSL native is bundled. `boringSslStaged` reads this host's `build/boringssl/staged/<os-arch>`, the same gate the
+            // `ffiLibraries` boringSsl branch above uses.
+            ffiStubLibraries := {
+                if (boringSslStaged(baseDirectory.value / "..")) Nil else Seq("kyonet_boringssl")
             }
         )
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(
+            mimaCheck(false),
+            kyoNetNativeClassifierGuard := {
+                val log        = streams.value.log
+                val generated  = (Compile / managedResources).value // runs ffiPackagedNatives + the state-manifest generator
+                val stateFiles = generated.filter(f => f.getName.endsWith(".state") && f.getParentFile.getName == "library-state")
+                if (stateFiles.isEmpty)
+                    sys.error("[kyo-net native-guard] no library-state manifest was generated; cannot verify native completeness.")
+                val nativeFiles = generated.filter { f =>
+                    val n = f.getName
+                    (n.endsWith(".so") || n.endsWith(".dylib") || n.endsWith(".dll")) &&
+                    f.getParentFile.getParentFile.getName == "native" // .../META-INF/native/<os-arch>/lib<id>.<ext>
+                }
+                def nativePresent(id: String): Boolean =
+                    nativeFiles.exists(f => f.getName.startsWith(s"lib$id.") && f.length > 0)
+                stateFiles.foreach { sf =>
+                    IO.readLines(sf).foreach { line =>
+                        val kv = line.split("=", 2)
+                        if (kv.length == 2) {
+                            val id    = kv(0).trim
+                            val state = kv(1).trim
+                            state match {
+                                case "stub" =>
+                                    sys.error(
+                                        s"[kyo-net native-guard] library '$id' is a STUB in ${sf.getName}: a stub must not ship in a " +
+                                            "native classifier jar. Stage the real native (build/boringssl) for this os-arch, or exclude the classifier."
+                                    )
+                                case "native" | "prebuilt" =>
+                                    if (!nativePresent(id))
+                                        sys.error(
+                                            s"[kyo-net native-guard] library '$id' is declared '$state' but no non-empty " +
+                                                s"META-INF/native/*/lib$id.* artifact was produced; the build did not compile or stage it."
+                                        )
+                                case "absent" => () // intentionally empty (e.g. kyonet_openssl on JVM); no native expected
+                                case other =>
+                                    sys.error(s"[kyo-net native-guard] library '$id' has unknown state '$other' in ${sf.getName}.")
+                            }
+                        }
+                    }
+                }
+                log.info(s"[kyo-net native-guard] passed (${stateFiles.map(_.getName).mkString(", ")}).")
+            },
+            Compile / packageBin := (Compile / packageBin).dependsOn(kyoNetNativeClassifierGuard).value,
+            // P2b (DECISION-P2b-classifier.md Decisions 1-3): the MAIN jar carries NO natives (pure-JVM NIO floor).
+            // The natives ship in per-os-arch classifier jars sliced from the META-INF/native/<os-arch> resource tree:
+            // the transport-native family (kyonet_posix_uring, classifier `<os-arch>`) and the vendored-BoringSSL family
+            // (kyonet_boringssl, classifier `<os-arch>-boringssl`), plus an all-natives aggregator (classifier `all-natives`).
+            Compile / packageBin / mappings := (Compile / packageBin / mappings).value.filterNot {
+                case (_, path) => path.startsWith("META-INF/native/")
+            },
+            kyoNetClassifierArtifacts := {
+                val log  = streams.value.log
+                val res  = (Compile / managedResources).value
+                val ver  = version.value
+                val out  = crossTarget.value
+                val base = "kyo-net"
+                // Native files in the resource tree as (os-arch, library-id, file). Layout: META-INF/native/<os-arch>/lib<id>.<ext>.
+                val nativeEntries = res.collect {
+                    case f
+                        if (f.getName.endsWith(".so") || f.getName.endsWith(".dylib") || f.getName.endsWith(".dll")) &&
+                            f.getParentFile.getParentFile.getName == "native" =>
+                        val osArch = f.getParentFile.getName
+                        val libId  = f.getName.stripPrefix("lib").takeWhile(_ != '.')
+                        (osArch, libId, f)
+                }
+                def familyClassifier(osArch: String, libId: String): Option[String] = libId match {
+                    case "kyonet_posix_uring" => Some(osArch)
+                    case "kyonet_boringssl"   => Some(s"$osArch-boringssl")
+                    case _                    => None // kyonet_openssl etc. is not a JVM classifier family
+                }
+                def sliceJar(classifier: String, files: Seq[File]): (Artifact, File) = {
+                    val jar     = out / s"$base-$ver-$classifier-natives.jar"
+                    val entries = files.map(f => f -> s"META-INF/native/${f.getParentFile.getName}/${f.getName}")
+                    IO.zip(entries, jar, None)
+                    Artifact(base).withType("jar").withExtension("jar").withClassifier(Some(classifier)) -> jar
+                }
+                val perClassifier = nativeEntries
+                    .groupBy { case (osArch, libId, _) => familyClassifier(osArch, libId) }
+                    .collect { case (Some(classifier), entries) => sliceJar(classifier, entries.map(_._3)) }
+                    .toMap
+                val allNatives =
+                    if (nativeEntries.nonEmpty) Map(sliceJar("all-natives", nativeEntries.map(_._3)))
+                    else Map.empty[Artifact, File]
+                val result = perClassifier ++ allNatives
+                log.info(s"[kyo-net classifier] ${nativeEntries.size} native(s) -> ${result.keys.flatMap(_.classifier).mkString(", ")}")
+                result
+            },
+            // Project-scoped `packagedArtifacts` is what `publish`/`ci-release` uploads (Compile / packagedArtifacts does not reach it).
+            packagedArtifacts ++= kyoNetClassifierArtifacts.value
+        )
         .nativeSettings(
             `native-settings`,
             `openssl-native-settings`,
@@ -1740,60 +1875,26 @@ lazy val `kyo-net` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Point the JS runtime at the plugin-compiled io_uring shim via KYO_FFI_<LIBID>_PATH,
-            // and bootstrap koffi into Node's resolver before tests run (mirrors kyo-ffi-it).
-            Test / jsEnv := {
-                val targetDir = target.value
-                val ffiOut    = targetDir / "ffi"
-                val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
-                    if (os.contains("mac")) "dylib"
-                    else if (os.contains("win")) "dll"
-                    else "so"
-                val arch =
-                    sys.props.getOrElse("os.arch", "") match {
-                        case "x86_64" | "amd64"  => "x86_64"
-                        case "aarch64" | "arm64" => "aarch64"
-                        case other               => other
-                    }
-                val osDetect =
-                    if (os.contains("mac")) "darwin"
-                    else if (os.contains("win")) "windows"
-                    else if (os.contains("linux")) "linux"
-                    else os
-                val lib = ffiOut / s"libkyonet_posix_uring-$osDetect-$arch.$ext"
-                new NodeJSEnv(
-                    NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120"))
-                        .withEnv(Map("KYO_FFI_KYONET_POSIX_URING_PATH" -> lib.getAbsolutePath))
-                )
-            },
-            // Bootstrap koffi into Node's resolver. Hooked on Test / compile (not Test / test) so test,
-            // testOnly, and testQuick all trigger it, and it re-runs after a clean. Idempotent on the marker.
-            Test / compile := (Test / compile).dependsOn(Def.task {
-                val log        = streams.value.log
-                val targetBase = target.value
-                val nodeMods   = targetBase / "node_modules"
-                val marker     = nodeMods / "koffi" / "package.json"
-                val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
-                val pjContent =
-                    s"""{"name":"kyo-net-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
-                val pj = targetBase / "package.json"
-                if (!pj.exists() || IO.read(pj) != pjContent) {
-                    IO.createDirectory(targetBase)
-                    IO.write(pj, pjContent)
-                }
-                if (!marker.exists()) {
-                    log.info(s"[kyo-net JS] installing koffi@$koffiRange into $targetBase ...")
-                    val rc = scala.sys.process.Process(
-                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
-                        targetBase
-                    ).!
-                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
-                }
-            }).value
+            // Point the Node runtime at the plugin-compiled koffi natives and bootstrap koffi into node_modules before tests run.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(kyoNetFfiEnvMap(target.value))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
-        .wasmSettings(`wasm-settings`)
+        // Wasm runs the same koffi posix transport on Node as JS (it `import`s koffi at module load), so it needs the identical koffi bootstrap
+        // and native-path env; only the NodeJSEnv args differ (the WASM backend needs `--experimental-wasm-exnref`, Node 24+, matching
+        // `wasm-settings`).
+        .wasmSettings(
+            `wasm-settings`,
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withEnv(kyoNetFfiEnvMap(target.value))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
+        )
 
 lazy val `kyo-aeron` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
@@ -1978,7 +2079,12 @@ lazy val `kyo-aeron` =
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
-                        .withEnv(Map("KYO_FFI_KYO_AERON_PATH" -> lib.getAbsolutePath))
+                        .withEnv(Map(
+                            "KYO_FFI_KYO_AERON_PATH" -> lib.getAbsolutePath,
+                            // Wasm (ESModule) has no `require` global; KoffiFacade resolves koffi via
+                            // node:module.createRequire, which searches NODE_PATH for the bootstrapped package.
+                            "NODE_PATH" -> (target.value / "node_modules").getAbsolutePath
+                        ))
                 )
             },
             Test / compile := (Test / compile).dependsOn(Def.task {

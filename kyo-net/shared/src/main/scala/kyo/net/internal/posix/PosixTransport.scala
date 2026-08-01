@@ -23,6 +23,7 @@ import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
 import kyo.net.NetUnixConnectTimeoutException
+import kyo.net.TransportCapabilities
 import kyo.net.internal.HandshakeFailure
 import kyo.net.internal.HandshakeState
 import kyo.net.internal.TlsEngine
@@ -533,7 +534,14 @@ final private[net] class PosixTransport private[posix] (
         promise: IOPromise[NetException, Connection],
         config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
-        takeNow(sockets.connect(handle.writeFd, addr, len)) match
+        // JS: `connect` is `@Ffi.blocking`, so it dispatches on a libuv worker and `takeNow` would yield `Absent`, stranding an immediate-error
+        // connect (ENOENT on a missing Unix path, ECONNREFUSED) on a readiness wait that never fires until the connect deadline. `connectNow`
+        // runs the same non-blocking connect synchronously so its errno is inspected inline, exactly as `takeNow` reads the inline-completed
+        // `@Ffi.blocking` connect on JVM/Native.
+        val connectOutcome: Maybe[Ffi.Outcome[Int]] =
+            if kyo.internal.Platform.isJS then Present(sockets.connectNow(handle.writeFd, addr, len))
+            else takeNow(sockets.connect(handle.writeFd, addr, len))
+        connectOutcome match
             case Present(result) =>
                 val rc = result.value
                 if rc == 0 then
@@ -547,7 +555,8 @@ final private[net] class PosixTransport private[posix] (
                     promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(result.errorCode))))
                 end if
             case Absent =>
-                // The inline-completed connect fiber yielded no value (only possible off JVM/Native, where the poller does not run).
+                // Defensive: neither platform reaches here now (JVM/Native inline-complete the `@Ffi.blocking` connect; JS uses `connectNow`). A
+                // future backend that returned a genuinely-pending connect fiber would arm the readiness wait as the safe continuation.
                 awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true, config)
         end match
     end driveReadinessConnect
@@ -613,15 +622,19 @@ final private[net] class PosixTransport private[posix] (
     private def buildEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
         engineFactory(config, hostname, isServer)
 
-    /** The posix transport drives any TLS engine the platform registry exposes (BoringSSL and the JDK SslEngine on JVM; BoringSSL and system
-      * OpenSSL on Native), so a connection may pin any of those via [[NetTlsConfig.tlsProvider]]. This is the architectural set; whether a given
-      * provider's library is staged on the host is a separate [[TlsProvider.isAvailable]] probe.
+    /** The posix transport drives every in-process TLS ENGINE provider the platform registry exposes (BoringSSL and the JDK SslEngine on JVM;
+      * BoringSSL and system OpenSSL on Native; BoringSSL on JS/Wasm), so a connection may pin any of those via [[NetTlsConfig.tlsProvider]]. It
+      * advertises `TlsProviderPlatform.engineProviderNames`, NOT the full `registered` list: on JS/Wasm `registered` also carries the
+      * selection-only `NodeTlsProvider` (Node terminates its own TLS on `JsTransport`), which the posix transport cannot drive, so advertising it
+      * would admit a `[posix / node]` handshake that then selects no engine and fails. This is the architectural set; whether a given provider's
+      * library is staged on the host is a separate capability probe. AF_UNIX is a posix primitive, present on every host the posix transport runs
+      * on.
+      *
+      * Read from the registry at construction rather than per call: the leaf provider lists are `val`s, so the set is fixed for the process and
+      * one read at build time is the same answer every later read would give.
       */
-    override private[net] def supportedTlsProviders: Set[String] =
-        TlsProviderPlatform.registered.map(_.name).toSet
-
-    /** AF_UNIX is a posix primitive, present on every host the posix transport runs on. */
-    override private[kyo] def supportsUnixSockets: Boolean = true
+    override private[net] val capabilities: TransportCapabilities =
+        TransportCapabilities(TlsProviderPlatform.engineProviderNames, unixSockets = true)
 
     /** After the TCP connect is established: for a plaintext connect complete immediately; for a TLS connect drive a client handshake over the
       * same fd (reusing [[driveHandshake]]) and complete once it succeeds. The `addr` buffer is closed here (the connect is done with it). The
@@ -1473,10 +1486,12 @@ final private[net] class PosixTransport private[posix] (
       */
     private def shim(using AllowUnsafe): PosixShimBindings = Ffi.load[PosixShimBindings]
 
-    /** Extract the value of an already-inline-completed `@Ffi.blocking` fiber via `poll()` (non-parking peek). Returns `Absent` only if the
-      * fiber is still pending (not reachable on JVM/Native where this transport runs). Uses `poll()` rather than any parking call.
+    /** Extract the value of an already-inline-completed `@Ffi.blocking` fiber via `poll()` (non-parking peek). Returns `Absent` when the fiber
+      * is still pending: on JVM/Native the `@Ffi.blocking` call inline-completes so that never happens, and on JS/Wasm the paths that need an
+      * inline result use the synchronous `*Now` overloads (`connectNow` / `sendNow` / `recvNow` / `acceptNow`) instead, leaving `takeNow` for
+      * fire-and-forget uses (a discarded `close`) where an `Absent` on JS/Wasm is fine. Uses `poll()` rather than any parking call.
       */
-    // Unsafe: poll() is the non-parking extraction of an already-inline-completed @Ffi.blocking fiber (JVM/Native).
+    // Unsafe: poll() is the non-parking peek of an @Ffi.blocking fiber; inline-completed on JVM/Native, and used on JS/Wasm only where a pending Absent is acceptable.
     private def takeNow[A](fiber: Fiber.Unsafe[A, Any])(using AllowUnsafe, Frame): Maybe[A] =
         if fiber.done() then
             fiber.poll() match

@@ -63,10 +63,13 @@ class JvmPosixBackendSelectionTest extends Test:
                 assert(IoBackendPlatform.selected.name == only, s"selected=${IoBackendPlatform.selected.name}, expected=$only")
             case None =>
                 if PosixConstants.isMacOrBsd then
-                    assert(KqueueBackend.isAvailable, "kqueue must be available on this macOS/BSD host")
+                    assert(
+                        KqueueBackend.probe.isAvailable,
+                        s"kqueue must be available on this macOS/BSD host: ${KqueueBackend.probe.describe}"
+                    )
                     assert(IoBackendPlatform.selected.name == "kqueue", s"selected=${IoBackendPlatform.selected.name}")
                 else if PosixConstants.isLinux then
-                    val expected = if IoUringBackend.isAvailable then "io_uring" else "epoll"
+                    val expected = if IoUringBackend.probe.isAvailable then "io_uring" else "epoll"
                     assert(IoBackendPlatform.selected.name == expected, s"selected=${IoBackendPlatform.selected.name}")
                 else
                     cancel("no posix backend on this host; selection round-trip needs epoll/kqueue/io_uring")
@@ -91,11 +94,8 @@ class JvmPosixBackendSelectionTest extends Test:
         // -Dkyo.net.backend -> forced-selection wiring works.
         val forced = IoBackend.select[Entry, NetBackendUnavailableException](
             IoBackendPlatform.registered,
-            _.name,
-            _.priority,
-            _.isAvailable,
             forced = Present("nio"),
-            onUnavailable = NetBackendUnavailableException(_)
+            onUnavailable = (name, report) => NetBackendUnavailableException(name, report.render)
         ).getOrThrow
         assert(forced.name == "nio", s"forced selected=${forced.name}")
         // The forced floor must build the NioTransport, not a PosixTransport, and that floor must round-trip as production.
@@ -111,7 +111,7 @@ class JvmPosixBackendSelectionTest extends Test:
         val nioEntries = IoBackendPlatform.registered.filter(_.name == "nio")
         assert(nioEntries.size == 1, s"expected exactly one nio floor entry, got ${IoBackendPlatform.registered.map(_.name)}")
         assert(nioEntries.head.priority == 10)
-        assert(nioEntries.head.isAvailable, "the nio floor must be unconditionally available")
+        assert(nioEntries.head.probe.isAvailable, "the nio floor must be unconditionally available")
     }
 
     "a posix backend whose bundled shim cannot load demotes to the nio floor instead of crashing" in {
