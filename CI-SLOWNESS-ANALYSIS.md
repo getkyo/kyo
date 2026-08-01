@@ -146,6 +146,20 @@ Three facts turn that from a candidate into the cause:
    `awaitSchedulerIdle`, so it always pays the full ceiling. A fork that started nothing satisfies it
    at once, which is precisely the arm64 `kyo-browser` control above (0 gaps, everything cancelled).
 
+The two arm64 modules also separate the mechanism cleanly, and the difference is one line of test
+setup. `UITest.withUI` starts the server before it touches the browser:
+
+```scala
+handlers <- UI.runHandlers("/")(uiTree)
+server   <- HttpServer.init(0, "localhost")(handlers*)
+result   <- Browser.runShared() { ... }
+```
+
+So on arm64, `kyo-ui` suites still bind an `HttpServer` before Chrome resolution fails and the tests
+cancel: the scheduler is busy, and those suites pay the 30s (61 gaps, 1924s). `kyo-browser` suites
+cancel before starting anything at all, so the scheduler is idle and they pay nothing (0 gaps). Same
+platform, same run, opposite outcomes, decided by whether anything was left running at `done()`.
+
 The code comment says this budget is "a ceiling that a healthy fork never spends". The measurement
 says it is spent 172 times per run. The two are reconciled by the JVM-lifetime `SharedChrome`: these
 forks are never "idle" by construction, so the ceiling is the normal path rather than the exception.
