@@ -5,6 +5,7 @@ import java.nio.file.StandardOpenOption
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import kyo.scheduler.Scheduler
+import kyo.scheduler.top.BusyWorker
 import kyo.test.runner.internal.LeakCheck
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.funsuite.AnyFunSuite
@@ -134,6 +135,18 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
             settleNanos = 1_000_000_000L
         )
         assert(out.isEmpty && calls == 1, s"a clean run must sample once and not park, got calls=$calls out=$out")
+    }
+
+    test("allBusyAccounted requires every busy worker to match, so one allowlisted carrier cannot excuse a leak") {
+        // The regression this pins: the verdict used to match the allowlist against the CONCATENATION of every busy worker's trace, so a
+        // fork holding the process-lifetime transport had every other busy worker excused with it, including a leaked one.
+        val shared = BusyWorker("kyo-worker-0", "processSharedTransport cycle")
+        val leaked = BusyWorker("kyo-worker-1", "kyo.SomeTest spinning fiber")
+        val allow  = Chunk("processSharedTransport")
+        assert(LeakCheck.allBusyAccounted(Seq(shared), allow), "the allowlisted carrier alone must be accounted")
+        assert(!LeakCheck.allBusyAccounted(Seq(shared, leaked), allow), "an unaccounted worker alongside it must NOT be excused")
+        assert(!LeakCheck.allBusyAccounted(Seq(leaked), allow), "an unaccounted worker alone must not be excused")
+        assert(LeakCheck.allBusyAccounted(Seq.empty, allow), "an empty busy set is vacuously accounted; emptiness is the caller's concern")
     }
 
     test("awaitSchedulerIdle returns Accounted without spending the budget when every busy worker is allowlisted") {

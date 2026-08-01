@@ -7,6 +7,7 @@ import kyo.Chunk
 import kyo.Maybe
 import kyo.discard
 import kyo.scheduler.Scheduler
+import kyo.scheduler.top.BusyWorker
 import scala.jdk.CollectionConverters.*
 
 /** JVM end-of-run leak probes, read at the sbt `done()` boundary after every suite in the fork has finished.
@@ -176,18 +177,25 @@ private[runner] object LeakCheck:
         case Busy(loadAvg: Double, frame: Maybe[String])
     end IdleResult
 
-    /** True when at least one worker holds work and EVERY such worker is matched by `allowlist`, against either its kyo trace or its JVM
-      * stack.
+    /** True when `w` is matched by `allowlist`, against either its kyo trace or its JVM stack: this worker's work is intentional. */
+    def workerAccounted(w: BusyWorker, allowlist: Chunk[String]): Boolean =
+        val text = w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")
+        allowlist.exists(text.contains)
+    end workerAccounted
+
+    /** True when EVERY busy worker is accounted for.
       *
-      * `forall`, not `exists`: one allowlisted carrier must not excuse a second, unrelated busy worker. An empty busy set is `Idle`, never
-      * `Accounted`, so the caller keeps those two outcomes distinct.
+      * `forall` per worker, not `exists` over their concatenated traces: one allowlisted carrier must not excuse a second, unrelated busy
+      * worker, which is exactly the leak this check exists to find. Vacuously true on an empty set, so callers that must distinguish
+      * "nothing running" from "only allowlisted work running" test emptiness themselves.
       */
+    def allBusyAccounted(busy: Seq[BusyWorker], allowlist: Chunk[String]): Boolean =
+        busy.forall(workerAccounted(_, allowlist))
+
+    /** True when at least one worker holds work and every such worker is accounted for. An empty busy set is `Idle`, never `Accounted`. */
     def busyWorkAllAccounted(allowlist: Chunk[String]): Boolean =
         val busy = Scheduler.get.busyFiberTraces()
-        busy.nonEmpty && busy.forall { w =>
-            val text = w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")
-            allowlist.exists(text.contains)
-        }
+        busy.nonEmpty && allBusyAccounted(busy, allowlist)
     end busyWorkAllAccounted
 
     /** Polls until the scheduler holds no UNACCOUNTED work continuously for `settleNanos`, or until `budgetNanos` elapses.
@@ -428,8 +436,10 @@ private[runner] object LeakCheck:
                             }.getOrElse("        <stack unavailable>")
                             s"$header$kyoSection\n    thread stack:\n$stack"
                         }.mkString("\n")
-                    val matchText   = busy.map(w => w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")).mkString("\n")
-                    val allowlisted = effectiveAllowlist.exists(matchText.contains)
+                    // Per worker, not over their concatenation: matching the joined text let ONE allowlisted carrier excuse every other
+                    // busy worker in the fork, including a genuinely leaked one. Vacuously true when the set is empty, which happens when
+                    // the work drained between the wait and this dump and is not a leak.
+                    val allowlisted = allBusyAccounted(busy, effectiveAllowlist)
                     if !allowlisted then
                         findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
                             s"\n  per-busy-worker fiber dump:\n$perWorker" +
