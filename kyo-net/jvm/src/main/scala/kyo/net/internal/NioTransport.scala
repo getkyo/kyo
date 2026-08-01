@@ -154,6 +154,9 @@ final private[kyo] class NioTransport private (
       */
     override private[net] def supportedTlsProviders: Set[String] = Set("jdk")
 
+    /** NIO binds real AF_UNIX sockets through `UnixDomainSocketAddress` (JEP 380) on every host the JVM runs on, Windows included. */
+    override private[kyo] def supportsUnixSockets: Boolean = true
+
     /** Claim flag for the process-global stdio connection, so stdio is claimed at most once (fds 0/1 must never be double-owned). Mirrors the
       * posix and Node transports' claim.
       */

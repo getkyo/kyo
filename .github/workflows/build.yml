@@ -7,13 +7,13 @@ name: build
 # Serial within a target: SBT_TASK_LIMIT=1 (set in env below) runs one sbt task at a time inside
 # each job, bounding peak memory to a single module's compile/link/test on the 16GB runners.
 #
-# Parallel across archs: the parent workflow (build-pr.yml / build-main.yml) calls this workflow
-# once per arch. Those calls have no `needs:` between them so the archs run as independent CI jobs.
+# Parallel across os poles: the parent workflow (ci.yml) calls this workflow once per pole.
+# Those calls have no `needs:` between them so the poles run as independent CI jobs.
 on:
   workflow_call:
     inputs:
       os:
-        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64).'
+        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64).'
         type: string
         required: true
       runner-image:
@@ -51,9 +51,11 @@ jobs:
 
   build:
     needs: prep
-    # JVM full runs peak at ~95-100 min (browser/UI/caliban suites serialize under a shared Chrome
-    # instance that cannot take concurrent CDP connections). 180 min gives headroom above that peak.
-    timeout-minutes: 180
+    # JVM full runs peak at ~95-100 min on Linux (browser/UI/caliban suites serialize under a
+    # shared Chrome instance that cannot take concurrent CDP connections) and run slower on the
+    # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. 240 min
+    # bounds a genuine hang while giving the slowest pole real headroom.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       max-parallel: 4

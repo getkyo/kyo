@@ -168,12 +168,15 @@ private[sbt] object CCompiler {
             val staticFlag      = if (staticLink) Seq("/MT") else Nil
             val libDirFlags     = libDirs.map(d => "/LIBPATH:" + d.getAbsolutePath)
             val libFlags        = linkLibs.map(l => l + ".lib")
-            // cl.exe builds a DLL with /LD; /Fe: sets output exe/dll name.
-            // Note: `cl` reads the command line positionally; sources + libs go after flags.
+            // cl.exe builds a DLL with /LD; /Fe: sets output exe/dll name. `/LIBPATH:` is a linker
+            // option: cl silently ignores it on the compiler command line, so the search dirs and the
+            // named import libs must follow `/link`, otherwise the linker cannot find a vendored .lib
+            // (LNK1181). The libs found via the LIB env (winsock, the CRT) resolve either way.
+            val linkerArgs = linkFlags ++ libDirFlags ++ libFlags
             splitCc(cc) ++ Seq("/LD") ++ translatedFlags ++ staticFlag ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
                 Seq("/Fe:" + outFile.getAbsolutePath) ++
-                linkFlags ++ libDirFlags ++ libFlags
+                (if (linkerArgs.nonEmpty) Seq("/link") ++ linkerArgs else Nil)
         case _ =>
             val includeFlags = includes.flatMap(d => Seq("-I", d.getAbsolutePath))
             // staticLink folds the named libs into the .so via the GNU ld / lld static toggle,

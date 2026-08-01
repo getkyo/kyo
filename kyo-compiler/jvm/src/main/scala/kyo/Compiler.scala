@@ -97,7 +97,7 @@ object Compiler:
           * @param settings
           *   the pool-wide policy (concurrency cap, live-instance bound, idle eviction, isolate)
           */
-        def init(settings: Settings = Settings.default)(using Frame): Pool < (Sync & Scope) =
+        def init(settings: Settings = Settings.default)(using Frame): Pool < (Async & Scope) =
             CompilerPool.init(settings)
 
         /** Pool-wide policy.

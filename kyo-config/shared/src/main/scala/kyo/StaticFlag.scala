@@ -62,7 +62,7 @@ abstract class StaticFlag[A](default: A, validate: A => Either[Throwable, A] = (
         else {
             val parsed =
                 if (isRollout(initialExpression)) {
-                    Rollout.select(initialExpression) match {
+                    Rollout.select(rolloutPayload(initialExpression)) match {
                         case Right(Some(s)) => Some(reader.parse(name, s))
                         case Right(None)    => None
                         case Left(err)      => throw FlagRolloutParseException(name, initialExpression, err)

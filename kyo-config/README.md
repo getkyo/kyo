@@ -196,7 +196,11 @@ end match
 
 Both `StaticFlag` and `DynamicFlag` support a rollout expression DSL for conditional values. Rollout expressions let you vary a flag's value by deployment topology (environment, region, cluster) and percentage-based sampling, without changing code or restarting the process.
 
+Rollout interpretation is explicit: only a value starting with the `rollout:` marker is parsed as an expression, and the marker is followed by the expression itself. A value without the marker is the flag's plain value, taken verbatim, so values that happen to contain `;` or `@` (Windows path lists, URIs with userinfo) are never split into choices.
+
 ### Grammar
+
+The grammar below describes the text after the `rollout:` marker.
 
 ```
 expression = choice { ";" choice }
@@ -226,7 +230,7 @@ percentage = digits "%"
 Choices are evaluated left to right. The first match wins. If no choice matches, the flag's default value is used.
 
 ```
--Dmyapp.db.poolSize="50@prod/us-east-1;30@prod;10"
+-Dmyapp.db.poolSize="rollout:50@prod/us-east-1;30@prod;10"
 ```
 
 For the expression above, evaluation proceeds as follows:
@@ -244,7 +248,7 @@ For **StaticFlag**, the path comes from the instance's rollout path, configured 
 For **DynamicFlag**, the path comes from the attributes passed by the caller:
 
 ```scala
-// -Dmyapp.features.rateLimit="200@premium;50@free;100"
+// -Dmyapp.features.rateLimit="rollout:200@premium;50@free;100"
 rateLimit("tenant-abc", "premium") // 200
 rateLimit("tenant-xyz", "free")    // 50
 rateLimit("tenant-def")            // 100 (terminal)
@@ -253,7 +257,7 @@ rateLimit("tenant-def")            // 100 (terminal)
 Multi-segment paths match as a prefix:
 
 ```
--Dmyapp.db.poolSize="50@prod/us-east-1;30@prod;10"
+-Dmyapp.db.poolSize="rollout:50@prod/us-east-1;30@prod;10"
 ```
 
 | Instance path | Result | Why |
@@ -267,7 +271,7 @@ Multi-segment paths match as a prefix:
 `*` matches any single path segment:
 
 ```
--Dmyapp.db.poolSize="50@prod/*/az1;30@prod;10"
+-Dmyapp.db.poolSize="rollout:50@prod/*/az1;30@prod;10"
 ```
 
 | Instance path | Result | Why |
@@ -284,7 +288,7 @@ A trailing `N%` on a selector controls what fraction of entities receive that va
 Note: Because weights accumulate left to right into cumulative bucket ranges, lowering a percentage removes entities previously in-bucket (reducing 75% to 50% drops the top 25%).
 
 ```
--Dmyapp.features.newCheckout="true@30%;false"
+-Dmyapp.features.newCheckout="rollout:true@30%;false"
 ```
 
 This means: 30% of entities (by deterministic bucketing of their key) get `true`. The remaining 70% fall through to `false`.
@@ -292,7 +296,7 @@ This means: 30% of entities (by deterministic bucketing of their key) get `true`
 The distinction between weights and thresholds matters when multiple percentage choices appear:
 
 ```
--Dmyapp.features.variant="A@30%;B@30%;C"
+-Dmyapp.features.variant="rollout:A@30%;B@30%;C"
 ```
 
 | Choice | Weight | Bucket range |
@@ -308,7 +312,7 @@ Each weight carves out its own slice of the 0-99 bucket space. Users write simpl
 Percentage weights make it straightforward to run multi-arm experiments:
 
 ```
--Dmyapp.features.checkoutVariant="A@25%;B@25%;C@25%;D"
+-Dmyapp.features.checkoutVariant="rollout:A@25%;B@25%;C@25%;D"
 ```
 
 Four equal groups: A gets buckets 0-24, B gets 25-49, C gets 50-74, and D (terminal) gets 75-99.
@@ -316,7 +320,7 @@ Four equal groups: A gets buckets 0-24, B gets 25-49, C gets 50-74, and D (termi
 An unequal split for a holdout experiment:
 
 ```
--Dmyapp.features.pricing="new@80%;control@10%;holdout"
+-Dmyapp.features.pricing="rollout:new@80%;control@10%;holdout"
 ```
 
 80% see the new pricing, 10% see the control, and the remaining 10% are the holdout group.
@@ -326,7 +330,7 @@ An unequal split for a holdout experiment:
 Path matching and percentages compose within a single selector:
 
 ```
--Dmyapp.features.newCheckout="true@premium/50%;true@free/10%;false"
+-Dmyapp.features.newCheckout="rollout:true@premium/50%;true@free/10%;false"
 ```
 
 50% of premium users and 10% of free users get `true`. Everyone else gets `false`. The path must match first; then the percentage filter is applied within that path.
@@ -337,10 +341,10 @@ Increasing the percentage adds entities without removing existing ones. A typica
 
 | Day | Expression | Effect |
 |-----|------------|--------|
-| 1 | `true@5%;false` | 5% of users (buckets 0-4) |
-| 2 | `true@25%;false` | 25% of users (buckets 0-24) |
-| 3 | `true@50%;false` | 50% of users (buckets 0-49) |
-| 4 | `true@75%;false` | 75% of users (buckets 0-74) |
+| 1 | `rollout:true@5%;false` | 5% of users (buckets 0-4) |
+| 2 | `rollout:true@25%;false` | 25% of users (buckets 0-24) |
+| 3 | `rollout:true@50%;false` | 50% of users (buckets 0-49) |
+| 4 | `rollout:true@75%;false` | 75% of users (buckets 0-74) |
 | 5 | `true` | 100% of users (terminal) |
 
 Bucketing is deterministic per key (via a stable string hash), so a user who was included at 5% stays included at 25%. The bucket range grows from the same starting point, making progressive rollouts additive.
@@ -356,7 +360,7 @@ import kyo.*
 
 // In package myapp.db
 // -Dkyo.rollout.path=prod/us-east-1/az1
-// -Dmyapp.db.poolSize="50@prod/us-east-1;30@prod;10"
+// -Dmyapp.db.poolSize="rollout:50@prod/us-east-1;30@prod;10"
 object poolSize extends StaticFlag[Int](10)
 ```
 
@@ -417,7 +421,7 @@ DynamicFlag evaluates the rollout expression on every call. The path comes from 
 import kyo.*
 
 // In package myapp.features
-// -Dmyapp.features.newCheckout="true@premium/50%;false"
+// -Dmyapp.features.newCheckout="rollout:true@premium/50%;false"
 object newCheckout extends DynamicFlag[Boolean](false)
 
 // At call site:
@@ -430,7 +434,7 @@ Dynamic flags also accept rollout expressions via `update()`:
 
 ```scala
 import kyo.AllowUnsafe.embrace.danger
-newCheckout.update("true@premium/75%;true@free/25%;false")
+newCheckout.update("rollout:true@premium/75%;true@free/25%;false")
 ```
 
 ### Validating Expressions
@@ -440,7 +444,7 @@ newCheckout.update("true@premium/75%;true@free/25%;false")
 ```scala
 import kyo.*
 
-Rollout.validate("true@50%;false") match
+Rollout.validate("rollout:true@50%;false") match
     case Right(warnings) => warnings.foreach(println)
     case Left(error)     => println(s"Error: $error")
 ```

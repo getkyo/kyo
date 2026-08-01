@@ -5,10 +5,16 @@ import kyo.net.NetPlatform
 /** Unix-domain-socket transport tests, over kyo-net's cross-platform `connectUnix`/`listenUnix`. Runs identically on every platform kyo-net
   * targets (JVM, JS, Native, Wasm); the client side uses a kyo-net `Connection` rather than a raw JVM `SocketChannel`, mirroring kyo-net's own
   * `TransportUnixSocketTest`.
+  *
+  * Every leaf gates on `Transport.supportsUnixSockets` and cancels where the transport cannot bind AF_UNIX paths (Node on Windows maps the
+  * local domain to named pipes, so a filesystem listen path fails EACCES there), mirroring `TransportUnixSocketTest`.
   */
 class JsonRpcTransportUnixTest extends JsonRpcTest:
 
     import AllowUnsafe.embrace.danger
+
+    private def assumeUnixSockets()(using Frame): Unit =
+        if !NetPlatform.transport.supportsUnixSockets then cancel("AF_UNIX sockets unsupported on this platform")
 
     /** Connect a client to `sock`, send `payload`, and close. kyo-net flushes the queued outbound bytes before releasing the socket, so the
       * server receives the frame even though the client closes immediately after the put.
@@ -19,6 +25,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
 
     "unixDomain binds and accepts a connection" in {
+        assumeUnixSockets()
         Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
@@ -38,6 +45,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
     }
 
     "unixDomain round-trips one envelope" in {
+        assumeUnixSockets()
         Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
@@ -56,6 +64,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
     }
 
     "unixDomain Scope cleanup deletes socket file" in {
+        assumeUnixSockets()
         Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
@@ -67,6 +76,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
     }
 
     "unixDomain framer override changes wire shape" in {
+        assumeUnixSockets()
         Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {

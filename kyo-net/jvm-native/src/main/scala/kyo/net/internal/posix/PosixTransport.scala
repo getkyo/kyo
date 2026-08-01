@@ -620,6 +620,9 @@ final private[net] class PosixTransport private[posix] (
     override private[net] def supportedTlsProviders: Set[String] =
         TlsProviderPlatform.registered.map(_.name).toSet
 
+    /** AF_UNIX is a posix primitive, present on every host the posix transport runs on. */
+    override private[kyo] def supportsUnixSockets: Boolean = true
+
     /** After the TCP connect is established: for a plaintext connect complete immediately; for a TLS connect drive a client handshake over the
       * same fd (reusing [[driveHandshake]]) and complete once it succeeds. The `addr` buffer is closed here (the connect is done with it). The
       * handshake is kicked synchronously (no extra carrier); its suspension points arm `onComplete` callbacks that fire from the driver carrier.

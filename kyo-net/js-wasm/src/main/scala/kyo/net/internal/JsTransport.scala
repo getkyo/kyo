@@ -54,6 +54,11 @@ final private[kyo] class JsTransport private (
       */
     override private[net] def supportedTlsProviders: Set[String] = Set("node")
 
+    /** Node implements the local domain with named pipes on Windows: a filesystem path handed to `server.listen` or `net.createConnection`
+      * fails EACCES there (only `\\.\pipe\` names bind), so AF_UNIX sockets exist for this transport only off Windows.
+      */
+    override private[kyo] def supportsUnixSockets: Boolean = !kyo.internal.Platform.isWindows
+
     /** The fail-closed explanation for a [[NetTlsConfig.tlsProvider]] pin other than "node", shared by the three TLS entry points so all reject a
       * non-node pin identically. Carried as the cause of a [[NetTlsHandshakeException]].
       */

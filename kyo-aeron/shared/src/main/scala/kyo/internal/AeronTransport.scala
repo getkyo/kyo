@@ -60,6 +60,20 @@ abstract private[kyo] class AeronTransport:
       */
     def fatalError(using AllowUnsafe): Maybe[String]
 
+    /** Whether the Aeron client backing this transport has been closed.
+      *
+      * Once true it never reverts: the client is gone for the process's lifetime, so no operation
+      * against it can ever succeed again. `Topic.publish` and `Topic.stream` read this before their
+      * retry decision and abort terminally, because every other post-close signal is
+      * indistinguishable from a transient one: a closed client reports `isConnected == false`, which
+      * is also how "no peer has attached yet" is reported, and `pollOne` reports `Absent`, which is
+      * also how "no message this poll" is reported. Without this a fiber still holding a handle when
+      * the client closes retries its backoff schedule forever instead of failing.
+      *
+      * The no-op default serves fakes whose client never closes, as `injectError` does.
+      */
+    def clientClosed(using AllowUnsafe): Boolean = false
+
     /** Injects a synthetic fatal error into the transport error slot, exercising the
       * TopicTransportFailedException path without a real conductor condition.
       *

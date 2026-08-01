@@ -131,6 +131,14 @@ abstract class Transport:
       * evolves with the transport rather than being duplicated as a fixed table in the tests.
       */
     private[net] def supportedTlsProviders: Set[String]
+
+    /** Whether this transport can bind and connect AF_UNIX filesystem paths ([[listenUnix]] / [[connectUnix]]). True on the posix and NIO
+      * transports, which drive real Unix sockets on every host they run on. False for Node on Windows: Node implements the local domain
+      * with named pipes there, so a filesystem listen path fails EACCES and no AF_UNIX socket can exist. The UDS test suites read this to
+      * cancel on hosts that cannot bind, so the capability lives here in production and evolves with the transport rather than being
+      * duplicated as per-suite platform checks (the same placement rule as [[supportedTlsProviders]]).
+      */
+    private[kyo] def supportsUnixSockets: Boolean
 end Transport
 
 object Transport:

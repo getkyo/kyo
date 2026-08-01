@@ -14,6 +14,15 @@ private[kyo] trait AeronRuntime:
     def close()(using AllowUnsafe): Unit
 end AeronRuntime
 
+/** Lifecycle handle for an embedded media driver that owns no client, backing [[kyo.AeronDriver]].
+  *
+  * `close` stops the driver and joins its conductor threads. Clients connected to the driver's
+  * directory are the caller's to close first, as they are with any external driver.
+  */
+private[kyo] trait AeronDriverRuntime:
+    def close()(using AllowUnsafe): Unit
+end AeronDriverRuntime
+
 /** Per-platform Aeron runtime selectors, delegating to `AeronPlatformTransport`.
   *
   * `embedded(dir)` launches an embedded media driver and connects a client (JVM: Java client plus
@@ -35,4 +44,10 @@ private[kyo] object AeronPlatform:
 
     def external(aeronDir: String)(using Frame): AeronRuntime < (Async & Abort[TopicTransportFailedException]) =
         AeronPlatformTransport.external(aeronDir)
+
+    /** Starts a client-less embedded driver in `dir`, for callers that connect their own clients to
+      * it. Timeouts are nanoseconds, `0` keeping the driver's default.
+      */
+    def driver(dir: String, clientLivenessNs: Long, publicationUnblockNs: Long)(using Frame): AeronDriverRuntime < Async =
+        AeronPlatformTransport.driver(dir, clientLivenessNs, publicationUnblockNs)
 end AeronPlatform

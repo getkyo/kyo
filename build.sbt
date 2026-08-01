@@ -1502,6 +1502,11 @@ lazy val `kyo-reactive-streams` =
 
 // Host os-arch in the staged/<os-arch>/ naming used by build-boringssl.sh and
 // kyo-aeron/scripts/build-aeron.sh (e.g. "darwin-aarch64").
+// npm is `npm.cmd` on Windows, where CreateProcess resolves only .exe from a bare name;
+// the koffi bootstraps below spawn it directly (not via a shell).
+def npmCommand: String =
+    if (System.getProperty("os.name", "").toLowerCase.contains("win")) "npm.cmd" else "npm"
+
 def hostOsArch: String = {
     val osName = System.getProperty("os.name", "").toLowerCase
     val os =
@@ -1781,7 +1786,7 @@ lazy val `kyo-net` =
                 if (!marker.exists()) {
                     log.info(s"[kyo-net JS] installing koffi@$koffiRange into $targetBase ...")
                     val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
@@ -1821,6 +1826,7 @@ lazy val `kyo-aeron` =
                 // aarch64-only, where 64-bit atomic_fetch_add lowers to an out-of-line libatomic call.
                 // macOS supplies all of them via libSystem.
                 val aeronArch = hostOsArch.split("-").lastOption.getOrElse("")
+                val isWindows = hostOsArch.startsWith("windows")
                 val linuxSystemLinkFlags =
                     if (hostOsArch.startsWith("linux"))
                         Seq("-lpthread", "-lm", "-ldl", "-luuid") ++ (if (aeronArch == "aarch64") Seq("-latomic") else Nil)
@@ -1838,8 +1844,17 @@ lazy val `kyo-aeron` =
                         // complete client + driver API. Adding aeron_static too duplicates every client
                         // symbol and fails the Darwin ld64 link.
                         linkLibs = Seq("aeron_driver_static"),
+                        // Windows needs aeron's declared winsock stack plus shell32 (SHFileOperation,
+                        // used by aeron's file utils), rendered as `.lib` by the plugin under MSVC.
+                        linkLibsByOs = if (isWindows) Map("windows" -> Seq("ws2_32", "wsock32", "Iphlpapi", "shell32")) else Map.empty,
                         linkFlags = linuxSystemLinkFlags,
-                        staticLink = true
+                        // Aeron supports Windows only under MSVC (its sources gate on _MSC_VER) and forces
+                        // the dynamic CRT (/MD), so on Windows the shim compiles with cl and /MD.
+                        // staticLink=true would add /MT (static CRT) and clash with aeron's /MD; the aeron
+                        // .lib is embedded by the link regardless, so Windows uses staticLink=false.
+                        cFlags = if (isWindows) Seq("/MD") else Nil,
+                        compilerByOs = if (isWindows) Map("windows" -> "cl") else Map.empty,
+                        staticLink = !isWindows
                     )
                 )
             }
@@ -1847,16 +1862,12 @@ lazy val `kyo-aeron` =
         .jvmSettings(
             mimaCheck(false),
             fork := true,
-            javaOptions ++= Seq(
-                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
-                "--add-opens=java.base/java.lang=ALL-UNNAMED",
-                "--add-opens=java.base/java.nio=ALL-UNNAMED",
-                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
-            ),
-            libraryDependencies ++= Seq(
-                "io.aeron" % "aeron-driver" % "1.50.2",
-                "io.aeron" % "aeron-client" % "1.50.2"
-            )
+            // The four --add-opens this used to need were io.aeron's: its embedded Java MediaDriver
+            // reaches into jdk.internal.misc, java.lang, java.nio, and sun.nio.ch, and Topic.run failed
+            // at driver launch without them. The JVM now drives the same C client and embedded C driver
+            // as every other platform through Panama, which needs no add-opens; --enable-native-access
+            // only silences the restricted-method warning.
+            javaOptions += "--enable-native-access=ALL-UNNAMED"
         )
         .nativeSettings(
             `native-settings`,
@@ -1904,7 +1915,9 @@ lazy val `kyo-aeron` =
                     else if (os.contains("win")) "windows"
                     else if (os.contains("linux")) "linux"
                     else os
-                val lib = ffiOut / s"libkyo_aeron-$osDetect-$arch.$ext"
+                // Windows has no `lib` prefix on the shared library, matching the plugin's CCompiler output.
+                val prefix = if (os.contains("win")) "" else "lib"
+                val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120"))
@@ -1927,7 +1940,7 @@ lazy val `kyo-aeron` =
                 if (!marker.exists()) {
                     log.info(s"[kyo-aeron JS] installing koffi@$koffiRange into $targetBase ...")
                     val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
@@ -1959,7 +1972,9 @@ lazy val `kyo-aeron` =
                     else if (os.contains("win")) "windows"
                     else if (os.contains("linux")) "linux"
                     else os
-                val lib = ffiOut / s"libkyo_aeron-$osDetect-$arch.$ext"
+                // Windows has no `lib` prefix on the shared library, matching the plugin's CCompiler output.
+                val prefix = if (os.contains("win")) "" else "lib"
+                val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
@@ -1982,7 +1997,7 @@ lazy val `kyo-aeron` =
                 if (!marker.exists()) {
                     log.info(s"[kyo-aeron Wasm] installing koffi@$koffiRange into $targetBase ...")
                     val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
@@ -1999,12 +2014,9 @@ lazy val `kyo-compiler` =
         .settings(
             `kyo-settings`,
             fork := true,
-            javaOptions ++= Seq(
-                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
-                "--add-opens=java.base/java.lang=ALL-UNNAMED",
-                "--add-opens=java.base/java.nio=ALL-UNNAMED",
-                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
-            ),
+            // These were io.aeron's requirement, dropped with it: the pool's shared driver is now
+            // kyo-aeron's AeronDriver, the same C driver every platform runs, reached through Panama.
+            javaOptions += "--enable-native-access=ALL-UNNAMED",
             libraryDependencies ++= Seq(
                 "org.scala-lang" %% "scala3-presentation-compiler" % scalaVersion.value
             )

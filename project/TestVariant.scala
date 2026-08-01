@@ -136,10 +136,13 @@ object TestVariant {
 
                 val writers: Seq[PrintWriter] = files.map(file => new PrintWriter(file))
 
+                // LF explicitly, never println: the platform separator would emit CRLF
+                // variants on Windows, and generated sources must be byte-identical on
+                // every platform.
                 processed.lines.foreach({
-                    case Line.Raw(str) => writers.foreach(_.println(str))
+                    case Line.Raw(str) => writers.foreach(_.print(str + "\n"))
                     case Line.Variants(lines) => lines.zip(writers).foreach({
-                            case (str, writer) => writer.println(str)
+                            case (str, writer) => writer.print(str + "\n")
                         })
 
                 })

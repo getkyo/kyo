@@ -1200,6 +1200,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 }
             }
         }
+    end withWsUnixServer
 
     private def mkWsUrl(socketPath: String, wsPath: String): String =
         mkUrl(socketPath, wsPath)

@@ -54,7 +54,7 @@ You do not run a compiler; you open a pool and ask it for a handle. The pool is 
 
 ### Opening the pool
 
-`Compiler.Pool.init` returns a `Pool < (Sync & Scope)`: the pool is acquired when the effect runs and released when the enclosing `Scope` closes. Inside the pool, `pool.compiler(config)` hands back the per-config handle.
+`Compiler.Pool.init` returns a `Pool < (Async & Scope)`: the pool is acquired when the effect runs and released when the enclosing `Scope` closes. It is `Async` rather than `Sync` because opening a pool starts the shared Aeron media driver, whose handshake suspends the calling fiber instead of blocking its carrier. Inside the pool, `pool.compiler(config)` hands back the per-config handle.
 
 ```scala
 val opened: Compiler < Async =
