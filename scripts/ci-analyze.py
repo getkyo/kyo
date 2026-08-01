@@ -41,6 +41,7 @@ Examples:
   ci-analyze.py tests    30699720019 --job X --suite Foo per-test durations
   ci-analyze.py compare  30699720019 <jobA> <jobB> -v    status-aware A/B
   ci-analyze.py resources 30699720019 --job X -vv        the raw ci-mon series
+  ci-analyze.py compile  30699720019 --job X             per-module compile time
   ci-analyze.py gaps     30699720019 --job X -v          dead time between suites
   ci-analyze.py idle     30699720019                     low-load stretches
   ci-analyze.py runs main 10                             recent runs
@@ -139,6 +140,8 @@ KYO_TEST = re.compile(r'^\s*\[(PASS|FAIL|CANCELLED|IGNORED)\] (.*?)\s+\(([0-9.]+
 ST_SUITE = re.compile(r'^\[info\] ([A-Z][\w.$]*):\s*$')
 ST_TEST = re.compile(r'^\[info\] - (.*) \((\d+) (millisecond|second|minute|hour)s?\)$')
 ST_RUN_DONE = re.compile(r'^\[info\] Run completed in (.*)\.$')
+COMPILING = re.compile(r'^\[info\] compiling (\d+) (\w+) sources? to (\S+)')
+MODULE_TARGET = re.compile(r'(kyo-[\w-]+)/(?:jvm|js|native|wasm|shared)/target')
 CIMON = re.compile(r'^\[ci-mon (\d{2}:\d{2}:\d{2})\] (.*)$')
 CIMON_START = re.compile(r'^=== \[ci-mon\] \d{2}:\d{2}:\d{2} started (.*) ===$')
 CIMON_DISK = re.compile(r'^\[ci-mon-disk\] (.*)$')
@@ -810,6 +813,62 @@ def cmd_idle(a):
               f"({tot/((rec['last']-rec['first']).total_seconds()/60)*100:.0f}% of the job)")
 
 
+def cmd_compile(a):
+    """Per-module compile time, from sbt's own 'compiling N sources to <target>' lines.
+
+    SBT_TASK_LIMIT=1 serializes the build, so a module's compile runs from its
+    marker to the next one; the module name comes out of the target path.
+    """
+    d, jobs = load_run(a.run, a.refresh)
+    mrx = rx_of(a.module)
+    for j, p in select_jobs(d, jobs, a):
+        rec = parse_job(p)
+        groups = phase_groups(rec)
+        ends = {g['phase']: g['end'] for g in groups}
+        marks = []
+        for t, b in log_lines(p):
+            m = COMPILING.match(b)
+            if not m:
+                continue
+            mm = MODULE_TARGET.search(m.group(3))
+            marks.append((t, mm.group(1) if mm else '(unknown)',
+                          int(m.group(1)), m.group(2)))
+        if not marks:
+            print(f"\n=== {short(j['name'])} [{j['id']}]: no compile markers ===")
+            continue
+        agg = defaultdict(lambda: [0.0, 0, 0])
+        for i, (t, mod, n, lang) in enumerate(marks):
+            if i + 1 < len(marks):
+                end = marks[i + 1][0]
+            else:
+                end = ends.get('testing') or rec['last']
+            secs = (end - t).total_seconds()
+            # a marker followed by a long test phase would swallow it; clamp to the
+            # next phase boundary instead
+            for g in groups:
+                if g['t'] <= t < g['end']:
+                    secs = min(secs, (g['end'] - t).total_seconds())
+                    break
+            e = agg[mod]
+            e[0] += secs
+            e[1] += n
+            e[2] += 1
+        print(f"\n=== {short(j['name'])} [{j['id']}] compile time per module ===")
+        print(f"  {'secs':>8} {'sources':>8} {'invocations':>12}  module")
+        tot = 0.0
+        for mod, (secs, n, c) in sorted(agg.items(), key=lambda kv: -kv[1][0]):
+            tot += secs
+            if mrx and not mrx.search(mod):
+                continue
+            if secs < a.min:
+                continue
+            print(f"  {secs:8.0f} {n:8} {c:12}  {mod}")
+        print(f"  {'-'*50}\n  total attributed {tot/60:.1f} min")
+        for g in groups:
+            if g['phase'].startswith('compiling'):
+                print(f"  phase {g['phase']:<20} {g['span']/60:6.1f} min")
+
+
 def cmd_gaps(a):
     """Dead time BETWEEN suites: the log is silent and nothing is scheduled.
 
@@ -962,6 +1021,10 @@ def main():
     p = common(sub.add_parser('idle', help='stretches with no output and no load'))
     p.add_argument('run'); p.add_argument('--threshold', type=int, default=30)
     p.add_argument('--load', type=float, default=1.0); p.set_defaults(f=cmd_idle)
+
+    p = common(sub.add_parser('compile', help='per-module compile time'))
+    p.add_argument('run'); p.add_argument('--module'); p.add_argument('--min', type=float, default=0)
+    p.set_defaults(f=cmd_compile)
 
     p = common(sub.add_parser('gaps', help='dead time between suites (timeout signatures)'))
     p.add_argument('run'); p.add_argument('--module'); p.add_argument('--min', type=float, default=5)
