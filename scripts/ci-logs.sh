@@ -39,6 +39,10 @@ set -uo pipefail
 # Reads per-JOB logs via the REST jobs/<id>/logs endpoint, so it works on a
 # running run too (a job's log is available as soon as that job finishes).
 #
+# This script answers "what failed". For "what was slow, and why" use the
+# companion ci-analyze.py, which keeps the per-line timestamps this one strips
+# and attributes a run's wall clock to phases, modules, suites and tests.
+#
 # Env: REPO (owner/repo, default gh-detected); CI_WORKFLOW (default ci.yml).
 
 REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)}"
