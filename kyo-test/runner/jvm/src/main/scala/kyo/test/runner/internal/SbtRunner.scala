@@ -129,12 +129,13 @@ final private[runner] class SbtRunner(
                     checkThreads = checkThreads,
                     checkFileDescriptors = checkFileDescriptors,
                     checkSockets = checkSockets,
-                    // Both budgets are ceilings that a healthy fork never spends: awaitSchedulerIdle returns as soon as the scheduler has
-                    // been idle for one settle window, and awaitFdDrain returns immediately when its first sample is empty. The cost is
-                    // paid only by a fork that already looks wrong, so the ceiling is sized for the slowest runner rather than the common
-                    // case. 2s was tuned on an unloaded box and is not enough on a CI runner with four contended cores, where a teardown
-                    // cascade (a FIN round trip, a pump unwind, a deferred close discharging on the io_uring reap thread) can outlast it
-                    // and read as a leak that would have drained a moment later.
+                    // Both budgets are ceilings a fork spends only when it holds work nothing accounts for: awaitSchedulerIdle returns as
+                    // soon as the scheduler holds no unaccounted work for one settle window (load zero, or every busy worker allowlisted),
+                    // and awaitFdDrain returns immediately when its first sample is empty. A fork carrying a process-lifetime transport is
+                    // therefore not charged for it. The ceiling is sized for the slowest runner rather than the common case: 2s was tuned
+                    // on an unloaded box and is not enough on a CI runner with four contended cores, where a teardown cascade (a FIN round
+                    // trip, a pump unwind, a deferred close discharging on the io_uring reap thread) can outlast it and read as a leak that
+                    // would have drained a moment later.
                     idleBudgetNanos = 30_000_000_000L,
                     // Paid on every run, twice: the scheduler must stay idle this long before quiescence is believed, and the post-gc park
                     // waits this long for Cleaner-closed channels to drop out. Kept short for that reason.
