@@ -8,10 +8,12 @@ timestamps `ci-logs.sh` strips. All numbers below are reproducible with `scripts
 
 Two separate things make a job long, and only one of them is a bug.
 
-1. **A 30-second teardown hang fires between test suites on the JVM rows, 107 times in the slowest
-   job.** It costs 56.5 min of the 3h27m linux-x64/JVM job and 36.8 min of the 2h18m
-   linux-arm64/JVM job: 27% of each. It is not workload and not machine speed. It is one fixed
-   timeout being reached over and over.
+1. **kyo-test's 30-second leak-check idle budget is spent in full once per test suite on the JVM
+   rows**, 107 times in the slowest job. It costs 56.5 min of the 3h27m linux-x64/JVM job and
+   36.8 min of the 2h18m linux-arm64/JVM job: 27% of each. It is not workload and not machine speed.
+   It is `SbtRunner.scala:138`'s `idleBudgetNanos = 30_000_000_000L`, reached every time because
+   kyo-browser and kyo-ui fork one JVM per suite and hold a JVM-lifetime shared Chrome that keeps the
+   scheduler from ever going idle.
 2. **linux-arm64 skips ~2,500 browser tests**, because Google publishes no `chrome-headless-shell`
    for linux-arm64. That is why arm64 looks fast. It is doing less work, not doing work faster.
 
@@ -113,35 +115,55 @@ across all 69 suites. Browser launched gives the hang; browser never launched gi
 `SelectorIntegrationTest`, `BrowserHistoryTest`). The 26 suites with no gap are the pure-unit ones
 that never launch one (`CdpTypesTest`, `SelectorTest`, `KeyTest`, `PercentEncodeTest`).
 
-### The matching code
+### The exact cause: kyo-test's leak-check idle budget, spent once per suite
 
-`kyo-browser/shared/src/main/scala/kyo/Browser.scala:4037` sets the default `closeGrace = 30.seconds`,
-and `kyo-browser/shared/src/main/scala/kyo/internal/CdpBackend.scala:172` releases the backend with it:
-
-```scala
-Scope.acquireRelease(initUnscoped(wsUrl, launchCfg))(_.close(launchCfg.closeGrace))
-```
-
-`close` is not a sleep. It races the orderly path against the grace and only force-closes on timeout:
+`kyo-test/runner/jvm/.../SbtRunner.scala:138` runs the leak check at the sbt `done()` boundary with a
+30-second ceiling:
 
 ```scala
-private[kyo] def close(gracePeriod: Duration)(using Frame): Unit < Async =
-    if gracePeriod == Duration.Zero then closeNow
-    else
-        Abort.run[Timeout](Async.timeout(gracePeriod)(closeOrderly))
-            .map {
-                case Result.Success(_)          => Kyo.unit
-                case Result.Failure(_: Timeout) => closeNow
-                ...
+// Both budgets are ceilings that a healthy fork never spends: awaitSchedulerIdle returns as soon
+// as the scheduler has been idle for one settle window ...
+// The cost is paid only by a fork that already looks wrong ...
+idleBudgetNanos = 30_000_000_000L,
+settleNanos     =    500_000_000L,
 ```
 
-So reaching 30s means `closeOrderly` (`awaitDrain`, then endpoint close, then the dialog drainer)
-never completes on the JVM. The timeout is the symptom; the hang in `closeOrderly` is the defect.
-`kyo-pod` shows the same shape with its own 30s budgets
-(`Container.scala:620`, `Container.scala:2101`), which is why it also appears in the gap table.
+`LeakCheck.awaitSchedulerIdle` polls until the scheduler has been idle for one 500ms settle window,
+or until the 30s budget runs out. 30s + 0.5s settle, plus the next fork's start, is the 31.5s measured.
 
-Worth fixing regardless of which resource hangs: a teardown that always needs a 30s timeout to
-unblock is costing roughly 27% of every JVM CI row.
+Three facts turn that from a candidate into the cause:
+
+1. **It runs once per suite, not once per module.** `build.sbt:2549` (kyo-browser) and `build.sbt:2670`
+   (kyo-ui) give every test class its own `Tests.SubProcess` fork, so sbt's `done()` boundary, and
+   therefore this budget, is reached once per suite. That is exactly the granularity of the gaps.
+2. **It is JVM-only.** `LeakCheck` exists solely under `kyo-test/runner/jvm`; `runner/js`,
+   `runner/native` and `runner/shared` have no equivalent. That is why the JS and Wasm rows record
+   **zero** such gaps while running the same browser suites.
+3. **The budget is only spent when the scheduler never goes idle**, which is guaranteed here by
+   design: `SharedChrome` (`kyo-browser/.../internal/SharedChrome.scala`) parks a detached fiber on
+   `Async.never` to hold Chrome alive for the whole JVM, and the CDP connection and the per-suite
+   `HttpServer` keep their pumps running. A fork that has started Chrome can therefore never satisfy
+   `awaitSchedulerIdle`, so it always pays the full ceiling. A fork that started nothing satisfies it
+   at once, which is precisely the arm64 `kyo-browser` control above (0 gaps, everything cancelled).
+
+The code comment says this budget is "a ceiling that a healthy fork never spends". The measurement
+says it is spent 172 times per run. The two are reconciled by the JVM-lifetime `SharedChrome`: these
+forks are never "idle" by construction, so the ceiling is the normal path rather than the exception.
+
+Two other 30s budgets on the same teardown path were checked and ruled out:
+`BrowserLauncher.removeTmpDir` (its `Schedule.fixed(200.millis).maxDuration(30.seconds)` logs a
+warning on exhaustion, and no `removeTmpDir` warning appears in any job log) and `Command.spawn`'s
+scope release (it calls `destroyForcibly()` with no grace).
+
+Fix directions, in rough order of payoff:
+
+- Make the leak check's idle wait aware of the intentionally long-lived `SharedChrome` fiber, so a
+  fork holding it is not treated as busy. This removes the cost without weakening the check.
+- Failing that, let a suite opt out of the scheduler-idle wait the way `UITest` already opts out of
+  `leakCheckSockets` and `leakCheckFileDescriptors`; today those two flags do not cover this budget.
+- Reconsider the per-suite fork for kyo-ui and kyo-browser. `build.sbt:2551` budgets it at "~3 minutes
+  of additional Chrome startup"; the measured cost is roughly 50 minutes of teardown per run, because
+  the 30s ceiling is multiplied by the suite count.
 
 ## Cause 2: linux-arm64 skips the browser suite (not a bug, but it hides work)
 
@@ -210,9 +232,10 @@ phase. Across the whole test phase, 64% of the wall clock on linux-x64/JVM is no
 
 ## Suggested order of work
 
-1. Fix the `closeOrderly` hang in the JVM CDP teardown (`CdpBackend.close`). Largest single win,
-   about 27% of every JVM row, and it is a real defect rather than a tuning knob.
-2. Do the same for the `kyo-pod` 30s budgets, which show the same signature.
+1. Stop spending `SbtRunner.scala:138`'s 30s idle budget once per suite (see the fix directions
+   above). Largest single win, about 27% of every JVM row.
+2. `kyo-pod` shows the same per-suite signature and is covered by the same fix, since it forks per
+   runtime and keeps container-backend pumps alive.
 3. Decide what linux-arm64 should do about the browser suite. Today it silently skips ~2,500 tests.
    Installing Chromium from the distro (the cancellation message already suggests it) would make the
    pole meaningful, at the cost of making it as slow as x64 until item 1 lands.
