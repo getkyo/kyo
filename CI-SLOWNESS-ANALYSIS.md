@@ -6,7 +6,7 @@ timestamps `ci-logs.sh` strips. All numbers below are reproducible with `scripts
 
 ## Answer first
 
-Two separate things make a job long, and only one of them is a bug.
+Three separate things, and two of them are bugs.
 
 1. **kyo-test's 30-second leak-check idle budget is spent in full once per test suite on the JVM
    rows**, 107 times in the slowest job. It costs 56.5 min of the 3h27m linux-x64/JVM job and
@@ -16,9 +16,13 @@ Two separate things make a job long, and only one of them is a bug.
    scheduler from ever going idle.
 2. **linux-arm64 skips ~2,500 browser tests**, because Google publishes no `chrome-headless-shell`
    for linux-arm64. That is why arm64 looks fast. It is doing less work, not doing work faster.
+   Not a bug, but it means arm64 is not a green signal for the browser suite.
+3. **windows-x64/JVM hung in kyo-ffi for 1h48m and was killed by the 240-minute timeout.** Eight
+   `getpid` / `time(0)` FFI tests wedged at once and never returned. Unrelated to the other two, and
+   it is what actually failed this run.
 
-Neither cause is CPU contention, memory pressure, a noisy neighbour, or a retry. Those were checked
-and ruled out with the ci-monitor.sh samples embedded in the logs.
+None of the three is CPU contention, memory pressure, a noisy neighbour, or a retry. Those were
+checked and ruled out with the ci-monitor.sh samples embedded in the logs.
 
 ## Job wall clock
 
@@ -32,8 +36,12 @@ and ruled out with the ci-monitor.sh samples embedded in the logs.
 1h48m30s  linux-x64/Wasm
 1h31m07s  linux-arm64/JS
 1h22m48s  linux-arm64/Wasm
-   still running at 3h39m, against a 240 min timeout:  windows-x64/JVM
+
+4h00m18s  windows-x64/JVM      cancelled: hit the 240 min timeout
 ```
+
+windows-x64/JVM did not merely run long. It hung and was killed by the workflow timeout, for a reason
+unrelated to everything else here. See "A second, separate bug" below.
 
 ## The two JVM rows, phase by phase
 
@@ -164,6 +172,41 @@ The code comment says this budget is "a ceiling that a healthy fork never spends
 says it is spent 172 times per run. The two are reconciled by the JVM-lifetime `SharedChrome`: these
 forks are never "idle" by construction, so the ceiling is the normal path rather than the exception.
 
+### Confirmed locally, and it is an ordering bug
+
+The above was inferred from the logs plus the code path. It has since been reproduced directly:
+
+```
+sbt 'kyo-httpJVM/testOnly kyo.HttpRequestPartTest'   ->  31.0s from Results: to [success], tests took 211ms
+sbt 'kyo-dataJVM/testOnly kyo.MaybeTest'             ->   1.3s from Results: to [success], tests took 195ms
+```
+
+The only material difference is whether kyo-net's process-lifetime transport is live on the scheduler.
+That run was on macOS, where `/proc/self/fd` does not exist, so the descriptor block is skipped
+entirely and `idleBudgetNanos` is the only 30s budget that can be spent. The defect reproduces in
+about a minute, so a fix has a fast feedback loop.
+
+That reproduction also sharpened the root cause from "a hang" into something more specific.
+`awaitSchedulerIdle` waits on `loadAvg() == 0`, which a process-lifetime event loop never satisfies,
+and the allowlist that already declares that work intentional is consulted **only after** the budget
+is spent:
+
+```scala
+awaitSchedulerIdle(idleBudgetNanos, settleNanos, pollNanos) match
+    case IdleResult.Idle => ()
+    case IdleResult.Busy(la, frame) =>
+        if checkFibers then
+            val allowlisted = effectiveAllowlist.exists(matchText.contains)
+            if !allowlisted then findings += ...
+```
+
+`LeakCheck.defaultAllowlist` is `Chunk("processSharedTransport")` and exists precisely for these
+carriers. So the fork waits 30 seconds for a fiber it was always going to excuse, then excuses it.
+The verdict is correct; the wait is pure waste. The same file already gets this right for descriptors:
+`awaitFdDrain` filters through the allowlist *before* waiting, so a clean run pays nothing.
+
+The fix and its alternatives are worked through in `LEAKCHECK-FIX-DESIGN.md`.
+
 Two other 30s budgets on the same teardown path were checked and ruled out:
 `BrowserLauncher.removeTmpDir` (its `Schedule.fixed(200.millis).maxDuration(30.seconds)` logs a
 warning on exhaustion, and no `removeTmpDir` warning appears in any job log) and `Command.spawn`'s
@@ -208,6 +251,46 @@ Per module, that is the entire spread between the two jobs:
 Everything else is within tens of seconds. The consequence is that **linux-arm64 is not a green
 signal for the browser suite**: roughly 2,500 tests never run there.
 
+## A second, separate bug: kyo-ffi hangs on windows-x64 and times the row out
+
+This is not slowness and shares no cause with the leak-check budget. It is what actually failed the run.
+
+windows-x64/JVM reached `kyo-ffi` at 14:46:11 and never left it. The block spans 6471s (1h48m) and
+contains 34.4s of reported test time. At 16:34:04 the 240-minute workflow timeout cancelled the job.
+
+The log is not silent during that window: kyo-test's own stuck-test detector prints a steady 8 lines
+per minute with a climbing elapsed counter, the last reading 107m.
+
+```
+15:00:52     [STUCK] getpid > returns the same id across two calls in the same process  (14m)
+15:00:52     [STUCK] getpid > agrees across repeated calls in a tight loop  (14m)
+15:00:52     [STUCK] getpid > returns a positive process id  (14m)
+15:00:52     [STUCK] getpid > stability holds over a longer burst  (14m)
+15:00:52     [STUCK] getpid > all returned pids are positive  (14m)
+15:00:52     [STUCK] time(0) > returns a positive epoch-seconds value  (14m)
+15:00:52     [STUCK] time(0) > two calls are monotonic non-decreasing  (14m)
+15:00:52     [STUCK] time(0) > is close to java.lang.System.currentTimeMillis / 1000  (14m)
+```
+
+Eight kyo-ffi tests, all of them calling libc `getpid` and `time(0)` through the FFI, wedged
+simultaneously and never returned. The forked JVM is doing nothing while it happens
+(`top=[bash:50M/7 ps:12M/1 java:6M/1]`, load 0.23 to 0.51), so it is blocked, not spinning.
+
+An earlier `[STUCK]` also appears at 13:57:02 on kyo-net's
+`UAF-loop: a high-iteration forked-then-close loop does not use-after-free`, preceded by a full thread
+dump, so this row had already stalled once before kyo-ffi.
+
+Two things follow, and they are independent:
+
+1. **kyo-ffi's `getpid` / `time` tests deadlock on windows-x64.** That is the bug to fix. The previous
+   main run's windows-x64/JVM job logged no `[STUCK]` at all and failed differently after 1h08m, so
+   this is either new or intermittent rather than a permanent property of the pole.
+2. **A stuck test cannot consume the whole job budget.** The detector correctly identified the hang
+   within a minute and then reported it once a minute for 107 minutes while nothing killed it. The
+   240-minute workflow timeout was the only backstop, which costs a full runner-hours budget and
+   produces a `cancelled` job rather than a diagnosable failure. A per-suite deadline that fails the
+   suite once `[STUCK]` persists would turn this into a red test in minutes.
+
 ## What was ruled out, with evidence
 
 `ci-monitor.sh` writes a sample into the same log every 20s, so this is measured, not assumed.
@@ -250,11 +333,14 @@ phase. Across the whole test phase, 64% of the wall clock on linux-x64/JVM is no
    above). Largest single win, about 27% of every JVM row.
 2. `kyo-pod` shows the same per-suite signature and is covered by the same fix, since it forks per
    runtime and keeps container-backend pumps alive.
-3. Decide what linux-arm64 should do about the browser suite. Today it silently skips ~2,500 tests.
+3. Fix the kyo-ffi `getpid` / `time` hang on windows-x64, and give a persistent `[STUCK]` a deadline
+   so a wedged suite fails red in minutes instead of burning the 240-minute job budget.
+4. Decide what linux-arm64 should do about the browser suite. Today it silently skips ~2,500 tests.
    Installing Chromium from the distro (the cancellation message already suggests it) would make the
    pole meaningful, at the cost of making it as slow as x64 until item 1 lands.
-4. Separately, `compiling test` costs 42-43 min on every JVM row and is the second largest block.
-   Not covered here.
+5. Separately, `compiling test` costs 42-43 min on every JVM row and is the second largest block.
+   `ci-analyze.py compile` attributes it across ~40 modules with no single dominant one, so it needs
+   a different kind of fix from the three above.
 
 ## Reproducing
 
