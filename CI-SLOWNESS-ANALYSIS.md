@@ -72,6 +72,23 @@ Work produces a spread. A spike at a single value is a timeout being reached. Pe
 
 Concentrated in `kyo-ui` (1707s), `kyo-browser` (1363s), `kyo-pod` (253s) on linux-x64/JVM.
 
+### It is not one bad run
+
+The previous completed main run, [30681003064](https://github.com/getkyo/kyo/actions/runs/30681003064),
+loses the same time in the same places, to within about 1%:
+
+| module | run 30681003064 | run 30699720019 |
+|---|---|---|
+| kyo-ui | 1700s | 1707s |
+| kyo-browser | 1357s | 1363s |
+| kyo-pod | 220s | 253s |
+| kyo-net | 34s | 34s |
+| kyo-http | 33s | 33s |
+| **job total** | **55.7 min (30%)** | **56.5 min (27%)** |
+
+103 of that run's 106 gaps are also 31.5s. This is a deterministic structural cost paid on every
+linux-x64/JVM row, not a flaky or load-dependent effect.
+
 ### It is the browser/CDP teardown path, and it is JVM-only
 
 Three independent controls in this one run point at the same thing.
