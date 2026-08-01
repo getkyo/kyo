@@ -413,6 +413,7 @@ final class Scheduler(
         blockingMonitor.stop()
         admissionRegulator.stop()
         concurrencyRegulator.stop()
+        clock.stop()
         top.close()
     }
 
