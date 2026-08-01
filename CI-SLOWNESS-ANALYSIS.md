@@ -329,10 +329,14 @@ phase. Across the whole test phase, 64% of the wall clock on linux-x64/JVM is no
 
 ## Suggested order of work
 
-1. Stop spending `SbtRunner.scala:138`'s 30s idle budget once per suite (see the fix directions
-   above). Largest single win, about 27% of every JVM row.
-2. `kyo-pod` shows the same per-suite signature and is covered by the same fix, since it forks per
-   runtime and keeps container-backend pumps alive.
+1. ~~Stop spending `SbtRunner.scala:138`'s 30s idle budget once per suite.~~ **Done.** Quiescence now
+   means no unaccounted work, so a fork holding an allowlisted process-lifetime carrier is not charged
+   for it. Measured on the same suite and machine, the `done()` boundary went from 31.2s to 1.7s for
+   kyo-browser and 31.0s to 1.6s for kyo-http, against a 1.3s control. See `LEAKCHECK-FIX-DESIGN.md`.
+   The 30s budget itself was left alone on purpose: shortening it does not weaken the check, it makes
+   it fire sooner and report more false leaks, which is the failure mode the 30s exists to avoid.
+2. `kyo-pod` shows the same per-suite signature and should be covered by the same fix, since it forks
+   per runtime and keeps container-backend pumps alive. Not yet measured locally.
 3. Fix the kyo-ffi `getpid` / `time` hang on windows-x64, and give a persistent `[STUCK]` a deadline
    so a wedged suite fails red in minutes instead of burning the 240-minute job budget.
 4. Decide what linux-arm64 should do about the browser suite. Today it silently skips ~2,500 tests.

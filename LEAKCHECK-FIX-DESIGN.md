@@ -1,5 +1,20 @@
 # Fixing the per-suite cost of kyo-test's end-of-run leak check
 
+> **Status: implemented.** Design A landed as `[kyo-test] leak check: wait on unaccounted work, not on
+> all work`, and the separable strengthening in section 4 landed as `[kyo-test] leak check: allowlist
+> every busy worker, not their concatenation`. Measured on the `done()` boundary, from a suite's last
+> `Results:` line to sbt's `[success]`, same machine and same suite before and after:
+>
+> | | before | after |
+> |---|---|---|
+> | `kyo-browserJVM/testOnly kyo.BrowserMutationTest` | 31.2s | 1.7s |
+> | `kyo-httpJVM/testOnly kyo.HttpRequestPartTest` | 31.0s | 1.6s |
+> | `kyo-netJVM/testOnly kyo.net.BackendEchoTest` | | 1.6s |
+> | `kyo-dataJVM/testOnly kyo.MaybeTest` (holds no transport) | 1.3s | 1.3s |
+>
+> The strengthening surfaced no new leaks in kyo-browser, kyo-http, kyo-net, or the runner's own 84
+> tests. The 30s budget itself was left unchanged, deliberately: see section 3D.
+
 Target defect: every forked test JVM that keeps a process-lifetime event loop alive spends the whole
 30-second `idleBudgetNanos` at its sbt `done()` boundary, then correctly reports nothing. Measured on
 run [30699720019](https://github.com/getkyo/kyo/actions/runs/30699720019): 107 occurrences worth
