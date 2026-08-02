@@ -1,5 +1,13 @@
 # Transport & HTTP Resilience Tests — Working Plan
 
+> **HEADLINE (corrected):** The reported driver wedge NEVER reproduced, on either version, once detection was correct.
+> With a correct detector (`"driver closed"`) + a hard post-load liveness check, RC5+86 and RC5+90 both show 0 real
+> driver-closes and 20/20 liveness under the reporter's exact real-thread harness. Every earlier "reproduced" number
+> was a broken detector counting normal per-connection closes (an RST'd read / cancelled connect during churn renders as
+> `"NioIoDriver ... is closed"` because the resource is the driver label). The R10 driver fix was reverted (pristine
+> driver at HEAD). Still true and valuable: the two resilience suites (green + leak-free, all backends, macOS + podman)
+> and the detector fix. See newest log entries.
+
 Living doc for the resilience-test campaign. Kept in sync with the todo list. Status legend: `[ ]` todo, `[~]` in progress, `[x]` done, `[gated]` blocked on explicit user go-ahead.
 
 ## Goal
@@ -93,6 +101,12 @@ Both suites: every scenario ends with a co-tenant liveness probe asserting the s
 - File-naming: `TransportResilienceTest` shares the `Transport` prefix with `Transport.scala`; `HttpServerResilienceTest` shares `HttpServer` with `HttpServer.scala` — both satisfy the prefix rule as aspect tests.
 
 ## Log (newest first)
+- **MAJOR CORRECTION: the driver wedge does NOT reproduce on current code, and every prior "reproduced" number was a FALSE POSITIVE from a broken detector.** The detector matched `"is closed" + "Driver"`, but every per-connection `Closed` renders as `"<driver-label> ... is closed"` (the resource IS the driver label), so it counted routine per-connection closes (RST'd reads, cancelled connects) as driver wedges. Corrected to match the whole-driver teardown detail `"driver closed"`. Verified two ways:
+  - In-suite (`reproduce (nio)`, pristine driver): hits 5614 -> 0, PASSES. Fiber tests never wedged the driver (liveness always passed, which already said so).
+  - scala-cli, current RC5+90, forced nio, reporter's exact real-thread harness + a hard post-load liveness check (20 sequential GETs on a fresh server): OLD-signature=217, REAL `"driver closed"`=0, liveness=20/20. VERDICT: driver HEALTHY, bug did NOT reproduce.
+  - The scala-cli repros used the SAME broken detector (`repro.scala:97`), so the earlier matrix ("+90 nio 265/3200", etc.) was per-connection closes, not wedges.
+- **Consequences:** (1) The R10 driver fix was chasing a phantom; reverted, driver pristine. (2) The `reproduce (nio)` test is a misnomer (it reproduces nothing) - it is now a resilience assertion that passes; rename/reframe. (3) OPEN: does the reporter's snapshot +86 genuinely wedge (a real bug since FIXED between +86 and +90) or was it also mis-detected? Running repro-verify against +86 to settle it.
+
 - **LEAK VERDICT (verified on podman, not assumed): the 1200-fd leak was TEST HYGIENE, not a driver bug.** With R3b/R4 closing their connections on the timeout path, the transport suite passes podman's strict leak check clean: 24 passed / 0 failed / 8 cancelled on nio+epoll+io_uring, `[success]`, no LeakCheck$Detected. The earlier skip-close run failed the same check with 1200 leaked sockets. So closing the sockets eliminates the leak: it was the tests not closing, not cancellation stranding driver resources. The `close-on-timeout`/`drain` edits are correct hygiene, NOT work-arounds (my earlier label was wrong); they stay. The drain LOOP is fine (no spin); the earlier kqueue timeouts were parallel-scenario interference, fixed by `sequential`.
 - Net: transport suite green + leak-free on podman (all 3 Linux drivers). The single real bug is the driver wedge, reproduced by the enabled `reproduce (nio)` HTTP test.
 
