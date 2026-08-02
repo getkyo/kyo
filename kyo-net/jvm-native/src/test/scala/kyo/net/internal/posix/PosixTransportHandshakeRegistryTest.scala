@@ -36,7 +36,7 @@ class PosixTransportHandshakeRegistryTest extends Test:
 
         "every settled accept handshake leaves the registry, including one whose deadline fires during registration" in {
             PosixTestSockets.assumePoller()
-            if !TlsProviderPlatform.registered.exists(_.isAvailable) then cancel("no TLS provider available on this backend")
+            if !TlsProviderPlatform.registered.exists(_.probe.isAvailable) then cancel("no TLS provider available on this backend")
             given Frame = Frame.internal
             val backend = PollerBackend.default()
             val driver  = TestDrivers.forBackend(backend, backend.create(), sock)

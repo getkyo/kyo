@@ -20,6 +20,7 @@ import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
 import kyo.net.NetUnixConnectTimeoutException
+import kyo.net.TransportCapabilities
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.scalajs.js
@@ -51,13 +52,13 @@ final private[kyo] class JsTransport private (
     /** JS terminates TLS with Node's `tls` module, so it serves only the "node" implementation. A connection pinning any other
       * [[NetTlsConfig.tlsProvider]] fails closed (see `connect(tls)`/`listen(tls)`/`upgradeToTls`). The cross-backend test matrix reads this to
       * skip non-node cells against the node backend.
+      *
+      * Node implements the local domain with named pipes on Windows: a filesystem path handed to `server.listen` or `net.createConnection`
+      * fails EACCES there (only `\\.\pipe\` names bind), so AF_UNIX sockets exist for this transport only off Windows. The host check is read
+      * at construction; the OS does not change under a running process.
       */
-    override private[net] def supportedTlsProviders: Set[String] = Set("node")
-
-    /** Node implements the local domain with named pipes on Windows: a filesystem path handed to `server.listen` or `net.createConnection`
-      * fails EACCES there (only `\\.\pipe\` names bind), so AF_UNIX sockets exist for this transport only off Windows.
-      */
-    override private[kyo] def supportsUnixSockets: Boolean = !kyo.internal.Platform.isWindows
+    override private[net] val capabilities: TransportCapabilities =
+        TransportCapabilities(Set("node"), unixSockets = !kyo.internal.Platform.isWindows)
 
     /** The fail-closed explanation for a [[NetTlsConfig.tlsProvider]] pin other than "node", shared by the three TLS entry points so all reject a
       * non-node pin identically. Carried as the cause of a [[NetTlsHandshakeException]].
@@ -1129,10 +1130,11 @@ private[kyo] object JsTransport:
       */
     final private[internal] case class AcceptHandshakeTracking(discharge: () => Unit, inFlightCount: () => Int)
     def init(poolSize: Int = 1)(using AllowUnsafe, Frame): JsTransport =
-        // Obtain each driver through the capability-probed registry rather than constructing JsIoDriver
-        // directly. The JS registry holds only NodeBackend, so the selected driver is the same JsIoDriver used
-        // before the registry existed; -Dkyo.net.backend can force/observe the selection.
-        val drivers = Array.fill[IoDriver[JsHandle]](poolSize)(kyo.net.internal.backend.IoBackendPlatform.driver())
+        // This is NodeBackend's own transport, so it builds NodeBackend's `JsIoDriver` directly. The registry is now
+        // heterogeneous (NodeBackend over `JsHandle` plus the koffi posix backends over `PosixHandle`), so a driver
+        // obtained through selection could be a posix driver; each backend builds its OWN transport via `Entry.build`,
+        // and `NodeBackend.build` delegates here.
+        val drivers = Array.fill[IoDriver[JsHandle]](poolSize)(kyo.net.internal.backend.NodeBackend.createDriver())
         val pool    = IoDriverPool.init(drivers)
         pool.start()
         new JsTransport(pool)

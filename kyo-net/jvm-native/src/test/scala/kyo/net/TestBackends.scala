@@ -6,15 +6,15 @@ import kyo.net.internal.backend.IoBackendPlatform
 /** The set of I/O backends the shared test harness fans every scenario over, exposed in a platform-uniform shape so the harness in
   * `kyo.net.Test` never names a platform's concrete registry type.
   *
-  * The posix platforms (JVM and Native) drive their backends through `IoBackendPlatform.registered`, a `Seq` of `Entry{name, priority,
-  * isAvailable, build(config): Transport}`. JVM registers io_uring, epoll, kqueue, and the always-available NIO floor; Native registers
-  * io_uring, epoll, and kqueue (no NIO floor). Both registries expose the identical `Entry` shape, so this one shim serves both via the
-  * `jvm-native` shared test source set; only the JS shim differs, because Node's registry holds a `Backend{name, isAvailable, createDriver}`
-  * rather than an `Entry` with a transport-building thunk.
+  * The posix platforms (JVM and Native) drive their backends through `IoBackendPlatform.registered`, a `Seq` of registry entries carrying the
+  * shared capability identity (`name` / `priority` / `probe`) plus `build(): Transport`. JVM registers io_uring, epoll, kqueue, and the
+  * always-available NIO floor; Native registers io_uring, epoll, and kqueue (no NIO floor). Both registries expose the identical entry shape,
+  * so this one shim serves both via the `jvm-native` shared test source set; only the JS shim differs, because Node's registry holds a
+  * backend that hands back an `IoDriver` rather than an entry with a transport-building thunk.
   *
-  * Each [[Entry]] mirrors the real registry's own availability probe and transport construction: `build` invokes the registry entry's
-  * `build`, which runs the driver-start-plus-`PosixTransport.init` (or `NioTransport.init`) sequence the posix tests use for a real
-  * round-trip. The harness builds a transport only for an available backend, so an unavailable entry never constructs a driver.
+  * Each [[Entry]] mirrors the real registry's own capability probe and transport construction: `build` invokes the registry entry's `build`,
+  * which runs the driver-start-plus-`PosixTransport.init` (or `NioTransport.init`) sequence the posix tests use for a real round-trip. The
+  * harness builds a transport only for an available backend, so an unavailable entry never constructs a driver.
   */
 object TestBackends:
 
@@ -67,7 +67,7 @@ object TestBackends:
         IoBackendPlatform.registered.filter(entry => only.forall(_ == entry.name)).map { entry =>
             Entry(
                 name = entry.name,
-                isAvailable = entry.isAvailable,
+                isAvailable = entry.probe.isAvailable,
                 make = frame => entry.build()(using summon[AllowUnsafe], frame)
             )
         }

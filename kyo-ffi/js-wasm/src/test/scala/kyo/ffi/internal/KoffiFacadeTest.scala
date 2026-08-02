@@ -4,21 +4,23 @@ import kyo.ffi.FfiLoadError
 import kyo.ffi.Test
 import scala.scalajs.js as sjs
 
-/** Structural shape tests for [[KoffiFacade]] + behavioural tests for [[KoffiAbiProbe]].
+/** Structural shape tests for [[KoffiFacade]], the load-time degrade contract, and behavioural tests for [[KoffiAbiProbe]].
   *
-  * The koffi npm package is not installed in the test environment; the Scala.js linker refuses to include any reachable call that
-  * transitively imports the `koffi` module. For [[KoffiFacade]] itself the spec therefore exercises only what can be validated without
-  * linking into `Koffi`:
+  * The koffi npm package is not installed in this test environment. koffi is resolved DYNAMICALLY on first use (see [[Koffi]]), NOT through a
+  * static `@JSImport`, so a reachable call into the facade LINKS fine and instead fails at first use with a catchable
+  * [[FfiLoadError.LibraryNotFound]]. That is the property the "degrade contract" leaf pins: a missing koffi is the catchable error kyo-net's
+  * `CapabilityProbe` classifies into a Node-floor demotion, rather than the whole-bundle `Cannot find module 'koffi'` load crash a static
+  * import would produce. The structural leaves additionally exercise:
   *
   *   - [[KoffiFn]] is a usable case class (fields + equality).
   *   - The types on [[KoffiFacade]] are declared (`classOf[KoffiFacade.OutHolder]` resolves; [[KoffiFn]] is a public case class).
   *
-  * Runtime semantics, `outInt → decode`, `register → invoke → unregister`, `errno`, etc., are validated in scripted integration
-  * tests with a real Node + koffi install. The Scala method signatures themselves are compile-time enforced at every call site in the
-  * generated emitter output (see `JsEmitterSpec`).
+  * Runtime call semantics, `outInt → decode`, `register → invoke → unregister`, `errno`, etc., are validated in scripted integration tests
+  * with a real Node + koffi install. The Scala method signatures themselves are compile-time enforced at every call site in the generated
+  * emitter output (see `JsEmitterSpec`).
   *
-  * The [[KoffiAbiProbe]] suite drives [[KoffiAbiProbe.probe]] directly with a `sjs.Dynamic.literal` stand-in for koffi. `probe` never calls
-  * back into the real `Koffi` object, so these tests run without a koffi install.
+  * The [[KoffiAbiProbe]] suite drives [[KoffiAbiProbe.probe]] directly with a `sjs.Dynamic.literal` stand-in for koffi, so those tests never
+  * resolve the real koffi module.
   */
 class KoffiFacadeTest extends Test:
 
@@ -74,6 +76,20 @@ class KoffiFacadeTest extends Test:
             val _tuple: (String, String, String, Seq[sjs.Any]) =
                 (_scalaName, _cSymbol, _result, _args)
             assert(_tuple._1 == "n")
+        }
+    }
+
+    "KoffiFacade load degrade contract" - {
+        "raises a catchable LibraryNotFound (not a bundle-load crash) when koffi is not installed" in {
+            // koffi is absent in the kyo-ffi test env. Because koffi is resolved dynamically (not a static @JSImport), this call LINKS and
+            // fails at first use with FfiLoadError.LibraryNotFound(libraryId="koffi"), the error kyo-net's CapabilityProbe classifies into a
+            // Node-floor degrade. Before the dynamic-load fix, merely linking this call crashed the whole test bundle with
+            // `Cannot find module 'koffi'` at load. That this test module loads AT ALL is half the regression guard; the assertion is the rest.
+            KoffiAbiProbe.resetForTest()
+            val ex = intercept[FfiLoadError.LibraryNotFound] {
+                KoffiFacade.load(null, Seq.empty[KoffiFn])
+            }
+            assert(ex.libraryId == "koffi")
         }
     }
 

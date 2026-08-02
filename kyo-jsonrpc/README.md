@@ -307,7 +307,7 @@ val uds: Unit < (Async & Scope & Abort[Throwable]) =
     }
 ```
 
-> **Note:** `unixDomain` works on every platform kyo-net targets: JVM (the posix io_uring/epoll/kqueue backend, or the NIO floor), Native (posix), and JS/Wasm (Node's `net` module). On JS/Wasm it requires a Node.js runtime; a browser has no sockets.
+> **Note:** `unixDomain` works on every platform kyo-net targets: JVM (the posix io_uring/epoll/kqueue backend, or the NIO floor), Native (posix), and JS/Wasm (Node's `net` module). On JS/Wasm it requires a Node.js runtime; a browser has no sockets. On the JVM the accelerated posix backend ships in per-platform `kyo-net` classifier jars and degrades to the NIO floor when they are absent; see [kyo-net: Native transport distribution (JVM)](../kyo-net/README.md#native-transport-distribution-jvm).
 
 ### Content-length stdio
 

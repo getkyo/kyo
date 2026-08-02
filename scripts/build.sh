@@ -290,7 +290,7 @@ run_in_container() {
 $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
-    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh \"linux-\$(uname -m)\"; fi \
+    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh; fi \
     && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh \"linux-\$(uname -m)\"; fi
 if $inner; then __rc=0; else __rc=\$?; fi
 if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi

@@ -39,6 +39,8 @@ Kyo's HTTP/1.1 client and server module. Both client and server share a single A
 | JS | Node.js [`net`](https://nodejs.org/api/net.html) and [`tls`](https://nodejs.org/api/tls.html) |
 | Native | Direct [`epoll`](https://man7.org/linux/man-pages/man7/epoll.7.html) (Linux) and [`kqueue`](https://www.freebsd.org/cgi/man.cgi?kqueue) (macOS) |
 
+> On the JVM the NIO row is the always-available floor. The accelerated native transport (io_uring/epoll/kqueue with BoringSSL TLS) ships in per-platform `kyo-net` classifier jars; add the classifiers for your host to opt in, and kyo-http degrades to the NIO floor when they are absent. See [kyo-net: Native transport distribution (JVM)](../kyo-net/README.md#native-transport-distribution-jvm).
+
 The library handles JSON, URL-encoded forms, multipart, text, and binary body formats. JSON uses `Schema` codecs, forms use `HttpFormCodec`, and multipart bodies use `HttpRequest.Part`. It supports streaming via SSE and NDJSON, includes composable middleware (filters), and supports OpenAPI in both directions: generating specs from routes and generating typed routes from specs at compile time. On the client side, it manages connection pooling, retries, and redirect following.
 
 ## Getting Started

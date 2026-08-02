@@ -72,7 +72,8 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                     case Absent => ()
             else
                 // The @Ffi.blocking read fiber is genuinely pending (it did not inline-complete): register onComplete to deliver the
-                // result when the blocking read worker completes. This driver operates on the JVM/Native-only PosixHandle, hence its jvm-native home.
+                // result when the blocking read worker completes. On JS/Wasm the read dispatches on a libuv worker, so this pending arm is the
+                // normal path there; on JVM/Native it covers a blocking read that did not resolve inline.
                 readFiber.onComplete {
                     case Result.Success(withError) => deliver(withError.eval)
                     case Result.Failure(e) =>

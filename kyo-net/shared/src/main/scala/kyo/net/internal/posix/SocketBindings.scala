@@ -118,6 +118,16 @@ private[net] trait SocketBindings extends Ffi:
       */
     def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int]
 
+    /** `int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)`, bound NON-blocking: returns the result directly rather than a
+      * `Fiber.Unsafe`. A connect on a fd set `O_NONBLOCK` never blocks: it returns 0 (an inline loopback completion), or -1 with `EINPROGRESS`
+      * while the handshake proceeds, or -1 with an immediate error (`ENOENT` for a missing Unix path, `ECONNREFUSED` for a refused peer). The
+      * readiness-connect path must inspect that inline result to distinguish the three, so JS uses this overload: the `@Ffi.blocking` `connect`
+      * dispatches on a libuv worker and is only resolvable asynchronously, so an immediate-error connect (whose fd never becomes writable) would
+      * strand on the readiness wait until the connect deadline instead of failing fast with its errno. Runs the same `connect` symbol as a plain
+      * synchronous downcall on every backend. Used only on a non-blocking fd.
+      */
+    def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int]
+
     /** `ssize_t read(int fd, void* buf, size_t count)`. The fd-generic read used by the stdio `BlockingReaderDriver` fallback
       * where the read end may be a regular file rather than a socket. Returns bytes read, 0 on EOF, -1 with `errno`. Blocking-annotated: the
       * result is a `Fiber.Unsafe` the caller must await.
@@ -134,7 +144,8 @@ end SocketBindings
 private[net] object SocketBindings extends Ffi.Config(
         library = "c",
         // `sendNow` is the non-blocking synchronous overload of `send`: it binds the same libc `send` symbol (the derived `send_now` is not a
-        // real symbol), differing only in that it omits `@Ffi.blocking` so the count comes back inline rather than via a fiber.
-        symbols = Map(("sendNow", "send"), ("recvNow", "recv"), ("acceptNow", "accept")),
+        // real symbol), differing only in that it omits `@Ffi.blocking` so the count comes back inline rather than via a fiber. `connectNow`
+        // is the same idea over `connect`, so an immediate-error connect surfaces its errno inline on JS instead of stranding on a libuv worker.
+        symbols = Map(("sendNow", "send"), ("recvNow", "recv"), ("acceptNow", "accept"), ("connectNow", "connect")),
         headers = Chunk("sys/socket.h", "netinet/in.h", "sys/un.h", "unistd.h", "sys/stat.h")
     )

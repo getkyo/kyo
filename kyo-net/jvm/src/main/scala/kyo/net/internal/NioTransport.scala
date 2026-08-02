@@ -34,6 +34,7 @@ import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
 import kyo.net.NetUnixConnectTimeoutException
+import kyo.net.TransportCapabilities
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
@@ -150,12 +151,11 @@ final private[kyo] class NioTransport private (
 
     /** The NIO floor terminates TLS inline with the JDK SSLEngine, so it can serve only the "jdk" implementation. A connection pinning any
       * other [[NetTlsConfig.tlsProvider]] fails closed (see `startTlsHandshake`). The cross-backend test matrix reads this to skip non-jdk
-      * cells against the NIO backend.
+      * cells against the NIO backend. It binds real AF_UNIX sockets through `UnixDomainSocketAddress` (JEP 380) on every host the JVM runs
+      * on, Windows included.
       */
-    override private[net] def supportedTlsProviders: Set[String] = Set("jdk")
-
-    /** NIO binds real AF_UNIX sockets through `UnixDomainSocketAddress` (JEP 380) on every host the JVM runs on, Windows included. */
-    override private[kyo] def supportsUnixSockets: Boolean = true
+    override private[net] val capabilities: TransportCapabilities =
+        TransportCapabilities(Set("jdk"), unixSockets = true)
 
     /** Claim flag for the process-global stdio connection, so stdio is claimed at most once (fds 0/1 must never be double-owned). Mirrors the
       * posix and Node transports' claim.

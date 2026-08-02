@@ -223,8 +223,8 @@ val recovered: Maybe[Connection] < Async =
 
 The I/O backend and the TLS provider are chosen at startup, highest-priority available first, and a `-D` property forces a specific one:
 
-- `-Dkyo.net.backend` selects the I/O backend: `io_uring` (Linux), `epoll` / `kqueue`, `nio` (the JVM floor), `node` (JS).
-- `-Dkyo.net.tls` selects the TLS provider: `boringssl` (the primary), `openssl` (the Native system fallback), `jdk` (the JVM floor).
+- `-Dkyo.net.backend` selects the I/O backend: `io_uring` (Linux), `epoll` / `kqueue`, `nio` (the JVM floor), `node` (the JS/Wasm floor). On JS and Wasm the posix backends (`io_uring` / `epoll` / `kqueue`) run as well, loaded through koffi on Node, so a Node host drives the same completion-based readiness transport the JVM and Native do; `node` is the floor when no posix native is available.
+- `-Dkyo.net.tls` selects the TLS provider: `boringssl` (the primary in-process engine on JVM, Native, JS, and Wasm), `openssl` (the Native system fallback), `jdk` (the JVM floor), `node` (Node's own TLS, when the JS/Wasm transport is the `node` floor).
 
 A forced-but-unavailable backend or provider fails closed (`NetBackendUnavailableException` / `NetTlsProviderUnavailableException`) rather than silently falling through to another, so a forced selection is honored or it errors.
 
@@ -250,5 +250,32 @@ def request(host: String, port: Int, payload: Span[Byte]): Maybe[Span[Byte]] < (
 
 ## Platform capability differences
 
+| Platform | I/O backend | In-process TLS | Floor |
+|---|---|---|---|
+| JVM, Linux | io_uring / epoll | BoringSSL | NIO + JDK TLS |
+| JVM, macOS | kqueue | BoringSSL | NIO + JDK TLS |
+| JVM, Windows | (none) | (none) | NIO + JDK TLS |
+| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | BoringSSL / system OpenSSL | link-time |
+| JS / Wasm, Node | koffi io_uring / epoll / kqueue | koffi BoringSSL | Node transport + Node TLS |
+
+The native I/O backend and BoringSSL are the primary on every posix platform; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
+
 - `stdio` is supported on every shipped transport: the posix transport, the pure-JDK NIO floor, and Node. It aborts `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time); `NetStdioUnsupportedException` remains the contract for a transport with no byte stream to fds 0 and 1, such as an in-memory transport.
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.
+- On JS and Wasm the transport runs on Node. The koffi-loaded posix transport (kqueue on macOS, epoll/io_uring on Linux) and its in-process BoringSSL TLS run through Node's libuv worker pool, so a Node host gets the native readiness transport; where the posix native is not staged, the `node` floor uses Node's own event loop and TLS. Native compiles the C shims at link time. Windows uses the NIO floor and JDK TLS only, with no native transport and no native TLS.
+- The transport degrades rather than failing: if the native I/O backend or the native TLS engine is unavailable, selection falls to the next available (`epoll`/`kqueue` to `nio`; `boringssl` to `jdk` or `openssl`), and a plain JVM jar with no bundled natives runs on the NIO floor with JDK TLS. A `-D`-forced selection is the exception: it fails closed instead of degrading.
+
+## Native transport distribution (JVM)
+
+The JVM `kyo-net` jar is pure-JVM NIO with JDK TLS and carries no native libraries. The native completion transport (`io_uring`/`epoll`/`kqueue`) and the vendored BoringSSL TLS engine ship in per-platform classifier jars, following the netty distribution model: a build adds the classifier for its host to opt into the native transport, and a build without those dependencies runs on the NIO floor.
+
+Two classifier families ship per `<os>-<arch>` (`linux-x86_64`, `linux-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `darwin-x86_64`, `darwin-aarch64`; there is no Windows native): the transport-native family (classifier `<os>-<arch>`, carrying the posix readiness native) and the vendored-BoringSSL family (classifier `<os>-<arch>-boringssl`). An `all-natives` classifier aggregates every platform for a fat build.
+
+```
+// add the native transport + BoringSSL TLS for your host's <os>-<arch> (e.g. linux-x86_64, darwin-aarch64):
+libraryDependencies += "io.getkyo" %% "kyo-net" % kyoVersion classifier "linux-x86_64"
+libraryDependencies += "io.getkyo" %% "kyo-net" % kyoVersion classifier "linux-x86_64-boringssl"
+// under the kyo FFI plugin, `ffiHostOsArch` resolves the host <os>-<arch> tag automatically.
+```
+
+Migration: a consumer that upgrades to the classifier distribution without adding these classifier dependencies keeps compiling and running, but silently drops from the native transport to the NIO floor (and from BoringSSL to JDK TLS). Add the two classifier dependencies above to keep the native transport. The startup log line names the selected backend and TLS provider, and the release build's classifier completeness guard refuses to publish a native classifier jar that is missing its native or carries a placeholder stub, so a published classifier always carries a real native.

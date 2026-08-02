@@ -11,7 +11,7 @@ import kyo.ffi.Ffi
   * OpenSSL, and stays distinct from the system-OpenSSL path's `kyo_ossl_*` symbols (the OpenSSL
   * fallback shares one binary on Native, so the prefixes must not collide). This trait binds just
   * the one-call availability probe: it allocates and frees an `SSL_CTX`, which fails only when the
-  * bundled library did not load (missing symbol / absent archive). `BoringSslProvider.isAvailable`
+  * bundled library did not load (missing symbol / absent archive). `BoringSslProvider`'s capability probe
   * and the bundle load test call it to confirm the bundle resolves on JVM (Panama) and
   * Native with no `UnsatisfiedLinkError`.
   *

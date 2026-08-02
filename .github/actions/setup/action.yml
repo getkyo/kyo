@@ -81,10 +81,11 @@ runs:
       run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
 
     # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
-    # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
-    # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
+    # linked so the shipped artifact has no runtime liburing dependency. Every platform target compiles the
+    # shim on Linux (JVM/JS/Wasm via the kyo-ffi plugin's cc, Native via the Scala Native linker), so this
+    # installs unconditionally on Linux; io_uring is Linux-only, so the shim is header-gated to stubs elsewhere.
     - name: Install liburing (Linux)
-      if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
+      if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: bash scripts/apt-install.sh liburing-dev
 
@@ -233,17 +234,30 @@ runs:
     # Build and stage the vendored BoringSSL static archives (libssl.a, libcrypto.a) for the runner's
     # os-arch, used by the kyo-net TLS data plane. build-boringssl.sh clones BoringSSL at the pinned commit
     # and builds via CMake plus Go (pre-installed on GitHub-hosted runners; installed defensively if
-    # absent). The staged tree is gitignored, so it is produced on every JVM/Native runner; without it the
-    # kyonet_boringssl shim links a stub and the BoringSSL TLS tests cancel.
+    # absent). The staged tree is gitignored, so it is produced on every platform runner (JVM/Native and,
+    # for the koffi-loaded TLS engine, JS/Wasm all compile the kyonet_boringssl shim); without it the
+    # kyonet_boringssl shim links a stub and the BoringSSL TLS tests cancel. Runs unconditionally: the
+    # os-arch case below skips Windows (no BoringSSL native) and hard-errors on an unmapped os.
     - name: Prepare BoringSSL
-      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' }}
       shell: bash
       run: |
+        # Map the runner os id to the kyo-net BoringSSL os-arch. Windows ships no BoringSSL native
+        # (NIO + JDK TLS by ruling), so it is an explicit skip. Any OTHER unmapped os is a hard error,
+        # never a silent skip: a bare `exit 0` here would ship the kyonet_boringssl stub and the TLS
+        # tests would cancel with no signal (the P1 hazard-5 silent-stub path).
         case "${{ inputs.os }}" in
-          linux-x64)   OS_ARCH=linux-x86_64 ;;
-          linux-arm64) OS_ARCH=linux-aarch64 ;;
-          macos-arm64) OS_ARCH=darwin-aarch64 ;;
-          *) echo "BoringSSL not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+          linux-x64)        OS_ARCH=linux-x86_64 ;;
+          linux-arm64)      OS_ARCH=linux-aarch64 ;;
+          linux-musl-x64)   OS_ARCH=linux-musl-x86_64 ;;
+          linux-musl-arm64) OS_ARCH=linux-musl-aarch64 ;;
+          macos-arm64)      OS_ARCH=darwin-aarch64 ;;
+          macos-x64)        OS_ARCH=darwin-x86_64 ;;
+          windows-*)        echo "Windows ships no BoringSSL native (NIO + JDK TLS by ruling); skipping." && exit 0 ;;
+          *)
+            echo "Prepare BoringSSL: no os-arch mapping for '${{ inputs.os }}'." >&2
+            echo "Add a mapping above or exclude this leg; refusing to ship a silent BoringSSL stub." >&2
+            exit 1
+            ;;
         esac
         if [[ "${{ inputs.os }}" == linux-* ]]; then
           command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }

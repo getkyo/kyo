@@ -52,6 +52,27 @@ object KyoFfiPlugin extends AutoPlugin {
                 "does not compile but that bindings can still reference. Defaults to common POSIX/Windows libs."
         )
         val ffiTargetPlatform = settingKey[String]("Target platform: 'JVM', 'Native', or 'JS'. Auto-detected.")
+        val ffiTargetOsArch = settingKey[Option[String]](
+            "Target '<os>-<arch>' for the produced natives, e.g. Some(\"darwin-x86_64\") on an arm64 Mac. " +
+                "It names the compiled artifact, the META-INF/native/<os>-<arch>/ directory it is packaged " +
+                "into, and the OS the per-OS link libs and compiler overrides are resolved for. None (the " +
+                "default, or -Dkyo.ffi.targetOsArch) means the build host, so an unset build behaves exactly " +
+                "as a host-only build. Supported: " + CCompiler.supportedOsArchTags.mkString(", ") + ". " +
+                "This setting does NOT make the compiler emit foreign code; pass the toolchain's own cross " +
+                "flags too (e.g. ffiCFlags += \"-arch x86_64\" for darwin-x86_64 on an arm64 Mac)."
+        )
+        val ffiPrebuiltDir = settingKey[Option[File]](
+            "Directory of prebuilt foreign-platform natives to merge into the packaged resources alongside " +
+                "the locally-compiled ones. Each file must follow the compile-output convention " +
+                "lib<id>-<os>-<arch>.<ext> (<id>-<os>-<arch>.dll on Windows) and is staged under ITS OWN " +
+                "<os>-<arch> directory, parsed from that suffix. Every id must be declared in ffiLibraries / " +
+                "ffiLibraryId. None (the default) merges nothing."
+        )
+        val ffiStubLibraries = settingKey[Seq[String]](
+            "Library ids whose declared C sources are a placeholder rather than the real binding (e.g. a TLS " +
+                "shim compiled with no vendored library staged). Recorded as 'stub' in the library-state " +
+                "manifest so a packaging completeness check can tell a placeholder artifact from a real one."
+        )
         val ffiCodegenClasspath = taskKey[Seq[File]](
             "Codegen classpath: kyo-ffi-codegen plus its Scala 3 toolchain. Defaults to resolving kyo-ffi-codegen from the project's resolvers; the in-repo integration test overrides it with the codegen project's classpath."
         )
@@ -89,6 +110,24 @@ object KyoFfiPlugin extends AutoPlugin {
           * for `ProcessBuilder`. Useful in tests and for debugging build issues.
           */
         val ffiDumpCcCommand = taskKey[Seq[Seq[String]]]("Return the cc command-line that ffiCompile would invoke.")
+
+        /** The build host's `<os>-<arch>` tag, e.g. `darwin-aarch64`, or `linux-musl-x86_64` on a
+          * musl distro. This is the plugin's own host resolver, exposed so a build that has to name
+          * the same platform outside the plugin's tasks (staging a vendored dependency under
+          * `staged/<os>-<arch>/`, pointing a test at a compiled artifact) derives it exactly once,
+          * including the musl probe. Deriving it independently is how a musl leg ends up staging
+          * under `linux-x86_64` while the packaged resources say `linux-musl-x86_64`.
+          */
+        def ffiHostOsArch: String = CCompiler.detectOs() + "-" + CCompiler.detectArch()
+
+        /** The artifact filename `ffiCompile` produces for `libraryId` on `osArch`, e.g.
+          * `ffiArtifactName("kyo_tcp", "linux-musl-x86_64") == "libkyo_tcp-linux-musl-x86_64.so"`.
+          * Same reason as `ffiHostOsArch`: one spelling of the naming convention.
+          */
+        def ffiArtifactName(libraryId: String, osArch: String): String = {
+            val (os, arch) = CCompiler.parseOsArch(osArch)
+            CCompiler.artifactName(libraryId, os, arch)
+        }
 
         /** koffi bootstrap for a Scala.js FFI consumer's TEST classpath: an idempotent `npm install` of
           * koffi, pinned to the range the runtime probe expects, hooked on `Test / compile` so `test`,
@@ -153,6 +192,12 @@ object KyoFfiPlugin extends AutoPlugin {
         ffiStrictBlocking  := false,
         ffiStrictCallbacks := false,
         ffiStrictDiscovery := sys.props.get("kyo.ffi.strictDiscovery").exists(_ == "true"),
+        // Unset means the host: every producer resolves the target through
+        // CCompiler.resolveTargetOsArch, so a build that never sets this behaves exactly as before.
+        // The system property lets a CI matrix leg name its target without a build edit.
+        ffiTargetOsArch  := sys.props.get("kyo.ffi.targetOsArch"),
+        ffiPrebuiltDir   := None,
+        ffiStubLibraries := Nil,
         // Common system libraries that bindings may reference without the plugin
         // producing or packaging an artifact for them. Users can extend this list
         // to whitelist additional system-provided libraries.
@@ -225,6 +270,7 @@ object KyoFfiPlugin extends AutoPlugin {
         ffiGenerate := {
             val log       = streams.value.log
             val out       = (Compile / sourceManaged).value / "kyo-ffi"
+            val genTarget = target.value
             val classesIn = (Compile / classDirectory).value
             val cp        = (Compile / dependencyClasspath).value.map(_.data.getAbsolutePath).toList
             val codegenCp = ffiCodegenClasspath.value.map(_.getAbsolutePath)
@@ -310,6 +356,9 @@ object KyoFfiPlugin extends AutoPlugin {
                             )
                             IO.delete(f)
                         }
+                        // No bindings remain: the persisted trait -> library-id index is stale, drop it so the
+                        // native manifest stops indexing traits that no longer exist.
+                        writeTraitLibraryIndex(genTarget, Nil)
                     }
                     Set.empty[File]
                 } else {
@@ -395,6 +444,11 @@ object KyoFfiPlugin extends AutoPlugin {
                                 IO.delete(f)
                             }
                         }
+                        // Persist the reflection-free binding-trait -> library-id index the native manifest
+                        // generator reads. The codegen knows each binding's `Ffi.Config.library` here; the manifest
+                        // resource generator runs as a separate task and cannot re-derive it, so it is written to a
+                        // stable file under `target` that survives cache hits (rewritten only on a codegen miss).
+                        writeTraitLibraryIndex(genTarget, generated.traits.map(t => t.fqcn -> t.library))
                         generated.files.map(_.toFile).toSet
                     } catch {
                         case t: Throwable =>
@@ -444,6 +498,8 @@ object KyoFfiPlugin extends AutoPlugin {
             val globalStatic    = ffiStaticLink.value
             val globalIncludes  = ffiIncludes.value
             val cacheDir        = streams.value.cacheDirectory / "kyo-ffi-compile"
+            // The platform the artifacts are FOR: the host unless ffiTargetOsArch names another.
+            val (targetOs, targetArch) = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)
 
             val libsRaw: Seq[FfiLibrary] = {
                 val multi = ffiLibraries.value
@@ -473,12 +529,16 @@ object KyoFfiPlugin extends AutoPlugin {
                     // separately via `ffiNativeLinkingOptions`. So `ffiCompile` produces no artifacts.
                     Nil
                 case _ =>
-                    // Resolve OS-specific link libs once for the building OS so a Linux-only
-                    // system lib (e.g. uring) is omitted from the macOS / Windows command.
-                    val buildOs = CCompiler.detectOs()
+                    // Per-OS link libs and compiler overrides resolve against the TARGET OS (the host
+                    // unless ffiTargetOsArch overrides it), so a Linux-only system lib (e.g. uring) is
+                    // omitted from the macOS / Windows command, and IS included when a build targets
+                    // Linux from elsewhere.
                     libs.zipWithIndex.flatMap { case (lib, idx) =>
                         if (lib.cSources.isEmpty) {
-                            log.info(s"[kyo-ffi-plugin] ffiCompile: no C sources declared for ${lib.id}; skipping.")
+                            // Declared with no C sources: an INTENTIONALLY-ABSENT native, not a failed
+                            // build. The library-state manifest records it as `absent` so a packaging
+                            // completeness check does not read the missing artifact as a broken leg.
+                            log.info(s"[kyo-ffi-plugin] ffiCompile: ${lib.id} declares no C sources (intentionally absent); skipping.")
                             Nil
                         } else {
                             val perLibCacheDir = cacheDir / s"lib-${idx}-${lib.id}"
@@ -486,10 +546,10 @@ object KyoFfiPlugin extends AutoPlugin {
                             // A library may override the global compiler for the OS being built
                             // (e.g. Aeron, which supports Windows only under MSVC); the default empty
                             // map leaves every other library on the global `cc`, unchanged.
-                            val libCc      = lib.compilerFor(buildOs).getOrElse(cc)
+                            val libCc      = lib.compilerFor(targetOs).getOrElse(cc)
                             val flags      = globalFlags ++ lib.cFlags
                             val linkFlags  = globalLinkFlags ++ lib.linkFlags
-                            val linkLibs   = lib.resolvedLinkLibs(buildOs)
+                            val linkLibs   = lib.resolvedLinkLibs(targetOs)
                             val staticLink = lib.staticLink
                             // Derive -I dirs from header file parent directories + explicit
                             // ffiIncludes + the library's vendored includeDirs (e.g. the staged
@@ -498,8 +558,12 @@ object KyoFfiPlugin extends AutoPlugin {
                             val includes   = (globalIncludes ++ headerDirs ++ lib.includeDirs).distinct
                             val libDirs    = lib.libDirs.distinct
 
+                            // `target=` keys the cache on the resolved os/arch: the artifact NAME is
+                            // derived from it, so without it a re-run under a different
+                            // ffiTargetOsArch would hit the cache and hand back the previous
+                            // target's file.
                             val configHash =
-                                s"$libCc|${flags.mkString(",")}|${linkFlags.mkString(",")}|${linkLibs.mkString(",")}|${lib.id}|${includes.map(_.getAbsolutePath).mkString(",")}|libdirs=${libDirs.map(_.getAbsolutePath).mkString(",")}|static=$staticLink"
+                                s"$libCc|${flags.mkString(",")}|${linkFlags.mkString(",")}|${linkLibs.mkString(",")}|${lib.id}|${includes.map(_.getAbsolutePath).mkString(",")}|libdirs=${libDirs.map(_.getAbsolutePath).mkString(",")}|static=$staticLink|target=$targetOs-$targetArch"
                             val configSentinel = perLibCacheDir / "config.hash"
                             IO.write(configSentinel, configHash)
 
@@ -512,6 +576,8 @@ object KyoFfiPlugin extends AutoPlugin {
                                     linkLibs = linkLibs,
                                     sources = lib.cSources,
                                     libraryId = lib.id,
+                                    os = targetOs,
+                                    arch = targetArch,
                                     outputDir = targetDir,
                                     log = log,
                                     includes = includes,
@@ -526,31 +592,22 @@ object KyoFfiPlugin extends AutoPlugin {
             }
         },
 
-        // ffiPackage: explicit task that copies artifacts; delegates to the resource generator path.
-        //
-        // In multi-library mode we need to know which artifact belongs to which library id
-        // (to preserve canonical names like `libalpha.so` and `libbeta.so`). We reconstruct
-        // that mapping from the artifact filename, which embeds `-<libraryId>-<os>-<arch>`.
-        ffiPackage := {
-            val artifacts = ffiCompile.value
-            val resDir    = (Compile / resourceManaged).value / "META-INF" / "native"
-            val platform  = ffiTargetPlatform.value
-            val libs      = ffiLibrariesResolved.value
-            if (artifacts.isEmpty) Nil
-            else Packager.copyForPlatformMulti(platform, groupArtifactsByLibrary(artifacts, libs), resDir)
-        },
+        // ffiPackage: explicit task that copies artifacts; same body as the resource generator below.
+        ffiPackage := ffiPackagedNatives.value,
 
-        // Copy compiled artifacts into the resource tree automatically.
+        // Copy compiled artifacts (and any staged prebuilts) into the resource tree automatically.
         // On Native this is a no-op (ffiCompile returns Nil). On JVM and JS the
         // artifacts land under META-INF/native/{os}-{arch}/ for NativeLoader/koffi.
-        Compile / resourceGenerators += Def.task {
-            val artifacts = ffiCompile.value
-            val resDir    = (Compile / resourceManaged).value / "META-INF" / "native"
-            val platform  = ffiTargetPlatform.value
-            val libs      = ffiLibrariesResolved.value
-            if (artifacts.isEmpty) Seq.empty[File]
-            else Packager.copyForPlatformMulti(platform, groupArtifactsByLibrary(artifacts, libs), resDir)
-        }.taskValue,
+        Compile / resourceGenerators += ffiPackagedNatives.taskValue,
+
+        // JVM/JS only: record what this build packages for each declared library id, so a packaging
+        // completeness check reads a declaration instead of guessing from a file that is not there.
+        Compile / resourceGenerators += ffiLibraryStateManifestGenerator.taskValue,
+
+        // JVM/JS only: emit the native manifest the runtime reads as DATA for the direct-load pre-check --
+        // per library id its bundled `<os>-<arch>` platforms, version and minRuntime, plus a reflection-free
+        // binding-trait -> library-id index. See `ffiNativeManifestGenerator`.
+        Compile / resourceGenerators += ffiNativeManifestGenerator.taskValue,
 
         // Native only: copy each library's C sources into `resourceManaged/scala-native/`.
         // sbt's `copyResources` then folds managed resources into the compile `classDirectory`,
@@ -621,21 +678,16 @@ object KyoFfiPlugin extends AutoPlugin {
                 )
                 topoSortLibraries(raw)
             }
-            val os  = CCompiler.detectOs()
-            val arc = CCompiler.detectArch()
+            // Same target resolution and same artifact naming as ffiCompile, so the dumped command
+            // is the command that would actually run (this used to re-derive the os→ext mapping and
+            // hard-error on linux-musl).
+            val (os, arc) = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)
             libs.map { lib =>
                 val libCc      = lib.compilerFor(os).getOrElse(cc)
                 val libFamily  = CCompiler.detectFamily(libCc)
                 val headerDirs = lib.cHeaders.map(_.getParentFile).distinct
                 val includes   = (globalIncludes ++ headerDirs ++ lib.includeDirs).distinct
-                val ext = os match {
-                    case "linux"   => "so"
-                    case "darwin"  => "dylib"
-                    case "windows" => "dll"
-                    case other     => sys.error(s"Unsupported OS: $other")
-                }
-                val prefix  = if (os == "windows") "" else "lib"
-                val outFile = new File(targetDir, s"$prefix${lib.id}-$os-$arc.$ext")
+                val outFile    = new File(targetDir, CCompiler.artifactName(lib.id, os, arc))
                 CCompiler.buildCommand(
                     cc = libCc,
                     family = libFamily,
@@ -664,7 +716,10 @@ object KyoFfiPlugin extends AutoPlugin {
             val platform = ffiTargetPlatform.value
             if (platform != "Native") Nil
             else {
-                val buildOs = CCompiler.detectOs()
+                // Same target OS ffiCompile resolves its link libs for (the host unless
+                // ffiTargetOsArch overrides it), so the two never disagree about which per-OS libs
+                // a build needs.
+                val buildOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
                 val libs    = ffiLibrariesResolved.value
                 libs.flatMap { lib =>
                     val libDirs = lib.libDirs.distinct
@@ -703,6 +758,116 @@ object KyoFfiPlugin extends AutoPlugin {
     )
 
     // --- helpers (settings/task fragments) --------------------------------------
+
+    /** A prebuilt native staged through `ffiPrebuiltDir`, with the library id and the platform its
+      * own filename declares. Nothing here is derived from the build host.
+      */
+    final private[sbt] case class PrebuiltNative(file: File, libraryId: String, os: String, arch: String)
+
+    /** The prebuilt natives under `dir`, one `PrebuiltNative` per file.
+      *
+      * Hidden files are ignored (a downloaded artifact tree carries `.DS_Store` and friends);
+      * anything else that does not follow the `lib<id>-<os>-<arch>.<ext>` convention is a hard
+      * error, as is a missing `dir`. Skipping an unparseable file would publish a jar quietly
+      * missing the platform whoever set this setting staged, which is the failure this input exists
+      * to make impossible.
+      */
+    private[sbt] def prebuiltNatives(dir: Option[File]): Seq[PrebuiltNative] = dir match {
+        case None => Nil
+        case Some(d) =>
+            if (!d.isDirectory)
+                sys.error(s"[kyo-ffi-plugin] ffiPrebuiltDir is not an existing directory: ${d.getAbsolutePath}")
+            val files = (d ** "*").get.filter(f => f.isFile && !f.getName.startsWith("."))
+            files.map { f =>
+                CCompiler.parseArtifactName(f.getName) match {
+                    case Some((id, os, arch)) => PrebuiltNative(f, id, os, arch)
+                    case None =>
+                        sys.error(
+                            s"[kyo-ffi-plugin] ffiPrebuiltDir: '${f.getName}' does not follow the " +
+                                s"lib<id>-<os>-<arch>.<ext> naming ffiCompile produces, so the platform it is for " +
+                                s"cannot be determined. Rename it (os-arch one of: " +
+                                s"${CCompiler.supportedOsArchTags.mkString(", ")}) or remove it from " +
+                                s"${d.getAbsolutePath}."
+                        )
+                }
+            }
+    }
+
+    /** The locally-compiled artifacts a staged prebuilt overrides: those whose parsed
+      * `(id, os, arch)` a prebuilt also supplies. Under the P3 publish topology the release host both
+      * compiles its own os-arch and downloads every producer's native into `ffiPrebuiltDir`, so its
+      * own os-arch collides; the prebuilt is authoritative (a dedicated producer staged BoringSSL for
+      * that os-arch, the publish host may not), so the colliding local artifact is the one dropped.
+      * An artifact whose name carries no recognized `<os>-<arch>` suffix is never overridden.
+      */
+    private[sbt] def prebuiltOverriddenCompiled(compiled: Seq[File], prebuilt: Seq[PrebuiltNative]): Seq[File] = {
+        val prebuiltKeys = prebuilt.map(p => (p.libraryId, p.os, p.arch)).toSet
+        compiled.filter(f => CCompiler.parseArtifactName(f.getName).exists(prebuiltKeys.contains))
+    }
+
+    /** Stage every native this build packages into the runtime resource layout, and return the
+      * destinations. Shared by `ffiPackage` and the `Compile / resourceGenerators` entry.
+      *
+      * Two sources, each landing under the platform it is actually for:
+      *   - the locally-compiled artifacts, under the resolved build target (`ffiTargetOsArch`,
+      *     defaulting to the host);
+      *   - the prebuilts staged through `ffiPrebuiltDir`, each under the `<os>-<arch>` its own
+      *     filename declares, so a publish host can fold in natives built on other runners.
+      *
+      * A prebuilt naming an undeclared library id fails the build (it would package under a
+      * name no runtime looks up). A prebuilt colliding with a locally-compiled artifact for the
+      * same (id, os, arch) does NOT fail: the prebuilt wins and the local one is dropped (logged).
+      * The P3 publish host both compiles its own os-arch and downloads every producer's native into
+      * `ffiPrebuiltDir`, including its own; the dedicated producer staged BoringSSL for that os-arch
+      * while the publish host may not, so the downloaded prebuilt is the authoritative artifact.
+      */
+    private def ffiPackagedNatives: Def.Initialize[Task[Seq[File]]] = Def.task {
+        val log         = streams.value.log
+        val compiled    = ffiCompile.value
+        val resDir      = (Compile / resourceManaged).value / "META-INF" / "native"
+        val platform    = ffiTargetPlatform.value
+        val libs        = ffiLibrariesResolved.value
+        val prebuiltDir = ffiPrebuiltDir.value
+        val prebuilt    = prebuiltNatives(prebuiltDir)
+
+        val (targetOs, targetArch) = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)
+
+        val declared   = libs.map(_.id).toSet
+        val undeclared = prebuilt.filterNot(p => declared.contains(p.libraryId))
+        if (undeclared.nonEmpty)
+            sys.error(
+                s"[kyo-ffi-plugin] ffiPrebuiltDir stages natives for undeclared library ids: " +
+                    s"${undeclared.map(p => s"${p.file.getName} (id '${p.libraryId}')").mkString(", ")}. " +
+                    s"Declared ids: ${declared.toSeq.sorted.mkString("[", ", ", "]")}. Declare the id (an entry with " +
+                    s"no cSources is enough when only the prebuilt supplies it) or fix the filename."
+            )
+
+        // Prebuilt wins on a collision: drop each locally-compiled artifact whose (id, os, arch) a
+        // prebuilt also supplies, so the staged prebuilt is the one that lands in the resource path.
+        val overridden = prebuiltOverriddenCompiled(compiled, prebuilt)
+        if (overridden.nonEmpty)
+            log.info(
+                s"[kyo-ffi-plugin] ffiPackage: ${overridden.size} locally-compiled native(s) overridden by a staged " +
+                    s"prebuilt for the same (id, os, arch): ${overridden.map(_.getName).sorted.mkString(", ")}."
+            )
+        val compiledKept = compiled.filterNot(overridden.contains)
+
+        val local =
+            if (compiledKept.isEmpty) Seq.empty[File]
+            else Packager.copyForPlatformMulti(platform, groupArtifactsByLibrary(compiledKept, libs), resDir, targetOs, targetArch)
+
+        val staged = prebuilt.groupBy(p => (p.os, p.arch)).toSeq.sortBy(_._1).flatMap {
+            case ((os, arch), group) =>
+                Packager.copyForPlatformMulti(platform, groupArtifactsByLibrary(group.map(_.file), libs), resDir, os, arch)
+        }
+        if (staged.nonEmpty)
+            log.info(
+                s"[kyo-ffi-plugin] ffiPackage: staged ${staged.size} prebuilt native(s) from " +
+                    s"${prebuiltDir.map(_.getAbsolutePath).getOrElse("")} for " +
+                    s"${prebuilt.map(p => s"${p.os}-${p.arch}").distinct.sorted.mkString(", ")}."
+            )
+        local ++ staged
+    }
 
     /** Native-only resource generator: copy each library's C sources into
       * `resourceManaged/scala-native/`. sbt's `copyResources` folds managed resources
@@ -780,26 +945,156 @@ object KyoFfiPlugin extends AutoPlugin {
         val moduleName   = name.value
         if (platform != "Native") Seq.empty[File]
         else
-            writeFfiFlagsManifest(resManaged, ffiNativeLinkFlagsDir, moduleName, linkFlags) ++
-                writeFfiFlagsManifest(resManaged, ffiNativeCompileFlagsDir, moduleName, compileFlags)
+            writeFfiManifest(resManaged, ffiNativeLinkFlagsDir, moduleName + ".flags", linkFlags) ++
+                writeFfiManifest(resManaged, ffiNativeCompileFlagsDir, moduleName + ".flags", compileFlags)
     }
 
-    /** Write `flags` (one per line) to `<resManaged>/<relDir>/<module>.flags`, content-skipped so the
-      * generated resource (and thus nativeLink's classpath hash) stays stable across no-change builds. An
-      * empty flag set writes nothing and removes a stale file so it does not leak downstream.
+    /** The classpath-relative directory KyoFfiPlugin writes each module's library-state manifest into
+      * (one `<module>.state` file per FFI module).
       */
-    private def writeFfiFlagsManifest(resManaged: File, relDir: Seq[String], moduleName: String, flags: Seq[String]): Seq[File] = {
+    val ffiLibraryStateDir: Seq[String] = Seq("META-INF", "kyo-ffi", "library-state")
+
+    /** JVM/JS resource generator: write one `<id>=<state>` line per declared library id, recording what
+      * this build packages for it. Emitted next to the natives themselves so a packaging completeness
+      * check reads a declaration rather than inferring intent from a file that is not there.
+      *
+      * Without it, "no `META-INF/native/<os>-<arch>/lib<id>.<ext>`" is ambiguous between a library that
+      * is deliberately empty, one whose native this leg failed to build, and one carrying a placeholder;
+      * a check keyed on the layout alone either false-positives on the first or misses the third. The
+      * four states, in the order they are decided:
+      *   - `stub`: C sources are declared but they are a placeholder (`ffiStubLibraries`), e.g. a TLS
+      *     shim compiled with no vendored library staged. An artifact exists; it does nothing.
+      *   - `native`: C sources are declared and compiled into the real artifact.
+      *   - `prebuilt`: no C sources here; the artifact comes from `ffiPrebuiltDir` (a native another
+      *     runner built).
+      *   - `absent`: no C sources and no prebuilt. The id is declared (so bindings referencing it
+      *     validate) and carries no native ON PURPOSE.
+      *
+      * This describes the DECLARATION, so it stays readable when a leg fails before packaging: a
+      * `native` id with no file in the layout is precisely the broken-leg case a check should reject.
+      */
+    private def ffiLibraryStateManifestGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
+        val platform   = ffiTargetPlatform.value
+        val libs       = ffiLibrariesResolved.value
+        val stubs      = ffiStubLibraries.value.toSet
+        val prebuilt   = prebuiltNatives(ffiPrebuiltDir.value).map(_.libraryId).toSet
+        val resManaged = (Compile / resourceManaged).value
+        val moduleName = name.value
+        if (platform == "Native") Seq.empty[File]
+        else {
+            val states = libs.map { lib =>
+                val state =
+                    if (lib.cSources.nonEmpty) { if (stubs.contains(lib.id)) "stub" else "native" }
+                    else if (prebuilt.contains(lib.id)) "prebuilt"
+                    else "absent"
+                s"${lib.id}=$state"
+            }
+            writeFfiManifest(resManaged, ffiLibraryStateDir, moduleName + ".state", states.sorted)
+        }
+    }
+
+    /** Write `lines` (one per line) to `<resManaged>/<relDir>/<fileName>`, content-skipped so the
+      * generated resource (and thus nativeLink's classpath hash) stays stable across no-change builds. An
+      * empty list writes nothing and removes a stale file so it does not leak downstream.
+      */
+    private def writeFfiManifest(resManaged: File, relDir: Seq[String], fileName: String, lines: Seq[String]): Seq[File] = {
         val destDir = relDir.foldLeft(resManaged)(_ / _)
-        val dest    = destDir / (moduleName + ".flags")
-        if (flags.isEmpty) {
+        val dest    = destDir / fileName
+        if (lines.isEmpty) {
             if (dest.exists()) IO.delete(dest)
             Seq.empty[File]
         } else {
             IO.createDirectory(destDir)
-            val content = flags.mkString("", "\n", "\n")
+            val content = lines.mkString("", "\n", "\n")
             if (!dest.exists() || IO.read(dest) != content) IO.write(dest, content)
             Seq(dest)
         }
+    }
+
+    /** The classpath-relative directory KyoFfiPlugin writes each module's native manifest into (one
+      * `<module>.manifest` per FFI module). The runtime enumerates every file under this directory across the
+      * classpath, so the per-module filename keeps kyo-net, kyo-aeron and other FFI modules from colliding.
+      */
+    val ffiNativeManifestDir: Seq[String] = Seq("META-INF", "kyo-ffi", "native-manifest")
+
+    /** JVM/JS resource generator: emit the native manifest the runtime reads as DATA for the reflection-free
+      * direct-load pre-check. One block per declared library id plus a binding-trait -> library-id index:
+      * {{{
+      * <id>.platforms=darwin-x86_64,...      # the <os>-<arch> this build bundles the native for
+      * <id>.version=<kyo version>            # the release the native ships with (single source, lockstep)
+      * <id>.minRuntime=<kyo version>         # the minimum kyo-ffi runtime the native requires
+      * trait.<binding-trait-FQN>=<id>        # so `Ffi.load[T]` maps T -> id without touching the generated impl
+      * }}}
+      *
+      * `platforms` mirrors what `ffiPackagedNatives` stages: the resolved build target (`ffiTargetOsArch`,
+      * defaulting to the host) for a locally-compiled library, plus each `ffiPrebuiltDir` native's own
+      * `<os>-<arch>`. An `absent` library (no C sources, no prebuilt) has an empty platform set; the pre-check
+      * treats a native not bundled for the current platform as a graceful demote-to-fallback, not an error.
+      *
+      * The trait index comes from the codegen (`ffiGenerate`), which knows each binding's `Ffi.Config.library`
+      * at generation time and persists the pairs to `target`; this reads them so the manifest stays
+      * reflection-free. No-op on Native (which links its C at build time and loads nothing at runtime).
+      */
+    private def ffiNativeManifestGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
+        // Force the codegen so the persisted trait -> library-id index is fresh, then read it.
+        val _                      = ffiGenerate.value
+        val platform               = ffiTargetPlatform.value
+        val libs                   = ffiLibrariesResolved.value
+        val prebuilt               = prebuiltNatives(ffiPrebuiltDir.value)
+        val resManaged             = (Compile / resourceManaged).value
+        val moduleName             = name.value
+        val projTarget             = target.value
+        val moduleVer              = version.value
+        val (targetOs, targetArch) = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)
+        if (platform == "Native") Seq.empty[File]
+        else {
+            val targetTag = s"$targetOs-$targetArch"
+            val idBlocks = libs.sortBy(_.id).flatMap { lib =>
+                val local     = if (lib.cSources.nonEmpty) Set(targetTag) else Set.empty[String]
+                val staged    = prebuilt.filter(_.libraryId == lib.id).map(p => s"${p.os}-${p.arch}").toSet
+                val platforms = (local ++ staged).toSeq.sorted
+                Seq(
+                    s"${lib.id}.platforms=${platforms.mkString(",")}",
+                    s"${lib.id}.version=$moduleVer",
+                    s"${lib.id}.minRuntime=$moduleVer"
+                )
+            }
+            val traitLines =
+                readTraitLibraryIndex(projTarget).sortBy(_._1).map { case (fqcn, library) => s"trait.$fqcn=$library" }
+            writeFfiManifest(resManaged, ffiNativeManifestDir, moduleName + ".manifest", idBlocks ++ traitLines)
+        }
+    }
+
+    /** File under `target` where `ffiGenerate` persists the binding-trait -> library-id pairs the native manifest
+      * generator reads (one `<fqcn>=<library>` per line). Kept out of the resource tree so it is never itself
+      * packaged; it is a cross-task hand-off, not a shipped artifact.
+      */
+    private def ffiTraitLibraryIndexFile(projTarget: File): File =
+        projTarget / "kyo-ffi" / "trait-library-index.txt"
+
+    /** Persist `pairs` (`<fqcn> -> <library>`) for the native manifest generator, content-skipped. An empty list
+      * removes a stale index so a module whose bindings were all deleted stops indexing traits that are gone.
+      */
+    private def writeTraitLibraryIndex(projTarget: File, pairs: Seq[(String, String)]): Unit = {
+        val dest = ffiTraitLibraryIndexFile(projTarget)
+        if (pairs.isEmpty) {
+            if (dest.exists()) IO.delete(dest): Unit
+        } else {
+            IO.createDirectory(dest.getParentFile)
+            val content = pairs.sortBy(_._1).map { case (fqcn, library) => s"$fqcn=$library" }.mkString("", "\n", "\n")
+            if (!dest.exists() || IO.read(dest) != content) IO.write(dest, content)
+        }
+    }
+
+    /** Read the persisted binding-trait -> library-id pairs; empty when no index has been written yet. */
+    private def readTraitLibraryIndex(projTarget: File): Seq[(String, String)] = {
+        val src = ffiTraitLibraryIndexFile(projTarget)
+        if (!src.exists()) Nil
+        else
+            IO.read(src).linesIterator.flatMap { line =>
+                val i = line.indexOf('=')
+                if (i > 0) Some(line.substring(0, i) -> line.substring(i + 1)) else None
+            }.toList
     }
 
     /** Resolve the list of libraries (multi-lib if non-empty, otherwise a single
@@ -892,25 +1187,29 @@ object KyoFfiPlugin extends AutoPlugin {
         extractOpt.toSeq ++ scratchOpt.toSeq
     }
 
-    /** Group the flat artifact list by library id based on the naming convention
-      * encoded in `CCompiler.compile` (`lib<id>-<os>-<arch>.<ext>` on POSIX,
-      * `<id>-<os>-<arch>.<ext>` on Windows). For each known library we pick the
-      * artifacts whose filename starts with the library's prefix.
+    /** Group the flat artifact list by library id based on the naming convention encoded in
+      * `CCompiler.artifactName` (`lib<id>-<os>-<arch>.<ext>` on POSIX, `<id>-<os>-<arch>.<ext>` on
+      * Windows). An artifact whose name parses is attributed to the id the NAME carries; one that
+      * does not parse falls back to the prefix convention.
+      *
+      * Attribution is always by name, including when the project declares a single library: the old
+      * one-library fast path handed every artifact to that id by position, which would mis-attribute
+      * a foreign native merged in from `ffiPrebuiltDir` (it would be packaged under the wrong
+      * canonical name and no runtime lookup would find it).
       */
-    private def groupArtifactsByLibrary(artifacts: Seq[File], libs: Seq[FfiLibrary]): Seq[(String, Seq[File])] = {
-        if (libs.size == 1) Seq(libs.head.id -> artifacts)
-        else {
-            libs.map { lib =>
-                val prefixPosix = s"lib${lib.id}-"
-                val prefixWin   = s"${lib.id}-"
-                val matched = artifacts.filter { f =>
-                    val n = f.getName
-                    n.startsWith(prefixPosix) || n.startsWith(prefixWin)
+    private[sbt] def groupArtifactsByLibrary(artifacts: Seq[File], libs: Seq[FfiLibrary]): Seq[(String, Seq[File])] =
+        libs.map { lib =>
+            val prefixPosix = s"lib${lib.id}-"
+            val prefixWin   = s"${lib.id}-"
+            val matched = artifacts.filter { f =>
+                val n = f.getName
+                CCompiler.parseArtifactName(n) match {
+                    case Some((id, _, _)) => id == lib.id
+                    case None             => n.startsWith(prefixPosix) || n.startsWith(prefixWin)
                 }
-                lib.id -> matched
             }
+            lib.id -> matched
         }
-    }
 
     // Helpers
     private def collectTastyFiles(dir: File): Seq[String] = {

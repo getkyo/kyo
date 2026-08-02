@@ -357,6 +357,25 @@ object Ffi:
     private val cache = new java.util.concurrent.ConcurrentHashMap[Class[?], AnyRef]()
 
     private def instantiate(cls: Class[?]): AnyRef =
-        val implName = cls.getName + "Impl"
-        kyo.ffi.internal.FfiReflect.instantiate(implName, cls.getName)
+        val traitFqn = cls.getName
+        val implName = traitFqn + "Impl"
+        // Manifest-driven direct-load pre-check (reflection-free). Reading `cls.getName` does NOT initialize the
+        // generated `<T>Impl`, so mapping the binding trait FQN to its bundled library id via the native manifest
+        // and asserting the native is present happens BEFORE the impl companion's initializer runs. A missing
+        // bundled native therefore raises a precise, catchable `FfiLoadError.LibraryNotFound` (or `AbiMismatch` on
+        // a runtime-version shortfall) from `Ffi.load[T]`, instead of the generated `<clinit>` throwing and
+        // poisoning the class (`ExceptionInInitializerError`, then `NoClassDefFoundError` on every later touch).
+        // A trait with no manifest entry (an unmigrated module, a system library such as `c`, or a runtime with no
+        // manifests) skips the check and loads exactly as before.
+        kyo.ffi.internal.NativeManifest.libraryIdFor(traitFqn) match
+            case Present(id) =>
+                kyo.ffi.internal.NativeManifest.entryFor(id) match
+                    case Present(entry) =>
+                        kyo.ffi.internal.AbiCheck.verifyRuntimeFloor(traitFqn, entry.minRuntime)
+                        kyo.ffi.internal.NativeManifestPlatform.assertBundledPresent(id, entry.platforms)
+                    case Absent => ()
+            case Absent => ()
+        end match
+        kyo.ffi.internal.FfiReflect.instantiate(implName, traitFqn)
+    end instantiate
 end Ffi
