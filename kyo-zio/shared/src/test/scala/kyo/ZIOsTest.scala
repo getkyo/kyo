@@ -223,6 +223,28 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                     yield assert(r.isInterrupted)
                     end for
                 }
+
+                "interrupt racing acquisition never orphans the bridged kyo fiber" in runZIO {
+                    // A ZIO interrupt that lands between ZIOs.run's fork and the wiring of its interruption
+                    // path must still stop the bridged kyo fiber. Each iteration forks a busy spin loop and
+                    // interrupts it immediately, maximizing that window; a dropped interrupt leaves a worker
+                    // spinning, so progress keeps advancing after every fiber has been awaited.
+                    val progress = new java.util.concurrent.atomic.AtomicLong(0)
+                    def spin: Unit < Sync =
+                        Sync.defer {
+                            discard(progress.incrementAndGet())
+                            spin
+                        }
+                    val iteration: Task[Unit] =
+                        ZIOs.run(spin).fork.flatMap(f => (f.interrupt *> f.await).unit)
+                    for
+                        _  <- ZIO.foreachDiscard(1 to 400)(_ => iteration)
+                        p1 <- ZIO.succeed(progress.get())
+                        _  <- ZIO.sleep(zio.Duration.fromMillis(200))
+                        p2 <- ZIO.succeed(progress.get())
+                    yield assert(p1 == p2)
+                    end for
+                }
             }
 
             "runKyo" - {
