@@ -75,7 +75,11 @@ class NativeLoaderConcurrencyTest extends Test:
             java.lang.System.setProperty(prop, explicit.toString): Unit
             try
                 val resolved = NativeLoader.resolveExtractDir()
-                assert(resolved.toString == explicit.toString)
+                // Render both through java.nio.file.Path.toString before comparing: resolveExtractDir returns a
+                // java.nio.file.Path whose toString uses the OS separator (Windows `\`), while `explicit` is a
+                // kyo.Path (`/`). Normalizing `explicit` the same way makes the check separator-agnostic. "Verbatim"
+                // means no `/kyo-ffi` is appended (asserted below), not the exact separator characters.
+                assert(resolved.toString == java.nio.file.Path.of(explicit.toString).toString)
                 // Should NOT append /kyo-ffi, the override is literal. This is the point.
                 assert(!resolved.toString.endsWith("kyo-ffi"))
             finally
