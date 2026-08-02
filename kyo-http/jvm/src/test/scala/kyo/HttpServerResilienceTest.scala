@@ -99,16 +99,23 @@ class HttpServerResilienceTest extends BaseHttpTest:
 
     // ---- reported bug: pooled client + firing request timeout + server restart churn (fibers) -----------------------
 
-    /** Walk the cause chain for the reported wedge signature: a driver reported as closed ("<Backend>IoDriver[...] is closed"). */
+    /** True only for a WHOLE-DRIVER close (the reported wedge), NOT a routine per-connection close.
+      *
+      * Every `Closed` a driver raises renders as "<driver-label> created at ... is closed." because the resource IS the
+      * driver's label (`Closed.scala`), so matching "is closed" + "Driver" also matches every ordinary per-connection
+      * close a churn/cancellation load produces (an RST'd read, a cancelled connect: detail "channel=... closed"). That
+      * was the earlier detector's bug: it counted connection closes as driver wedges. The whole-driver teardown is the
+      * only path that tags its `Closed` with the detail "driver closed" (`NioIoDriver.close` / `PollerIoDriver.close` /
+      * `IoUringDriver.close`), and the detail is carried in `getMessage`, so match on it to count only genuine driver
+      * closes. The real permanence check is still the post-load liveness assert; this counter is the corroborating signal.
+      */
     private def isDriverClosed(e: Any): Boolean =
         def check(t: Throwable, depth: Int): Boolean =
             if (t eq null) || depth > 6 then false
-            else
-                val m = String.valueOf(t.getMessage)
-                (m.contains("is closed") && m.contains("Driver")) || check(t.getCause, depth + 1)
+            else String.valueOf(t.getMessage).contains("driver closed") || check(t.getCause, depth + 1)
         e match
             case t: Throwable => check(t, 0)
-            case other        => val m = String.valueOf(other); m.contains("is closed") && m.contains("Driver")
+            case other        => String.valueOf(other).contains("driver closed")
     end isDriverClosed
 
     "reported bug: shared pooled client survives request cancellation under server churn" - eachBackend { (transport, _) =>
