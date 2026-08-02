@@ -59,26 +59,33 @@ object ZIOs:
       *   A zio.ZIO that, when run, will execute the Kyo effect
       */
     def run[A, E](v: => A < (Abort[E] & Async))(using frame: Frame, trace: zio.Trace): ZIO[Any, E, A] =
-        ZIO.suspendSucceed {
-            import AllowUnsafe.embrace.danger
-            Fiber.initUnscoped(v).map { fiber =>
-                ZIO.asyncInterrupt[Any, E, A] { cb =>
-                    fiber.unsafe.onComplete {
-                        case Result.Success(a) => cb(Exit.succeed(a.eval))
-                        case Result.Failure(e) => cb(Exit.fail(e))
-                        case Result.Panic(e)   => cb(Exit.die(e))
-                    }
-                    // Honor ZIO's interrupt-and-await contract: interrupt the kyo fiber and suspend until
-                    // it has actually completed, so the ZIO fiber is not reported interrupted before the
-                    // bridged kyo computation (and its finalizers) have stopped. A bare
-                    // `fiber.unsafe.interrupt()` only signals, which lets the kyo computation outlive the
-                    // interrupt and leak a busy worker.
-                    Left(ZIO.async[Any, Nothing, Unit] { k =>
-                        fiber.unsafe.onComplete(_ => k(ZIO.unit))
-                        discard(fiber.unsafe.interrupt())
-                    })
-                }
-            }.handle(Sync.Unsafe.evalOrThrow)
+        ZIO.uninterruptibleMask { restore =>
+            ZIO.suspendSucceed {
+                import AllowUnsafe.embrace.danger
+                Fiber.initUnscoped(v).map { fiber =>
+                    val join: ZIO[Any, E, A] =
+                        ZIO.async[Any, E, A] { cb =>
+                            fiber.unsafe.onComplete {
+                                case Result.Success(a) => cb(Exit.succeed(a.eval))
+                                case Result.Failure(e) => cb(Exit.fail(e))
+                                case Result.Panic(e)   => cb(Exit.die(e))
+                            }
+                        }
+                    // Honor ZIO's interrupt-and-await contract: interrupt the kyo fiber and suspend until it
+                    // has actually completed, so the ZIO fiber is not reported interrupted before the bridged
+                    // kyo computation (and its finalizers) have stopped. This runs as an onInterrupt finalizer
+                    // attached outside `restore`, so it fires on any interrupt of the ZIO fiber. The previous
+                    // asyncInterrupt canceler existed only after the async node executed, so an interrupt
+                    // landing between the fork and that node dropped the node, skipped canceler registration,
+                    // and orphaned the kyo fiber as a busy worker.
+                    val interruptAndAwait: ZIO[Any, Nothing, Unit] =
+                        ZIO.async[Any, Nothing, Unit] { k =>
+                            fiber.unsafe.onComplete(_ => k(ZIO.unit))
+                            discard(fiber.unsafe.interrupt())
+                        }
+                    restore(join).onInterrupt(interruptAndAwait)
+                }.handle(Sync.Unsafe.evalOrThrow)
+            }
         }
     end run
 

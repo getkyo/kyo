@@ -148,6 +148,31 @@ class AsyncTest extends kyo.test.Test[Any]:
                 else once.map(i => if i then repeat(n - 1) else fail("interrupt returned false"))
             repeat(50).andThen(succeed("all 50 interrupt attempts returned true"))
         }
+        "interrupting a parent stops all its Async.foreach children".notJs in {
+            // Regression: Async.foreach forks its children but links each to the parent's interrupt cascade
+            // only when the parent processes the child's join. A parent interrupted while the children are
+            // still launching could leave one unlinked and running (orphaned). Asserts the children STOP
+            // advancing after the parent is interrupted, independent of finalizers, by checking that a shared
+            // progress counter stops changing once every fiber has been awaited.
+            val progress          = new java.util.concurrent.atomic.AtomicLong(0)
+            def spin: Unit < Sync = Sync.defer(discard(progress.incrementAndGet())).andThen(spin)
+            def once: Unit < Async =
+                for
+                    fiber <- Fiber.initUnscoped(Async.foreachDiscard(1 to 16)(_ => spin))
+                    _     <- fiber.interrupt(panic)
+                    _     <- fiber.getResult
+                yield ()
+            def repeat(n: Int): Unit < Async =
+                if n <= 0 then ()
+                else once.andThen(repeat(n - 1))
+            for
+                _  <- repeat(200)
+                p1 <- Sync.defer(progress.get())
+                _  <- Async.sleep(50.millis)
+                p2 <- Sync.defer(progress.get())
+            yield assert(p1 == p2)
+            end for
+        }
     }
 
     "race" - {
