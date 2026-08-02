@@ -1,0 +1,106 @@
+# Audit: `Closed` exceptions in kyo-net — resource identity ↔ creation-frame coherence
+
+## Protocol (validated)
+
+`Closed(resource, createdAt, details)` renders `"<resource> created at <createdAt> is closed. <details>"` — one claim: *this named resource, born at this frame, is closed*. Judge `resource` and `createdAt` **together** as one description of the true resource.
+
+1. Identify the resource actually being reported closed (the true resource).
+2. Trace `createdAt`: it MUST be the frame where the true resource was created. `summon[Frame]` binds to the nearest enclosing `given Frame`/`using Frame`; a method's `using Frame` param is the throw-site/caller frame, NOT a creation frame.
+3. Global-shared exception: if the true resource is process-global/internally-created (the process-shared transport driver), `Frame.internal` is its correct creation frame. A per-connection/fd/listener is NOT global-shared.
+
+Verdict per site: **COHERENT** (arg1 names the true resource AND arg2 is that resource's creation frame) or **DEFECTIVE** (state what is wrong + the correct pair).
+
+Key structural fact: **no handle/connection/listener in kyo-net captures a creation frame** (`NioHandle.init`, `PosixHandle`, etc. take no `Frame`). So a per-connection `Closed` has no captured connection-creation frame to use — the fix requires capturing the user's connect/accept frame onto the handle. Today per-connection sites pass either the driver's throw-site `summon` or `Frame.internal`; neither is the connection's birth.
+
+---
+
+## NioIoDriver.scala — 15 sites. `label="NioIoDriver[sel=…]"`; `handleLabel(h)="channel=…"`.
+
+Frame binding: `summon[Frame]` → the method's `using Frame` (AMBIENT) unless the method declares `given Frame = Frame.internal` (INTERNAL).
+
+| line | method | true resource | arg1 | arg2 binds to | verdict |
+|---|---|---|---|---|---|
+| 280 | awaitRead | a connection (handle, upgrade detach) | driver ✗ | ambient ✗ | **DEFECTIVE** both — resource→connection; frame→that connection's creation frame |
+| 328 | armRead | a connection (superseded read arm) | driver ✗ | ambient ✗ | **DEFECTIVE** both |
+| 335 | armRead | a connection (registerRead failed) | driver ✗ | ambient ✗ | **DEFECTIVE** both |
+| 443 | applyUpgradeArm | a connection (upgrade) | driver ✗ | internal(437) ✗ | **DEFECTIVE** both — internal is wrong for a per-connection resource |
+| 652 | deliverStagedToArm | a connection | driver ✗ | internal(639) ✗ | **DEFECTIVE** both |
+| 738 | failConsumedUpgradeRead | a connection | driver ✗ | internal(737) ✗ | **DEFECTIVE** both |
+| 794 | stopUpgradeProducer | a connection | driver ✗ | internal(788) ✗ | **DEFECTIVE** both |
+| 809 | awaitWritable | a connection (registerWrite failed) | driver ✗ | ambient ✗ | **DEFECTIVE** both |
+| 836 | awaitConnect | a connection (registerConnect failed) | driver ✗ | ambient ✗ | **DEFECTIVE** both |
+| 857 | awaitAccept (stub) | NONE — "not supported" op; nothing is closed | driver ✗ | ambient ✗ | **DEFECTIVE** — misuse of `Closed` for an unsupported-op error (should be an unsupported/illegal-op exception, not `Closed`) |
+| 964 | cleanupPending | a connection (handle teardown from cancel/closeHandle) | driver ✗ | ambient ✗ | **DEFECTIVE** both |
+| 1047 | cleanupAccept | a listener (server channel) | driver ✗ | ambient ✗ | **DEFECTIVE** both — resource→listener |
+| 1068 | close() | the driver (global-shared) | driver ✓ | ambient ✗ | **DEFECTIVE** frame — resource correct; createdAt should be explicit `Frame.internal` (driver is global-shared), not the ambient caller frame |
+| 1174 | awaitAccept(server) | a listener (registerAccept failed) | driver ✗ | ambient ✗ | **DEFECTIVE** both — resource→listener |
+| 1868 | dispatchConnect | a connection (connect refused) | driver ✗ | internal(1853) ✗ | **DEFECTIVE** both — the reported case; resource→connection, frame→connection creation frame |
+
+**NioIoDriver: 0 coherent / 15 defective.** 13 per-connection-or-listener (resource names the driver, should name the connection/listener; frame is neither the connection's birth). 1 whole-driver close (`:1068`, resource OK, frame should be explicit `Frame.internal`). 1 misuse (`:857`, `Closed` used for an unsupported-op error).
+
+## NioTransport.scala — 2 sites
+_pending_
+
+## PollerIoDriver.scala — 24 sites. `label="PollerIoDriver"`; `handleLabel(h)="fd=…/…"`.
+
+`given Frame=Frame.internal` only in `write`/`writeRaw` (:911,:969) — no `Closed` there, so **all 24 sites bind `summon[Frame]` to the ambient `using Frame`.**
+
+**resource-OK / frame-DEFECTIVE (4)** — genuinely report the driver, which IS closed at that point (createdAt should be explicit `Frame.internal`, is ambient):
+- :728 awaitRead, :857 armSocketWritable, :881 awaitAccept — all under `if terminal.get()` ("fd=X driver closed": the op is rejected because the driver went terminal; the driver is the true closed resource).
+- :1466 close() — the genuine whole-driver close ("driver closed").
+
+**resource-DEFECTIVE + frame-DEFECTIVE (20)** — a per-connection failure (detail names the fd) reported under the driver label; resource→the connection/fd, frame→that connection's creation frame:
+- :738, :761 (detached for upgrade) · :899 (stale accept fd) · :1236 (fd canceled) · :1550 (stale event fd) · :1616 (error/RST fd) · :1656, :1659, :1710, :1728 (stale/closed-handle read fd) · :1856 (recv failed fd) · :1912 (upgrade detach) · :2074, :2101, :2151, :2161 (TLS recv/engine fd) · :2173 (stale writable fd) · :2360 (register on closing handle fd) · :2424 (register failed fd) · :2509 (fd closed)
+
+**Poller: 0 coherent / 24 defective** (4 frame-only on genuine driver closes; 20 resource+frame per-connection).
+
+## IoUringDriver.scala — 20 sites. `label="IoUringDriver"`; `handleLabel(h)="fd=…/…"`.
+
+`given Frame=Frame.internal` at `complete`:1774 (covers :1939-:2087) and `completeMultishot`:2104 (no Closed). Rest AMBIENT.
+
+**resource-OK / frame-DEFECTIVE (4)** — genuinely report the driver (closed), createdAt should be explicit `Frame.internal`, is ambient:
+- :247 submitDeferredRecv, :420 submitConnect, :474 submitAccept — all gated `if closedFlag.get()` ("driver closed").
+- :1282 teardownRing — whole-driver close ("driver closed").
+
+**resource-DEFECTIVE + frame-DEFECTIVE (16)** — per-connection/listener under the driver label:
+- ambient frame: :204, :228 (upgrade detach) · :272 (fd closed) · :297 (exclusive-use violation) · :336 (recv negative length) · :436 (no connectTarget) · :481 (listener closed → resource should be the listener) · :898 (fd canceled) · :1123 (connection closed)
+- internal frame but per-connection (internal is wrong for a per-connection resource): :1939 (buffer-role mismatch) · :1958 (ownership mismatch) · :1989 (fatal TLS record) · :2024 (TLS engine read failed) · :2055 (read errno) · :2078 (connect errno) · :2087 (accept errno)
+
+**IoUring: 0 coherent / 20 defective** (4 frame-only on genuine driver closes; 16 resource+frame).
+
+## JsIoDriver.scala — 5 sites. `label="JsIoDriver"`; `handleLabel(h)="socket#…"`. All AMBIENT.
+
+**resource+frame DEFECTIVE (4)** — per-connection (one socket): :67 (socket destroyed) · :105 (socket destroyed) · :128 (socket closed/error before writable) · :159 (socket#N canceled).
+**misuse DEFECTIVE (1)**: :98 awaitAccept "not supported on JsIoDriver" — nothing closed (unsupported-op stub, like Nio :857).
+
+**JsIoDriver: 0 coherent / 5 defective.**
+
+## Transport interrupt-cause sites — NioTransport (2), JsTransport (3), PosixTransport (5), ReadPump (1) = 11
+
+A DISTINCT defect class: `Result.Panic(Closed("<Transport/ReadPump>", summon[Frame], "<...before deadline / settled / interrupted / disarmed>"))` used as the **interrupt cause** passed to `timer.interruptDiscard(...)` (or a cleanup arm). **Nothing is closed** — `Closed` is misused as a cancellation/interrupt signal; the detail describes why a deadline timer was disarmed (the op completed in time), not a closed resource. Rendered it would read "NioTransport … is closed. handshake completed before deadline" — nonsensical.
+
+- NioTransport: :1275 (handshake completed before deadline) · :1312 (connect completed before deadline)
+- JsTransport: :397 (connect completed) · :456 (handshake settled) · :1070 (upgrade settled)
+- PosixTransport: :512 (connect completed) · :613 (connect interrupted before completion) · :729 (handshake settled) · :1292 (handshake completed) · :1719 (upgrade settled)
+- ReadPump: :164 (grace disarmed by progress)
+
+**All 11 DEFECTIVE (misuse):** the right cause is an interrupt/cancellation signal (e.g. `Interrupted`), not `Closed`. These are internal (not user-surfaced), but the protocol takes no dismissals: `Closed` here names a resource that is not closed. (`ReadPump` :164 resolves to `Frame.internal` via its callers, but the misuse stands.)
+
+---
+
+# Consolidated conclusion
+
+**~75 `Closed(...)` sites; 0 fully coherent.** Three defect classes:
+
+1. **Per-connection failure mislabeled as the driver (the reported bug's class) — the large majority (~55 sites).** A single connection/fd/listener failure builds `Closed(<driver label>, …)`, so it renders "<Driver> is closed" while the driver is alive. The detail string ALREADY names the true resource (`channel=X` / `fd=X` / `socket#N` / `server channel=X`), directly contradicting arg1. Frame is also wrong: it's the throw-site (`summon`) or `Frame.internal`, never the connection's creation frame — and **no handle captures a creation frame** (`NioHandle.init` / `PosixHandle` / `JsHandle` take no `Frame`), so fixing the frame requires threading the user's connect/accept frame onto the handle. Nio: 13, Poller: 20, IoUring: 16, Js: 4.
+
+2. **Genuine driver close, but ambient frame (9 sites).** `close()`/terminal-guarded sites correctly name the driver, but pass `summon[Frame]` (the caller's frame) instead of the driver's real creation frame. Driver is global-shared → createdAt should be an explicit `Frame.internal`. Nio :1068; Poller :728,:857,:881,:1466; IoUring :247,:420,:474,:1282.
+
+3. **`Closed` misused where nothing is closed (13 sites).** Unsupported-op stubs (Nio :857, Js :98) and the 11 transport/ReadPump timer-interrupt causes. The type is wrong: an unsupported op / a timer-disarm / an interrupt is not a closure.
+
+**Note the earlier skew this corrects:** judging the frame alone rated the `given Frame=Frame.internal` per-connection sites (e.g. Nio :1868, IoUring :1939-:2087) as "frame OK" — but coupled to the true resource (a per-connection object, not global-shared), `Frame.internal` is the wrong creation frame there. Resource and frame are one judgment.
+
+## Fix directions (for discussion — no code yet)
+- **Class 1:** per-connection `Closed` should name the connection (the handle already has `handleLabel`/fd/socket id) and carry that connection's creation frame — which means capturing the user's `transport.connect`/`accept` frame onto the handle at creation and using it here. Also reconsider whether some (e.g. connect-refused, RST) should be a `NetConnectException`/`NetConnectionClosedException` rather than `Closed` at all.
+- **Class 2:** pass an explicit `Frame.internal` at the genuine driver-close sites.
+- **Class 3:** stop using `Closed` for unsupported-ops (an unsupported/illegal-op exception) and for timer-interrupt causes (an interrupt/`Interrupted` cause).
