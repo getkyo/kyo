@@ -22,6 +22,18 @@ class HttpServerResilienceTest extends BaseHttpTest:
     private val ping =
         HttpRoute.getRaw("ping").response(_.bodyText).handler(_ => HttpResponse.ok("pong"))
 
+    /** A handler that never responds in time: it sleeps far longer than any client timeout, so a request to it is only
+      * ever resolved by the client's cancellation (or the connection closing).
+      */
+    private val slow =
+        HttpRoute.getRaw("slow").response(_.bodyText).handler(_ => Async.sleep(30.seconds).andThen(HttpResponse.ok("late")))
+
+    /** A handler that fails (panics) so the server dispatch has to contain the failure without wedging the connection
+      * handling for other requests.
+      */
+    private val boom =
+        HttpRoute.getRaw("boom").response(_.bodyText).handler(_ => Sync.defer(throw new RuntimeException("handler boom")))
+
     /** One client per backend, built over that backend's process-lifetime shared transport and never closed: closing an
       * `HttpClientBackend` closes its transport, and `TestBackends` transports are shared for the whole run (exactly as
       * every client and server in a process shares `NetPlatform.transport`). The pool persists across scenarios, which
@@ -148,6 +160,122 @@ class HttpServerResilienceTest extends BaseHttpTest:
             assert(bug.get() == 0, s"driver-closed wedge REPRODUCED: ${bug.get()} hits during churn")
             assert(liveResult == Result.Success("pong"), s"shared pooled client wedged after churn: got $liveResult")
         end for
+    }
+
+    // ---- dedicated, tightened reproduction of the reported wedge (IGNORED: run manually) ---------------------------
+
+    /** Reliable manual reproduction of the reported NioIoDriver "... is closed" wedge, at the HTTP level, with FIBERS.
+      *
+      * The wedge is a cross-carrier race (a cancelled request's caller-carrier `closeHandle` vs the poll carrier's
+      * `dispatchReadyKeys` on the same fd) that only `NioIoDriver` is exposed to (its dispatch catch is
+      * `CancelledKeyException`-only; `PollerIoDriver`'s dispatch is total). It reproduces on nio but NOT kqueue/epoll,
+      * so this targets nio directly. A single 3s pass is racy (0 to tens of hits), so this runs a long, aggressive load
+      * (tight 10ms server restarts + a 30ms request timeout that fires on the hung requests) and stops as soon as the
+      * driver wedges. `.ignore` keeps it out of the normal (fiber) suite: it reproduces an UNFIXED bug, so it is red by
+      * design, and it is intentionally long. Enable by removing `.ignore` (or invoke directly) once the driver contains
+      * per-connection dispatch errors like `PollerIoDriver`.
+      */
+    "reproduce (nio): pooled client wedges under request cancellation + server churn"
+        .ignore("reproduces the unfixed NioIoDriver close-under-cancellation wedge; long + racy; run manually") in {
+        val durationMs = sys.props.get("kyo.reproDurationMs").map(_.toLong).getOrElse(20000L)
+        TestBackends.all.find(e => e.name == "nio" && e.isAvailable) match
+            case None => cancel("nio backend not available on this host")
+            case Some(entry) =>
+                val transport = entry.transport
+                val client    = clientFor(entry)
+                HttpClient.let(client) {
+                    val current = new java.util.concurrent.atomic.AtomicReference[HttpServer]()
+                    val stop    = new java.util.concurrent.atomic.AtomicBoolean(false)
+                    val bug     = new java.util.concurrent.atomic.AtomicInteger(0)
+                    for
+                        server0 <- startServer(transport, ping)
+                        _ = current.set(server0)
+                        churn <- Fiber.initUnscoped {
+                            Abort.run[Any] {
+                                Loop.foreach {
+                                    if stop.get() then Loop.done(())
+                                    else
+                                        Async.sleep(10.millis)
+                                            .andThen(startServer(transport, ping).map(s => current.getAndSet(s).closeNow))
+                                            .andThen(Loop.continue)
+                                }
+                            }.unit
+                        }
+                        deadline = java.lang.System.currentTimeMillis() + durationMs
+                        _ <- Async.foreach(0 until 16, 16) { _ =>
+                            Loop.foreach {
+                                if java.lang.System.currentTimeMillis() >= deadline || bug.get() > 0 then Loop.done(())
+                                else
+                                    val url = s"http://localhost:${current.get().port}/ping"
+                                    Abort.run[Any] {
+                                        Async.timeout(30.millis) {
+                                            Async.zip(
+                                                HttpClient.getTextResponse(url, failOnError = false),
+                                                HttpClient.getTextResponse(url, failOnError = false)
+                                            )
+                                        }
+                                    }.map {
+                                        case Result.Failure(ex) => if isDriverClosed(ex) then discard(bug.incrementAndGet())
+                                        case Result.Panic(ex)   => if isDriverClosed(ex) then discard(bug.incrementAndGet())
+                                        case _                  => ()
+                                    }.andThen(Loop.continue)
+                            }
+                        }
+                        _ = stop.set(true)
+                        _ <- churn.get
+                        _ <- current.get().closeNow
+                    yield assert(bug.get() == 0, s"driver-closed wedge REPRODUCED on nio: ${bug.get()} hits")
+                    end for
+                }
+        end match
+    }
+
+    // ---- HTTP request cancellation / pool integrity / handler failure (fibers) -------------------------------------
+
+    "in-flight request cancellation stays contained; the shared client survives" - eachBackend { (transport, _) =>
+        // Many concurrent requests to a never-responding endpoint, each cancelled by a short firing timeout. The
+        // cancellations must not break the shared pooled client: a healthy request afterward still round-trips.
+        for
+            server <- startServer(transport, ping, slow)
+            base = s"http://localhost:${server.port}"
+            _ <- Async.foreach(0 until 32, 16) { _ =>
+                Abort.run[Any](Async.timeout(30.millis)(HttpClient.getText(s"$base/slow"))).unit
+            }
+            body <- HttpClient.getText(s"$base/ping")
+            _    <- server.closeNow
+        yield assert(body == "pong")
+    }
+
+    "a cancelled request does not poison a reused pooled connection" - eachBackend { (transport, _) =>
+        // Interleave a cancelled slow request with a healthy ping on the SAME pooled client. If a cancelled request left
+        // undrained bytes on a pooled connection, the next reuse would read them as the ping's status line and fail.
+        for
+            server <- startServer(transport, ping, slow)
+            base = s"http://localhost:${server.port}"
+            _ <- Loop(0) { i =>
+                if i >= 20 then Loop.done(())
+                else
+                    Abort.run[Any](Async.timeout(30.millis)(HttpClient.getText(s"$base/slow")))
+                        .andThen(HttpClient.getText(s"$base/ping"))
+                        .map(b => assert(b == "pong", s"pooled reuse after a cancelled request returned '$b', not 'pong'"))
+                        .andThen(Loop.continue(i + 1))
+            }
+            _ <- server.closeNow
+        yield succeed
+    }
+
+    "handler failure stays isolated; a healthy endpoint still serves" - eachBackend { (transport, _) =>
+        // A failing handler must not wedge the connection handling for other requests: after hammering the failing
+        // endpoint, the healthy endpoint on the same server (and shared client) still round-trips.
+        for
+            server <- startServer(transport, ping, boom)
+            base = s"http://localhost:${server.port}"
+            _ <- Async.foreach(0 until 20, 10) { _ =>
+                Abort.run[Any](HttpClient.getText(s"$base/boom")).unit
+            }
+            body <- HttpClient.getText(s"$base/ping")
+            _    <- server.closeNow
+        yield assert(body == "pong")
     }
 
 end HttpServerResilienceTest
