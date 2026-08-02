@@ -2134,7 +2134,9 @@ lazy val `kyo-http` =
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
-        .dependsOn(`kyo-net`)
+        // test->test so the resilience suites can reuse kyo-net's per-backend transport harness
+        // (kyo.net.TestBackends / kyo.net.Test.eachBackend) to fan HTTP scenarios over every driver.
+        .dependsOn(`kyo-net` % "compile->compile;test->test")
         .withKyoTest
         .settings(
             `kyo-settings`

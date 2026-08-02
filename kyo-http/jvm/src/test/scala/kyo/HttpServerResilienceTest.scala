@@ -6,7 +6,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 
 /** Reliability of the shared `HttpClient` default-client transport under server churn: the HTTP-level analogue of
-  * `kyo.net.TransportChurnResilienceTest`. Faithful to the reported reproduction (a kyo-http server in place of
+  * `kyo.net.TransportResilienceTest`. Faithful to the reported reproduction (a kyo-http server in place of
   * WireMock, no external dependency), expressed entirely with kyo's `Async` primitives (fibers run on real scheduler
   * worker threads, so no raw `Thread`s or `runAndBlock`): 16-way concurrent load, each firing two concurrent GETs per
   * invocation through the process-shared default client, while a churn fiber restarts the server every 25 ms so
@@ -16,7 +16,7 @@ import kyo.*
   * "... is closed". This asserts that never happens (zero driver-closed hits during the load) and that the shared
   * client still round-trips afterwards. Prints the backend actually selected.
   */
-class HttpServerReliabilityTest extends BaseHttpTest:
+class HttpServerResilienceTest extends BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
@@ -79,7 +79,7 @@ class HttpServerReliabilityTest extends BaseHttpTest:
             _          <- liveServer.closeNow
         yield
             val liveOk = liveResult == Result.Success("pong")
-            println(s"[HttpServerReliabilityTest] backend=$backend driverClosedHits=${bug.get()} liveness=$liveOk")
+            println(s"[HttpServerResilienceTest] backend=$backend driverClosedHits=${bug.get()} liveness=$liveOk")
             assert(bug.get() == 0, s"[backend=$backend] driver-closed wedge REPRODUCED: ${bug.get()} hits during churn")
             assert(
                 liveOk,
@@ -88,4 +88,4 @@ class HttpServerReliabilityTest extends BaseHttpTest:
         end for
     }
 
-end HttpServerReliabilityTest
+end HttpServerResilienceTest
