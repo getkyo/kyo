@@ -287,9 +287,12 @@ class TransportResilienceTest extends Test:
             silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _ <- Async.foreach(0 until 200, 40) { _ =>
-                Abort.run[NetException | Closed | Timeout] {
+                Abort.run[NetException | Closed] {
                     transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
-                        Async.timeout(20.millis)(conn.inbound.safe.take).andThen(Sync.defer(conn.close()))
+                        // VERIFICATION: catch the timeout out of the abort so conn.close ALWAYS runs. If podman's leak
+                        // check is clean with this, the leak was the test not closing (hygiene), not a driver-side leak.
+                        Abort.run[Closed | Timeout](Async.timeout(20.millis)(conn.inbound.safe.take))
+                            .andThen(Sync.defer(conn.close()))
                     }
                 }.unit
             }
@@ -348,12 +351,13 @@ class TransportResilienceTest extends Test:
                     Loop(0) { i =>
                         if i >= 120 then Loop.done(())
                         else
-                            Abort.run[NetException | Closed | Timeout] {
+                            Abort.run[NetException | Closed] {
                                 transport.connect("127.0.0.1", churnListener.port).safe.get.map { conn =>
                                     // Arm a read the drain server never answers, bounded by a short timeout that fires while
-                                    // it is still parked. The churn RSTs this connection inside that window, so the timeout's
-                                    // interrupt teardown races the peer-FIN/RST dispatch on the same fd.
-                                    Async.timeout(8.millis)(conn.inbound.safe.take).andThen(Sync.defer(conn.close()))
+                                    // it is still parked. VERIFICATION: catch the timeout out of the abort so conn.close
+                                    // ALWAYS runs, isolating whether the leak was the test not closing vs a driver-side leak.
+                                    Abort.run[Closed | Timeout](Async.timeout(8.millis)(conn.inbound.safe.take))
+                                        .andThen(Sync.defer(conn.close()))
                                 }
                             }.andThen(Loop.continue(i + 1))
                     }
