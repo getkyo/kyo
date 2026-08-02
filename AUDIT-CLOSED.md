@@ -100,7 +100,16 @@ A DISTINCT defect class: `Result.Panic(Closed("<Transport/ReadPump>", summon[Fra
 
 **Note the earlier skew this corrects:** judging the frame alone rated the `given Frame=Frame.internal` per-connection sites (e.g. Nio :1868, IoUring :1939-:2087) as "frame OK" — but coupled to the true resource (a per-connection object, not global-shared), `Frame.internal` is the wrong creation frame there. Resource and frame are one judgment.
 
-## Fix directions (for discussion — no code yet)
-- **Class 1:** per-connection `Closed` should name the connection (the handle already has `handleLabel`/fd/socket id) and carry that connection's creation frame — which means capturing the user's `transport.connect`/`accept` frame onto the handle at creation and using it here. Also reconsider whether some (e.g. connect-refused, RST) should be a `NetConnectException`/`NetConnectionClosedException` rather than `Closed` at all.
-- **Class 2:** pass an explicit `Frame.internal` at the genuine driver-close sites.
-- **Class 3:** stop using `Closed` for unsupported-ops (an unsupported/illegal-op exception) and for timer-interrupt causes (an interrupt/`Interrupted` cause).
+## Fix directions (traced feasibility)
+
+**The correct user creation frame is available at every handle-creation site and is currently DROPPED.** Public API captures it: `Transport.connect(...)(using …, Frame)` and `Transport.listen(...)(using …, Frame)`. It stays in scope down to handle creation but is not passed on:
+- NIO connect: user frame live at `NioHandle.init` (NioTransport `:223/:265/:279`); accept: `acceptAllPending(...)(using …, Frame)` (from `listen`) live at `:457`. `NioHandle.init` (`:131`) takes no `Frame` → dropped.
+- `PosixHandle` / `JsHandle` same shape (classes with `val` fields, factory `init`). `JsHandle.init` already takes `using Frame`.
+
+**Frame threading MUST be an explicit `createdAt: Frame` parameter, NOT `using Frame`.** `NioHandle.init` has ~6 call sites (connect ×3, accept, upgrade re-handle ×2), several under a `given Frame = Frame.internal` or other ambient frame; an implicit would silently capture the wrong one (the exact bug class this fixes). An explicit param forces each call site to pass the deliberate creation frame and makes it reviewable.
+
+- **Class 1 (~55 per-connection):** add `val createdAt: Frame` to each handle (`NioHandle`/`PosixHandle`/`JsHandle`), explicit `createdAt: Frame` param on their `init`/`initTls`, threaded from the connect/accept/listen user frame at each creation call site. Then per-connection `Closed` names the connection (its `handleLabel`/fd/socket id) with `handle.createdAt`. Also reconsider whether connect-refused / RST should be `NetConnectException` / `NetConnectionClosedException` rather than `Closed`.
+- **Class 2 (9 driver closes):** pass explicit `Frame.internal` (driver is global-shared).
+- **Class 3 (13 misuses):** stop using `Closed` — unsupported-op → an unsupported/illegal-op exception; timer-interrupt cause → an interrupt/`Interrupted` cause.
+
+Scope: 3 handle types (field + explicit init param), all handle-creation call sites (thread the deliberate frame), ~55 Class-1 rewrites, 9 Class-2, 13 Class-3. Large but mechanical and uniform.
