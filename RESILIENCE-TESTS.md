@@ -83,10 +83,26 @@ Both suites: every scenario ends with a co-tenant liveness probe asserting the s
 - [ ] **R9** Run both suites across all backends; confirm wedge reproduces on `[nio]`, green elsewhere; record results here.
 - [gated] **R10** Driver fix for the NIO cross-carrier cancel-vs-dispatch race (contain per-connection dispatch errors like `PollerIoDriver`). NOT now; user-gated.
 
+## Decisions (user)
+- **Fibers only.** No real OS threads / `runAndBlock` in the reproduction. Remove the real-threads transport scenario in cleanup (R5).
+- **Reproduce via podman.** The wedge may be a scheduling-pressure phenomenon hidden on a fast local box; run the suites under `scripts/build.sh --env podman-ci` (4 vCPU, `SBT_TASK_LIMIT=1`, CI heap) to expose it with fibers.
+
 ## Open questions / decisions
 
 - HTTP test also drives the process-shared default client in one scenario (to mirror the reporter exactly) in addition to the per-backend explicit clients? Leaning yes, as one extra scenario.
 - File-naming: `TransportResilienceTest` shares the `Transport` prefix with `Transport.scala`; `HttpServerResilienceTest` shares `HttpServer` with `HttpServer.scala` — both satisfy the prefix rule as aspect tests.
+
+## Log (newest first)
+- **Work-arounds undone (per user): stop tuning green, expose real behavior as findings.** (1) drain/registeringDrain reverted from single-`take` back to the read LOOP, to expose what `conn.inbound.safe.take` does on peer-close/EOF (a read-only loop that spins there would be a real transport finding; `echo` survives only because its `put` aborts on close). (2) Client close-on-timeout removed (`Async.timeout(...).andThen(conn.close())`, close SKIPPED on timeout-abort), to re-expose the fd leak and determine whether interrupting an in-flight read leaks the DRIVER-SIDE armed read (a real cancellation-cleanup bug) vs merely my unclosed socket. Candidate findings to root-cause next: (A) take-on-EOF read-loop behavior; (B) interrupt/timeout leaves driver arm stranded?; (C) isolation-[kqueue] cumulative strand.
+
+- **Podman transport result: wedge does NOT reproduce even under CI-faithful Linux constraints.** `--env podman-ci` ran nio/epoll/io_uring (kqueue cancels on Linux): 27 passed / 0 failed. So CI scheduling pressure alone does not trip it at the transport level. Reproduction is firmly an HTTP-layer phenomenon (pool + restart + firing timeout).
+- **Leak found + fixed.** The podman run's kyo-test leak check caught a 1200-fd leak from my transport scenarios: (1) `Async.timeout(...).andThen(conn.close())` skips the close when the timeout FIRES (abort short-circuit) so R3b/R4 leaked every client fd; (2) silent server handlers never closed accepted connections. Fix: a `drain` server helper (reads+discards, closes on peer-close) replaces the silent handlers, and the client catches the timeout out of the abort so `conn.close` always runs. NOTE: the local macOS run did NOT catch this (fd-leak check is Linux-strict); podman is the gate for leak validation.
+- Real-threads transport scenario removed (fibers-only).
+- R6: opaque `HttpClient` bridged via a cast (`asInstanceOf[HttpClient]`) since it is `opaque type HttpClient = HttpClientBackend` with no public per-transport factory. Smoke scenario added.
+
+- R6 in progress: `HttpServerResilienceTest` rewritten with an HTTP-level `eachBackend` (one `HttpClientBackend.init` client per backend over the shared `TestBackends` transport, never closed; per-scenario servers via `HttpServer.Unsafe.init`; `HttpClient.let` binds the ambient client). Smoke scenario ("healthy GET round-trips") added; compiling + running across backends locally.
+- Podman: running `scripts/build.sh --env podman-ci sbt 'kyo-netJVM/testOnly kyo.net.TransportResilienceTest'` to check whether CI-faithful scheduling pressure trips the wedge with fibers (result pending).
+- Decision recorded: fibers only; reproduce via podman.
 
 ## Log
 - (init) Doc created. Findings above verified in code + scala-cli repro matrix. Next: R1 (build dep), then R2 rename.

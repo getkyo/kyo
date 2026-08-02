@@ -28,6 +28,18 @@ class TransportResilienceTest extends Test:
             }
         })
 
+    /** Fire-and-forget drain: read and discard every inbound chunk until the peer closes, then close this side. */
+    private def drain(conn: Connection): Unit =
+        discard(Sync.Unsafe.evalOrThrow {
+            Fiber.initUnscoped {
+                Abort.run[Closed] {
+                    Loop.foreach {
+                        conn.inbound.safe.take.andThen(Loop.continue)
+                    }
+                }.andThen(Sync.defer(conn.close())).unit
+            }
+        })
+
     private def collect(conn: Connection, target: Int)(using Frame): Array[Byte] < (Async & Abort[Closed]) =
         Loop(Array.emptyByteArray) { acc =>
             if acc.length >= target then Loop.done(acc)
@@ -146,11 +158,10 @@ class TransportResilienceTest extends Test:
     "abrupt local close during an in-flight read does not wedge the driver" - eachBackend { transport =>
         // The client arms a read (no data will come: the handler never echoes) and closes the connection out from under
         // that armed read, racing the driver's read dispatch. Repeated under concurrency.
-        def silent(conn: Connection): Unit = ()
         for
             cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
-            silentListener <- transport.listen("127.0.0.1", 0, 128)(silent).safe.get
+            silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _ <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
@@ -239,11 +250,10 @@ class TransportResilienceTest extends Test:
     "interrupting in-flight reads at concurrency does not wedge the driver" - eachBackend { transport =>
         // A silent server never echoes, so each client read parks. Interrupting the parked read must fail only that one
         // read (Interrupted/Closed) and never escape the poll loop to close the driver. Repeated under concurrency.
-        def silent(conn: Connection): Unit = ()
         for
             cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
-            silentListener <- transport.listen("127.0.0.1", 0, 128)(silent).safe.get
+            silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _ <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
@@ -265,11 +275,10 @@ class TransportResilienceTest extends Test:
     "a firing read timeout (Async.timeout) against a silent server does not wedge the driver" - eachBackend { transport =>
         // The reporter's actual cancellation source: an Async.timeout that EXPIRES on an in-flight read (the server never
         // responds) and interrupts it. The timeout's interrupt runs the connection teardown; it must stay contained.
-        def silent(conn: Connection): Unit = ()
         for
             cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
-            silentListener <- transport.listen("127.0.0.1", 0, 128)(silent).safe.get
+            silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _ <- Async.foreach(0 until 200, 40) { _ =>
                 Abort.run[NetException | Closed | Timeout] {
@@ -295,17 +304,26 @@ class TransportResilienceTest extends Test:
             // driver. Must stay contained on every backend.
             val serverConns = java.util.concurrent.ConcurrentHashMap.newKeySet[Connection]()
             val stop        = new JAtomicBoolean(false)
-            // Register the accepted connection for the churn to RST, but never echo: the client read below stays
-            // genuinely ARMED (nothing completes it) until the churn closes this side, so the timeout's interrupt races
-            // the peer-FIN/RST dispatch on an fd with an in-flight read. An echo would complete the read first and erase
-            // the race, which is why the earlier echo variant never wedged. The serverConns ref keeps it reachable.
-            def registeringHold(conn: Connection): Unit =
+            // Register the accepted connection for the churn to RST, and drain (read+discard) without echoing: the client
+            // read below stays genuinely ARMED (the server never sends) until the churn closes this side, so the timeout's
+            // interrupt races the peer-FIN/RST dispatch on an fd with an in-flight read. An echo would complete the read
+            // first and erase the race. The drain loop closes this side on peer-close so no server-side fd leaks.
+            def registeringDrain(conn: Connection): Unit =
                 discard(serverConns.add(conn))
-            end registeringHold
+                discard(Sync.Unsafe.evalOrThrow {
+                    Fiber.initUnscoped {
+                        Abort.run[Closed] {
+                            Loop.foreach {
+                                conn.inbound.safe.take.andThen(Loop.continue)
+                            }
+                        }.andThen(Sync.defer { discard(serverConns.remove(conn)); conn.close() }).unit
+                    }
+                })
+            end registeringDrain
             for
                 cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
                 _             <- Scope.ensure(Sync.defer(cleanListener.close()))
-                churnListener <- transport.listen("127.0.0.1", 0, 256)(registeringHold).safe.get
+                churnListener <- transport.listen("127.0.0.1", 0, 256)(registeringDrain).safe.get
                 _             <- Scope.ensure(Sync.defer(churnListener.close()))
                 churn = Loop(0) { _ =>
                     if stop.get() then Loop.done(())
@@ -326,9 +344,9 @@ class TransportResilienceTest extends Test:
                         else
                             Abort.run[NetException | Closed | Timeout] {
                                 transport.connect("127.0.0.1", churnListener.port).safe.get.map { conn =>
-                                    // Arm a read the silent server never answers, bounded by a short timeout that fires
-                                    // while it is still parked. The churn RSTs this connection inside that window, so the
-                                    // timeout's interrupt teardown races the peer-FIN/RST dispatch on the same fd.
+                                    // Arm a read the drain server never answers, bounded by a short timeout that fires while
+                                    // it is still parked. The churn RSTs this connection inside that window, so the timeout's
+                                    // interrupt teardown races the peer-FIN/RST dispatch on the same fd.
                                     Async.timeout(8.millis)(conn.inbound.safe.take).andThen(Sync.defer(conn.close()))
                                 }
                             }.andThen(Loop.continue(i + 1))
@@ -341,81 +359,6 @@ class TransportResilienceTest extends Test:
                 churnListener.close()
                 succeed
             end for
-    }
-
-    // ---- reported bug via REAL OS threads: 16 blocking threads + server-restart churn ------------------------------
-
-    "reported bug (real OS threads): mass invalidation under blocking multi-threaded load" - eachBackend { transport =>
-        // The reporter's exact model: real OS-thread parallelism (16 threads each entering the runtime and BLOCKING on
-        // a round-trip via runAndBlock, not fibers batched inside one run) plus a server going away under them. A raw
-        // churn thread mass-closes every connected server side repeatedly (server restart), RST-ing in-flight reads.
-        val serverConns = java.util.concurrent.ConcurrentHashMap.newKeySet[Connection]()
-        val stop        = new JAtomicBoolean(false)
-        val msg         = "ping".getBytes("UTF-8")
-        def registeringEcho(conn: Connection): Unit =
-            discard(serverConns.add(conn))
-            discard(Sync.Unsafe.evalOrThrow {
-                Fiber.initUnscoped {
-                    Abort.run[Closed] {
-                        Loop.foreach {
-                            conn.inbound.safe.take.map(chunk => conn.outbound.safe.put(chunk).andThen(Loop.continue))
-                        }
-                    }.andThen(Sync.defer(discard(serverConns.remove(conn)))).unit
-                }
-            })
-        end registeringEcho
-        for
-            cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
-            _             <- Scope.ensure(Sync.defer(cleanListener.close()))
-            churnListener <- transport.listen("127.0.0.1", 0, 256)(registeringEcho).safe.get
-            _             <- Scope.ensure(Sync.defer(churnListener.close()))
-            _ <- Sync.defer {
-                val port = churnListener.port
-                val churn = new Thread(() =>
-                    while !stop.get() do
-                        val it = serverConns.iterator()
-                        while it.hasNext do
-                            val c = it.next()
-                            discard(serverConns.remove(c))
-                            try c.close()
-                            catch case _: Throwable => ()
-                        end while
-                        try Thread.sleep(2)
-                        catch case _: InterruptedException => ()
-                    end while
-                )
-                churn.setDaemon(true)
-                churn.start()
-                val load = (0 until 16).map { _ =>
-                    val t = new Thread(() =>
-                        var i = 0
-                        while i < 80 do
-                            discard(Sync.Unsafe.evalOrThrow(Abort.run[Timeout](KyoApp.runAndBlock(5.seconds) {
-                                Abort.run[NetException | Closed] {
-                                    transport.connect("127.0.0.1", port).safe.get.map { conn =>
-                                        conn.outbound.safe.put(Span.fromUnsafe(msg))
-                                            .andThen(conn.inbound.safe.take)
-                                            .andThen(Sync.defer(conn.close()))
-                                    }
-                                }.unit
-                            })))
-                            i += 1
-                        end while
-                    )
-                    t.setDaemon(true)
-                    t.start()
-                    t
-                }
-                load.foreach(_.join())
-                stop.set(true)
-                churn.join()
-            }
-            _ <- assertAlive(transport, cleanListener.port, "real-threads")
-        yield
-            cleanListener.close()
-            churnListener.close()
-            succeed
-        end for
     }
 
 end TransportResilienceTest
