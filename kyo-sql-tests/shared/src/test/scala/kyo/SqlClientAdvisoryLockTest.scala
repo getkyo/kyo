@@ -31,10 +31,12 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
 
     "a held lock excludes a concurrent session until the body releases it" - forEachBackend() { (_, client, _) =>
         // Both engines make `withAdvisoryLock` block until the lock is granted, so exclusion shows up as an ordering.
-        // The contender attempts only once the holder is inside, and it cannot record its entry until the holder's
-        // body has returned and released the lock: that the contender enters at all is the release half, that it
-        // enters last is the exclusion half. The two sessions are two connections of one pool, which the server keeps
-        // apart, so the lock is genuinely contended across sessions rather than re-entered on one.
+        // The contender attempts only once the holder is inside, and it cannot acquire until the holder releases, which
+        // happens as the holder's body returns. The holder records "holder-exit" as the last step INSIDE the body, so
+        // that marker is causally before the release and therefore before the contender's post-acquire "contender-enter";
+        // recorded after `withAdvisoryLock` returned it would instead race the contender, since both then run only once
+        // the same release has happened. The two sessions are two connections of one pool, which the server keeps apart,
+        // so the lock is genuinely contended across sessions rather than re-entered on one.
         val key = 918273L
         for
             events        <- AtomicRef.init(Chunk.empty[String])
@@ -45,7 +47,8 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
                     events.updateAndGet(_.append("holder-enter"))
                         .andThen(holderInside.release)
                         .andThen(releaseHolder.await)
-                }.andThen(events.updateAndGet(_.append("holder-exit")).unit)
+                        .andThen(events.updateAndGet(_.append("holder-exit")).unit)
+                }
             }
             contender <- Fiber.init {
                 holderInside.await.andThen {
