@@ -1,0 +1,156 @@
+package kyo.internal.postgres
+
+import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionException
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeUnknownBackendMessageException
+import kyo.SqlException
+import kyo.internal.postgres.unmarshaller.Unmarshallers
+import kyo.net.Connection
+
+/** Connection-scoped buffer accumulator that reconstructs complete Postgres backend messages from raw byte chunks.
+  *
+  * The Postgres v3 wire format (post-startup) is: Byte1(type) | Int32(length including itself) | payload
+  *
+  * A single chunk delivered from the [[Connection.inbound]] channel may contain zero, one, or many complete messages, and a single message
+  * may span multiple chunks. [[MessageReader]] reassembles them before handing the payload to the appropriate [[Unmarshaller]].
+  *
+  * State is mutable (pending buffer) and must not be shared across concurrent accesses, each [[PostgresConnection]] owns exactly one
+  * [[MessageReader]].
+  */
+final class MessageReader:
+
+    // Not thread-safe by design: each MessageReader is owned by a single PostgresConnection fiber.
+    private var pending: Chunk[Byte] = Chunk.empty
+
+    /** Reads one complete [[BackendMessage]] from the connection, pulling more chunks from the inbound channel as needed.
+      *
+      * Blocks (suspends the fiber) only when additional bytes are required to complete the current message header or payload.
+      */
+    def readOne(conn: Connection, unmarshallers: Unmarshallers)(using Frame): BackendMessage < (Async & Abort[SqlException]) =
+        if hasCompleteMessage then decodePending(unmarshallers)
+        else pullMoreAndRetry(conn, unmarshallers)
+
+    /** Reads one complete [[BackendMessage]] if one has already arrived, and reports [[Absent]] instead of waiting for the remote end.
+      *
+      * Decodes from the pending buffer when a whole message is already sitting there, and otherwise takes whatever the inbound channel
+      * holds right now and retries, stopping at [[Absent]] once the channel has nothing left. Bytes that arrive without completing a
+      * message stay buffered, so a later [[readOne]] resumes on them: nothing this method sees is ever dropped.
+      *
+      * This is the only way to ask whether the server has said anything yet. The pending buffer is private and can already hold a whole
+      * message that no poll of the channel would see, and a caller polling the channel itself would take bytes the next read needs.
+      * `Channel.empty` and `Channel.size` cannot answer the question either, for the same reason: neither sees the buffer.
+      */
+    def readOneIfAvailable(conn: Connection, unmarshallers: Unmarshallers)(using
+        Frame
+    ): Maybe[BackendMessage] < (Async & Abort[SqlException]) =
+        if hasCompleteMessage then decodePending(unmarshallers).map(Maybe.Present(_))
+        else pollMoreOrAbsent(conn, unmarshallers)
+
+    // 5 bytes = 1 type byte + 4 length bytes
+    private val headerSize = 5
+
+    /** True when the pending buffer already holds a whole message: the 5-byte header plus the payload its length field announces. */
+    private def hasCompleteMessage: Boolean =
+        pending.size >= headerSize && pending.size >= 1 + readInt32At(pending, 1)
+
+    /** Removes the message at the head of the pending buffer and decodes it. Requires [[hasCompleteMessage]]. */
+    private def decodePending(unmarshallers: Unmarshallers)(using Frame): BackendMessage < (Async & Abort[SqlException]) =
+        val msgType   = pending(0)
+        val len       = readInt32At(pending, 1) // length includes itself (4 bytes) but not the type byte
+        val totalSize = 1 + len                 // type byte + (length field + payload)
+        val bodyLen   = len - 4                 // payload length excluding the 4-byte length field
+        val body      = pending.slice(headerSize, headerSize + bodyLen)
+        pending = pending.slice(totalSize, pending.size)
+        decodeMessage(msgType, body, unmarshallers)
+    end decodePending
+
+    private[postgres] def onTakePanic(t: Throwable)(using Frame): SqlConnectionException < Sync =
+        Log.error(s"[kyo-sql] MessageReader: unexpected panic: ${t.getMessage}").andThen(
+            SqlConnectionClosedException("reading (panic: " + t.getMessage + ")")
+        )
+
+    private def pullMoreAndRetry(conn: Connection, unmarshallers: Unmarshallers)(using
+        Frame
+    ): BackendMessage < (Async & Abort[SqlException]) =
+        Abort.run[Closed](conn.inbound.safe.take).flatMap {
+            case Result.Success(span) =>
+                // Span has no IterableOnce/Iterable surface (opts out of Scala collections);
+                // Chunk has no Span overload. .toArray is the only safe Span->Chunk bridge.
+                pending = pending.concat(Chunk.from(span.toArray))
+                readOne(conn, unmarshallers)
+            case Result.Failure(_) =>
+                Abort.fail(SqlConnectionClosedException("reading message"))
+            case Result.Panic(t) =>
+                onTakePanic(t).flatMap(Abort.fail(_))
+        }
+
+    /** Appends whatever the inbound channel holds right now and retries, or reports [[Absent]] when it holds nothing. */
+    private def pollMoreOrAbsent(conn: Connection, unmarshallers: Unmarshallers)(using
+        Frame
+    ): Maybe[BackendMessage] < (Async & Abort[SqlException]) =
+        Abort.run[Closed](conn.inbound.safe.poll).flatMap {
+            case Result.Success(polled) =>
+                polled match
+                    case Maybe.Present(span) =>
+                        // Same Span->Chunk bridge as pullMoreAndRetry, and the same reason.
+                        pending = pending.concat(Chunk.from(span.toArray))
+                        readOneIfAvailable(conn, unmarshallers)
+                    case Maybe.Absent =>
+                        Maybe.Absent
+            case Result.Failure(_) =>
+                Abort.fail(SqlConnectionClosedException("reading message"))
+            case Result.Panic(t) =>
+                onTakePanic(t).flatMap(Abort.fail(_))
+        }
+
+    private def readInt32At(chunk: Chunk[Byte], offset: Int): Int =
+        val b0 = chunk(offset) & 0xff
+        val b1 = chunk(offset + 1) & 0xff
+        val b2 = chunk(offset + 2) & 0xff
+        val b3 = chunk(offset + 3) & 0xff
+        (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+    end readInt32At
+
+    private def decodeMessage(msgType: Byte, body: Chunk[Byte], unmarshallers: Unmarshallers)(using
+        Frame
+    ): BackendMessage < (Async & Abort[SqlException]) =
+        val buf = new PostgresBufferReader(Span.from(body.toArray))
+        val result: BackendMessage < Abort[SqlDecodeException] = msgType match
+            case 'R' => unmarshallers.authentication.read(buf)
+            case 'S' => unmarshallers.parameterStatus.read(buf)
+            case 'K' => unmarshallers.backendKeyData.read(buf)
+            case 'Z' => unmarshallers.readyForQuery.read(buf)
+            case 'T' => unmarshallers.rowDescription.read(buf)
+            case 'D' => unmarshallers.dataRow.read(buf)
+            case 'C' => unmarshallers.commandComplete.read(buf)
+            case 'E' => unmarshallers.errorResponse.read(buf)
+            case 'N' => unmarshallers.noticeResponse.read(buf)
+            case 'A' => unmarshallers.notificationResponse.read(buf)
+            case '1' => unmarshallers.parseComplete.read(buf)
+            case '2' => unmarshallers.bindComplete.read(buf)
+            case '3' => unmarshallers.closeComplete.read(buf)
+            case 't' => unmarshallers.parameterDescription.read(buf)
+            case 'n' => unmarshallers.noData.read(buf)
+            case 's' => unmarshallers.portalSuspended.read(buf)
+            case 'I' => EmptyQueryResponse
+            // COPY protocol messages
+            case 'G' => unmarshallers.copyInResponse.read(buf)
+            case 'H' => unmarshallers.copyOutResponse.read(buf)
+            case 'd' => unmarshallers.copyData.read(buf)
+            case 'c' => unmarshallers.copyDone.read(buf)
+            case unknown =>
+                Abort.fail(SqlDecodeUnknownBackendMessageException(unknown))
+        Abort.run[SqlDecodeException](result).flatMap {
+            case Result.Success(msg) => msg
+            case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("message", e))
+            case Result.Panic(t) =>
+                Log.error(s"[kyo-sql] MessageReader: decode panic: ${t.getMessage}").andThen(
+                    Abort.fail(SqlConnectionProtocolDecodeException("message", t))
+                )
+        }
+    end decodeMessage
+
+end MessageReader

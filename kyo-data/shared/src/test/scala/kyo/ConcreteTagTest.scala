@@ -1071,6 +1071,40 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
                 assert(ConcreteTag.fromClass[String](ConcreteTag[String].toClass) == ConcreteTag[String])
             }
         }
+
+        "showType" - {
+
+            "renders the type with no wrapper, where show wraps it" in {
+                assert(ConcreteTag[Int].showType == "Int")
+                assert(ConcreteTag[String].showType == "String")
+                assert(ConcreteTag[Dog].showType == "Dog")
+            }
+
+            "show is showType inside the wrapper, so existing callers are unchanged" in {
+                assert(ConcreteTag[Int].show == "ConcreteTag[Int]")
+                assert(ConcreteTag[String].show == "ConcreteTag[String]")
+                assert(ConcreteTag[Dog].show == s"ConcreteTag[${ConcreteTag[Dog].showType}]")
+            }
+
+            // The reason showType exists rather than callers using toClass.getSimpleName, which is the
+            // cheaper spelling and is lossy: every one of these collapses to Object under toClass.
+            "is lossless where toClass is not" in {
+                val union        = ConcreteTag[Int] | ConcreteTag[String]
+                val intersection = ConcreteTag[Swimmer] & ConcreteTag[Flyer]
+                assert(union.showType == "(Int | String)")
+                assert(intersection.showType == "(Swimmer & Flyer)")
+                assert(ConcreteTag[Nothing].showType == "Nothing")
+                assert(union.toClass eq classOf[AnyRef])
+                assert(intersection.toClass eq classOf[AnyRef])
+            }
+
+            // A primitive's erased class renders lowercase, which is what the PostgreSQL empty-range
+            // refusal used to print: `Range[int]` for a `Range[Int]`.
+            "renders a primitive as its Scala name, not its erased lowercase one" in {
+                assert(ConcreteTag[Int].showType == "Int")
+                assert(ConcreteTag[Int].toClass.getSimpleName == "int")
+            }
+        }
     }
 
 end ConcreteTagTest

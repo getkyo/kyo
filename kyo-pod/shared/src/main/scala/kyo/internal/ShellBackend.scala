@@ -199,24 +199,42 @@ final private[kyo] class ShellBackend(
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         runUnit(ResourceContext.Container(id), "rename", id.value, newName)
 
-    def waitForExit(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
+    def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         val waitCmd = Command(cmd, "wait", id.value)
-        Abort.runWith[CommandException](waitCmd.textWithExitCode) {
-            case Result.Success((output, _)) =>
-                // docker wait prints the container's exit code to stdout
-                parseExitCode(output.trim) match
-                    case Result.Success(code) => code
-                    case _                    =>
-                        // Couldn't parse output; try inspect as fallback
-                        inspectExitCode(id)
-            case Result.Failure(_) =>
-                // docker wait failed (e.g. container already removed); try inspect
-                inspectExitCode(id)
-            case Result.Panic(ex) =>
-                Abort.fail[ContainerException](
-                    ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
-                )
-        }
+        // Shell backend bounds the caller's `timeout` via `Async.timeout` since `docker wait` has no
+        // native deadline flag. `Duration.Infinity` skips the wrapper and lets `docker wait` block
+        // until the container exits.
+        val call: ExitCode < (Async & Abort[ContainerException]) =
+            Abort.runWith[CommandException](waitCmd.textWithExitCode) {
+                case Result.Success((output, _)) =>
+                    // docker wait prints the container's exit code to stdout
+                    parseExitCode(output.trim) match
+                        case Result.Success(code) => code
+                        case _                    =>
+                            // Couldn't parse output; try inspect as fallback
+                            inspectExitCode(id)
+                case Result.Failure(_) =>
+                    // docker wait failed (e.g. container already removed); try inspect
+                    inspectExitCode(id)
+                case Result.Panic(ex) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
+                    )
+            }
+        if timeout == Duration.Infinity then call
+        else
+            Abort.run[Timeout](Async.timeout(timeout)(call)).map {
+                case Result.Success(code) => code
+                case Result.Failure(_) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit for ${id.value} exceeded $timeout")
+                    )
+                case Result.Panic(ex) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
+                    )
+            }
+        end if
     end waitForExit
 
     private def parseExitCode(s: String): Result[NumberFormatException, ExitCode] =
@@ -2388,14 +2406,28 @@ private[kyo] object ShellBackend:
         else ContainerOperationException(s"docker login $server failed (auth): $output")
     end classifyLoginError
 
+    /** Whether a CLI probe outcome makes that CLI usable as the shell backend.
+      *
+      * Total on purpose: only a spawned probe that exited zero counts, and everything else, a spawn failure, a panic, or a
+      * live binary answering a non-zero exit, reads as "not usable" so detection falls through to the next CLI. The non-zero
+      * arm is the one that bites in practice: `podman version` exits 125 when the podman machine VM is stopped, and an
+      * earlier shape of [[detect]] guarded its success arm on the exit code with no unguarded arm beside it, so exactly that
+      * outcome escaped the match as a `MatchError` instead of falling through to docker.
+      */
+    private[internal] def probeUsable(outcome: Result[CommandException, (String, ExitCode)]): Boolean =
+        outcome match
+            case Result.Success((_, code)) => code == ExitCode.Success
+            case _                         => false
+
     /** Auto-detect an available container runtime by probing CLI binaries on `PATH`.
       *
       * Resolution order:
       *   1. `podman version` — if it exits successfully, the resulting backend uses the `podman` CLI.
       *   2. `docker version` — if it exits successfully, the resulting backend uses the `docker` CLI.
       *
-      * Failures and panics from one probe never short-circuit the next: a panic on `podman` is logged and we fall through to `docker`.
-      * Fails with [[ContainerBackendUnavailableException]] only when neither binary is usable.
+      * No probe outcome short-circuits the next candidate: a spawn failure, a non-zero exit (a stopped podman machine VM
+      * answers 125), or a panic on `podman` falls through to `docker`, with panics logged. Fails with
+      * [[ContainerBackendUnavailableException]] only when neither binary is usable.
       *
       * @see
       *   [[HttpContainerBackend.detect]] for the socket-based companion path used when no CLI is available.
@@ -2404,49 +2436,28 @@ private[kyo] object ShellBackend:
         meter: Meter = Meter.Noop,
         streamBufferSize: Int = defaultStreamBufferSize
     )(using Frame): ShellBackend < (Async & Abort[ContainerException]) =
-        Abort.runWith[CommandException](Command("podman", "version").textWithExitCode) {
-            case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
-                val backend = new ShellBackend("podman", meter, streamBufferSize)
-                Log.info(s"kyo-pod: using shell backend (CLI=podman)").andThen(backend)
-            case Result.Failure(_) =>
-                Abort.runWith[CommandException](Command("docker", "version").textWithExitCode) {
-                    case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
-                        val backend = new ShellBackend("docker", meter, streamBufferSize)
-                        Log.info(s"kyo-pod: using shell backend (CLI=docker)").andThen(backend)
-                    case Result.Failure(_) =>
+        def usable(cli: String): Boolean < Async =
+            Abort.run[CommandException](Command(cli, "version").textWithExitCode).map {
+                case outcome @ Result.Panic(t) =>
+                    Log.warn(s"unexpected error in detect ($cli probe): $t").andThen(probeUsable(outcome))
+                case outcome =>
+                    probeUsable(outcome)
+            }
+        def backendFor(cli: String): ShellBackend < Async =
+            Log.info(s"kyo-pod: using shell backend (CLI=$cli)").andThen(new ShellBackend(cli, meter, streamBufferSize))
+        usable("podman").map { podman =>
+            if podman then backendFor("podman")
+            else
+                usable("docker").map { docker =>
+                    if docker then backendFor("docker")
+                    else
                         Abort.fail(ContainerBackendUnavailableException(
                             "auto-detect",
                             "Neither podman nor docker is available. Install one of them."
                         ))
-                    case Result.Panic(t) =>
-                        Log.warn(s"unexpected error in detect (docker probe): $t").andThen(
-                            Abort.fail(ContainerBackendUnavailableException(
-                                "auto-detect",
-                                "Neither podman nor docker is available. Install one of them."
-                            ))
-                        )
                 }
-            case Result.Panic(t) =>
-                Log.warn(s"unexpected error in detect (podman probe): $t").andThen(
-                    Abort.runWith[CommandException](Command("docker", "version").textWithExitCode) {
-                        case Result.Success((_, exitCode)) if exitCode == ExitCode.Success =>
-                            val backend = new ShellBackend("docker", meter, streamBufferSize)
-                            Log.info(s"kyo-pod: using shell backend (CLI=docker)").andThen(backend)
-                        case Result.Failure(_) =>
-                            Abort.fail(ContainerBackendUnavailableException(
-                                "auto-detect",
-                                "Neither podman nor docker is available. Install one of them."
-                            ))
-                        case Result.Panic(t2) =>
-                            Log.warn(s"unexpected error in detect (docker probe after podman panic): $t2").andThen(
-                                Abort.fail(ContainerBackendUnavailableException(
-                                    "auto-detect",
-                                    "Neither podman nor docker is available. Install one of them."
-                                ))
-                            )
-                    }
-                )
         }
+    end detect
 
     // --- JSON DTOs for container inspect ---
 

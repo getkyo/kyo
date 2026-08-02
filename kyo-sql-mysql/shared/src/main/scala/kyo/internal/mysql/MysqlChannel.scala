@@ -1,0 +1,253 @@
+package kyo.internal.mysql
+
+import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionProtocolCorruptedException
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlConnectionWritePanicException
+import kyo.SqlDecodeException
+import kyo.SqlException
+import kyo.internal.mysql.marshaller.Marshallers
+import kyo.internal.mysql.unmarshaller.GenericResponseUnmarshaller
+import kyo.internal.mysql.unmarshaller.Unmarshallers
+import kyo.net.Connection
+
+/** Wraps a [[kyo.net.Connection]] with typed send/receive for the MySQL wire protocol.
+  *
+  * Responsibilities:
+  *   - Serialises frontend messages to framed MySQL packets and writes them.
+  *   - Reads complete logical payloads from the connection (reassembling split packets) and decodes backend messages.
+  *   - Tracks the per-command sequence ID: resets to 0 at the start of each new command via [[resetSeq]], increments per write.
+  *
+  * State (seq counter, accumulation buffer) is mutable and NOT thread-safe. Each [[MysqlChannel]] must be accessed from at most one fiber
+  * at a time. The connection pool guarantees serial access.
+  *
+  * ==Single-fiber invariant for seqId==
+  *
+  * [[seqId]] is a plain `var` intentionally, it is single-fiber mutable state whose correctness depends on the connection pool's guarantee
+  * that each [[MysqlChannel]] is accessed from at most one fiber at a time. [[resetSeq]], [[setSeq]], [[advanceSeq]], and the inline
+  * mutations in [[send]]/[[readChunks]] are therefore safe without synchronisation. Do NOT add atomics or locking here; the invariant is
+  * maintained by the pool layer, not by the channel.
+  */
+final class MysqlChannel(
+    val conn: Connection,
+    val marshallers: Marshallers,
+    val unmarshallers: Unmarshallers,
+    val socketTimeout: Duration,
+    private val _corrupted: AtomicRef[Maybe[String]],
+    private val _cleanupLatch: AtomicRef[Maybe[Latch]]
+):
+    // Per-command sequence ID (0-255, wraps). Reset to 0 at the start of each new command.
+    // Single-fiber state, see class scaladoc for the invariant.
+    private var seqId: Int = 0
+
+    // Accumulation buffer for raw TCP bytes received from the server.
+    private val buf: AccumulatedBuffer = new AccumulatedBuffer
+
+    /** Returns the current sequence ID (for testing). */
+    def currentSeq: Int = seqId
+
+    /** Resets the sequence ID to 0, call at the start of each new command boundary. */
+    def resetSeq(): Unit = seqId = 0
+
+    /** Serialises `msg` to a MySQL packet (using the current seqId) and writes it to the connection. */
+    def send[T <: FrontendMessage](msg: T)(using m: Marshaller[T])(using Frame): Unit < (Async & Abort[SqlException]) =
+        checkCorrupted().andThen {
+            Sync.defer {
+                val writer = new MysqlBufferWriter
+                m.write(msg, writer)
+                val payload = writer.toSpan
+                val packets = MysqlPacket.writeOne(payload, seqId)
+                // Advance seqId by the number of packets written (each packet increments seq by 1)
+                seqId = (seqId + packets.size) & 0xff
+                // Fast path: single packet (>99% of sends), use it directly, no copy
+                if packets.size == 1 then
+                    packets(0)
+                else
+                    // Slow path: concatenate all packet spans into one write
+                    val totalLen = packets.foldLeft(0)(_ + _.size)
+                    val allBytes = new Array[Byte](totalLen)
+                    var offset   = 0
+                    packets.foreach { p =>
+                        val arr = p.toArray
+                        java.lang.System.arraycopy(arr, 0, allBytes, offset, arr.length)
+                        offset += arr.length
+                    }
+                    Span.from(allBytes)
+                end if
+            }.flatMap { bytes =>
+                Abort.run[Closed](conn.outbound.safe.put(bytes)).flatMap {
+                    case Result.Success(_) => ()
+                    case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing"))
+                    case Result.Panic(t) =>
+                        Abort.fail(SqlConnectionWritePanicException(t))
+                }
+            }
+        }
+    end send
+
+    /** Reads the next complete logical payload from the connection and decodes it as a [[BackendMessage]].
+      *
+      * @param inAuthContext
+      *   pass `true` during the authentication phase so 0xFE bytes are decoded as [[AuthSwitchRequest]]
+      */
+    def receive(inAuthContext: Boolean)(using Frame): BackendMessage < (Async & Abort[SqlException]) =
+        readPayload.flatMap { payload =>
+            val reader = MysqlBufferReader(payload)
+            Abort.run[SqlDecodeException](
+                GenericResponseUnmarshaller.read(reader, payload.size, inAuthContext)
+            ).flatMap {
+                case Result.Success(msg) => msg
+                case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("message", e))
+                case Result.Panic(t) =>
+                    Abort.fail(SqlConnectionProtocolDecodeException("message", t))
+            }
+        }
+    end receive
+
+    /** Reads the initial [[HandshakeV10]] from the server (used only during connection setup). */
+    def receiveHandshake(using Frame): HandshakeV10 < (Async & Abort[SqlException]) =
+        readPayload.flatMap { payload =>
+            val reader = MysqlBufferReader(payload)
+            Abort.run[SqlDecodeException](unmarshallers.handshakeV10.read(reader)).flatMap {
+                case Result.Success(hs) => hs
+                case Result.Failure(e)  => Abort.fail(SqlConnectionProtocolDecodeException("Handshake", e))
+                case Result.Panic(t) =>
+                    Abort.fail(SqlConnectionProtocolDecodeException("Handshake", t))
+            }
+        }
+    end receiveHandshake
+
+    /** Reads the next complete logical payload (reassembling split packets), exposed for result-set parsers that need raw byte access. */
+    def readRawPayload(using Frame): Span[Byte] < (Async & Abort[SqlException]) =
+        checkCorrupted().andThen(readPayload)
+
+    /** Sets the sequence ID to a specific value, used when cloning the channel across a TLS upgrade to preserve continuity. */
+    private[mysql] def setSeq(v: Int): Unit = seqId = v
+
+    /** Advances the sequence ID by `n`, used by [[exchange.LocalInfileExchange]] when writing raw LOCAL_INFILE_DATA packets. */
+    private[mysql] def advanceSeq(n: Int): Unit = seqId = (seqId + n) & 0xff
+
+    /** Marks the channel as corrupted, naming the operation whose cleanup failed.
+      *
+      * Once corrupted, all subsequent send/receive operations on this channel fail immediately with a [[kyo.SqlConnectionException]] leaf
+      * carrying `operation`, so the failure names the actual corrupter. The channel must be discarded (closed and not returned to any
+      * pool). Called by a cleanup path ([[exchange.LocalInfileExchange]]'s error drain, [[exchange.StreamQueryExchange]]'s result-set
+      * drain) when the cleanup itself fails, meaning the TCP stream framing is irrecoverably broken.
+      */
+    private[mysql] def markCorrupted(operation: String)(using Frame): Unit < Sync = _corrupted.set(Maybe.Present(operation))
+
+    /** Registers a cleanup latch that blocks subsequent channel operations until cleanup finishes.
+      *
+      * Called by [[exchange.LocalInfileExchange]] at the very start of the upload, before any bytes are sent. This ensures that any
+      * concurrent operation arriving after a cancellation sees either a clean channel or "unusable", never stale protocol bytes.
+      */
+    private[mysql] def beginCleanup(latch: Latch)(using Frame): Unit < Sync = _cleanupLatch.set(Maybe.Present(latch))
+
+    /** Clears the cleanup latch, signalling that the channel is no longer mid-cleanup.
+      *
+      * Must be called (together with [[Latch.release]]) by the cleanup fiber before returning. Always pair with [[beginCleanup]].
+      */
+    private[mysql] def endCleanup()(using Frame): Unit < Sync = _cleanupLatch.set(Maybe.Absent)
+
+    /** Reads a raw payload without first checking the corruption flag.
+      *
+      * Used exclusively by [[exchange.LocalInfileExchange]] cleanup code, which runs after [[markCorrupted]] may have already been set (to
+      * block concurrent callers) but still needs to drain the server's OK/ERR response so the TCP stream stays in a known state before the
+      * connection is discarded.
+      */
+    private[mysql] def readRawPayloadSkipCheck(using Frame): Span[Byte] < (Async & Abort[SqlException]) = readPayload
+
+    /** Fails immediately if the channel has been marked corrupted by a previous cleanup failure, naming the operation that corrupted it.
+      *
+      * If a cleanup is currently in-flight (signalled by [[_cleanupLatch]]), blocks (uninterruptibly) until cleanup finishes, then
+      * re-checks. This prevents the caller from racing with cleanup bytes on the wire.
+      */
+    private def checkCorrupted()(using Frame): Unit < (Async & Abort[SqlException]) =
+        _cleanupLatch.get.flatMap {
+            case Maybe.Present(latch) =>
+                // A LOCAL INFILE cleanup is in-flight. Block until it releases the latch,
+                // then re-check whether the channel was marked corrupted during cleanup.
+                // Async.mask makes this wait uninterruptible so the caller cannot skip it.
+                Async.mask { latch.await }.andThen(checkCorrupted())
+            case Maybe.Absent =>
+                _corrupted.get.flatMap {
+                    case Maybe.Present(operation) =>
+                        Abort.fail(SqlConnectionProtocolCorruptedException(operation))
+                    case Maybe.Absent =>
+                        ()
+                }
+        }
+
+    /** Reads the next complete logical payload (reassembling split packets) from the TCP stream, bounded by `socketTimeout` when the caller
+      * set one.
+      *
+      * Every path that can WAIT for bytes goes through here, and the bound covers the WHOLE logical payload rather than one chunk of it.
+      * That distinction is the bound's meaning: [[readChunks]] loops until the accumulation buffer holds a complete payload, so a bound
+      * applied to the single `take` inside [[pullChunk]] would restart its budget on every chunk that arrived, and a server trickling one
+      * chunk per `socketTimeout - 1` would never be timed out for any number of chunks. MySQL reassembles logical payloads up to 16 MB out
+      * of 16 MB packets, so that is a lot of chunks. `PostgresChannel.receive` bounds `MessageReader.readOne`, which loops the same way, and this
+      * is the same shape.
+      *
+      * The bound is opt-in and [[Duration.Infinity]] by default, because it cuts off a wait for bytes rather than a statement: a server
+      * legitimately takes as long as the query takes to answer, so a bound short enough to catch a stalled connection is also short enough
+      * to kill a slow query. A caller that asks for one is choosing that trade.
+      */
+    private def readPayload(using Frame): Span[Byte] < (Async & Abort[SqlException]) =
+        bounded(readChunks)
+
+    /** The unbounded reassembly loop [[readPayload]] puts the budget around.
+      *
+      * After successfully reading a packet, advances [[seqId]] to `receivedSeqId + 1` so the next [[send]] call uses the correct sequence
+      * number. The MySQL wire protocol requires seqId to increment by 1 with each packet in a command exchange: server seqId 0 → client
+      * must reply with seqId 1 → server acks with seqId 2, and so on.
+      */
+    private def readChunks(using Frame): Span[Byte] < (Async & Abort[SqlException]) =
+        MysqlPacket.readOne(buf) match
+            case Maybe.Present((payload, receivedSeqId)) =>
+                // Advance seqId so the next send uses receivedSeqId + 1.
+                seqId = (receivedSeqId + 1) & 0xff
+                payload
+            case Maybe.Absent =>
+                // Need more bytes from the network
+                pullChunk.andThen(readChunks)
+    end readChunks
+
+    /** Pulls one chunk of bytes from the connection's inbound channel into the accumulation buffer.
+      *
+      * Unbounded on its own: the budget belongs to the payload [[readPayload]] is assembling, not to each chunk of it.
+      */
+    private def pullChunk(using Frame): Unit < (Async & Abort[SqlException]) =
+        Abort.run[Closed](conn.inbound.safe.take).flatMap {
+            case Result.Success(span) =>
+                buf.append(span)
+            case Result.Failure(_) =>
+                Abort.fail(SqlConnectionClosedException("reading"))
+            case Result.Panic(t) =>
+                Abort.fail(SqlConnectionClosedException("reading (panic: " + t.getMessage + ")"))
+        }
+    end pullChunk
+
+    /** Applies this connection's `socketTimeout` to a read that can wait for bytes.
+      *
+      * `read` is by-name so it is constructed inside the branch that runs it: [[readChunks]] inspects the accumulation buffer as soon as it
+      * is called, and a by-value parameter would move that outside the wrapper. The inner bound itself is [[kyo.db.Connection.boundedRead]],
+      * shared with `PostgresChannel`; only the timeout source (a `val` here) is per-engine.
+      */
+    private def bounded[A](read: => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
+        kyo.db.Connection.boundedRead(socketTimeout)(read)
+
+end MysqlChannel
+
+object MysqlChannel:
+    /** Creates a [[MysqlChannel]] over `conn` with default marshallers and unmarshallers.
+      *
+      * `socketTimeout` bounds each read; [[Duration.Infinity]], the default, leaves reads unbounded.
+      */
+    def apply(conn: Connection, socketTimeout: Duration = Duration.Infinity)(using Frame): MysqlChannel < Sync =
+        AtomicRef.init[Maybe[String]](Maybe.Absent).flatMap { corrupted =>
+            AtomicRef.init[Maybe[Latch]](Maybe.Absent).map { cleanupLatch =>
+                new MysqlChannel(conn, Marshallers.default, Unmarshallers.default, socketTimeout, corrupted, cleanupLatch)
+            }
+        }
+end MysqlChannel

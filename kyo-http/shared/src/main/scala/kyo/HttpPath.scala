@@ -23,10 +23,10 @@ import scala.language.implicitConversions
   *   [[kyo.HttpRoute]] Uses paths to define endpoint URL patterns
   */
 enum HttpPath[+A] derives CanEqual:
-    case Literal(value: String)                                                       extends HttpPath[Any]
-    case Capture[N <: String, A](fieldName: N, wireName: String, codec: HttpCodec[A]) extends HttpPath[N ~ A]
-    case Rest[N <: String](fieldName: N)                                              extends HttpPath[N ~ String]
-    case Concat[A, B](left: HttpPath[A], right: HttpPath[B])                          extends HttpPath[A & B]
+    case Literal(value: String)                                                                   extends HttpPath[Any]
+    case Capture[N <: String & Singleton, A](fieldName: N, wireName: String, codec: HttpCodec[A]) extends HttpPath[N ~ A]
+    case Rest[N <: String & Singleton](fieldName: N)                                              extends HttpPath[N ~ String]
+    case Concat[A, B](left: HttpPath[A], right: HttpPath[B])                                      extends HttpPath[A & B]
 
     def show: String =
         this match
