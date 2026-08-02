@@ -56,14 +56,15 @@ _pending_
 
 ## IoUringDriver.scala — 20 sites. `label="IoUringDriver"`; `handleLabel(h)="fd=…/…"`.
 
-`given Frame=Frame.internal` at `complete`:1774 (covers :1939-:2087) and `completeMultishot`:2104 (no Closed). Rest AMBIENT.
+`given Frame=Frame.internal` at `write`:499 (no Closed), `complete`:1774 (covers :1939-:2087), and `completeMultishot`:2104 (no Closed). Rest AMBIENT.
 
 **resource-OK / frame-DEFECTIVE (4)** — genuinely report the driver (closed), createdAt should be explicit `Frame.internal`, is ambient:
 - :247 submitDeferredRecv, :420 submitConnect, :474 submitAccept — all gated `if closedFlag.get()` ("driver closed").
 - :1282 teardownRing — whole-driver close ("driver closed").
 
 **resource-DEFECTIVE + frame-DEFECTIVE (16)** — per-connection/listener under the driver label:
-- ambient frame: :204, :228 (upgrade detach) · :272 (fd closed) · :297 (exclusive-use violation) · :336 (recv negative length) · :436 (no connectTarget) · :481 (listener closed → resource should be the listener) · :898 (fd canceled) · :1123 (connection closed)
+- ambient frame: :204, :228 (upgrade detach) · :272 (fd closed) · :297 (exclusive-use violation) · :336 (recv negative length) · :481 (listener closed → resource should be the listener) · :898 (fd canceled) · :1123 (connection closed)
+- **:436 reclassified to Class 3** (misuse): "awaitConnect on a handle with no connectTarget" — an illegal-op error; nothing is closed. So IoUring Class-1 = 15.
 - internal frame but per-connection (internal is wrong for a per-connection resource): :1939 (buffer-role mismatch) · :1958 (ownership mismatch) · :1989 (fatal TLS record) · :2024 (TLS engine read failed) · :2055 (read errno) · :2078 (connect errno) · :2087 (accept errno)
 
 **IoUring: 0 coherent / 20 defective** (4 frame-only on genuine driver closes; 16 resource+frame).
@@ -84,19 +85,28 @@ A DISTINCT defect class: `Result.Panic(Closed("<Transport/ReadPump>", summon[Fra
 - PosixTransport: :512 (connect completed) · :613 (connect interrupted before completion) · :729 (handshake settled) · :1292 (handshake completed) · :1719 (upgrade settled)
 - ReadPump: :164 (grace disarmed by progress)
 
-**All 11 DEFECTIVE (misuse):** the right cause is an interrupt/cancellation signal (e.g. `Interrupted`), not `Closed`. These are internal (not user-surfaced), but the protocol takes no dismissals: `Closed` here names a resource that is not closed. (`ReadPump` :164 resolves to `Frame.internal` via its callers, but the misuse stands.)
+**All 11 DEFECTIVE (misuse):** the right cause is an interrupt/cancellation signal (e.g. `Interrupted`), not `Closed`. These are internal (not user-surfaced), but the protocol takes no dismissals: `Closed` here names a resource that is not closed. (`ReadPump` :164's `summon[Frame]` binds to `disarm`'s own `using Frame` param (ambient), not `Frame.internal`; the misuse stands regardless.)
+
+## Handle / reader files (added after opus validation — initially missed: multi-line `Closed(` defeated the first grep)
+
+**BlockingReaderDriver.scala — 3 sites.** `label="BlockingReaderDriver"`, all in `awaitRead` (per-connection reads), ambient frame:
+- :46 "read failed fd=X errno=Y" · :65, :80 "read fiber failed fd=X" — **DEFECTIVE both** (Class 1): resource→connection, frame→connection creation frame.
+
+**JsHandle.scala — 1 site.** :98 `Closed(driver.label, summon[Frame], "socket error")` — per-connection socket error; **DEFECTIVE both** (Class 1).
+
+**PosixHandle.scala — 2 sites.** :754, :783 `kyo.Closed("PosixHandle", Frame.internal, s"fd=X/Y closed …")` — per-connection handle close. Resource = the literal class name `"PosixHandle"` (not the specific connection); createdAt = an **explicit `Frame.internal`**. **DEFECTIVE both** (Class 1): the resource should name the specific connection, and `Frame.internal` is the wrong creation frame for a per-connection resource (needs the user connect/accept frame). NOTABLE: these already pass an *explicit* frame — proving the fix is not just "pass explicit instead of summon" but "pass the *connection's creation* frame."
 
 ---
 
-# Consolidated conclusion
+# Consolidated conclusion (81 sites — corrected after opus validation)
 
-**~75 `Closed(...)` sites; 0 fully coherent.** Three defect classes:
+**81 `Closed(...)` sites across 11 files; 0 fully coherent.** (Independently re-counted; opus-validated.) Three defect classes:
 
-1. **Per-connection failure mislabeled as the driver (the reported bug's class) — the large majority (~55 sites).** A single connection/fd/listener failure builds `Closed(<driver label>, …)`, so it renders "<Driver> is closed" while the driver is alive. The detail string ALREADY names the true resource (`channel=X` / `fd=X` / `socket#N` / `server channel=X`), directly contradicting arg1. Frame is also wrong: it's the throw-site (`summon`) or `Frame.internal`, never the connection's creation frame — and **no handle captures a creation frame** (`NioHandle.init` / `PosixHandle` / `JsHandle` take no `Frame`), so fixing the frame requires threading the user's connect/accept frame onto the handle. Nio: 13, Poller: 20, IoUring: 16, Js: 4.
+1. **Per-connection failure mislabeled (the reported bug's class) — 58 sites.** A single connection/fd/listener failure builds `Closed(<driver label OR "PosixHandle">, …)`, so it renders "<Driver> is closed" (or "PosixHandle is closed") while the driver is alive. The detail already names the true resource (`channel=X`/`fd=X`/`socket#N`/`server channel=X`), contradicting arg1. Frame is also wrong: the throw-site `summon` OR an explicit `Frame.internal` (PosixHandle), never the connection's creation frame — and **no handle captures a creation frame** (`NioHandle.init`/`PosixHandle`/`JsHandle` take no `Frame`), so the fix requires threading the user's connect/accept frame onto the handle. Nio 13, Poller 20, IoUring 15, JsIoDriver 4, BlockingReaderDriver 3, PosixHandle 2, JsHandle 1.
 
-2. **Genuine driver close, but ambient frame (9 sites).** `close()`/terminal-guarded sites correctly name the driver, but pass `summon[Frame]` (the caller's frame) instead of the driver's real creation frame. Driver is global-shared → createdAt should be an explicit `Frame.internal`. Nio :1068; Poller :728,:857,:881,:1466; IoUring :247,:420,:474,:1282.
+2. **Genuine driver close, but ambient frame (9 sites).** `close()`/terminal-guarded sites correctly name the driver, but pass `summon[Frame]` (the caller's frame) instead of an explicit `Frame.internal` (driver is global-shared). Nio :1068; Poller :728,:857,:881,:1466; IoUring :247,:420,:474,:1282.
 
-3. **`Closed` misused where nothing is closed (13 sites).** Unsupported-op stubs (Nio :857, Js :98) and the 11 transport/ReadPump timer-interrupt causes. The type is wrong: an unsupported op / a timer-disarm / an interrupt is not a closure.
+3. **`Closed` misused where nothing is closed (14 sites).** Unsupported/illegal-op stubs (Nio :857, Js :98-driver, IoUring :436) and the 11 transport/ReadPump timer-interrupt causes. The type is wrong: an illegal op / a timer-disarm / an interrupt is not a closure.
 
 **Note the earlier skew this corrects:** judging the frame alone rated the `given Frame=Frame.internal` per-connection sites (e.g. Nio :1868, IoUring :1939-:2087) as "frame OK" — but coupled to the true resource (a per-connection object, not global-shared), `Frame.internal` is the wrong creation frame there. Resource and frame are one judgment.
 
