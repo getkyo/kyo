@@ -20,5 +20,10 @@ test-output
 .jvmopts
 node_modules
 
+# GraalVM native-image manifests are checked into module resources and ship in the jar; the
+# global *.json ignore above would otherwise drop them. Plugin-generated manifests live under
+# target/ (resourceManaged) and stay ignored via the target rule.
+!**/src/main/resources/META-INF/native-image/**/*.json
+
 # Local analysis notes, never committed
 analysis-*.md

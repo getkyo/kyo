@@ -6,3 +6,5 @@
 > ffiPackage
 > compile
 > run
+# GraalVM native-image reachability metadata is generated into managed resources.
+> checkReachabilityMetadata
