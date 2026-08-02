@@ -449,6 +449,10 @@ object KyoFfiPlugin extends AutoPlugin {
                         // resource generator runs as a separate task and cannot re-derive it, so it is written to a
                         // stable file under `target` that survives cache hits (rewritten only on a codegen miss).
                         writeTraitLibraryIndex(genTarget, generated.traits.map(t => t.fqcn -> t.library))
+                        // GraalVM native-image reachability metadata for this module's JVM impls (empty for JS/Native),
+                        // persisted to a stable file under target that survives cache hits exactly like the index above; the
+                        // reachability-metadata resource generator copies it into managed resources.
+                        writeReachabilityMetadata(genTarget, generated.reachabilityMetadata)
                         generated.files.map(_.toFile).toSet
                     } catch {
                         case t: Throwable =>
@@ -608,6 +612,10 @@ object KyoFfiPlugin extends AutoPlugin {
         // per library id its bundled `<os>-<arch>` platforms, version and minRuntime, plus a reflection-free
         // binding-trait -> library-id index. See `ffiNativeManifestGenerator`.
         Compile / resourceGenerators += ffiNativeManifestGenerator.taskValue,
+
+        // GraalVM native-image: ship the codegen-emitted reachability-metadata.json (JVM only) so a downstream
+        // native-image build discovers the FFM downcalls/upcalls and the generated impls' reflection with no agent.
+        Compile / resourceGenerators += ffiReachabilityMetadataGenerator.taskValue,
 
         // Native only: copy each library's C sources into `resourceManaged/scala-native/`.
         // sbt's `copyResources` then folds managed resources into the compile `classDirectory`,
@@ -1065,12 +1073,57 @@ object KyoFfiPlugin extends AutoPlugin {
         }
     }
 
+    /** Ship the GraalVM native-image reachability metadata that `ffiGenerate` emitted for this module's JVM impls (FFM
+      * downcalls/upcalls plus the generated `*Impl` reflective instantiation), under
+      * `META-INF/native-image/io.getkyo/<module>/reachability-metadata.json` so native-image auto-discovers it with no
+      * tracing agent. JVM only: JS and Native modules persist no content, so this generates nothing.
+      */
+    private def ffiReachabilityMetadataGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
+        // Force the codegen so the persisted reachability metadata is fresh, then copy it into managed resources.
+        val _          = ffiGenerate.value
+        val projTarget = target.value
+        val resManaged = (Compile / resourceManaged).value
+        val moduleName = name.value
+        val src        = ffiReachabilityMetadataFile(projTarget)
+        if (!src.exists()) Seq.empty[File]
+        else {
+            val content = IO.read(src)
+            if (content.trim.isEmpty) Seq.empty[File]
+            else {
+                val dest =
+                    resManaged / "META-INF" / "native-image" / "io.getkyo" / moduleName / "reachability-metadata.json"
+                IO.createDirectory(dest.getParentFile)
+                if (!dest.exists() || IO.read(dest) != content) IO.write(dest, content)
+                Seq(dest)
+            }
+        }
+    }
+
     /** File under `target` where `ffiGenerate` persists the binding-trait -> library-id pairs the native manifest
       * generator reads (one `<fqcn>=<library>` per line). Kept out of the resource tree so it is never itself
       * packaged; it is a cross-task hand-off, not a shipped artifact.
       */
     private def ffiTraitLibraryIndexFile(projTarget: File): File =
         projTarget / "kyo-ffi" / "trait-library-index.txt"
+
+    /** File under `target` where `ffiGenerate` persists the JVM reachability-metadata.json content the native-image
+      * resource generator ships. Kept out of the resource tree so it is never itself packaged; a cross-task hand-off.
+      */
+    private def ffiReachabilityMetadataFile(projTarget: File): File =
+        projTarget / "kyo-ffi" / "reachability-metadata.json"
+
+    /** Persist the GraalVM native-image reachability metadata for the resource generator, content-skipped. Empty content
+      * removes a stale file (a JS/Native module, or a module whose bindings were all deleted).
+      */
+    private def writeReachabilityMetadata(projTarget: File, content: String): Unit = {
+        val dest = ffiReachabilityMetadataFile(projTarget)
+        if (content.isEmpty) {
+            if (dest.exists()) IO.delete(dest): Unit
+        } else {
+            IO.createDirectory(dest.getParentFile)
+            if (!dest.exists() || IO.read(dest) != content) IO.write(dest, content)
+        }
+    }
 
     /** Persist `pairs` (`<fqcn> -> <library>`) for the native manifest generator, content-skipped. An empty list
       * removes a stale index so a module whose bindings were all deleted stops indexing traits that are gone.
