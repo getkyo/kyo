@@ -19,6 +19,11 @@ class HttpServerResilienceTest extends BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
+    // Every scenario shares the process-lifetime per-backend transport + pooled client, so run leaves sequentially AND
+    // globally sequentially: a parallel scenario, or another suite sharing the transport, would otherwise interfere with
+    // the churn/cancellation load on the shared driver/pool.
+    override def config = super.config.sequential.globallySequential(true)
+
     private val ping =
         HttpRoute.getRaw("ping").response(_.bodyText).handler(_ => HttpResponse.ok("pong"))
 
@@ -162,21 +167,19 @@ class HttpServerResilienceTest extends BaseHttpTest:
         end for
     }
 
-    // ---- dedicated, tightened reproduction of the reported wedge (IGNORED: run manually) ---------------------------
+    // ---- dedicated, tightened reproduction of the reported wedge (reproduce-before-fix: RED until the driver is fixed) ---
 
-    /** Reliable manual reproduction of the reported NioIoDriver "... is closed" wedge, at the HTTP level, with FIBERS.
+    /** Reliable reproduction of the reported NioIoDriver "... is closed" wedge, at the HTTP level, with FIBERS.
       *
       * The wedge is a cross-carrier race (a cancelled request's caller-carrier `closeHandle` vs the poll carrier's
       * `dispatchReadyKeys` on the same fd) that only `NioIoDriver` is exposed to (its dispatch catch is
       * `CancelledKeyException`-only; `PollerIoDriver`'s dispatch is total). It reproduces on nio but NOT kqueue/epoll,
-      * so this targets nio directly. A single 3s pass is racy (0 to tens of hits), so this runs a long, aggressive load
+      * so this targets nio directly. A single 3s pass is racy (0 to tens of hits), so this runs an aggressive load
       * (tight 10ms server restarts + a 30ms request timeout that fires on the hung requests) and stops as soon as the
-      * driver wedges. `.ignore` keeps it out of the normal (fiber) suite: it reproduces an UNFIXED bug, so it is red by
-      * design, and it is intentionally long. Enable by removing `.ignore` (or invoke directly) once the driver contains
-      * per-connection dispatch errors like `PollerIoDriver`.
+      * driver wedges (typically well under a second). This is a reproduce-before-fix guard: it is RED by design while the
+      * bug is unfixed, and it goes GREEN once the driver contains per-connection dispatch errors like `PollerIoDriver`.
       */
-    "reproduce (nio): pooled client wedges under request cancellation + server churn"
-        .ignore("reproduces the unfixed NioIoDriver close-under-cancellation wedge; long + racy; run manually") in {
+    "reproduce (nio): pooled client wedges under request cancellation + server churn" in {
         val durationMs = sys.props.get("kyo.reproDurationMs").map(_.toLong).getOrElse(20000L)
         TestBackends.all.find(e => e.name == "nio" && e.isAvailable) match
             case None => cancel("nio backend not available on this host")

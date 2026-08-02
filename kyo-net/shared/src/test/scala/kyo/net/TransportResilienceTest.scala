@@ -16,6 +16,12 @@ class TransportResilienceTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
+    // Every scenario shares the process-lifetime per-backend transport (TestBackends builds one transport per backend and
+    // reuses it across leaves, exactly as production shares NetPlatform.transport). Run leaves sequentially AND globally
+    // sequentially so no other scenario, and no other suite sharing the transport, runs concurrently and starves or
+    // interferes with the churn/cancellation load on that shared driver.
+    override def config = super.config.sequential.globallySequential(true)
+
     /** Fire-and-forget echo: each accepted connection copies every inbound chunk back out until the peer closes. */
     private def echo(conn: Connection): Unit =
         discard(Sync.Unsafe.evalOrThrow {
