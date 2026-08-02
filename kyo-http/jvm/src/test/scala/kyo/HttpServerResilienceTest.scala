@@ -190,6 +190,8 @@ class HttpServerResilienceTest extends BaseHttpTest:
                     val current = new java.util.concurrent.atomic.AtomicReference[HttpServer]()
                     val stop    = new java.util.concurrent.atomic.AtomicBoolean(false)
                     val bug     = new java.util.concurrent.atomic.AtomicInteger(0)
+                    val total   = new java.util.concurrent.atomic.AtomicInteger(0)
+                    val notOk   = new java.util.concurrent.atomic.AtomicInteger(0)
                     for
                         server0 <- startServer(transport, ping)
                         _ = current.set(server0)
@@ -207,8 +209,9 @@ class HttpServerResilienceTest extends BaseHttpTest:
                         deadline = java.lang.System.currentTimeMillis() + durationMs
                         _ <- Async.foreach(0 until 16, 16) { _ =>
                             Loop.foreach {
-                                if java.lang.System.currentTimeMillis() >= deadline || bug.get() > 0 then Loop.done(())
+                                if java.lang.System.currentTimeMillis() >= deadline then Loop.done(())
                                 else
+                                    discard(total.incrementAndGet())
                                     val url = s"http://localhost:${current.get().port}/ping"
                                     Abort.run[Any] {
                                         Async.timeout(30.millis) {
@@ -218,16 +221,25 @@ class HttpServerResilienceTest extends BaseHttpTest:
                                             )
                                         }
                                     }.map {
-                                        case Result.Failure(ex) => if isDriverClosed(ex) then discard(bug.incrementAndGet())
-                                        case Result.Panic(ex)   => if isDriverClosed(ex) then discard(bug.incrementAndGet())
-                                        case _                  => ()
+                                        case Result.Failure(ex) =>
+                                            discard(notOk.incrementAndGet()); if isDriverClosed(ex) then discard(bug.incrementAndGet())
+                                        case Result.Panic(ex) =>
+                                            discard(notOk.incrementAndGet()); if isDriverClosed(ex) then discard(bug.incrementAndGet())
+                                        case _ => ()
                                     }.andThen(Loop.continue)
                             }
                         }
                         _ = stop.set(true)
                         _ <- churn.get
                         _ <- current.get().closeNow
-                    yield assert(bug.get() == 0, s"driver-closed wedge REPRODUCED on nio: ${bug.get()} hits")
+                    yield
+                        java.lang.System.out.println(
+                            s"[reproduce-nio] dur=${durationMs}ms total=${total.get()} notOk=${notOk.get()} hits=${bug.get()}"
+                        )
+                        assert(
+                            bug.get() == 0,
+                            s"driver-closed wedge REPRODUCED on nio: ${bug.get()} hits (total=${total.get()} notOk=${notOk.get()})"
+                        )
                     end for
                 }
         end match
