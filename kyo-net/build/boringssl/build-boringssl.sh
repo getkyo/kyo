@@ -133,7 +133,9 @@ assert_arch() {
                 echo "note: ar/file unavailable, skipping arch assertion for $archive" >&2
                 return 0
             fi
-            member="$(ar t "$archive" | head -n1)"
+            # head closes the pipe after line 1; under `set -o pipefail` the still-writing ar takes
+            # SIGPIPE (busybox head on the Alpine/musl leg) and fails the build with 141. sed -n reads to EOF.
+            member="$(ar t "$archive" | sed -n '1p')"
             tmp="$(mktemp -d)"
             ( cd "$tmp" && ar x "$archive" "$member" )
             desc="$(file -b "$tmp/$member")"
