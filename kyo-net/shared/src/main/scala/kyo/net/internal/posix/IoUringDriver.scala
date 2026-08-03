@@ -2007,11 +2007,11 @@ final private[net] class IoUringDriver private[posix] (
                                                     () =>
                                                         fatalRecord = true; closeHandle(h)
                                                 )
-                                                // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): fatalRecord is set
-                                                // exactly when THIS call's onFatal fired; isClosing() is kept too for any other concurrent close that
-                                                // already ran the guard's free (a rare path independent of this read). Either way, failing the read
-                                                // promise Closed here tears the connection down on io_uring exactly as the poller's rearmOwned /
-                                                // endDispatch does when the dispatch guard observes the close bit.
+                                                // Fatal-record check: fatalRecord is set exactly when THIS call's onFatal fired. isClosing() is kept
+                                                // too for any other concurrent close that already ran the guard's free (a rare path independent of
+                                                // this read). Either way the read completes with the typed decrypt failure, never a bare Closed and
+                                                // never the good prefix (feedAndDecrypt discarded it per RFC 5246 7.2.2). The closeHandle queued by
+                                                // onFatal runs the actual teardown behind this op on the engine FIFO.
                                                 if fatalRecord || h.isClosing() then
                                                     promise.completeDiscard(Result.succeed(ReadOutcome.Failed(NetConnectionIoException(
                                                         s"connection ${handleLabel(h)}",

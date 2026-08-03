@@ -2059,7 +2059,12 @@ final private[net] class PollerIoDriver private[posix] (
                     // requestClose() would run freeResources immediately here (this read dispatch is its own last holder once it releases
                     // moments later), forfeiting the fd close permanently, since freeResources never runs a second time for a handle whose
                     // credit is installed only after the guard has already gone terminal.
+                    // fatalRecord records that THIS dispatch's decrypt hit a fatal record (readPlain == -2, the BoringSSL signal, where a JDK
+                    // engine throws instead, caught below), so the completion delivers the typed decrypt failure rather than a bare Closed.
+                    // Mirrors the io_uring feed op.
+                    var fatalRecord = false
                     val onFatal = () =>
+                        fatalRecord = true
                         claimAndDeferFdClose(handle)
                         handle.requestClose()
                     var plain   = feedAndDecrypt(engine, staging, n, handle, onFatal)
@@ -2073,7 +2078,9 @@ final private[net] class PollerIoDriver private[posix] (
                     // engine yields plaintext, the socket reports EAGAIN, or the peer closes, rather than inferring emptiness from a short recv and
                     // re-arming for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record / bulk TLS
                     // transfer strands on the poller under load.
-                    while plain.length == 0 && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose && !drained do
+                    // Stops on fatalRecord too: the stream is corrupt and the connection is being torn down, so no further ciphertext is fed.
+                    while !fatalRecord && plain.length == 0 && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose && !drained
+                    do
                         val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
                         val rN = r.value.toInt
                         if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle, onFatal)
@@ -2093,7 +2100,20 @@ final private[net] class PollerIoDriver private[posix] (
                     handle.readMightHaveMore =
                         (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
                             (handle.halfClose == HalfCloseState.PeerHalfClosePending)
-                    if plain.length > 0 then
+                    if fatalRecord then
+                        // A fatal record (RFC 5246 7.2.2) tears the connection down as the typed decrypt failure, identical to io_uring. Completed
+                        // with a bare completeDiscard BEFORE endDispatch: onFatal's requestClose set the close bit, so finishDispatch / rearmOwned's
+                        // endDispatch-true arm would rewrite any result into a bare Closed. First-wins keeps the typed result. endDispatch still runs
+                        // (bool discarded) as this dispatch's pairing release. First in the chain, so no re-arm re-deposits a read on the
+                        // torn-down handle.
+                        handle.readMightHaveMore = false
+                        promise.completeDiscard(Result.succeed(ReadOutcome.Failed(NetConnectionIoException(
+                            s"connection ${handleLabel(handle)}",
+                            NetConnectionIoException.Operation.Decrypt,
+                            "fatal record"
+                        )(using handle.createdAt))))
+                        discard(handle.endDispatch())
+                    else if plain.length > 0 then
                         // First application plaintext after the upgrade: close the post-upgrade kqueue read window so steady-state reads keep the
                         // bare re-arm (no per-read kevent). A no-op outside an upgrade (the flag is only set at STARTTLS completion).
                         handle.postUpgradeReadWindow = false

@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConnectionIoException
 import kyo.net.Test
 import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
@@ -11,18 +12,18 @@ import kyo.net.internal.transport.ReadOutcome
 /** io_uring-path parity guard for the fatal-record abort + read-produced-ciphertext drain (mirroring the poller's
   * [[TlsEngineIoCorruptRecordTest]] / [[TlsEngineIoReadDrainTest]]).
   *
-  * Both reproductions and fixes for the fatal-record swallow (RFC 5246 §7.2.2: a fatal record-layer error must terminate the connection, not
-  * be delivered behind good data) and the read-path WANT_WRITE / KeyUpdate stall (a `SSL_read` that queues outbound ciphertext must be sent)
-  * live on the shared [[TlsEngineIo]] decrypt path. The io_uring read CQE completion drives that same path inside its engine FIFO op
-  * ([[IoUringDriver]] `complete` -> `feedAndDecrypt`), then checks `PosixHandle.isClosing()` (the io_uring twin of the poller's rearmOwned /
-  * endDispatch closing check) to fail the read `Closed` on a fatal record, and calls `flushTls` to send any ciphertext the read produced. This
-  * test pins that the io_uring path behaves identically to the poller path on a REAL ring with a REAL BoringSSL engine, with no dedicated
-  * io_uring-path coverage before now.
+  * The fatal-record swallow (RFC 5246 §7.2.2: a fatal record-layer error must terminate the connection, not be delivered behind good data) and
+  * the read-path KeyUpdate stall (a `SSL_read` that queues outbound ciphertext must send it) both live on the shared [[TlsEngineIo]] decrypt path.
+  * The io_uring read CQE completion drives that same path inside its engine FIFO op
+  * ([[IoUringDriver]] `complete` -> `feedAndDecrypt`), detects the fatal record via `feedAndDecrypt`'s `onFatal` signal, and fails the read with
+  * the typed decrypt error (`ReadOutcome.Failed(NetConnectionIoException(Decrypt))`) while tearing the connection down, then calls `flushTls` to
+  * send any ciphertext the read produced. This test pins that the io_uring path behaves identically to the poller path on a REAL ring with a REAL
+  * BoringSSL engine.
   *
   * Leaf 1 (fatal-record abort) feeds `[good record][corrupted record]` (the corruption flips a body byte of the second record so its AEAD tag
-  * fails) coalesced on the wire and reads via the driver. The driver's read CQE feeds the engine; `feedAndDecrypt` reaches the fatal `-2`,
-  * calls `requestClose()`, and the completion observes the now-closing handle and fails the read `Closed` rather than delivering the good prefix
-  * or re-arming a freed handle. Leaf 2 (read-produced-ciphertext drain) reads a real inbound record through the same CQE path and asserts the
+  * fails) coalesced on the wire and reads via the driver. The driver's read CQE feeds the engine; `feedAndDecrypt` reaches the fatal record,
+  * fires `onFatal` (tearing the connection down), and the completion fails the read with the typed decrypt error rather than delivering the good
+  * prefix or re-arming a freed handle. Leaf 2 (read-produced-ciphertext drain) reads a real inbound record through the same CQE path and asserts the
   * engine's write side was drained (`drainCiphertext` ran), the wiring by which a TLS 1.3 KeyUpdate response queued during the read reaches the
   * wire via `flushTls` (a real end-to-end KeyUpdate is not drivable: the shims bind no `SSL_key_update`, the same limitation the poller's
   * read-drain leaf documents).
@@ -69,7 +70,7 @@ class IoUringDriverCorruptRecordTest extends Test:
 
     "IoUringDriver corrupt-record + read-drain (real ring, real engine)" - {
 
-        "a fatal TLS record on a read CQE fails the read Closed and tears the connection down, never delivering the good prefix" in {
+        "a fatal TLS record on a read CQE fails the read with a typed decrypt error and tears the connection down, never delivering the good prefix" in {
             PosixTestSockets.assumeUring()
             TlsRealEngines.assumeTlsReady()
             TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
@@ -112,26 +113,26 @@ class IoUringDriverCorruptRecordTest extends Test:
                                 drv.closeHandle(handle)
                                 discard(sock.close(peerFd))
                                 outcome match
-                                    case Result.Failure(_: Closed) =>
-                                        // RFC 5246 §7.2.2: the fatal record tears the connection down. The driver must NOT have delivered the good
-                                        // prefix as a normal read, and the handle must be closing (requestClose fired), not re-armed.
+                                    case Result.Success(ReadOutcome.Failed(e: NetConnectionIoException)) =>
+                                        // RFC 5246 §7.2.2: the fatal record tears the connection down, surfaced as the typed decrypt failure (never a
+                                        // misleading Closed, and never the good prefix). The handle must be closing (onFatal tore it down), not re-armed.
+                                        assert(
+                                            e.operation == NetConnectionIoException.Operation.Decrypt,
+                                            s"the fatal record must surface as a TLS decrypt failure; got operation ${e.operation}"
+                                        )
                                         assert(
                                             closing,
-                                            "the fatal record must mark the handle closing (requestClose), tearing it down rather than re-arming a freed handle"
+                                            "the fatal record must mark the handle closing (onFatal), tearing it down rather than re-arming a freed handle"
                                         )
                                     case Result.Success(ReadOutcome.Bytes(got)) =>
                                         fail(
                                             s"a fatal TLS record was swallowed: the read delivered ${got.size} bytes (${got.toArray.toList}) " +
-                                                "instead of failing Closed; RFC 5246 §7.2.2 requires the connection to be torn down"
-                                        )
-                                    case Result.Success(other) =>
-                                        fail(
-                                            s"a fatal TLS record was swallowed: the read produced $other " +
-                                                "instead of failing Closed; RFC 5246 §7.2.2 requires the connection to be torn down"
+                                                "instead of the typed decrypt failure; RFC 5246 §7.2.2 requires the connection to be torn down"
                                         )
                                     case Result.Failure(_: Timeout) =>
-                                        fail("the read hung on a fatal record: the fatal abort never failed the read Closed")
-                                    case other => fail(s"unexpected read outcome: $other")
+                                        fail("the read hung on a fatal record: the fatal abort never completed the read")
+                                    case other =>
+                                        fail(s"a fatal TLS record must surface as the typed decrypt failure; got: $other")
                                 end match
                             }
                         }
