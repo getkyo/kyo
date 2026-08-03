@@ -317,8 +317,21 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
         }
     // mkDir always creates all intermediate parent directories (mkdir -p behavior): upsert creates
     // missing parent nodes automatically. No createFolders flag; the mkdir -p contract is invariant.
+    //
+    // An existing directory is left exactly as it stands, and an existing regular file is a conflict.
+    // Routing through upsert unconditionally would replace the node instead, which discards a
+    // populated directory's children and hands the directory a fresh identity. Files.createDirectories
+    // does neither, and this service is the lower that overlay commits replay onto, so a mkDir that
+    // empties a directory conceals any replay defect whose symptom is a surviving child.
     def mkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-        now.map(t => modify(s => Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.dir(t), t)), ()))))
+        now.map { t =>
+            modify { s =>
+                lookup(s.root, path.parts) match
+                    case Present(existing) if existing.file.isEmpty => Result.succeed((s, ()))
+                    case Present(_)                                 => Result.fail(FileAlreadyExistsException(path))
+                    case Absent => Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.dir(t), t)), ()))
+            }
+        }
     def mkFile(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
         now.map(t => modify(s => Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(Span.empty[Byte], t), t)), ()))))
     // The in-memory backend honors replaceExisting (aborts FileAlreadyExistsException when the target

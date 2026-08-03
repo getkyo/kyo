@@ -314,4 +314,40 @@ class InMemoryFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    // mkdir -p semantics, matching Files.createDirectories. These matter beyond this service:
+    // it is the lower every overlay commit test replays onto, so a mkDir that empties a
+    // directory hides any replay defect whose symptom is a surviving child.
+
+    "mkDir on an existing directory keeps its children" in {
+        withInMem { svc =>
+            val d = Path("keep-dir")
+            Path.runWith(svc) {
+                (d / "child.txt").write("payload").andThen(d.mkDir).andThen(d.list)
+            }.map { listed =>
+                assert(listed.map(_.name.getOrElse("")) == Chunk("child.txt"))
+            }
+        }
+    }
+
+    "mkDir on an existing directory keeps its children's contents" in {
+        withInMem { svc =>
+            val d = Path("keep-content")
+            Path.runWith(svc) {
+                (d / "child.txt").write("payload").andThen(d.mkDir).andThen((d / "child.txt").read)
+            }.map { text =>
+                assert(text == "payload")
+            }
+        }
+    }
+
+    "mkDir on an existing regular file is rejected" in {
+        withInMem { svc =>
+            val p = Path("occupied.txt")
+            Abort.run[FileSystemException](Path.runWith(svc)(p.write("payload").andThen(p.mkDir))).map {
+                case Result.Failure(_: FileAlreadyExistsException) => succeed("rejected")
+                case other                                         => fail(s"expected FileAlreadyExistsException, got $other")
+            }
+        }
+    }
+
 end InMemoryFileSystemTest
