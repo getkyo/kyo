@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
@@ -89,13 +90,13 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
         })
     end awaitRead
 
-    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         real.awaitWritable(handle, promise)
 
-    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         real.awaitConnect(handle, promise)
 
-    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // BlockingReaderDriver wraps PollerIoDriver for the regular-file stdin case; delegate accept to the real poller driver.
         real.awaitAccept(handle, promise)
 

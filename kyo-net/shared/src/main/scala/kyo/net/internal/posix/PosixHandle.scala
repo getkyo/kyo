@@ -387,7 +387,7 @@ final private[net] class PosixHandle private (
       * [[WriteState.Backpressured]]) because the drain path runs on the engine FIFO worker and cannot reach the WritePump's WriteState atomic cell
       * directly; the handle is the shared bridge between the two carriers.
       */
-    @volatile var backpressurePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
+    @volatile var backpressurePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
 
     /** Whether the last recv on this fd filled the read buffer exactly (n == readBufferSize). When true, the kernel may still hold residual
       * bytes that an edge-triggered backend will never re-signal (epoll fires once per empty->ready transition; a filled buffer leaves data in
@@ -443,7 +443,7 @@ final private[net] class PosixHandle private (
       * happens-before barrier for the change worker's `rc < 0` failure path). Single owner for the write side: only `awaitAccept` writes
       * this field, and at most one accept is in flight per handle.
       */
-    @volatile var pendingAcceptPromise: Maybe[Promise.Unsafe[Int, Abort[Closed]]] = Absent
+    @volatile var pendingAcceptPromise: Maybe[Promise.Unsafe[Int, Abort[Closed | NetException]]] = Absent
 
     /** The pending writable promise for this fd, stored directly on the handle alongside the poll-fiber-confined `pendingWritables` map entry.
       * The map entry routes the readiness event to the right waiter on the poll fiber; this field lets the cancel/close paths fail the promise
@@ -452,7 +452,7 @@ final private[net] class PosixHandle private (
       * fiber on `dispatchWritable` and by the cancel/close paths. At most one writable is armed per handle at a time. The arming handle's id is
       * `id` itself, so the stale-fd guard reads `handle.id` rather than a separately-stored copy.
       */
-    @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
+    @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
 
     /** Latch: the peer has closed its write side (a FIN) or the connection hit a hard error (RST). Written only by the poll carrier at the FIN/error
       * edges its standing registration delivers, even while the ReadPump is backpressured with no read armed. `@volatile` because the grace timer
@@ -831,13 +831,16 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
 
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]                                                          = unbound
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = unbound
-    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = unbound
-    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit     = unbound
-    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit       = unbound
-    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                           = unbound
-    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                         = unbound
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                    = unbound
-    def close()(using AllowUnsafe, Frame): Unit                                                                             = unbound
-    def label: String                                                                                                       = "NoDriver"
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        unbound
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        unbound
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        unbound
+    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = unbound
+    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                               = unbound
+    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                          = unbound
+    def close()(using AllowUnsafe, Frame): Unit                                                   = unbound
+    def label: String                                                                             = "NoDriver"
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"
 end NoDriver

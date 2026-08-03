@@ -1,6 +1,7 @@
 package kyo.net.internal.transport
 
 import kyo.*
+import kyo.net.NetException
 
 /** Completion-based I/O driver. The driver performs reads internally and delivers results via promise completion. This model unifies
   * poll-based platforms (Native epoll/kqueue, JVM NIO Selector) with callback-based platforms (JS Node.js).
@@ -60,7 +61,7 @@ abstract private[kyo] class IoDriver[Handle]:
       *
       * Used after `write` returns `Partial` to know when to retry.
       */
-    def awaitWritable(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit
+    def awaitWritable(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit
 
     /** Whether the peer has closed its write side (FIN) or the connection has a hard error (RST / hangup). Synchronous, non-blocking, and
       * side-effect-free from the caller's view: a backend with no non-consuming close signal (NIO, JS) may internally consume socket bytes to probe,
@@ -75,13 +76,13 @@ abstract private[kyo] class IoDriver[Handle]:
       * OP_WRITE-based connect detection. On Native, delegates to awaitWritable (epoll/kqueue signal connect via write-readiness). On JS,
       * completes immediately (Node.js handles connect via callback).
       */
-    def awaitConnect(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit
+    def awaitConnect(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit
 
     /** Register interest in ONE accepted client fd on the (non-blocking, poller-armed) listen fd `handle`. Completes `promise` with the
       * accepted fd (`>= 0`) or `Closed`. The caller re-arms once per accepted fd (epoll/kqueue drain extra ready fds via acceptNow;
       * io_uring yields one fd per IORING_OP_ACCEPT).
       */
-    def awaitAccept(handle: Handle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit
+    def awaitAccept(handle: Handle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit
 
     /** Synchronous write attempt of `data` starting at `offset`. Done: all bytes from offset written. Partial(data, newOffset): socket buffer
       * full, await writable and retry the same span from newOffset. Error: connection failed.

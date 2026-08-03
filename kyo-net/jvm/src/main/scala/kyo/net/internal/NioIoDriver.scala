@@ -10,6 +10,7 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLEngineResult
 import kyo.*
+import kyo.net.NetException
 import kyo.net.internal.transport.*
 import kyo.net.internal.util.*
 import kyo.scheduler.InternalClock
@@ -74,11 +75,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
 
     // Pending writable requests: channel -> promise
     private val pendingWritables =
-        new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed]]]()
+        new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed | NetException]]]()
 
     // Pending connect requests: channel -> promise
     private val pendingConnects =
-        new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed]]]()
+        new java.util.concurrent.ConcurrentHashMap[SocketChannel, Promise.Unsafe[Unit, Abort[Closed | NetException]]]()
 
     // Pending accept requests: server channel -> promise
     private val pendingAccepts =
@@ -801,7 +802,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end if
     end stopUpgradeProducer
 
-    def awaitWritable(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitWritable(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         pendingWritables.put(handle.channel, promise)
         Log.live.unsafe.debug(s"$label awaitWritable registered ${handleLabel(handle)}")
         if !registerInterest(handle.channel, SelectionKey.OP_WRITE) then
@@ -827,7 +828,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         registered
     end armConnectInterest
 
-    def awaitConnect(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitConnect(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         Maybe(pendingConnects.putIfAbsent(handle.channel, promise)) match
             case Absent =>
                 Log.live.unsafe.debug(s"$label awaitConnect registered ${handleLabel(handle)}")
@@ -853,7 +854,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * use the ServerSocketChannel overload below, not this one. Fails loudly so an accidental caller gets an immediate error rather than
       * silently receiving fd 0 (stdin), which is a latent misuse bug.
       */
-    def awaitAccept(handle: NioHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitAccept(handle: NioHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         promise.completeDiscard(Result.fail(Closed(
             label,
             summon[Frame],

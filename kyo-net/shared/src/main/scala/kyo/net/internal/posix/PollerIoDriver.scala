@@ -7,6 +7,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.NetConnectionClosedException
 import kyo.net.NetConnectionClosedException.Operation
+import kyo.net.NetException
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -816,7 +817,7 @@ final private[net] class PollerIoDriver private[posix] (
             if delivered then deliverToUpgradeHandoff(handle, arr)
     end onInboundClosedDuringRead
 
-    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
             // Tail-bound park (CWE-400): the WritePump suspended because the TLS write tail hit the high-water mark, NOT because the kernel send
             // buffer is full. Those are different signals: the socket may be writable while the tail is still large, so arming raw write-readiness
@@ -843,7 +844,10 @@ final private[net] class PollerIoDriver private[posix] (
       * Distinct from the tail-bound park in [[awaitWritable]], which waits for the write-backpressure tail to drain (a different condition); the flush
       * re-arm needs the SOCKET signal (so it can send more of the tail), so it calls this directly rather than the tail-aware public method.
       */
-    private def armSocketWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    private def armSocketWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
         // Store the writable promise on the handle so the cancel/close paths can fail it synchronously without touching the poll-fiber-confined
         // pendingWritables map. The activeFds + pendingWritables puts are applied on the poll fiber from the registration (single-writer);
         // the entry pairs the promise with the arming handle's id (handle.id) so dispatchWritable drops a recycled fd's prior owner's readiness.
@@ -860,7 +864,7 @@ final private[net] class PollerIoDriver private[posix] (
         end if
     end armSocketWritable
 
-    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // epoll/kqueue signal connect completion via write-readiness. A fresh connect has no write tail, so this arms socket readiness directly
         // (the tail-aware awaitWritable would take the same path, but calling armSocketWritable is explicit about the intent and avoids the tail read).
         armSocketWritable(handle, promise)
@@ -869,7 +873,7 @@ final private[net] class PollerIoDriver private[posix] (
       * pending), `drainReady` routes the event to `dispatchAccept`, which completes `promise` with -1 as a readiness sentinel so the
       * transport can drain via `acceptNow`. The caller re-arms after each accept.
       */
-    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         handle.pendingAcceptPromise = Present(promise)
         // The activeFds + pendingAccepts puts are applied on the poll fiber from the registration (single-writer).
         // rc<0 failure is handled inside dispatchCmd, which checks pendingAccepts and fails the stored promise. The accept=true bit routes the
@@ -1192,7 +1196,7 @@ final private[net] class PollerIoDriver private[posix] (
         if handle.flushReArmPending then () // a flush re-arm is already pending; it will pick up any appended bytes
         else
             handle.flushReArmPending = true
-            val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            val p = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             p.onComplete {
                 case Result.Success(_) =>
                     handle.flushReArmPending = false
@@ -2667,7 +2671,7 @@ private[net] object PollerIoDriver:
       * writable path stores it here because the writable promise is not held on the handle), so a writable readiness event the kernel queued
       * for a fd's prior owner is dropped after the fd is recycled into a new owner rather than delivered to the new owner as `Success`.
       */
-    final private case class PendingWritable(promise: Promise.Unsafe[Unit, Abort[Closed]], id: HandleId)
+    final private case class PendingWritable(promise: Promise.Unsafe[Unit, Abort[Closed | NetException]], id: HandleId)
 
     /** Kind of a pending interest registration carried through [[regIntake]] to the poll fiber, which applies the matching map put on its own
       * carrier (the single-writer confinement). Read and Accept share `OpRegisterRead` at the backend but route to different maps

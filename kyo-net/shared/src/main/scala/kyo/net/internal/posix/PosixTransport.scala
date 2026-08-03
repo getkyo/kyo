@@ -580,7 +580,7 @@ final private[net] class PosixTransport private[posix] (
         checkSoError: Boolean,
         config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
-        val writablePromise = new IOPromise[Closed, Unit]
+        val writablePromise = new IOPromise[Closed | NetException, Unit]
         writablePromise.onComplete { result =>
             result match
                 case Result.Success(_) =>
@@ -591,10 +591,10 @@ final private[net] class PosixTransport private[posix] (
                         promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err))))
                     else completeOrTls(handle, addr, driver, target, port, tls, promise, config)
                     end if
-                case Result.Failure(closed) =>
+                case Result.Failure(cause) =>
                     addr.close()
                     closeUnwiredHandle(handle, driver, connectPhase = true)
-                    promise.completeDiscard(Result.fail(connectFail(host, port, closed)))
+                    promise.completeDiscard(Result.fail(connectFail(host, port, cause)))
                 case Result.Panic(e) =>
                     addr.close()
                     closeUnwiredHandle(handle, driver, connectPhase = true)
@@ -602,11 +602,11 @@ final private[net] class PosixTransport private[posix] (
             end match
         }
         // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-        // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent only
-        // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs this
-        // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
-        // suspended computation.
-        driver.awaitConnect(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is transparent
+        // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs this
+        // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit values above (a
+        // driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+        driver.awaitConnect(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
         // If the connect promise is completed before the writable arm resolves (an external interrupt: e.g. an Async.timeout connectTimeout
         // interrupts the awaiting fiber, which interrupts this promise), the arm is still parked with the socket in SYN_SENT. Forward the
         // completion to the arm so its onComplete runs the connect-failure cleanup (closeUnwiredHandle), reclaiming the in-flight connect fd
@@ -1050,7 +1050,7 @@ final private[net] class PosixTransport private[posix] (
             if listener.isClosed then
                 discard(acceptLoopsActive.decrementAndGet())
             else
-                val acceptPromise = new IOPromise[Closed, Int]
+                val acceptPromise = new IOPromise[Closed | NetException, Int]
                 acceptPromise.onComplete {
                     case Result.Success(fd) =>
                         // io_uring completes with the real accepted fd (>= 0); the poller uses -1 as a readiness sentinel.
@@ -1068,18 +1068,18 @@ final private[net] class PosixTransport private[posix] (
                                 scheduleAcceptAfterBackoff()
                         end match
                     case Result.Failure(_) =>
-                        // Listener closed; driver completed the accept promise with Failure(Closed).
+                        // Listener closed (Failure(Closed)) or a driver-side accept failure (Failure(NetConnectionIoException)); either stops the loop.
                         discard(acceptLoopsActive.decrementAndGet())
                     case Result.Panic(e) =>
                         Log.live.unsafe.error("PosixTransport accept loop panic", e)
                         discard(acceptLoopsActive.decrementAndGet())
                 }
                 // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed, Int], even though both erase to the same runtime object; the alias is transparent
-                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitAccept's fixed Promise.Unsafe-typed parameter needs
-                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Int values above, never
-                // a suspended computation.
-                driver.awaitAccept(handle, acceptPromise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed]]])
+                // plainly-constructed IOPromise[Closed | NetException, Int], even though both erase to the same runtime object; the alias is
+                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitAccept's fixed Promise.Unsafe-typed parameter
+                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Int
+                // values above (a driver-side accept failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                driver.awaitAccept(handle, acceptPromise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
         end scheduleNextAccept
 
         // Re-arm accept interest after the resource-exhaustion backoff, without blocking the poll-loop carrier. `Clock.live.unsafe.sleep`
@@ -2126,7 +2126,7 @@ final private[net] class PosixTransport private[posix] (
         onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit
     )(using AllowUnsafe, Frame): Unit =
-        val writablePromise = new IOPromise[Closed, Unit]
+        val writablePromise = new IOPromise[Closed | NetException, Unit]
         writablePromise.onComplete {
             case Result.Success(_)      => cont()
             case Result.Failure(closed) => onFailed(closed)
@@ -2137,7 +2137,7 @@ final private[net] class PosixTransport private[posix] (
         // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitWritable's fixed Promise.Unsafe-typed parameter needs this
         // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
         // suspended computation.
-        handle.driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        handle.driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
     end awaitWritable
 
     private def isWouldBlock(errno: Int): Boolean =

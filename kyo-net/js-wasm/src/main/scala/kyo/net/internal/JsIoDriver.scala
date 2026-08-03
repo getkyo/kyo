@@ -89,15 +89,15 @@ final private[kyo] class JsIoDriver private (
         end if
     end isPeerClosed
 
-    def awaitConnect(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitConnect(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // JS connect is handled via Node.js 'connect' event callback, not via the driver
         promise.completeDiscard(Result.succeed(()))
 
-    def awaitAccept(handle: JsHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitAccept(handle: JsHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // JS does not run the PosixTransport accept loop; fail fast so a caller that accidentally uses this path gets an immediate error.
         promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"awaitAccept not supported on JsIoDriver")))
 
-    def awaitWritable(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitWritable(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering the typed
         // Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed facade for Node's
         // net.Socket.

@@ -281,25 +281,25 @@ final private[kyo] class NioTransport private (
                 channel.close()
                 promise.completeDiscard(Result.fail(connectFail(host, port, "")))
             else
-                val connectPromise = new IOPromise[Closed, Unit]
+                val connectPromise = new IOPromise[Closed | NetException, Unit]
                 connectPromise.onComplete { result =>
                     result match
                         case Result.Success(_) =>
                             Log.live.unsafe.debug(s"NioTransport connected channel=${channel.hashCode()}")
                             completeConnect(handle, promise, channelCapacity)
-                        case Result.Failure(closed) =>
+                        case Result.Failure(cause) =>
                             channel.close()
-                            promise.completeDiscard(Result.fail(connectFail(host, port, closed)))
+                            promise.completeDiscard(Result.fail(connectFail(host, port, cause)))
                         case Result.Panic(e) =>
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
                 }
                 // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent
-                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs
-                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above,
-                // never a suspended computation.
-                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+                // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
+                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
+                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
+                // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
             end if
         end if
     end awaitConnect
@@ -611,7 +611,7 @@ final private[kyo] class NioTransport private (
                 channel.close()
                 promise.completeDiscard(Result.fail(NetConnectException(host, port, "")))
             else
-                val connectPromise = new IOPromise[Closed, Unit]
+                val connectPromise = new IOPromise[Closed | NetException, Unit]
                 connectPromise.onComplete { result =>
                     result match
                         case Result.Success(_) =>
@@ -630,19 +630,19 @@ final private[kyo] class NioTransport private (
                                 readChunkSize,
                                 handle.peerCloseGrace
                             )
-                        case Result.Failure(closed) =>
+                        case Result.Failure(cause) =>
                             channel.close()
-                            promise.completeDiscard(Result.fail(NetConnectException(host, port, closed)))
+                            promise.completeDiscard(Result.fail(NetConnectException(host, port, cause)))
                         case Result.Panic(e) =>
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
                 }
                 // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent
-                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs
-                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above,
-                // never a suspended computation.
-                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+                // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is
+                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter
+                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit
+                // values above (a driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
             end if
         end if
     end awaitConnectThenTls
@@ -1066,7 +1066,7 @@ final private[kyo] class NioTransport private (
         connectPromise: IOPromise[NetException, Connection[NioHandle]],
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Unit =
-        val writablePromise = new IOPromise[Closed, Unit]
+        val writablePromise = new IOPromise[Closed | NetException, Unit]
         writablePromise.onComplete { result =>
             result match
                 case Result.Success(_) =>
@@ -1091,7 +1091,7 @@ final private[kyo] class NioTransport private (
         // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitWritable's fixed Promise.Unsafe-typed parameter needs this
         // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
         // suspended computation.
-        driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
     end flushHandshakeWrite
 
     def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: kyo.net.NetConfig)(

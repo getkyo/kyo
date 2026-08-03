@@ -8,6 +8,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetBackendUnavailableException
 import kyo.net.NetConnectionClosedException
 import kyo.net.NetConnectionClosedException.Operation
+import kyo.net.NetException
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -378,7 +379,7 @@ final private[net] class IoUringDriver private[posix] (
             case _ => ()
     end drainQueuedRecv
 
-    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
             // Tail-bound park (CWE-400): the pump suspended because the write tail reached the high-water mark, not because of a kernel send-buffer
             // limit (io_uring's send is async and self-drains via the in-flight SQE's CQE re-flush). Completing the promise now would busy-loop:
@@ -401,7 +402,7 @@ final private[net] class IoUringDriver private[posix] (
         end if
     end awaitWritable
 
-    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // Arm the connect on the reap carrier (single get_sqe producer); see [[submitEngineOp]].
         submitEngineOp(() => submitConnect(promise, handle))
     end awaitConnect
@@ -410,7 +411,10 @@ final private[net] class IoUringDriver private[posix] (
       * queue; [[reArmStalledSubmits]] re-enters here directly after a CQE batch freed a slot. On a full SQ the connect parks in [[stalledSubmits]]
       * (its promise stays pending) instead of failing, so a transient SQ-full does not drop a connection that would otherwise complete.
       */
-    private def submitConnect(promise: Promise.Unsafe[Unit, Abort[Closed]], handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+    private def submitConnect(promise: Promise.Unsafe[Unit, Abort[Closed | NetException]], handle: PosixHandle)(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
         handle.connectTarget match
             case Present((addr, len)) =>
                 val key = keyGen.getAndIncrement()
@@ -443,7 +447,7 @@ final private[net] class IoUringDriver private[posix] (
       * full the accept parks in [[stalledSubmits]] (keeping its buffers) and is re-armed once a slot frees, never failed (a failed accept
       * would wedge the accept loop, whose `onComplete` reads Failure as "listener closed" and stops re-arming).
       */
-    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // Placeholder buffers that kyo_uring_prep_accept requires; the kernel may write the peer address into addr, which we discard.
         // The accepted fd comes from the CQE res field. These must stay alive until the CQE is reaped (kept in PendingOp.Accept) and across a
         // park+re-arm, so they are allocated here once and threaded through submitAccept rather than re-allocated per re-arm.
@@ -460,7 +464,7 @@ final private[net] class IoUringDriver private[posix] (
       * accept loop.
       */
     private def submitAccept(
-        promise: Promise.Unsafe[Int, Abort[Closed]],
+        promise: Promise.Unsafe[Int, Abort[Closed | NetException]],
         handle: PosixHandle,
         noAddr: Buffer[Byte],
         noLen: Buffer[Int]
