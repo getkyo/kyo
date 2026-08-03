@@ -102,6 +102,9 @@ class PollerIoDriverErrorEventTest extends Test:
                 yield
                     readOutcome match
                         case Result.Failure(_: Closed) => succeed
+                        // The pending read is failed by the real error: either the error dispatch fails it Closed, or the recv itself reaps the
+                        // errno and surfaces a typed receive failure (ReadOutcome.Failed). Both mean the read was failed, not stranded.
+                        case Result.Success(ReadOutcome.Failed(_)) => succeed
                         case Result.Failure(_: Timeout) =>
                             fail("error event dropped: the pending read was never failed and hung")
                         case other => fail(s"unexpected read outcome: $other")

@@ -155,15 +155,17 @@ class PollerIoDriverTest extends Test:
                     sock.close(client).safe.get.map { _ =>
                         Abort.run[Closed](readVia(driver, acceptedH)).map { result =>
                             driver.closeHandle(acceptedH)
-                            // The reset surfaces as Closed; some kernels deliver the RST only after an EOF read, so accept either a Closed
-                            // failure or a terminal EOF (both are non-data terminal outcomes, never live bytes).
+                            // The reset surfaces as a driver close (Closed), a terminal EOF, or a typed receive failure when the recv itself
+                            // reaps the RST errno; some kernels deliver the RST only after an EOF read. All are non-data terminal outcomes,
+                            // never live bytes.
                             result match
                                 case Result.Failure(_: Closed) => succeed
                                 case Result.Success(ReadOutcome.PeerFin) | Result.Success(ReadOutcome.CleanClose) | Result.Success(
                                         ReadOutcome.LocalShutdown
                                     ) => succeed
                                 case Result.Success(ReadOutcome.Bytes(s)) if s.isEmpty => succeed // empty Bytes: EOF as a zero-length read
-                                case other                                             => fail(s"expected Closed or EOF, got $other")
+                                case Result.Success(ReadOutcome.Failed(_)) => succeed // recv reaped the RST as a typed receive failure
+                                case other => fail(s"expected Closed, EOF, or a typed receive failure, got $other")
                             end match
                         }
                     }

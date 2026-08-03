@@ -17,14 +17,16 @@ import kyo.net.internal.transport.ReadOutcome
   * (prepared).
   *
   * The rejection MUST be OBSERVABLE, not a silent SQE drop: a bare drop would leave the ring waiting on a CQE that never arrives (a hang, worse
-  * than the theoretical OOB). [[IoUringDriver.submitRecv]] maps a non-zero `prep_recv` return to a failed read promise (`Closed`); the send
-  * flush paths leave the in-flight guard clear and re-queue the remainder (the same not-submitted handling as SQ-full).
+  * than the theoretical OOB). [[IoUringDriver.submitRecv]] maps a non-zero `prep_recv` return to a driver-invariant breach that aborts the read
+  * through the panic channel with a typed `NetConnectionIoException`; the send flush paths leave the in-flight guard clear and re-queue the
+  * remainder (the same not-submitted handling as SQ-full).
   *
   * Two leaves:
   *   - The C trust-boundary leaf drives a genuinely negative length straight into the real shim over a real SQE and asserts the shim REJECTS it
   *     (returns -1) while a non-negative length is PREPARED (returns 0). This pins the finding at the boundary it names with a real bad value.
   *   - The driver observable-rejection leaf forces `prep_recv` to reject once (the documented single-value injection, the same style as
-  *     [[RecordingIoUringBindings]]'s `cqe_res` override) and asserts the read promise FAILS `Closed` rather than hanging on a never-arriving CQE.
+  *     [[RecordingIoUringBindings]]'s `cqe_res` override) and asserts the read promise PANICS with a typed `NetConnectionIoException` naming the
+  *     defect rather than hanging on a never-arriving CQE.
   *
   * Reproduce-first: with the C guard removed (each prep_* returning 0 unconditionally), the boundary leaf FAILS because the negative length is
   * cast and an OOB SQE is prepared (return 0, no rejection); the driver leaf's injected reject path would never be reached so the promise would
@@ -138,9 +140,12 @@ class IoUringDriverNegativeLengthTest extends Test:
                         driver.closeHandle(acceptedH)
                         discard(Ffi.load[SocketBindings].close(client))
                         outcome match
-                            case Result.Failure(_: Closed)  => succeed
+                            // A negative-length recv rejection is a driver-invariant breach (a C-boundary guard), so it aborts the connection
+                            // through the panic channel with a typed NetConnectionIoException naming the defect, not a plain Closed.
+                            case Result.Panic(cause) =>
+                                assert(cause.getMessage.contains("negative length"), s"message=${cause.getMessage}")
                             case Result.Failure(_: Timeout) => fail("read hung: rejection was silently dropped, no CQE ever arrived")
-                            case other                      => fail(s"expected the read promise to fail Closed, got $other")
+                            case other => fail(s"expected the read promise to Panic on the rejected negative-length recv, got $other")
                         end match
                     }
                 }

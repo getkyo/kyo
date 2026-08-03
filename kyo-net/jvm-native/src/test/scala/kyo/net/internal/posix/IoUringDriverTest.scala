@@ -313,23 +313,24 @@ class IoUringDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "res < 0 completes the read with Closed naming the errno on a real peer reset" in {
+        "res < 0 completes the read with a typed receive failure naming the errno on a real peer reset" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
-                    // A real RST: SO_LINGER {l_onoff=1, l_linger=0} + close. The kernel fills the pending recv CQE with res=-ECONNRESET=-104
-                    // on Linux; the driver maps any res<0 to Closed("read errno=N") with no errno-specific branch, so the message names 104.
+                    // A real RST: SO_LINGER {l_onoff=1, l_linger=0} + close. The kernel fills the pending recv CQE with res=-ECONNRESET=-104 on
+                    // Linux; the driver surfaces any res<0 recv error as a typed ReadOutcome.Failed(NetConnectionIoException(receive)) naming the
+                    // connection, so the read succeeds with a Failed outcome whose cause message names errno 104.
                     val econnreset = 104
                     PosixTestSockets.resetPeer(sock, client)
                     Abort.run[Closed](promise.safe.get).map { result =>
                         drv.closeHandle(acceptedH)
                         result match
-                            case Result.Failure(c: Closed) =>
-                                assert(c.getMessage.contains(s"errno=$econnreset"), s"message=${c.getMessage}")
-                            case other => fail(s"expected Closed(errno=$econnreset), got $other")
+                            case Result.Success(ReadOutcome.Failed(cause)) =>
+                                assert(cause.getMessage.contains(s"errno=$econnreset"), s"message=${cause.getMessage}")
+                            case other => fail(s"expected ReadOutcome.Failed(errno=$econnreset), got $other")
                         end match
                     }
                 }
@@ -581,25 +582,25 @@ class IoUringDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "awaitAccept on a non-listening socket completes with Closed naming the errno" in {
+        "awaitAccept on a non-listening socket completes with a typed accept failure naming the errno" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    // accept(2) on a connected (non-listening) socket fails with a real negative CQE (EINVAL on Linux). The driver maps any
-                    // res<0 to Closed("accept errno=N"); the errno is whatever the kernel returned, asserted to be a positive POSIX code.
+                    // accept(2) on a connected (non-listening) socket fails with a real negative CQE (EINVAL on Linux, not a transient errno). The
+                    // driver surfaces a non-transient accept failure as a typed NetConnectionIoException(accept) naming the listener and the errno.
                     val connectedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val promise    = Promise.Unsafe.init[Int, Abort[Closed]]()
                     drv.awaitAccept(connectedH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
-                    Abort.run[Closed](promise.safe.get).map { result =>
+                    promise.safe.getResult.map { result =>
                         drv.closeHandle(connectedH)
                         discard(sock.close(client))
                         result match
-                            case Result.Failure(c: Closed) =>
-                                val m     = c.getMessage
-                                val errno = "accept errno=(\\d+)".r.findFirstMatchIn(m).map(_.group(1).toInt)
-                                assert(m.contains("accept errno="), s"message=$m")
+                            case Result.Failure(cause) =>
+                                val m     = cause.getMessage
+                                val errno = "errno=(\\d+)".r.findFirstMatchIn(m).map(_.group(1).toInt)
+                                assert(m.contains("accept failed"), s"message=$m")
                                 assert(errno.exists(_ > 0), s"accept errno must be a positive POSIX code, message=$m")
-                            case other => fail(s"expected Closed(accept errno=...), got $other")
+                            case other => fail(s"expected a typed accept failure naming the errno, got $other")
                         end match
                     }
                 }
