@@ -6,7 +6,6 @@ import kyo.*
 import kyo.Result.Error
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 sealed private[kyo] trait IOPromiseBase[+E, +A]:
     self: IOPromise[E, A] =>
@@ -414,7 +413,11 @@ private[kyo] object IOPromise:
     private inline def eval[A](inline f: => Unit): Unit =
         try f
         catch
-            case ex if NonFatal(ex) =>
+            // Completion callbacks run in a single loop over all of a promise's waiters; a throwable escaping here
+            // would abort that loop and leave the remaining waiters unnotified. A callback is an isolated
+            // side-effecting notification, not the fiber's own computation, so contain and log every failure
+            // (fatal included) rather than propagate.
+            case ex =>
                 given Frame = Frame.internal
                 import AllowUnsafe.embrace.danger
                 Log.live.unsafe.error("uncaught exception", ex)
