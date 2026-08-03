@@ -589,8 +589,8 @@ class IoUringDriverTest extends Test:
                     // accept(2) on a connected (non-listening) socket fails with a real negative CQE (EINVAL on Linux, not a transient errno). The
                     // driver surfaces a non-transient accept failure as a typed NetConnectionIoException(accept) naming the listener and the errno.
                     val connectedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val promise    = Promise.Unsafe.init[Int, Abort[Closed]]()
-                    drv.awaitAccept(connectedH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
+                    val promise    = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
+                    drv.awaitAccept(connectedH, promise)
                     promise.safe.getResult.map { result =>
                         drv.closeHandle(connectedH)
                         discard(sock.close(client))
