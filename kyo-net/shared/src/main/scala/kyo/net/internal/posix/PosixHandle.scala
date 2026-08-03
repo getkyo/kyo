@@ -63,7 +63,10 @@ final private[net] class PosixHandle private (
     // plain read-then-clear let both paths feed the peer's flight to the handshake engine, corrupting the record stream. Whichever side
     // wins a `compareAndSet(Present(arr), Absent)` on this slot is the sole feeder for that chunk; the loser sees the winner's `Absent` and
     // skips.
-    val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]]
+    val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]],
+    // The user's transport.connect/listen call frame, captured at the public entry and threaded here explicitly (never implicit: several
+    // creation sites run under `given Frame = Frame.internal`). Used as the `createdAt` of this handle's per-connection failures.
+    val createdAt: Frame
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
       * [[growReadBufferForFullRead]]): the field is `var` so the grow can swap in a larger buffer, but every read of it is a coherent snapshot
@@ -648,7 +651,7 @@ private[net] object PosixHandle:
       * The readiness poller ignores it (epoll/kqueue signal connect via write-readiness), so it defaults to `Absent` for an already-connected
       * (e.g. accepted) socket.
       */
-    def socket(fd: Int, bufSize: Int, connectTarget: Maybe[(Buffer[Byte], Int)])(using
+    def socket(fd: Int, bufSize: Int, connectTarget: Maybe[(Buffer[Byte], Int)], createdAt: Frame)(using
         AllowUnsafe
     ): PosixHandle =
         new PosixHandle(
@@ -664,11 +667,12 @@ private[net] object PosixHandle:
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
-            lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
+            lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            createdAt = createdAt
         )
 
     /** stdio handle: split fds, read end 0 and write end 1 (the split-fd case). */
-    def stdio(bufSize: Int)(using AllowUnsafe): PosixHandle =
+    def stdio(bufSize: Int, createdAt: Frame)(using AllowUnsafe): PosixHandle =
         new PosixHandle(
             0,
             1,
@@ -682,7 +686,8 @@ private[net] object PosixHandle:
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
-            lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
+            lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            createdAt = createdAt
         )
 
     /** Actually release the resources the handle owns: the TLS engine (if any) and the reused read buffer. Called exactly once, under the

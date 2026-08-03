@@ -99,24 +99,47 @@ class HttpServerResilienceTest extends BaseHttpTest:
 
     // ---- reported bug: pooled client + firing request timeout + server restart churn (fibers) -----------------------
 
-    /** True only for a WHOLE-DRIVER close (the reported wedge), NOT a routine per-connection close.
-      *
-      * Every `Closed` a driver raises renders as "<driver-label> created at ... is closed." because the resource IS the
-      * driver's label (`Closed.scala`), so matching "is closed" + "Driver" also matches every ordinary per-connection
-      * close a churn/cancellation load produces (an RST'd read, a cancelled connect: detail "channel=... closed"). That
-      * was the earlier detector's bug: it counted connection closes as driver wedges. The whole-driver teardown is the
-      * only path that tags its `Closed` with the detail "driver closed" (`NioIoDriver.close` / `PollerIoDriver.close` /
-      * `IoUringDriver.close`), and the detail is carried in `getMessage`, so match on it to count only genuine driver
-      * closes. The real permanence check is still the post-load liveness assert; this counter is the corroborating signal.
+    /** EXACTLY the reporter's repro detector, kept faithful on purpose: the failure message contains BOTH "NioIoDriver"
+      * and "is closed". Note this is broad: every `Closed` the driver emits renders as
+      * "NioIoDriver[...] created at ... is closed. <detail>", so it also matches ordinary per-connection closes (an RST'd
+      * read, a cancelled connect). That is why each hit is LOGGED (`recordIfDriverClosed`) with its real exception type,
+      * message, and full cause chain: the log shows whether a matched hit is a per-connection close (detail
+      * "channel=... closed") or a genuine whole-driver close (detail "driver closed"). The post-load liveness assert is
+      * the independent ground-truth check on whether the driver actually wedged.
       */
     private def isDriverClosed(e: Any): Boolean =
-        def check(t: Throwable, depth: Int): Boolean =
-            if (t eq null) || depth > 6 then false
-            else String.valueOf(t.getMessage).contains("driver closed") || check(t.getCause, depth + 1)
-        e match
-            case t: Throwable => check(t, 0)
-            case other        => String.valueOf(other).contains("driver closed")
+        val msg =
+            e match
+                case t: Throwable => String.valueOf(t.getMessage)
+                case other        => String.valueOf(other)
+        msg.contains("NioIoDriver") && msg.contains("is closed")
     end isDriverClosed
+
+    /** Global cap so a wedge (which would match on every subsequent call) cannot flood the console. */
+    private val loggedHits = new java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** If `e` matches the reporter's signature, increment `counter` and log the first few hits' actual exception type,
+      * message, and cause chain, so the true nature of each hit is visible rather than inferred from a string.
+      */
+    private def recordIfDriverClosed(counter: java.util.concurrent.atomic.AtomicInteger, e: Any): Unit =
+        if isDriverClosed(e) then
+            discard(counter.incrementAndGet())
+            if loggedHits.getAndIncrement() < 10 then
+                val sb = new StringBuilder(s"[driver-closed hit] top=${e.getClass.getName}")
+                e match
+                    case t: Throwable =>
+                        var c: Throwable = t
+                        var d            = 0
+                        while (c ne null) && d < 8 do
+                            sb.append(s"\n  [$d] ${c.getClass.getName}: ${String.valueOf(c.getMessage)}")
+                            c = c.getCause
+                            d += 1
+                        end while
+                    case other => sb.append(s": ${String.valueOf(other)}")
+                end match
+                java.lang.System.out.println(sb.toString)
+            end if
+    end recordIfDriverClosed
 
     "reported bug: shared pooled client survives request cancellation under server churn" - eachBackend { (transport, _) =>
         // The reporter's shape at the HTTP level, with fibers: 16-way concurrent load through the process-shared POOLED
@@ -156,8 +179,8 @@ class HttpServerResilienceTest extends BaseHttpTest:
                                 )
                             }
                         }.map {
-                            case Result.Failure(ex) => if isDriverClosed(ex) then discard(bug.incrementAndGet())
-                            case Result.Panic(ex)   => if isDriverClosed(ex) then discard(bug.incrementAndGet())
+                            case Result.Failure(ex) => recordIfDriverClosed(bug, ex)
+                            case Result.Panic(ex)   => recordIfDriverClosed(bug, ex)
                             case _                  => ()
                         }.andThen(Loop.continue)
                 }
@@ -228,11 +251,9 @@ class HttpServerResilienceTest extends BaseHttpTest:
                                             )
                                         }
                                     }.map {
-                                        case Result.Failure(ex) =>
-                                            discard(notOk.incrementAndGet()); if isDriverClosed(ex) then discard(bug.incrementAndGet())
-                                        case Result.Panic(ex) =>
-                                            discard(notOk.incrementAndGet()); if isDriverClosed(ex) then discard(bug.incrementAndGet())
-                                        case _ => ()
+                                        case Result.Failure(ex) => discard(notOk.incrementAndGet()); recordIfDriverClosed(bug, ex)
+                                        case Result.Panic(ex)   => discard(notOk.incrementAndGet()); recordIfDriverClosed(bug, ex)
+                                        case _                  => ()
                                     }.andThen(Loop.continue)
                             }
                         }

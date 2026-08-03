@@ -39,7 +39,11 @@ final private[kyo] class NioHandle private (
     @volatile var tls: Maybe[NioTlsState],
     // Peer-close reclaim grace for this connection's ReadPump (kyo.net.NetConfig.peerCloseGrace), set from config at adoption. One handle
     // spans a STARTTLS upgrade, so the upgraded connection inherits it.
-    val peerCloseGrace: Duration
+    val peerCloseGrace: Duration,
+    // The user's transport.connect/listen call frame, captured at the public entry point and threaded here explicitly (never an implicit,
+    // which would capture whatever ambient Frame is in scope at a creation site). Used as the `createdAt` of every per-connection Closed /
+    // NetConnectionIoException this handle's failures produce, so a failure names where the user created the connection.
+    val createdAt: Frame
 ):
     import AllowUnsafe.embrace.danger
     val readBuffer: ByteBuffer = ByteBuffer.allocateDirect(readBufferSize)
@@ -127,19 +131,23 @@ private[kyo] object NioHandle:
         case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], frame: Frame)
     end UpgradeHandoff
 
-    /** Create a plain-TCP handle with an allocated direct read buffer. */
-    def init(channel: SocketChannel, bufferSize: Int, peerCloseGrace: Duration)(using AllowUnsafe): NioHandle =
-        new NioHandle(channel, bufferSize, Absent, peerCloseGrace)
+    /** Create a plain-TCP handle with an allocated direct read buffer. `createdAt` is the user's connect/listen call frame (explicit, not
+      * implicit: several creation sites run under `given Frame = Frame.internal`, so an implicit would capture the wrong frame).
+      */
+    def init(channel: SocketChannel, bufferSize: Int, peerCloseGrace: Duration, createdAt: Frame)(using AllowUnsafe): NioHandle =
+        new NioHandle(channel, bufferSize, Absent, peerCloseGrace, createdAt)
     end init
 
     /** Create a TLS-enabled handle. TLS buffers are sized from the `SSLEngine` session's recommended capacities. */
-    def initTls(channel: SocketChannel, bufferSize: Int, engine: SSLEngine, peerCloseGrace: Duration)(using AllowUnsafe): NioHandle =
+    def initTls(channel: SocketChannel, bufferSize: Int, engine: SSLEngine, peerCloseGrace: Duration, createdAt: Frame)(using
+        AllowUnsafe
+    ): NioHandle =
         val session   = engine.getSession
         val netInBuf  = ByteBuffer.allocate(session.getPacketBufferSize)
         val netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
         val appInBuf  = ByteBuffer.allocate(session.getApplicationBufferSize)
         val tlsState  = NioTlsState(engine, netInBuf, netOutBuf, appInBuf)
-        new NioHandle(channel, bufferSize, Present(tlsState), peerCloseGrace)
+        new NioHandle(channel, bufferSize, Present(tlsState), peerCloseGrace, createdAt)
     end initTls
 
     /** Close the handle: send TLS close_notify if TLS (best-effort, non-blocking), then close channel. */

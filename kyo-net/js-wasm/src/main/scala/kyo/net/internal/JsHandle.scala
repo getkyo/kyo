@@ -13,7 +13,7 @@ import scala.scalajs.js
   * Leftover bytes are stored when a `"data"` chunk arrives before `awaitRead` has been called (or when a chunk contains more data than the
   * pending read can consume). They are delivered on the next `awaitRead` call without resuming the socket.
   */
-final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId):
+final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId, val createdAt: Frame):
     // Pending read promise (at most one). Absent when no read is pending.
     var pendingRead: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
 
@@ -55,9 +55,9 @@ private[kyo] object JsHandle:
     private[kyo] case class Leftover(buf: Array[Byte], off: Int, len: Int)
 
     /** Create a `JsHandle` from a connected, paused Node.js socket and attach permanent `data`, `end`, `close`, and `error` listeners. */
-    def init(socket: js.Dynamic, driver: IoDriver[JsHandle])(using AllowUnsafe, Frame): JsHandle =
+    def init(socket: js.Dynamic, driver: IoDriver[JsHandle], createdAt: Frame)(using AllowUnsafe): JsHandle =
         // JS has no file-descriptor concept; use 0 as the fd placeholder so HandleId.next produces a process-unique id.
-        val handle = new JsHandle(socket, HandleId.next(0))
+        val handle = new JsHandle(socket, HandleId.next(0), createdAt)
 
         // Permanent "data" listener
         discard(socket.on(
@@ -95,7 +95,8 @@ private[kyo] object JsHandle:
                 handle.pendingRead match
                     case Present(pending) =>
                         handle.clearPendingRead()
-                        pending.completeDiscard(Result.fail(Closed(driver.label, summon[Frame], "socket error")))
+                        // Class 1: a socket error on THIS connection, not the driver. Name the connection, carry its creation frame.
+                        pending.completeDiscard(Result.fail(Closed(s"connection socket#${handle.id}", handle.createdAt, "socket error")))
                     case Absent => ()
             }: js.Function1[js.Dynamic, Unit]
         ))
