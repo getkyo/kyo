@@ -112,9 +112,28 @@ private[kyo] object OverlayFileSystem:
         end extension
     end ReadSet
 
+    /** Where the overlay is in its one-shot lifecycle.
+      *
+      * `Open` accepts writes. `Committing` rejects them for the duration of a commit, so the staged
+      * state a commit took cannot gain entries after it was taken. `Terminated` is final.
+      *
+      * A commit that finds conflicts returns to `Open` rather than terminating: the caller's next
+      * move is `commitWith`, which needs the staged state intact and the overlay still accepting the
+      * writes a resolution implies.
+      *
+      * Carried inside [[OverlayState]] rather than in an atomic of its own so that a write's
+      * admission check and the write itself are one compare-and-set. A separate flag lets a commit
+      * flip the lifecycle between a write's check and its mutation, which is how a write lands in
+      * state that nothing will ever read.
+      */
+    enum Phase derives CanEqual:
+        case Open, Committing, Terminated
+    end Phase
+
     /** The overlay's mutable state: the upper trie of staged entries, the append-only journal of
-      * staged write operations (consumed by commit), and the read-set of lower observations
-      * (the entry recorded the first time a lower path is read through the overlay).
+      * staged write operations (consumed by commit), the read-set of lower observations
+      * (the entry recorded the first time a lower path is read through the overlay), and the
+      * lifecycle phase that decides whether a further write is admitted at all.
       *
       * The upper is a [[PathTrie]] rather than a flat map because every question asked of it beyond
       * a point lookup is hierarchical: shadowing by an ancestor, a directory's direct children, and
@@ -134,11 +153,19 @@ private[kyo] object OverlayFileSystem:
         // the lower changes, so one logical file could acquire two keys and split its staged state.
         // Pinning it on first touch keeps keys stable; drift is a commit-time conflict, not a silent
         // re-key.
-        resolved: PathTrie[Chunk[String]]
+        resolved: PathTrie[Chunk[String]],
+        phase: Phase
     )
 
     object OverlayState:
-        val empty: OverlayState = OverlayState(UpperTrie.empty, Chunk.empty, ReadSet.empty, PathTrie.empty)
+        val empty: OverlayState =
+            OverlayState(UpperTrie.empty, Chunk.empty, ReadSet.empty, PathTrie.empty, Phase.Open)
+
+        /** The state an overlay is left in once its lifetime is over: nothing staged, nothing
+          * admitted. Reached by discard, by a completed commit, and by scope exit.
+          */
+        val terminated: OverlayState = empty.copy(phase = Phase.Terminated)
+    end OverlayState
 
     def init[S, S2](lower: FileSystem.Write[S])(using
         frame: Frame,
@@ -146,15 +173,11 @@ private[kyo] object OverlayFileSystem:
     ): (
         FileSystem.StagedChanges[S & Sync & Abort[FileSystemException]] & FileSystem.Write[S & Sync] & FileSystem.Watch[S & Sync]
     ) < (Sync & Scope) =
-        Scope.acquireRelease(
-            AtomicRef.init(OverlayState.empty).map(ref => AtomicBoolean.init(true).map(active => (ref, active)))
-        ) { case (ref, active) =>
-            active.compareAndSet(true, false).map { wasOpen =>
-                if wasOpen then ref.set(OverlayState.empty) else ()
-            }
-        }.flatMap { case (ref, active) =>
+        Scope.acquireRelease(AtomicRef.init(OverlayState.empty)) { ref =>
+            ref.set(OverlayState.terminated)
+        }.flatMap { ref =>
             // Unsafe: allocates per-instance commit counter at construction
-            Sync.Unsafe.defer(new WatchableOverlayFileSystem(lower, ref, AtomicLong.Unsafe.init(0L).safe, active, isolate))
+            Sync.Unsafe.defer(new WatchableOverlayFileSystem(lower, ref, AtomicLong.Unsafe.init(0L).safe, isolate))
         }
 
 end OverlayFileSystem
@@ -465,8 +488,7 @@ end WriteOpLog
 private[kyo] class OverlayFileSystem[S](
     lower: FileSystem.Write[S],
     state: AtomicRef[OverlayFileSystem.OverlayState],
-    uniqueSeq: AtomicLong,
-    active: AtomicBoolean
+    uniqueSeq: AtomicLong
 ) extends FileSystem.Write[S & Sync]
     with FileSystem.StagedChanges[S & Sync & Abort[FileSystemException]]:
     import OverlayFileSystem.*
@@ -497,18 +519,54 @@ private[kyo] class OverlayFileSystem[S](
     // when applyResolved throws (crash simulation) so recover() can find the staging dir.
     private[kyo] var stagingDirHandle: Maybe[Path.TempDirHandle] = Absent
 
-    // CAS modify loop for operations that may fail with FileSystemException.
-    private def modify[E <: FileSystemException, A](op: OverlayState => Result[E, (OverlayState, A)])(using Frame): A < (Sync & Abort[E]) =
+    // The failure a write raises once the overlay is no longer admitting them.
+    //
+    // FileIOException is the one FileSystemException satisfying the read, write and structure bounds
+    // at once, so every write method can raise it without widening its declared row.
+    // FileSystem.StagedChanges.AlreadyTerminated cannot be used here: it extends CommitConflict,
+    // which is not a FileSystemException and appears in no write method's row.
+    private def terminated(path: Path, operation: FileSystemOperation)(using Frame): FileIOException =
+        FileIOException(path, operation, new IOException("staged changes are no longer accepting writes"))
+
+    // CAS modify loop for operations that may fail with FileSystemException. Admits the mutation
+    // only while the overlay is open, so a write cannot land in state a commit has already taken or
+    // a discard has already thrown away.
+    private def modify[E <: FileSystemException, A](path: Path, operation: FileSystemOperation)(
+        op: OverlayState => Result[E, (OverlayState, A)]
+    )(using Frame): A < (Sync & Abort[E | FileIOException]) =
         Loop(()) { _ =>
             state.get.map { cur =>
-                Abort.get(op(cur)).map { (next, v) =>
-                    state.compareAndSet(cur, next).map {
-                        case true  => Loop.done(v)
-                        case false => Loop.continue(())
+                if cur.phase != Phase.Open then Abort.fail(terminated(path, operation))
+                else
+                    Abort.get(op(cur)).map { (next, v) =>
+                        state.compareAndSet(cur, next).map {
+                            case true  => Loop.done(v)
+                            case false => Loop.continue(())
+                        }
                     }
-                }
             }
         }
+
+    // Stages a change, admitted only while the overlay is open.
+    //
+    // Separate from modifyPure, which stays ungated: modifyPure also records read-set observations
+    // and pinned canonical resolutions, and those accompany reads. A read through a discarded
+    // overlay is not an error, it just sees the lower, so gating every mutation would turn reading
+    // after discard into a failure. What must be refused is a write, because a write after the
+    // staged state is gone has nowhere to land.
+    private def stage(path: Path, operation: FileSystemOperation)(op: OverlayState => OverlayState)(using
+        Frame
+    ): Unit < (S & Abort[FileIOException]) =
+        (Loop(()) { _ =>
+            state.get.map { cur =>
+                if cur.phase != Phase.Open then Abort.fail(terminated(path, operation))
+                else
+                    state.compareAndSet(cur, op(cur)).map {
+                        case true  => Loop.done(())
+                        case false => Loop.continue(())
+                    }
+            }
+        }: Unit < (Sync & Abort[FileIOException])).asInstanceOf[Unit < (S & Abort[FileIOException])]
 
     // Reads the current snapshot and presents it as `S & Abort[FileSystemException]` so callers can
     // sequence it with lower calls without leaking an extra Sync into their effect row.
@@ -1020,7 +1078,7 @@ private[kyo] class OverlayFileSystem[S](
                             canonical(parent).map { pcp =>
                                 stampAbsent(pcp).andThen {
                                     val stat = Path.PathStat(0L, 0L)
-                                    modifyPure { current =>
+                                    stage(parent, FileSystemOperation.Create) { current =>
                                         val opaque =
                                             current.upper.get(pcp).contains(Upper.Whiteout) || ancestorWhiteout(current, pcp)
                                         val entry = if opaque then Upper.OpaqueDir(stat) else Upper.Entry(Path.Entry.Directory(stat))
@@ -1044,7 +1102,7 @@ private[kyo] class OverlayFileSystem[S](
         val stat = Path.PathStat(0L, value.size.toLong)
         ensureWriteParent(path, options).andThen {
             canonical(path).map { cp =>
-                modifyPure { s =>
+                stage(path, FileSystemOperation.Write) { s =>
                     s.copy(
                         upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(value, stat))),
                         journal = s.journal.appended(WriteOp.WriteFile(cp.parts, value, stat))
@@ -1073,7 +1131,7 @@ private[kyo] class OverlayFileSystem[S](
                         // Already in upper: concatenate without consulting lower, no stamp needed.
                         val merged = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
                         val stat   = Path.PathStat(0L, merged.size.toLong)
-                        modifyPure { cur =>
+                        stage(path, FileSystemOperation.Write) { cur =>
                             cur.copy(
                                 upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(merged, stat))),
                                 journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, merged, stat))
@@ -1093,7 +1151,7 @@ private[kyo] class OverlayFileSystem[S](
                             readLower.map { existing =>
                                 val merged = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
                                 val stat   = Path.PathStat(0L, merged.size.toLong)
-                                modifyPure { cur =>
+                                stage(path, FileSystemOperation.Write) { cur =>
                                     cur.copy(
                                         upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(merged, stat))),
                                         journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, merged, stat))
@@ -1118,7 +1176,7 @@ private[kyo] class OverlayFileSystem[S](
                         boundInt(path, "truncate size", size).map { sz =>
                             val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(sz))
                             val stat = Path.PathStat(0L, kept.size.toLong)
-                            modifyPure { cur =>
+                            stage(path, FileSystemOperation.Write) { cur =>
                                 cur.copy(
                                     upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(kept, stat))),
                                     journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, kept, stat))
@@ -1135,7 +1193,7 @@ private[kyo] class OverlayFileSystem[S](
                                         boundInt(path, "truncate size", size).map { sz =>
                                             val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(sz))
                                             val stat = Path.PathStat(0L, kept.size.toLong)
-                                            modifyPure { cur =>
+                                            stage(path, FileSystemOperation.Write) { cur =>
                                                 cur.copy(
                                                     upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(kept, stat))),
                                                     journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, kept, stat))
@@ -1155,7 +1213,7 @@ private[kyo] class OverlayFileSystem[S](
                 s.upper.get(cp) match
                     case Present(Upper.Entry(Path.Entry.File(bytes, stat))) =>
                         val ns = stat.copy(lastModifiedMs = epochMs)
-                        modifyPure { cur =>
+                        stage(path, FileSystemOperation.Write) { cur =>
                             cur.copy(
                                 upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(bytes, ns))),
                                 journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, bytes, ns))
@@ -1163,7 +1221,7 @@ private[kyo] class OverlayFileSystem[S](
                         }
                     case Present(Upper.Entry(Path.Entry.Directory(stat))) =>
                         val ns = stat.copy(lastModifiedMs = epochMs)
-                        modifyPure { cur =>
+                        stage(path, FileSystemOperation.Write) { cur =>
                             cur.copy(
                                 upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(ns))),
                                 journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
@@ -1171,7 +1229,7 @@ private[kyo] class OverlayFileSystem[S](
                         }
                     case Present(Upper.OpaqueDir(stat)) =>
                         val ns = stat.copy(lastModifiedMs = epochMs)
-                        modifyPure { cur =>
+                        stage(path, FileSystemOperation.Write) { cur =>
                             cur.copy(
                                 upper = cur.upper.updated(cp, Upper.OpaqueDir(ns)),
                                 journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = true))
@@ -1189,7 +1247,7 @@ private[kyo] class OverlayFileSystem[S](
                                         lower.readBytes(lp).map { bytes =>
                                             stampFile(cp, stat, bytes).andThen {
                                                 val ns = stat.copy(lastModifiedMs = epochMs)
-                                                modifyPure { cur =>
+                                                stage(path, FileSystemOperation.Write) { cur =>
                                                     cur.copy(
                                                         upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(bytes, ns))),
                                                         journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, bytes, ns))
@@ -1200,7 +1258,7 @@ private[kyo] class OverlayFileSystem[S](
                                     else
                                         stampDir(cp, stat).andThen {
                                             val ns = stat.copy(lastModifiedMs = epochMs)
-                                            modifyPure { cur =>
+                                            stage(path, FileSystemOperation.Write) { cur =>
                                                 cur.copy(
                                                     upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(ns))),
                                                     journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
@@ -1226,7 +1284,7 @@ private[kyo] class OverlayFileSystem[S](
                             if !exists then
                                 stampAbsent(cp).andThen {
                                     val st = Path.PathStat(0L, 0L)
-                                    modifyPure { cur =>
+                                    stage(path, FileSystemOperation.Create) { cur =>
                                         cur.copy(
                                             upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(st))),
                                             journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
@@ -1240,7 +1298,7 @@ private[kyo] class OverlayFileSystem[S](
                                          else lower.readBytes(lp).map(bytes => stampFile(cp, stat, bytes))).andThen {
                                             // An existing lower dir (or file) gets OpaqueDir, hiding its children.
                                             val st = if isDir then stat else Path.PathStat(0L, 0L)
-                                            modifyPure { cur =>
+                                            stage(path, FileSystemOperation.Create) { cur =>
                                                 cur.copy(
                                                     upper = cur.upper.updated(cp, Upper.OpaqueDir(st)),
                                                     journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = true))
@@ -1270,7 +1328,7 @@ private[kyo] class OverlayFileSystem[S](
                                 case file: Path.Entry.File =>
                                     // A file move keeps single-node semantics: whiteout the source, stage the
                                     // resolved file at the target, and journal one source-independent Move op.
-                                    modifyPure { cur =>
+                                    stage(to, FileSystemOperation.Move) { cur =>
                                         cur.copy(
                                             upper = cur.upper.updated(fromCp, Upper.Whiteout).updated(toCp, Upper.Entry(file)),
                                             journal = cur.journal.appended(WriteOp.Move(fromCp.parts, toCp.parts, file))
@@ -1281,7 +1339,7 @@ private[kyo] class OverlayFileSystem[S](
                                     // the overlay view (upper-staged plus lower-only) is materialized under `to`,
                                     // and the whole source subtree is whiteouted so it is fully gone.
                                     collectSubtree(from).map { nodes =>
-                                        modifyPure { cur =>
+                                        stage(to, FileSystemOperation.Move) { cur =>
                                             val (upperT, journalT) = stageSubtree(cur.upper, cur.journal, fromCp, toCp, nodes)
                                             // Whiteout the source dir and every upper descendant of it (a direct
                                             // upper Entry outranks an ancestor whiteout, so each must be marked);
@@ -1315,7 +1373,7 @@ private[kyo] class OverlayFileSystem[S](
                                     val copied =
                                         if options.copyAttributes then file
                                         else file.copy(stat = Path.PathStat(0L, file.stat.sizeBytes))
-                                    modifyPure { cur =>
+                                    stage(to, FileSystemOperation.Copy) { cur =>
                                         cur.copy(
                                             upper = cur.upper.updated(toCp, Upper.Entry(copied)),
                                             journal = cur.journal.appended(
@@ -1327,7 +1385,7 @@ private[kyo] class OverlayFileSystem[S](
                                     // A directory copy materializes the entire subtree under `to`, leaving the
                                     // source intact (no whiteout, no Remove op).
                                     collectSubtree(from).map { nodes =>
-                                        modifyPure { cur =>
+                                        stage(to, FileSystemOperation.Copy) { cur =>
                                             val (upperT, journalT) = stageSubtree(
                                                 cur.upper,
                                                 cur.journal,
@@ -1462,7 +1520,7 @@ private[kyo] class OverlayFileSystem[S](
                 s.upper.get(cp) match
                     case Present(Upper.Whiteout) => false
                     case Present(_) =>
-                        modifyPure { cur =>
+                        stage(path, FileSystemOperation.Remove) { cur =>
                             cur.copy(
                                 upper = cur.upper.updated(cp, Upper.Whiteout),
                                 journal = cur.journal.appended(WriteOp.Remove(cp.parts))
@@ -1473,7 +1531,7 @@ private[kyo] class OverlayFileSystem[S](
                             if !found then stampAbsent(cp).andThen(false)
                             else
                                 stampLower(cp).andThen {
-                                    modifyPure { cur =>
+                                    stage(path, FileSystemOperation.Remove) { cur =>
                                         cur.copy(
                                             upper = cur.upper.updated(cp, Upper.Whiteout),
                                             journal = cur.journal.appended(WriteOp.Remove(cp.parts))
@@ -1605,7 +1663,7 @@ private[kyo] class OverlayFileSystem[S](
             val dir  = Path(prefix + "-overlay-" + instanceSeed + "-" + seq.toHexString)
             val stat = Path.PathStat(0L, 0L)
             canonical(dir).map { cp =>
-                modifyPure { cur =>
+                stage(dir, FileSystemOperation.Create) { cur =>
                     cur.copy(
                         upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(stat))),
                         journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
@@ -1639,7 +1697,7 @@ private[kyo] class OverlayFileSystem[S](
                         val stat = Path.PathStat(0L, 0L)
                         ensureWriteParent(path, Path.WriteOptions()).andThen {
                             canonical(path).map { cp =>
-                                modify { current =>
+                                modify(path, FileSystemOperation.Channel) { current =>
                                     current.upper.get(cp) match
                                         case Present(Upper.Entry(_) | Upper.OpaqueDir(_)) => Result.fail(FileAlreadyExistsException(path))
                                         case _ =>
@@ -1804,21 +1862,55 @@ private[kyo] class OverlayFileSystem[S](
 
     // --- Commit / discard ---
 
-    private def terminate(action: String)(using Frame): Unit < (Sync & Abort[CommitConflict]) =
-        active.compareAndSet(true, false).map { claimed =>
-            if claimed then ()
-            else Abort.fail(FileSystem.StagedChanges.AlreadyTerminated(action))
+    // Claims the commit by closing the overlay to writes for its duration.
+    //
+    // The close has to happen before the staged state is read, not after it is validated: a write
+    // admitted in between would be added to a plan already taken and then erased by the reset that
+    // ends the commit, so the caller's write would succeed and land nowhere.
+    private def beginCommit(action: String)(using Frame): Unit < (Sync & Abort[CommitConflict]) =
+        Loop(()) { _ =>
+            state.get.map { cur =>
+                cur.phase match
+                    case Phase.Open =>
+                        state.compareAndSet(cur, cur.copy(phase = Phase.Committing)).map {
+                            case true  => Loop.done(())
+                            case false => Loop.continue(())
+                        }
+                    case Phase.Committing | Phase.Terminated =>
+                        Abort.fail(FileSystem.StagedChanges.AlreadyTerminated(action))
+            }
         }
 
-    private[kyo] def discardOnScopeExit(using Frame): Unit < Sync =
-        active.compareAndSet(true, false).map { claimed =>
-            if claimed then state.set(OverlayState.empty) else ()
+    // Reopens an overlay whose commit could not proceed. A conflicting commit is not terminal: the
+    // caller's next move is commitWith, which needs the staged state intact and further writes
+    // admitted.
+    private def abandonCommit(using Frame): Unit < Sync =
+        Loop(()) { _ =>
+            state.get.map { cur =>
+                state.compareAndSet(cur, cur.copy(phase = Phase.Open)).map {
+                    case true  => Loop.done(())
+                    case false => Loop.continue(())
+                }
+            }
         }
+
+    // Ends the overlay's life, discarding whatever is still staged.
+    private def terminate(using Frame): Unit < Sync =
+        Loop(()) { _ =>
+            state.get.map { cur =>
+                state.compareAndSet(cur, OverlayState.terminated).map {
+                    case true  => Loop.done(())
+                    case false => Loop.continue(())
+                }
+            }
+        }
+
+    private[kyo] def discardOnScopeExit(using Frame): Unit < Sync = terminate
 
     def discard(using Frame): Unit < (S & Sync & Abort[FileSystem.StagedChanges.TerminalState]) =
-        active.compareAndSet(true, false).map { claimed =>
-            if claimed then Abort.run[FileSystemException](modifyPure(_ => OverlayState.empty)).map(_ => ())
-            else Abort.fail(FileSystem.StagedChanges.AlreadyTerminated("discard"))
+        state.get.map { cur =>
+            if cur.phase != Phase.Open then Abort.fail(FileSystem.StagedChanges.AlreadyTerminated("discard"))
+            else terminate
         }
 
     // Validate the read-set: for each recorded ancestor entry, re-read lower and compare.
@@ -2155,67 +2247,69 @@ private[kyo] class OverlayFileSystem[S](
     end syncParentOf
 
     def commit(using Frame): Unit < (S & Sync & Abort[FileSystemException] & Abort[CommitConflict]) =
-        stateGet.map { s =>
-            validate(s).map { conflicts =>
-                if conflicts.isEmpty then
-                    terminate("commit").andThen(withCommit(s.journal)).andThen(modifyPure(_ => OverlayState.empty))
-                else
-                    Abort.fail(CommitConflict(conflicts.map(_._2)))
+        beginCommit("commit").andThen {
+            stateGet.map { s =>
+                validate(s).map { conflicts =>
+                    if conflicts.isEmpty then withCommit(s.journal).andThen(terminate)
+                    else abandonCommit.andThen(Abort.fail(CommitConflict(conflicts.map(_._2))))
+                }
             }
         }
 
     def commitWith(resolve: FileSystem.Conflict => FileSystem.Resolution)(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException] & Abort[CommitConflict]) =
-        stateGet.map { s =>
-            validate(s).map { conflicts =>
-                // Collect one Resolution per conflicted path, then rebuild upper and journal
-                // so the replay reflects every resolution (not just the original staged ops).
-                conflicts.foldLeft[Chunk[(CanonicalPath, Resolution)] < (S & Abort[FileSystemException])](Chunk.empty) {
-                    case (accKyo, (cp, conflict)) =>
-                        accKyo.map(resolutions => resolutions.appended((cp, resolve(conflict))))
-                }.map { resolutions =>
-                    // Pure fold: compute replacement upper and journal from the resolutions.
-                    val (newUpper, replacedJournal) =
-                        resolutions.foldLeft((s.upper, s.journal)) { case ((upper, journal), (cp, resolution)) =>
-                            val parts = cp.parts
-                            resolution match
-                                case Resolution.KeepOurs =>
-                                    (upper, journal)
-                                case Resolution.KeepTheirs =>
-                                    val stripped = journal.filter {
-                                        case WriteOp.WriteFile(p, _, _)   => p != parts
-                                        case WriteOp.WriteDirectory(p, _) => p != parts
-                                        case WriteOp.Remove(p)            => p != parts
-                                        case WriteOp.Move(from, to, _)    => from != parts && to != parts
-                                        case WriteOp.Copy(_, to, _, _)    => to != parts
-                                    }
-                                    (upper.removed(cp), stripped)
-                                case Resolution.Write(entry) =>
-                                    val stripped = journal.filter {
-                                        case WriteOp.WriteFile(p, _, _)   => p != parts
-                                        case WriteOp.WriteDirectory(p, _) => p != parts
-                                        case WriteOp.Remove(p)            => p != parts
-                                        case WriteOp.Move(from, to, _)    => from != parts && to != parts
-                                        case WriteOp.Copy(_, to, _, _)    => to != parts
-                                    }
-                                    val newOp = entry match
-                                        case Path.Entry.File(bytes, stat) => WriteOp.WriteFile(parts, bytes, stat)
-                                        case Path.Entry.Directory(_)      => WriteOp.WriteDirectory(parts, opaque = false)
-                                    (upper.updated(cp, Upper.Entry(entry)), stripped.appended(newOp))
-                                case Resolution.Remove =>
-                                    val stripped = journal.filter {
-                                        case WriteOp.WriteFile(p, _, _)   => p != parts
-                                        case WriteOp.WriteDirectory(p, _) => p != parts
-                                        case WriteOp.Remove(p)            => p != parts
-                                        case WriteOp.Move(from, to, _)    => from != parts && to != parts
-                                        case WriteOp.Copy(_, to, _, _)    => to != parts
-                                    }
-                                    (upper.updated(cp, Upper.Whiteout), stripped.appended(WriteOp.Remove(parts)))
-                            end match
+        beginCommit("commitWith").andThen {
+            stateGet.map { s =>
+                validate(s).map { conflicts =>
+                    // Collect one Resolution per conflicted path, then rebuild upper and journal
+                    // so the replay reflects every resolution (not just the original staged ops).
+                    conflicts.foldLeft[Chunk[(CanonicalPath, Resolution)] < (S & Abort[FileSystemException])](Chunk.empty) {
+                        case (accKyo, (cp, conflict)) =>
+                            accKyo.map(resolutions => resolutions.appended((cp, resolve(conflict))))
+                    }.map { resolutions =>
+                        // Pure fold: compute replacement upper and journal from the resolutions.
+                        val (newUpper, replacedJournal) =
+                            resolutions.foldLeft((s.upper, s.journal)) { case ((upper, journal), (cp, resolution)) =>
+                                val parts = cp.parts
+                                resolution match
+                                    case Resolution.KeepOurs =>
+                                        (upper, journal)
+                                    case Resolution.KeepTheirs =>
+                                        val stripped = journal.filter {
+                                            case WriteOp.WriteFile(p, _, _)   => p != parts
+                                            case WriteOp.WriteDirectory(p, _) => p != parts
+                                            case WriteOp.Remove(p)            => p != parts
+                                            case WriteOp.Move(from, to, _)    => from != parts && to != parts
+                                            case WriteOp.Copy(_, to, _, _)    => to != parts
+                                        }
+                                        (upper.removed(cp), stripped)
+                                    case Resolution.Write(entry) =>
+                                        val stripped = journal.filter {
+                                            case WriteOp.WriteFile(p, _, _)   => p != parts
+                                            case WriteOp.WriteDirectory(p, _) => p != parts
+                                            case WriteOp.Remove(p)            => p != parts
+                                            case WriteOp.Move(from, to, _)    => from != parts && to != parts
+                                            case WriteOp.Copy(_, to, _, _)    => to != parts
+                                        }
+                                        val newOp = entry match
+                                            case Path.Entry.File(bytes, stat) => WriteOp.WriteFile(parts, bytes, stat)
+                                            case Path.Entry.Directory(_)      => WriteOp.WriteDirectory(parts, opaque = false)
+                                        (upper.updated(cp, Upper.Entry(entry)), stripped.appended(newOp))
+                                    case Resolution.Remove =>
+                                        val stripped = journal.filter {
+                                            case WriteOp.WriteFile(p, _, _)   => p != parts
+                                            case WriteOp.WriteDirectory(p, _) => p != parts
+                                            case WriteOp.Remove(p)            => p != parts
+                                            case WriteOp.Move(from, to, _)    => from != parts && to != parts
+                                            case WriteOp.Copy(_, to, _, _)    => to != parts
+                                        }
+                                        (upper.updated(cp, Upper.Whiteout), stripped.appended(WriteOp.Remove(parts)))
+                                end match
+                            }
+                        modifyPure(_.copy(upper = newUpper, journal = replacedJournal)).andThen {
+                            withCommit(replacedJournal).andThen(terminate)
                         }
-                    terminate("commitWith").andThen(modifyPure(_.copy(upper = newUpper, journal = replacedJournal))).andThen {
-                        withCommit(replacedJournal).andThen(modifyPure(_ => OverlayState.empty))
                     }
                 }
             }
@@ -2323,9 +2417,8 @@ final private[kyo] class WatchableOverlayFileSystem[S, S2](
     lower: FileSystem.Write[S],
     state: AtomicRef[OverlayFileSystem.OverlayState],
     uniqueSeq: AtomicLong,
-    active: AtomicBoolean,
     isolate: Isolate[S, Sync, S2]
-) extends OverlayFileSystem[S](lower, state, uniqueSeq, active), FileSystem.Watch[S & Sync]:
+) extends OverlayFileSystem[S](lower, state, uniqueSeq), FileSystem.Watch[S & Sync]:
 
     def openWatcher(path: Path, options: WatchOptions)(using
         Frame

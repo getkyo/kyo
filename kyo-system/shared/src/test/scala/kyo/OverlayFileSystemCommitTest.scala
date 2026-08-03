@@ -362,6 +362,56 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
         }
     }
 
+    // Lifecycle. Staged changes are one-shot: once a commit has taken the staged state or a discard
+    // has thrown it away, a further write has nowhere to land and has to say so rather than
+    // succeeding into state nothing will read.
+
+    withEachLower("a write after discard is rejected") { (ov, _, base) =>
+        val p = base / "after-discard.txt"
+        ov.discard.andThen {
+            Abort.run[FileSystemException](Path.runWith(ov)(p.write("leaked"))).map {
+                case Result.Failure(_: FileIOException) => succeed("rejected")
+                case Result.Success(_)                  => fail("a write after discard succeeded")
+                case other                              => fail(s"expected FileIOException, got $other")
+            }
+        }
+    }
+
+    withEachLower("a write after commit is rejected") { (ov, _, base) =>
+        val p = base / "after-commit.txt"
+        Path.runWith(ov)(p.write("first")).andThen {
+            ov.commit.andThen {
+                Abort.run[FileSystemException](Path.runWith(ov)(p.write("second"))).map {
+                    case Result.Failure(_: FileIOException) => succeed("rejected")
+                    case Result.Success(_)                  => fail("a write after commit succeeded")
+                    case other                              => fail(s"expected FileIOException, got $other")
+                }
+            }
+        }
+    }
+
+    withEachLower("a commit that conflicts leaves the overlay writable") { (ov, lower, base) =>
+        // A failed commit is not a terminal state: the caller's next move is commitWith, which needs
+        // the staged state intact and the overlay still accepting the writes a resolution implies.
+        val p = base / "conflicted.txt"
+        Path.runWith(lower)(p.write("v1")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(lower)(p.write("v2-external-and-longer")).andThen {
+                    Path.runWith(ov)(p.write("ours")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(_: CommitConflict) =>
+                                Abort.run[FileSystemException](Path.runWith(ov)(p.write("after-conflict"))).map {
+                                    case Result.Success(_) => succeed("still writable")
+                                    case other             => fail(s"a failed commit terminated the overlay: $other")
+                                }
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // WriteOpLog decode-failure split: bad magic or wrong version = loud fail through FileSystemException;
     // torn/truncated log with valid magic = crash artifact, silent Success(Absent).
 

@@ -851,4 +851,36 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
+    // -------------------------------------------------------------------------
+    // writes are refused for the duration of a commit
+    // -------------------------------------------------------------------------
+
+    /** A commit takes the staged state, applies it, and then clears it. A write admitted between
+      * those two points is added to state that has already been read and is about to be erased, so
+      * it succeeds and lands nowhere: not in the commit, not in the overlay, not in the lower.
+      *
+      * Closing the overlay for the commit's duration is what removes that window, and a crash hook
+      * is what makes the window observable. Halting inside the commit leaves the overlay in exactly
+      * the state a concurrent write would have raced, without needing a second fiber to hit it.
+      */
+    "a write while a commit is in flight is rejected" in {
+        withInMemoryTestOverlay { (ov, _) =>
+            val staged = Path("in-flight-staged.txt")
+            val late   = Path("in-flight-late.txt")
+            Sync.Unsafe.defer { ov.beforeMarkerHook = () => throw SyntheticCrash("crash: mid commit") }
+                .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
+                    attemptCrash(
+                        Path.runWith(ov)(staged.write("staged")).andThen(ov.commit)
+                    ).asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
+                        Abort.run[FileSystemException](Path.runWith(ov)(late.write("late"))).map {
+                            case Result.Failure(_: FileIOException) => succeed("rejected")
+                            case Result.Success(_) =>
+                                fail("a write landed in a commit that had already taken the staged state")
+                            case other => fail(s"expected FileIOException, got $other")
+                        }
+                    }
+                }
+        }
+    }
+
 end OverlayFileSystemRecoveryTest

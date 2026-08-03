@@ -433,7 +433,6 @@ object Path extends PathPlatformSpecific:
                 new ForwardingLowerFileSystem,
                 AtomicRef.Unsafe.init(OverlayFileSystem.OverlayState.empty).safe,
                 AtomicLong.Unsafe.init(0L).safe,
-                AtomicBoolean.Unsafe.init(true).safe,
                 summon[Isolate[PathWrite, Sync, PathWrite]]
             )
         ).asInstanceOf[WatchableOverlayFileSystem[PathWrite, PathWrite] < PathWrite]
