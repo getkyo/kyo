@@ -71,7 +71,7 @@ jobs:
             test -s "kyonet-natives/$f" || { echo "producer natives-darwin is missing $f" >&2; exit 1; }
           done
           ls -l kyonet-natives
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: natives-darwin
           path: kyonet-natives
@@ -138,7 +138,7 @@ jobs:
             test -s "kyonet-natives/$f" || { echo "producer natives-linux-x86_64 is missing $f" >&2; exit 1; }
           done
           ls -l kyonet-natives
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-x86_64
           path: kyonet-natives
@@ -200,7 +200,7 @@ jobs:
             test -s "kyonet-natives/$f" || { echo "producer natives-linux-aarch64 is missing $f" >&2; exit 1; }
           done
           ls -l kyonet-natives
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-aarch64
           path: kyonet-natives
