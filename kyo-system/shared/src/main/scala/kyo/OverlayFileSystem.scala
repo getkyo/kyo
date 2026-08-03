@@ -1986,8 +1986,16 @@ private[kyo] class OverlayFileSystem[S](
         op match
             case WriteOp.WriteFile(parts, _, _) =>
                 moveStagedFile(stagingDir / s"e$i.dat", pathFrom(parts), Absent, syncParent = !idempotent)
-            case WriteOp.WriteDirectory(parts, _) =>
-                lower.mkDir(pathFrom(parts))
+            case WriteOp.WriteDirectory(parts, opaque) =>
+                val target = pathFrom(parts)
+                // An opaque directory is the overlay's whole answer for that path: reads through the
+                // overlay show only the staged children, so the committed directory has to hold only
+                // those. Clearing before creating is what makes the listing a caller already read
+                // match the listing the commit leaves behind. The journal places this entry before
+                // the staged children beneath it, so the clear cannot remove them.
+                val clear: Unit < (S & Abort[FileSystemException]) =
+                    if opaque then lower.removeAll(target) else ()
+                clear.andThen(lower.mkDir(target))
             case WriteOp.Remove(parts) =>
                 lower.removeAll(pathFrom(parts))
             case WriteOp.Move(fromP, toP, resolved) =>
@@ -2002,7 +2010,7 @@ private[kyo] class OverlayFileSystem[S](
                         case Path.Entry.File(_, stat) =>
                             moveStagedFile(stagingDir / s"e$i.dat", pathFrom(toP), Present(stat), syncParent = !idempotent)
                         case Path.Entry.Directory(stat) =>
-                            lower.mkDir(pathFrom(toP)).andThen(applyLastModified(pathFrom(toP), Present(stat)))
+                            freshDirectory(pathFrom(toP), Present(stat))
                 }
             case WriteOp.Copy(_, toP, resolved, copyAttributes) =>
                 resolved match
@@ -2011,10 +2019,24 @@ private[kyo] class OverlayFileSystem[S](
                         moveStagedFile(stagingDir / s"e$i.dat", pathFrom(toP), stat, syncParent = !idempotent)
                     case Path.Entry.Directory(copiedStat) =>
                         val stat = if copyAttributes then Present(copiedStat) else Absent
-                        lower.mkDir(pathFrom(toP)).andThen(applyLastModified(pathFrom(toP), stat))
+                        freshDirectory(pathFrom(toP), stat)
                 end match
         end match
     end applyOneOp
+
+    // Materializes a directory that holds only what the overlay staged into it.
+    //
+    // stageSubtree records every directory a move or copy lands on as an opaque entry, so reads
+    // through the overlay show only the staged subtree. Creating the directory without clearing it
+    // first leaves whatever the target held before, and the caller reads one directory before the
+    // commit and a different one after. The staged children are written by later journal entries, so
+    // clearing here cannot remove them.
+    private def freshDirectory(target: Path, stat: Maybe[Path.PathStat])(using
+        Frame
+    ): Unit < (S & Abort[FileSystemException]) =
+        lower.removeAll(target).andThen(lower.mkDir(target)).andThen(
+            stat.fold[Unit < (S & Abort[FileSystemException])]((): Unit)(s => lower.setLastModified(target, s.lastModifiedMs))
+        )
 
     private def applyOneOpIdempotent(stagingDir: Path, i: Int, op: WriteOp)(using Frame): Unit < (S & Abort[FileSystemException]) =
         applyOneOp(stagingDir, i, op, idempotent = true)
