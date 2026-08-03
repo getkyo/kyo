@@ -506,4 +506,4 @@ Lastly, the name "Kyo" comes from a Buddhist term for "Sutra," a compiled teachi
 
 ## License
 
-See the [LICENSE.txt](LICENSE.txt) file for details.
+See [LICENSE.txt](LICENSE.txt) for details.
