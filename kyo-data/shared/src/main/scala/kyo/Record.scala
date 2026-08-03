@@ -43,7 +43,7 @@ final class Record[F](private[kyo] val dict: Dict[String, Any]) extends Dynamic:
     /** Retrieves a field value by name via dynamic method syntax. The return type is inferred from the field's declared type. Requires
       * `Fields.Have` evidence that the field exists in `F`.
       */
-    inline def selectDynamic[Name <: String & Singleton](name: Name)(using h: Fields.Have[F, Name]): h.Value =
+    def selectDynamic[Name <: String & Singleton](name: Name)(using h: Fields.Have[F, Name]): h.Value =
         dict(name).asInstanceOf[h.Value]
 
     /** Retrieves a field value by name. Unlike `selectDynamic`, this method works with any string literal, including names that are not
@@ -148,7 +148,7 @@ object Record:
     /** Phantom type representing a field binding from a singleton string name to a value type. Contravariant in `Value` so that duplicate
       * field names with different types are normalized to a union: `"f" ~ Int & "f" ~ String =:= "f" ~ (Int | String)`.
       */
-    final infix class ~[Name <: String & Singleton, -Value] private () extends Serializable
+    final infix class ~[Name <: String, -Value] private () extends Serializable
 
     object `~`:
         /** Type-level function that wraps the value component of a `Name ~ Value` pair in `G`. */
@@ -159,7 +159,7 @@ object Record:
           * the type produced by `G`.
           */
         type MapNamedValue[G[_ <: String & Singleton, _]] = [x] =>> x match
-            case n ~ v => n ~ G[n & String, v]
+            case n ~ v => n ~ G[n & String & Singleton, v]
     end `~`
 
     /** Match type that looks up the value type for `Name` in a tuple of `Name ~ Value` pairs. */

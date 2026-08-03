@@ -104,10 +104,6 @@ object FieldsMacros:
                 case _ => None
 
         val infos = components.flatMap(extractComponent)
-        // Construct each Field with its concrete String singleton as the Name type parameter so the
-        // singleton info is preserved at the type level. `Field[Name, Value]` now requires
-        // `Name <: String & Singleton`, so we widen-then-reify each name's literal type via
-        // `ConstantType(StringConstant(...)).asType` rather than passing the un-typed `String`.
         val fieldsList = Expr.ofList(infos.map(ci =>
             '{
                 Field[String, Any](
@@ -132,28 +128,21 @@ object FieldsMacros:
             case ConstantType(StringConstant(s)) => s
             case _ => report.errorAndAbort(s"Field name must be a literal string type, got: ${TypeRepr.of[Name].show}")
 
-        // Collect the value type of EVERY `Name ~ V` entry for `nameStr`. A duplicate
-        // field (same name, multiple types) contributes multiple entries, and the
-        // field's value type is their union. `Have.Value` must be that union:
-        // `Record.selectDynamic` is `inline`, so a too-narrow `Value` is inlined into a
-        // wrong `asInstanceOf` and produces a runtime ClassCastException. The prior
-        // first-match-wins walk (`orElse`) returned only the first entry's type whenever
-        // the `&`-tree kept the duplicate entries as separate leaves.
-        def findValueTypes(tpe: TypeRepr): List[TypeRepr] =
+        def findValueType(tpe: TypeRepr): Option[TypeRepr] =
             tpe.dealias match
                 case AndType(l, r) =>
-                    findValueTypes(l) ++ findValueTypes(r)
+                    findValueType(l).orElse(findValueType(r))
                 case OrType(l, r) =>
-                    findValueTypes(l) ++ findValueTypes(r)
+                    findValueType(l).orElse(findValueType(r))
                 case AppliedType(_, List(ConstantType(StringConstant(n)), valueType)) if n == nameStr =>
-                    List(valueType)
+                    Some(valueType)
                 case _ =>
-                    if tpe =:= TypeRepr.of[Any] then Nil
+                    if tpe =:= TypeRepr.of[Any] then None
                     else
                         // Check case class fields
                         val sym = tpe.typeSymbol
                         if sym.isClassDef && sym.flags.is(Flags.Case) then
-                            sym.caseFields.find(_.name == nameStr).map(f => tpe.memberType(f)).toList
+                            sym.caseFields.find(_.name == nameStr).map(f => tpe.memberType(f))
                         else
                             try
                                 tpe.typeSymbol.tree match
@@ -161,26 +150,22 @@ object FieldsMacros:
                                         typeDef.rhs match
                                             case bounds: TypeBoundsTree =>
                                                 val hi = bounds.hi.tpe
-                                                if !(hi =:= TypeRepr.of[Any]) then findValueTypes(hi)
-                                                else Nil
-                                            case _ => Nil
-                                    case _ => Nil
-                            catch case _: Exception => Nil
+                                                if !(hi =:= TypeRepr.of[Any]) then findValueType(hi)
+                                                else None
+                                            case _ => None
+                                    case _ => None
+                            catch case _: Exception => None
                         end if
 
-        findValueTypes(TypeRepr.of[F]) match
-            case Nil =>
-                report.errorAndAbort(
-                    s"Field '$nameStr' not found in ${TypeRepr.of[F].show}"
-                )
-            case types =>
-                val deduped = types.foldLeft(List.empty[TypeRepr]) { (acc, t) =>
-                    if acc.exists(_ =:= t) then acc else acc :+ t
-                }
-                val valueType = deduped.reduce((a, b) => OrType(a, b))
+        findValueType(TypeRepr.of[F]) match
+            case Some(valueType) =>
                 valueType.asType match
                     case '[v] =>
                         '{ Fields.Have.unsafe[F, Name, v] }
+            case None =>
+                report.errorAndAbort(
+                    s"Field '$nameStr' not found in ${TypeRepr.of[F].show}"
+                )
         end match
     end haveImpl
 

@@ -8,8 +8,9 @@ import scala.quoted.*
 /** Custom `FromExpr` instances for AST `Term` leaves that arise from `Record` field projections rather than direct case-class construction.
   *
   * `FromExpr.derived` reconstructs values by walking constructor `Apply` trees. A column reference written as `c.p.age` in DSL code does
-  * NOT expand to a `Column.apply(...)` constructor, it expands to a `selectDynamic` projection chain which, after inlining, is a nested
-  * `Dict.apply(<record>.inline$dict, "key")` chain. The derived product/sum walker has no arm for that shape, so every WHERE / SELECT /
+  * NOT expand to a `Column.apply(...)` constructor, it is a `selectDynamic` projection chain of nested `<record>.selectDynamic("key")`
+  * calls (an inline field accessor expands each step to `Dict.apply(<record>.inline$dict, "key")` instead). The derived product/sum
+  * walker has no arm for that shape, so every WHERE / SELECT /
   * JOIN / groupBy query that references a column fails to lift, and a zero-arg AST case class is the hazard that makes the failure silent
   * rather than loud: the sum walker tries each child in turn and a zero-arg product matches a projection-shaped tree. The only such node is
   * `SetValue.Default()`, which is not a `Term` and so is a candidate in an assignment position alone; every `Term` position is free of it.
@@ -216,9 +217,9 @@ object ColumnFromExpr:
 
         // --- Projection-chain key collection ---
 
-        /** Collects the literal key segments of a `selectDynamic` projection chain, left-to-right. Each step is
-          * `Dict.apply(<receiver>.inline$dict, "key")`; recursion bottoms out at the receiver `Record` expression. Returns `Nil` when `t`
-          * is not a projection chain.
+        /** Collects the literal key segments of a `selectDynamic` projection chain, left-to-right. Each step is a
+          * `<receiver>.selectDynamic("key")` call, or its inline-expanded `Dict.apply(<receiver>.inline$dict, "key")` form; recursion
+          * bottoms out at the receiver `Record` expression. Returns `Nil` when `t` is not a projection chain.
           */
         private def projectionKeys(t: Term): List[String] =
             projectChain(t).map(_._1).getOrElse(Nil)
@@ -234,6 +235,12 @@ object ColumnFromExpr:
                             Apply(TypeApply(Select(dictQual, "apply"), _), List(Select(recv, "inline$dict"))),
                             List(keyE)
                         ) if dictQual.symbol.name == "Dict" || dictQual.symbol.name == "Dict$" =>
+                        strLit(keyE) match
+                            case Some(k) => loop(recv, k :: acc)
+                            case None    => None
+                    // A field-access step as a bare `selectDynamic` / `getField` call: `<recv>.selectDynamic("key")`
+                    // carrying the field-name literal and the `Fields.Have` given. Collect the name and recurse into the receiver.
+                    case Apply(Apply(TypeApply(Select(recv, "selectDynamic" | "getField"), _), List(keyE)), _) =>
                         strLit(keyE) match
                             case Some(k) => loop(recv, k :: acc)
                             case None    => None
