@@ -1791,6 +1791,9 @@ final private[net] class IoUringDriver private[posix] (
                 // touching the engine / buffers. Decrementing inline at CQE-reap time drops the count to zero and lets a deferred close free those
                 // resources before the queued op runs (the BoringSSL feedCiphertext MemorySession-alreadyClosed use-after-free).
                 var deferredDecrement = false
+                // Set when a transient accept errno re-arms the accept: the addr/len buffers are threaded to the re-armed op, so the old op's
+                // releaseBuffer must be skipped (they are not this op's to free anymore).
+                var reArmedTransientAccept = false
                 op match
                     case PendingOp.Read(promise, h, eintrRetries, handshakeOwned, armedPostUpgrade, armedForStaging) =>
                         // Release the exclusive-use claim (PosixHandle.recvInFlight) now that this SQE has genuinely reaped, before any
@@ -2105,7 +2108,7 @@ final private[net] class IoUringDriver private[posix] (
                                 NetConnectionIoException.Operation.Connect,
                                 new NetErrno(-res)
                             )(using h.createdAt)))
-                    case PendingOp.Accept(promise, h, _, _) =>
+                    case PendingOp.Accept(promise, h, noAddr, noLen) =>
                         if res >= 0 then
                             // The accept SQE produced a connected fd. If the accept promise was already completed -- the listener's close
                             // cancel() failed it while this accept was in flight (the closeListener teardown) -- nobody will wrap or dispatch
@@ -2113,6 +2116,18 @@ final private[net] class IoUringDriver private[posix] (
                             // the closing listener would otherwise see its connect succeed, then hang forever on its first read: no handler
                             // ever responds, and the orphaned fd is never closed so no FIN/RST reaches the peer.
                             if !promise.complete(Result.succeed(res)) then discard(takeNow(sockets.close(res)))
+                        else if -res == PosixConstants.EINTR || -res == PosixConstants.ECONNABORTED || -res == PosixConstants.EMFILE ||
+                            -res == PosixConstants.ENFILE
+                        then
+                            // Transient accept errno: the call was interrupted (EINTR), the peer aborted before accept returned (ECONNABORTED), or
+                            // the process/system fd table was momentarily full (EMFILE/ENFILE). accept settled no connection, so re-arm the accept
+                            // SQE on the SAME promise (reusing the threaded addr/len buffers) instead of failing it. Failing would reach the
+                            // transport accept loop, whose onComplete reads any Failure as "listener closed" and stops re-arming, permanently
+                            // wedging the listener on a one-off transient errno. This mirrors PollerIoDriver/PosixTransport (which retry these
+                            // errnos rather than tear the accept loop down) and this driver's own transient-reap retries (EINTR/ENOMEM/EBUSY). The
+                            // buffers are threaded to the re-armed op, so the old op's releaseBuffer is skipped below.
+                            reArmedTransientAccept = true
+                            submitAccept(promise, h, noAddr, noLen)
                         else
                             promise.completeDiscard(Result.fail(NetConnectionIoException(
                                 s"listener ${handleLabel(h)}",
@@ -2120,7 +2135,9 @@ final private[net] class IoUringDriver private[posix] (
                                 new NetErrno(-res)
                             )(using h.createdAt)))
                 end match
-                op.releaseBuffer() // release per-op buffers (Write send buf, Accept addr/len) now that the CQE is reaped
+                // Skip when a transient accept re-armed: the addr/len buffers were threaded to the re-armed op, so this old op no longer owns them.
+                if !reArmedTransientAccept then
+                    op.releaseBuffer() // release per-op buffers (Write send buf, Accept addr/len) now that the CQE is reaped
                 // For ops whose resource use was handed to a deferred engine op above, queue the decrement BEHIND that op (FIFO order on the
                 // engine queue) so the in-flight count stays non-zero until the deferred op has finished with the engine / buffers; otherwise
                 // decrement inline now. drainEngineOps catches a throwing op and continues, so the queued decrement always runs (no leaked count).
