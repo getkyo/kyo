@@ -126,7 +126,22 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     final def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         val safepoint = Safepoint.get
-        val next      = eval(startMillis, clock, deadline)(using safepoint)
+        val next =
+            try eval(startMillis, clock, deadline)(using safepoint)
+            catch
+                case ex =>
+                    // A fatal error unwinds eval before the normal termination path below runs. The task's promise
+                    // is already completed with a Panic, but its finalizers would be skipped, stranding whatever
+                    // resource or awaited promise they release. Run the finalizers and release the trace, then
+                    // re-propagate the fatal.
+                    if !finalizers.isEmpty then
+                        finalizers.run(pollError())
+                        finalizers = Finalizers.empty
+                    if trace ne null then
+                        safepoint.releaseTrace(trace)
+                        trace = null.asInstanceOf[Trace]
+                    curr = nullResult
+                    throw ex
         if !isPending() then
             // On an interrupt that lands mid-slice, `next` is the accurate remainder whose head is the
             // suspension eval stopped in front of (for example an Async.Join), while `curr` is the stale
