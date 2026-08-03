@@ -755,9 +755,9 @@ private[net] object PosixHandle:
             given Frame = Frame.internal
             bp.completeDiscard(
                 Result.fail(kyo.Closed(
-                    "PosixHandle",
-                    Frame.internal,
-                    s"fd=${h.readFd}/${h.writeFd} closed while a write was parked on backpressure"
+                    s"connection fd=${h.readFd}/${h.writeFd}",
+                    h.createdAt,
+                    "closed while a write was parked on backpressure"
                 ))
             )
         }
@@ -784,9 +784,9 @@ private[net] object PosixHandle:
         h.queuedRecv match
             case PosixHandle.QueuedRecv.Queued(p, _, _) =>
                 p.completeDiscard(Result.fail(kyo.Closed(
-                    "PosixHandle",
-                    Frame.internal,
-                    s"fd=${h.readFd}/${h.writeFd} closed while a recv was queued"
+                    s"connection fd=${h.readFd}/${h.writeFd}",
+                    h.createdAt,
+                    "closed while a recv was queued"
                 )(using Frame.internal)))
             case _ => ()
         end match

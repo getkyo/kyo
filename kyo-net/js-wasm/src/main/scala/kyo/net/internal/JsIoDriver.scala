@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetDriverUnsupportedException
 import kyo.net.NetException
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
@@ -65,7 +66,7 @@ final private[kyo] class JsIoDriver private (
             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
         else if handle.socket.destroyed.asInstanceOf[Boolean] then
             // (iii) Socket destroyed (RST, or a completed close) with nothing staged: fail Closed.
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"socket destroyed")))
+            promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "socket destroyed")))
         else
             // (iv) Request the next chunk: the permanent 'data' listener delivers it (or 'end'/'error' the EOF/failure).
             handle.pendingRead = Present(promise)
@@ -96,14 +97,14 @@ final private[kyo] class JsIoDriver private (
 
     def awaitAccept(handle: JsHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // JS does not run the PosixTransport accept loop; fail fast so a caller that accidentally uses this path gets an immediate error.
-        promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"awaitAccept not supported on JsIoDriver")))
+        promise.completeDiscard(Result.Panic(NetDriverUnsupportedException(label, "awaitAccept")))
 
     def awaitWritable(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering the typed
         // Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed facade for Node's
         // net.Socket.
         if handle.socket.destroyed.asInstanceOf[Boolean] then
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"socket destroyed")))
+            promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "socket destroyed")))
         else
             // Register one-shot listeners for drain/close/error
             var drainFn: js.Function0[Unit]             = null
@@ -126,7 +127,7 @@ final private[kyo] class JsIoDriver private (
 
             def completeFailure(reason: String): Unit =
                 removeAll()
-                promise.completeDiscard(Result.fail(Closed(label, summon[Frame], reason)))
+                promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, reason)))
 
             drainFn = (() => completeSuccess()): js.Function0[Unit]
             closeFn = (() => completeFailure("socket closed before writable")): js.Function0[Unit]
@@ -157,7 +158,7 @@ final private[kyo] class JsIoDriver private (
 
     def cancel(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
         discard(handle.socket.pause())
-        val closed = Closed(label, summon[Frame], s"${handleLabel(handle)} canceled")
+        val closed = Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "canceled")
         handle.pendingRead match
             case Present(pending) =>
                 pending.completeDiscard(Result.fail(closed))

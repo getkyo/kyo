@@ -3,6 +3,8 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConnectionIoException
+import kyo.net.NetErrno
 import kyo.net.NetException
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -44,10 +46,12 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                 if n < 0 then
                     // read(2) returns -1 on error; errorCode holds the errno.
                     // A zero return is EOF (not an error), even if a stale errno is non-zero.
-                    promise.completeDiscard(Result.fail(Closed(
-                        label,
-                        summon[Frame],
-                        s"read failed fd=${handle.readFd} errno=${result.errorCode}"
+                    promise.completeDiscard(Result.succeed(ReadOutcome.Failed(
+                        NetConnectionIoException(
+                            s"connection ${handleLabel(handle)}",
+                            NetConnectionIoException.Operation.Receive,
+                            new NetErrno(result.errorCode)
+                        )(using handle.createdAt)
                     )))
                 else if n == 0 then
                     // EOF on a regular file: orderly peer close.
@@ -63,10 +67,12 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                 readFiber.poll() match
                     case Present(Result.Success(withError)) => deliver(withError.eval)
                     case Present(Result.Failure(e)) =>
-                        promise.completeDiscard(Result.fail(Closed(
-                            label,
-                            summon[Frame],
-                            s"read fiber failed fd=${handle.readFd}: $e"
+                        promise.completeDiscard(Result.succeed(ReadOutcome.Failed(
+                            NetConnectionIoException(
+                                s"connection ${handleLabel(handle)}",
+                                NetConnectionIoException.Operation.Receive,
+                                e.toString
+                            )(using handle.createdAt)
                         )))
                     case Present(Result.Panic(t)) =>
                         promise.completeDiscard(Result.panic(t))
@@ -78,10 +84,12 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                 readFiber.onComplete {
                     case Result.Success(withError) => deliver(withError.eval)
                     case Result.Failure(e) =>
-                        promise.completeDiscard(Result.fail(Closed(
-                            label,
-                            summon[Frame],
-                            s"read fiber failed fd=${handle.readFd}: $e"
+                        promise.completeDiscard(Result.succeed(ReadOutcome.Failed(
+                            NetConnectionIoException(
+                                s"connection ${handleLabel(handle)}",
+                                NetConnectionIoException.Operation.Receive,
+                                e.toString
+                            )(using handle.createdAt)
                         )))
                     case Result.Panic(t) =>
                         promise.completeDiscard(Result.panic(t))

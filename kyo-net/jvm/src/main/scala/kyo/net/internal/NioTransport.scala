@@ -416,7 +416,7 @@ final private[kyo] class NioTransport private (
                 // only inside kyo.Fiber.Promise's own defining scope, so NioIoDriver's ServerSocketChannel overload of awaitAccept, whose
                 // promise parameter is Promise.Unsafe[Unit, Abort[Closed]], needs this erased-boundary cast to accept it. Safe: the
                 // promise is completed only with the plain Closed/Unit values above, never a suspended computation.
-                driver.awaitAccept(serverChannel, acceptPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+                driver.awaitAccept(serverChannel, acceptPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]], listener.createdAt)
             end if
         end scheduleNextAccept
 
@@ -1264,7 +1264,7 @@ final private[kyo] class NioTransport private (
         host: String,
         port: Int,
         handshakeTimeout: Duration
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         if handshakeTimeout.isFinite then
             val timer = Clock.live.unsafe.sleep(handshakeTimeout)
             timer.onComplete { _ =>
@@ -1272,7 +1272,7 @@ final private[kyo] class NioTransport private (
             }
             // Disarm: when the handshake outcome completes connPromise first, interrupt the timer fiber so it never fires.
             connPromise.onComplete { _ =>
-                timer.interruptDiscard(Result.Panic(Closed("NioTransport", summon[Frame], "handshake completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "handshake completed before deadline")))
             }
     end armHandshakeDeadline
 
@@ -1290,7 +1290,7 @@ final private[kyo] class NioTransport private (
         host: String,
         port: Int,
         connectTimeout: Duration
-    )(using AllowUnsafe, Frame): () => Unit =
+    )(using allow: AllowUnsafe, frame: Frame): () => Unit =
         if connectTimeout.isFinite then
             // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
             // elapsed" from "the deadline was called off". Harmless while the only disarm ran after connPromise had already settled (the
@@ -1309,7 +1309,7 @@ final private[kyo] class NioTransport private (
             def disarm(): Unit =
                 // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
                 disarmed.set(true)
-                timer.interruptDiscard(Result.Panic(Closed("NioTransport", summon[Frame], "connect completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "connect completed before deadline")))
             end disarm
             // Backstop for every way this connect can end before its TCP phase completes.
             connPromise.onComplete(_ => disarm())
@@ -1747,7 +1747,7 @@ final private[net] class NioListener(
             // Reclaim the handshakes this listener accepted before the accept teardown: they own channels and handles this close is the only
             // remaining chance to release, since the transport itself may never be closed.
             onCloseHook.foreach(_())
-            driver.cleanupAccept(serverChannel)
+            driver.cleanupAccept(serverChannel, createdAt)
             try serverChannel.close()
             catch case _: IOException => ()
                 // serverChannel.close() cancels the channel's SelectionKey but, on JDK 11+, defers the real fd close (kill()) until the selector
