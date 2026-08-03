@@ -142,7 +142,7 @@ class IoUringDriverEintrRetryTest extends Test:
             PosixTestSockets.assumeUring()
             withEintrDriver { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                     // Arm the one-shot injection BEFORE awaitRead: the driver's first recv is submitted non-blocking (MSG_DONTWAIT, spy override)
                     // so on the still-empty socket it completes immediately moving NO byte, and the spy forces that CQE to -EINTR (a real io_uring
@@ -182,7 +182,7 @@ class IoUringDriverEintrRetryTest extends Test:
             PosixTestSockets.assumeUring()
             withEintrDriver { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                     val reaped  = recording.awaitReap()
                     // Arm BEFORE the write: the prep-time injection must see the arm so the armed send is prepped with length 0 (it transfers

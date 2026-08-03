@@ -40,19 +40,27 @@ class WritePumpDoubleFireTest extends Test:
             // Latch: completed by the pump's first write (partial). Drives handoff without sleep.
             val parkedLatch = Promise.Unsafe.init[Unit, Any]()
             // Writable promise captured when the driver receives awaitWritable.
-            var capturedWritable: Promise.Unsafe[Unit, Abort[Closed]] = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+            var capturedWritable: Promise.Unsafe[Unit, Abort[Closed | NetException]] =
+                null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]]
 
             final class AlwaysPartialDriver extends IoDriver[Unit]:
                 def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                     Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit =
                     capturedWritable = promise
                     // Signal the test that the pump has parked (state is AwaitingWritable).
                     parkedLatch.completeDiscard(Result.succeed(()))
                 end awaitWritable
-                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                    ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
                     // Always return Partial (never Done): the pump parks after the first write and never
                     // advances to Idle on its own, giving the test full control over when state moves.
@@ -119,20 +127,29 @@ class WritePumpDoubleFireTest extends Test:
         // Then: the CAS succeeds, doWrite is called, and the write completes
         // (sanity-check that the non-stale path still works after the CAS was added)
         "legitimate-writable-wins-CAS-and-drives-write" in {
-            val writeCalls                                            = AtomicInt.Unsafe.init(0)
-            val parkedLatch                                           = Promise.Unsafe.init[Unit, Any]()
-            val doneLatch                                             = Promise.Unsafe.init[Unit, Any]()
-            var capturedWritable: Promise.Unsafe[Unit, Abort[Closed]] = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+            val writeCalls  = AtomicInt.Unsafe.init(0)
+            val parkedLatch = Promise.Unsafe.init[Unit, Any]()
+            val doneLatch   = Promise.Unsafe.init[Unit, Any]()
+            var capturedWritable: Promise.Unsafe[Unit, Abort[Closed | NetException]] =
+                null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]]
 
             final class PartialThenDoneDriver extends IoDriver[Unit]:
                 def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                     Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit =
                     capturedWritable = promise
                     parkedLatch.completeDiscard(Result.succeed(()))
-                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = ()
+                end awaitWritable
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                    ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
                     val n = writeCalls.incrementAndGet()
                     if n == 1 then WriteResult.Partial(data, offset + 1)

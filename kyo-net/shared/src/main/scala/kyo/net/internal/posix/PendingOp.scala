@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Buffer
+import kyo.net.NetException
 import kyo.net.internal.transport.ReadOutcome
 
 /** One submitted-but-not-yet-reaped io_uring operation, keyed by a dense `user_data` value.
@@ -58,10 +59,10 @@ private[net] enum PendingOp(val handle: PosixHandle):
       * so the reap can detect a partial send (`res < len`) and re-submit the unsent ciphertext remainder (io_uring has no writability re-arm).
       * The buffer is the per-handle reused flush mirror; it must NOT be closed on reap (it is freed only in `freeResources`).
       */
-    case TlsWrite(h: PosixHandle, buf: Buffer[Byte], len: Int)                 extends PendingOp(h)
-    case Connect(promise: Promise.Unsafe[Unit, Abort[Closed]], h: PosixHandle) extends PendingOp(h)
+    case TlsWrite(h: PosixHandle, buf: Buffer[Byte], len: Int)                                extends PendingOp(h)
+    case Connect(promise: Promise.Unsafe[Unit, Abort[Closed | NetException]], h: PosixHandle) extends PendingOp(h)
     case Accept(
-        promise: Promise.Unsafe[Int, Abort[Closed]],
+        promise: Promise.Unsafe[Int, Abort[Closed | NetException]],
         h: PosixHandle,
         noAddr: Buffer[Byte],
         noLen: Buffer[Int]

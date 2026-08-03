@@ -64,9 +64,9 @@ class IoUringRawWriteSqFullTest extends Test:
             withRecordingDriver(1) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (fillerClient, fillerAccepted) =>
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                        val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent)
-                        val writeH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                        val peerH   = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val writeH  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val peerH   = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val gate    = new java.util.concurrent.CountDownLatch(1)
                         val pinIn   = Promise.Unsafe.init[Unit, Abort[Closed]]()
                         drv.submitEngineOp { () =>

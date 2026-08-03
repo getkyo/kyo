@@ -2134,7 +2134,7 @@ lazy val `kyo-http` =
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
-        .dependsOn(`kyo-net`)
+        .dependsOn(`kyo-net` % "compile->compile;test->test")
         .withKyoTest
         .settings(
             `kyo-settings`

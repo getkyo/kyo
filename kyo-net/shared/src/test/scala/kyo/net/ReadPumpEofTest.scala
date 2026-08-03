@@ -58,9 +58,16 @@ class ReadPumpEofTest extends Test:
                             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                     end match
                 end awaitRead
-                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
-                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                    ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()

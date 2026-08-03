@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 
 /** Deterministic stress repro for the connect write-readiness lost-wakeup (`NetConnectTimeoutException` in
@@ -87,14 +88,15 @@ class PollerConnectStrandTest extends Test:
                         discard(sockets.close(client).poll())
                         true // immediate-complete or immediate-error: a valid resolution, not a strand
                     else
-                        val handle  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                        driver.awaitConnect(handle, promise)
-                        Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](promise.safe.get))).map { outcome =>
-                            discard(sockets.close(client).poll())
-                            val resolved = outcome.isSuccess // the writable promise resolved; Timeout = stranded (the bug)
-                            if !resolved then discard(hungN.incrementAndGet())
-                            resolved
+                        driver.awaitConnect(handle, promise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
+                        Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](promise.safe.get))).map {
+                            outcome =>
+                                discard(sockets.close(client).poll())
+                                val resolved = outcome.isSuccess // the writable promise resolved; Timeout = stranded (the bug)
+                                if !resolved then discard(hungN.incrementAndGet())
+                                resolved
                         }
                     end if
                 }

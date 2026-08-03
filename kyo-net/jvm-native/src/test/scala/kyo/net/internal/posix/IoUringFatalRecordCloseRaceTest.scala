@@ -129,7 +129,7 @@ class IoUringFatalRecordCloseRaceTest extends Test:
                     val clientEngine = TlsRealEngines.singleEngine(isServer = false)
                     Sync.ensure(Sync.defer { clientEngine.free(); serverEngine.free() }) {
                         assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake did not complete")
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         acceptedH.tls = Present(serverEngine)
                         // Arm a real in-flight recv: nothing is ever sent on `client`, so the driver's own in-flight count for this handle
                         // stays non-zero for the whole test (the exact "another kernel-owned op still in flight" condition the bug ignores).
@@ -181,7 +181,7 @@ class IoUringFatalRecordCloseRaceTest extends Test:
                     // never races the driver's own engine touch.
                     Sync.ensure(Sync.defer { clientEngine.free(); serverEngine.free() }) {
                         assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake did not complete")
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         acceptedH.tls = Present(serverEngine)
                         val recvPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(acceptedH, recvPromise)

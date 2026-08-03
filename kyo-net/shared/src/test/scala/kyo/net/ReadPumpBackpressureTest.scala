@@ -23,8 +23,9 @@ class ReadPumpBackpressureTest extends Test:
     given Frame = Frame.internal
 
     final private class ParkingWriteDriver extends IoDriver[Unit]:
-        @volatile var captured: Boolean                           = false
-        var capturedWritable: Promise.Unsafe[Unit, Abort[Closed]] = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+        @volatile var captured: Boolean = false
+        var capturedWritable: Promise.Unsafe[Unit, Abort[Closed | NetException]] =
+            null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]]
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
@@ -32,11 +33,11 @@ class ReadPumpBackpressureTest extends Test:
             // Deliver a span immediately to simulate inbound data arriving. This fires the ReadPump's
             // onComplete synchronously (inline), so inbound has data before start() returns.
             promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](99)))))
-        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
             capturedWritable = promise // park: never complete it in this test
             captured = true
-        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = ()
+        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
+        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit   = ()
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
             // Partial on first write to park the pump; Done on retry.
             if !captured then WriteResult.Partial(data, math.max(1, data.size / 2))
@@ -108,9 +109,16 @@ class ReadPumpBackpressureTest extends Test:
                     end if
                     // Re-arm (awaitReadCalls == 2) and beyond: park. The pump waits for the next delivery.
                 end awaitRead
-                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
-                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                    ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
@@ -169,9 +177,16 @@ class ReadPumpBackpressureTest extends Test:
                     // parks the pump on the put. No arm follows the overflow, so this never fires past cap+1 (the guard is defensive).
                     if awaitReadCalls.incrementAndGet() <= cap + 1 then
                         promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](1)))))
-                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
-                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                    ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
@@ -216,12 +231,13 @@ class ReadPumpBackpressureTest extends Test:
             def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
                 val n = awaitReadCalls.incrementAndGet()
                 if n <= cap + 1 then promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](n.toByte)))))
-            override def isPeerClosed(handle: Unit)(using AllowUnsafe, Frame): Boolean                                    = peerClosed
-            def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-            def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
-            def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
-            def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                        = WriteResult.Done
-            def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                      = ()
+            override def isPeerClosed(handle: Unit)(using AllowUnsafe, Frame): Boolean = peerClosed
+            def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                ()
+            def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
+            def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit   = ()
+            def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+            def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
             def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
             def close()(using AllowUnsafe, Frame): Unit                   = ()
             def label: String                                             = "WatchDriver"

@@ -49,8 +49,8 @@ class StartTlsUpgradeTest extends Test:
         Sync.ensure(Sync.defer(driver.close())) {
             Scope.run {
                 loopbackPair().map { case (clientFd, serverFd) =>
-                    val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val clientPlain  = transport.openWith(clientHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                     val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                     clientPlain.start()

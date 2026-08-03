@@ -51,7 +51,7 @@ class ChangeFifoOrderingTest extends Test:
                 // loop), so the poll loop MUST run for a submitted change to execute. It bounded-waits on the poller fd (no fds registered) and drains
                 // the change queue each cycle; close() signals it to exit.
                 discard(driver.start())
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                 // Submit deregister (cancel) THEN register (awaitRead) for the same fd, in that order. The registerRead is the SECOND change, so its
                 // execution promise completing means both changes have run; the test then reads the final order with no sleep.
@@ -105,8 +105,8 @@ class ChangeFifoOrderingTest extends Test:
                         // The change FIFO is drained only on the poll-loop carrier, so start the poll loop: the FIRST registerRead runs on it and the
                         // latch inside onRegisterRead pins that carrier (the single change consumer), exactly the pin this leaf needs. close() exits it.
                         discard(driver.start())
-                        val firstH  = PosixHandle.socket(firstFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val secondH = PosixHandle.socket(secondFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val firstH  = PosixHandle.socket(firstFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val secondH = PosixHandle.socket(secondFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                         val firstPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(firstH, firstPromise)

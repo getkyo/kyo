@@ -44,7 +44,7 @@ class PosixTransportUpgradeRejectTest extends Test:
                 discard(sock.close(peerFd))
                 driver.close()
             }) {
-                val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val plaintext = transport.openWith(handle, driver, channelCapacity = 4)
                 plaintext.start()
                 // The connectTls/listenTls shape: the handle is born with an engine and the connection's upgradeFn is wired anyway. A
@@ -76,7 +76,7 @@ class PosixTransportUpgradeRejectTest extends Test:
                 discard(sock.close(peerFd))
                 driver.close()
             }) {
-                val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val plaintext = transport.openWith(handle, driver, channelCapacity = 4)
                 plaintext.start()
                 // The post-first-upgrade state: the upgraded connection reuses the handle, whose isUpgraded marker is durable.

@@ -19,6 +19,16 @@ private[net] object tls extends kyo.StaticFlag[String]("")
   */
 private[net] object dnsTtl extends kyo.StaticFlag[Long](30_000L)
 
+/** Backoff in milliseconds before re-arming `accept` after it returned `EMFILE`/`ENFILE` (the process or system file-descriptor table was full),
+  * default 50 (`-Dkyo.net.acceptResourceBackoff`). On these two errnos the kernel does not dequeue the pending connection, so the listen fd stays
+  * ready and an immediate re-arm re-reaps the same errno at once, spinning the accept carrier at 100% CPU (libuv #690, asyncio Tulip #78). The
+  * backoff breaks the spin while keeping the listener alive, so accepting resumes once a descriptor frees. Read by both the poller
+  * (`PosixTransport`) and io_uring (`IoUringDriver`) so both backends behave identically under descriptor exhaustion. Backed by `Long`
+  * milliseconds for the same reason as [[dnsTtl]] (StaticFlag has no `Duration` reader) and clamped non-negative (a negative backoff would be an
+  * invalid sleep). See [[backend]] for why this stays a top-level object in `kyo.net`.
+  */
+private[net] object acceptResourceBackoff extends kyo.StaticFlag[Long](50L, n => Right(Math.max(0L, n)))
+
 /** Number of independent I/O driver instances a transport builds (`-Dkyo.net.ioPoolSize`). Each driver owns its own poller or io_uring ring
   * fd; new connections are distributed round-robin across the pool, so this is the transport's multiplexing width. On the io_uring backend it
   * also sets the ring submission-queue depth, `max(256, ioPoolSize * 64)`.

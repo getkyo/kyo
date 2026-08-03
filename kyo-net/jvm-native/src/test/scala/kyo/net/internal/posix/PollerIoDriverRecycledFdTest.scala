@@ -64,8 +64,8 @@ class PollerIoDriverRecycledFdTest extends Test:
         withRecordingDriver(1) { (drv, rec) =>
             PosixTestSockets.loopbackPair().map { case (fillerClient, fillerAccepted) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    val handle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val handle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val gate    = new java.util.concurrent.CountDownLatch(1)
                     val pinIn   = Promise.Unsafe.init[Unit, Abort[Closed]]()
                     drv.submitEngineOp { () =>
@@ -114,8 +114,9 @@ class PollerIoDriverRecycledFdTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
 
-            val live  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-            val stale = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent) // same fd, later generation differs
+            val live = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val stale =
+                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal) // same fd, later generation differs
             assert(live.id.packed != stale.id.packed, "the two handles for the recycled fd must carry distinct HandleIds")
 
             val liveRead = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
@@ -164,8 +165,9 @@ class PollerIoDriverRecycledFdTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
 
-            val live  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-            val stale = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent) // same fd, later generation differs
+            val live = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val stale =
+                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal) // same fd, later generation differs
             assert(live.id.packed != stale.id.packed, "the two handles for the recycled fd must carry distinct HandleIds")
 
             val liveRead = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
