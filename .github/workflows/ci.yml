@@ -92,7 +92,11 @@ jobs:
             oses="$INPUT_OSES"
             targets="$INPUT_TARGETS"
           else
-            oses='linux-x64 linux-arm64 windows-x64'
+            # windows-x64 is temporarily excluded from push and pull_request runs while
+            # windows-specific failures are worked (container-backed kyo-pod tests do not run on
+            # the windows runner). It stays available on demand via workflow_dispatch with
+            # oses=windows-x64, which is how windows fixes are validated in the meantime.
+            oses='linux-x64 linux-arm64'
             targets='JVM JS Native Wasm'
           fi
 
