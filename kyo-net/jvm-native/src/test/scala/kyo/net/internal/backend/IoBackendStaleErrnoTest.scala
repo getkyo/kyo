@@ -35,7 +35,14 @@ class IoBackendStaleErrnoTest extends Test:
     "every available I/O backend builds a working transport after a prior syscall left errno non-zero" - {
         IoBackendPlatform.registered.foreach { entry =>
             s"backend=${entry.name}" in {
-                if !entry.probe.isAvailable then cancel(s"backend ${entry.name} is not available on this host: ${entry.probe.describe}")
+                if kyo.internal.Platform.isWindows then
+                    // The stale-errno precondition is dirtied via the POSIX socket(2) binding, whose bindings object fails
+                    // its <clinit> on the Windows CRT (bare POSIX socket symbols are absent). That ExceptionInInitializerError
+                    // is thrown uncaught on scheduler-worker threads and hangs the run to the job timeout. The invariant under
+                    // test concerns the POSIX backends' errno handling; on Windows only the NIO floor exists. Cancel instead.
+                    cancel("stale-errno precondition uses POSIX SocketBindings, unavailable on the Windows CRT")
+                else if !entry.probe.isAvailable then
+                    cancel(s"backend ${entry.name} is not available on this host: ${entry.probe.describe}")
                 else
                     // Dirty errno on THIS thread, then build synchronously: the driver init reads errno at queue_init and must ignore it.
                     val dirty = sock.socket(-1, -1, -1)
