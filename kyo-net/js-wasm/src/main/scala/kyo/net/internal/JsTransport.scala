@@ -375,7 +375,7 @@ final private[kyo] class JsTransport private (
         host: String,
         port: Int,
         connectTimeout: Duration
-    )(using AllowUnsafe, Frame): () => Unit =
+    )(using allow: AllowUnsafe, frame: Frame): () => Unit =
         if connectTimeout.isFinite then
             // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
             // elapsed" from "the deadline was called off". Harmless while the only disarm ran after `promise` had already settled (the
@@ -394,7 +394,7 @@ final private[kyo] class JsTransport private (
             def disarm(): Unit =
                 // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
                 disarmed.set(true)
-                timer.interruptDiscard(Result.Panic(Closed("JsTransport", summon[Frame], "connect completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "connect completed before deadline")))
             end disarm
             // Backstop for every way this connect can end before its TCP phase completes.
             promise.onComplete(_ => disarm())
@@ -453,11 +453,7 @@ final private[kyo] class JsTransport private (
                                 discard(socket.destroy())
                         }
                         promise.onComplete { _ =>
-                            deadline.interruptDiscard(Result.Panic(Closed(
-                                "JsTransport",
-                                summon[Frame],
-                                "handshake settled before deadline"
-                            )))
+                            deadline.interruptDiscard(Result.Panic(Interrupted(frame, "handshake settled before deadline")))
                         }
                     end if
                 }: js.Function0[Unit]
@@ -1067,7 +1063,7 @@ final private[kyo] class JsTransport private (
                     discard(tlsSocket.destroy())
             }
             promise.onComplete { _ =>
-                deadline.interruptDiscard(Result.Panic(Closed("JsTransport", summon[Frame], "upgrade settled before deadline")))
+                deadline.interruptDiscard(Result.Panic(Interrupted(frame, "upgrade settled before deadline")))
             }
         end if
 

@@ -485,7 +485,7 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         timeout: Duration
-    )(using AllowUnsafe, Frame): () => Unit =
+    )(using allow: AllowUnsafe, frame: Frame): () => Unit =
         // A Unix connect is bounded too, though not because the kernel parks it: the OS connect settles promptly on every arm this transport ships: a
         // non-blocking AF_UNIX connect completes inline or fails fast, never reporting "in progress" (measured on Linux 6.x and macOS, and
         // IORING_OP_CONNECT against a full backlog reaps -EAGAIN immediately). What the deadline actually bounds is this transport's own
@@ -512,7 +512,7 @@ final private[net] class PosixTransport private[posix] (
             def disarm(): Unit =
                 // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
                 disarmed.set(true)
-                timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "connect completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "connect completed before deadline")))
             end disarm
             // Backstop for every way this connect can end before its TCP phase completes: an OS failure, the caller interrupting, a listener
             // teardown. The TCP-phase handoff in completeOrTls is what disarms it on the success path.
@@ -579,7 +579,7 @@ final private[net] class PosixTransport private[posix] (
         promise: IOPromise[NetException, Connection],
         checkSoError: Boolean,
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         val writablePromise = new IOPromise[Closed | NetException, Unit]
         writablePromise.onComplete { result =>
             result match
@@ -613,7 +613,7 @@ final private[net] class PosixTransport private[posix] (
         // instead of leaking it until the OS TCP timeout. completeDiscard is at-most-once: a normal connect outcome (the arm completed first)
         // makes this a no-op, and the arm's own onComplete then completes this promise.
         promise.onComplete { _ =>
-            writablePromise.completeDiscard(Result.panic(Closed("PosixTransport", summon[Frame], "connect interrupted before completion")))
+            writablePromise.completeDiscard(Result.panic(Interrupted(frame, "connect interrupted before completion")))
         }
     end awaitConnectThen
 
@@ -652,7 +652,7 @@ final private[net] class PosixTransport private[posix] (
         tls: Maybe[(NetTlsConfig, String)],
         promise: IOPromise[NetException, Connection],
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         addr.close()
         // The TCP phase is established here, so its deadline stops owning the connection. Transport.connectTls documents connectTimeout as
         // bounding the TCP phase and NetTlsConfig.handshakeTimeout as bounding the handshake, worst case their sum; leaving the connect timer
@@ -729,11 +729,7 @@ final private[net] class PosixTransport private[posix] (
                     }
                     // The handshake settled first: interrupt the timer so it never fires.
                     promise.onComplete { _ =>
-                        deadline.interruptDiscard(Result.Panic(Closed(
-                            "PosixTransport",
-                            summon[Frame],
-                            "handshake settled before deadline"
-                        )))
+                        deadline.interruptDiscard(Result.Panic(Interrupted(frame, "handshake settled before deadline")))
                     }
                 end if
                 driveHandshake(
@@ -1278,8 +1274,8 @@ final private[net] class PosixTransport private[posix] (
       *     whether a timer is armed.
       */
     private def armHandshakeDeadline(clientFd: Int, timeout: Duration, onDeadline: () => Unit)(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): PosixTransport.ArmedDeadline =
         if !timeout.isFinite then
             val settled = AtomicBoolean.Unsafe.init(false)
@@ -1301,7 +1297,7 @@ final private[net] class PosixTransport private[posix] (
                 disarm = () =>
                     if settled.compareAndSet(false, true) then
                         // The handshake won the race: disarm the deadline so the timer never fires (its onComplete sees the guard already set).
-                        timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "handshake completed before deadline")))
+                        timer.interruptDiscard(Result.Panic(Interrupted(frame, "handshake completed before deadline")))
                         true
                     else false,
                 hasFired = () => fired.get()
@@ -1575,7 +1571,7 @@ final private[net] class PosixTransport private[posix] (
         tls: NetTlsConfig,
         channelCapacity: Int,
         isServer: Boolean
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         conn match
             case posixConn: InternalConnection[PosixHandle] @unchecked if posixConn.handle.isInstanceOf[PosixHandle] =>
                 // One upgrade per connection: win the one-shot claim BEFORE arming any shared upgrade state (the abandon thunk below, the
@@ -1728,7 +1724,7 @@ final private[net] class PosixTransport private[posix] (
                             }
                             out.onComplete { _ =>
                                 deadline.interruptDiscard(
-                                    Result.Panic(Closed("PosixTransport", summon[Frame], "upgrade settled before deadline"))
+                                    Result.Panic(Interrupted(frame, "upgrade settled before deadline"))
                                 )
                             }
                         end if
