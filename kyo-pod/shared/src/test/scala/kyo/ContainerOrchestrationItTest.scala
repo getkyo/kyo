@@ -423,30 +423,36 @@ class ContainerOrchestrationItTest extends BasePodTest:
         }
     }
 
-    "isHealthy returns false in under 500ms when healthcheck fails" - runBackend {
-        val config = Container.Config("alpine")
-            .command("sh", "-c", "trap 'exit 0' TERM; touch /tmp/healthy; sleep infinity & wait")
-            .healthCheck(Container.HealthCheck.init(Schedule.fixed(200.millis).take(10)) { c =>
-                c.exec("test", "-f", "/tmp/healthy").map { r =>
-                    if !r.isSuccess then
-                        Abort.fail(ContainerHealthCheckException(c.id, "unhealthy", attempts = 1, lastError = "file missing"))
-                    else ()
-                }
-            })
-        Container.init(config).map { c =>
-            for
-                _  <- c.isHealthy // warm up (should be healthy)
-                _  <- c.exec("rm", "/tmp/healthy")
-                t0 <- Clock.now
-                h  <- c.isHealthy
-                t1 <- Clock.now
-            yield
-                val elapsedMs = t1.toJava.toEpochMilli - t0.toJava.toEpochMilli
-                assert(!h, "Expected isHealthy to return false after rm")
-                assert(
-                    elapsedMs < 500,
-                    s"Expected isHealthy to return in < 500ms when failing, took ${elapsedMs}ms — it is running the full retry schedule"
-                )
+    // isHealthy is a single-shot on-demand probe: it runs the configured check exactly once, never the
+    // retry schedule (that is awaitHealthy / init's job). Asserted by counting check invocations rather
+    // than by wall-clock time, so the guarantee holds without depending on exec latency under load.
+    "isHealthy runs the check once (single-shot), not the retry schedule, when it fails" - runBackend {
+        AtomicInt.init(0).map { checkCalls =>
+            val config = Container.Config("alpine")
+                .command("sh", "-c", "trap 'exit 0' TERM; touch /tmp/healthy; sleep infinity & wait")
+                .healthCheck(Container.HealthCheck.init(Schedule.fixed(200.millis).take(10)) { c =>
+                    checkCalls.incrementAndGet.andThen {
+                        c.exec("test", "-f", "/tmp/healthy").map { r =>
+                            if !r.isSuccess then
+                                Abort.fail(ContainerHealthCheckException(c.id, "unhealthy", attempts = 1, lastError = "file missing"))
+                            else ()
+                        }
+                    }
+                })
+            Container.init(config).map { c =>
+                for
+                    _      <- c.isHealthy // warm up (should be healthy)
+                    _      <- c.exec("rm", "/tmp/healthy")
+                    before <- checkCalls.get
+                    h      <- c.isHealthy
+                    after  <- checkCalls.get
+                yield
+                    assert(!h, "Expected isHealthy to return false after rm")
+                    assert(
+                        after - before == 1,
+                        s"Expected isHealthy to invoke the health check exactly once (single-shot), not run the retry schedule; got ${after - before} invocations"
+                    )
+            }
         }
     }
 

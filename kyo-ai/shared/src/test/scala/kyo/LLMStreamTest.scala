@@ -40,53 +40,80 @@ class LLMStreamTest extends kyo.test.Test[Any]:
 
     "a stalled stream fails typed at the configured timeout after delivering its fragments" in {
         TestCompletionServer.runStreaming { server =>
-            // The provider emits part of the envelope and then stops producing without a terminator. The
-            // fragments must REACH the consumer and the call must still end at its deadline, so the
-            // assertion is arrived-then-failed: a bound covering only the response headers would fail
-            // before anything was delivered, and a stream with no bound would never end at all.
-            val config = serverConfig(server.baseUrl).timeout(300.millis)
-            for
-                seen <- AtomicRef.init(Chunk.empty[String])
-                _    <- server.enqueueStreamStall(Chunk(argDelta("""{"resultValue":""""), argDelta("partial")))
-                result <- Abort.run[AIException](
-                    LLM.run(config)(Scope.run(AI.stream[String].map(_.foreach(s => seen.updateAndGet(_.append(s)).unit))))
-                )
-                delivered <- seen.get
-            yield
-                assert(
-                    delivered.mkString == "partial",
-                    s"the emitted fragments must reach the consumer before the deadline: $delivered"
-                )
-                result match
-                    case Result.Failure(_: AICompletionTimeoutException) => succeed
-                    case other => fail(s"expected the streaming deadline to fire on a stalled stream, got: $other")
-                end match
-            end for
+            // The provider emits part of the envelope then stops without a terminator. The fragments must REACH
+            // the consumer and the call must still end at its deadline. Timing is made deterministic with a
+            // controlled Clock: the deadline sleeps on that Clock, so it fires exactly when the test advances
+            // virtual time, never by racing a real short timeout against the real SSE round-trip. The `arrived`
+            // latch orders "fragments delivered" (real I/O) BEFORE "deadline fired" (a clock advance) causally,
+            // so the leaf cannot flake on a slow runner where delivery alone exceeds a fixed millisecond budget.
+            val config = serverConfig(server.baseUrl).timeout(10.seconds)
+            Clock.withTimeControl { control =>
+                for
+                    arrived <- Latch.init(1)
+                    seen    <- AtomicRef.init(Chunk.empty[String])
+                    _       <- server.enqueueStreamStall(Chunk(argDelta("""{"resultValue":""""), argDelta("partial")))
+                    fiber <- Fiber.init {
+                        Abort.run[AIException] {
+                            LLM.run(config)(Scope.run(AI.stream[String].map(_.foreach { s =>
+                                seen.updateAndGet(_.append(s)).flatMap(cur => Kyo.when(cur.mkString == "partial")(arrived.release))
+                            })))
+                        }
+                    }
+                    _         <- arrived.await
+                    _         <- control.advance(config.timeout + 1.second, 500.millis)
+                    result    <- fiber.get
+                    delivered <- seen.get
+                yield
+                    assert(
+                        delivered.mkString == "partial",
+                        s"the emitted fragments must reach the consumer before the deadline: $delivered"
+                    )
+                    result match
+                        case Result.Failure(_: AICompletionTimeoutException) => succeed
+                        case other => fail(s"expected the streaming deadline to fire on a stalled stream, got: $other")
+                    end match
+                end for
+            }
         }
     }
 
     "a slow consumer does not spend the streaming deadline" in {
         TestCompletionServer.runStreaming { server =>
-            // The deadline is a budget on the provider's production, not on wall-clock: a consumer that
-            // pauses between elements for longer than the timeout must still receive the WHOLE stream, so
-            // the assertion is on the delivered value. Asserting only that the call completed would also
-            // be satisfied by an empty stream, which proves nothing about the bound.
-            val config   = serverConfig(server.baseUrl).timeout(300.millis)
+            // The deadline is a budget on the provider's PRODUCTION, not on the consumer's wall-clock. Production
+            // buffers the whole (tiny) stream and completes independently of the consumer, so once it has, virtual
+            // time can be pushed FAR past the deadline while the consumer is still blocked and the deadline must not
+            // fire. The consumer's slowness is a latch, not a sleep; the `firstSeen` latch plus a short real settle
+            // order "production done" before the advance, so the leaf is deterministic rather than racing a fixed
+            // millisecond consumer delay against the deadline.
+            val config   = serverConfig(server.baseUrl).timeout(10.seconds)
             val expected = List(Answer("ok"), Answer("two"))
             val args     = elementArgs(expected)
             val split    = Chunk(args.substring(0, 12), args.substring(12, 24), args.substring(24))
-            for
-                seen <- AtomicRef.init(Chunk.empty[Answer])
-                _    <- server.enqueueStream(split.map(argDelta))
-                _ <- LLM.run(config)(
-                    Scope.run(AI.stream[Answer].map(_.foreach(a => Async.sleep(700.millis).andThen(seen.updateAndGet(_.append(a)).unit))))
+            Clock.withTimeControl { control =>
+                for
+                    firstSeen <- Latch.init(1)
+                    proceed   <- Latch.init(1)
+                    seen      <- AtomicRef.init(Chunk.empty[Answer])
+                    _         <- server.enqueueStream(split.map(argDelta))
+                    fiber <- Fiber.init {
+                        LLM.run(config)(Scope.run(AI.stream[Answer].map(_.foreach { a =>
+                            seen.updateAndGet(_.append(a)).flatMap(cur =>
+                                Kyo.when(cur.size == 1)(firstSeen.release).andThen(proceed.await)
+                            )
+                        })))
+                    }
+                    _         <- firstSeen.await
+                    _         <- control.advance(Duration.Zero, 300.millis)
+                    _         <- control.advance(config.timeout * 2)
+                    _         <- proceed.release
+                    _         <- fiber.get
+                    delivered <- seen.get
+                yield assert(
+                    delivered == Chunk.from(expected),
+                    s"a consumer slower than the timeout must still receive the whole stream, got: $delivered"
                 )
-                delivered <- seen.get
-            yield assert(
-                delivered == Chunk.from(expected),
-                s"a consumer slower than the timeout must still receive the whole stream, got: $delivered"
-            )
-            end for
+                end for
+            }
         }
     }
 
