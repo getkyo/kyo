@@ -2035,8 +2035,12 @@ class ResolverTest extends BaseCalibanTest:
             url = s"ws://localhost:${server.port}/api/graphql/ws"
             cr <- HttpClient.webSocket(url, config = wsSubprotocol("graphql-transport-ws")) { ws =>
                 for
+                    // No connection_ack wait: the afterInit panic closes the WS with 4401, and that close
+                    // races the ack frame. When the close wins (reliably on Windows), awaiting the ack aborts
+                    // with "ws closed before predicate matched". The 4401 close is the subject, so await it
+                    // directly via awaitClose (which polls closeReason and never consumes frames), matching the
+                    // "subscribe before connection_init returns 4401" test above.
                     _  <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
-                    _  <- expectMessage(ws, _.contains("connection_ack"))
                     cr <- awaitClose(ws)
                 yield cr
             }
