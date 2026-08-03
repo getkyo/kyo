@@ -140,6 +140,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                             outcome match
                                 case Result.Success(fd) =>
                                     assert(fd >= 0, s"the re-armed accept must deliver a valid fd; got $fd")
+                                    discard(sock.close(fd)) // close the re-armed accept's connection so it does not outlive the test
                                 case Result.Failure(_: Timeout) =>
                                     fail("accept hung: a transient errno was neither failed nor retried")
                                 case Result.Failure(c: Closed) =>
