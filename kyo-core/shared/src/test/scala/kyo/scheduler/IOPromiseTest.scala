@@ -1248,4 +1248,24 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
     }
 
+    "flush" - {
+        "a fatal error in one completion callback still runs the others" in {
+            // When a promise completes, its registered callbacks run in a single flush loop. A callback that throws
+            // must not abort that loop and leave the promise's other waiters unnotified. InterruptedException is a
+            // portable throwable that scala.util.control.NonFatal classifies as fatal; placing it between two
+            // counting callbacks means an aborted flush would skip one of them regardless of order.
+            var ran = 0
+            val p   = new IOPromise[Nothing, Int]()
+            p.onComplete(_ => ran += 1)
+            p.onComplete(_ => throw new InterruptedException("fatal error"))
+            p.onComplete(_ => ran += 1)
+            try p.completeDiscard(Result.succeed(1))
+            catch case _: Throwable => () // contain any throwable that escapes the flush so the assertion below runs
+            assert(
+                ran == 2,
+                s"a fatal callback aborted the flush and orphaned the other waiters; only $ran of 2 non-fatal callbacks ran"
+            )
+        }
+    }
+
 end IOPromiseTest
