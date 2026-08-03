@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetConnectionIoException
 import kyo.net.internal.transport.*
 import kyo.net.internal.util.HandleId
 import scala.scalajs.js
@@ -91,11 +92,20 @@ private[kyo] object JsHandle:
         discard(socket.on("close", signalEof))
         discard(socket.on(
             "error",
-            { (_: js.Dynamic) =>
+            { (err: js.Dynamic) =>
                 handle.pendingRead match
                     case Present(pending) =>
                         handle.clearPendingRead()
-                        pending.completeDiscard(Result.fail(Closed(s"connection socket#${handle.id}", handle.createdAt, "socket error")))
+                        // A Node "error" is a hard receive error on a live read: surface it as a typed receive failure on the read outcome (not a
+                        // closure), carrying the socket's own creation frame and the error's message as the cause.
+                        val cause = if js.typeOf(err.message) == "string" then err.message.toString else ""
+                        pending.completeDiscard(Result.succeed(ReadOutcome.Failed(
+                            NetConnectionIoException(
+                                s"connection socket#${handle.id}",
+                                NetConnectionIoException.Operation.Receive,
+                                cause
+                            )(using handle.createdAt)
+                        )))
                     case Absent => ()
             }: js.Function1[js.Dynamic, Unit]
         ))

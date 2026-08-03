@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetException
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.scalajs.js
