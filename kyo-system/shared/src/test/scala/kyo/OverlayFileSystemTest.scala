@@ -953,4 +953,32 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    // An operation decides against a snapshot and then applies its result. If the state moved in
+    // between, the decision was built on a view that no longer holds and applying it discards
+    // whatever moved it. Concurrent appends are the shortest case: each reads a base and writes
+    // base ++ its own bytes, so a stale base silently drops another append.
+
+    "concurrent appends to one path do not lose an update" in {
+        val p = Path("concurrent-append.txt")
+        // Each trial seeds the lower and appends through a fresh overlay so every fiber takes the
+        // lower-read path, whose suspension is the window a lost update falls through. Repeated
+        // because the window is narrow: a single trial passes while the defect is present.
+        def trial: Int < (Sync & Async & Scope & Abort[FileSystemException]) =
+            FileSystem.inMemory.map { lower =>
+                FileSystem.overlay(lower).map { ov =>
+                    Path.runWith(lower)(p.write("A")).andThen {
+                        Async.foreach(Chunk("X", "Y", "Z", "W"))(s => Path.runWith(ov)(p.append(s))).andThen {
+                            Path.runWith(ov)(p.read).map(_.length)
+                        }
+                    }
+                }
+            }
+        Loop.indexed(0) { (i, lost) =>
+            if i >= 100 then Loop.done(lost)
+            else trial.map(len => Loop.continue(lost + (if len == 5 then 0 else 1)))
+        }.map { lost =>
+            assert(lost == 0, s"$lost of 100 trials lost at least one concurrent append")
+        }
+    }
+
 end OverlayFileSystemTest

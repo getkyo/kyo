@@ -478,9 +478,22 @@ end WriteOpLog
   * commit. The read-set records the full observed Path.Entry for each lower path on its first
   * observation; commit validates these entries against the live lower before replaying.
   *
-  * The four structural components are: lower (the constructor field), upper (Map in OverlayState),
-  * journal (Chunk[WriteOp] in OverlayState), and readSet (Map[Chunk[String], Maybe[Path.Entry]] in
-  * OverlayState). All state changes go through the CAS modify loop so concurrent access is safe.
+  * The four structural components are: lower (the constructor field), upper (a PathTrie in
+  * OverlayState), journal (Chunk[WriteOp] in OverlayState), and readSet (Map[Chunk[String],
+  * Maybe[Path.Entry]] in OverlayState).
+  *
+  * Every operation that reads state and writes a function of it is one transition: [[transact]]
+  * decides against a snapshot and applies the result only if that snapshot still stands, retrying
+  * from a fresh one otherwise. Reading the lower inside a decision is therefore safe under
+  * concurrency, because a decision built on a read that has been overtaken is discarded rather than
+  * applied. A compare-and-set on each individual update is not enough on its own: it leaves the span
+  * from the snapshot, through a lower read, to the update unprotected, which is where a concurrent
+  * append loses one of the two writes.
+  *
+  * Two paths stay outside that guarantee, and neither is a read-modify-write. `ensureWriteParent`
+  * creates the directories missing above a target, which converges on the same result whoever runs
+  * it. A write handle from `openWrite` buffers into its own array and publishes at `finish`, so two
+  * handles open on one path replace each other wholesale, which is what a file handle means.
   *
   * Scope-managed: the enclosing Scope bounds its lifetime; on scope exit open staged state is
   * discarded.
@@ -591,46 +604,70 @@ private[kyo] class OverlayFileSystem[S](
             }
         }: Unit < Sync).asInstanceOf[Unit < S]
 
-    // Record a lower observation in the read-set for a file: the full observed entry (bytes + stat),
-    // not a stat-only stamp, so Conflict.ancestor is available at commit without re-reading the lower
-    // path. Idempotent: an existing read-set entry is kept.
+    /** Runs one logical operation as a single state transition.
+      *
+      * `decide` receives a snapshot and returns the state that should replace it. It may suspend to
+      * read the lower, and it is retried from a fresh snapshot whenever the state moved underneath
+      * it, so a decision is never applied to a state other than the one it was made against. That is
+      * the property the previous snapshot-then-modify pair lacked: it read one snapshot, suspended,
+      * and wrote into a later one, which silently discards a concurrent read-modify-write.
+      *
+      * Everything the operation stages has to be folded into the returned state. A nested [[stage]]
+      * inside `decide` would apply on every pass, and since staging is not idempotent a retry would
+      * apply it twice.
+      *
+      * Nested *observations* are fine. `canonical` and the read-set stamps publish through their own
+      * compare-and-set, so the first pass loses the outer one and retries; on the second pass each
+      * of them finds its record already present and returns the state unchanged, so the outer
+      * compare-and-set succeeds. They are idempotent by construction, which is what makes the retry
+      * terminate rather than spin.
+      *
+      * The lower reads inside `decide` are idempotent too, so replaying them on retry is safe.
+      */
+    private def transact[E, A](path: Path, operation: FileSystemOperation)(
+        decide: OverlayState => (OverlayState, A) < (S & Abort[E])
+    )(using Frame): A < (S & Abort[E | FileIOException]) =
+        (Loop(()) { _ =>
+            stateGet.map { cur =>
+                if cur.phase != Phase.Open then Abort.fail(terminated(path, operation))
+                else
+                    decide(cur).map { (next, value) =>
+                        state.compareAndSet(cur, next).map {
+                            case true  => Loop.done(value)
+                            case false => Loop.continue(())
+                        }
+                    }
+            }
+        }: A < (S & Sync & Abort[E | FileIOException])).asInstanceOf[A < (S & Abort[E | FileIOException])]
+
+    // Read-set observations, as state functions rather than as their own transitions, so an
+    // operation's observation and the entry it stages land together. The full observed entry is
+    // recorded, not a stat-only stamp, so Conflict.ancestor is available at commit without re-reading
+    // the lower path.
+    //
+    // Each keeps an existing record and returns the same state value when there is nothing to add.
+    // Both matter: keeping the first observation is what commit validates against, and returning the
+    // state unchanged is what lets these run inside a retried transaction without spinning.
+    private def withFileStamp(s: OverlayState, cp: CanonicalPath, stat: Path.PathStat, bytes: Span[Byte]): OverlayState =
+        if s.readSet.contains(cp) then s
+        else s.copy(readSet = s.readSet.updated(cp, Present(Path.Entry.File(bytes, stat))))
+
+    private def withDirStamp(s: OverlayState, cp: CanonicalPath, stat: Path.PathStat): OverlayState =
+        if s.readSet.contains(cp) then s
+        else s.copy(readSet = s.readSet.updated(cp, Present(Path.Entry.Directory(stat))))
+
+    private def withAbsentStamp(s: OverlayState, cp: CanonicalPath): OverlayState =
+        if s.readSet.contains(cp) then s
+        else s.copy(readSet = s.readSet.updated(cp, Absent))
+
     private def stampFile(cp: CanonicalPath, stat: Path.PathStat, bytes: Span[Byte])(using Frame): Unit < S =
-        modifyPure { s =>
-            if s.readSet.contains(cp) then s
-            else
-                val entry = Path.Entry.File(bytes, stat)
-                s.copy(readSet = s.readSet.updated(cp, Present(entry)))
-        }
+        modifyPure(withFileStamp(_, cp, stat, bytes))
 
     private def stampDir(cp: CanonicalPath, stat: Path.PathStat)(using Frame): Unit < S =
-        modifyPure { s =>
-            if s.readSet.contains(cp) then s
-            else
-                val entry = Path.Entry.Directory(stat)
-                s.copy(readSet = s.readSet.updated(cp, Present(entry)))
-        }
+        modifyPure(withDirStamp(_, cp, stat))
 
     private def stampAbsent(cp: CanonicalPath)(using Frame): Unit < S =
-        modifyPure { s =>
-            if s.readSet.contains(cp) then s
-            else s.copy(readSet = s.readSet.updated(cp, Absent))
-        }
-
-    // Stamp a lower observation using stat + isRegularFile to determine the kind. A regular file
-    // requires a bytes read to build the recorded Path.Entry.File.
-    private def stampLower(cp: CanonicalPath)(using Frame): Unit < (S & Abort[FileReadException]) =
-        val path = lowerPath(cp)
-        lower.exists(path).map { found =>
-            if !found then stampAbsent(cp)
-            else
-                lower.stat(path).map { stat =>
-                    lower.isRegularFile(path).map { isFile =>
-                        if isFile then lower.readBytes(path).map(bytes => stampFile(cp, stat, bytes))
-                        else stampDir(cp, stat)
-                    }
-                }
-        }
-    end stampLower
+        modifyPure(withAbsentStamp(_, cp))
 
     // Reconstruct a Path from segment parts (parallel to Path.parts decomposition).
     private def pathFrom(parts: Chunk[String])(using Frame): Path =
@@ -1125,42 +1162,44 @@ private[kyo] class OverlayFileSystem[S](
     ): Unit < (S & Abort[FileReadException | FileWriteException]) =
         ensureWriteParent(path, options).andThen(canonical(path).map { cp =>
             val lp = lowerPath(cp)
-            withState { s =>
+            transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Write) { s =>
                 s.upper.get(cp) match
                     case Present(Upper.Entry(Path.Entry.File(existing, _))) =>
-                        // Already in upper: concatenate without consulting lower, no stamp needed.
-                        val merged = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
-                        val stat   = Path.PathStat(0L, merged.size.toLong)
-                        stage(path, FileSystemOperation.Write) { cur =>
-                            cur.copy(
-                                upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(merged, stat))),
-                                journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, merged, stat))
-                            )
-                        }
+                        // Already in upper: concatenate without consulting lower, no observation to
+                        // record. Both the base and the result come from the same snapshot, so the
+                        // transaction rejects the merge if anything else appended in between.
+                        (stagedAppend(s, cp, existing, value), ())
                     case _ =>
-                        // Not in upper: read lower (stamp on first observation), then stage.
+                        // Not in upper: read lower, record the observation, and stage the result all
+                        // in the one state this transaction will apply.
                         // Ancestor Whiteout hides lower content; treat as absent, start fresh.
                         lower.exists(lp).map { lowerFound =>
-                            val found = lowerFound && !ancestorWhiteout(s, cp)
-                            val readLower: Span[Byte] < (S & Abort[FileReadException]) =
-                                if !found then stampAbsent(cp).andThen(Span.empty[Byte])
-                                else
-                                    lower.readBytes(lp).map { existing =>
-                                        lower.stat(lp).map { stat => stampFile(cp, stat, existing).andThen(existing) }
+                            if !lowerFound || ancestorWhiteout(s, cp) then
+                                (stagedAppend(withAbsentStamp(s, cp), cp, Span.empty[Byte], value), ())
+                            else
+                                lower.readBytes(lp).map { existing =>
+                                    lower.stat(lp).map { stat =>
+                                        (stagedAppend(withFileStamp(s, cp, stat, existing), cp, existing, value), ())
                                     }
-                            readLower.map { existing =>
-                                val merged = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
-                                val stat   = Path.PathStat(0L, merged.size.toLong)
-                                stage(path, FileSystemOperation.Write) { cur =>
-                                    cur.copy(
-                                        upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(merged, stat))),
-                                        journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, merged, stat))
-                                    )
                                 }
-                            }
                         }
             }
         })
+
+    // Concatenation and staging, shared by both arms of appendBytes so the two cannot drift.
+    private def stagedAppend(
+        s: OverlayState,
+        cp: CanonicalPath,
+        existing: Span[Byte],
+        value: Span[Byte]
+    ): OverlayState =
+        val merged = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
+        val stat   = Path.PathStat(0L, merged.size.toLong)
+        s.copy(
+            upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(merged, stat))),
+            journal = s.journal.appended(WriteOp.WriteFile(cp.parts, merged, stat))
+        )
+    end stagedAppend
 
     def appendLines(path: Path, value: Chunk[String], options: Path.WriteOptions)(using
         Frame
@@ -1170,144 +1209,117 @@ private[kyo] class OverlayFileSystem[S](
     def truncate(path: Path, size: Long)(using Frame): Unit < (S & Abort[FileReadException | FileWriteException]) =
         canonical(path).map { cp =>
             val lp = lowerPath(cp)
-            withState { s =>
+            transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Write) { s =>
                 s.upper.get(cp) match
                     case Present(Upper.Entry(Path.Entry.File(bytes, _))) =>
-                        boundInt(path, "truncate size", size).map { sz =>
-                            val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(sz))
-                            val stat = Path.PathStat(0L, kept.size.toLong)
-                            stage(path, FileSystemOperation.Write) { cur =>
-                                cur.copy(
-                                    upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(kept, stat))),
-                                    journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, kept, stat))
-                                )
-                            }
-                        }
+                        boundInt(path, "truncate size", size).map(sz => (stagedTruncate(s, cp, bytes, sz), ()))
                     case Present(_) => Abort.fail(FileNotFoundException(path))
                     case Absent =>
                         if ancestorWhiteout(s, cp) then Abort.fail(FileNotFoundException(path))
                         else
                             lower.readBytes(lp).map { bytes =>
                                 lower.stat(lp).map { lStat =>
-                                    stampFile(cp, lStat, bytes).andThen {
-                                        boundInt(path, "truncate size", size).map { sz =>
-                                            val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(sz))
-                                            val stat = Path.PathStat(0L, kept.size.toLong)
-                                            stage(path, FileSystemOperation.Write) { cur =>
-                                                cur.copy(
-                                                    upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(kept, stat))),
-                                                    journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, kept, stat))
-                                                )
-                                            }
-                                        }
+                                    boundInt(path, "truncate size", size).map { sz =>
+                                        (stagedTruncate(withFileStamp(s, cp, lStat, bytes), cp, bytes, sz), ())
                                     }
                                 }
                             }
             }
         }
 
+    // Truncation and staging, shared by both arms of truncate so the two cannot drift.
+    private def stagedTruncate(s: OverlayState, cp: CanonicalPath, bytes: Span[Byte], size: Int): OverlayState =
+        val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(size))
+        val stat = Path.PathStat(0L, kept.size.toLong)
+        s.copy(
+            upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(kept, stat))),
+            journal = s.journal.appended(WriteOp.WriteFile(cp.parts, kept, stat))
+        )
+    end stagedTruncate
+
     def setLastModified(path: Path, epochMs: Long)(using Frame): Unit < (S & Abort[FileReadException | FileWriteException]) =
         canonical(path).map { cp =>
             val lp = lowerPath(cp)
-            withState { s =>
+            transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Write) { s =>
+                def stagedFile(base: OverlayState, bytes: Span[Byte], stat: Path.PathStat): OverlayState =
+                    val ns = stat.copy(lastModifiedMs = epochMs)
+                    base.copy(
+                        upper = base.upper.updated(cp, Upper.Entry(Path.Entry.File(bytes, ns))),
+                        journal = base.journal.appended(WriteOp.WriteFile(cp.parts, bytes, ns))
+                    )
+                end stagedFile
+                def stagedDir(base: OverlayState, stat: Path.PathStat, opaque: Boolean): OverlayState =
+                    val ns    = stat.copy(lastModifiedMs = epochMs)
+                    val entry = if opaque then Upper.OpaqueDir(ns) else Upper.Entry(Path.Entry.Directory(ns))
+                    base.copy(
+                        upper = base.upper.updated(cp, entry),
+                        journal = base.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque))
+                    )
+                end stagedDir
                 s.upper.get(cp) match
-                    case Present(Upper.Entry(Path.Entry.File(bytes, stat))) =>
-                        val ns = stat.copy(lastModifiedMs = epochMs)
-                        stage(path, FileSystemOperation.Write) { cur =>
-                            cur.copy(
-                                upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(bytes, ns))),
-                                journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, bytes, ns))
-                            )
-                        }
-                    case Present(Upper.Entry(Path.Entry.Directory(stat))) =>
-                        val ns = stat.copy(lastModifiedMs = epochMs)
-                        stage(path, FileSystemOperation.Write) { cur =>
-                            cur.copy(
-                                upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(ns))),
-                                journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
-                            )
-                        }
-                    case Present(Upper.OpaqueDir(stat)) =>
-                        val ns = stat.copy(lastModifiedMs = epochMs)
-                        stage(path, FileSystemOperation.Write) { cur =>
-                            cur.copy(
-                                upper = cur.upper.updated(cp, Upper.OpaqueDir(ns)),
-                                journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = true))
-                            )
-                        }
-                    case Present(Upper.Whiteout) => Abort.fail(FileNotFoundException(path))
+                    case Present(Upper.Entry(Path.Entry.File(bytes, stat))) => (stagedFile(s, bytes, stat), ())
+                    case Present(Upper.Entry(Path.Entry.Directory(stat)))   => (stagedDir(s, stat, opaque = false), ())
+                    case Present(Upper.OpaqueDir(stat))                     => (stagedDir(s, stat, opaque = true), ())
+                    case Present(Upper.Whiteout)                            => Abort.fail(FileNotFoundException(path))
                     case Absent =>
                         if ancestorWhiteout(s, cp) then Abort.fail(FileNotFoundException(path))
                         else
                             lower.stat(lp).map { stat =>
                                 lower.isRegularFile(lp).map { isFile =>
                                     if isFile then
-                                        // The bytes read precedes stampFile so the read-set entry and the staged
+                                        // The bytes read precedes the stamp so the read-set entry and the staged
                                         // upper entry share the same observed bytes (no double read).
                                         lower.readBytes(lp).map { bytes =>
-                                            stampFile(cp, stat, bytes).andThen {
-                                                val ns = stat.copy(lastModifiedMs = epochMs)
-                                                stage(path, FileSystemOperation.Write) { cur =>
-                                                    cur.copy(
-                                                        upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.File(bytes, ns))),
-                                                        journal = cur.journal.appended(WriteOp.WriteFile(cp.parts, bytes, ns))
-                                                    )
-                                                }
-                                            }
+                                            (stagedFile(withFileStamp(s, cp, stat, bytes), bytes, stat), ())
                                         }
-                                    else
-                                        stampDir(cp, stat).andThen {
-                                            val ns = stat.copy(lastModifiedMs = epochMs)
-                                            stage(path, FileSystemOperation.Write) { cur =>
-                                                cur.copy(
-                                                    upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(ns))),
-                                                    journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
-                                                )
-                                            }
-                                        }
+                                    else (stagedDir(withDirStamp(s, cp, stat), stat, opaque = false), ())
                                 }
                             }
+                end match
             }
         }
 
     def mkDir(path: Path)(using Frame): Unit < (S & Abort[FileReadException | FileStructureException]) =
         canonical(path).map { cp =>
             val lp = lowerPath(cp)
-            withState { s =>
+            transact[FileReadException | FileStructureException, Unit](path, FileSystemOperation.Create) { s =>
+                def staged(base: OverlayState, entry: Upper, opaque: Boolean): OverlayState =
+                    base.copy(
+                        upper = base.upper.updated(cp, entry),
+                        journal = base.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque))
+                    )
                 s.upper.get(cp) match
-                    case Present(Upper.OpaqueDir(_))                   => () // already opaque dir
-                    case Present(Upper.Entry(Path.Entry.Directory(_))) => () // already a dir in upper
+                    case Present(Upper.OpaqueDir(_))                   => (s, ()) // already opaque dir
+                    case Present(Upper.Entry(Path.Entry.Directory(_))) => (s, ()) // already a dir in upper
                     case _                                             =>
                         // If lower has a directory at this path, create OpaqueDir (hides lower children).
                         // If lower has a file or absent, create a regular directory entry.
                         lower.exists(lp).map { exists =>
                             if !exists then
-                                stampAbsent(cp).andThen {
-                                    val st = Path.PathStat(0L, 0L)
-                                    stage(path, FileSystemOperation.Create) { cur =>
-                                        cur.copy(
-                                            upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(st))),
-                                            journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
-                                        )
-                                    }
-                                }
+                                val st = Path.PathStat(0L, 0L)
+                                (
+                                    staged(withAbsentStamp(s, cp), Upper.Entry(Path.Entry.Directory(st)), opaque = false),
+                                    ()
+                                )
                             else
                                 lower.stat(lp).map { stat =>
                                     lower.isDirectory(lp).map { isDir =>
-                                        (if isDir then stampDir(cp, stat)
-                                         else lower.readBytes(lp).map(bytes => stampFile(cp, stat, bytes))).andThen {
-                                            // An existing lower dir (or file) gets OpaqueDir, hiding its children.
-                                            val st = if isDir then stat else Path.PathStat(0L, 0L)
-                                            stage(path, FileSystemOperation.Create) { cur =>
-                                                cur.copy(
-                                                    upper = cur.upper.updated(cp, Upper.OpaqueDir(st)),
-                                                    journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = true))
+                                        // An existing lower dir (or file) gets OpaqueDir, hiding its children.
+                                        val st = if isDir then stat else Path.PathStat(0L, 0L)
+                                        if isDir then
+                                            (staged(withDirStamp(s, cp, stat), Upper.OpaqueDir(st), opaque = true), ())
+                                        else
+                                            lower.readBytes(lp).map { bytes =>
+                                                (
+                                                    staged(withFileStamp(s, cp, stat, bytes), Upper.OpaqueDir(st), opaque = true),
+                                                    ()
                                                 )
                                             }
-                                        }
+                                        end if
                                     }
                                 }
                         }
+                end match
             }
         }
 
@@ -1322,36 +1334,43 @@ private[kyo] class OverlayFileSystem[S](
         ensureWriteParent(to, Path.WriteOptions(options.createFolders)).andThen(
             canonical(from).map { fromCp =>
                 canonical(to).map { toCp =>
-                    resolveEntry(from).map { resolved =>
-                        checkMoveTarget(to, options.replace) {
-                            resolved match
-                                case file: Path.Entry.File =>
-                                    // A file move keeps single-node semantics: whiteout the source, stage the
-                                    // resolved file at the target, and journal one source-independent Move op.
-                                    stage(to, FileSystemOperation.Move) { cur =>
-                                        cur.copy(
-                                            upper = cur.upper.updated(fromCp, Upper.Whiteout).updated(toCp, Upper.Entry(file)),
-                                            journal = cur.journal.appended(WriteOp.Move(fromCp.parts, toCp.parts, file))
+                    // The source read, the target guard and the staging are one transition: resolving
+                    // the source and then staging against a later state is what lets a target created
+                    // in between slip past Replace.Never.
+                    transact[FileReadException | FileWriteException | FileStructureException, Unit](
+                        to,
+                        FileSystemOperation.Move
+                    ) { s =>
+                        resolveEntry(from).map { resolved =>
+                            checkMoveTarget(to, options.replace) {
+                                resolved match
+                                    case file: Path.Entry.File =>
+                                        // A file move keeps single-node semantics: whiteout the source, stage the
+                                        // resolved file at the target, and journal one source-independent Move op.
+                                        (
+                                            s.copy(
+                                                upper = s.upper.updated(fromCp, Upper.Whiteout).updated(toCp, Upper.Entry(file)),
+                                                journal = s.journal.appended(WriteOp.Move(fromCp.parts, toCp.parts, file))
+                                            ),
+                                            ()
                                         )
-                                    }
-                                case _: Path.Entry.Directory =>
-                                    // A directory move relocates the entire subtree: every descendant visible in
-                                    // the overlay view (upper-staged plus lower-only) is materialized under `to`,
-                                    // and the whole source subtree is whiteouted so it is fully gone.
-                                    collectSubtree(from).map { nodes =>
-                                        stage(to, FileSystemOperation.Move) { cur =>
-                                            val (upperT, journalT) = stageSubtree(cur.upper, cur.journal, fromCp, toCp, nodes)
+                                    case _: Path.Entry.Directory =>
+                                        // A directory move relocates the entire subtree: every descendant visible in
+                                        // the overlay view (upper-staged plus lower-only) is materialized under `to`,
+                                        // and the whole source subtree is whiteouted so it is fully gone.
+                                        collectSubtree(from).map { nodes =>
+                                            val (upperT, journalT) = stageSubtree(s.upper, s.journal, fromCp, toCp, nodes)
                                             // Whiteout the source dir and every upper descendant of it (a direct
                                             // upper Entry outranks an ancestor whiteout, so each must be marked);
                                             // the Remove op recursively drops the source subtree from lower on commit.
-                                            val srcKeys = cur.upper.descendantValues(fromCp).map(_._1).toList
+                                            val srcKeys = s.upper.descendantValues(fromCp).map(_._1).toList
                                             val upperW =
                                                 srcKeys.foldLeft(upperT.updated(fromCp, Upper.Whiteout))((u, k) =>
                                                     u.updated(k, Upper.Whiteout)
                                                 )
-                                            cur.copy(upper = upperW, journal = journalT.appended(WriteOp.Remove(fromCp.parts)))
+                                            (s.copy(upper = upperW, journal = journalT.appended(WriteOp.Remove(fromCp.parts))), ())
                                         }
-                                    }
+                            }
                         }
                     }
                 }
@@ -1366,37 +1385,44 @@ private[kyo] class OverlayFileSystem[S](
         ensureWriteParent(to, Path.WriteOptions(options.createFolders)).andThen(
             canonical(from).map { fromCp =>
                 canonical(to).map { toCp =>
-                    resolveEntry(from).map { resolved =>
-                        checkMoveTarget(to, options.replace) {
-                            resolved match
-                                case file: Path.Entry.File =>
-                                    val copied =
-                                        if options.copyAttributes then file
-                                        else file.copy(stat = Path.PathStat(0L, file.stat.sizeBytes))
-                                    stage(to, FileSystemOperation.Copy) { cur =>
-                                        cur.copy(
-                                            upper = cur.upper.updated(toCp, Upper.Entry(copied)),
-                                            journal = cur.journal.appended(
-                                                WriteOp.Copy(fromCp.parts, toCp.parts, copied, options.copyAttributes)
-                                            )
+                    // One transition, for the same reason as move: the target guard and the staging
+                    // have to see the same state, or a target created in between defeats
+                    // Replace.Never.
+                    transact[FileReadException | FileWriteException | FileStructureException, Unit](
+                        to,
+                        FileSystemOperation.Copy
+                    ) { s =>
+                        resolveEntry(from).map { resolved =>
+                            checkMoveTarget(to, options.replace) {
+                                resolved match
+                                    case file: Path.Entry.File =>
+                                        val copied =
+                                            if options.copyAttributes then file
+                                            else file.copy(stat = Path.PathStat(0L, file.stat.sizeBytes))
+                                        (
+                                            s.copy(
+                                                upper = s.upper.updated(toCp, Upper.Entry(copied)),
+                                                journal = s.journal.appended(
+                                                    WriteOp.Copy(fromCp.parts, toCp.parts, copied, options.copyAttributes)
+                                                )
+                                            ),
+                                            ()
                                         )
-                                    }
-                                case _: Path.Entry.Directory =>
-                                    // A directory copy materializes the entire subtree under `to`, leaving the
-                                    // source intact (no whiteout, no Remove op).
-                                    collectSubtree(from).map { nodes =>
-                                        stage(to, FileSystemOperation.Copy) { cur =>
+                                    case _: Path.Entry.Directory =>
+                                        // A directory copy materializes the entire subtree under `to`, leaving the
+                                        // source intact (no whiteout, no Remove op).
+                                        collectSubtree(from).map { nodes =>
                                             val (upperT, journalT) = stageSubtree(
-                                                cur.upper,
-                                                cur.journal,
+                                                s.upper,
+                                                s.journal,
                                                 fromCp,
                                                 toCp,
                                                 nodes,
                                                 options.copyAttributes
                                             )
-                                            cur.copy(upper = upperT, journal = journalT)
+                                            (s.copy(upper = upperT, journal = journalT), ())
                                         }
-                                    }
+                            }
                         }
                     }
                 }
@@ -1516,31 +1542,44 @@ private[kyo] class OverlayFileSystem[S](
     def remove(path: Path)(using Frame): Boolean < (S & Abort[FileReadException | FileStructureException]) =
         canonical(path).map { cp =>
             val lp = lowerPath(cp)
-            withState { s =>
+            transact[FileReadException | FileStructureException, Boolean](path, FileSystemOperation.Remove) { s =>
+                def staged(base: OverlayState): OverlayState =
+                    base.copy(
+                        upper = base.upper.updated(cp, Upper.Whiteout),
+                        journal = base.journal.appended(WriteOp.Remove(cp.parts))
+                    )
                 s.upper.get(cp) match
-                    case Present(Upper.Whiteout) => false
-                    case Present(_) =>
-                        stage(path, FileSystemOperation.Remove) { cur =>
-                            cur.copy(
-                                upper = cur.upper.updated(cp, Upper.Whiteout),
-                                journal = cur.journal.appended(WriteOp.Remove(cp.parts))
-                            )
-                        }.andThen(true)
+                    case Present(Upper.Whiteout) => (s, false)
+                    case Present(_)              => (staged(s), true)
                     case Absent =>
                         lower.exists(lp).map { found =>
-                            if !found then stampAbsent(cp).andThen(false)
+                            if !found then (withAbsentStamp(s, cp), false)
                             else
-                                stampLower(cp).andThen {
-                                    stage(path, FileSystemOperation.Remove) { cur =>
-                                        cur.copy(
-                                            upper = cur.upper.updated(cp, Upper.Whiteout),
-                                            journal = cur.journal.appended(WriteOp.Remove(cp.parts))
-                                        )
-                                    }.andThen(true)
-                                }
+                                // The removal's base is recorded before the whiteout hides it, so commit
+                                // still has something to validate the removal against.
+                                observedLower(s, cp).map(observed => (staged(observed), true))
                         }
+                end match
             }
         }
+
+    // The state with a lower observation recorded for `cp`, reading whatever the observation needs.
+    // The state-function counterpart of the old stampLower, for use inside a transaction.
+    private def observedLower(s: OverlayState, cp: CanonicalPath)(using
+        Frame
+    ): OverlayState < (S & Abort[FileReadException]) =
+        val path = lowerPath(cp)
+        lower.exists(path).map { found =>
+            if !found then withAbsentStamp(s, cp)
+            else
+                lower.stat(path).map { stat =>
+                    lower.isRegularFile(path).map { isFile =>
+                        if isFile then lower.readBytes(path).map(bytes => withFileStamp(s, cp, stat, bytes))
+                        else withDirStamp(s, cp, stat)
+                    }
+                }
+        }
+    end observedLower
 
     def removeExisting(path: Path)(using Frame): Unit < (S & Abort[FileReadException | FileStructureException]) =
         remove(path).map(existed => if existed then () else Abort.fail(FileNotFoundException(path)))
