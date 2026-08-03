@@ -77,7 +77,7 @@ class IoUringDriverCrossTailMockedTest extends Test:
         /** DEFER: flushTls must not submit a TLS send SQE while rawSendInFlight is set. */
         "defer: with rawSendInFlight set a writeTls must not submit a TLS send SQE" in {
             withMockedDriver { (drv, stub) =>
-                val handle = PosixHandle.socket(42, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(42, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 // Post-STARTTLS state: TLS engine installed, handshake's final raw flight still in flight.
                 handle.tls = Present(new PassThroughEngine)
                 handle.engineFreeSink = _ => ()
@@ -107,7 +107,7 @@ class IoUringDriverCrossTailMockedTest extends Test:
             withMockedDriver { (drv, stub) =>
                 // Start with tls=Absent so the first write goes through writeRaw, producing a
                 // PendingOp.Write in the driver's pending map and recording rawKey in lastDataKey.
-                val handle = PosixHandle.socket(42, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(42, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                 val rawBytes = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                 val tlsBytes = Array.tabulate[Byte](16)(i => (i + 17).toByte)

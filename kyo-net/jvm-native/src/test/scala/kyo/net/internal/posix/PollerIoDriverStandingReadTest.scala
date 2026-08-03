@@ -130,7 +130,7 @@ class PollerIoDriverStandingReadTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Many small back-to-back messages: each forces a fresh readiness event under EPOLLONESHOT, so each exercises the
                     // rearmSurvivors-clear followed by the standing read's awaitRead re-arm. A lost re-arm strands a message.
                     val count   = 200

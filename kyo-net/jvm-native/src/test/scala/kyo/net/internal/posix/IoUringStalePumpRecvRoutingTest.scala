@@ -76,7 +76,7 @@ class IoUringStalePumpRecvRoutingTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val serverEngine = TlsRealEngines.singleEngine(isServer = true)
                     Sync.ensure(Sync.defer(serverEngine.free())) {
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         // Arm an ORDINARY recv exactly as the plaintext ReadPump's continuation would, BEFORE any upgrade flag is set:
                         // handshakeOwned=false, tls Absent (so submitRecv targets handle.readBuffer, not recvStagingFor), no gate active.
                         val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()

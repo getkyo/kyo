@@ -51,7 +51,7 @@ class PollerIoDriverPeerClosedTest extends Test:
             PosixTestSockets.assumePoller()
             withDriver { driver =>
                 PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                    val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     sendFromPeer(peerFd, 4)
                     // Drain the 4 bytes through the driver: this registers the fd and completes the read, then leaves no read armed (backpressure).
                     PosixTestSockets.drainPeer(driver, handle, driverFd, 4).map { _ =>
@@ -70,7 +70,7 @@ class PollerIoDriverPeerClosedTest extends Test:
             PosixTestSockets.assumePoller()
             withDriver { driver =>
                 PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                    val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     sendFromPeer(peerFd, 4)
                     PosixTestSockets.drainPeer(driver, handle, driverFd, 4).map { _ =>
                         PosixTestSockets.resetPeer(sock, peerFd) // RST with no read armed

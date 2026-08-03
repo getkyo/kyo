@@ -80,7 +80,7 @@ class IoUringTlsEncryptionTest extends Test:
                 withRecordingDriver { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                         val recordingServer = RecordingTlsEngine(serverEngine)
-                        val handle          = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle          = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(recordingServer)
 
                         val plaintext = Array.tabulate[Byte](16)(i => (i + 1).toByte)
@@ -123,7 +123,7 @@ class IoUringTlsEncryptionTest extends Test:
                 withRecordingDriver { (drv, _) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                         val recordingServer = RecordingTlsEngine(serverEngine)
-                        val handle          = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle          = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(recordingServer)
 
                         val plaintext = Array.tabulate[Byte](16)(i => (i + 10).toByte)

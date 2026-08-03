@@ -34,17 +34,25 @@ class WritePumpResumeTest extends Test:
         "backpressured-writer-resumes-on-drain" in {
             // PartialFirstDriver: returns Partial on the first write (half the bytes), Done on the retry.
             // All callbacks are synchronous (inline) so no sleep or latch is needed to observe the retry.
-            val writtenRegions                                       = scala.collection.mutable.ListBuffer[(Span[Byte], Int)]()
-            var capturedPromise: Promise.Unsafe[Unit, Abort[Closed]] = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+            val writtenRegions = scala.collection.mutable.ListBuffer[(Span[Byte], Int)]()
+            var capturedPromise: Promise.Unsafe[Unit, Abort[Closed | NetException]] =
+                null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]]
 
             final class PartialFirstDriver extends IoDriver[Unit]:
                 def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                     Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit =
                     capturedPromise = promise
-                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                    ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
                     writtenRegions += ((data, offset))
                     if writtenRegions.size == 1 then
@@ -119,17 +127,25 @@ class WritePumpResumeTest extends Test:
         "tail-partial-enters-backpressured-and-resumes-on-drain" in {
             // TailPartialFirstDriver: returns TailPartial on the first write (half the bytes), Done on the retry.
             // All callbacks are synchronous (inline) so no sleep or latch is needed to observe the retry.
-            val writtenRegions                                       = scala.collection.mutable.ListBuffer[(Span[Byte], Int)]()
-            var capturedPromise: Promise.Unsafe[Unit, Abort[Closed]] = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+            val writtenRegions = scala.collection.mutable.ListBuffer[(Span[Byte], Int)]()
+            var capturedPromise: Promise.Unsafe[Unit, Abort[Closed | NetException]] =
+                null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]]
 
             final class TailPartialFirstDriver extends IoDriver[Unit]:
                 def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                     Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit =
                     capturedPromise = promise
-                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+                    ()
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
                     writtenRegions += ((data, offset))
                     if writtenRegions.size == 1 then

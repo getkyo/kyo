@@ -76,7 +76,7 @@ class IoUringDriverCorruptRecordTest extends Test:
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the read")
                 withRecordingDriver { (drv, _) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
                         // The driver handle must NOT free the engine on teardown: withEngines owns the single real free. requestClose (fired by
                         // the fatal record) routes the engine free through this sink, so a no-op sink keeps the native session alive for withEngines.
@@ -148,7 +148,7 @@ class IoUringDriverCorruptRecordTest extends Test:
                 val recordingServer = RecordingTlsEngine(serverEngine)
                 withRecordingDriver { (drv, _) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(recordingServer)
 
                         val plaintext  = "application-data-on-the-io_uring-read-path".getBytes("UTF-8")

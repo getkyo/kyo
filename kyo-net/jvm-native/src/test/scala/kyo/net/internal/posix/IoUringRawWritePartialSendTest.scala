@@ -84,8 +84,8 @@ class IoUringRawWritePartialSendTest extends Test:
                 // Shrunk SO_SNDBUF on the driver side forces the kernel to short-send a payload far larger than the send buffer; a conserving
                 // implementation re-flushes the unsent remainder when the send CQE reaps.
                 PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (driverFd, peerFd) =>
-                    val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                     val payload = Array.tabulate[Byte](48 * 1024)(i => (i % 251).toByte)
 

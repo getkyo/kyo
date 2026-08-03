@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 
 /** Reproduction + regression guard (D5): [[IoUringDriver]]'s SQE-based accept path fails the accept promise on ANY
@@ -122,11 +123,11 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
             PosixTestSockets.assumeUring()
             withInjectingDriver { (drv, recording) =>
                 val (serverFd, port) = listenSocket()
-                val listenH          = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val listenH          = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val promise          = Promise.Unsafe.init[Int, Abort[Closed]]()
                 // Arm the one-shot transient errno for the first accept CQE, then arm the accept and drive a connection.
                 recording.armAcceptErrno(PosixConstants.EMFILE)
-                drv.awaitAccept(listenH, promise)
+                drv.awaitAccept(listenH, promise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
                 connectClient(port).map { client1 =>
                     // The first accept CQE reports -EMFILE (injected). The fix re-arms; connect a second client so the
                     // re-armed accept has a real connection to accept. Without the fix, the promise already failed Closed.

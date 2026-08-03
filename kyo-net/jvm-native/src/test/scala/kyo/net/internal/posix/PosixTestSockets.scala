@@ -240,7 +240,7 @@ object PosixTestSockets:
     def drainCollect(driver: IoDriver[PosixHandle], fd: Int, want: Int)(using Frame): List[Byte] < (Abort[Closed] & Async) =
         import AllowUnsafe.embrace.danger
         val sockets = sock
-        val handle  = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent)
+        val handle  = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
         def recvLoop(acc: List[Byte]): List[Byte] =
             val buf = Buffer.alloc[Byte](65536)
             try

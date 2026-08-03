@@ -127,7 +127,7 @@ class IoUringDriverNegativeLengthTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Arm the one-shot prep_recv rejection BEFORE awaitRead, so the recv SQE for this read is refused at the C boundary. The
                     // driver must FAIL the read promise observably (Closed) instead of dropping the SQE silently (which would leave the promise
                     // waiting on a CQE that never arrives, a hang). The 5s ceiling exists only to turn a regression (hang) into a failed test.

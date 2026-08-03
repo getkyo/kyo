@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
@@ -36,7 +37,7 @@ class RearmSurvivorsTest extends Test:
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             discard(driver.start())
 
             fillSendBuffer(acceptedFd)
@@ -45,7 +46,7 @@ class RearmSurvivorsTest extends Test:
             val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, readPromise)
             // Arm write too: under one-shot this would require a survivor re-arm after the read fires; under ET it must not.
-            val writePromise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            val writePromise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitWritable(handle, writePromise)
 
             // Wait for the read promise to complete (the driver dispatched the EOF read event). Then inspect the call log.
@@ -82,11 +83,11 @@ class RearmSurvivorsTest extends Test:
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
             discard(driver.start())
 
             // Register write-interest; the socket is already writable (connected), so the event fires quickly.
-            val writePromise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            val writePromise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitWritable(handle, writePromise)
 
             writePromise.safe.get.map { _ =>

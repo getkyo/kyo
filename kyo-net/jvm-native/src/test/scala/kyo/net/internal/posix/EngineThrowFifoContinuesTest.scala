@@ -162,7 +162,7 @@ class EngineThrowFifoContinuesTest extends Test:
 
                 // A minimal handle to satisfy feedAndDecrypt's parameter: feedCiphertext throws
                 // immediately so no handle fields are accessed beyond the engine call.
-                val handle = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
+                val handle = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal)
 
                 // Op 1: calls feedAndDecrypt on the throwing engine; the inner catch handles the throw
                 // and returns normally so the outer drainEngineOps catch does NOT fire.

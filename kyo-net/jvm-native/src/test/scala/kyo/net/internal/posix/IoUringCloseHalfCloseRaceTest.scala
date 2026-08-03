@@ -74,7 +74,7 @@ class IoUringCloseHalfCloseRaceTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     // Arm a real in-flight recv: nothing is ever sent on `client`, so this recv would block forever on its own -- the
                     // ONLY thing that can complete it is the close path's self-induced SHUT_RD below.
