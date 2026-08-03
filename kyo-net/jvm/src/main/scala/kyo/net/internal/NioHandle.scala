@@ -40,9 +40,6 @@ final private[kyo] class NioHandle private (
     // Peer-close reclaim grace for this connection's ReadPump (kyo.net.NetConfig.peerCloseGrace), set from config at adoption. One handle
     // spans a STARTTLS upgrade, so the upgraded connection inherits it.
     val peerCloseGrace: Duration,
-    // The user's transport.connect/listen call frame, captured at the public entry point and threaded here explicitly (never an implicit,
-    // which would capture whatever ambient Frame is in scope at a creation site). Used as the `createdAt` of every per-connection Closed /
-    // NetConnectionIoException this handle's failures produce, so a failure names where the user created the connection.
     val createdAt: Frame
 ):
     import AllowUnsafe.embrace.danger
@@ -131,9 +128,7 @@ private[kyo] object NioHandle:
         case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], frame: Frame)
     end UpgradeHandoff
 
-    /** Create a plain-TCP handle with an allocated direct read buffer. `createdAt` is the user's connect/listen call frame (explicit, not
-      * implicit: several creation sites run under `given Frame = Frame.internal`, so an implicit would capture the wrong frame).
-      */
+    /** Create a plain-TCP handle with an allocated direct read buffer. */
     def init(channel: SocketChannel, bufferSize: Int, peerCloseGrace: Duration, createdAt: Frame)(using AllowUnsafe): NioHandle =
         new NioHandle(channel, bufferSize, Absent, peerCloseGrace, createdAt)
     end init

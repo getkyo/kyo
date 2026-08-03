@@ -205,13 +205,16 @@ final private[net] class PosixTransport private[posix] (
       * `Closed` (the CAS fails) so fd 0/1 are never double-owned. The connection closes its driver registration on scope exit but never closes
       * fds 0/1 (the process owns them).
       */
-    override def stdio(channelCapacity: Int, readChunkSize: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+    override def stdio(channelCapacity: Int, readChunkSize: Int)(using
+        allow: AllowUnsafe,
+        frame: Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] =
         if !stdioClaimed.compareAndSet(false, true) then
             // Exactly one stdio per process (no double-ownership of fd 0/1).
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else
             Fiber.Unsafe.init {
-                val handle           = PosixHandle.stdio(readChunkSize)
+                val handle           = PosixHandle.stdio(readChunkSize, frame)
                 val conn: Connection = openWith(handle, selectDriver(handle.readFd), channelCapacity)
                 if !conn.start() then
                     // Unreachable: openWith (:211-217) registers the connection nowhere a concurrent close could reach before start() runs
@@ -430,7 +433,7 @@ final private[net] class PosixTransport private[posix] (
         promise: IOPromise[NetException, Connection],
         connectTimeout: Duration,
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         encoded match
             case Absent =>
                 promise.completeDiscard(Result.fail(connectFail(host, port, "")))
@@ -448,7 +451,7 @@ final private[net] class PosixTransport private[posix] (
                     val driver = pool.next()
                     // The handle carries the caller's read size for the rest of its life (PosixHandle.readBufferSize), so every later read on
                     // this connection uses it without the config having to be reachable from the handle.
-                    val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)))
+                    val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)), createdAt = frame)
                     handle.peerCloseGrace = config.peerCloseGrace
                     handle.driver = driver
                     // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
@@ -951,7 +954,7 @@ final private[net] class PosixTransport private[posix] (
         tls: Maybe[NetTlsConfig],
         promise: IOPromise[NetException, NetListener],
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         encoded match
             case Absent =>
                 promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
@@ -980,7 +983,16 @@ final private[net] class PosixTransport private[posix] (
                                         val resolved = resolvePort(fd, family)
                                         (resolved, NetAddress.Tcp(host, resolved))
                                 val listener =
-                                    new PosixListener(fd, actualPort, host, address, sockets, listeners, AtomicBoolean.Unsafe.init(false))
+                                    new PosixListener(
+                                        fd,
+                                        actualPort,
+                                        host,
+                                        address,
+                                        frame,
+                                        sockets,
+                                        listeners,
+                                        AtomicBoolean.Unsafe.init(false)
+                                    )
                                 discard(listeners.add(listener))
                                 // Flip fd non-blocking BEFORE arming the poller (atomic with awaitAccept arming; no busy-spin window).
                                 if shim.kyo_posix_set_nonblocking(fd) != 0 then
@@ -1012,7 +1024,7 @@ final private[net] class PosixTransport private[posix] (
     )(using AllowUnsafe, Frame): Unit =
         discard(acceptLoopsActive.incrementAndGet())
         val driver = pool.next()
-        val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent)
+        val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
 
         // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
         // for the driver's model. On the readiness drivers `closeListener` cancels synchronously (clearing the fd-keyed pendingAccepts /
@@ -1132,7 +1144,7 @@ final private[net] class PosixTransport private[posix] (
         if !prepareClientSocket(clientFd, nodelay = true, config) then closeRawFd(clientFd)
         else
             val driver = pool.next()
-            val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent)
+            val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
             handle.peerCloseGrace = config.peerCloseGrace
             handle.driver = driver
             tls match
@@ -2500,6 +2512,7 @@ final private[net] class PosixListener(
     val port: Int,
     val host: String,
     val address: NetAddress,
+    val createdAt: Frame,
     private val sockets: SocketBindings,
     private val registry: java.util.Set[PosixListener],
     // CAS-guarded close flag: close() flips it so a second close() is a no-op (idempotent listener teardown).

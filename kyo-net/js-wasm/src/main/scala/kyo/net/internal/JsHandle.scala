@@ -95,7 +95,6 @@ private[kyo] object JsHandle:
                 handle.pendingRead match
                     case Present(pending) =>
                         handle.clearPendingRead()
-                        // Class 1: a socket error on THIS connection, not the driver. Name the connection, carry its creation frame.
                         pending.completeDiscard(Result.fail(Closed(s"connection socket#${handle.id}", handle.createdAt, "socket error")))
                     case Absent => ()
             }: js.Function1[js.Dynamic, Unit]

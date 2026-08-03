@@ -64,8 +64,6 @@ final private[net] class PosixHandle private (
     // wins a `compareAndSet(Present(arr), Absent)` on this slot is the sole feeder for that chunk; the loser sees the winner's `Absent` and
     // skips.
     val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]],
-    // The user's transport.connect/listen call frame, captured at the public entry and threaded here explicitly (never implicit: several
-    // creation sites run under `given Frame = Frame.internal`). Used as the `createdAt` of this handle's per-connection failures.
     val createdAt: Frame
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
