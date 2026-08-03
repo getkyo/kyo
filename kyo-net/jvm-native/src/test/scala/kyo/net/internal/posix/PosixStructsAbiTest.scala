@@ -72,6 +72,8 @@ class PosixStructsAbiTest extends Test:
         // decoded mode masks to S_IFREG, which holds only when modeOffset matches the host's struct stat. A wrong offset lands on an adjacent
         // field (st_uid / st_nlink) whose value does not mask to S_IFREG, which is exactly the aarch64 misclassification this guards against.
         "PosixStat.stMode reads S_IFREG from a real fstat'd regular file (arch-aware st_mode offset)" in {
+            if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
+                cancel("fstat round-trips through the POSIX SocketBindings, whose symbols are absent from the Windows CRT")
             val sockets     = Ffi.load[SocketBindings]
             val (tempFd, _) = PosixTestSockets.tempFileFd(Array.empty[Byte])
             val stat        = Buffer.alloc[Byte](PosixConstants.statSize)

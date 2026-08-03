@@ -757,12 +757,12 @@ class HtmlRendererTest extends UITest:
     }
 
     "ImgSrc.Absolute renders full URL" in {
-        withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("https://example.com/logo.png").getOrThrow), "logo").id("i"))) {
+        withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("https://a.test/logo.png").getOrThrow), "logo").id("i"))) {
             Browser.assertAttributeSatisfies(
                 Selector.id("i"),
                 "src",
                 "ignore"
-            )(s => s.contains("example.com") && s.contains("logo.png")).unit
+            )(s => s.contains("a.test") && s.contains("logo.png")).unit
         }
     }
 

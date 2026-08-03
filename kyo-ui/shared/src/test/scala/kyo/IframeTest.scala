@@ -13,8 +13,8 @@ class IframeTest extends UITest:
     }
 
     "iframe src attribute" in {
-        withUI(UI.div(UI.iframe("https://example.com/page").id("f"))) {
-            Browser.assertAttributeSatisfies(Selector.id("f"), "src", "ignore")(_.contains("example.com/page")).unit
+        withUI(UI.div(UI.iframe("https://a.test/page").id("f"))) {
+            Browser.assertAttributeSatisfies(Selector.id("f"), "src", "ignore")(_.contains("a.test/page")).unit
         }
     }
 
