@@ -48,6 +48,11 @@ object CompatPlugin extends AutoPlugin {
         type CompatBackendAxis      = _root_.io.getkyo.compat.CompatBackendAxis
         type NoSuchBackendException = _root_.io.getkyo.compat.NoSuchBackendException
 
+        // Re-export the companion as a term too, so `CompatBackendAxis.external(...)`
+        // (and the bare `CompatBackendAxis(...)` apply) resolve in a build.sbt that
+        // declares an externally-published backend without a `_root_.io.getkyo.compat.*` import.
+        val CompatBackendAxis = _root_.io.getkyo.compat.CompatBackendAxis
+
         // Backend axis instances. The `Lib` suffix avoids collisions with
         // `scala.concurrent.Future` and the `kyo` package object.
         val FutureLib: CompatBackendAxis =
@@ -116,6 +121,22 @@ object CompatPlugin extends AutoPlugin {
             /** Convenience for binding multiple backends in one call. */
             def bindAllLocally(locals: Map[CompatBackendAxis, ProjectReference]): ProjectMatrix = {
                 locals.foreach { case (b, local) => CompatLibrary.updateBinding(m.id, b, local) }
+                m
+            }
+
+            /** Wire the kyo-compat cross-binding conformance suite into every generated row's Test scope. The suite (the same
+              * `kyo-compat/test` + `kyo-compat/test-streams` sources the built-in bindings pass) is bundled in this plugin's jar; each row
+              * extracts the sources for its platform into `Test / sourceManaged`, and scalatest plus `-Xmax-inlines` are added. This lets a
+              * binding, in particular one published outside the kyo repo, prove it satisfies the same contract as the built-in bindings.
+              *
+              * Must be called BEFORE first access to the matrix's `componentProjects` / `projectRefs` (like `bindLocally` and the
+              * per-platform settings, it is re-read at row-materialization time).
+              *
+              * @param scalatestVersion
+              *   scalatest version to add to each row's Test scope; defaults to the version the bundled suite is written against.
+              */
+            def compatConformance(scalatestVersion: String = "3.2.20"): ProjectMatrix = {
+                CompatLibrary.enableConformance(m.id, scalatestVersion)
                 m
             }
 
