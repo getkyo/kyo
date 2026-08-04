@@ -405,7 +405,8 @@ object Path extends PathPlatformSpecific:
           *
           * The byte-level primitive under [[tail]]: it polls for new content and does no text decoding or line splitting. On end of file
           * it sleeps `pollDelay` and retries; if the file has shrunk below the current position it rewinds to offset 0 and replays the
-          * file from there.
+          * file from there. The rewind sleeps one `pollDelay` of its own before replaying, so a caller timing a replay sees one poll
+          * interval between the shrink and the first replayed byte.
           *
           * That rewind carries no marker: the first byte replayed after a truncation is indistinguishable from an ordinary appended byte.
           * A consumer that carries state across chunks, such as a framer holding a partial record, will therefore splice that stale
