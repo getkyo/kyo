@@ -131,6 +131,52 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
     }
 
+    "read" - {
+
+        "reads a jsonl file into values" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-read")
+                file = dir / "events.jsonl"
+                _      <- file.write("{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n")
+                values <- Scope.run(Jsonl.read[Event](file).run)
+                _      <- dir.removeAll
+            yield assert(values == Chunk(Event("a", 1), Event("b", 2)))
+        }
+
+        "reads an empty file as no values" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-read")
+                file = dir / "empty.jsonl"
+                _      <- file.write("")
+                values <- Scope.run(Jsonl.read[Event](file).run)
+                _      <- dir.removeAll
+            yield assert(values == Chunk.empty)
+        }
+
+        "reads a file whose final record has no trailing newline" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-read")
+                file = dir / "unterminated.jsonl"
+                _      <- file.write("{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}")
+                values <- Scope.run(Jsonl.read[Event](file).run)
+                _      <- dir.removeAll
+            yield assert(values == Chunk(Event("a", 1), Event("b", 2)))
+        }
+
+        "readResults survives a bad record" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-read")
+                file = dir / "mixed.jsonl"
+                _  <- file.write("{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n")
+                rs <- Scope.run(Jsonl.readResults[Event](file).run)
+                _  <- dir.removeAll
+            yield
+                assert(rs.size == 3)
+                assert(rs(1).isFailure)
+                assert(rs(2).getOrThrow == Event("c", 3))
+        }
+    }
+
     "pipeResults" - {
 
         "keeps going past a bad record" in {
