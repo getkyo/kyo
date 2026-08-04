@@ -26,6 +26,13 @@ object Json:
 
     given Json = Json()
 
+    /** Line-delimited JSON (JSONL, also called NDJSON) support: one JSON value per line.
+      *
+      * Alias for [[kyo.JsonLines]], whose body lives in its own file. Reach it as `Json.Lines.Framer`,
+      * `Json.Lines.Record`, and `Json.Lines.DefaultMaxLineBytes`.
+      */
+    export kyo.JsonLines as Lines
+
     /** Encodes a value of type A to a JSON string.
       *
       * @param value
