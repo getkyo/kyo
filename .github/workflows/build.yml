@@ -99,8 +99,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           # github.sha, not github.ref: a queued job must validate the commit that triggered the
-          # run, not whatever the branch tip is when the job starts. The concurrency group in
-          # ci.yml keys main pushes on the sha for the same reason.
+          # run, not whatever the branch tip is when the job starts.
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
 
