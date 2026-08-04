@@ -151,6 +151,8 @@ Following tracks the open file and not the name, which is what `tail -f` does an
 - **Deletion.** No further records, and no abort. An unlinked file that is still open keeps its content and can still be measured, so the stream waits, indefinitely, for bytes that can no longer arrive.
 - **Truncation in place.** The file is the same file, so the follower rewinds to byte 0 and replays it, rebuilding the framer at the rewind. A record left half written when the truncation happened is dropped with the rest of the old content and is never spliced onto the first replayed record. That holds wherever the cut fell, so a log rotated in place replays as a clean read of its new content. This is a replay, not an error: a consumer will see records it has already seen.
 
+The first two describe POSIX descriptor behavior. Windows keeps the directory entry alive until the last handle closes and refuses to rename or unlink an open file for some open modes, so the rename and delete outcomes are undefined there. Truncation in place is unaffected, and so is everything else in this README: the platform caveat is about what the operating system permits a third party to do to the name, not about which platforms this module runs on.
+
 ### Reading and following differ on the last record
 
 Both surfaces frame the same bytes with the same framer, and they disagree about exactly one record: the last one, when it has no trailing newline.
@@ -248,7 +250,7 @@ Three parameters bound what a decode can cost, and two of them look interchangea
 val capped = Jsonl.read[LogEvent](logFile, maxLineBytes = 64 * 1024)
 ```
 
-The limit counts the record's own bytes, the ones a decoder sees, and never the line terminator: a `'\n'` and any `'\r'` immediately before it are excluded. A `\r\n`-terminated line therefore occupies one more byte on the wire than the limit allows for its record. A pending partial record is measured the same way, so a record is accepted or rejected identically whether its terminator arrived in the same chunk or a later one.
+The limit counts the record's own bytes, the ones a decoder sees, and never the line terminator: a `'\n'` and any `'\r'` immediately before it are excluded. A maximum-size record therefore occupies `maxLineBytes + 1` bytes on the wire when it ends in `\n`, and `maxLineBytes + 2` when it ends in `\r\n`. A pending partial record is measured the same way, so a record is accepted or rejected identically whether its terminator arrived in the same chunk or a later one.
 
 > **Caution:** a strict `maxLineBytes` breach aborts with a bare `LimitExceededException`, not a `RecordDecodeException`. No record was framed, so there is no record to attribute it to. Both are `DecodeException`, so the effect row does not distinguish them, and a handler that matches only on `RecordDecodeException` will miss the framing breach entirely. Match on `DecodeException`, or on both.
 
