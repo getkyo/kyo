@@ -26,6 +26,11 @@ object JsonLines:
       *
       * A byte stream that contains no newline would otherwise grow the framer's residual without bound. The `maxDepth` and
       * `maxCollectionSize` limits operate inside a single document and do not cover this.
+      *
+      * The limit counts the record's own bytes, the ones a decoder will see, and never the line terminator: a `'\n'` and any `'\r'`
+      * immediately before it are excluded. A `\r\n`-terminated line therefore holds one more byte on the wire than the limit allows for
+      * its record. A pending residual is measured the same way, so a record is accepted or rejected identically whether its terminator
+      * arrived in the same chunk or a later one.
       */
     val DefaultMaxLineBytes: Int = 16 * 1024 * 1024
 
@@ -48,6 +53,9 @@ object JsonLines:
       * `index` counts only records that were emitted, so blank and whitespace-only lines do not consume an index. `byteOffset` counts
       * every byte of the overall input, including skipped blank lines and a leading byte order mark, so it addresses the record in the
       * original source.
+      *
+      * Do not compare two records with `==`. `Span` is an opaque array with no structural equality, so the derived `equals` compares
+      * `bytes` by reference and two records holding identical content never match. Compare [[text]] or `bytes.is(other.bytes)` instead.
       *
       * @param bytes
       *   the record's UTF-8 bytes, with any line terminator removed
@@ -120,7 +128,7 @@ object JsonLines:
           */
         def finish: Maybe[Record] =
             val trimmed = stripReturn(residual)
-            if isBlank(trimmed) then Absent
+            if isBlank(trimmed, 0, trimmed.size) then Absent
             else Present(Record(trimmed, nextIndex, residualOffset))
         end finish
 
@@ -135,36 +143,62 @@ object JsonLines:
         end startsWithBomPrefix
 
         private def scan(buf: Span[Byte], offset: Long)(using Frame): Result[LimitExceededException, (Framer, Chunk[Record])] =
-            emitFrom(buf, offset, nextIndex, Chunk.empty).flatMap { case (rest, restOffset, index, records) =>
-                if rest.size > maxLineBytes then
+            emitFrom(buf, 0, offset, nextIndex, Chunk.empty).flatMap { case (start, restOffset, index, records) =>
+                // The residual is measured by the same rule a completed record is: a trailing '\r' is the
+                // first half of a terminator that has not arrived yet, so it does not count toward the limit.
+                val restSize = buf.size - start
+                val restLine =
+                    if restSize > 0 && buf(buf.size - 1) == Return then restSize - 1
+                    else restSize
+                if restLine > maxLineBytes then
                     Result.fail[LimitExceededException, (Framer, Chunk[Record])](
-                        LimitExceededException(LimitName, rest.size, maxLineBytes)
+                        LimitExceededException(LimitName, restLine, maxLineBytes)
                     )
                 else
+                    val rest = if start == 0 then buf else buf.slice(start, buf.size)
                     Result.succeed[LimitExceededException, (Framer, Chunk[Record])](
                         (Framer(rest, index, restOffset, maxLineBytes, false), records)
                     )
+                end if
             }
         end scan
 
+        /** Walks `buf` from `start`, emitting one record per newline.
+          *
+          * Carries `start` as an index rather than re-slicing the tail after each record: `Span.slice` copies, so slicing per record
+          * would make framing a chunk of k records cost O(chunk size * k). Only an emitted record copies, which keeps the total cost
+          * linear in the chunk with allocation proportional to the output.
+          *
+          * `offset` is the overall-input offset of `buf(start)`, and the returned `Int` is the index where the unterminated residual
+          * begins.
+          */
         @tailrec
         private def emitFrom(
             buf: Span[Byte],
+            start: Int,
             offset: Long,
             index: Long,
             acc: Chunk[Record]
-        )(using Frame): Result[LimitExceededException, (Span[Byte], Long, Long, Chunk[Record])] =
-            indexOfNewline(buf) match
-                case -1 => Result.succeed((buf, offset, index, acc))
+        )(using Frame): Result[LimitExceededException, (Int, Long, Long, Chunk[Record])] =
+            indexOfNewline(buf, start) match
+                case -1 => Result.succeed((start, offset, index, acc))
                 case nl =>
-                    val line = stripReturn(buf.slice(0, nl))
-                    if line.size > maxLineBytes then
-                        Result.fail(LimitExceededException(LimitName, line.size, maxLineBytes))
+                    val lineEnd  = if nl > start && buf(nl - 1) == Return then nl - 1 else nl
+                    val lineSize = lineEnd - start
+                    if lineSize > maxLineBytes then
+                        Result.fail(LimitExceededException(LimitName, lineSize, maxLineBytes))
                     else
-                        val rest       = buf.slice(nl + 1, buf.size)
-                        val restOffset = offset + nl + 1
-                        if isBlank(line) then emitFrom(rest, restOffset, index, acc)
-                        else emitFrom(rest, restOffset, index + 1, acc :+ Record(line, index, offset))
+                        val restOffset = offset + (nl + 1 - start)
+                        if isBlank(buf, start, lineEnd) then emitFrom(buf, nl + 1, restOffset, index, acc)
+                        else
+                            emitFrom(
+                                buf,
+                                nl + 1,
+                                restOffset,
+                                index + 1,
+                                acc :+ Record(buf.slice(start, lineEnd), index, offset)
+                            )
+                        end if
                     end if
             end match
         end emitFrom
@@ -182,12 +216,13 @@ object JsonLines:
             Framer(Span.empty[Byte], 0L, 0L, maxLineBytes, true)
     end Framer
 
-    private def indexOfNewline(buf: Span[Byte]): Int =
-        var i     = 0
+    private def indexOfNewline(buf: Span[Byte], from: Int): Int =
+        var i     = from
         var found = -1
         while found < 0 && i < buf.size do
             if buf(i) == Newline then found = i
             i += 1
+        end while
         found
     end indexOfNewline
 
@@ -195,11 +230,11 @@ object JsonLines:
         if line.nonEmpty && line(line.size - 1) == Return then line.slice(0, line.size - 1)
         else line
 
-    private def isBlank(line: Span[Byte]): Boolean =
-        var i     = 0
+    private def isBlank(buf: Span[Byte], from: Int, until: Int): Boolean =
+        var i     = from
         var blank = true
-        while blank && i < line.size do
-            val b = line(i)
+        while blank && i < until do
+            val b = buf(i)
             if b != Space && b != Tab && b != Return then blank = false
             i += 1
         end while
