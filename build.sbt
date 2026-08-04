@@ -3262,7 +3262,38 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
                 Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
             else
                 Def.task((scripted.toTask("")).value)
-        }).value
+        }).value,
+        // Bundle the cross-binding conformance suite (kyo-compat/test + test-streams)
+        // into the plugin jar as resources, plus an INDEX, so an external binding can
+        // pull it in via `.compatConformance`. Copied verbatim from the canonical suite
+        // the in-repo bindings compile against, so the bundle stays byte-identical.
+        Compile / resourceGenerators += Def.task {
+            val outDir  = (Compile / resourceManaged).value / "kyo-compat-testkit"
+            val suites  = Seq("test" -> "test", "test-streams" -> "streams")
+            val buckets = Seq("shared", "jvm", "js", "native")
+            val base    = (ThisBuild / baseDirectory).value / "kyo-compat"
+            IO.delete(outDir)
+            val index     = scala.collection.mutable.ArrayBuffer.empty[String]
+            val generated = scala.collection.mutable.ArrayBuffer.empty[File]
+            for {
+                (suiteDir, suiteTag) <- suites
+                bucket               <- buckets
+                root = base / suiteDir / bucket / "src" / "test" / "scala"
+                if root.exists
+                src <- (root ** "*.scala").get
+            } {
+                val rel   = root.toPath.relativize(src.toPath).toString.replace('\\', '/')
+                val scope = s"$suiteTag-$bucket"
+                val dest  = outDir / scope / rel
+                IO.copyFile(src, dest)
+                index += s"$scope\t$rel"
+                generated += dest
+            }
+            val indexFile = outDir / "INDEX"
+            IO.write(indexFile, index.sorted.mkString("\n") + "\n")
+            generated += indexFile
+            generated.toSeq
+        }.taskValue
     )
 
 // ===========================================================================

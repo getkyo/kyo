@@ -435,8 +435,8 @@ Constructors and terminals not in the surface compose from what is:
 ### Known divergences (kyo binding)
 
 Three tests in `CStreamTest` are marked `pending` because they expose limitations
-of `kyo.Stream` that the other five bindings (zio, ce, ox, twitter-future, future)
-don't have. They are kept in the suite as the cross-binding contract; removing the
+of `kyo.Stream` that the other backends (future, zio, ox, twitter-future) don't
+have. They are kept in the suite as the cross-binding contract; removing the
 `pending` markers once `kyo.Stream` is fixed will turn them green on every binding.
 
 - **Chunked-eager effectful map.** `kyo.Stream.map(f: A => B < S)` applies `f` eagerly
@@ -666,3 +666,79 @@ lazy val myLibAll = myLib.aggregate("my-lib-all")
 ```
 
 The aggregator sets `publish / skip := true`, so it never lands in maven local itself.
+
+## External bindings
+
+The five backends above live in this repo. A backend can also be maintained and published from a separate repository. Nothing here needs to change to consume it: a binding depends only on its target runtime (no other kyo module), and the plugin resolves each backend by its own Maven coordinates.
+
+The examples below use a fictitious library, `acme`, as a stand-in for the runtime you are integrating: substitute its name, coordinates, and dependency for the real ones.
+
+### Using an external binding
+
+Declare the backend with `CompatBackendAxis.external(...)`, giving its published coordinates, and pass it to `.compatLibrary(...)` alongside the built-in backends:
+
+```scala doctest:expect=skipped
+// build.sbt
+import sbt.VirtualAxis
+
+val AcmeLib = CompatBackendAxis.external(
+    name = "acme",
+    idSuffix = "Acme",
+    directorySuffix = "-acme",
+    supportedPlatforms = Set("jvm", "js"),
+    organization = "com.acme",
+    artifactName = "kyo-compat-acme",
+    version = "0.1.0"
+)
+
+lazy val myLib = (projectMatrix in file("my-lib"))
+    .compatLibrary(KyoLib, ZioLib, AcmeLib)(VirtualAxis.jvm, VirtualAxis.js)(Seq("3.3.4"))
+```
+
+Each generated `acme` row pulls `com.acme:kyo-compat-acme:0.1.0` (with the platform suffix `%%%` adds) instead of an `io.getkyo` artifact; the built-in backends are unaffected. The backend `name` must not collide with a built-in (`future`, `kyo`, `zio`, `ox`, `twitter-future`): equality and matrix de-duplication are by `name`. External backends have no named accessor (`.kyo`, `.zio`, ...), so reach their rows with `myLib.get(AcmeLib)` (returns `Option[CompatBackendProjects]`) rather than a dotted accessor.
+
+### Vendoring a binding
+
+To keep the binding as a project in your own build instead of consuming a published artifact, declare it with `CompatBackendAxis.local(...)` (no coordinates) and route the backend to your project with `bindLocally`:
+
+```scala doctest:expect=skipped
+// A local binding module in your build (see "Setting up an external binding" for its shape).
+lazy val vendoredAcme = (crossProject(JVMPlatform) in file("kyo-compat-acme"))
+    .settings(libraryDependencies += "com.acme" %%% "acme-runtime" % "1.0.0")
+
+val AcmeLib = CompatBackendAxis.local("acme", "Acme", "-acme", Set("jvm"))
+
+lazy val myLib = (projectMatrix in file("my-lib"))
+    .compatLibrary(KyoLib, AcmeLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .bindLocally(AcmeLib, vendoredAcme.jvm) // the acme row dependsOn vendoredAcme; nothing is resolved from Maven
+```
+
+A `local` backend carries no coordinates and must be bound; an unbound one fails at build load with a clear error. `bindLocally` also works on an `external` backend (it overrides the published coordinate with the local project), so you can move between vendoring and a published artifact without touching your library source.
+
+### Setting up an external binding
+
+A binding provides the whole `kyo.compat.*` surface for one runtime. To author one:
+
+1. **Implement the surface.** In `package kyo.compat`, define `CIO` as an `opaque type` aliasing the runtime's effect (see [Backends](#backends) for each built-in's carrier) and implement every `C*` handle (`CFiber`, `CPromise`, `CChannel`, `CStream`, the atomics, `CLatch`, `CMeter`, `CLocal`) plus the `CIO` combinators. Each operation is an `inline def` that lowers to the runtime's primitive. Depend only on the target runtime.
+2. **Cross-publish per platform.** Publish one artifact per platform in `supportedPlatforms`, with the suffixes `%%%` resolves (`_sjs1` for Scala.js, `_native0.5` for Native). The coordinates you publish are exactly what consumers pass to `CompatBackendAxis.external(...)`.
+3. **Validate against the shared contract.** `.compatConformance()` wires the cross-binding conformance suite (bundled inside `kyo-compat-plugin`) into every generated row's Test scope: the suite sources are extracted into `Test / sourceManaged` and scalatest plus `-Xmax-inlines` are added, so the suite compiles against your binding and runs. Point the backend at your in-development binding with `bindLocally` so the harness compiles against local sources rather than a published artifact. The harness declares the backend with `local` (not `external`) because the binding is not published yet; see [Vendoring a binding](#vendoring-a-binding):
+
+```scala doctest:expect=skipped
+// The binding artifact (implements kyo.compat.* for the target runtime), depending
+// only on that runtime.
+lazy val myBackend = (crossProject(JVMPlatform) in file("kyo-compat-acme"))
+    .settings(libraryDependencies += "com.acme" %%% "acme-runtime" % "1.0.0")
+
+val AcmeLib = CompatBackendAxis.local("acme", "Acme", "-acme", Set("jvm"))
+
+// Conformance harness: the acme backend bound to the local binding, suite wired in.
+lazy val acmeConformance = (projectMatrix in file(".conformance"))
+    .compatLibrary(AcmeLib)(VirtualAxis.jvm)(Seq("3.3.4"))
+    .bindLocally(AcmeLib, myBackend.jvm)
+    .compatConformance()
+    .settings(publish / skip := true)
+
+// sbt acmeConformanceAcme/test  -> compiles the shared suite against the local binding and runs it
+```
+
+`.compatConformance(scalatestVersion)` takes the scalatest version to use (default matches the version the bundled suite is written against). The suite is the same one the built-in bindings pass; any test it exercises that a runtime genuinely cannot satisfy is the place to reconcile the binding with the surface's contract.

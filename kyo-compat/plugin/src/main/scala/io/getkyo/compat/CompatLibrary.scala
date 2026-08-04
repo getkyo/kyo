@@ -15,7 +15,7 @@ import sbtprojectmatrix.ReflectionUtil
   * carries its backend identity, then add a per-row `process` callback that injects:
   *
   *   - `moduleName := name.value + backend.directorySuffix`
-  *   - `libraryDependencies += "io.getkyo" %%% s"kyo-compat-<id>" % compatKyoVersion.value` (suppressed when the backend is locally bound)
+  *   - `libraryDependencies +=` the backend's artifact coordinates (`organization %%% artifactName % version`, defaulting to `io.getkyo %%% s"kyo-compat-<name>" % compatKyoVersion.value`; suppressed when the backend is locally bound)
   *   - shared/per-backend `unmanagedSourceDirectories`
   *
   * `dependsOn(other: ProjectMatrix)` between two compat libraries works out-of-the-box — `WeakAxis` semantics on [[CompatBackendAxis]]
@@ -40,7 +40,8 @@ private[compat] object CompatLibrary {
         bindings: Map[String, ProjectReference], // backend.name -> local project ref
         jvmExtras: Seq[Setting[?]] = Nil,
         jsExtras: Seq[Setting[?]] = Nil,
-        nativeExtras: Seq[Setting[?]] = Nil
+        nativeExtras: Seq[Setting[?]] = Nil,
+        conformance: Option[String] = None // Some(scalatestVersion) when .compatConformance is enabled
     )
 
     private val registry: scala.collection.mutable.Map[String, Meta] =
@@ -61,6 +62,15 @@ private[compat] object CompatLibrary {
                 sys.error(s"compatLibrary: matrix '$id' was not registered before bindLocally")
             )
             registry(id) = cur.copy(bindings = cur.bindings + (backend.name -> local))
+        }
+
+    def enableConformance(id: String, scalatestVersion: String): Unit =
+        registry.synchronized {
+            val cur = registry.getOrElse(
+                id,
+                sys.error(s"compatLibrary: matrix '$id' was not registered before compatConformance")
+            )
+            registry(id) = cur.copy(conformance = Some(scalatestVersion))
         }
 
     /** Append per-platform extra settings to the matrix's Meta entry. The extras are read at row-materialization time by `addRows`'s
@@ -169,6 +179,14 @@ private[compat] object CompatLibrary {
             }
 
             val process: Project => Project = (proj: Project) => {
+                // A backend declared with CompatBackendAxis.local carries no coordinates and must be
+                // bound to a vendored project. Fail clearly here (re-read at materialization, so a
+                // bindLocally placed after compatLibrary is seen) rather than later on a Maven miss.
+                if (backend.local && !metaOf(matrixId).exists(_.bindings.contains(backend.name)))
+                    sys.error(
+                        s"compatLibrary: backend '${backend.name}' was declared with CompatBackendAxis.local " +
+                            "but not bound; add .bindLocally(<axis>, <project>) for it."
+                    )
                 val withPlugin = enablePlatformPlugin(proj)
                 val withDeps = withPlugin.settings(
                     moduleName := name.value + backend.directorySuffix,
@@ -197,8 +215,8 @@ private[compat] object CompatLibrary {
                         val isBound = metaOf(matrixId).exists(_.bindings.contains(backend.name))
                         if (isBound) Seq.empty
                         else Seq(
-                            "io.getkyo" %%% s"kyo-compat-${backend.name}" %
-                                CompatPlugin.autoImport.compatKyoVersion.value
+                            backend.organization %%% backend.resolvedArtifactName %
+                                backend.version.getOrElse(CompatPlugin.autoImport.compatKyoVersion.value)
                         )
                     }
                 )
@@ -212,7 +230,8 @@ private[compat] object CompatLibrary {
                 // customRow process closures run). Re-read at materialization
                 // time so `.jvmSettings(...)` calls placed AFTER
                 // `.compatLibrary(...)` are picked up.
-                val platformExtras: Seq[Setting[?]] = metaOf(matrixId).map { meta =>
+                val currentMeta = metaOf(matrixId)
+                val platformExtras: Seq[Setting[?]] = currentMeta.map { meta =>
                     platform match {
                         case VirtualAxis.jvm    => meta.jvmExtras
                         case VirtualAxis.js     => meta.jsExtras
@@ -220,8 +239,17 @@ private[compat] object CompatLibrary {
                         case _                  => Nil
                     }
                 }.getOrElse(Nil)
-                if (platformExtras.isEmpty) withLocal
-                else withLocal.settings(platformExtras: _*)
+                // Conformance suite wiring, re-read at materialization time so a
+                // `.compatConformance(...)` call placed AFTER `.compatLibrary(...)` is
+                // picked up (same pattern as bindLocally and the per-platform extras).
+                val conformanceExtras: Seq[Setting[?]] =
+                    currentMeta.flatMap(_.conformance) match {
+                        case Some(scalatestVersion) => conformanceSettings(platform.value, scalatestVersion)
+                        case None                   => Nil
+                    }
+                val extras = platformExtras ++ conformanceExtras
+                if (extras.isEmpty) withLocal
+                else withLocal.settings(extras: _*)
             }
 
             // Add one row per scala version, tagging the row with a
@@ -237,6 +265,22 @@ private[compat] object CompatLibrary {
             }
         }
     }
+
+    /** Test-scope settings that wire the plugin-bundled conformance suite into one generated row: extract the suite for `platformValue`
+      * (the `shared` buckets plus this platform's bucket) into `Test / sourceManaged`, add scalatest, and set `-Xmax-inlines` (the suite
+      * relies on it). Applied per row by the `process` closure when `.compatConformance` is enabled.
+      */
+    private def conformanceSettings(platformValue: String, scalatestVersion: String): Seq[Setting[?]] =
+        Seq(
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalatestVersion % Test,
+            Test / scalacOptions += "-Xmax-inlines:1024",
+            Test / sourceGenerators += Def.task {
+                CompatConformance.extract(
+                    (Test / sourceManaged).value / "kyo-compat-testkit",
+                    platformValue
+                )
+            }.taskValue
+        )
 }
 
 /** A virtual axis representing one kyo-compat backend. Implements `VirtualAxis.WeakAxis` — at most one backend axis can be on a row, and
@@ -245,12 +289,22 @@ private[compat] object CompatLibrary {
   *
   * Suffix order is `40` so the backend lands BEFORE the platform (`80`) and scala (`100`) in generated project ids and source-set suffixes:
   * `myLibFuture`, `myLibFutureJS`, etc.
+  *
+  * The `organization`, `artifactName`, and `version` fields carry the Maven coordinates of the backend's runtime artifact. The five
+  * built-in backends leave them at their defaults (`io.getkyo` %%% `kyo-compat-<name>` % `compatKyoVersion.value`). A backend published
+  * OUTSIDE the kyo repo sets them to its own coordinates, so its generated rows pull that artifact
+  * instead of a nonexistent `io.getkyo:kyo-compat-<name>`. Prefer [[CompatBackendAxis.external]] to declare one. The backend `name` must
+  * not collide with a built-in, since equality (and matrix de-duplication) is by `name`.
   */
 final case class CompatBackendAxis(
-    name: String,                   // e.g. "future" — artifact name `kyo-compat-future`
-    idSuffix: String,               // e.g. "Future" — appended to project id
-    directorySuffix: String,        // e.g. "-future" — appended to moduleName + source dir
-    supportedPlatforms: Set[String] // values from PlatformAxis: "jvm" | "js" | "native"
+    name: String,                        // e.g. "future"; default artifact name `kyo-compat-future`
+    idSuffix: String,                    // e.g. "Future"; appended to project id
+    directorySuffix: String,             // e.g. "-future"; appended to moduleName + source dir
+    supportedPlatforms: Set[String],     // values from PlatformAxis: "jvm" | "js" | "native"
+    organization: String = "io.getkyo",  // Maven org of the backend artifact
+    artifactName: Option[String] = None, // artifact name; defaults to s"kyo-compat-$name"
+    version: Option[String] = None,      // artifact version; defaults to compatKyoVersion.value
+    local: Boolean = false               // declared via `local(...)`: vendored, must be bound with bindLocally
 ) extends VirtualAxis.WeakAxis {
     override val suffixOrder: Int = 40
     override def equals(obj: Any): Boolean = obj match {
@@ -258,6 +312,90 @@ final case class CompatBackendAxis(
         case _                       => false
     }
     override def hashCode(): Int = name.hashCode
+
+    /** Artifact name of the row dependency: `artifactName` when set, else `kyo-compat-<name>`. */
+    private[compat] def resolvedArtifactName: String = artifactName.getOrElse(s"kyo-compat-$name")
+}
+
+object CompatBackendAxis {
+
+    // Names of the five built-in backends (mirrors the axes in CompatPlugin.autoImport).
+    // An added backend must not reuse one, because equality and the named accessors
+    // (.future / .kyo / ...) match by name and would otherwise resolve to the added rows.
+    private[compat] val builtinNames: Set[String] =
+        Set("future", "kyo", "zio", "ox", "twitter-future")
+
+    private def requireDistinctName(name: String): Unit =
+        require(
+            !builtinNames.contains(name),
+            s"compatLibrary: backend name '$name' collides with a built-in backend " +
+                s"(${builtinNames.toSeq.sorted.mkString(", ")}); pick a distinct name, since equality and the " +
+                "named accessors match by name."
+        )
+
+    /** Declares a backend whose runtime artifact is published outside the kyo repo, with explicit Maven coordinates. The generated rows
+      * for this backend pull `organization %%% artifactName % version` instead of the default `io.getkyo:kyo-compat-<name>`. Use this when
+      * the binding is published as an artifact; use [[local]] to vendor the binding as a project in your own build instead.
+      *
+      * @param name
+      *   backend identity (also the source-dir segment `my-lib/<name>/...`); must not collide with a built-in backend
+      * @param idSuffix
+      *   appended to generated project ids (e.g. `Acme` yields `myLibAcme`)
+      * @param directorySuffix
+      *   appended to `moduleName` and the module source dir (e.g. `-acme`)
+      * @param supportedPlatforms
+      *   platform values the artifact is cross-published for (`"jvm"` / `"js"` / `"native"`)
+      * @param organization
+      *   Maven organization of the published artifact
+      * @param artifactName
+      *   Maven artifact name of the published artifact
+      * @param version
+      *   Maven version of the published artifact
+      */
+    def external(
+        name: String,
+        idSuffix: String,
+        directorySuffix: String,
+        supportedPlatforms: Set[String],
+        organization: String,
+        artifactName: String,
+        version: String
+    ): CompatBackendAxis = {
+        requireDistinctName(name)
+        CompatBackendAxis(
+            name,
+            idSuffix,
+            directorySuffix,
+            supportedPlatforms,
+            organization,
+            Some(artifactName),
+            Some(version)
+        )
+    }
+
+    /** Declares a backend whose binding is vendored as a project in the consumer's own build rather than resolved from Maven. The axis
+      * carries no coordinates; it MUST be paired with `bindLocally(axis, <project>)`, which routes each row to that project via
+      * `dependsOn`. A row for a `local` backend that was not bound fails at build load with a clear error. Use [[external]] instead when
+      * the binding is a published artifact.
+      *
+      * @param name
+      *   backend identity (also the source-dir segment `my-lib/<name>/...`); must not collide with a built-in backend
+      * @param idSuffix
+      *   appended to generated project ids (e.g. `Acme` yields `myLibAcme`)
+      * @param directorySuffix
+      *   appended to `moduleName` and the module source dir (e.g. `-acme`)
+      * @param supportedPlatforms
+      *   platform values the vendored binding supports (`"jvm"` / `"js"` / `"native"`)
+      */
+    def local(
+        name: String,
+        idSuffix: String,
+        directorySuffix: String,
+        supportedPlatforms: Set[String]
+    ): CompatBackendAxis = {
+        requireDistinctName(name)
+        CompatBackendAxis(name, idSuffix, directorySuffix, supportedPlatforms, local = true)
+    }
 }
 
 /** Raised by named accessors when the user accesses a backend that wasn't passed to `compatLibrary(...)`.
