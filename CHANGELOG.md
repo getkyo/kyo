@@ -13,6 +13,10 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-core] `Fiber.initUnscoped`: fork a fiber without guaranteeing cleanup (formerly `Fiber.init`)
 - [kyo-core] `Path.tailBytes`: follow a file at the byte level, starting from the beginning, the end, or a recorded offset
 - [kyo-core] `Path.Origin`: where a byte-level read begins (`Start`, `End`, `Offset`)
+- [kyo-core] `Stream.fromInputStream`: stream a `java.io.InputStream`'s bytes, closed with the enclosing `Scope`
+- [kyo-schema] `RecordDecodeException`: decode failure for one record in a multi-record input, carrying its index, byte offset, and text
+- [kyo-schema-json] `Json.Lines`: pure JSONL/NDJSON framing (`Framer`, `Record`, `Framed`) plus `decodeAll`, `decodeAllBytes`, `decodeAllResults`, `encodeAll`, `encodeAllBytes`, `encodeLine`
+- [kyo-json] new module: `Jsonl`, streaming JSONL/NDJSON over files and byte streams with `read`, `follow`, `pipe`, `encode`, `write`, `append`, and per-record error recovery through the `Results` variants
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`
 - [kyo-logging-jpl] `kyo.JavaLog`: bridge `Log` to Java platform logging a.k.a. `System.Logger`
 - [kyo-logging-slf4j] `kyo.SLF4JLog`: bridge `Log` to SLF4J 2.0 API
@@ -30,3 +34,4 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-combinators] `.fork`: apply `Fiber.init` (formerly `.forkScoped`)
 - [kyo-prelude] The `Parse` effect has been moved to a new `kyo-parse` module
 - [kyo-core] `Log.live`: defaulting to `Unsafe.ConsoleLogger` for all platforms
+- [kyo-core] `Path.Unsafe.openWrite(append = true)`: now appends on Scala.js and Wasm. The Node handle wrote at an explicit position, which makes the call a positioned write, and POSIX leaves `O_APPEND` without effect there, so on macOS every write overwrote the file from its first byte. Writes now go at the file description's own cursor.

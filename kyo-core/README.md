@@ -886,7 +886,41 @@ def parseEvent(line: String): Event = ???
 def process(e: Event): Unit < Sync  = ???
 ```
 
-`readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), and `tail` (follow file updates) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
+`parseEvent` above is hand-rolled because `kyo-core` carries no codec. For typed JSONL/NDJSON decoding, including per-record error recovery and follow mode, use [kyo-json](../kyo-json/README.md)'s `Jsonl`.
+
+`tailBytes` follows a file at the byte level, doing no text decoding and no line splitting. It is the primitive `tail` is built on, and the one to reach for when the content is not text lines. `Path.Origin` says where reading begins:
+
+```scala
+import kyo.*
+
+// Replay the whole file, then keep emitting as bytes are appended
+val fromStart: Stream[Byte, Async & Scope & Abort[FileReadException]] =
+    Path("var", "log", "events.ndjson").tailBytes(Path.Origin.Start)
+
+// Skip what the file already holds; emit only bytes appended after this point.
+// This is the default, which is what preserves `tail`'s follow-only contract.
+val fromEnd: Stream[Byte, Async & Scope & Abort[FileReadException]] =
+    Path("var", "log", "events.ndjson").tailBytes()
+
+// Resume at a recorded position, so a restarted consumer replays nothing it already saw
+val fromOffset: Stream[Byte, Async & Scope & Abort[FileReadException]] =
+    Path("var", "log", "events.ndjson").tailBytes(Path.Origin.Offset(4096))
+```
+
+Following tracks the open file and not the name, which is what `tail -f` does and `tail -F` does not. The file is opened once, so renaming, replacing, or deleting the name afterwards changes nothing about what the stream reads: rotation by rename keeps the stream on the original file, and deleting the file yields no further bytes and no failure, since an unlinked file that is still open keeps its content. Truncating the file in place is the one case that does rewind: the stream goes back to byte 0 and replays. That rewind carries no marker, so a consumer holding state across chunks (a parser with a partial record, say) has to reset that state itself. A consumer that needs to pick up a rotated-in replacement closes the stream and opens a new one against the path.
+
+For a byte source that is not a file, `Stream.fromInputStream` streams a `java.io.InputStream` in `bufferSize` chunks and closes it when the enclosing `Scope` ends, so a caller never pairs the read with a manual close:
+
+```scala
+import kyo.*
+
+def source: java.io.InputStream = ???
+
+val bytes: Stream[Byte, Sync & Scope] =
+    Stream.fromInputStream(source, bufferSize = 8192)
+```
+
+`readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), `tail` (follow file updates), and `tailBytes` (follow file updates at the byte level) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
 
 > **Note:** Streaming reads carry `Scope` in their effect type. The OS handle is released only when the enclosing `Scope` closes (normal completion, error, or cancellation).
 

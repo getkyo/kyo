@@ -38,6 +38,7 @@ These are the top-level entry points:
 | Entry point | Purpose |
 |-------------|---------|
 | `Json` / `Ion` / `Yaml` / `Bson` / `Protobuf` / `MsgPack` | Serialize to JSON strings, Ion text or binary, YAML documents, BSON bytes, Protocol Buffers bytes, or MessagePack bytes |
+| `Json.Lines` | Frame and decode line-delimited JSON (JSONL/NDJSON), one JSON value per line |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -53,7 +54,7 @@ The functionality above ships as seven artifacts: a format-agnostic core plus on
 | Artifact | Provides |
 |----------|----------|
 | `kyo-schema` | The core: `Schema`, derivation, validation, annotations, optics, structural conversion, and the `Codec` SPI. No wire format. |
-| `kyo-schema-json` | The `Json` entry point: JSON text and bytes, plus JSON Schema generation. |
+| `kyo-schema-json` | The `Json` entry point: JSON text and bytes, `Json.Lines` for JSONL/NDJSON framing, plus JSON Schema generation. |
 | `kyo-schema-protobuf` | The `Protobuf` entry point: Protocol Buffers binary, plus `.proto` schema export. |
 | `kyo-schema-msgpack` | The `MsgPack` entry point: MessagePack binary. |
 | `kyo-schema-bson` | The `Bson` entry point: BSON document bytes. |
@@ -368,6 +369,83 @@ strict.decodeString[Json]("""{"id":1,"name":"Ada"}""")
 strict.decodeString[Json]("""{"id":1,"name":"Ada","extra":true}""")
 // Result.Failure(UnknownFieldException(...))  (rejects the first unknown field)
 ```
+
+#### JSONL
+
+Line-delimited JSON (JSONL, also called NDJSON) puts one JSON value on each line. It is the shape append-only record logs are exchanged in, including AI agent session transcripts and structured application logs, because a writer can add a record by appending one line and a reader can consume records without waiting for the file to end. `Json.Lines` is the pure surface over that format: it frames bytes into records and decodes each record with the ordinary JSON reader.
+
+`encodeAll` writes a whole collection, one newline-terminated record per value; `decodeAll` reads it back:
+
+```scala
+val users = List(alice, alice.copy(id = 2, name = "Bob"))
+
+val log: String = Json.Lines.encodeAll(users)
+// {"id":1,"name":"Alice",...}\n{"id":2,"name":"Bob",...}\n
+
+Json.Lines.decodeAll[User](log)
+// Result.Success(Chunk(<alice>, <bob>))
+```
+
+`encodeLine` encodes a single value with its terminating newline, which is what an incremental writer appends per record. `encodeAllBytes` and `decodeAllBytes` are the `Span[Byte]` variants, and they are the ones to prefer when the input is already bytes: framing works on bytes, so handing it a `String` costs a decode and a re-encode.
+
+```scala
+val line: String = Json.Lines.encodeLine(alice)
+
+val bytes: Span[Byte] = Json.Lines.encodeAllBytes(List(alice))
+Json.Lines.decodeAllBytes[User](bytes)
+// Result.Success(Chunk(alice))
+```
+
+A record log is often heterogeneous or half-written, so one bad line should not cost the whole file. `decodeAllResults` returns one `Result` per record instead of failing the input:
+
+```scala
+case class Row(id: Int) derives Schema
+
+val text = """{"id":1}
+             |not json
+             |{"id":3}
+             |""".stripMargin
+
+val mixed: Span[Byte] = Span.from(text.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+Json.Lines.decodeAllResults[Row](mixed)
+// Chunk(Result.Success(Row(1)), Result.Failure(RecordDecodeException(...)), Result.Success(Row(3)))
+```
+
+A failure carries `RecordDecodeException`, which names the record it came from: `recordIndex` (counting only non-blank records), `byteOffset` into the original input, the record's text, and the underlying `DecodeException` as `cause`. That is what lets a consumer report "record 41 at byte 9302 is malformed" rather than "the file is malformed".
+
+Framing splits on `'\n'` and is exact rather than approximate: JSON requires control characters inside strings to be escaped, so a valid record cannot contain an unescaped newline. Blank and whitespace-only lines are skipped without consuming a record index, a leading byte order mark is stripped, `\r\n` terminators are accepted, and a final record with no trailing newline is still emitted.
+
+Framing works on bytes rather than text because a UTF-8 multibyte character can straddle a chunk boundary. Splitting bytes first and decoding each complete record afterwards removes that hazard with no incremental text decoder. `Json.Lines.Framer` exposes that as a value, so a caller with its own read loop can frame across chunk boundaries itself:
+
+```scala
+val chunk = """{"id":1}
+              |{"id":2}
+              |{"id""".stripMargin
+
+val framer = Json.Lines.Framer.init()
+
+val framed: Json.Lines.Framed =
+    framer.feed(Span.from(chunk.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+
+val records: Chunk[Json.Lines.Record] = framed.records
+// two records; the unterminated `{"id"` stays in framed.framer
+
+val next: Json.Lines.Framer = framed.framer
+// feed this with the following chunk
+
+val breach: Maybe[LimitExceededException] = framed.error
+// Absent unless a record exceeded maxLineBytes
+
+next.finish
+// Present(Record(...)) for a trailing record with no newline, Absent otherwise
+```
+
+Feeding a framer never mutates it: `feed` returns the advanced framer in `Framed.framer` and the receiver stays usable. Each `Record` carries `bytes` (its own UTF-8 encoding, terminator removed), `index`, and `byteOffset`, and `text` decodes those bytes. Do not compare two records with `==`: `Span` has no structural equality, so the derived `equals` compares `bytes` by reference; compare `text` or `bytes.is(other.bytes)` instead.
+
+`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MB) bounds a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. A breach surfaces as `Framed.error`, and in `decodeAllResults` as a final `LimitExceededException` failure after every record decoded before it. It is the one failure that cannot be skipped past, because no record boundary was found to skip to.
+
+All of the above is pure and takes whole inputs. Reading a JSONL file, decoding an arbitrary byte stream, and following a file that is still being written live in [kyo-json](../kyo-json), whose `Jsonl` entry point drives this same framer under `Sync` and `Async`.
 
 ### Ion
 

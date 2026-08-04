@@ -24,7 +24,7 @@ import kyo.internal.PathPlatformSpecific
   * }}}
   *
   * Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than
-  * failing — they require only `Sync`, not `Abort`.
+  * failing, so they require only `Sync` and not `Abort`.
   *
   * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`, `tailBytes`) return `Stream` values
   * that carry `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream
@@ -286,7 +286,7 @@ object Path extends PathPlatformSpecific:
                         Sync.Unsafe.defer {
                             val result = handle.readChunk(rawBuf)
                             if result.isEof then
-                                // End of file — flush any bytes still held in inBuf
+                                // End of file: flush any bytes still held in inBuf
                                 inBuf.flip()
                                 outBuf.clear()
                                 decoder.decode(inBuf, outBuf, true)
@@ -735,14 +735,14 @@ object Path extends PathPlatformSpecific:
         var i = len - 1
         // Skip continuation bytes (10xxxxxx)
         while i >= 0 && (bytes(i) & 0xc0) == 0x80 do i -= 1
-        if i < 0 then 0 // all continuation bytes — shouldn't happen
+        if i < 0 then 0 // all continuation bytes, which shouldn't happen
         else
             val leading  = bytes(i)
             val startPos = i
             val tailLen  = len - startPos
             // Determine expected sequence length from leading byte
             val expected =
-                if (leading & 0x80) == 0 then 1         // 0xxxxxxx — ASCII
+                if (leading & 0x80) == 0 then 1         // 0xxxxxxx, ASCII
                 else if (leading & 0xe0) == 0xc0 then 2 // 110xxxxx
                 else if (leading & 0xf0) == 0xe0 then 3 // 1110xxxx
                 else if (leading & 0xf8) == 0xf0 then 4 // 11110xxx
@@ -794,7 +794,7 @@ object Path extends PathPlatformSpecific:
         def readLines()(using AllowUnsafe, Frame): Result[FileReadException, Chunk[String]]
         def readLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Chunk[String]]
 
-        // --- Streaming read handles (abstract — platform provides the concrete handles) ---
+        // --- Streaming read handles (abstract; the platform provides the concrete handles) ---
 
         def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle]
         def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle]
@@ -845,7 +845,7 @@ object Path extends PathPlatformSpecific:
         def removeExisting()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
         def removeAll()(using AllowUnsafe, Frame): Result[FileFsException, Unit]
 
-        // --- Walk handle (abstract — platform provides the resource management) ---
+        // --- Walk handle (abstract; the platform provides the resource management) ---
 
         def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileFsException, Path.WalkHandle]
 
@@ -859,7 +859,7 @@ object Path extends PathPlatformSpecific:
 
     end Unsafe
 
-    // --- WriteHandle — abstraction for open write channels ---
+    // --- WriteHandle: abstraction for open write channels ---
 
     /** An open write channel returned by `Path.Unsafe.openWrite`. Platform implementations provide the concrete class. */
     abstract private[kyo] class WriteHandle:
@@ -873,13 +873,13 @@ object Path extends PathPlatformSpecific:
         def close()(using AllowUnsafe): Unit
     end WriteHandle
 
-    // --- Read handles — returned by Path.Unsafe.openRead / openReadLines ---
+    // --- Read handles, returned by Path.Unsafe.openRead / openReadLines ---
 
-    /** The result of a `ReadHandle.readChunk` call — either a positive byte count or EOF. */
+    /** The result of a `ReadHandle.readChunk` call: either a positive byte count or EOF. */
     opaque type ReadResult = Int
 
     object ReadResult:
-        /** End of file — no more data will be produced. */
+        /** End of file, so no more data will be produced. */
         val Eof: ReadResult = -1
 
         /** Wraps a raw byte count (from `InputStream.read` or `FileChannel.read`) into a `ReadResult`. */

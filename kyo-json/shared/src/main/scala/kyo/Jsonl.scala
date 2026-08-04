@@ -187,6 +187,10 @@ object Jsonl:
       * with the enclosing `Scope` and closed when that scope ends; until then the stream never completes on its own, so a consumer
       * bounds it with `take`, `takeWhile`, or an interrupt.
       *
+      * An unterminated trailing record is where this differs from [[read]], and it is the only place the two differ. [[pipe]] runs on a
+      * finite input, so it finishes its framer at end of input and emits a final record that carries no newline. A follow stream never
+      * reaches an end of input, so it holds those bytes as a pending partial and emits the record only once its newline arrives.
+      *
       * `from` defaults to [[Path.Origin.Start]], which replays the file and then follows, because reading a live agent transcript wants
       * every record rather than only those written after the reader attached. [[Path.tailBytes]] defaults to [[Path.Origin.End]] instead,
       * since it is the primitive under `Path.tail` and has to preserve that method's follow-only contract.
@@ -365,6 +369,12 @@ object Jsonl:
       *
       * [[write]] in every respect except that nothing is emptied first, which is what an append-only record log wants: each call adds its
       * records after the ones already there, and the file is created when it does not yet exist, including for an empty stream.
+      *
+      * Appending starts at the file's current end and writes no separator of its own, so a file whose last record has no trailing newline
+      * gets the first appended record spliced onto that last record, producing one corrupt line where there were two. [[pipe]] accepts an
+      * unterminated final record by design, so [[read]] reads such a file without complaint and the splice is only visible afterwards.
+      * Everything this module writes ends in a newline, so this reaches a file produced elsewhere or truncated mid-record; append to one of
+      * those only after terminating its last line.
       *
       * @param path
       *   the file to append to

@@ -49,6 +49,7 @@ methods on `Path`, defined in `object Path`) provides effect-tracked I/O:
 | `path.readBytesStream`            | `Stream[Byte, Scope & Sync & Abort[...]]`              |
 | `path.readLinesStream`            | `Stream[String, Scope & Sync & Abort[...]]`            |
 | `path.tail`                       | `Stream[String, Async & Scope & Abort[...]]`           |
+| `path.tailBytes`                  | `Stream[Byte, Async & Scope & Abort[...]]`             |
 | `path.write`, `writeBytes`, ...   | `Unit < (Sync & Abort[FileWriteException])`            |
 | `path.append`, `appendBytes`, ... | `Unit < (Sync & Abort[FileWriteException])`            |
 | `path.mkDir`, `mkFile`            | `Unit < (Sync & Abort[FileFsException])`               |
@@ -67,6 +68,19 @@ Both are `val` on `object Path`, computed once at companion-object
 initialization via `platformPathSeparator` / `platformFileSeparator` on the
 `PathPlatformSpecific` trait.
 
+#### `Path.Origin`
+
+`Path.Origin` is the enum saying where a byte-level read begins: `Start` (first
+byte, so a follower replays existing content), `End` (skip what the file holds
+and emit only what is appended afterwards), and `Offset(bytes)` (resume at a
+recorded position). A negative `Offset` is clamped to 0 on every platform.
+
+`tailBytes` defaults to `Origin.End` because it is the primitive under
+`path.tail` and has to preserve that method's follow-only contract. Downstream
+drivers built on the same polling loop pick their own default; `Jsonl.follow`
+in `kyo-json` defaults to `Origin.Start`. Do not change either default to match
+the other: they are follow-only and replay-then-follow surfaces respectively.
+
 #### Key design points
 
 - `Path` is immutable. All I/O goes through `Sync.Unsafe.defer` at the safe
@@ -75,8 +89,14 @@ initialization via `platformPathSeparator` / `platformFileSeparator` on the
   require only `Sync`, not `Abort`: they return `false` for inaccessible paths.
 - Streaming methods carry `Scope` so the underlying OS handle is closed when the
   enclosing scope exits, regardless of whether it completes normally or aborts.
-- `path.tail` is the only streaming method that adds `Async` (it sleeps between
-  polls).
+- `path.tail` and `path.tailBytes` are the streaming methods that add `Async`
+  (they sleep between polls). Both are drivers over one `private[kyo] follow`
+  loop, which owns the open, the poll, and the truncation rewind; `tail` layers
+  UTF-8 and line buffering on top as the state it threads through that loop.
+- Following tracks the OPEN FILE, not the name (`tail -f`, never `tail -F`).
+  A rename or a delete of the name is invisible to a running stream; a
+  truncation rewinds to byte 0 and replays, restoring the step's initial state
+  so nothing buffered before the rewind is spliced onto what follows it.
 
 ### Unsafe tier
 
