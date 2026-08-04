@@ -482,9 +482,13 @@ class BrowserDownloadTest extends BrowserTest:
                         Browser.click(Browser.Selector.id("a")).andThen(
                             Browser.click(Browser.Selector.id("b")).andThen(
                                 Browser.click(Browser.Selector.id("c")).andThen(
-                                    // Give Chrome time to flush the three WillBegin + Progress events
-                                    // through the per-session dispatcher into the recordDownloads chunk.
-                                    Async.sleep(2.seconds)
+                                    // Gate on the three downloaded files landing. Each WillBegin fires at
+                                    // its download's start, well before the file is written, so once all
+                                    // three files exist every WillBegin has already been dispatched into
+                                    // the recordDownloads chunk.
+                                    assertEventually(
+                                        Kyo.foreach(Chunk(fileA, fileB, fileC))(f => (tempPath / f).exists).map(_.forall(identity))
+                                    )
                                 )
                             )
                         )
