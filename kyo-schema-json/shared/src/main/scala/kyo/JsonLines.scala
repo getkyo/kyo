@@ -241,4 +241,172 @@ object JsonLines:
         blank
     end isBlank
 
+    /** Folds a chunk of per-record results into a single result, short-circuiting on the first
+      * failure or panic.
+      *
+      * `decodeAllBytes` reduces `decodeAllResults` through this. It is not a general-purpose
+      * combinator, so it stays private to this file rather than joining `Result` itself.
+      */
+    private def foldResults[E, A](results: Chunk[Result[E, A]]): Result[E, Chunk[A]] =
+        @tailrec
+        def loop(i: Int, acc: Chunk[A]): Result[E, Chunk[A]] =
+            if i >= results.size then Result.succeed(acc)
+            else
+                results(i) match
+                    case Result.Success(a) => loop(i + 1, acc :+ a)
+                    case Result.Failure(e) => Result.fail(e)
+                    case Result.Panic(ex)  => Result.panic(ex)
+        loop(0, Chunk.empty[A])
+    end foldResults
+
+    /** Decodes one framed record.
+      *
+      * Routes through `Codec.decodeFully`, so a record holding trailing content after a complete value is rejected rather than silently
+      * truncated. A failure is wrapped with the record's position so the caller can locate it in the original input.
+      *
+      * @param record
+      *   the framed record to decode
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @return
+      *   the decoded value, or a `RecordDecodeException` carrying the record's position and text
+      */
+    def decodeRecord[A](
+        record: Record,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize
+    )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        json.decodeFully[A](record.bytes, maxDepth, maxCollectionSize).mapFailure { cause =>
+            RecordDecodeException(record.index, record.byteOffset, record.text, cause)
+        }
+    end decodeRecord
+
+    /** Decodes every record in a JSONL string, failing on the first undecodable one.
+      *
+      * @param input
+      *   the JSONL text to decode
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxLineBytes
+      *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
+      * @return
+      *   every decoded value in order, or the first decode or framing failure encountered
+      */
+    def decodeAll[A](
+        input: String,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxLineBytes: Int = DefaultMaxLineBytes
+    )(using Json, Schema[A], Frame): Result[DecodeException, Chunk[A]] =
+        decodeAllBytes[A](
+            Span.from(input.getBytes(StandardCharsets.UTF_8)),
+            maxDepth,
+            maxCollectionSize,
+            maxLineBytes
+        )
+    end decodeAll
+
+    /** Decodes every record in raw JSONL bytes, failing on the first undecodable one.
+      *
+      * @param input
+      *   the raw UTF-8 JSONL bytes to decode
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxLineBytes
+      *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
+      * @return
+      *   every decoded value in order, or the first decode or framing failure encountered
+      */
+    def decodeAllBytes[A](
+        input: Span[Byte],
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxLineBytes: Int = DefaultMaxLineBytes
+    )(using Json, Schema[A], Frame): Result[DecodeException, Chunk[A]] =
+        foldResults(decodeAllResults[A](input, maxDepth, maxCollectionSize, maxLineBytes))
+    end decodeAllBytes
+
+    /** Decodes every record, returning one `Result` per record instead of failing the whole input.
+      *
+      * The variant for heterogeneous or partially-written logs: a truncated tail or an unrecognized record type yields one failure rather
+      * than discarding the whole file.
+      *
+      * The one failure this cannot recover from is a record exceeding `maxLineBytes`: no record boundary was found, so there is nothing
+      * to skip to. That surfaces as a final failure element and ends the chunk.
+      *
+      * @param input
+      *   the raw UTF-8 JSONL bytes to decode
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxLineBytes
+      *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
+      * @return
+      *   one result per record; a framing failure that finds no record boundary yields a single-element chunk
+      */
+    def decodeAllResults[A](
+        input: Span[Byte],
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxLineBytes: Int = DefaultMaxLineBytes
+    )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
+        Framer.init(maxLineBytes).feed(input) match
+            case Result.Success((framer, records)) =>
+                val decoded = records.map(r => decodeRecord[A](r, maxDepth, maxCollectionSize))
+                framer.finish match
+                    case Absent       => decoded
+                    case Present(rec) => decoded :+ decodeRecord[A](rec, maxDepth, maxCollectionSize)
+            case Result.Failure(e) => Chunk(Result.fail(e))
+            case Result.Panic(ex)  => Chunk(Result.panic(ex))
+    end decodeAllResults
+
+    /** Encodes every value as one JSONL record per line, each terminated by a newline.
+      *
+      * @param values
+      *   the values to encode, in order
+      * @return
+      *   the JSONL text, or the empty string for an empty input
+      */
+    def encodeAll[A](values: Seq[A])(using schema: Schema[A], frame: Frame): String =
+        val json = summon[Json]
+        val sb   = new StringBuilder
+        values.foreach { v =>
+            val w = json.newWriter()
+            schema.writeTo(v, w)
+            discard(sb.append(new String(w.result().toArray, StandardCharsets.UTF_8)).append('\n'))
+        }
+        sb.toString
+    end encodeAll
+
+    /** Encodes every value as one JSONL record per line, returning raw UTF-8 bytes.
+      *
+      * @param values
+      *   the values to encode, in order
+      * @return
+      *   the JSONL bytes, or an empty span for an empty input
+      */
+    def encodeAllBytes[A](values: Seq[A])(using Schema[A], Frame): Span[Byte] =
+        Span.from(encodeAll(values).getBytes(StandardCharsets.UTF_8))
+    end encodeAllBytes
+
+    /** Encodes a single value as one JSONL record, terminated by a newline.
+      *
+      * @param value
+      *   the value to encode
+      * @return
+      *   the value's compact JSON encoding followed by a newline
+      */
+    def encodeLine[A](value: A)(using schema: Schema[A], frame: Frame): String =
+        val w = summon[Json].newWriter()
+        schema.writeTo(value, w)
+        new String(w.result().toArray, StandardCharsets.UTF_8) + "\n"
+    end encodeLine
+
 end JsonLines
