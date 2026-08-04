@@ -5,8 +5,8 @@ import java.nio.charset.StandardCharsets
 /** Recovery test suite for [[OverlayFileSystem]] durable commit.
   *
   * Exercises recovery after a crash at each step of the five-step durable commit protocol:
-  * before the intent log is written, after the intent log, after individual journal entries
-  * are applied to lower, before the committed marker, and after the committed marker. Each
+  * before the intent log is written, after the intent log, after individual plan entries are
+  * applied to lower, before the committed marker, and after the committed marker. Each
   * crash point is covered by two variants: an in-memory lower (deterministic, cross-platform)
   * and a host lower (real filesystem, exercises the NIO atomic-move and fsync paths).
   *
@@ -29,7 +29,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     // intentional hook-injected crash from a genuine file error or unexpected panic.
     final private class SyntheticCrash(msg: String) extends RuntimeException(msg)
 
-    // --- Fixed three-op journal paths (in-memory and host variants) ---
+    // --- Fixed three-entry plan paths (in-memory and host variants) ---
     private val aFile = Path("a.txt")
     private val dDir  = Path("d")
     private val oldF  = Path("old.txt")
@@ -82,19 +82,22 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     end withHostTestOverlay
 
-    /** Stages the fixed three-op journal through `ov` over `lower`:
-      *   WriteFile("a.txt", "file-content"), WriteDirectory("d"), Remove("old.txt").
-      * `lower` must have "old.txt" pre-seeded (done here). Journal is n=3; crash points are
-      * injected by the caller before committing.
+    /** Stages the fixed three-entry plan through `ov` over `lower`: a file at "a.txt", a
+      * directory at "d", and a whiteout at "old.txt". `lower` must have "old.txt" pre-seeded
+      * (done here).
+      *
+      * The plan is derived from the upper trie, which yields a node before its children with
+      * siblings in segment order, so the three land in exactly that order and n is 3. That is what
+      * the per-entry crash positions below index into.
       */
-    private def primeJournal(
+    private def primePlan(
         ov: OverlayFileSystem[Sync],
         lower: FileSystem.Write[Sync],
         a: Path,
         d: Path,
         old: Path
     ): Unit < (Sync & Abort[FileSystemException]) =
-        // Seed old.txt in lower so the Remove op has something to delete.
+        // Seed old.txt in lower so the whiteout has something to delete.
         Path.runWith(lower)(old.write("old-content")).andThen {
             Path.runWith(ov)(a.write("file-content")).andThen {
                 Path.runWith(ov)(d.mkDir).andThen {
@@ -103,7 +106,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
             }
         }
 
-    /** Asserts that the lower service reflects the fully-applied three-op journal:
+    /** Asserts that the lower service reflects the fully-applied three-entry plan:
       * a.txt exists with "file-content", d exists as a directory, old.txt is absent.
       */
     private def assertFullyApplied(
@@ -155,7 +158,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
 
     "in-memory: crash before intent log write leaves lower unchanged" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 Sync.Unsafe.defer { ov.afterStageHook = () => throw SyntheticCrash("crash: before intent log write") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -176,7 +179,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     "host: crash before intent log write leaves lower unchanged" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer { ov.afterStageHook = () => throw SyntheticCrash("crash: before intent log write (host)") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -198,9 +201,9 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     // crash after intent log write, before any op is applied
     // -------------------------------------------------------------------------
 
-    "in-memory: crash after intent log write replays full journal on recovery" in {
+    "in-memory: crash after intent log write replays the full plan on recovery" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 Sync.Unsafe.defer { ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -218,10 +221,10 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
-    "host: crash after intent log write replays full journal on recovery" in {
+    "host: crash after intent log write replays the full plan on recovery" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer { ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write (host)") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -240,15 +243,15 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     }
 
     // -------------------------------------------------------------------------
-    // crash after first op applied, two remaining
+    // crash after first entry applied, two remaining
     // -------------------------------------------------------------------------
 
-    "in-memory: crash mid-apply after first op recovers idempotently" in {
+    "in-memory: crash mid-apply after first entry recovers idempotently" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 // afterEntryApplyHook is called with (1-indexed-position, n); throw at position 1.
                 Sync.Unsafe.defer {
-                    ov.afterEntryApplyHook = (i, _) => if i == 1 then throw SyntheticCrash("crash: after first op applied")
+                    ov.afterEntryApplyHook = (i, _) => if i == 1 then throw SyntheticCrash("crash: after first entry applied")
                 }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -266,12 +269,12 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
-    "host: crash mid-apply after first op recovers idempotently" in {
+    "host: crash mid-apply after first entry recovers idempotently" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer {
-                    ov.afterEntryApplyHook = (i, _) => if i == 1 then throw SyntheticCrash("crash: after first op applied (host)")
+                    ov.afterEntryApplyHook = (i, _) => if i == 1 then throw SyntheticCrash("crash: after first entry applied (host)")
                 }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -290,14 +293,14 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     }
 
     // -------------------------------------------------------------------------
-    // crash after second op applied, one remaining
+    // crash after second entry applied, one remaining
     // -------------------------------------------------------------------------
 
-    "in-memory: crash mid-apply after second op recovers idempotently" in {
+    "in-memory: crash mid-apply after second entry recovers idempotently" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 Sync.Unsafe.defer {
-                    ov.afterEntryApplyHook = (i, _) => if i == 2 then throw SyntheticCrash("crash: after second op applied")
+                    ov.afterEntryApplyHook = (i, _) => if i == 2 then throw SyntheticCrash("crash: after second entry applied")
                 }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -315,12 +318,12 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
-    "host: crash mid-apply after second op recovers idempotently" in {
+    "host: crash mid-apply after second entry recovers idempotently" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer {
-                    ov.afterEntryApplyHook = (i, _) => if i == 2 then throw SyntheticCrash("crash: after second op applied (host)")
+                    ov.afterEntryApplyHook = (i, _) => if i == 2 then throw SyntheticCrash("crash: after second entry applied (host)")
                 }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -339,12 +342,12 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     }
 
     // -------------------------------------------------------------------------
-    // crash after all ops applied, before committed marker
+    // crash after all entries applied, before committed marker
     // -------------------------------------------------------------------------
 
-    "in-memory: crash before committed marker replays journal idempotently" in {
+    "in-memory: crash before committed marker replays the plan idempotently" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 Sync.Unsafe.defer { ov.beforeMarkerHook = () => throw SyntheticCrash("crash: before committed marker") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -362,10 +365,10 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
-    "host: crash before committed marker replays journal idempotently" in {
+    "host: crash before committed marker replays the plan idempotently" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer { ov.beforeMarkerHook = () => throw SyntheticCrash("crash: before committed marker (host)") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -389,7 +392,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
 
     "in-memory: crash after committed marker recovers via cleanup only" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 Sync.Unsafe.defer { ov.afterMarkerHook = () => throw SyntheticCrash("crash: after committed marker") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -411,7 +414,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     "host: crash after committed marker recovers via cleanup only" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer { ov.afterMarkerHook = () => throw SyntheticCrash("crash: after committed marker (host)") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -435,7 +438,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
 
     "in-memory: recover is idempotent; second call after completed recovery is a no-op" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 Sync.Unsafe.defer { ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write (idempotence test)") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -443,7 +446,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
                         ).asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                             Sync.Unsafe.defer { ov.afterIntentLogHook = () => () }
                                 .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
-                                    // First recovery: replays the full journal.
+                                    // First recovery: replays the full plan.
                                     ov.recover().andThen {
                                         assertFullyApplied(lower, aFile, dDir, oldF).andThen {
                                             // Second recovery: stagingDirHandle is now Absent; exits as no-op.
@@ -494,7 +497,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     "host: recover is idempotent; second call after completed recovery is a no-op" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer {
                     ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write (idempotence host test)")
                 }
@@ -524,7 +527,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
 
     "in-memory: staging dir is removed after recover on crash before log write" in {
         withInMemoryTestOverlay { (ov, lower) =>
-            primeJournal(ov, lower, aFile, dDir, oldF).andThen {
+            primePlan(ov, lower, aFile, dDir, oldF).andThen {
                 Sync.Unsafe.defer { ov.afterStageHook = () => throw SyntheticCrash("crash: before intent log write (cleanup test)") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -552,7 +555,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     "host: staging dir is removed from root after recover on crash before log write" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer { ov.afterStageHook = () => throw SyntheticCrash("crash: before intent log write (cleanup host test)") }
                     .asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {
                         attemptCrash(
@@ -583,7 +586,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
             // Truncated = KYIL magic (4 bytes) + version (1 byte); no records, no KYCT terminator.
             // WriteOpLog.decode returns Success(Absent) for this, triggering the torn-log discard branch.
             val stagingDir = root / "kyo-commit-torn"
-            val tornBytes  = Span.from("KYIL".getBytes(StandardCharsets.UTF_8) :+ 0x02.toByte)
+            val tornBytes  = Span.from("KYIL".getBytes(StandardCharsets.UTF_8) :+ 0x03.toByte)
             lower.mkDir(stagingDir).andThen {
                 lower.writeBytes(
                     stagingDir / ".kyo-staging",
@@ -614,18 +617,23 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
 
     "fresh overlay recoverFromDisk replays a valid intent log written to disk" in {
         withHostTestOverlay { (_, lower, root) =>
-            // Seed old.txt in lower for the Remove op.
+            // Seed old.txt in lower for the whiteout entry.
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
             Path.runWith(lower)(old.write("old-content")).andThen {
-                // Build the same three-op journal the hook-injection tests use.
-                val journal: Chunk[WriteOp] = Chunk(
-                    WriteOp.WriteFile(a.parts, Span.from("file-content".getBytes(StandardCharsets.UTF_8)), Path.PathStat(0L, 12L)),
-                    WriteOp.WriteDirectory(d.parts, false),
-                    WriteOp.Remove(old.parts)
+                // Build the same three-entry plan the hook-injection tests produce.
+                val plan: Chunk[ReplayEntry] = Chunk(
+                    ReplayEntry.File(
+                        a.parts,
+                        Span.from("file-content".getBytes(StandardCharsets.UTF_8)),
+                        Path.PathStat(0L, 12L),
+                        Absent
+                    ),
+                    ReplayEntry.Directory(d.parts, opaque = false, Absent),
+                    ReplayEntry.Whiteout(old.parts)
                 )
                 // Manually construct the orphaned staging dir in root (within the rooted lower).
                 val stagingDir = root / "kyo-commit-restart"
-                // Stage the file for WriteFile op at e0.dat (applyOneOpIdempotent moves it to a.txt).
+                // Stage the file entry's bytes at e0.dat (recovery moves it to a.txt).
                 lower.mkDir(stagingDir).andThen {
                     lower.writeBytes(
                         stagingDir / ".kyo-staging",
@@ -640,14 +648,14 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
                             // Write the valid intent log (WriteOpLog.encode returns Span[Byte] directly).
                             lower.writeBytes(
                                 stagingDir / "intent.kyo",
-                                WriteOpLog.encode(journal),
+                                WriteOpLog.encode(plan),
                                 Path.WriteOptions(createFolders = false)
                             ).andThen {
                                 // Fresh overlay over the same lower; no in-memory stagingDirHandle.
                                 FileSystem.overlay(lower).map { freshOv =>
                                     val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                                     overlay.recoverFromDisk(root).andThen {
-                                        // All three ops must be reflected in lower.
+                                        // All three plan entries must be reflected in lower.
                                         assertFullyApplied(lower, a, d, old).andThen {
                                             // Staging dir cleaned up.
                                             lower.exists(stagingDir).map { still =>
@@ -694,21 +702,31 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
             // Seed two files to be removed.
             Path.runWith(lower)(old1.write("old1")).andThen {
                 Path.runWith(lower)(old2.write("old2")).andThen {
-                    // Build two independent journals, each touching distinct paths.
-                    val journal1: Chunk[WriteOp] = Chunk(
-                        WriteOp.WriteFile(a1.parts, Span.from("content1".getBytes(StandardCharsets.UTF_8)), Path.PathStat(0L, 8L)),
-                        WriteOp.Remove(old1.parts)
+                    // Build two independent plans, each touching distinct paths.
+                    val plan1: Chunk[ReplayEntry] = Chunk(
+                        ReplayEntry.File(
+                            a1.parts,
+                            Span.from("content1".getBytes(StandardCharsets.UTF_8)),
+                            Path.PathStat(0L, 8L),
+                            Absent
+                        ),
+                        ReplayEntry.Whiteout(old1.parts)
                     )
-                    val journal2: Chunk[WriteOp] = Chunk(
-                        WriteOp.WriteFile(a2.parts, Span.from("content2".getBytes(StandardCharsets.UTF_8)), Path.PathStat(0L, 8L)),
-                        WriteOp.Remove(old2.parts)
+                    val plan2: Chunk[ReplayEntry] = Chunk(
+                        ReplayEntry.File(
+                            a2.parts,
+                            Span.from("content2".getBytes(StandardCharsets.UTF_8)),
+                            Path.PathStat(0L, 8L),
+                            Absent
+                        ),
+                        ReplayEntry.Whiteout(old2.parts)
                     )
                     val staging1 = root / "kyo-commit-batch1"
                     val staging2 = root / "kyo-commit-batch2"
 
                     def writeLog(
                         stagingDir: Path,
-                        journal: Chunk[WriteOp],
+                        plan: Chunk[ReplayEntry],
                         eBytes: Span[Byte]
                     ): Unit < (Sync & Abort[FileSystemException]) =
                         lower.mkDir(stagingDir).andThen {
@@ -720,15 +738,15 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
                                 lower.writeBytes(stagingDir / "e0.dat", eBytes, Path.WriteOptions(createFolders = false)).andThen {
                                     lower.writeBytes(
                                         stagingDir / "intent.kyo",
-                                        WriteOpLog.encode(journal),
+                                        WriteOpLog.encode(plan),
                                         Path.WriteOptions(createFolders = false)
                                     )
                                 }
                             }
                         }
 
-                    writeLog(staging1, journal1, Span.from("content1".getBytes(StandardCharsets.UTF_8))).andThen {
-                        writeLog(staging2, journal2, Span.from("content2".getBytes(StandardCharsets.UTF_8))).andThen {
+                    writeLog(staging1, plan1, Span.from("content1".getBytes(StandardCharsets.UTF_8))).andThen {
+                        writeLog(staging2, plan2, Span.from("content2".getBytes(StandardCharsets.UTF_8))).andThen {
                             FileSystem.overlay(lower).map { freshOv =>
                                 val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                                 // recoverFromDisk processes both staging dirs via foldLeft.
@@ -815,7 +833,7 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     "staged file is durably written to staging dir before intent log (barrier ordering)" in {
         withHostTestOverlay { (ov, lower, root) =>
             val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
-            primeJournal(ov, lower, a, d, old).andThen {
+            primePlan(ov, lower, a, d, old).andThen {
                 Sync.Unsafe.defer {
                     ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log (barrier ordering test)")
                 }.asInstanceOf[Unit < (Sync & Abort[FileSystemException])].andThen {

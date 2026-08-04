@@ -284,8 +284,8 @@ class OverlayOverHostPathWatchTest extends FileSystemWatchTestSuite:
 
     "overlay watching correlates a rename performed in the lower" in {
         // This is the case that reaches the overlay's stableIdentity delegation. A rename made
-        // *through* the overlay is answered from the journal, which carries the move, so the
-        // delegation is never consulted; only a rename made in the lower falls through to it.
+        // *through* the overlay is answered from its recorded provenance, which carries the move,
+        // so the delegation is never consulted; only a rename made in the lower falls through.
         // Correlating a rename into a single Moved requires a stable identity from both snapshots,
         // so a delegation that returned nothing would degrade this into Removed plus Created.
         Clock.withTimeControl { clock =>

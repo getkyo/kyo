@@ -519,6 +519,82 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
         }
     }
 
+    withEachLower("a directory's setLastModified survives commit") { (ov, lower, base) =>
+        // Staged metadata on a directory rather than a file. The overlay reports the staged value
+        // before commit; the point is that the lower carries the same value afterwards, so a caller
+        // reads the same directory before and after.
+        val d = base / "mtime-dir"
+        Path.runWith(ov) {
+            d.mkDir.andThen(d.setLastModified(123456L)).andThen(d.stat)
+        }.map { staged =>
+            ov.commit.andThen {
+                Path.runWith(lower)(d.stat).map { live =>
+                    assert(staged.lastModifiedMs == 123456L, s"the overlay reported ${staged.lastModifiedMs} before commit")
+                    assert(
+                        live.lastModifiedMs == 123456L,
+                        s"the lower carries ${live.lastModifiedMs} but the overlay reported ${staged.lastModifiedMs}"
+                    )
+                }
+            }
+        }
+    }
+
+    withEachLower("a staged directory keeps its timestamp after its children are written") { (ov, lower, base) =>
+        // The case above has an empty directory, so the stamp the commit applies when it creates the
+        // directory is never disturbed and it passes without the second pass over the plan. Writing a
+        // file into the directory is what perturbs it: on a real filesystem the child's creation
+        // updates the parent's modification time, after the parent was already stamped.
+        val d = base / "restamp-dir"
+        val f = d / "child.txt"
+        Path.runWith(ov) {
+            d.mkDir.andThen(f.write("child-content")).andThen(d.setLastModified(987654L))
+        }.andThen {
+            ov.commit.andThen {
+                Path.runWith(lower)(d.stat).map { live =>
+                    assert(
+                        live.lastModifiedMs == 987654L,
+                        s"writing the child left the directory dated ${live.lastModifiedMs}"
+                    )
+                }
+            }
+        }
+    }
+
+    withEachLower("a plain write does not stamp epoch zero on its target") { (ov, lower, base) =>
+        // A staged write carries PathStat(0, size) as a placeholder, not as a modification time.
+        // Replaying it as a timestamp would date every committed file to 1970.
+        val p = base / "no-mtime.txt"
+        Path.runWith(ov)(p.write("payload")).andThen {
+            ov.commit.andThen {
+                Path.runWith(lower)(p.stat).map { live =>
+                    assert(live.lastModifiedMs > 0L, s"the committed file was dated ${live.lastModifiedMs}")
+                }
+            }
+        }
+    }
+
+    withEachLower("resolving a conflict on a moved file's source does not strand its target") { (ov, lower, base) =>
+        // Staging a write and then moving it produced two operations that a path-predicate filter
+        // could not tell apart: resolving the source dropped the move too, and the target was never
+        // created even though the staged view showed it.
+        val from = base / "resolve-from.txt"
+        val to   = base / "resolve-to.txt"
+        Path.runWith(lower)(from.write("v1")).andThen {
+            // The read is what puts the source in the read-set, so the out-of-band write below
+            // becomes a conflict the resolution has to answer for. Without it nothing diverges and
+            // the case proves nothing.
+            Path.runWith(ov)(from.read.andThen(from.write("ours")).andThen(from.move(to))).andThen {
+                Path.runWith(lower)(from.write("v2-external-and-longer")).andThen {
+                    ov.commitWith(_ => FileSystem.Resolution.KeepTheirs).andThen {
+                        Path.runWith(lower)(to.exists).map { found =>
+                            assert(found, "the move target was dropped when its source's conflict was resolved")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // WriteOpLog decode-failure split: bad magic or wrong version = loud fail through FileSystemException;
     // torn/truncated log with valid magic = crash artifact, silent Success(Absent).
 
@@ -545,9 +621,9 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
     }
 
     "WriteOpLog.decode returns Success(Absent) for torn log with valid magic but no terminator" in {
-        // Valid KYIL header + version but truncated before the terminator: crash artifact.
+        // Valid KYIL header + the current version byte, truncated before the terminator: crash artifact.
         val torn = Span.from(
-            Array[Byte]('K'.toByte, 'Y'.toByte, 'I'.toByte, 'L'.toByte, 0x02.toByte)
+            Array[Byte]('K'.toByte, 'Y'.toByte, 'I'.toByte, 'L'.toByte, 0x03.toByte)
         )
         val logPath = Path("intent.kyo")
         WriteOpLog.decode(logPath, torn) match

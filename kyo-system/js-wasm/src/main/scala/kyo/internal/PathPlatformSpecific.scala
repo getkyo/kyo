@@ -644,7 +644,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     def stat()(using AllowUnsafe, Frame): Result[FileReadException, kyo.Path.PathStat] =
         catchRead {
             val s = NodeFs.statSync(pathStr)
-            kyo.Path.PathStat(s.mtimeMs.toLong, s.size.toLong)
+            // Rounded, not truncated. Node converts a modification time to a double count of
+            // seconds inside libuv before the syscall, so a value the caller set as 987654 ms is
+            // stored as 987653999000 ns and read back as 987653.999. Truncating reports 987653, a
+            // millisecond before both the instant the filesystem holds and the one that was asked
+            // for. Rounding reports the nearest millisecond to what is stored, which recovers it.
+            kyo.Path.PathStat(math.round(s.mtimeMs), s.size.toLong)
         }
 
     private[kyo] def stableIdentity()(using AllowUnsafe, Frame): Result[FileReadException, Maybe[String]] =

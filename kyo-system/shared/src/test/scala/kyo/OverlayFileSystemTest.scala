@@ -358,7 +358,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
-    "commitWith KeepOurs replays staged journal onto lower" in {
+    "commitWith KeepOurs replays the staged layer onto lower" in {
         withOverlay { (ov, lower) =>
             val p = Path("committed.txt")
             Path.runWith(ov)(p.write("payload")).andThen {
@@ -371,7 +371,7 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
-    "commit with no conflicts replays journal onto lower" in {
+    "commit with no conflicts replays the staged layer onto lower" in {
         withOverlay { (ov, lower) =>
             val p = Path("conflict-free.txt")
             Path.runWith(ov)(p.write("value")).andThen {

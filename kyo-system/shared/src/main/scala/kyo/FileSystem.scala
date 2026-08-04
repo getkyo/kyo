@@ -463,7 +463,7 @@ object FileSystem:
     def inMemory(using Frame): (FileSystem.Write[Sync] & FileSystem.Watch[Sync]) < Sync = InMemoryFileSystem.init
 
     /** Copy-on-write overlay over `lower`: reads fall through, writes stage in an upper
-      * layer, and an explicit commit replays the staged journal onto `lower`.
+      * layer, and an explicit commit replays that staged layer onto `lower`.
       */
     def overlay[S, S2](lower: FileSystem.Write[S])(using
         Frame,

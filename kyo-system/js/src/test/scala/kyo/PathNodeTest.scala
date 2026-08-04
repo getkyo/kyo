@@ -95,6 +95,27 @@ class PathNodeTest extends kyo.test.Test[Any]:
         })
     }
 
+    "Node setLastModified round-trips a millisecond exactly" in {
+        // Node's utimesSync takes seconds. Dividing milliseconds by 1000.0 puts the value through a
+        // double that cannot represent every millisecond, so the timestamp that reaches the
+        // filesystem is already wrong: 987654 ms becomes 987.6539999999999850 s, and reading it back
+        // gives 987653. Every value below round-trips exactly in whole seconds, so the failure is the
+        // conversion rather than the filesystem's resolution.
+        Scope.run(Path.run {
+            val values = Chunk(987654L, 1234567L, 1_000_000_000_123L)
+            Path.tempDir("kyo-node-mtime").map { dir =>
+                Kyo.foreach(values.zipWithIndex) { (target, i) =>
+                    val file = dir / s"mtime-$i.bin"
+                    file.writeBytes(Span.from(Array[Byte](0x01))).andThen {
+                        file.setLastModified(target).andThen {
+                            file.stat.map(st => assert(st.lastModifiedMs == target, s"set $target, read back ${st.lastModifiedMs}"))
+                        }
+                    }
+                }.unit
+            }
+        })
+    }
+
     "Node copyAttributes controls copied modification time" in {
         Scope.run(Path.run {
             val sourceMtime = 1234567L
