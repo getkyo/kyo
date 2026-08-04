@@ -221,13 +221,12 @@ class SignalTest extends kyo.test.Test[Any]:
             for
                 ref    <- Signal.initRef(1)
                 f      <- Fiber.initUnscoped(ref.streamChanges.take(3).run)
-                _      <- Async.sleep(100.millis)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
                 _      <- ref.set(2)
-                _      <- Async.sleep(100.millis)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
                 _      <- ref.set(2) // Should be ignored
-                _      <- Async.sleep(100.millis)
+                _      <- assertEventually(ref.waiters.map(_ == 1))
                 _      <- ref.set(3)
-                _      <- Async.sleep(100.millis)
                 values <- f.get
             yield assert(values == Chunk(1, 2, 3))
         }
@@ -751,7 +750,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 ref <- Signal.initRef(0)
                 z = Signal.combineLatestAll(Seq(ref))
                 f  <- Fiber.initUnscoped(z.streamChanges.take(2).run)
-                _  <- Async.sleep(50.millis)
+                _  <- assertEventually(ref.waiters.map(_ == 1))
                 _  <- Kyo.foreachDiscard(Seq.range(1, 11))(ref.set)
                 vs <- f.get
             yield assert(vs.size == 2 && vs.head == Chunk(0) && vs.last.head >= 1)
