@@ -14,12 +14,21 @@ class ForeachTest extends CompatTest:
         c.map(out => assert(out.toSeq == Seq(2, 4, 6)))
     }
 
-    "foreach runs concurrently (timing canary)" in run {
-        // parallel 5×100ms ≈ 110ms; sequential = ~500ms.
-        val start = java.lang.System.nanoTime()
-        CIO.foreach(1 to 5)(_ => CIO.delay(100.millis)(CIO.defer { 7 })).map { out =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(out.size == 5 && elapsed < 500L, s"out.size=${out.size} elapsed=$elapsed ms")
+    "foreach runs concurrently (peak-concurrency canary)" in run {
+        // Concurrency shows up as overlap, not wall-clock: each task marks itself active, holds
+        // briefly, then leaves; a peak of 5 means all 5 were active at once (parallel), whereas a
+        // sequential run would peak at 1. Asserting the overlap is robust to a slow machine in a
+        // way `elapsed < 500ms` is not. (Same shape as the bounded-concurrency canary below.)
+        val active = new AtomicInteger(0)
+        val peak   = new AtomicInteger(0)
+        CIO.foreach(1 to 5) { _ =>
+            CIO.defer {
+                val cur = active.incrementAndGet()
+                peak.updateAndGet(_ max cur)
+                ()
+            }.flatMap(_ => CIO.delay(100.millis)(CIO.defer { active.decrementAndGet(); 7 }))
+        }.map { out =>
+            assert(out.size == 5 && peak.get() == 5, s"out.size=${out.size} peak=${peak.get()}")
         }
     }
 
@@ -168,11 +177,13 @@ class ForeachTest extends CompatTest:
         }
     }
 
-    "foreach with concurrency=2 on 6 items observes max 2 concurrent items" in run {
-        // Bounded path canary: peak concurrent invocations must not exceed 2.
+    "foreach with concurrency=2 on 6 items observes exactly 2 concurrent items" in run {
+        // Bounded path canary: peak concurrent invocations must be exactly 2 - never more (the
+        // bound holds) and never fewer (the bound is actually engaged, i.e. it did not run
+        // sequentially). peak == 2 captures both, so the former elapsed >= 150ms batching floor
+        // is redundant.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        val start  = java.lang.System.nanoTime()
         val c = CIO.foreach(1 to 6, 2) { _ =>
             CIO.defer {
                 val cur = active.incrementAndGet()
@@ -186,21 +197,25 @@ class ForeachTest extends CompatTest:
             }
         }
         c.map { _ =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(peak.get() <= 2, s"peak concurrency ${peak.get()} exceeded bound of 2")
-            assert(elapsed >= 150L, s"elapsed ${elapsed}ms less than 150ms (3 sequential batches of 2 × 50ms)")
+            assert(peak.get() == 2, s"peak concurrency ${peak.get()} (expected exactly 2)")
         }
     }
 
-    "foreach unbounded (default concurrency) completes 5 x 100ms in < 500ms" in run {
-        // Unbounded path explicit canary: the default (Int.MaxValue) branch must
-        // run all 5 tasks in parallel so total elapsed is well under 500ms.
-        val start = java.lang.System.nanoTime()
-        val c     = CIO.foreach(1 to 5, Int.MaxValue)(_ => CIO.delay(100.millis)(CIO.defer { 7 }))
-        c.map { out =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
+    "foreach unbounded (default concurrency) runs all 5 concurrently" in run {
+        // Unbounded path explicit canary: the default (Int.MaxValue) branch must run all 5 tasks
+        // in parallel, so all 5 are active at once (peak == 5). Asserting the overlap effect is
+        // robust to a slow machine where an `elapsed < 500ms` ceiling would flake.
+        val active = new AtomicInteger(0)
+        val peak   = new AtomicInteger(0)
+        CIO.foreach(1 to 5, Int.MaxValue) { _ =>
+            CIO.defer {
+                val cur = active.incrementAndGet()
+                peak.updateAndGet(_ max cur)
+                ()
+            }.flatMap(_ => CIO.delay(100.millis)(CIO.defer { active.decrementAndGet(); 7 }))
+        }.map { out =>
             assert(out.size == 5, s"expected 5 results, got ${out.size}")
-            assert(elapsed < 500L, s"elapsed ${elapsed}ms >= 500ms (unbounded must complete in ~100ms)")
+            assert(peak.get() == 5, s"unbounded must run all 5 concurrently, peak=${peak.get()}")
         }
     }
 

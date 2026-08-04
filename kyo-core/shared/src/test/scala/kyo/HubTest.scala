@@ -346,12 +346,13 @@ class HubTest extends kyo.test.Test[Any]:
                         Kyo.foreachDiscard(1 to 10)(hub.put)
                     )
                 )
-                _         <- latch.release
-                stopwatch <- Clock.stopwatch
-                result    <- slowConsumer.get
-                _         <- producerFiber.get
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 8.millis && result == (1 to 10))
+                _      <- latch.release
+                result <- slowConsumer.get
+                _      <- producerFiber.get
+            // result == (1 to 10) is the property: every item reached the deliberately-throttled
+            // consumer, in order, with no loss. The former elapsed >= 8.millis floor only
+            // confirmed the test's own per-item sleeps ran, which the delivery already implies.
+            yield assert(result == (1 to 10))
         }
 
         "concurrent filtered listeners".onlyJvm in {

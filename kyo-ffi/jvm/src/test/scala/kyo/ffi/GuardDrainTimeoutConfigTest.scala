@@ -51,17 +51,14 @@ class GuardDrainTimeoutConfigTest extends Test:
             )
             closerThread.setDaemon(true)
 
-            val startNanos = System.nanoTime()
             closerThread.start()
 
-            // Should complete well within 100ms (not the default 5s)
+            // The bounded latch await IS the timing bound: close() must finish within 500ms (the
+            // configured short drain timeout), not the default 5s. If it took longer, await(500ms)
+            // returns false and this assertion fails - no separate elapsed measurement needed.
             assert(closedLatch.await(500, TimeUnit.MILLISECONDS) == true)
-            val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L
             // Drain timed out with one callback still in flight → TimedOut outcome.
             assert(closeResult == CloseOutcome.TimedOut)
-
-            // Verify it didn't take anywhere near the default 5 seconds
-            assert(elapsedMs < 500L)
         finally
             GuardCore.drainTimeoutNanos = original
         end try
