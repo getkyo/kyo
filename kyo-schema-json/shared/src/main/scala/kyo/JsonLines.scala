@@ -77,7 +77,8 @@ object JsonLines:
       * breach never discards records that were already complete. See [[Framer.feed]] for what `error` and `framer` mean together.
       *
       * @param framer
-      *   the advanced framer, safe to feed again only when `error` is `Absent`
+      *   the advanced framer, safe to use again (including calling `feed` or `finish` on it) only when `error` is `Absent`. When
+      *   `error` is `Present`, this still holds the pre-chunk residual, so `finish` on it would emit a bogus partial record.
       * @param records
       *   every record framed from this chunk, in order, up to the breach if there was one
       * @param error
@@ -122,7 +123,9 @@ object JsonLines:
           *   a [[Framed]] holding every record this chunk completed and, if a record or the pending residual exceeds `maxLineBytes`,
           *   the breach as `error`. `records` is populated even when `error` is present: a breach ends framing but never discards a
           *   record that was already complete. When `error` is `Present`, no record boundary could be found for the offending bytes,
-          *   so the returned `framer` must not be fed again. When `error` is `Absent`, `framer` is safe to feed with the next chunk.
+          *   so the returned `framer` must not be used again for anything, including feeding it further or calling `finish` on it: it
+          *   still holds the pre-chunk residual, so `finish` on it would emit a bogus partial record. When `error` is `Absent`,
+          *   `framer` is safe to feed with the next chunk or to call `finish` on.
           */
         def feed(chunk: Span[Byte])(using Frame): Framed =
             val combined = if residual.isEmpty then chunk else residual ++ chunk
@@ -391,8 +394,9 @@ object JsonLines:
 
     /** Encodes every value as one JSONL record per line, each terminated by a newline.
       *
-      * Delegates to `Json.encode`, so a `Json` given in the caller's scope is honored the same way it would be for a single-value
-      * `Json.encode` call, rather than being permanently bound to whichever `Json` is visible where this method is defined.
+      * Delegates to `Json.encode`. `Json.encode` takes `Json` as an explicit parameter rather than summoning it internally
+      * (`Json.scala`), so a `Json` given in this method's own caller's scope flows through to every `Json.encode` call here the same
+      * way it would for a `Json.encode` call written directly at that call site.
       *
       * @param values
       *   the values to encode, in order
@@ -407,8 +411,10 @@ object JsonLines:
 
     /** Encodes every value as one JSONL record per line, returning raw UTF-8 bytes.
       *
-      * Builds from `Json.encodeBytes` directly rather than through `encodeAll`, so encoding to bytes never round-trips through a
-      * `String`.
+      * Encodes each value once with `Json.encodeBytes`, then concatenates every encoded value and its trailing newline with
+      * `Span.concat`, which sizes the output array once and copies each piece into it exactly once. Building the result by
+      * repeatedly concatenating onto a growing accumulator (`acc ++ Json.encodeBytes(v) ++ ...`) would instead copy the whole
+      * accumulator again for every value, which is quadratic in the number of values; this stays linear in the total output size.
       *
       * @param values
       *   the values to encode, in order
@@ -416,7 +422,8 @@ object JsonLines:
       *   the JSONL bytes, or an empty span for an empty input
       */
     def encodeAllBytes[A](values: Seq[A])(using Json, Schema[A], Frame): Span[Byte] =
-        values.foldLeft(Span.empty[Byte])((acc, v) => acc ++ Json.encodeBytes(v) ++ NewlineSpan)
+        val pieces = values.flatMap(v => Seq(Json.encodeBytes(v), NewlineSpan))
+        Span.concat(pieces*)
     end encodeAllBytes
 
     /** Encodes a single value as one JSONL record, terminated by a newline.

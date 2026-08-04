@@ -372,6 +372,17 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             assert(Json.Lines.encodeAllBytes(Seq.empty[Event]).isEmpty)
         }
 
+        // Regression test for a defect where encodeAllBytes concatenated onto a growing Span
+        // accumulator (`acc ++ Json.encodeBytes(v) ++ newline`), copying the whole accumulator again
+        // on every value: quadratic in the number of values. This does not measure timing, which
+        // would be flaky; it pins the size accounting a copy-arithmetic bug would get wrong,
+        // regardless of which linear-time scheme produces it.
+        "encodeAllBytes produces exactly the sum of each value's encoded length plus one newline per value" in {
+            val values         = (0 until 5000).map(i => Event(s"item$i", i))
+            val expectedLength = values.map(v => Json.encodeBytes(v).size + 1).sum
+            assert(Json.Lines.encodeAllBytes(values).size == expectedLength)
+        }
+
         "round trips through decodeAll" in {
             val values = Seq(Event("café", 1), Event("🎉", 2))
             assert(Json.Lines.decodeAll[Event](Json.Lines.encodeAll(values)).getOrThrow == Chunk.from(values))
