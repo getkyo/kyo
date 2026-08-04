@@ -189,4 +189,93 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             assert(records.map(_.text) == Chunk("12345678"))
         }
     }
+
+    case class Event(name: String, count: Int) derives Schema, CanEqual
+
+    "decodeAll" - {
+
+        "decodes every record" in {
+            val in = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n"
+            assert(Json.Lines.decodeAll[Event](in).getOrThrow == Chunk(Event("a", 1), Event("b", 2)))
+        }
+
+        "decodes an unterminated final record" in {
+            val in = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}"
+            assert(Json.Lines.decodeAll[Event](in).getOrThrow == Chunk(Event("a", 1), Event("b", 2)))
+        }
+
+        "returns an empty chunk for empty input" in {
+            assert(Json.Lines.decodeAll[Event]("").getOrThrow == Chunk.empty)
+        }
+
+        "fails on the first bad record with its position" in {
+            val in     = "{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n"
+            val result = Json.Lines.decodeAll[Event](in)
+            assert(result.isFailure)
+            result.foldError(
+                _ => fail("expected a failure"),
+                {
+                    case Result.Failure(e: RecordDecodeException) =>
+                        assert(e.recordIndex == 1L)
+                        assert(e.byteOffset == 23L)
+                        assert(e.record == "{\"nope\":true}")
+                    case other => fail(s"unexpected error $other")
+                }
+            )
+        }
+
+        "rejects trailing content after a complete value on one line" in {
+            assert(Json.Lines.decodeAll[Event]("{\"name\":\"a\",\"count\":1} {}\n").isFailure)
+        }
+    }
+
+    "decodeAllResults" - {
+
+        "keeps going past a bad record" in {
+            val in = "{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n"
+            val rs = Json.Lines.decodeAllResults[Event](Span.from(in.getBytes(StandardCharsets.UTF_8)))
+            assert(rs.size == 3)
+            assert(rs(0).getOrThrow == Event("a", 1))
+            assert(rs(1).isFailure)
+            assert(rs(2).getOrThrow == Event("c", 3))
+        }
+
+        "terminates after an oversized record because no boundary was found" in {
+            val in = "aaaaaaaaaaaaaaaaaaaaaaaa"
+            val rs = Json.Lines.decodeAllResults[Event](
+                Span.from(in.getBytes(StandardCharsets.UTF_8)),
+                maxLineBytes = 8
+            )
+            assert(rs.size == 1)
+            assert(rs(0).isFailure)
+        }
+    }
+
+    "encode" - {
+
+        "encodeLine appends a newline" in {
+            assert(Json.Lines.encodeLine(Event("a", 1)) == "{\"name\":\"a\",\"count\":1}\n")
+        }
+
+        "encodeAll writes one record per line" in {
+            val out = Json.Lines.encodeAll(Seq(Event("a", 1), Event("b", 2)))
+            assert(out == "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n")
+        }
+
+        "encodeAll of an empty sequence is empty" in {
+            assert(Json.Lines.encodeAll(Seq.empty[Event]) == "")
+        }
+
+        "round trips through decodeAll" in {
+            val values = Seq(Event("café", 1), Event("🎉", 2))
+            assert(Json.Lines.decodeAll[Event](Json.Lines.encodeAll(values)).getOrThrow == Chunk.from(values))
+        }
+
+        "encodeLine escapes an embedded newline rather than emitting it raw" in {
+            val line = Json.Lines.encodeLine(Event("a\nb", 1))
+            assert(line.count(_ == '\n') == 1)
+            assert(line.endsWith("\n"))
+            assert(Json.Lines.decodeAll[Event](line).getOrThrow == Chunk(Event("a\nb", 1)))
+        }
+    }
 end JsonLinesTest
