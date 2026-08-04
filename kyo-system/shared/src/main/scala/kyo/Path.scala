@@ -26,9 +26,9 @@ import kyo.internal.PathPlatformSpecific
   * Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than
   * failing — they require only `Sync`, not `Abort`.
   *
-  * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`, `tailBytes`) return `Stream` values that carry
-  * `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream starts and released
-  * when the enclosing `Scope` closes — whether by normal completion, error, or cancellation.
+  * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`, `tailBytes`) return `Stream` values
+  * that carry `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream
+  * starts and released when the enclosing `Scope` closes, whether by normal completion, error, or cancellation.
   *
   * @see
   *   [[FileException]] for the typed error hierarchy
@@ -64,6 +64,14 @@ object Path extends PathPlatformSpecific:
     enum Origin derives CanEqual:
         case Start
         case End
+
+        /** Resumes at byte `bytes` of the file.
+          *
+          * A negative `bytes` is clamped to 0, so it reads from the first byte exactly as [[Origin.Start]] does, identically on every
+          * platform. A `bytes` past the current end of the file reads nothing, which a follower cannot distinguish from a file that has
+          * shrunk below its position: it rewinds to 0 and replays the whole file. Record an offset only from a stream that actually read
+          * the file if a full replay would be wrong.
+          */
         case Offset(bytes: Long)
     end Origin
 
@@ -391,9 +399,13 @@ object Path extends PathPlatformSpecific:
 
         /** Streams the file's bytes, continuing to emit as content is appended.
           *
-          * The byte-level primitive under [[tail]]: it polls for new content and does no text decoding or line splitting. On end of file it
-          * sleeps `pollDelay` and retries; if the file has shrunk below the current position it resets to the beginning, matching [[tail]]'s
-          * truncation handling.
+          * The byte-level primitive under [[tail]]: it polls for new content and does no text decoding or line splitting. On end of file
+          * it sleeps `pollDelay` and retries; if the file has shrunk below the current position it rewinds to offset 0 and replays the
+          * file from there.
+          *
+          * That rewind carries no marker: the first byte replayed after a truncation is indistinguishable from an ordinary appended byte.
+          * A consumer that carries state across chunks, such as a framer holding a partial record, will therefore splice that stale
+          * partial onto the first replayed record unless it resets the state itself.
           *
           * @param from
           *   where reading begins; defaults to [[Path.Origin.End]] so the default is follow-only
@@ -621,9 +633,11 @@ object Path extends PathPlatformSpecific:
                     Abort.get(self.unsafe.size()).map { fileSize =>
                         val startPos =
                             from match
-                                case Origin.Start         => 0L
-                                case Origin.End           => fileSize
-                                case Origin.Offset(bytes) => bytes
+                                case Origin.Start => 0L
+                                case Origin.End   => fileSize
+                                // Clamped so a negative offset means the same thing everywhere: JVM and Native raise a raw
+                                // IllegalArgumentException from the channel, while Node reads from the current position instead.
+                                case Origin.Offset(bytes) => math.max(0L, bytes)
                         Sync.Unsafe.defer {
                             handle.position(startPos)
                             val buf = new Array[Byte](bufferSize)
