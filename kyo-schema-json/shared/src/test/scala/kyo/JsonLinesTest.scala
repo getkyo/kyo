@@ -377,7 +377,18 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // on every value: quadratic in the number of values. This does not measure timing, which
         // would be flaky; it pins the size accounting a copy-arithmetic bug would get wrong,
         // regardless of which linear-time scheme produces it.
-        "encodeAllBytes produces exactly the sum of each value's encoded length plus one newline per value" in {
+        // Regression test for a defect where forcing the pieces to IndexedSeq before Span.concat was
+        // skipped: Span.concat indexes its pieces (spans(i)), which is O(i) for a List, so a List
+        // caller stayed quadratic (via pointer chases instead of byte copies) even after the round 2
+        // fix. Both a List and an IndexedSeq input must produce the same exact byte length, pinning
+        // the fix against a future refactor that reintroduces the type-preserving path.
+        "encodeAllBytes produces exactly the sum of each value's encoded length plus one newline per value, for a List" in {
+            val values         = (0 until 5000).map(i => Event(s"item$i", i)).toList
+            val expectedLength = values.map(v => Json.encodeBytes(v).size + 1).sum
+            assert(Json.Lines.encodeAllBytes(values).size == expectedLength)
+        }
+
+        "encodeAllBytes produces exactly the sum of each value's encoded length plus one newline per value, for an IndexedSeq" in {
             val values         = (0 until 5000).map(i => Event(s"item$i", i))
             val expectedLength = values.map(v => Json.encodeBytes(v).size + 1).sum
             assert(Json.Lines.encodeAllBytes(values).size == expectedLength)
