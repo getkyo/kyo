@@ -1725,6 +1725,16 @@ class PathTest extends kyo.test.Test[Any]:
     )(using Frame): Unit < Async =
         Loop.repeat(times)(control.advance(step))
 
+    /** Gives a forked follower real time to run while offering it no wakeup at all.
+      *
+      * Advancing the controlled clock by nothing still settles for `wallClock` of real time, so this
+      * hands out CPU without handing out virtual time. A follower parked on a controlled `Async.sleep`
+      * therefore cannot progress here however long the settle lasts, while a follower that loops
+      * without sleeping progresses freely. That difference is what an assertion after a settle reads.
+      */
+    private def settle(control: Clock.TimeControl, wallClock: Duration)(using Frame): Unit < Async =
+        control.advance(Duration.Zero, wallClock)
+
     /** `condition`, but already satisfied once `fiber` has finished.
       *
       * The driver loops below wait for something the follower must produce. A follower that instead
@@ -1806,6 +1816,44 @@ class PathTest extends kyo.test.Test[Any]:
             _     <- dir.removeAll
         yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "aaaabbbb")
         end for
+    }
+
+    "tailBytes sleeps one poll delay before replaying a rewind" in {
+        // A rewind is the one branch that can re-enter the read loop without new bytes having arrived,
+        // so it is the one branch still structurally able to replay a file without bound. The sleep is
+        // what bounds it, and what bounds a platform that under-reports a size instead of raising.
+        Clock.withTimeControl { control =>
+            val content = "0123456789"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-rewind-sleep")
+                file = dir / "log.txt"
+                _    <- file.write(content)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                // Starting past the end reads as a shrunk file, so the first poll rewinds to 0.
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Offset(1024L), 50.millis)
+                            .take(content.length)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                // Real time to reach and take the rewind, but not one instant of virtual time.
+                _        <- settle(control, 100.millis)
+                _        <- settle(control, 100.millis)
+                _        <- settle(control, 100.millis)
+                parked   <- seen.get
+                _        <- advanceUntil(control, 50.millis)(fiber.done)
+                _        <- fiber.get
+                replayed <- seen.get
+                _        <- dir.removeAll
+            yield
+                // Zero wakeups offered, so zero bytes may be replayed. A rewind that continues the loop
+                // directly needs no wakeup and would have replayed the whole file during the settles.
+                assert(parked.isEmpty, s"Expected nothing replayed before a wakeup, got: ${parked.size} bytes")
+                // The rewind still replays, one poll delay later.
+                assert(new String(replayed.toArray, StandardCharsets.UTF_8) == content)
+            end for
+        }
     }
 
     "tailBytes rewinds to the first byte and replays after the file is truncated" in {
@@ -1893,7 +1941,7 @@ class PathTest extends kyo.test.Test[Any]:
     //
     // A follower follows an open file, not a name. Every quantity the poll loop compares therefore
     // has to come from the handle, which is the only value that denotes the followed inode. The
-    // four tests below drive the ways a name can stop denoting that inode.
+    // five tests below drive the ways a name can stop denoting that inode.
     //
     // Renaming and unlinking a file that is currently open is POSIX descriptor behavior. Windows
     // keeps the directory entry alive until the last handle closes and refuses the operation
