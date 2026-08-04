@@ -1684,6 +1684,24 @@ class PathTest extends kyo.test.Test[Any]:
             }
         }
 
+    /** Advances the controlled clock until `condition` holds, writing nothing.
+      *
+      * Each advance ticks the virtual clock and then settles for the same duration of wall-clock
+      * time, so a follower woken by the tick gets a chance to run before the condition is checked
+      * again. The exit condition is an observed fact rather than a fixed number of advances, so
+      * the loop cannot run out of wakeups on a loaded machine.
+      */
+    private def advanceUntil(
+        control: Clock.TimeControl,
+        step: Duration
+    )(condition: Boolean < Async)(using Frame): Unit < Async =
+        Loop.foreach {
+            condition.map { done =>
+                if done then Loop.done
+                else control.advance(step).andThen(Loop.continue)
+            }
+        }
+
     "tailBytes with Origin.Start replays existing content then follows" in {
         Clock.withTimeControl { control =>
             for
@@ -1729,6 +1747,68 @@ class PathTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "tailBytes with a negative Origin.Offset reads from the first byte" in {
+        // The offset is clamped to 0 rather than reaching the platform handle, where a negative
+        // position raises IllegalArgumentException on JVM and Native and is read as "current
+        // position" by Node. This case runs on every platform because the divergence is the defect.
+        for
+            dir <- Path.tempDir("kyo-tailbytes")
+            file = dir / "log.txt"
+            _     <- file.write("aaaabbbb")
+            bytes <- Scope.run(file.tailBytes(Path.Origin.Offset(-4L), 50.millis).take(4).run)
+            _     <- dir.removeAll
+        yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "aaaa")
+        end for
+    }
+
+    "tailBytes with an Origin.Offset past the end of the file replays the whole file" in {
+        // Reading past the end is indistinguishable from a truncation, so the follower rewinds to 0.
+        // No poll sleep is reached: the rewind continues the loop directly.
+        for
+            dir <- Path.tempDir("kyo-tailbytes")
+            file = dir / "log.txt"
+            _     <- file.write("aaaabbbb")
+            bytes <- Scope.run(file.tailBytes(Path.Origin.Offset(1024L), 50.millis).take(8).run)
+            _     <- dir.removeAll
+        yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "aaaabbbb")
+        end for
+    }
+
+    "tailBytes rewinds to the first byte and replays after the file is truncated" in {
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            val replaced = "abcd"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-truncate")
+                file = dir / "log.txt"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + replaced.length)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                // Wait until the original content has been replayed, so the truncation below is
+                // guaranteed to leave the follower's position past the new end of the file.
+                _ <- advanceUntil(control, 50.millis)(seen.get.map(_.size >= original.length))
+                _ <- file.truncate(0L)
+                // A single truncating write: the file never grows back past the follower's
+                // position, so the rewind fires on whichever poll comes next.
+                _     <- file.write(replaced)
+                _     <- advanceUntil(control, 50.millis)(fiber.done)
+                _     <- fiber.get
+                bytes <- seen.get
+                _     <- dir.removeAll
+            yield
+                // The replayed bytes follow the pre-truncation bytes with nothing in between: the
+                // rewind is invisible at the byte level, which is the contract a framer must know.
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original + replaced)
+            end for
+        }
+    }
+
     "tail behavior is unchanged after the tailBytes refactor" in {
         Clock.withTimeControl { control =>
             for
@@ -1749,17 +1829,27 @@ class PathTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-tail-truncate-pending")
                 file = dir / "log.txt"
-                _         <- file.mkFile
-                tailFiber <- Fiber.initUnscoped(Scope.run(file.tail(50.millis).take(1).run))
-                _         <- control.advance(50.millis) // wake the first poll, which sees an empty file
-                _         <- file.append("partial")     // no newline, so it is held as pending text
-                _         <- control.advance(50.millis) // wake the second poll, which buffers "partial"
-                _         <- file.truncate(0L)
-                _         <- control.advance(50.millis) // wake the third poll, which resets after truncation
-                _         <- writeUntilDone(tailFiber, control, 50.millis, file.append("clean\n"))
-                lines     <- tailFiber.get
-                _         <- dir.removeAll
-            yield assert(lines == Chunk("clean"))
+                _     <- file.mkFile
+                lines <- AtomicRef.init(Chunk.empty[String])
+                tailFiber <- Fiber.initUnscoped(
+                    Scope.run(file.tail(50.millis).take(2).foreach(line => lines.updateAndGet(_.append(line))))
+                )
+                _ <- control.advance(50.millis) // let the follower open the empty file and park on its first poll
+                // One complete line plus text with no newline, written in a single call so that the
+                // read which produces "seen" necessarily also buffers "partial" as pending text.
+                _ <- file.write("seen\npartial")
+                // Emitting "seen" is the observable proof that the follower read past the newline,
+                // so the truncation below cannot silently land before the pending text exists.
+                _ <- advanceUntil(control, 50.millis)(lines.get.map(_.nonEmpty))
+                // A truncating write, and the only one: the file stays at 6 bytes, below the
+                // follower's position of 12, so the reset fires no matter how it is scheduled.
+                _       <- file.write("clean\n")
+                _       <- advanceUntil(control, 50.millis)(tailFiber.done)
+                _       <- tailFiber.get
+                emitted <- lines.get
+                _       <- dir.removeAll
+            // "partialclean" here would mean the pending text survived the rewind.
+            yield assert(emitted == Chunk("seen", "clean"))
             end for
         }
     }
