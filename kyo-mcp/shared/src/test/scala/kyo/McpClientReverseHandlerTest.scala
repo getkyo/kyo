@@ -85,7 +85,7 @@ class McpClientReverseHandlerTest extends Test:
             ).flatMap { (srv, client) =>
                 for
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyLog(McpServer.LogLevel.Info, "test-log"))
-                    _ <- Async.sleep(30.millis)
+                    _ <- assertEventually(Sync.defer(counter.get()(using AllowUnsafe.embrace.danger) >= 1))
                     c = counter.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow
@@ -121,7 +121,7 @@ class McpClientReverseHandlerTest extends Test:
             ).flatMap { (srv, client) =>
                 for
                     _ <- Abort.run[McpConnectionClosedException](srv.notifyLog(McpServer.LogLevel.Warning, "warn-data"))
-                    _ <- Async.sleep(30.millis)
+                    _ <- assertEventually(Sync.defer(received.unsafe.get()(using AllowUnsafe.embrace.danger).isDefined))
                     r = received.unsafe.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow
@@ -156,7 +156,7 @@ class McpClientReverseHandlerTest extends Test:
                     // server's subscription set contains the URI before notifyResourceUpdated checks it.
                     _ <- client.subscribeResource(uri)
                     _ <- srv.notifyResourceUpdated(uri)
-                    _ <- Async.sleep(30.millis)
+                    _ <- assertEventually(Sync.defer(received.unsafe.get()(using AllowUnsafe.embrace.danger).isDefined))
                     r = received.unsafe.get()(using AllowUnsafe.embrace.danger)
                     _ <- srv.closeNow
                     _ <- client.closeNow
