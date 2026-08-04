@@ -6,6 +6,16 @@ class JsonlTest extends kyo.test.Test[Any]:
 
     case class Event(name: String, count: Int) derives Schema, CanEqual
 
+    /** A record nested two levels deep holding a ten-entry collection.
+      *
+      * Its depth and its collection size are different numbers, which is what lets a limit test set `maxDepth` and `maxCollectionSize` to
+      * two different values and read back from the raised exception which of the two was applied.
+      */
+    case class Bag(items: Chunk[Int]) derives Schema, CanEqual
+
+    private val bag     = Bag(Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+    private val bagLine = "{\"items\":[0,1,2,3,4,5,6,7,8,9]}"
+
     private def byteStream(s: String, chunkSize: Int = 4096): Stream[Byte, Any] =
         Stream.init(Chunk.from(s.getBytes(StandardCharsets.UTF_8)), chunkSize)
 
@@ -20,6 +30,26 @@ class JsonlTest extends kyo.test.Test[Any]:
             {
                 case Result.Failure(e: RecordDecodeException) => assert(e.recordIndex == index)
                 case other                                    => fail(s"unexpected error $other")
+            }
+        )
+
+    /** Asserts that `result` is a record decode failure caused by breaching `limit` with the maximum `maximum`.
+      *
+      * Pins which of the two decode limits was applied and the value it was applied with, not merely that decoding failed. That is what
+      * makes a limit test sensitive to `maxDepth` and `maxCollectionSize` being forwarded in the wrong order: both are `Int`, so a
+      * transposition compiles, and it shows up here as the wrong limit name or the wrong maximum.
+      */
+    private def assertLimitBreach[A](result: Result[DecodeException, A], limit: String, maximum: Int)(using kyo.test.AssertScope): Unit =
+        result.foldError(
+            value => fail(s"expected a failure, got $value"),
+            {
+                case Result.Failure(e: RecordDecodeException) =>
+                    e.cause match
+                        case cause: LimitExceededException =>
+                            assert(cause.limit == limit)
+                            assert(cause.maximum == maximum)
+                        case other => fail(s"unexpected cause $other")
+                case other => fail(s"unexpected error $other")
             }
         )
 
@@ -129,6 +159,41 @@ class JsonlTest extends kyo.test.Test[Any]:
                 )
             end for
         }
+
+        "applies maxDepth and maxCollectionSize to a terminated record" in {
+            for
+                depth <- Abort.run[DecodeException](
+                    byteStream(bagLine + "\n").into(Jsonl.pipe[Bag](maxDepth = 1, maxCollectionSize = 50)).run
+                )
+                collection <- Abort.run[DecodeException](
+                    byteStream(bagLine + "\n").into(Jsonl.pipe[Bag](maxDepth = 8, maxCollectionSize = 4)).run
+                )
+                within <- byteStream(bagLine + "\n").into(Jsonl.pipe[Bag](maxDepth = 8, maxCollectionSize = 50)).run
+            yield
+                assertLimitBreach(depth, "Nesting depth", 1)
+                assertLimitBreach(collection, "Collection size", 4)
+                assert(within == Chunk(bag))
+            end for
+        }
+
+        "applies maxDepth and maxCollectionSize to an unterminated final record" in {
+            // No trailing newline, so the record is completed by the framer's `finish` rather than by a
+            // record boundary inside a chunk. That is a second decode call site with its own pair of limit
+            // arguments to forward, and the terminated case above does not reach it.
+            for
+                depth <- Abort.run[DecodeException](
+                    byteStream(bagLine).into(Jsonl.pipe[Bag](maxDepth = 1, maxCollectionSize = 50)).run
+                )
+                collection <- Abort.run[DecodeException](
+                    byteStream(bagLine).into(Jsonl.pipe[Bag](maxDepth = 8, maxCollectionSize = 4)).run
+                )
+                within <- byteStream(bagLine).into(Jsonl.pipe[Bag](maxDepth = 8, maxCollectionSize = 50)).run
+            yield
+                assertLimitBreach(depth, "Nesting depth", 1)
+                assertLimitBreach(collection, "Collection size", 4)
+                assert(within == Chunk(bag))
+            end for
+        }
     }
 
     "read" - {
@@ -193,6 +258,43 @@ class JsonlTest extends kyo.test.Test[Any]:
                 assertRecordFailure(rs(1), 1L)
                 assert(rs(2).getOrThrow == Event("c", 3))
         }
+
+        "read applies maxDepth and maxCollectionSize" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-read-limits")
+                file = dir / "bag.jsonl"
+                _     <- file.write(bagLine + "\n")
+                depth <- Abort.run[DecodeException](Scope.run(Jsonl.read[Bag](file, maxDepth = 1, maxCollectionSize = 50).run))
+                collection <- Abort.run[DecodeException](
+                    Scope.run(Jsonl.read[Bag](file, maxDepth = 8, maxCollectionSize = 4).run)
+                )
+                within <- Scope.run(Jsonl.read[Bag](file, maxDepth = 8, maxCollectionSize = 50).run)
+                _      <- dir.removeAll
+            yield
+                assertLimitBreach(depth, "Nesting depth", 1)
+                assertLimitBreach(collection, "Collection size", 4)
+                assert(within == Chunk(bag))
+            end for
+        }
+
+        "readResults applies maxDepth and maxCollectionSize" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-read-results-limits")
+                file = dir / "bag.jsonl"
+                _          <- file.write(bagLine + "\n")
+                depth      <- Scope.run(Jsonl.readResults[Bag](file, maxDepth = 1, maxCollectionSize = 50).run)
+                collection <- Scope.run(Jsonl.readResults[Bag](file, maxDepth = 8, maxCollectionSize = 4).run)
+                within     <- Scope.run(Jsonl.readResults[Bag](file, maxDepth = 8, maxCollectionSize = 50).run)
+                _          <- dir.removeAll
+            yield
+                assert(depth.size == 1)
+                assertLimitBreach(depth(0), "Nesting depth", 1)
+                assert(collection.size == 1)
+                assertLimitBreach(collection(0), "Collection size", 4)
+                assert(within.size == 1)
+                assert(within(0).getOrThrow == bag)
+            end for
+        }
     }
 
     "pipeResults" - {
@@ -240,6 +342,23 @@ class JsonlTest extends kyo.test.Test[Any]:
                         case other                                     => fail(s"unexpected error $other")
                     }
                 )
+            end for
+        }
+
+        "applies maxDepth and maxCollectionSize to terminated and unterminated records" in {
+            // The unterminated case reaches the framer's `finish`, which is a separate decode call site from
+            // the one a record boundary inside a chunk reaches, with its own pair of limit arguments.
+            for
+                terminated   <- byteStream(bagLine + "\n").into(Jsonl.pipeResults[Bag](maxDepth = 8, maxCollectionSize = 4)).run
+                unterminated <- byteStream(bagLine).into(Jsonl.pipeResults[Bag](maxDepth = 1, maxCollectionSize = 50)).run
+                within       <- byteStream(bagLine).into(Jsonl.pipeResults[Bag](maxDepth = 8, maxCollectionSize = 50)).run
+            yield
+                assert(terminated.size == 1)
+                assertLimitBreach(terminated(0), "Collection size", 4)
+                assert(unterminated.size == 1)
+                assertLimitBreach(unterminated(0), "Nesting depth", 1)
+                assert(within.size == 1)
+                assert(within(0).getOrThrow == bag)
             end for
         }
     }
@@ -592,6 +711,312 @@ class JsonlTest extends kyo.test.Test[Any]:
                         case other                                     => fail(s"unexpected error $other")
                     }
                 )
+            end for
+        }
+
+        "follow applies maxDepth and maxCollectionSize" in {
+            // The whole record is on disk before the follower starts, so the first read reaches the decode
+            // without ever polling and no wakeup is needed.
+            for
+                dir <- Path.tempDir("kyo-jsonl-follow-limits")
+                file = dir / "bag.jsonl"
+                _ <- file.write(bagLine + "\n")
+                depth <- Abort.run[DecodeException](
+                    Scope.run(Jsonl.follow[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run)
+                )
+                collection <- Abort.run[DecodeException](
+                    Scope.run(Jsonl.follow[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 4).take(1).run)
+                )
+                within <- Scope.run(
+                    Jsonl.follow[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 50).take(1).run
+                )
+                _ <- dir.removeAll
+            yield
+                assertLimitBreach(depth, "Nesting depth", 1)
+                assertLimitBreach(collection, "Collection size", 4)
+                assert(within == Chunk(bag))
+            end for
+        }
+
+        "followResults applies maxDepth and maxCollectionSize" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-follow-results-limits")
+                file = dir / "bag.jsonl"
+                _ <- file.write(bagLine + "\n")
+                depth <- Scope.run(
+                    Jsonl.followResults[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run
+                )
+                collection <- Scope.run(
+                    Jsonl.followResults[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 4).take(1).run
+                )
+                within <- Scope.run(
+                    Jsonl.followResults[Bag](file, pollDelay = pollDelay, maxDepth = 8, maxCollectionSize = 50).take(1).run
+                )
+                _ <- dir.removeAll
+            yield
+                assert(depth.size == 1)
+                assertLimitBreach(depth(0), "Nesting depth", 1)
+                assert(collection.size == 1)
+                assertLimitBreach(collection(0), "Collection size", 4)
+                assert(within.size == 1)
+                assert(within(0).getOrThrow == bag)
+            end for
+        }
+    }
+
+    "encode" - {
+
+        "turns a value stream into jsonl bytes" in {
+            for bytes <- Jsonl.encode(Stream.init(Chunk(Event("a", 1)))).run
+            yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "{\"name\":\"a\",\"count\":1}\n")
+        }
+
+        "emits nothing for an empty stream" in {
+            for bytes <- Jsonl.encode(Stream.init(Chunk.empty[Event])).run
+            yield assert(bytes == Chunk.empty[Byte])
+        }
+
+        "terminates every record with a newline whatever the source chunking" in {
+            // One newline per record, never one per chunk: the bytes are a function of the values alone,
+            // which is the property [[Jsonl.pipe]] holds on the way in.
+            val values   = Chunk(Event("a", 1), Event("b", 2), Event("c", 3))
+            val expected = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n{\"name\":\"c\",\"count\":3}\n"
+            for
+                whole <- Jsonl.encode(Stream.init(values, 4096)).run
+                byOne <- Jsonl.encode(Stream.init(values, 1)).run
+                byTwo <- Jsonl.encode(Stream.init(values, 2)).run
+            yield
+                assert(new String(whole.toArray, StandardCharsets.UTF_8) == expected)
+                assert(byOne == whole)
+                assert(byTwo == whole)
+            end for
+        }
+
+        "encodes non-ascii text as utf-8" in {
+            val expected = "{\"name\":\"café\",\"count\":1}\n{\"name\":\"🎉\",\"count\":2}\n"
+            for bytes <- Jsonl.encode(Stream.init(Chunk(Event("café", 1), Event("🎉", 2)))).run
+            yield
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == expected)
+                assert(bytes.size == expected.getBytes(StandardCharsets.UTF_8).length)
+            end for
+        }
+
+        "round trips through pipe" in {
+            val values = Chunk(Event("café", 1), Event("🎉", 2), Event("a\nb", 3))
+            for got <- Jsonl.encode(Stream.init(values)).into(Jsonl.pipe[Event]()).run
+            yield assert(got == values)
+        }
+
+        "emits one byte chunk per source chunk" in {
+            // Each record here encodes to 23 bytes, so two source chunks of two values and one value become
+            // byte chunks of 46 and 23. That is the bounded-memory property stated as an observable fact: an
+            // encoder accumulating across chunks would emit one chunk of 69 and one encoding per value would
+            // emit three of 23, and both are visible here without measuring a heap.
+            for
+                sizes <- AtomicRef.init(Chunk.empty[Int])
+                _ <- Jsonl.encode(Stream.init(Chunk(Event("a", 1), Event("b", 2), Event("c", 3)), 2))
+                    .foreachChunk(bytes => sizes.updateAndGet(_ :+ bytes.size))
+                got <- sizes.get
+            yield assert(got == Chunk(46, 23))
+            end for
+        }
+    }
+
+    "write" - {
+
+        "writes a stream of values as jsonl" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-write")
+                file = dir / "out.jsonl"
+                _    <- Jsonl.write(file, Stream.init(Chunk(Event("a", 1), Event("b", 2))))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n")
+        }
+
+        "replaces the existing content rather than adding to it" in {
+            // The existing content is longer than what replaces it, so a write that only overwrote from the
+            // start would leave the tail of the old content behind and the assertion would see it.
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-truncate")
+                file = dir / "out.jsonl"
+                _    <- Jsonl.write(file, Stream.init(Chunk(Event("old", 1), Event("older", 2), Event("oldest", 3))))
+                _    <- Jsonl.write(file, Stream.init(Chunk(Event("new", 9))))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "{\"name\":\"new\",\"count\":9}\n")
+        }
+
+        "writing an empty stream produces an empty file" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-empty")
+                file = dir / "empty.jsonl"
+                _    <- Jsonl.write(file, Stream.init(Chunk.empty[Event]))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "")
+        }
+
+        "writing an empty stream over an existing file empties it" in {
+            // The emptying is part of the call rather than of the first chunk, so a stream that never
+            // produces one still leaves an empty file instead of the previous content.
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-empty-over")
+                file = dir / "out.jsonl"
+                _    <- Jsonl.write(file, Stream.init(Chunk(Event("a", 1))))
+                _    <- Jsonl.write(file, Stream.init(Chunk.empty[Event]))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "")
+        }
+
+        "creates missing parent directories by default" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-folders")
+                file = dir / "nested" / "deeper" / "out.jsonl"
+                _    <- Jsonl.write(file, Stream.init(Chunk(Event("a", 1))))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "{\"name\":\"a\",\"count\":1}\n")
+        }
+
+        "fails when createFolders is false and a parent is missing" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-no-folders")
+                file = dir / "nested" / "out.jsonl"
+                r      <- Abort.run[FileWriteException](Jsonl.write(file, Stream.init(Chunk(Event("a", 1))), createFolders = false))
+                exists <- file.exists
+                _      <- dir.removeAll
+            yield
+                assert(r.isFailure)
+                assert(!exists)
+            end for
+        }
+
+        "round trips through read" in {
+            val values = Chunk(Event("café", 1), Event("🎉", 2))
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-round-trip")
+                file = dir / "rt.jsonl"
+                _   <- Jsonl.write(file, Stream.init(values))
+                got <- Scope.run(Jsonl.read[Event](file).run)
+                _   <- dir.removeAll
+            yield assert(got == values)
+            end for
+        }
+
+        "keeps the records already written when the stream fails part way" in {
+            // A prefix of a JSONL file is still a valid JSONL file, so the records that completed belong to
+            // the consumer. Removing the partial file instead would lose all of them to the record that failed.
+            val failing = Stream[Event, Abort[String]](Emit.valueWith(Chunk(Event("a", 1)))(Abort.fail("boom")))
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-failure")
+                file = dir / "partial.jsonl"
+                r      <- Abort.run[String](Jsonl.write(file, failing))
+                exists <- file.exists
+                text   <- file.read
+                _      <- dir.removeAll
+            yield
+                assert(r.isFailure)
+                assert(exists)
+                assert(text == "{\"name\":\"a\",\"count\":1}\n")
+            end for
+        }
+
+        "writes a large stream in bounded memory" in {
+            // 50000 records is far more than a fold that buffered the whole stream would hold comfortably,
+            // and the exact byte length is what catches the arithmetic errors buffering hides: a chunk
+            // written twice, a chunk dropped, or a newline emitted per chunk instead of per record. Reading
+            // the file back pins the record count independently of the length.
+            val n = 50000
+            val expectedSize =
+                (0 until n).foldLeft(0L)((acc, i) => acc + Json.encode(Event("e", i)).getBytes(StandardCharsets.UTF_8).length + 1L)
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-large")
+                file = dir / "large.jsonl"
+                _     <- Jsonl.write(file, Stream.range(0, n).mapPure(i => Event("e", i)))
+                size  <- file.size
+                count <- Scope.run(Jsonl.read[Event](file).fold(0)((acc, _) => acc + 1))
+                _     <- dir.removeAll
+            yield
+                assert(size == expectedSize)
+                assert(count == n)
+            end for
+        }
+    }
+
+    "append" - {
+
+        "adds to an existing file without truncating it" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-append")
+                file = dir / "out.jsonl"
+                _    <- Jsonl.write(file, Stream.init(Chunk(Event("a", 1))))
+                _    <- Jsonl.append(file, Stream.init(Chunk(Event("b", 2))))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n")
+        }
+
+        "creates the file when it does not exist" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-append-create")
+                file = dir / "nested" / "out.jsonl"
+                _    <- Jsonl.append(file, Stream.init(Chunk(Event("a", 1))))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "{\"name\":\"a\",\"count\":1}\n")
+        }
+
+        "appending an empty stream creates a file that does not exist" in {
+            // The file's existence is a fact about the call, not about whether the stream produced anything,
+            // so an append of nothing leaves the same empty log an append of nothing to an empty file leaves.
+            for
+                dir <- Path.tempDir("kyo-jsonl-append-empty-create")
+                file = dir / "out.jsonl"
+                _      <- Jsonl.append(file, Stream.init(Chunk.empty[Event]))
+                exists <- file.exists
+                text   <- file.read
+                _      <- dir.removeAll
+            yield
+                assert(exists)
+                assert(text == "")
+            end for
+        }
+
+        "appending an empty stream leaves the file unchanged" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-append-empty")
+                file = dir / "out.jsonl"
+                _    <- Jsonl.write(file, Stream.init(Chunk(Event("a", 1))))
+                _    <- Jsonl.append(file, Stream.init(Chunk.empty[Event]))
+                text <- file.read
+                _    <- dir.removeAll
+            yield assert(text == "{\"name\":\"a\",\"count\":1}\n")
+        }
+
+        "fails when createFolders is false and a parent is missing" in {
+            for
+                dir <- Path.tempDir("kyo-jsonl-append-no-folders")
+                file = dir / "nested" / "out.jsonl"
+                r      <- Abort.run[FileWriteException](Jsonl.append(file, Stream.init(Chunk(Event("a", 1))), createFolders = false))
+                exists <- file.exists
+                _      <- dir.removeAll
+            yield
+                assert(r.isFailure)
+                assert(!exists)
+            end for
+        }
+
+        "repeated appends build a log readable in one pass" in {
+            val rounds = 200
+            for
+                dir <- Path.tempDir("kyo-jsonl-append-rounds")
+                file = dir / "log.jsonl"
+                _   <- Kyo.foreachDiscard(Chunk.from(0 until rounds))(i => Jsonl.append(file, Stream.init(Chunk(Event("e", i)))))
+                got <- Scope.run(Jsonl.read[Event](file).run)
+                _   <- dir.removeAll
+            yield assert(got == Chunk.from((0 until rounds).map(i => Event("e", i))))
             end for
         }
     }
