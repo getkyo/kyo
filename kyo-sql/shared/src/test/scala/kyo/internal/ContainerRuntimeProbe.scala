@@ -50,7 +50,11 @@ object ContainerRuntimeProbe:
 
     private def socketExists(path: String)(using AllowUnsafe): Boolean =
         val p = kyo.Path(path)
-        p.unsafe.exists() || p.unsafe.exists(followLinks = false)
+        // Unsafe: synchronous runtime probing has no user call site from which to propagate a Frame.
+        // A failed probe reads as "no socket here", which is what an unreachable runtime looks like.
+        p.unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrElse(false) ||
+        p.unsafe.exists(followLinks = false)(using summon[AllowUnsafe], Frame.internal).getOrElse(false)
+    end socketExists
 
     private def getEnv(name: String)(using AllowUnsafe): Maybe[String] =
         kyo.System.live.unsafe.env(name)

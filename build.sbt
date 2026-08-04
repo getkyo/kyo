@@ -2892,7 +2892,7 @@ lazy val `kyo-i18n` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-i18n"))
-        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-core`, `kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))

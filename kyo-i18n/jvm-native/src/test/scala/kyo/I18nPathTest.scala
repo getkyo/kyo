@@ -13,15 +13,18 @@ class I18nPathTest extends kyo.test.Test[Any]:
 
     "init from a directory" - {
         "reads <locale>.ftl per locale" in {
-            for
-                dir <- Path.tempDir("kyo-i18n")
-                _   <- (dir / "en.ftl").write("hello = Hello")
-                _   <- (dir / "de.ftl").write("hello = Hallo")
-                h   <- I18n.init(Seq(en, de), en)(dir)
-                a   <- I18n.let(h)(I18n.at(en, "hello"))
-                b   <- I18n.let(h)(I18n.at(de, "hello"))
-                _   <- dir.removeAll
-            yield assert(a == "Hello" && b == "Hallo")
+            // Path.tempDir registers its own recursive removal with the enclosing Scope, so the
+            // directory no longer needs removing by hand at the end of the comprehension.
+            Path.run {
+                for
+                    dir <- Path.tempDir("kyo-i18n")
+                    _   <- (dir / "en.ftl").write("hello = Hello")
+                    _   <- (dir / "de.ftl").write("hello = Hallo")
+                    h   <- I18n.init(Seq(en, de), en)(dir)
+                    a   <- I18n.let(h)(I18n.at(en, "hello"))
+                    b   <- I18n.let(h)(I18n.at(de, "hello"))
+                yield assert(a == "Hello" && b == "Hallo")
+            }
         }
     }
 end I18nPathTest
