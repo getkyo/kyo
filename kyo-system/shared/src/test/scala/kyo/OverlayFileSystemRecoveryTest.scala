@@ -404,6 +404,73 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
             Sync.defer(discard(synced.updateAndGet(_.appended(path)))).andThen(inner.syncDirectory(path))
     end RecordingLower
 
+    /** A lower whose `writeChunk` interrupts its own fiber on the nth call.
+      *
+      * The interrupt has to come from inside the work, not from outside it. `PathLockTest` records
+      * why: an interrupt requested from another fiber is delivered before the work begins, so the
+      * case passes whether or not the behaviour under test is correct. The fiber therefore learns
+      * its own handle through a promise and hands it to this lower before starting the commit.
+      *
+      * No production hook is added. The existing crash hooks fire between protocol steps, and this
+      * defect is inside one step.
+      */
+    final private class InterruptingLower(
+        inner: FileSystem.Write[Sync],
+        at: Int,
+        calls: java.util.concurrent.atomic.AtomicInteger,
+        self: java.util.concurrent.atomic.AtomicReference[Maybe[Fiber[Unit, Any]]]
+    ) extends FileSystem.Write[Sync]:
+        export inner.{writeChunk as _, *}
+
+        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte])(using
+            Frame
+        ): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.defer {
+                if calls.incrementAndGet() == at then
+                    self.get() match
+                        case Present(fiber) =>
+                            // Unsafe: requests interruption of the fiber running this commit, from
+                            // inside the write, so delivery lands at the next safepoint rather than
+                            // before the commit starts.
+                            import AllowUnsafe.embrace.danger
+                            discard(fiber.unsafe.interrupt())
+                        case Absent => ()
+            }.andThen(inner.writeChunk(handle, chunk))
+    end InterruptingLower
+
+    /** A lower that counts the handles it vends and the closes they receive.
+      *
+      * Case 1 asserts the behaviour that matters; this asserts the resource directly, because on a
+      * host lower each unclosed handle is a file descriptor and repeated interrupted commits reach
+      * the process limit.
+      */
+    final private class CountingHandleLower(
+        inner: FileSystem.Write[Sync],
+        opens: java.util.concurrent.atomic.AtomicInteger,
+        closes: java.util.concurrent.atomic.AtomicInteger
+    ) extends FileSystem.Write[Sync]:
+        export inner.{openWrite as _, *}
+
+        def openWrite(path: Path, append: Boolean, options: Path.WriteOptions)(using
+            Frame
+        ): Path.WriteHandle < (Sync & Abort[FileReadException | FileWriteException]) =
+            inner.openWrite(path, append, options).map { handle =>
+                discard(opens.incrementAndGet())
+                new Path.WriteHandle:
+                    def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+                        handle.writeBytes(chunk)
+                    def writeString(s: String, charset: java.nio.charset.Charset)(using
+                        AllowUnsafe,
+                        Frame
+                    ): Result[FileWriteException, Unit] = handle.writeString(s, charset)
+                    def finish()(using AllowUnsafe): Unit = handle.finish()
+                    def close()(using AllowUnsafe): Unit =
+                        discard(closes.incrementAndGet())
+                        handle.close()
+                end new
+            }
+    end CountingHandleLower
+
     "recovery syncs each recovered file's parent directory" in {
         // A recovered commit writes the committed marker, which declares it durable. The apply step
         // used to skip the parent-directory sync on the recovery path while performing it on the
@@ -457,6 +524,100 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // interrupted commit: handle bracketing defect (RED, see task-1-report.md)
+    // -------------------------------------------------------------------------
+
+    "an interrupted commit leaves no unfinished file in the staging directory" in {
+        // close() is what erases a file whose finish() was never called, and the whole durable
+        // protocol reads existence as the signal that a file is complete: applyReplayEntry asks
+        // whether a staged file exists before moving it into place. A commit that skips close()
+        // therefore leaves a file that a later recovery moves into place as the file's content.
+        //
+        // at = 1 calibrated against the staged file's own writeChunk call: the .kyo-staging
+        // sentinel is written through lower.writeBytes, which does not route through writeChunk on
+        // the host lower, so the first writeChunk call belongs to the staged e0.dat file.
+        //
+        // The staging-directory check only applies once the commit was actually interrupted. A
+        // commit that runs to completion clears stagingDirHandle and removes the staging directory
+        // itself as its very last step, so reading that state after a successful commit (Step 7,
+        // at = 999) would always find Absent, regardless of whether the defect exists. interrupted
+        // records whether the awaited fiber's own result was the interrupt panic, so the untouched
+        // case is a trivial pass instead of a false "did not reach staging" failure.
+        withHostTestOverlay { (ov, lower, root) =>
+            val selfRef     = new java.util.concurrent.atomic.AtomicReference(Maybe.empty[Fiber[Unit, Any]])
+            val calls       = new java.util.concurrent.atomic.AtomicInteger(0)
+            val interrupted = new java.util.concurrent.atomic.AtomicBoolean(false)
+            val faulty      = new InterruptingLower(lower, at = 1, calls, selfRef)
+            FileSystem.overlay(faulty).map { staged =>
+                val ov2 = staged.asInstanceOf[OverlayFileSystem[Sync]]
+                Path.runWith(ov2)((root / "staged.txt").write("payload")).andThen {
+                    Fiber.Promise.init[Fiber[Unit, Any], Any].map { handoff =>
+                        Fiber.initUnscoped {
+                            handoff.get.map { self =>
+                                Sync.defer(selfRef.set(Present(self))).andThen {
+                                    Abort.run[FileSystemException | CommitConflict](ov2.commit).unit
+                                }
+                            }
+                        }.map { fiber =>
+                            handoff.complete(Result.succeed(fiber)).andThen(fiber.getResult).map {
+                                case Result.Panic(_) => interrupted.set(true)
+                                case _               => ()
+                            }
+                        }
+                    }.unit.asInstanceOf[Unit < (Sync & Abort[FileSystemException])]
+                }.andThen {
+                    Sync.Unsafe.defer(interrupted.get()).map { wasInterrupted =>
+                        if !wasInterrupted then succeed
+                        else
+                            Sync.Unsafe.defer(ov2.stagingDirHandle).map {
+                                case Absent => fail("the commit did not reach the staging step")
+                                case Present(handle) =>
+                                    lower.list(handle.path).map { entries =>
+                                        val staged = entries.flatMap(_.name).filter(_.endsWith(".dat"))
+                                        assert(
+                                            staged.isEmpty,
+                                            s"an unfinished staged file survived the interrupt: $staged"
+                                        )
+                                    }
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    "an interrupted commit closes every handle it opened" in {
+        withHostTestOverlay { (ov, lower, root) =>
+            val selfRef = new java.util.concurrent.atomic.AtomicReference(Maybe.empty[Fiber[Unit, Any]])
+            val calls   = new java.util.concurrent.atomic.AtomicInteger(0)
+            val opens   = new java.util.concurrent.atomic.AtomicInteger(0)
+            val closes  = new java.util.concurrent.atomic.AtomicInteger(0)
+            val faulty  = new CountingHandleLower(new InterruptingLower(lower, at = 1, calls, selfRef), opens, closes)
+            FileSystem.overlay(faulty).map { staged =>
+                val ov2 = staged.asInstanceOf[OverlayFileSystem[Sync]]
+                Path.runWith(ov2)((root / "counted.txt").write("payload")).andThen {
+                    Fiber.Promise.init[Fiber[Unit, Any], Any].map { handoff =>
+                        Fiber.initUnscoped {
+                            handoff.get.map { self =>
+                                Sync.defer(selfRef.set(Present(self))).andThen {
+                                    Abort.run[FileSystemException | CommitConflict](ov2.commit).unit
+                                }
+                            }
+                        }.map { fiber =>
+                            handoff.complete(Result.succeed(fiber)).andThen(fiber.getResult)
+                        }
+                    }.unit.asInstanceOf[Unit < (Sync & Abort[FileSystemException])]
+                }.andThen {
+                    Sync.Unsafe.defer((opens.get(), closes.get())).map { (o, c) =>
+                        assert(o > 0, "the commit opened no handle, so the case proves nothing")
+                        assert(c == o, s"opened $o handles and closed $c")
                     }
                 }
             }

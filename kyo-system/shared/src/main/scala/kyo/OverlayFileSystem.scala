@@ -2247,19 +2247,38 @@ private[kyo] class OverlayFileSystem[S](
         // Unsafe: same halt-on-throw contract as runHook.
         Sync.Unsafe.defer(hook(k, n)).asInstanceOf[Unit < (S & Abort[FileSystemException])]
 
-    // Writes file content to `path` via the openWrite/writeChunk/finish/close path so the
-    // bytes are durable (finish() calls fsync) before the caller proceeds. Used for staged
-    // files in stagePlan so that if the process crashes after staging but before the intent
-    // log is written, the staged content is either fully present or absent -- never partial.
-    private def stageDurableFile(path: Path, bytes: Span[Byte])(using Frame): Unit < (S & Abort[FileSystemException]) =
+    // Opens `path`, writes `bytes`, and marks the write logically complete, releasing the handle on
+    // every exit.
+    //
+    // close() is not only resource release. On both backends it deletes the file when finish() was
+    // never called, and that is what enforces the invariant this protocol rests on: a file in a
+    // staging directory exists only if it was finished. applyReplayEntry decides whether a staged
+    // file was already moved by asking whether it exists, and recovery decides a commit completed by
+    // asking whether the marker exists. A path that skips close() therefore leaves an unfinished
+    // file that a later reader treats as a finished one.
+    //
+    // close() runs only in the finalizer, never in the body. NodeWriteHandle.close() raises EBADF on
+    // a second call where FileChannel.close() is a no-op, so closing in both places is not available
+    // on both backends; and the alternative, a completion flag read from the finalizer, is a var with
+    // no happens-before edge. Closing once from the finalizer needs neither.
+    private def writeSealed(path: Path, bytes: Span[Byte])(using
+        Frame
+    ): Unit < (S & Sync & Abort[FileSystemException]) =
         lower.openWrite(path, false, Path.WriteOptions(createFolders = false)).map { handle =>
-            lower.writeChunk(handle, Chunk.from(bytes.toArray)).andThen(
-                // Unsafe: finish() fsyncs so staged bytes are durable before returning;
-                // close() releases the channel. Without finish(), a crash mid-write leaves
-                // no sealed file: recovery's existence check would see a partial artifact.
-                Sync.Unsafe.defer { handle.finish(); handle.close() }
-                    .asInstanceOf[Unit < (S & Abort[FileSystemException])]
-            )
+            Sync.ensure {
+                // Unsafe: releases the handle during unwinding. finish() decides whether close() also
+                // erases the file, so this runs unconditionally rather than on the success path only.
+                // Suppressed so a failure here cannot displace the failure that caused the unwind.
+                Sync.Unsafe.defer {
+                    try handle.close()
+                    catch case _: Throwable => ()
+                }
+            } {
+                lower.writeChunk(handle, Chunk.from(bytes.toArray))
+                    // Unsafe: finish() fsyncs, so the bytes are durable and the file is sealed as
+                    // complete before the finalizer releases the handle.
+                    .andThen(Sync.Unsafe.defer(handle.finish()))
+            }
         }
 
     // Stage file content for every plan entry that carries bytes. Writes each as "e<i>.dat"
@@ -2269,48 +2288,33 @@ private[kyo] class OverlayFileSystem[S](
     // The index is the entry's position in the plan, and it is the index applyReplayEntry reads
     // back. Both walk the plan the intent log records, so a recovered commit finds each staged
     // file under the name the commit that wrote it used.
-    private def stagePlan(stagingDir: Path, plan: Chunk[ReplayEntry])(using Frame): Unit < (S & Abort[FileSystemException]) =
-        plan.zipWithIndex.foldLeft[Unit < (S & Abort[FileSystemException])](()) { case (acc, (entry, i)) =>
+    private def stagePlan(stagingDir: Path, plan: Chunk[ReplayEntry])(using
+        Frame
+    ): Unit < (S & Sync & Abort[FileSystemException]) =
+        plan.zipWithIndex.foldLeft[Unit < (S & Sync & Abort[FileSystemException])](()) { case (acc, (entry, i)) =>
             acc.andThen {
                 entry match
-                    case ReplayEntry.File(_, bytes, _, _) => stageDurableFile(stagingDir / s"e$i.dat", bytes)
+                    case ReplayEntry.File(_, bytes, _, _) => writeSealed(stagingDir / s"e$i.dat", bytes)
                     case _                                => ()
             }
         }
 
-    // Encodes the commit plan with WriteOpLog and writes it to "intent.kyo" in the staging dir
-    // via the openWrite/finish/close path. finish() is the completion boundary: its absence
-    // (crash during write) leaves the file absent or partial, so recovery skips. A plain
-    // writeBytes call lacks the two-phase open/finish contract; a crash mid-write leaves no sealed log.
+    // Encodes the commit plan with WriteOpLog and writes it to the intent log. finish() inside
+    // writeSealed is the completion boundary: without it the file is erased on the way out, so
+    // recovery sees no log rather than a torn one. syncDirectory follows the sealed write so the
+    // log's dirent is durable after power loss.
     private def writeIntentLog(stagingDir: Path, plan: Chunk[ReplayEntry])(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException]) =
-        val logBytes = WriteOpLog.encode(plan)
-        lower.openWrite(stagingDir / "intent.kyo", false, Path.WriteOptions(createFolders = false)).map { handle =>
-            val close: Unit < Sync = Sync.Unsafe.defer { handle.finish(); handle.close() }
-            val persistDirectory: Unit < (Sync & S & Abort[FileSystemException]) =
-                close.andThen(lower.syncDirectory(stagingDir))
-            lower.writeChunk(handle, Chunk.from(logBytes.toArray)).andThen(
-                // Unsafe: finish() seals the log as complete; close() releases the channel.
-                // syncDirectory flushes the staging dir's dirent so the log file is reachable after
-                // power loss. Without finish(), a crash mid-write leaves no sealed log: recovery skips.
-                persistDirectory
-            )
-        }
-    end writeIntentLog
+        writeSealed(stagingDir / "intent.kyo", WriteOpLog.encode(plan))
+            .andThen(lower.syncDirectory(stagingDir))
 
-    // Writes the "committed.marker" sentinel via the openWrite/finish/close path so that a
-    // crash during the marker write leaves it absent (recovery re-applies), not partially
-    // written in an ambiguous state.
+    // Writes the zero-byte committed marker. Its existence is the entire signal that a commit
+    // completed, which is why it is written through the same seal: a marker that exists without
+    // having been finished would report a commit that did not happen.
     private def writeCommittedMarker(stagingDir: Path)(using Frame): Unit < (S & Sync & Abort[FileSystemException]) =
-        lower.openWrite(stagingDir / "committed.marker", false, Path.WriteOptions(createFolders = false)).map { handle =>
-            val close: Unit < Sync = Sync.Unsafe.defer { handle.finish(); handle.close() }
-            val persistDirectory: Unit < (Sync & S & Abort[FileSystemException]) =
-                close.andThen(lower.syncDirectory(stagingDir))
-            // No content; finish() commits the zero-byte sentinel, close() releases the channel.
-            // syncDirectory flushes the staging dir's dirent so the marker is reachable after power loss.
-            persistDirectory
-        }
+        writeSealed(stagingDir / "committed.marker", Span.empty[Byte])
+            .andThen(lower.syncDirectory(stagingDir))
 
     // Apply one plan entry during the commit apply phase. File entries move atomically from their
     // staged copy to the final lower path (POSIX rename on host; CAS on in-memory). Each atomic
@@ -2391,9 +2395,13 @@ private[kyo] class OverlayFileSystem[S](
                             .andThen {
                                 restampDirectories(plan).andThen {
                                     runHook(beforeMarkerHook).andThen { // crash point 4
-                                        // Crash during the marker write is not an independently injectable point:
-                                        // the sentinel either exists or does not; no partial state is possible.
-                                        // The afterMarkerHook fires in withCommit after applyResolved returns.
+                                        // Crash during the marker write is not an independently
+                                        // injectable point: the marker is written through
+                                        // writeSealed, so it is erased on the way out unless
+                                        // finish() ran, and the sentinel either exists or does not.
+                                        // That held only on the success path until the write was
+                                        // bracketed. The afterMarkerHook fires in withCommit after
+                                        // applyResolved returns.
                                         writeCommittedMarker(stagingDir)
                                     }
                                 }
