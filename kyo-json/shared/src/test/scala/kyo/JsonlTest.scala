@@ -517,12 +517,13 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         }
 
-        "followResults stops framing after a record-size breach and resumes after a truncation" in {
+        "followResults keeps the records framed before a limit breach, then ends" in {
             Clock.withTimeControl { control =>
                 // One record of 22 bytes, then 49 bytes with no terminator: no record boundary can be found
                 // for the pending bytes, which is the one framing failure that has nothing to skip to.
                 val existing = "{\"name\":\"a\",\"count\":1}\n" + "{\"name\":\"" + ("b" * 40)
-                // 23 bytes, below the follower's position, so the rewind fires on the next poll.
+                // 23 bytes, below the follower's position, so a rewind would fire on the next poll if the
+                // follower were still reading. It is written precisely to prove that it is not.
                 val replaced = "{\"name\":\"c\",\"count\":3}\n"
                 for
                     dir <- Path.tempDir("kyo-jsonl-follow-breach")
@@ -544,9 +545,10 @@ class JsonlTest extends kyo.test.Test[Any]:
                     got <- seen.get
                     _   <- dir.removeAll
                 yield
-                    // The breach ends framing but not the stream: the follower keeps its place, and the
-                    // truncation that rebuilds the framer is what lets records flow again.
-                    assert(got.size == 3)
+                    // `take(3)` never reaches a third element: the breach ends the stream after the records
+                    // framed before it, so the truncation written afterwards yields nothing at all. A stream
+                    // that stayed open would have replayed Event("c", 3) here instead.
+                    assert(got.size == 2)
                     assert(got(0).getOrThrow == Event("a", 1))
                     got(1).foldError(
                         _ => fail("expected a failure"),
@@ -555,9 +557,42 @@ class JsonlTest extends kyo.test.Test[Any]:
                             case other                                     => fail(s"unexpected error $other")
                         }
                     )
-                    assert(got(2).getOrThrow == Event("c", 3))
                 end for
             }
+        }
+
+        "follow keeps the records framed before a limit breach, then aborts" in {
+            // One record of 22 bytes, then 49 bytes with no terminator, all on disk before the follower
+            // starts: one read frames the record and hits the breach, so the abort is reached without
+            // polling and no wakeup is needed.
+            val in = "{\"name\":\"a\",\"count\":1}\n" + "{\"name\":\"" + ("b" * 40)
+            for
+                dir <- Path.tempDir("kyo-jsonl-follow-breach-strict")
+                file = dir / "t.jsonl"
+                _    <- file.write(in)
+                seen <- AtomicRef.init(Chunk.empty[Event])
+                r <- Abort.run[DecodeException](
+                    Scope.run(
+                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                            .take(2)
+                            .foreach(e => seen.updateAndGet(_ :+ e))
+                    )
+                )
+                emitted <- seen.get
+                _       <- dir.removeAll
+            yield
+                // The framing route into the abort, which "follow emits the records before a bad one and then
+                // aborts" does not reach: that one covers the decode route. The breach arrives at the strict
+                // variant as a failure element, and the record framed before it is still delivered.
+                assert(emitted == Chunk(Event("a", 1)))
+                r.foldError(
+                    _ => fail("expected a failure"),
+                    {
+                        case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
+                        case other                                     => fail(s"unexpected error $other")
+                    }
+                )
+            end for
         }
     }
 end JsonlTest
