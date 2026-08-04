@@ -7,9 +7,9 @@ import scala.annotation.tailrec
   * The format is how append-only record logs are exchanged, including AI agent session transcripts and structured application logs. This
   * entry point reads them as `Stream` values, so a multi-gigabyte transcript is processed record by record rather than loaded whole.
   *
-  * All framing and parsing live in `Json.Lines.Framer` in kyo-schema-json, which is pure. Every entry point here is a loop over that framer,
-  * so the effectful and pure surfaces cannot drift: no newline scanning, no line splitting, and no JSON parsing is repeated here. Use
-  * `Json.Lines` directly when the whole input is already in memory and no effects are wanted.
+  * All framing and parsing live in `Json.Lines.Framer` in kyo-schema-json, which is pure. Every entry point here is a loop over that
+  * framer, so the effectful and pure surfaces cannot drift: no newline scanning, no line splitting, and no JSON parsing is repeated here.
+  * Use `Json.Lines` directly when the whole input is already in memory and no effects are wanted.
   *
   * Strict entry points abort on the first undecodable record. The `Results` variants emit one `Result` per record instead, which is what
   * heterogeneous or partially-written logs need.
@@ -63,20 +63,23 @@ object Jsonl:
                                     Emit.valueWith(Chunk(value))(Loop.done)
                                 }
                     case Present(chunk) =>
-                        val framed            = framer.feed(Span.from(chunk))
-                        val (values, failure) = decodePrefix[A](framed.records, maxDepth, maxCollectionSize)
-                        failure match
-                            case Present(error) =>
-                                // A record inside this chunk failed to decode. Everything decoded before it is
-                                // emitted first, so the prefix a consumer sees does not depend on the chunking.
-                                emitNonEmpty(values)(Abort.error(error))
-                            case Absent =>
-                                framed.error match
-                                    case Absent         => emitNonEmpty(values)(Loop.continue(framed.framer))
+                        frameChunk[A](framer, Span.from(chunk), maxDepth, maxCollectionSize) match
+                            case Framing.Continued(results, advanced) =>
+                                val (values, failure) = splitAtFailure(results)
+                                failure match
+                                    case Absent         => emitNonEmpty(values)(Loop.continue(advanced))
                                     case Present(error) =>
-                                        // No record boundary was found, so `framed.framer` must not be used again.
-                                        // The records completed before the breach still stand and are emitted first.
-                                        emitNonEmpty(values)(Abort.fail(error))
+                                        // A record inside this chunk failed to decode. Everything decoded before it is
+                                        // emitted first, so the prefix a consumer sees does not depend on the chunking.
+                                        emitNonEmpty(values)(Abort.error(error))
+                                end match
+                            case Framing.Halted(results, breach) =>
+                                // No record boundary was found, so framing is over either way. The records
+                                // completed before the breach still stand and are emitted first.
+                                val (values, failure) = splitAtFailure(results)
+                                failure match
+                                    case Absent         => emitNonEmpty(values)(Abort.fail(breach))
+                                    case Present(error) => emitNonEmpty(values)(Abort.error(error))
                         end match
                 }
             }
@@ -112,14 +115,12 @@ object Jsonl:
                             case Present(record) =>
                                 Emit.valueWith(Chunk(Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)))(Loop.done)
                     case Present(chunk) =>
-                        val framed  = framer.feed(Span.from(chunk))
-                        val decoded = decodeRecords[A](framed.records, maxDepth, maxCollectionSize)
-                        framed.error match
-                            case Absent         => emitNonEmpty(decoded)(Loop.continue(framed.framer))
-                            case Present(error) =>
-                                // No record boundary was found, so `framed.framer` must not be used again and
+                        frameChunk[A](framer, Span.from(chunk), maxDepth, maxCollectionSize) match
+                            case Framing.Continued(results, advanced) => emitNonEmpty(results)(Loop.continue(advanced))
+                            case Framing.Halted(results, breach)      =>
+                                // No record boundary was found and no rewind can arrive on a finite input, so
                                 // there is no point resuming: emit what was framed, report the breach, and stop.
-                                Emit.valueWith(decoded :+ Result.fail[DecodeException, A](error))(Loop.done)
+                                Emit.valueWith(results :+ Result.fail[DecodeException, A](breach))(Loop.done)
                         end match
                 }
             }
@@ -179,20 +180,25 @@ object Jsonl:
       *
       * Reading is one continuous pass that switches from draining to polling once it reaches the end of the file, not a read concatenated
       * with a tail, so a record appended while the existing content is still being replayed is never missed. The file handle is registered
-      * with the enclosing `Scope` and closed when that scope ends; until then the stream never completes on its own, so a consumer bounds it
-      * with `take`, `takeWhile`, or an interrupt.
+      * with the enclosing `Scope` and closed when that scope ends; until then the stream never completes on its own, so a consumer
+      * bounds it with `take`, `takeWhile`, or an interrupt.
       *
       * `from` defaults to [[Path.Origin.Start]], which replays the file and then follows, because reading a live agent transcript wants
       * every record rather than only those written after the reader attached. [[Path.tailBytes]] defaults to [[Path.Origin.End]] instead,
       * since it is the primitive under `Path.tail` and has to preserve that method's follow-only contract.
       *
-      * A file truncated below the read position is replayed from its first byte, and that rewind carries no marker in the byte stream. A
-      * record left half written when the truncation happened is therefore still buffered and gets spliced onto the first replayed record.
-      * The spliced record normally fails to parse, which aborts this stream, while [[followResults]] reports it as a single failure element
-      * and then continues correctly; a buffered fragment that happens to compose with the replayed bytes into a well-formed record decodes
-      * to a wrong value with no failure at all. A file truncated on a record boundary, which is the usual shape of a rotated log, carries
-      * nothing across and replays cleanly. Rotation by rename is a different case: the handle stays with the original file, so records
-      * written to the newly created file are never seen at all.
+      * A file truncated below the read position is replayed from its first byte, and the framer is rebuilt at that rewind. A record left
+      * half written when the truncation happened is therefore dropped along with the rest of the old content, and never spliced onto the
+      * first replayed record. That holds wherever the truncation fell, so a log rotated in place replays as a clean read of its new
+      * content whether or not the cut landed on a record boundary.
+      *
+      * Following tracks the open file and not the name, which is what `tail -f` does and `tail -F` does not. The file is opened once, so
+      * the name it was opened under can afterwards be renamed, replaced, or deleted with no effect on what this stream reads. Rotation by
+      * rename therefore keeps the stream on the original file: it emits whatever is still appended through that file's new name, and
+      * nothing written to the new file created under the old name. Deleting the file yields no further records and no failure, because an
+      * unlinked file that is still open keeps its content and can still be measured. A consumer that needs to pick up a rotated-in
+      * replacement closes this stream and opens a new one against the path. [[Path.tailBytes]] documents the same contract for the byte
+      * loop underneath.
       *
       * @param path
       *   the file to follow
@@ -220,17 +226,29 @@ object Jsonl:
     )(using
         Json,
         Schema[A],
+        Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Tag[Emit[Chunk[A]]],
         Frame
     ): Stream[A, Scope & Async & Abort[FileReadException | DecodeException]] =
-        path.tailBytes(from, pollDelay).into(pipe[A](maxDepth, maxCollectionSize, maxLineBytes))
+        followResults[A](path, from, pollDelay, maxDepth, maxCollectionSize, maxLineBytes).flatMapChunk { results =>
+            val (values, failure) = splitAtFailure(results)
+            failure match
+                case Absent => Stream[A, Any](emitNonEmpty(values)(()))
+                // Every value decoded before the failure is emitted first, exactly as [[pipe]] does, so the
+                // prefix a consumer receives stays a function of the data rather than of the read size.
+                case Present(error) => Stream[A, Abort[DecodeException]](emitNonEmpty(values)(Abort.error(error)))
+            end match
+        }
 
     /** Streams a JSONL file's records as per-record `Result`s, continuing to emit as records are appended.
       *
-      * The variant for heterogeneous or partially written logs, and the one to prefer for a file that may be truncated: an undecodable
-      * record yields one failure element and the stream carries on, so the record spliced across a truncation described in [[follow]] costs
-      * a single failure rather than ending the stream. Every other property of [[follow]] holds unchanged, including the `Path.Origin.Start`
-      * default and the behavior under rotation by rename.
+      * The variant for heterogeneous or partially written logs: an undecodable record yields one failure element and the stream carries
+      * on. Every other property of [[follow]] holds unchanged, including the `Path.Origin.Start` default, the framer rebuilt across a
+      * truncation, and the behavior under rotation by rename.
+      *
+      * A record exceeding `maxLineBytes` is the one framing failure with nothing to skip to, since no record boundary was found for the
+      * pending bytes. It surfaces as a single failure element after every record framed before it, and framing then stops: the stream
+      * stays open and emits nothing further until a truncation rewinds the file and rebuilds the framer.
       *
       * @param path
       *   the file to follow
@@ -246,7 +264,7 @@ object Jsonl:
       * @param maxLineBytes
       *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
       * @return
-      *   an unbounded stream of per-record results, ending only on a record-size breach
+      *   an unbounded stream of per-record results
       */
     def followResults[A](
         path: Path,
@@ -261,7 +279,77 @@ object Jsonl:
         Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Frame
     ): Stream[Result[DecodeException, A], Scope & Async & Abort[FileReadException]] =
-        path.tailBytes(from, pollDelay).into(pipeResults[A](maxDepth, maxCollectionSize, maxLineBytes))
+        // The framer is the follow loop's carried state rather than a pipe downstream of it, which is what
+        // ties its lifetime to the file's: a rewind restores this initial state, so bytes framed before a
+        // truncation cannot reach a record replayed after one.
+        Path.follow[Result[DecodeException, A], Maybe[Json.Lines.Framer]](
+            path,
+            from,
+            pollDelay,
+            FollowBufferSize,
+            Present(Json.Lines.Framer.init(maxLineBytes))
+        ) { (state, buffer, bytesRead) =>
+            state match
+                case Absent          => (Chunk.empty[Result[DecodeException, A]], Absent)
+                case Present(framer) =>
+                    // The follow loop reuses `buffer` across reads, so the framer, which retains what it
+                    // cannot yet frame, is handed an array nothing else holds.
+                    val chunk = Span.fromUnsafe(java.util.Arrays.copyOf(buffer, bytesRead))
+                    frameChunk[A](framer, chunk, maxDepth, maxCollectionSize) match
+                        case Framing.Continued(results, advanced) => (results, Present(advanced))
+                        case Framing.Halted(results, breach)      =>
+                            // No record boundary was found for the pending bytes, so this framer can never be
+                            // fed again. Framing stops here and only a rewind, which restores a fresh framer,
+                            // can start it again.
+                            (results :+ Result.fail[DecodeException, A](breach), Absent)
+                    end match
+        }
+    end followResults
+
+    /** Read buffer size for the follow drivers, matching [[Path.tailBytes]]'s own default. */
+    private inline def FollowBufferSize: Int = 8192
+
+    /** What framing and decoding one chunk of JSONL bytes produced.
+      *
+      * Naming the two outcomes keeps each driver's handling of them a visible decision, and keeps the framer that a breach leaves behind
+      * out of reach: the case that carries a breach carries no framer, so there is no value to feed again by mistake.
+      */
+    private enum Framing[A]:
+        /** Every record the chunk completed, and the framer that frames the next chunk. */
+        case Continued[A](results: Chunk[Result[DecodeException, A]], framer: Json.Lines.Framer) extends Framing[A]
+
+        /** Every record completed before a record exceeded `maxLineBytes`, and that breach. */
+        case Halted[A](results: Chunk[Result[DecodeException, A]], breach: LimitExceededException) extends Framing[A]
+    end Framing
+
+    /** Frames one chunk of bytes and decodes every record it completed.
+      *
+      * The one framing implementation the module has. [[pipe]] and [[pipeResults]] drive it from their `Stream[Byte]` poll loop, [[follow]]
+      * and [[followResults]] drive it as `Path.follow`'s step, so neither driver can grow framing rules the other does not have. It stays
+      * pure, which is what lets the follow drivers use it as that step at all: the framer becomes state the follow loop carries and
+      * discards on a rewind, instead of state a downstream pipe holds and knows nothing about.
+      *
+      * @param framer
+      *   the framer holding whatever the previous chunk left unterminated
+      * @param chunk
+      *   the next bytes of the input, of any size including empty
+      * @return
+      *   [[Framing.Continued]] with the chunk's results and the advanced framer, or [[Framing.Halted]] when a record exceeded
+      *   `maxLineBytes`, carrying the records completed before the breach
+      */
+    private def frameChunk[A](
+        framer: Json.Lines.Framer,
+        chunk: Span[Byte],
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using Json, Schema[A], Frame): Framing[A] =
+        val framed  = framer.feed(chunk)
+        val results = framed.records.map(record => Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize))
+        framed.error match
+            case Absent         => Framing.Continued(results, framed.framer)
+            case Present(error) => Framing.Halted(results, error)
+        end match
+    end frameChunk
 
     /** Emits `values` and then continues with `next`, skipping the emission when `values` is empty.
       *
@@ -276,37 +364,25 @@ object Jsonl:
         if values.isEmpty then next
         else Emit.valueWith(values)(next)
 
-    /** Decodes every framed record of one chunk, one result per record. */
-    private def decodeRecords[A](
-        records: Chunk[Json.Lines.Record],
-        maxDepth: Int,
-        maxCollectionSize: Int
-    )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
-        records.map(record => Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize))
-
-    /** Decodes records up to the first failure, returning the values decoded before it and that failure.
+    /** Splits results at the first failure, returning the values before it and that failure.
       *
-      * The strict pipe needs the prefix and the failure separately, because it emits the prefix and only then aborts. Folding to a single
-      * `Result` instead, the shape `JsonLines.decodeAllBytes` uses for whole-input decoding, would throw the prefix away, and a pipe that
-      * throws it away leaks the upstream chunk size into what a consumer receives.
+      * The strict surfaces need the prefix and the failure separately, because they emit the prefix and only then abort. Folding to a
+      * single `Result` instead, the shape `JsonLines.decodeAllBytes` uses for whole-input decoding, would throw the prefix away, and a
+      * surface that throws it away leaks the upstream read size into what a consumer receives.
       *
       * The failure is carried as a `Result.Error`, which covers `Failure` and `Panic`, and it reaches the caller's `Abort.error`
       * unchanged. A panic therefore stays a panic and is never rewritten into a decode failure.
       */
-    private def decodePrefix[A](
-        records: Chunk[Json.Lines.Record],
-        maxDepth: Int,
-        maxCollectionSize: Int
-    )(using Json, Schema[A], Frame): (Chunk[A], Maybe[Result.Error[DecodeException]]) =
+    private def splitAtFailure[A](results: Chunk[Result[DecodeException, A]]): (Chunk[A], Maybe[Result.Error[DecodeException]]) =
         @tailrec
         def loop(i: Int, acc: Chunk[A]): (Chunk[A], Maybe[Result.Error[DecodeException]]) =
-            if i >= records.size then (acc, Absent)
+            if i >= results.size then (acc, Absent)
             else
-                Json.Lines.decodeRecord[A](records(i), maxDepth, maxCollectionSize) match
+                results(i) match
                     case Result.Success(value)                               => loop(i + 1, acc :+ value)
                     case failure: Result.Failure[DecodeException] @unchecked => (acc, Present(failure))
                     case panic: Result.Panic                                 => (acc, Present(panic))
         loop(0, Chunk.empty[A])
-    end decodePrefix
+    end splitAtFailure
 
 end Jsonl
