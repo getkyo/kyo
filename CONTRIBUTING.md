@@ -243,10 +243,15 @@ When a Kyo primitive exists for a concept, use it instead of the stdlib equivale
 | `Result[E, A]` | `Either`, `Try`                                            | Three-way: `Success`/`Failure`/`Panic` — never raw `Either` or `Try` in effect signatures                                                                                                        |
 | `Chunk[A]`     | `Seq`, `List`, `Vector`                                    | Use internally; accept generic collections in public APIs (see below)                                                                                                                            |
 | `Duration`     | `java.time.Duration`, `scala.concurrent.duration.Duration` | Opaque `Long`-based, zero-allocation                                                                                                                                                             |
+| `ByteSize`     | a bare `Long` or `Int` holding a byte count                | Opaque `Long`-based, zero-allocation, saturating arithmetic, non-negative by construction                                                                                                        |
 | `Instant`      | `java.time.Instant`                                        | Kyo's own wrapper with consistent API                                                                                                                                                            |
 | `Span[A]`      | `IArray[A]`, `ArraySeq[A]`                                 | Immutable array wrapper, avoids boxing, O(1) indexing                                                                                                                                            |
 | `Schedule`     | Custom retry/timing logic                                  | Composable scheduling policies                                                                                                                                                                   |
 | `TypeMap[A]`   | Heterogeneous maps                                         | Type-safe map keyed by type                                                                                                                                                                      |
+
+Prefer `ByteSize` over a bare numeric type wherever a value means "a quantity of bytes": storage and disk sizes, file sizes, buffer and byte-array capacities, read and write chunk sizes, network packet and frame sizes, transfer limits and quotas, memory footprints. It carries the unit in the type, so a call site cannot silently pass kibibytes where bytes were expected, and its arithmetic saturates instead of overflowing. A raw `Long` or `Int` stays correct for an index, an offset into a buffer, or a count of elements; those are positions, not sizes.
+
+This is guidance for new and changed code. Existing APIs that thread byte counts as `Long` are not required to migrate, and a migration should be its own change rather than a drive-by edit inside an unrelated one.
 
 **kyo-prelude** — effects:
 
