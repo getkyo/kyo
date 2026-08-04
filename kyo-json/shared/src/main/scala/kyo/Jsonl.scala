@@ -18,6 +18,9 @@ import scala.annotation.tailrec
   * `read` covers a file that is complete; `follow` covers one still being written, replaying what is already there and then emitting each
   * record as it is appended.
   *
+  * `encode`, `write`, and `append` go the other way, turning a stream of values into JSONL bytes or into a file. They are bounded in the
+  * same way the reading side is: a chunk of values becomes a chunk of bytes and is written, so nothing accumulates across the stream.
+  *
   * Arbitrary byte sources need no dedicated entry point, because any `Stream[Byte, S]` is already the input:
   * {{{
   * Stream.fromInputStream(is).into(Jsonl.pipe[Event]())
@@ -266,7 +269,7 @@ object Jsonl:
       * @param maxLineBytes
       *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
       * @return
-      *   an unbounded stream of per-record results
+      *   a stream of per-record results that runs until interrupted, or until a record exceeds `maxLineBytes`
       */
     def followResults[A](
         path: Path,
@@ -307,6 +310,113 @@ object Jsonl:
             }
         endAtBreach(framed)
     end followResults
+
+    /** Encodes a stream of values as JSONL bytes, one newline-terminated record per value.
+      *
+      * The inverse of [[pipe]]: `Jsonl.encode(values).into(Jsonl.pipe[A]())` yields back `values`. Encoding happens per chunk, so a chunk
+      * of values becomes a chunk of bytes and nothing accumulates across chunks. That is what keeps a stream of any length bounded in
+      * memory, here and in [[write]] and [[append]], which encode a chunk at a time in the same way.
+      *
+      * The newline terminates each record rather than each chunk, so the bytes are a function of the values alone and never of how the
+      * upstream source chunked them. [[pipe]] holds the same property on the way in.
+      *
+      * @param values
+      *   the values to encode, in order
+      * @return
+      *   a stream of UTF-8 JSONL bytes, empty for an empty input
+      */
+    def encode[A, S](values: Stream[A, S])(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Stream[Byte, S] =
+        values.mapChunkPure { chunk =>
+            // `Json.Lines.encodeAllBytes` sizes its output array once and copies each encoded value and its
+            // newline into it exactly once, so a chunk costs one allocation of exactly the bytes it produces.
+            // The array it returns is fresh and unshared, which is what makes handing it over without a copy safe.
+            Chunk.fromNoCopy(Json.Lines.encodeAllBytes(chunk).toArrayUnsafe)
+        }
+
+    /** Writes a stream of values to a JSONL file, replacing whatever the file held.
+      *
+      * The file is emptied first, then each chunk of values is encoded and written as it arrives. Nothing buffers the whole stream, so a
+      * file far larger than memory is written in the same space as a file of two records. The emptying does not wait for a chunk, so
+      * writing an empty stream leaves an empty file rather than the old content.
+      *
+      * A failure part way through leaves the records already written on disk rather than removing the file. A JSONL file is a record log
+      * and a prefix of one is still a valid log, so a consumer reads what completed instead of losing all of it to the record that did
+      * not.
+      *
+      * @param path
+      *   the file to write
+      * @param values
+      *   the values to write, in order
+      * @param createFolders
+      *   whether to create missing parent directories (default `true`)
+      * @return
+      *   unit once every value has been written
+      */
+    def write[A, S](path: Path, values: Stream[A, S], createFolders: Boolean = true)(
+        using
+        Json,
+        Schema[A],
+        Tag[Emit[Chunk[A]]],
+        Frame
+    ): Unit < (S & Sync & Abort[FileWriteException]) =
+        writeAll(path, values, appending = false, createFolders)
+
+    /** Appends a stream of values to a JSONL file, preserving whatever the file already held.
+      *
+      * [[write]] in every respect except that nothing is emptied first, which is what an append-only record log wants: each call adds its
+      * records after the ones already there, and the file is created when it does not yet exist, including for an empty stream.
+      *
+      * @param path
+      *   the file to append to
+      * @param values
+      *   the values to append, in order
+      * @param createFolders
+      *   whether to create missing parent directories (default `true`)
+      * @return
+      *   unit once every value has been appended
+      */
+    def append[A, S](path: Path, values: Stream[A, S], createFolders: Boolean = true)(
+        using
+        Json,
+        Schema[A],
+        Tag[Emit[Chunk[A]]],
+        Frame
+    ): Unit < (S & Sync & Abort[FileWriteException]) =
+        writeAll(path, values, appending = true, createFolders)
+
+    /** Writes `values` as JSONL to `path`, folding the stream chunk by chunk.
+      *
+      * The one write implementation the module has, so [[write]] and [[append]] differ in `appending` alone and neither can grow behavior
+      * the other does not have. Each chunk of values is encoded by `Json.Lines.encodeAllBytes`, the same call [[encode]] streams, and is
+      * written straight out, so what is held at any moment is one chunk of encoded bytes however many values the stream has.
+      *
+      * The opening write carries no bytes. It is what makes the file's existence, and for [[write]] its emptiness, a fact about the call
+      * rather than about whether the stream produced anything: writing an empty stream empties the file and appending an empty stream
+      * still creates it, exactly as writing or appending one record does. It also creates the parent directory, which is why every chunk
+      * after it passes `createFolders = false`.
+      *
+      * The fold goes through `Path.appendBytes` rather than holding one `Path.Unsafe.openWrite` handle across it. A single handle would be
+      * one open and close for the whole stream instead of one per chunk, but `openWrite(append = true)` does not append on Scala.js: the
+      * handle writes at a position it starts at zero, so on an operating system that honors an explicit position for a descriptor opened
+      * to append (macOS does; Linux ignores it) every chunk overwrites the file from its first byte. `Path.appendBytes` appends on every
+      * platform.
+      */
+    private def writeAll[A, S](path: Path, values: Stream[A, S], appending: Boolean, createFolders: Boolean)(
+        using
+        Json,
+        Schema[A],
+        Tag[Emit[Chunk[A]]],
+        Frame
+    ): Unit < (S & Sync & Abort[FileWriteException]) =
+        val opened =
+            if appending then path.appendBytes(Span.empty[Byte], createFolders)
+            else path.writeBytes(Span.empty[Byte], createFolders)
+        opened.andThen {
+            values.foreachChunk { chunk =>
+                path.appendBytes(Json.Lines.encodeAllBytes(chunk), createFolders = false)
+            }
+        }
+    end writeAll
 
     /** Ends `stream` at the first framing breach, keeping that breach as its final element.
       *
