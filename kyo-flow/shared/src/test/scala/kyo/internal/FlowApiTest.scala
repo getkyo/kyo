@@ -151,7 +151,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _    <- Async.sleep(500.millis)
                     body <- HttpClient.getText(url(port, s"/api/v1/executions/$eid"))
                 yield
                     assert(body.contains(eid))
@@ -176,7 +175,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _    <- Async.sleep(500.millis)
                     body <- HttpClient.getText(url(port, s"/api/v1/executions/$eid/inputs"))
                 yield
                     assert(body.contains("\"name\""))
@@ -192,7 +190,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _    <- Async.sleep(500.millis)
                     body <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/signal/x"), "42")
                 yield assert(body.contains("true"))
             }
@@ -203,7 +200,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _    <- Async.sleep(500.millis)
                     resp <- HttpClient.postTextResponse(url(port, s"/api/v1/executions/$eid/signal/bogus"), "42", failOnError = false)
                     body = resp.fields.body
                 yield assert(resp.status.code == 400 || body.contains("400") || body.contains("BadRequest"))
@@ -237,7 +233,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _    <- Async.sleep(500.millis)
                     body <- HttpClient.getText(url(port, s"/api/v1/executions/$eid/history"))
                 yield
                     assert(body.contains("Created"))
@@ -253,7 +248,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _    <- Async.sleep(500.millis)
                     body <- HttpClient.postText(url(port, s"/api/v1/executions/$eid/cancel"), "")
                 yield assert(body.contains("true"))
             }
@@ -267,7 +261,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- Async.sleep(200.millis)
                     result <- HttpClient.postJson[FlowApi.SearchResponse](
                         url(port, "/api/v1/executions/search"),
                         FlowApi.SearchRequest()
@@ -280,7 +273,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
             withFlowServer { port =>
                 for
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- Async.sleep(200.millis)
                     result <- HttpClient.postJson[FlowApi.SearchResponse](
                         url(port, "/api/v1/executions/search"),
                         FlowApi.SearchRequest(workflowId = Some("test-flow"))
@@ -297,7 +289,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- Async.sleep(500.millis)
                     result <- HttpClient.postJson[FlowApi.CancelAllResponse](
                         url(port, "/api/v1/executions/cancel"),
                         FlowApi.CancelAllRequest(workflowId = Some("test-flow"))
@@ -314,7 +305,6 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     eid = jsonField(createBody, "executionId")
-                    _    <- Async.sleep(500.millis)
                     body <- HttpClient.getText(url(port, s"/api/v1/executions/$eid/diagram"))
                 yield assert(body.contains("graph"))
             }
