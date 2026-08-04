@@ -414,7 +414,10 @@ object JsonLines:
       * Encodes each value once with `Json.encodeBytes`, then concatenates every encoded value and its trailing newline with
       * `Span.concat`, which sizes the output array once and copies each piece into it exactly once. Building the result by
       * repeatedly concatenating onto a growing accumulator (`acc ++ Json.encodeBytes(v) ++ ...`) would instead copy the whole
-      * accumulator again for every value, which is quadratic in the number of values; this stays linear in the total output size.
+      * accumulator again for every value, which is quadratic in the number of values; this stays linear in the total output size for
+      * every input `Seq`. `Span.concat` indexes its pieces (`spans(i)`), which is O(i) for a `List`, so the pieces are forced to
+      * `IndexedSeq` before the call: a no-op for a `Vector` or `ArraySeq`, one linear copy for a `List`. Skipping that forcing would
+      * keep the `List` case quadratic in the number of values, just via pointer chases instead of byte copies.
       *
       * @param values
       *   the values to encode, in order
@@ -423,7 +426,7 @@ object JsonLines:
       */
     def encodeAllBytes[A](values: Seq[A])(using Json, Schema[A], Frame): Span[Byte] =
         val pieces = values.flatMap(v => Seq(Json.encodeBytes(v), NewlineSpan))
-        Span.concat(pieces*)
+        Span.concat(pieces.toIndexedSeq*)
     end encodeAllBytes
 
     /** Encodes a single value as one JSONL record, terminated by a newline.
