@@ -367,6 +367,10 @@ object Path extends PathPlatformSpecific:
             tail(pollDelay, 8192)
 
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls, using the given read buffer size.
+          *
+          * Follows the open file rather than the name, exactly as [[tailBytes]] does: see its documentation for what a rename, a
+          * replacement, and a deletion of the name do to the stream. A truncation in place drops the pending partial line along with the
+          * rest of the old content, so no line ever spans the rewind.
           */
         def tail(pollDelay: Duration, bufferSize: Int)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
             // State carried between reads: leftover bytes from an incomplete UTF-8 sequence, plus the pending incomplete line text.
@@ -406,6 +410,18 @@ object Path extends PathPlatformSpecific:
           * That rewind carries no marker: the first byte replayed after a truncation is indistinguishable from an ordinary appended byte.
           * A consumer that carries state across chunks, such as a framer holding a partial record, will therefore splice that stale
           * partial onto the first replayed record unless it resets the state itself.
+          *
+          * This follows the open file, the way `tail -f` does, never the name, the way `tail -F` does. The file is opened once, and every
+          * later decision is made from that open file, so the name it was opened under can afterwards be renamed, replaced by a different
+          * file, or deleted without the stream noticing. Three consequences follow, and they are the contract, not an accident:
+          *
+          *   - Rotation by rename keeps the stream on the original file. It emits whatever is still appended through the file's new name,
+          *     and nothing that is written to the new file created under the old name.
+          *   - Deleting the file yields no further values and no failure. An unlinked file that is still open can still be measured and
+          *     still holds its content, so the stream simply waits, indefinitely, for bytes that can no longer arrive.
+          *   - Truncating the file in place, which keeps the same file, does rewind and replay as described above.
+          *
+          * A consumer that needs to pick up a rotated-in replacement should close the stream and open a new one against the path.
           *
           * @param from
           *   where reading begins; defaults to [[Path.Origin.End]] so the default is follow-only
@@ -602,6 +618,45 @@ object Path extends PathPlatformSpecific:
         runtime: Path
     ) derives CanEqual
 
+    /** What one poll of a followed file observed.
+      *
+      * Naming the outcomes keeps the loop that drives them a total match: each state's handling is a visible decision, and a state added
+      * later is a compile error at the driver rather than a silent fallthrough.
+      */
+    private enum Poll derives CanEqual:
+        /** New bytes were read into the buffer. */
+        case Data(bytesRead: Int)
+
+        /** The file shrank below the cursor: its content was replaced, so carried state is stale. */
+        case Rewound
+
+        /** No new bytes and no replacement: wait. */
+        case Idle
+
+        /** The open file can no longer be measured. */
+        case Unreadable(error: Result.Error[FileReadException])
+    end Poll
+
+    /** Reads once from `handle` at cursor `pos` and classifies what it found.
+      *
+      * Both quantities the classification compares come from the handle: the bytes it just read and the size of the file it holds. A size
+      * taken by path would be a measurement of whatever the name resolves to now, which is a different file the moment the name is renamed,
+      * replaced, or unlinked.
+      */
+    private def poll(handle: ReadHandle, buffer: Array[Byte], pos: Long)(using AllowUnsafe, Frame): Poll =
+        // ReadResult is opaque, and this is its defining scope, so its accessors have to be imported by name.
+        import ReadResult.bytesRead
+        import ReadResult.isEof
+        val result = handle.readChunk(buffer)
+        if !result.isEof then Poll.Data(result.bytesRead)
+        else
+            handle.size().foldError(
+                size => if size < pos then Poll.Rewound else Poll.Idle,
+                error => Poll.Unreadable(error)
+            )
+        end if
+    end poll
+
     /** Polling loop shared by [[Path.tailBytes]] and [[Path.tail]].
       *
       * Opens a `Scope`-managed read handle, seeks to the position `from` selects, then reads until the end of the file, sleeping
@@ -609,12 +664,17 @@ object Path extends PathPlatformSpecific:
       * read, which is what lets `tail` buffer an incomplete UTF-8 sequence and a partial line across reads while `tailBytes` carries
       * nothing.
       *
-      * When the file has shrunk below the current position the loop rewinds to the beginning and restores `initialState`, so a truncation
-      * discards whatever half-read state belonged to the old content.
+      * Everything the loop measures comes from the open handle, so it follows a file rather than a name: renaming the file, replacing the
+      * name with another file, and deleting the name are all invisible to it, and it keeps reading the file it opened.
+      *
+      * When that file has shrunk below the current position the loop rewinds to the beginning and restores `initialState`, so a truncation
+      * discards whatever half-read state belonged to the old content. The rewind also sleeps one `pollDelay`: a rewind is rare, so the
+      * latency costs nothing, and it bounds any platform that under-reports a size instead of raising rather than letting the under-report
+      * re-arm an unbroken replay.
       *
       * `step` receives the read buffer itself, which the loop reuses across iterations: it must copy any bytes it retains.
       */
-    private def follow[V, St](
+    private[kyo] def follow[V, St](
         self: Path,
         from: Origin,
         pollDelay: Duration,
@@ -628,41 +688,37 @@ object Path extends PathPlatformSpecific:
                 Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
             )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
                 // Unsafe: the read handle is a single-consumer cursor owned by this stream, so its
-                // position and buffer reads are bridged into Sync one call at a time.
+                // position, size, and buffer reads are bridged into Sync one call at a time.
                 Sync.Unsafe.defer {
-                    Abort.get(self.unsafe.size()).map { fileSize =>
-                        val startPos =
-                            from match
-                                case Origin.Start => 0L
-                                case Origin.End   => fileSize
-                                // Clamped so a negative offset means the same thing everywhere: JVM and Native raise a raw
-                                // IllegalArgumentException from the channel, while Node reads from the current position instead.
-                                case Origin.Offset(bytes) => math.max(0L, bytes)
+                    val startPos =
+                        from match
+                            case Origin.Start => Result.succeed(0L)
+                            // The end of the file the handle holds, not the end of whatever the path names, so that
+                            // the start position and the cursor it seeds belong to one file.
+                            case Origin.End => handle.size()
+                            // Clamped so a negative offset means the same thing everywhere: JVM and Native raise a raw
+                            // IllegalArgumentException from the channel, while Node reads from the current position instead.
+                            case Origin.Offset(bytes) => Result.succeed(math.max(0L, bytes))
+                    Abort.get(startPos).map { start =>
                         Sync.Unsafe.defer {
-                            handle.position(startPos)
+                            handle.position(start)
                             val buf = new Array[Byte](bufferSize)
-                            Loop(startPos, initialState) { (pos, state) =>
+                            Loop(start, initialState) { (pos, state) =>
                                 Sync.Unsafe.defer {
-                                    val result = handle.readChunk(buf)
-                                    if result.isEof then
-                                        Sync.Unsafe.defer {
-                                            Abort.get(self.unsafe.size()).map { currentSize =>
-                                                if currentSize < pos then
-                                                    // File was truncated: rewind and drop the state carried from the old content
-                                                    Sync.Unsafe.defer(handle.position(0L))
-                                                        .andThen(Loop.continue(0L, initialState))
-                                                else
-                                                    Async.sleep(pollDelay)
-                                                        .andThen(Loop.continue(pos, state))
-                                            }
-                                        }
-                                    else
-                                        val n              = result.bytesRead
-                                        val (values, next) = step(state, buf, n)
-                                        if values.isEmpty then Loop.continue(pos + n, next)
-                                        else Emit.valueWith(values)(Loop.continue(pos + n, next))
-                                        end if
-                                    end if
+                                    poll(handle, buf, pos) match
+                                        case Poll.Data(n) =>
+                                            val (values, next) = step(state, buf, n)
+                                            if values.isEmpty then Loop.continue(pos + n, next)
+                                            else Emit.valueWith(values)(Loop.continue(pos + n, next))
+                                        case Poll.Rewound =>
+                                            Sync.Unsafe.defer(handle.position(0L))
+                                                .andThen(Async.sleep(pollDelay))
+                                                .andThen(Loop.continue(0L, initialState))
+                                        case Poll.Idle =>
+                                            Async.sleep(pollDelay)
+                                                .andThen(Loop.continue(pos, state))
+                                        case Poll.Unreadable(error) =>
+                                            Abort.error(error)
                                 }
                             }
                         }
@@ -848,6 +904,17 @@ object Path extends PathPlatformSpecific:
 
         /** Sets the channel position to `offset` bytes from the start of the file. */
         def position(offset: Long)(using AllowUnsafe): Unit
+
+        /** Size in bytes of the open file this handle holds, independent of what the path now names.
+          *
+          * A handle denotes an inode, a path denotes a name, and the two stop agreeing the moment the name is renamed, replaced, or
+          * unlinked. A follower reasoning about its own cursor must therefore measure through the handle: a size taken by path is a
+          * different quantity that only happens to match while the name still resolves to the open file.
+          *
+          * Returns a `Result` rather than raising, so a measurement failure stays in the typed `FileReadException` channel instead of
+          * escaping the enclosing `Sync.Unsafe.defer` as a panic.
+          */
+        def size()(using AllowUnsafe, Frame): Result[FileReadException, Long]
 
         /** Reads the current content into the handle's own retained buffer and parses the first ASCII-decimal
           * `Long` in place, with no intermediate `String` and no `Maybe` box. TOTAL: returns
