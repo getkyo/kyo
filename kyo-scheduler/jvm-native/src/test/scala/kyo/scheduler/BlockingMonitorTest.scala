@@ -511,10 +511,11 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 assert(blockedWorkerCount() <= baseline, "active worker should not be detected as blocked")
             }
 
-            // Also verify the task kept executing (wasn't drained)
+            // Also verify the task kept executing (wasn't drained): the busy-loop keeps
+            // incrementing, so iterations must eventually exceed a snapshot; a drained task
+            // would stall and this fails at eventually's timeout.
             val before = iterations.get()
-            Thread.sleep(10)
-            assert(iterations.get() > before, "task should still be executing")
+            eventually(assert(iterations.get() > before, "task should still be executing"))
 
             stop.set(true)
             eventually(assert(task.executions == 1))
@@ -578,7 +579,13 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             })
             scheduler.schedule(task)
             assert(started.await(5, TimeUnit.SECONDS))
-            Thread.sleep(10)
+
+            // Wait until the thread is actually detected blocked in its sleep before marking it
+            // for interrupt, rather than a fixed 10ms guess (same barrier as the sibling test
+            // below).
+            eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
+                assert(blockedWorkerStatus().isDefined, "sleeping thread should be detected as blocked")
+            }
 
             task.interrupted = true
             assert(task.needsInterrupt(), "needsInterrupt should reflect the interrupt flag")
@@ -637,7 +644,11 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             })
             scheduler.schedule(task)
             assert(started.await(5, TimeUnit.SECONDS))
-            Thread.sleep(10)
+            // Wait until the thread is detected blocked in its sleep before marking it for
+            // interrupt, rather than a fixed 10ms guess (matches the sibling tests' barrier).
+            eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
+                assert(blockedWorkerStatus().isDefined, "sleeping thread should be detected as blocked")
+            }
 
             task.interrupted = true
 
@@ -830,7 +841,11 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             scheduler.schedule(task)
             assert(started.await(5, TimeUnit.SECONDS))
-            Thread.sleep(10)
+            // Wait until the thread is detected blocked in its sleep before marking it for
+            // interrupt, rather than a fixed 10ms guess (matches the sibling tests' barrier).
+            eventually(timeout(scaled(org.scalatest.time.Span(2, org.scalatest.time.Seconds)))) {
+                assert(blockedWorkerStatus().isDefined, "sleeping thread should be detected as blocked")
+            }
 
             task.interrupted = true
 
