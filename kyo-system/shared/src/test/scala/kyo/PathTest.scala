@@ -1663,26 +1663,34 @@ class PathTest extends kyo.test.Test[Any]:
     // tailBytes
     // =========================================================================
 
-    /** Repeats `write` until `fiber` completes, waking the follower between writes.
+    /** Repeats `write` until `condition` holds, waking the follower between writes.
       *
       * Each iteration performs the write and then advances the controlled clock, so a follower
-      * sleeping between polls is woken again and again until it has seen enough content to
-      * finish. Ordering never depends on how quickly the forked fiber reaches its first poll:
-      * a follower that starts late simply observes a later copy of the same bytes, and every
-      * caller below writes a byte sequence whose repetition leaves the assertion unchanged.
+      * sleeping between polls is woken again and again until the condition is observed. Ordering
+      * never depends on how quickly the forked fiber reaches its first poll: a follower that starts
+      * late simply observes a later copy of the same bytes, and every caller below writes a byte
+      * sequence whose repetition leaves the assertion unchanged.
       */
+    private def writeUntil(
+        control: Clock.TimeControl,
+        step: Duration,
+        write: Unit < (Async & Abort[FileWriteException])
+    )(condition: Boolean < Async)(using Frame): Unit < (Async & Abort[FileWriteException]) =
+        Loop.foreach {
+            condition.map { done =>
+                if done then Loop.done
+                else write.andThen(control.advance(step)).andThen(Loop.continue)
+            }
+        }
+
+    /** Repeats `write` until `fiber` completes, waking the follower between writes. */
     private def writeUntilDone[A, S](
         fiber: Fiber[A, S],
         control: Clock.TimeControl,
         step: Duration,
         write: Unit < (Async & Abort[FileWriteException])
     )(using Frame): Unit < (Async & Abort[FileWriteException]) =
-        Loop.foreach {
-            fiber.done.map { done =>
-                if done then Loop.done
-                else write.andThen(control.advance(step)).andThen(Loop.continue)
-            }
-        }
+        writeUntil(control, step, write)(fiber.done)
 
     /** Advances the controlled clock until `condition` holds, writing nothing.
       *
@@ -1701,6 +1709,31 @@ class PathTest extends kyo.test.Test[Any]:
                 else control.advance(step).andThen(Loop.continue)
             }
         }
+
+    /** Advances the controlled clock a fixed number of times, writing nothing.
+      *
+      * Used where the assertion is that a follower stays parked: the count bounds how many wakeups
+      * it is offered, and the paired `take` bounds how many values it could emit, so the check is a
+      * count of wakeups against a count of emissions rather than an amount of elapsed wall-clock
+      * time. A follower that replays without ever sleeping needs no wakeup at all and so blows the
+      * emission bound however slowly the machine runs.
+      */
+    private def advanceTimes(
+        control: Clock.TimeControl,
+        step: Duration,
+        times: Int
+    )(using Frame): Unit < Async =
+        Loop.repeat(times)(control.advance(step))
+
+    /** `condition`, but already satisfied once `fiber` has finished.
+      *
+      * The driver loops below wait for something the follower must produce. A follower that instead
+      * stops early, by aborting, never produces it, and the loop would spin forever. Treating "the
+      * follower finished" as an exit releases the loop so that the assertion afterwards reports the
+      * abort rather than the test hanging on it.
+      */
+    private def doneOr[A, S](fiber: Fiber[A, S])(condition: Boolean < Async)(using Frame): Boolean < Async =
+        fiber.done.map(done => if done then true else condition)
 
     "tailBytes with Origin.Start replays existing content then follows" in {
         Clock.withTimeControl { control =>
@@ -1763,7 +1796,8 @@ class PathTest extends kyo.test.Test[Any]:
 
     "tailBytes with an Origin.Offset past the end of the file replays the whole file" in {
         // Reading past the end is indistinguishable from a truncation, so the follower rewinds to 0.
-        // No poll sleep is reached: the rewind continues the loop directly.
+        // The rewind costs one poll delay before the replay, which is what bounds a size under-report
+        // that would otherwise re-arm the rewind on every poll.
         for
             dir <- Path.tempDir("kyo-tailbytes")
             file = dir / "log.txt"
@@ -1850,6 +1884,208 @@ class PathTest extends kyo.test.Test[Any]:
                 _       <- dir.removeAll
             // "partialclean" here would mean the pending text survived the rewind.
             yield assert(emitted == Chunk("seen", "clean"))
+            end for
+        }
+    }
+
+    // =========================================================================
+    // tailBytes: file identity
+    //
+    // A follower follows an open file, not a name. Every quantity the poll loop compares therefore
+    // has to come from the handle, which is the only value that denotes the followed inode. The
+    // four tests below drive the ways a name can stop denoting that inode.
+    //
+    // Renaming and unlinking a file that is currently open is POSIX descriptor behavior. Windows
+    // keeps the directory entry alive until the last handle closes and refuses the operation
+    // outright for some open modes, so the outcome under test is not defined there.
+    // =========================================================================
+
+    "tailBytes does not replay the original file after the name is rotated and recreated" in {
+        assume(!Platform.isWindows, "renaming an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-rotate-recreate")
+                file    = dir / "log.txt"
+                rotated = dir / "log.txt.1"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + 1)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                // The whole file has been replayed, so the follower's cursor sits at the end of the
+                // inode it holds and the rotation below cannot land before the handle exists.
+                _ <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _ <- file.move(rotated)
+                // The rotation's replacement: a fresh, empty inode under the original name. A size
+                // read by path now reports 0 against a cursor of 10 and calls that a truncation on
+                // every poll, which replays the handle's ten bytes without ever sleeping.
+                _     <- file.mkFile
+                _     <- advanceTimes(control, 50.millis, 10)
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                // An eleventh byte can only be a replay: nothing was ever appended to the followed
+                // inode. Ten wakeups could not produce it, and a loop that does not sleep needs none.
+                assert(!done)
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original)
+            end for
+        }
+    }
+
+    "tailBytes keeps following the original file after it is renamed away" in {
+        assume(!Platform.isWindows, "renaming an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            val appended = "abc"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-rename")
+                file    = dir / "log.txt"
+                rotated = dir / "log.txt.1"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Abort.run[FileReadException](
+                        Scope.run(
+                            file.tailBytes(Path.Origin.Start, 50.millis)
+                                .take(original.length + appended.length)
+                                .foreach(b => seen.updateAndGet(_.append(b)))
+                        )
+                    )
+                )
+                _ <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _ <- file.move(rotated)
+                // Polls against a name that resolves to nothing, with no new bytes to distract the
+                // loop from reaching the branch that measures the file.
+                _       <- advanceTimes(control, 50.millis, 5)
+                stopped <- fiber.done
+                // Written through the new name, which is the same inode the handle holds.
+                _       <- rotated.append(appended)
+                _       <- advanceUntil(control, 50.millis)(fiber.done)
+                outcome <- fiber.get
+                bytes   <- seen.get
+                _       <- dir.removeAll
+            yield
+                // A size read by path raises on each of those polls, because the old name is gone.
+                assert(!stopped)
+                assert(outcome == Result.succeed(()))
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original + appended)
+            end for
+        }
+    }
+
+    "tailBytes keeps following the original file after the name is replaced by another file" in {
+        assume(!Platform.isWindows, "replacing an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            // Shorter than the follower's cursor, which is where a size read by path reads as a
+            // truncation and replays the handle's content instead of doing nothing.
+            val replacement = "new\n"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-replace")
+                file     = dir / "log.txt"
+                incoming = dir / "log.txt.incoming"
+                _    <- file.write(original)
+                _    <- incoming.write(replacement)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + 1)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                _     <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _     <- incoming.move(file, replaceExisting = true)
+                _     <- advanceTimes(control, 50.millis, 10)
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                // Neither the replacement's content nor a replay of the original: the handle holds an
+                // inode that no longer has a name and that never grows again.
+                assert(!done)
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original)
+            end for
+        }
+    }
+
+    "tailBytes waits rather than aborting after the followed file is deleted" in {
+        assume(!Platform.isWindows, "unlinking an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            val original = "0123456789"
+            for
+                dir <- Path.tempDir("kyo-tailbytes-delete")
+                file = dir / "log.txt"
+                _    <- file.write(original)
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(
+                        file.tailBytes(Path.Origin.Start, 50.millis)
+                            .take(original.length + 1)
+                            .foreach(b => seen.updateAndGet(_.append(b)))
+                    )
+                )
+                _     <- advanceUntil(control, 50.millis)(doneOr(fiber)(seen.get.map(_.size >= original.length)))
+                _     <- file.removeExisting
+                _     <- advanceTimes(control, 50.millis, 10)
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                // An unlinked inode still measures, so the follower polls an empty file forever. A
+                // finished fiber here would mean either an abort or an emission, and there is neither.
+                assert(!done)
+                assert(new String(bytes.toArray, StandardCharsets.UTF_8) == original)
+            end for
+        }
+    }
+
+    "tailBytes with Origin.End starts at the end of the handle's file and follows it across a rename" in {
+        assume(!Platform.isWindows, "renaming an open file is POSIX descriptor behavior")
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tailbytes-end-handle")
+                file    = dir / "log.txt"
+                rotated = dir / "log.txt.1"
+                // Digits, so that any byte of the pre-existing content is recognisable in the output.
+                _    <- file.write("0123456789")
+                seen <- AtomicRef.init(Chunk.empty[Byte])
+                fiber <- Fiber.initUnscoped(
+                    Abort.run[FileReadException](
+                        Scope.run(
+                            file.tailBytes(Path.Origin.End, 50.millis)
+                                .foreach(b => seen.updateAndGet(_.append(b)))
+                        )
+                    )
+                )
+                // One emission proves the handle is open and its start position already fixed, so the
+                // rename below cannot land before the handle exists.
+                _ <- writeUntil(control, 50.millis, file.append("a"))(doneOr(fiber)(seen.get.map(_.nonEmpty)))
+                _ <- file.move(rotated)
+                _ <- writeUntil(control, 50.millis, rotated.append("b"))(
+                    doneOr(fiber)(seen.get.map(_.exists(_ == 'b'.toByte)))
+                )
+                done  <- fiber.done
+                bytes <- seen.get
+                _     <- fiber.interrupt
+                _     <- dir.removeAll
+            yield
+                val text = new String(bytes.toArray, StandardCharsets.UTF_8)
+                // Still running: the rename did not raise, because nothing resolved the old name.
+                assert(!done)
+                // No digit: the start position was the end of the inode the handle holds.
+                assert(text.forall(c => c == 'a' || c == 'b'), s"Expected only appended bytes, got: $text")
+                // A 'b' arrived through the new name, so the follower stayed with the same inode.
+                assert(text.contains('b'))
             end for
         }
     }
