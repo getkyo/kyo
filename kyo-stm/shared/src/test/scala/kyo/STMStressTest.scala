@@ -212,7 +212,11 @@ class STMStressTest extends kyo.test.Test[Any]:
                     yield ()
                 }
             }
-            _     <- Async.sleep(50.millis)
+            // The waiter re-runs the nested transaction through its schedule (STM retry is
+            // schedule-based re-execution, not park-and-notify). Wait until it has attempted
+            // the nested read at least once with r1 == 0, so publishing r1 forces a further
+            // retry that observes the write (nestedRetries >= 2).
+            _     <- assertEventually(nestedRetries.get.map(_ >= 1))
             _     <- STM.run(r1.set(42))
             _     <- Abort.run(Async.timeout(5.seconds)(waiter.get))
             woken <- wokeUp.get
@@ -253,6 +257,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         for
             ref       <- TRef.init(0)
             wakeOrder <- AtomicRef.init(Chunk.empty[Int])
+            attempts  <- AtomicInt.init(0)
             gates     <- Kyo.fill(10)(Latch.init(1))
             waiters <- Kyo.foreach(0 until 10) { i =>
                 Fiber.initUnscoped {
@@ -260,6 +265,7 @@ class STMStressTest extends kyo.test.Test[Any]:
                         _ <- gates(i).release
                         _ <- STM.run(STM.defaultRetrySchedule.forever) {
                             for
+                                _ <- Sync.defer(attempts.incrementAndGet)
                                 v <- ref.get
                                 _ <- STM.retryIf(v < i + 1)
                             yield ()
@@ -268,8 +274,11 @@ class STMStressTest extends kyo.test.Test[Any]:
                     yield ()
                 }
             }
-            _     <- Kyo.foreachDiscard(0 until 10)(i => gates(i).await)
-            _     <- Async.sleep(100.millis)
+            _ <- Kyo.foreachDiscard(0 until 10)(i => gates(i).await)
+            // All 10 waiters are re-running through their schedules against ref == 0; wait
+            // until they have collectively attempted before publishing so the wake path is
+            // exercised rather than each waiter reading the final value on its first attempt.
+            _     <- assertEventually(attempts.get.map(_ >= 10))
             _     <- Kyo.foreachDiscard(1 to 10)(i => STM.run(ref.set(i)))
             _     <- Kyo.foreachDiscard(waiters)(_.get)
             order <- wakeOrder.get
@@ -280,9 +289,11 @@ class STMStressTest extends kyo.test.Test[Any]:
         for
             ref       <- TRef.init(0)
             completed <- AtomicInt.init(0)
+            attempts  <- AtomicInt.init(0)
             waiters = Async.fill(16, 16) {
                 STM.run(STM.defaultRetrySchedule.forever) {
                     for
+                        _ <- Sync.defer(attempts.incrementAndGet)
                         v <- ref.get
                         _ <- STM.retryIf(v == 0)
                         _ <- ref.set(v - 1)
@@ -290,10 +301,12 @@ class STMStressTest extends kyo.test.Test[Any]:
                 }.handle(Abort.run).andThen(completed.incrementAndGet)
             }
             waiterFiber <- Fiber.initUnscoped(waiters)
-            _           <- Async.sleep(100.millis)
-            _           <- STM.run(ref.set(16))
-            _           <- Abort.run(Async.timeout(10.seconds)(waiterFiber.get))
-            p           <- completed.get
+            // Wait until the 16 waiters are re-running against ref == 0 before publishing,
+            // so the signal-a-blocked-waiter path is exercised (not a first-attempt read).
+            _ <- assertEventually(attempts.get.map(_ >= 16))
+            _ <- STM.run(ref.set(16))
+            _ <- Abort.run(Async.timeout(10.seconds)(waiterFiber.get))
+            p <- completed.get
         yield assert(p == 16, s"completed=$p")
     }
 
@@ -610,17 +623,21 @@ class STMStressTest extends kyo.test.Test[Any]:
 
     "fiber blocked in STM.retryIf wakes when reachable writer eventually publishes" in {
         for
-            ref   <- TRef.init(0)
-            woken <- AtomicBoolean.init(false)
+            ref      <- TRef.init(0)
+            woken    <- AtomicBoolean.init(false)
+            attempts <- AtomicInt.init(0)
             waiter <- Fiber.initUnscoped {
                 STM.run(STM.defaultRetrySchedule.forever) {
                     for
+                        _ <- Sync.defer(attempts.incrementAndGet)
                         v <- ref.get
                         _ <- STM.retryIf(v == 0)
                     yield ()
                 }.andThen(woken.set(true))
             }
-            _ <- Async.sleep(500.millis)
+            // Wait until the waiter has attempted (and retried) against ref == 0 before
+            // publishing, so it is genuinely woken rather than reading 1 on its first attempt.
+            _ <- assertEventually(attempts.get.map(_ >= 1))
             _ <- STM.run(ref.set(1))
             _ <- Abort.run(Async.timeout(5.seconds)(waiter.get))
             w <- woken.get
@@ -709,12 +726,14 @@ class STMStressTest extends kyo.test.Test[Any]:
 
     "STM.retryIf with N concurrent waiters survives sustained wake/sleep cycles".notJs in {
         for
-            ref    <- TRef.init(0)
-            wakes  <- AtomicInt.init(0)
-            errors <- AtomicInt.init(0)
+            ref      <- TRef.init(0)
+            wakes    <- AtomicInt.init(0)
+            errors   <- AtomicInt.init(0)
+            attempts <- AtomicInt.init(0)
             waiters = Async.fill(100, 100) {
                 STM.run(STM.defaultRetrySchedule.forever) {
                     for
+                        _ <- Sync.defer(attempts.incrementAndGet)
                         v <- ref.get
                         _ <- STM.retryIf(v == 0)
                         _ <- Sync.defer(wakes.incrementAndGet)
@@ -725,11 +744,12 @@ class STMStressTest extends kyo.test.Test[Any]:
                 }
             }
             waiterFiber <- Fiber.initUnscoped(waiters)
-            _           <- Async.sleep(200.millis)
-            _           <- STM.run(ref.set(1))
-            _           <- Abort.run(Async.timeout(20.seconds)(waiterFiber.get))
-            w           <- wakes.get
-            e           <- errors.get
+            // Wait until the 100 waiters are re-running against ref == 0 before publishing.
+            _ <- assertEventually(attempts.get.map(_ >= 100))
+            _ <- STM.run(ref.set(1))
+            _ <- Abort.run(Async.timeout(20.seconds)(waiterFiber.get))
+            w <- wakes.get
+            e <- errors.get
         yield assert(w == 100 && e == 0, s"wakes=$w errors=$e")
     }
 
@@ -1781,13 +1801,15 @@ class STMStressTest extends kyo.test.Test[Any]:
         // re-run when EITHER ref changes — here, a write to `a` wakes a waiter whose
         // body also read `b`.
         for
-            a      <- TRef.init(0)
-            b      <- TRef.init(0)
-            woken  <- AtomicBoolean.init(false)
-            sawVia <- AtomicRef.init("")
+            a        <- TRef.init(0)
+            b        <- TRef.init(0)
+            woken    <- AtomicBoolean.init(false)
+            sawVia   <- AtomicRef.init("")
+            attempts <- AtomicInt.init(0)
             waiter <- Fiber.initUnscoped {
                 STM.run(STM.defaultRetrySchedule.forever) {
                     for
+                        _  <- Sync.defer(attempts.incrementAndGet)
                         va <- a.get
                         vb <- b.get
                         _  <- STM.retryIf(va == 0 && vb == 0)
@@ -1795,7 +1817,9 @@ class STMStressTest extends kyo.test.Test[Any]:
                     yield ()
                 }.andThen(woken.set(true))
             }
-            _   <- Async.sleep(100.millis)
+            // Wait until the waiter has read both refs (still 0) and retried before publishing
+            // a, so the write to a wakes a genuinely-blocked waiter whose read-set includes b.
+            _   <- assertEventually(attempts.get.map(_ >= 1))
             _   <- STM.run(a.set(42))
             _   <- Abort.run(Async.timeout(5.seconds)(waiter.get))
             w   <- woken.get
