@@ -227,6 +227,19 @@ object StreamCoreExtensions:
             Stream.unwrap(stream)
         end fromIteratorCatching
 
+        /** Streams a `java.io.InputStream`'s bytes.
+          *
+          * The stream is registered with the enclosing `Scope` and closed when that scope ends, so a caller never has to pair the
+          * read with a manual close. Reads happen in `bufferSize` chunks.
+          *
+          * @param is
+          *   the input stream to consume
+          * @param bufferSize
+          *   read buffer size in bytes
+          */
+        def fromInputStream(is: java.io.InputStream, bufferSize: Int = 8192)(using Frame): Stream[Byte, Sync & Scope] =
+            streamFromJavaInputStream(is, bufferSize)
+
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
           * @note

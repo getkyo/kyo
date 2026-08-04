@@ -96,6 +96,32 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 Stream.collectAll(Seq(s1, s2)).run.map: res =>
                     assert(res.toSet == Set.from(1 to 5) ++ Set.from(101 to 105))
         }
+
+        "fromInputStream" - {
+            "reads all bytes" in {
+                val data = "hello world".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                val is   = new java.io.ByteArrayInputStream(data)
+                for bytes <- Scope.run(Stream.fromInputStream(is).run)
+                yield assert(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8) == "hello world")
+            }
+
+            "closes the stream when the scope ends" in {
+                var closed = false
+                val is = new java.io.ByteArrayInputStream("x".getBytes(java.nio.charset.StandardCharsets.UTF_8)):
+                    override def close(): Unit =
+                        closed = true
+                        super.close()
+                for _ <- Scope.run(Stream.fromInputStream(is).run)
+                yield assert(closed)
+            }
+
+            "reads bytes across multiple buffer-sized chunks" in {
+                val data = Array.fill(20)(1.toByte)
+                val is   = new java.io.ByteArrayInputStream(data)
+                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = 8).run)
+                yield assert(bytes.toArray.toSeq == data.toSeq)
+            }
+        }
     }
 
     "combinator" - {
