@@ -1,3 +1,4 @@
+/home/damian/.bash_profile: line 6: /home/damian/.cache/mill/download/mill-completion.sh: No such file or directory
 # kyo-core contributor guide
 
 This file documents the internal design contracts, invariants, and conventions
@@ -50,3 +51,4 @@ Every public API is in the safe tier. The unsafe tier (`Channel.Unsafe`,
 `Sync.Unsafe`) exists for integrators and performance-critical bridging only.
 Every site that calls `AllowUnsafe` or `Sync.Unsafe.defer` must have a
 `// Unsafe:` comment explaining which safe-tier contract it is bridging.
+
