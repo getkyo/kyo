@@ -12,6 +12,8 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-schema] `Schema.stringOrderedDictSchema` and `Schema.orderedDictSchema`: derive a `Schema` for a case class with an `OrderedDict` field
 - [kyo-core] `Fiber.use`: use a forked fiber within a function and clean it up
 - [kyo-core] `Fiber.initUnscoped`: fork a fiber without guaranteeing cleanup (formerly `Fiber.init`)
+- [kyo-core] `Path.tailBytes`: follow a file at the byte level, starting from the beginning, the end, or a recorded offset
+- [kyo-core] `Path.Origin`: where a byte-level read begins (`Start`, `End`, `Offset`)
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`
 - [kyo-logging-jpl] `kyo.JavaLog`: bridge `Log` to Java platform logging a.k.a. `System.Logger`
 - [kyo-logging-slf4j] `kyo.SLF4JLog`: bridge `Log` to SLF4J 2.0 API

@@ -1594,6 +1594,111 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
+    // tailBytes
+    // =========================================================================
+
+    /** Repeats `write` until `fiber` completes, waking the follower between writes.
+      *
+      * Each iteration performs the write and then advances the controlled clock, so a follower
+      * sleeping between polls is woken again and again until it has seen enough content to
+      * finish. Ordering never depends on how quickly the forked fiber reaches its first poll:
+      * a follower that starts late simply observes a later copy of the same bytes, and every
+      * caller below writes a byte sequence whose repetition leaves the assertion unchanged.
+      */
+    private def writeUntilDone[A, S](
+        fiber: Fiber[A, S],
+        control: Clock.TimeControl,
+        step: Duration,
+        write: Unit < (Async & Abort[FileWriteException])
+    )(using Frame): Unit < (Async & Abort[FileWriteException]) =
+        Loop.foreach {
+            fiber.done.map { done =>
+                if done then Loop.done
+                else write.andThen(control.advance(step)).andThen(Loop.continue)
+            }
+        }
+
+    "tailBytes with Origin.Start replays existing content then follows" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tailbytes")
+                file = dir / "log.txt"
+                _ <- file.write("one\ntwo\n")
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(file.tailBytes(Path.Origin.Start, 50.millis).take(12).run)
+                )
+                _     <- writeUntilDone(fiber, control, 50.millis, file.append("three\n"))
+                bytes <- fiber.get
+                _     <- dir.removeAll
+            yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "one\ntwo\nthre")
+            end for
+        }
+    }
+
+    "tailBytes with Origin.End skips existing content" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tailbytes")
+                file = dir / "log.txt"
+                _ <- file.write("old\n")
+                fiber <- Fiber.initUnscoped(
+                    Scope.run(file.tailBytes(Path.Origin.End, 50.millis).take(4).run)
+                )
+                _     <- writeUntilDone(fiber, control, 50.millis, file.append("new\n"))
+                bytes <- fiber.get
+                _     <- dir.removeAll
+            yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "new\n")
+            end for
+        }
+    }
+
+    "tailBytes with Origin.Offset resumes at the given byte" in {
+        for
+            dir <- Path.tempDir("kyo-tailbytes")
+            file = dir / "log.txt"
+            _     <- file.write("aaaabbbb")
+            bytes <- Scope.run(file.tailBytes(Path.Origin.Offset(4L), 50.millis).take(4).run)
+            _     <- dir.removeAll
+        yield assert(new String(bytes.toArray, StandardCharsets.UTF_8) == "bbbb")
+        end for
+    }
+
+    "tail behavior is unchanged after the tailBytes refactor" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tail-regression")
+                file = dir / "log.txt"
+                _     <- file.write("existing\n")
+                fiber <- Fiber.initUnscoped(Scope.run(file.tail(50.millis).take(2).run))
+                _     <- writeUntilDone(fiber, control, 50.millis, file.append("first\r\nsecond\n"))
+                lines <- fiber.get
+                _     <- dir.removeAll
+            yield assert(lines == Chunk("first", "second"))
+            end for
+        }
+    }
+
+    "tail discards a pending partial line when the file is truncated" in {
+        Clock.withTimeControl { control =>
+            for
+                dir <- Path.tempDir("kyo-tail-truncate-pending")
+                file = dir / "log.txt"
+                _         <- file.mkFile
+                tailFiber <- Fiber.initUnscoped(Scope.run(file.tail(50.millis).take(1).run))
+                _         <- control.advance(50.millis) // wake the first poll, which sees an empty file
+                _         <- file.append("partial")     // no newline, so it is held as pending text
+                _         <- control.advance(50.millis) // wake the second poll, which buffers "partial"
+                _         <- file.truncate(0L)
+                _         <- control.advance(50.millis) // wake the third poll, which resets after truncation
+                _         <- writeUntilDone(tailFiber, control, 50.millis, file.append("clean\n"))
+                lines     <- tailFiber.get
+                _         <- dir.removeAll
+            yield assert(lines == Chunk("clean"))
+            end for
+        }
+    }
+
+    // =========================================================================
     // Streaming delegation (guards against infinite-recursion in safe API)
     // =========================================================================
 

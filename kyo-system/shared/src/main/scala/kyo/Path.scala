@@ -26,7 +26,7 @@ import kyo.internal.PathPlatformSpecific
   * Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than
   * failing — they require only `Sync`, not `Abort`.
   *
-  * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`) return `Stream` values that carry
+  * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`, `tailBytes`) return `Stream` values that carry
   * `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream starts and released
   * when the enclosing `Scope` closes — whether by normal completion, error, or cancellation.
   *
@@ -54,6 +54,18 @@ object Path extends PathPlatformSpecific:
       * reflect a consistent measurement of the file at one instant.
       */
     final case class PathStat(lastModifiedMs: Long, sizeBytes: Long) derives CanEqual
+
+    /** Where a byte-level read begins.
+      *
+      * `Start` reads the file from its first byte, so a follower replays existing content before emitting new content. `End` skips whatever
+      * the file already holds and emits only what is appended afterwards. `Offset` resumes at a recorded position, which lets a consumer
+      * that tracked how far it read continue without replaying.
+      */
+    enum Origin derives CanEqual:
+        case Start
+        case End
+        case Offset(bytes: Long)
+    end Origin
 
     /** Platform separator between path entries in classpath-style joined strings.
       *
@@ -349,63 +361,55 @@ object Path extends PathPlatformSpecific:
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls, using the given read buffer size.
           */
         def tail(pollDelay: Duration, bufferSize: Int)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
-            Stream {
-                Scope.acquireRelease(
-                    Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
-                    // Seek to end first, then poll for new content
-                    Sync.Unsafe.defer {
-                        Abort.get(self.unsafe.size()).map { fileSize =>
-                            Sync.Unsafe.defer {
-                                handle.position(fileSize)
-                                val buf = new Array[Byte](bufferSize)
-                                // State: (file position, leftover bytes from incomplete UTF-8, pending incomplete line text)
-                                val emptyBytes = new Array[Byte](0)
-                                Loop((fileSize, emptyBytes, "")) { case (pos, leftover, pending) =>
-                                    Sync.Unsafe.defer {
-                                        val result = handle.readChunk(buf)
-                                        if result.isEof then
-                                            Sync.Unsafe.defer {
-                                                Abort.get(self.unsafe.size()).map { currentSize =>
-                                                    if currentSize < pos then
-                                                        // File was truncated — reset to beginning
-                                                        Sync.Unsafe.defer(handle.position(0L))
-                                                            .andThen(Loop.continue((0L, emptyBytes, "")))
-                                                    else
-                                                        Async.sleep(pollDelay)
-                                                            .andThen(Loop.continue((pos, leftover, pending)))
-                                                }
-                                            }
-                                        else
-                                            val n = result.bytesRead
-                                            // Combine leftover bytes from previous read with new bytes
-                                            val allBytes =
-                                                if leftover.isEmpty then java.util.Arrays.copyOf(buf, n)
-                                                else
-                                                    val combined = new Array[Byte](leftover.length + n)
-                                                    java.lang.System.arraycopy(leftover, 0, combined, 0, leftover.length)
-                                                    java.lang.System.arraycopy(buf, 0, combined, leftover.length, n)
-                                                    combined
-                                            // Find how many trailing bytes form an incomplete UTF-8 sequence
-                                            val incomplete = incompleteUtf8Tail(allBytes, allBytes.length)
-                                            val decodeLen  = allBytes.length - incomplete
-                                            val newLeftover =
-                                                if incomplete > 0 then java.util.Arrays.copyOfRange(allBytes, decodeLen, allBytes.length)
-                                                else emptyBytes
-                                            val text  = pending + new String(allBytes, 0, decodeLen, StandardCharsets.UTF_8)
-                                            val parts = text.split("\r?\n", -1).toList
-                                            val (toEmit, newPending) =
-                                                if text.endsWith("\n") then (parts.dropRight(1), "")
-                                                else (parts.dropRight(1), parts.last)
-                                            if toEmit.isEmpty then Loop.continue((pos + n, newLeftover, newPending))
-                                            else Emit.valueWith(Chunk.from(toEmit))(Loop.continue((pos + n, newLeftover, newPending)))
-                                        end if
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            // State carried between reads: leftover bytes from an incomplete UTF-8 sequence, plus the pending incomplete line text.
+            // `follow` restores this initial state when the file is truncated, so neither survives a rewind.
+            val emptyBytes = new Array[Byte](0)
+            follow[String, (Array[Byte], String)](self, Origin.End, pollDelay, bufferSize, (emptyBytes, "")) {
+                case ((leftover, pending), buf, n) =>
+                    // Combine leftover bytes from previous read with new bytes
+                    val allBytes =
+                        if leftover.isEmpty then java.util.Arrays.copyOf(buf, n)
+                        else
+                            val combined = new Array[Byte](leftover.length + n)
+                            java.lang.System.arraycopy(leftover, 0, combined, 0, leftover.length)
+                            java.lang.System.arraycopy(buf, 0, combined, leftover.length, n)
+                            combined
+                    // Find how many trailing bytes form an incomplete UTF-8 sequence
+                    val incomplete = incompleteUtf8Tail(allBytes, allBytes.length)
+                    val decodeLen  = allBytes.length - incomplete
+                    val newLeftover =
+                        if incomplete > 0 then java.util.Arrays.copyOfRange(allBytes, decodeLen, allBytes.length)
+                        else emptyBytes
+                    val text  = pending + new String(allBytes, 0, decodeLen, StandardCharsets.UTF_8)
+                    val parts = text.split("\r?\n", -1).toList
+                    val (toEmit, newPending) =
+                        if text.endsWith("\n") then (parts.dropRight(1), "")
+                        else (parts.dropRight(1), parts.last)
+                    (Chunk.from(toEmit), (newLeftover, newPending))
+            }
+        end tail
+
+        /** Streams the file's bytes, continuing to emit as content is appended.
+          *
+          * The byte-level primitive under [[tail]]: it polls for new content and does no text decoding or line splitting. On end of file it
+          * sleeps `pollDelay` and retries; if the file has shrunk below the current position it resets to the beginning, matching [[tail]]'s
+          * truncation handling.
+          *
+          * @param from
+          *   where reading begins; defaults to [[Path.Origin.End]] so the default is follow-only
+          * @param pollDelay
+          *   how long to sleep between polls once the end of the file is reached
+          * @param bufferSize
+          *   read buffer size in bytes
+          */
+        def tailBytes(
+            from: Origin = Origin.End,
+            pollDelay: Duration = 100.millis,
+            bufferSize: Int = 8192
+        )(using Frame): Stream[Byte, Async & Scope & Abort[FileReadException]] =
+            follow[Byte, Unit](self, from, pollDelay, bufferSize, ()) { (_, buf, n) =>
+                // The loop reuses `buf`, so each emitted chunk gets its own copy
+                (Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, n)), ())
             }
 
         // --- Write ---
@@ -585,6 +589,74 @@ object Path extends PathPlatformSpecific:
         preference: Path,
         runtime: Path
     ) derives CanEqual
+
+    /** Polling loop shared by [[Path.tailBytes]] and [[Path.tail]].
+      *
+      * Opens a `Scope`-managed read handle, seeks to the position `from` selects, then reads until the end of the file, sleeping
+      * `pollDelay` between polls. `step` turns each freshly read block of bytes into the values to emit and the state carried into the next
+      * read, which is what lets `tail` buffer an incomplete UTF-8 sequence and a partial line across reads while `tailBytes` carries
+      * nothing.
+      *
+      * When the file has shrunk below the current position the loop rewinds to the beginning and restores `initialState`, so a truncation
+      * discards whatever half-read state belonged to the old content.
+      *
+      * `step` receives the read buffer itself, which the loop reuses across iterations: it must copy any bytes it retains.
+      */
+    private def follow[V, St](
+        self: Path,
+        from: Origin,
+        pollDelay: Duration,
+        bufferSize: Int,
+        initialState: St
+    )(
+        step: (St, Array[Byte], Int) => (Chunk[V], St)
+    )(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, Async & Scope & Abort[FileReadException]] =
+        Stream {
+            Scope.acquireRelease(
+                Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
+            )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
+                // Unsafe: the read handle is a single-consumer cursor owned by this stream, so its
+                // position and buffer reads are bridged into Sync one call at a time.
+                Sync.Unsafe.defer {
+                    Abort.get(self.unsafe.size()).map { fileSize =>
+                        val startPos =
+                            from match
+                                case Origin.Start         => 0L
+                                case Origin.End           => fileSize
+                                case Origin.Offset(bytes) => bytes
+                        Sync.Unsafe.defer {
+                            handle.position(startPos)
+                            val buf = new Array[Byte](bufferSize)
+                            Loop(startPos, initialState) { (pos, state) =>
+                                Sync.Unsafe.defer {
+                                    val result = handle.readChunk(buf)
+                                    if result.isEof then
+                                        Sync.Unsafe.defer {
+                                            Abort.get(self.unsafe.size()).map { currentSize =>
+                                                if currentSize < pos then
+                                                    // File was truncated: rewind and drop the state carried from the old content
+                                                    Sync.Unsafe.defer(handle.position(0L))
+                                                        .andThen(Loop.continue(0L, initialState))
+                                                else
+                                                    Async.sleep(pollDelay)
+                                                        .andThen(Loop.continue(pos, state))
+                                            }
+                                        }
+                                    else
+                                        val n              = result.bytesRead
+                                        val (values, next) = step(state, buf, n)
+                                        if values.isEmpty then Loop.continue(pos + n, next)
+                                        else Emit.valueWith(values)(Loop.continue(pos + n, next))
+                                        end if
+                                    end if
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    end follow
 
     /** Returns the number of trailing bytes that form an incomplete UTF-8 sequence. */
     private def incompleteUtf8Tail(bytes: Array[Byte], len: Int): Int =
