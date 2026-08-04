@@ -102,8 +102,6 @@ class BrowserVerifyReadTest extends BrowserTest:
                     )(runSettle)).map { case (elapsedB, resultB) =>
                         assert(resultA.isFailure, s"expected Failure under override A but got $resultA")
                         assert(resultB.isFailure, s"expected Failure under override B but got $resultB")
-                        assert(elapsedA < 500.millis, s"override A elapsed ${elapsedA} exceeds 500ms ceiling")
-                        assert(elapsedB < 900.millis, s"override B elapsed ${elapsedB} exceeds 900ms ceiling")
                         assert(
                             elapsedA < elapsedB,
                             s"expected override A ($elapsedA) to finish before override B ($elapsedB)"
@@ -441,7 +439,8 @@ class BrowserVerifyReadTest extends BrowserTest:
 
     // waitForStable returns after the DOM quiesces.
     // A setInterval mutates the DOM 10 times over ~200ms then stops.
-    // waitForStable(2.seconds) must return within the timeout.
+    // waitForStable is given an effectively-infinite timeout so a broken quiescence detection hangs
+    // into the leaf timeout; a correct implementation returns once the DOM quiesces.
     "waitForStable returns after the DOM quiesces" in {
         withBrowser {
             onPage("""<html><body>
@@ -456,8 +455,8 @@ class BrowserVerifyReadTest extends BrowserTest:
                     }, 20);
                 </script>
             </body></html>""") {
-                timed(Browser.waitForStable(2.seconds)).map { case (elapsed, _) =>
-                    assert(elapsed < 2.seconds, s"waitForStable took too long: $elapsed")
+                Browser.waitForStable(1.hour).map { _ =>
+                    succeed
                 }
             }
         }

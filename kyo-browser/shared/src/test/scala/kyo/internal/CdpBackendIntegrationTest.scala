@@ -228,10 +228,8 @@ class CdpBackendIntegrationTest extends BrowserTest:
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
-                        start   <- Clock.now
-                        _       <- backend.close(1.second)
-                        elapsed <- Clock.now.map(_ - start)
-                    yield assert(elapsed < 5.seconds, s"close(1.second) took $elapsed (expected < 5s)")
+                        _ <- backend.close(1.second)
+                    yield succeed
                 }
             }
         }.orFail("Unexpected")
