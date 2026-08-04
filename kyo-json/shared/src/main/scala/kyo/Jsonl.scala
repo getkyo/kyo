@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 
 /** Streaming JSONL (also called NDJSON): one JSON value per line, over effectful sources.
@@ -197,8 +198,8 @@ object Jsonl:
       * rename therefore keeps the stream on the original file: it emits whatever is still appended through that file's new name, and
       * nothing written to the new file created under the old name. Deleting the file yields no further records and no failure, because an
       * unlinked file that is still open keeps its content and can still be measured. A consumer that needs to pick up a rotated-in
-      * replacement closes this stream and opens a new one against the path. [[Path.tailBytes]] documents the same contract for the byte
-      * loop underneath.
+      * replacement closes this stream and opens a new one against the path. [[Path.tailBytes]] states the same contract in byte terms: it
+      * is a sibling driver over the same polling loop rather than a layer beneath this one.
       *
       * @param path
       *   the file to follow
@@ -247,8 +248,9 @@ object Jsonl:
       * truncation, and the behavior under rotation by rename.
       *
       * A record exceeding `maxLineBytes` is the one framing failure with nothing to skip to, since no record boundary was found for the
-      * pending bytes. It surfaces as a single failure element after every record framed before it, and framing then stops: the stream
-      * stays open and emits nothing further until a truncation rewinds the file and rebuilds the framer.
+      * pending bytes. It surfaces as a single failure element after every record framed before it, and then the stream ends, exactly as it
+      * does in [[pipeResults]]. Framing is over at that point, so ending says so, where staying open would leave a consumer waiting on a
+      * stream that can never emit again.
       *
       * @param path
       *   the file to follow
@@ -282,31 +284,84 @@ object Jsonl:
         // The framer is the follow loop's carried state rather than a pipe downstream of it, which is what
         // ties its lifetime to the file's: a rewind restores this initial state, so bytes framed before a
         // truncation cannot reach a record replayed after one.
-        Path.follow[Result[DecodeException, A], Maybe[Json.Lines.Framer]](
-            path,
-            from,
-            pollDelay,
-            FollowBufferSize,
-            Present(Json.Lines.Framer.init(maxLineBytes))
-        ) { (state, buffer, bytesRead) =>
-            state match
-                case Absent          => (Chunk.empty[Result[DecodeException, A]], Absent)
-                case Present(framer) =>
-                    // The follow loop reuses `buffer` across reads, so the framer, which retains what it
-                    // cannot yet frame, is handed an array nothing else holds.
-                    val chunk = Span.fromUnsafe(java.util.Arrays.copyOf(buffer, bytesRead))
-                    frameChunk[A](framer, chunk, maxDepth, maxCollectionSize) match
-                        case Framing.Continued(results, advanced) => (results, Present(advanced))
-                        case Framing.Halted(results, breach)      =>
-                            // No record boundary was found for the pending bytes, so this framer can never be
-                            // fed again. Framing stops here and only a rewind, which restores a fresh framer,
-                            // can start it again.
-                            (results :+ Result.fail[DecodeException, A](breach), Absent)
-                    end match
-        }
+        val framed =
+            Path.follow[Result[DecodeException, A], Json.Lines.Framer](
+                path,
+                from,
+                pollDelay,
+                FollowBufferSize,
+                Json.Lines.Framer.init(maxLineBytes)
+            ) { (framer, buffer, bytesRead) =>
+                // The follow loop reuses `buffer` across reads, so the framer, which retains what it
+                // cannot yet frame, is handed an array nothing else holds.
+                val chunk = Span.fromUnsafe(java.util.Arrays.copyOf(buffer, bytesRead))
+                frameChunk[A](framer, chunk, maxDepth, maxCollectionSize) match
+                    case Framing.Continued(results, advanced) => (results, advanced)
+                    case Framing.Halted(results, breach)      =>
+                        // `endAtBreach` ends the stream on this very chunk, so the loop is never resumed and
+                        // the state returned here is never fed. `framer` is returned only because the step
+                        // owes one: the framer a breach leaves behind is unusable, which is why
+                        // [[Framing.Halted]] does not carry it.
+                        (results :+ Result.fail[DecodeException, A](breach), framer)
+                end match
+            }
+        endAtBreach(framed)
     end followResults
 
-    /** Read buffer size for the follow drivers, matching [[Path.tailBytes]]'s own default. */
+    /** Ends `stream` at the first framing breach, keeping that breach as its final element.
+      *
+      * A breach found no record boundary, so there is nothing to skip to and framing is over. Ending there is what the lenient surfaces
+      * promise and what [[pipeResults]] does on a finite input: it tells a consumer the records are finished, where staying open would
+      * leave it waiting on a stream that can never emit again.
+      *
+      * The halt lives here, one layer out from `Path.follow`, because that loop's step is pure and a pure step cannot end a stream. The
+      * composition can: truncating the emitted stream leaves the framer inside the loop untouched, so the rewind that rebuilds it stays
+      * exactly as it is. Discarding the loop's continuation is also what puts the state the step returned at a breach out of reach.
+      *
+      * A `LimitExceededException` arriving here can only be the framer's, because [[JsonLines.decodeRecord]] wraps every decode failure in
+      * a `RecordDecodeException`, so no record's own decoding can produce one.
+      */
+    private def endAtBreach[A, S](stream: Stream[Result[DecodeException, A], S])(
+        using
+        tag: Tag[Emit[Chunk[Result[DecodeException, A]]]],
+        frame: Frame
+    ): Stream[Result[DecodeException, A], S] =
+        Stream(
+            ArrowEffect.handleLoop(tag, stream.emit)(
+                [C] =>
+                    (input, cont) =>
+                        val breach = breachIndex(input)
+                        if breach < 0 then Emit.valueWith(input)(Loop.continue(cont(())))
+                        // `Kyo.unit` in place of the continuation is how `Stream.take` stops: the upstream
+                        // loop is dropped rather than resumed, so nothing polls the file again.
+                        else Emit.valueWith(input.take(breach + 1))(Loop.continue(Kyo.unit))
+                        end if
+            )
+        )
+    end endAtBreach
+
+    /** Index of the first framing breach in `results`, or `-1` when there is none.
+      *
+      * `frameChunk` appends a breach as the last element of the chunk it halts on, so a scan can only ever find it there. It scans anyway,
+      * over one chunk: a cheap loop that keeps the halt correct rather than correct-given-where-the-element-sits.
+      */
+    private def breachIndex[A](results: Chunk[Result[DecodeException, A]]): Int =
+        @tailrec
+        def loop(i: Int): Int =
+            if i >= results.size then -1
+            else
+                results(i) match
+                    case Result.Failure(_: LimitExceededException) => i
+                    case _                                         => loop(i + 1)
+        loop(0)
+    end breachIndex
+
+    /** Read buffer size for the follow drivers.
+      *
+      * 8 KB, so a record of any ordinary size arrives whole in one read and the framer seldom carries a partial across polls. This is
+      * passed to the shared follow loop explicitly rather than inherited from [[Path.tailBytes]]'s own default, so the two are free to
+      * differ and neither has to track the other.
+      */
     private inline def FollowBufferSize: Int = 8192
 
     /** What framing and decoding one chunk of JSONL bytes produced.
