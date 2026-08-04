@@ -172,7 +172,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                 _  <- dir.removeAll
             yield
                 assert(rs.size == 3)
-                assert(rs(1).isFailure)
+                assert(rs(0).getOrThrow == Event("a", 1))
+                assertRecordFailure(rs(1), 1L)
                 assert(rs(2).getOrThrow == Event("c", 3))
         }
     }
