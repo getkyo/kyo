@@ -246,10 +246,10 @@ class OverlayPathWatchTest extends FileSystemWatchTestSuite:
     }
 end OverlayPathWatchTest
 
-/** The in-memory backend has its own watcher, event-sourced from its state journal and entirely
-  * separate from the polling watcher the host and overlay use. It advertises the Watch tier, so it
-  * owes the same contract; before this it had only its own ad-hoc cases and the two implementations
-  * were never held to the same assertions.
+/** The in-memory backend has its own watcher, pushed to from each mutation into the channel every
+  * registered watcher holds, and entirely separate from the polling watcher the host and overlay
+  * use. It advertises the Watch tier, so it owes the same contract; before this it had only its own
+  * ad-hoc cases and the two implementations were never held to the same assertions.
   */
 class InMemoryPathWatchTest extends FileSystemWatchTestSuite:
     private given Frame = Frame.internal

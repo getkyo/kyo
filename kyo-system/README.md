@@ -151,8 +151,17 @@ val staged =
 
 `Path.commitWritesOnSuccess(program)` commits after a successful program,
 `Path.discardWrites(program)` always discards, and `Path.stageWrites(program)` returns the explicit
-`FileSystem.StagedChanges` handle. `commit` validates observed lower entries. `commitWith` resolves
-each `CommitConflict` with `FileSystem.Resolution.KeepOurs`, `KeepTheirs`, `Write`, or `Remove`.
+`FileSystem.StagedChanges` handle. `commit` re-checks each observation the staged work was built on
+against the live lower, and aborts with `CommitConflict` if one no longer holds; an observation is
+only as strong as the read that made it, so asking whether a path exists does not conflict on a
+change to its contents. `commitWith` resolves each conflict with `FileSystem.Resolution.KeepOurs`,
+`KeepTheirs`, `Write`, or `Remove`.
+
+`FileSystem.overlay(lower)` builds the same staging layer over any service directly. A commit is
+durable across a crash: it stages content, records its plan in an intent log, applies it, and only
+then writes a marker declaring the commit complete. A process that dies partway leaves a staging
+directory behind, so use `FileSystem.overlayRecovering(lower, root)` when the lower is a real
+filesystem: it replays any such leftover under `root` before handing the overlay back.
 
 `Path.tempDir(prefix)` creates a directory through the active service, returns the `Path`, and registers recursive removal via the creating service when the enclosing `Scope` closes.
 

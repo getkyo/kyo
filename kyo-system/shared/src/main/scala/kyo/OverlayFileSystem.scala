@@ -589,10 +589,24 @@ end WriteOpLog
   * lower. The read-set records what the overlay observed of each lower path on its first read;
   * commit validates those observations against the live lower before replaying.
   *
-  * The three structural components are: lower (the constructor field), upper (a PathTrie in
-  * OverlayState), and readSet (in OverlayState). There is no fourth record of the staged writes:
-  * [[OverlayFileSystem.OverlayState.replayPlan]] derives the commit plan from the upper layer, so a
-  * caller's read and the commit's write are the same value seen twice.
+  * The structure is one lower service (the constructor field) and one [[OverlayState]] behind an
+  * atomic reference. That state holds the staged upper layer, the read-set, the pinned canonical
+  * resolutions, the per-path provenance a watcher's identity question is answered from, and the
+  * lifecycle phase. Nothing in it records the staged writes a second time:
+  * [[OverlayFileSystem.OverlayState.replayPlan]] derives the commit plan from the upper layer.
+  *
+  * That derivation is the point rather than a convenience. A parallel log of write operations
+  * alongside the upper layer is two descriptions of one intent, paired by hand at every mutation
+  * site, and the weaker of the two decides what a commit does: a staged directory's modification
+  * time had nowhere to live in an operation record, so a read reported it and a commit dropped it.
+  * Deriving the plan makes what a caller reads back and what a commit writes the same value seen
+  * twice.
+  *
+  * A commit is durable across a crash: each staged file is written into a staging directory, the
+  * plan is recorded in an intent log, the entries are applied, directory timestamps are settled,
+  * and only then is a marker written declaring the commit complete. A process that dies partway
+  * leaves that staging directory behind, and [[FileSystem.overlayRecovering]] is how the next
+  * process finds and replays it.
   *
   * Every operation that reads state and writes a function of it is one transition: [[transact]]
   * decides against a snapshot and applies the result only if that snapshot still stands, retrying
