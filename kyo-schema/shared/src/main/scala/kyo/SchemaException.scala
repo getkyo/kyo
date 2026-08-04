@@ -145,6 +145,39 @@ case class TrailingInputException(format: Codec, detail: String)(using Frame)
     extends SchemaException(s"Unexpected trailing content: $detail")
     with DecodeException
 
+/** Thrown when one record in a multi-record stream fails to decode.
+  *
+  * Line-delimited formats (JSONL, NDJSON) and multi-document formats decode a sequence of
+  * independent values, so a failure needs to say which one failed and where it sat in the
+  * input. Without that, a fault in a large transcript reports only the shape of the error
+  * and leaves the reader to find the offending record by hand.
+  *
+  * `byteOffset` is the offset of the record's first byte in the overall input, so a consumer
+  * that records it can resume from that point rather than replaying from the start.
+  *
+  * The name is format-agnostic because this type lives in the format-agnostic core.
+  *
+  * @param recordIndex
+  *   zero-based position of the record among the decodable records seen so far
+  * @param byteOffset
+  *   offset of the record's first byte within the overall input
+  * @param record
+  *   the raw record text, truncated in the rendered message but complete on the field
+  * @param cause
+  *   the underlying decode failure
+  */
+case class RecordDecodeException(
+    recordIndex: Long,
+    byteOffset: Long,
+    record: String,
+    cause: DecodeException
+)(using Frame)
+    extends SchemaException(
+        s"Failed to decode record $recordIndex at byte $byteOffset: " +
+            (if record.length > 50 then record.take(50) + "..." else record),
+        cause
+    ) with DecodeException
+
 /** Thrown when a configured safety limit is exceeded during decoding. */
 case class LimitExceededException(limit: String, actual: Int, maximum: Int)(using Frame)
     extends SchemaException(s"$limit $actual exceeds maximum $maximum")
