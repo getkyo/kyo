@@ -69,6 +69,20 @@ object JsonLines:
         def text: String = new String(bytes.toArray, StandardCharsets.UTF_8)
     end Record
 
+    /** The outcome of feeding one chunk to a [[Framer]].
+      *
+      * `records` always holds every record framed from the fed chunk before any breach, whether or not `error` is present: a limit
+      * breach never discards records that were already complete. See [[Framer.feed]] for what `error` and `framer` mean together.
+      *
+      * @param framer
+      *   the advanced framer, safe to feed again only when `error` is `Absent`
+      * @param records
+      *   every record framed from this chunk, in order, up to the breach if there was one
+      * @param error
+      *   `Present` when no record boundary could be found for the current residual
+      */
+    final case class Framed(framer: Framer, records: Chunk[Record], error: Maybe[LimitExceededException])
+
     /** Immutable, resumable framer over arbitrary byte chunks.
       *
       * Holds the only stateful concern in JSONL handling, a record straddling a chunk boundary, as a value. Callers thread it through
@@ -98,23 +112,23 @@ object JsonLines:
         atStart: Boolean
     ):
 
-        /** Feeds a chunk, returning the advanced framer and every record the chunk completed.
+        /** Feeds a chunk, returning every record it completed along with the advanced framer.
           *
           * @param chunk
           *   the next bytes of the input, of any size including empty
           * @return
-          *   the advanced framer paired with the completed records, or a failure if a record or the pending residual exceeds
-          *   `maxLineBytes`
+          *   a [[Framed]] holding every record this chunk completed and, if a record or the pending residual exceeds `maxLineBytes`,
+          *   the breach as `error`. `records` is populated even when `error` is present: a breach ends framing but never discards a
+          *   record that was already complete. When `error` is `Present`, no record boundary could be found for the offending bytes,
+          *   so the returned `framer` must not be fed again. When `error` is `Absent`, `framer` is safe to feed with the next chunk.
           */
-        def feed(chunk: Span[Byte])(using Frame): Result[LimitExceededException, (Framer, Chunk[Record])] =
+        def feed(chunk: Span[Byte])(using Frame): Framed =
             val combined = if residual.isEmpty then chunk else residual ++ chunk
             if atStart && startsWithBomPrefix(combined) then
                 if combined.size < Bom.size then
                     // Still undecided: the bytes so far are a proper prefix of the mark, and a proper
                     // prefix holds no newline, so there is nothing to emit while waiting for the rest.
-                    Result.succeed[LimitExceededException, (Framer, Chunk[Record])](
-                        (Framer(combined, nextIndex, residualOffset, maxLineBytes, true), Chunk.empty)
-                    )
+                    Framed(Framer(combined, nextIndex, residualOffset, maxLineBytes, true), Chunk.empty, Absent)
                 else
                     scan(combined.slice(Bom.size, combined.size), residualOffset + Bom.size)
             else scan(combined, residualOffset)
