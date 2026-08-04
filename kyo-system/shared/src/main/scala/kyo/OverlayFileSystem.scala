@@ -279,18 +279,49 @@ private[kyo] object OverlayFileSystem:
         val terminated: OverlayState = empty.copy(phase = Phase.Terminated)
     end OverlayState
 
-    def init[S, S2](lower: FileSystem.Write[S])(using
+    // Allocates the instance both constructors return. Declared as the concrete class so
+    // initRecovering can call recoverFromDisk on a value that is statically known to have it,
+    // rather than widening here and casting back.
+    private def build[S, S2](lower: FileSystem.Write[S])(using
         frame: Frame,
         isolate: Isolate[S, Sync, S2]
-    ): (
-        FileSystem.StagedChanges[S & Sync & Abort[FileSystemException]] & FileSystem.Write[S & Sync] & FileSystem.Watch[S & Sync]
-    ) < (Sync & Scope) =
+    ): WatchableOverlayFileSystem[S, S2] < (Sync & Scope) =
         Scope.acquireRelease(AtomicRef.init(OverlayState.empty)) { ref =>
             ref.set(OverlayState.terminated)
         }.flatMap { ref =>
             // Unsafe: allocates per-instance commit counter at construction
             Sync.Unsafe.defer(new WatchableOverlayFileSystem(lower, ref, AtomicLong.Unsafe.init(0L).safe, isolate))
         }
+
+    def init[S, S2](lower: FileSystem.Write[S])(using
+        frame: Frame,
+        isolate: Isolate[S, Sync, S2]
+    ): (
+        FileSystem.StagedChanges[S & Sync & Abort[FileSystemException]] & FileSystem.Write[S & Sync] & FileSystem.Watch[S & Sync]
+    ) < (Sync & Scope) =
+        build(lower)
+
+    /** Builds an overlay and replays any staging directory a previous process left behind.
+      *
+      * Separate from [[init]] rather than folded into it because recovery needs a root and a scan
+      * of it, and neither is available on every path that builds an overlay: the staged-write
+      * scopes in [[Path]] build one over a forwarding service that re-suspends every operation as
+      * an effect and has no root at all. Making the root a parameter of one constructor keeps the
+      * other honest rather than handing it a root it cannot use.
+      *
+      * The scan runs before the overlay is returned, so a caller never stages work on top of a
+      * lower that still holds a half-applied commit.
+      *
+      * The effect row carries `S` where [[init]]'s does not, because this one runs the scan rather
+      * than only allocating, and the reads the scan makes are the lower's.
+      */
+    def initRecovering[S, S2](lower: FileSystem.Write[S], root: Path)(using
+        frame: Frame,
+        isolate: Isolate[S, Sync, S2]
+    ): (
+        FileSystem.StagedChanges[S & Sync & Abort[FileSystemException]] & FileSystem.Write[S & Sync] & FileSystem.Watch[S & Sync]
+    ) < (S & Sync & Scope & Abort[FileSystemException]) =
+        build(lower).map(overlay => overlay.recoverFromDisk(root).andThen(overlay))
 
 end OverlayFileSystem
 
@@ -2540,13 +2571,13 @@ private[kyo] class OverlayFileSystem[S](
                     Sync.Unsafe.defer { stagingDirHandle = Absent }
                 }
 
-    // Scans the lower service's root for orphaned staging directories (kyo-commit-* prefix)
-    // left by a prior process crash and recovers each via recoverStagingDir. Does NOT wire
-    // at OverlayFileSystem.init: wiring at init would require adding root: Path and
-    // Abort[FileSystemException] to Service.overlay's public signature, which would change the
-    // established API. Call recoverFromDisk(root) explicitly immediately after
-    // Service.overlay(lower) to enable automatic crash recovery. private[kyo] so disk-scan
-    // recovery tests can call it directly.
+    // Scans the lower service's root for orphaned staging directories (kyo-commit-* prefix) left by
+    // a prior process crash and recovers each via recoverStagingDir. This is the scan behind
+    // FileSystem.overlayRecovering, which runs it before handing the overlay back.
+    //
+    // Stays private[kyo] because a caller reaches it through that constructor rather than on its
+    // own: running it against a lower an overlay is already staging onto would replay a commit
+    // underneath work built on the pre-replay view.
     private[kyo] def recoverFromDisk(root: Path)(using Frame): Unit < (S & Sync & Abort[FileSystemException]) =
         lower.list(root).map { entries =>
             // Sorted before replay. The host's list has no ordering guarantee, unlike every other

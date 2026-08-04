@@ -464,6 +464,52 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
     }
 
     // -------------------------------------------------------------------------
+    // recovery wired at construction: the only route a restarted process has
+    // -------------------------------------------------------------------------
+
+    "a recovering overlay replays an orphaned staging directory left by a previous process" in {
+        // The staging directory a crashed process leaves behind is the whole point of the durable
+        // protocol. A caller that asks for recovery has to get it at construction, because after a
+        // restart there is no overlay object left to ask.
+        withHostTestOverlay { (ov, lower, root) =>
+            val p = root / "orphaned.txt"
+            Sync.Unsafe.defer {
+                ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write (recovering ctor)")
+            }.andThen {
+                attemptCrash(Path.runWith(ov)(p.write("recovered")).andThen(ov.commit)).andThen {
+                    // A fresh overlay over the same root stands in for a restarted process: the
+                    // crashed instance's staging directory is still on disk and nothing in memory
+                    // refers to it.
+                    FileSystem.overlayRecovering(lower, root).map { _ =>
+                        Path.runWith(lower)(p.read).map { text =>
+                            assert(text == "recovered", s"the orphaned commit was not replayed, read '$text'")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a plain overlay leaves an orphaned staging directory alone" in {
+        // The two constructors differ in exactly one way and the difference has to be observable,
+        // otherwise the recovering one is not carrying its weight.
+        withHostTestOverlay { (ov, lower, root) =>
+            val p = root / "left-alone.txt"
+            Sync.Unsafe.defer {
+                ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write (plain ctor)")
+            }.andThen {
+                attemptCrash(Path.runWith(ov)(p.write("not-recovered")).andThen(ov.commit)).andThen {
+                    FileSystem.overlay(lower).map { _ =>
+                        Path.runWith(lower)(p.exists).map { found =>
+                            assert(!found, "a plain overlay replayed an orphaned commit")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // crash after committed marker, before staging dir cleanup
     // -------------------------------------------------------------------------
 
