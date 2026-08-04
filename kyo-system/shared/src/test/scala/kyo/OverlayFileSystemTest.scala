@@ -999,6 +999,141 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    // stableIdentity answers whether two observations name the same file, which is what lets a
+    // watcher correlate a rename into one Moved instead of a Removed and a Created. These pin the
+    // answers so the machinery behind them can be replaced without changing them.
+
+    "a staged write reports an identity of its own" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("identity-write.txt")
+            Path.runWith(lower)(p.write("lower")).andThen {
+                ov.stableIdentity(p).map { before =>
+                    Path.runWith(ov)(p.write("staged")).andThen {
+                        ov.stableIdentity(p).map { after =>
+                            assert(after.isDefined, "a staged write reported no identity")
+                            assert(after != before, s"the staged write kept the lower identity $before")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a staged directory reports an identity of its own" in {
+        withOv { ov =>
+            val d = Path("identity-dir")
+            Path.runWith(ov)(d.mkDir).andThen {
+                ov.stableIdentity(d).map(identity => assert(identity.isDefined, "a staged directory reported no identity"))
+            }
+        }
+    }
+
+    "a copy target reports an identity distinct from its source" in {
+        withOverlay { (ov, lower) =>
+            val from = Path("identity-copy-from.txt")
+            val to   = Path("identity-copy-to.txt")
+            Path.runWith(lower)(from.write("payload")).andThen {
+                Path.runWith(ov)(from.copy(to)).andThen {
+                    ov.stableIdentity(to).map { target =>
+                        ov.stableIdentity(from).map { source =>
+                            assert(target.isDefined, "a copy target reported no identity")
+                            assert(target != source, s"the copy target shares the source identity $source")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a moved file keeps the identity of its source" in {
+        // Needs the host lower: the in-memory backend inherits the absent default for
+        // stableIdentity, so both sides would be absent and the assertion would hold vacuously.
+        hostTempDir("kyo-overlay-identity-move").map { root =>
+            FileSystem.host(root).map { lower =>
+                FileSystem.overlay(lower).map { ov =>
+                    val from = root / "identity-from.txt"
+                    val to   = root / "identity-to.txt"
+                    Path.runWith(lower)(from.write("payload")).andThen {
+                        ov.stableIdentity(from).map { before =>
+                            assert(before.isDefined, "the host lower reported no identity for the source")
+                            Path.runWith(ov)(from.move(to)).andThen {
+                                ov.stableIdentity(to).map { after =>
+                                    assert(after == before, s"the move changed the identity from $before to $after")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a file moved twice still keeps its original identity" in {
+        // Each move whiteouts its own source, so a record that conflated "this path is gone" with
+        // "this content came from there" loses the second hop's link and the chain stops early.
+        hostTempDir("kyo-overlay-identity-move-twice").map { root =>
+            FileSystem.host(root).map { lower =>
+                FileSystem.overlay(lower).map { ov =>
+                    val first  = root / "identity-hop-1.txt"
+                    val second = root / "identity-hop-2.txt"
+                    val third  = root / "identity-hop-3.txt"
+                    Path.runWith(lower)(first.write("payload")).andThen {
+                        ov.stableIdentity(first).map { before =>
+                            assert(before.isDefined, "the host lower reported no identity for the source")
+                            Path.runWith(ov)(first.move(second).andThen(second.move(third))).andThen {
+                                ov.stableIdentity(third).map { after =>
+                                    assert(after == before, s"two moves changed the identity from $before to $after")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a removed path reports no identity" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("identity-gone.txt")
+            Path.runWith(lower)(p.write("payload")).andThen {
+                Path.runWith(ov)(p.removeAll).andThen {
+                    ov.stableIdentity(p).map(identity => assert(identity.isEmpty, s"a removed path reported $identity"))
+                }
+            }
+        }
+    }
+
+    "a path beneath a removed directory reports no identity" in {
+        withOverlay { (ov, lower) =>
+            val d = Path("identity-removed-dir")
+            Path.runWith(lower)((d / "child.txt").write("payload", Path.WriteOptions(createFolders = true))).andThen {
+                Path.runWith(ov)(d.removeAll).andThen {
+                    ov.stableIdentity(d / "child.txt").map { identity =>
+                        assert(identity.isEmpty, s"a path under a removed directory reported $identity")
+                    }
+                }
+            }
+        }
+    }
+
+    "an untouched path defers to the lower" in {
+        hostTempDir("kyo-overlay-identity-delegate").map { root =>
+            FileSystem.host(root).map { lower =>
+                FileSystem.overlay(lower).map { ov =>
+                    val p = root / "identity-untouched.txt"
+                    Path.runWith(lower)(p.write("payload")).andThen {
+                        lower.stableIdentity(p).map { direct =>
+                            ov.stableIdentity(p).map { throughOverlay =>
+                                assert(direct.isDefined, "the host lower reported no identity")
+                                assert(throughOverlay == direct, s"the overlay answered $throughOverlay, the lower $direct")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "concurrent appends to one path do not lose an update" in {
         val p = Path("concurrent-append.txt")
         // Each trial seeds the lower and appends through a fresh overlay so every fiber takes the

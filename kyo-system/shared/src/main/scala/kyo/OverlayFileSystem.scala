@@ -167,6 +167,23 @@ private[kyo] object OverlayFileSystem:
         end extension
     end ReadSet
 
+    /** How a path in the overlay's view came to hold what it holds.
+      *
+      * A watcher asks whether two observations name the same file, so that a rename correlates into
+      * one change rather than a removal and an unrelated creation. Staged origin and move provenance
+      * are the whole of what answers that, which is why recording them directly replaces scanning a
+      * log of operations for the same information.
+      */
+    private[kyo] enum Provenance derives CanEqual:
+        /** Content that originated in this overlay. The token is unique per staging event, so a
+          * staged write never reports the identity of whatever it replaced.
+          */
+        case Staged(token: String)
+
+        /** This path took another path's identity, so a rename is not observed as a new file. */
+        case MovedFrom(origin: Chunk[String])
+    end Provenance
+
     /** Where the overlay is in its one-shot lifecycle.
       *
       * `Open` accepts writes. `Committing` rejects them for the duration of a commit, so the staged
@@ -197,9 +214,8 @@ private[kyo] object OverlayFileSystem:
     final case class OverlayState(
         upper: UpperTrie,
         journal: Chunk[WriteOp],
-        // The read-set records the full observed base entry, not a stat-only stamp, so
-        // Conflict.ancestor (Maybe[Path.Entry]) is available at commit without re-reading the lower
-        // path. The Absent-observation case is carried as an Absent value in the map.
+        // What the overlay saw the first time it looked at each lower path. Commit validates each
+        // record against the live lower, and each is only as strong as the read that produced it.
         readSet: ReadSet,
         // Resolution of a raw path to its canonical form, recorded on first observation.
         //
@@ -209,12 +225,16 @@ private[kyo] object OverlayFileSystem:
         // Pinning it on first touch keeps keys stable; drift is a commit-time conflict, not a silent
         // re-key.
         resolved: PathTrie[Chunk[String]],
+        // How each staged path came to hold what it holds, for stableIdentity. A trie rather than a
+        // map because a path with no record of its own is still gone when the overlay removed
+        // something above it, which is an ancestor question.
+        provenance: PathTrie[Provenance],
         phase: Phase
     )
 
     object OverlayState:
         val empty: OverlayState =
-            OverlayState(UpperTrie.empty, Chunk.empty, ReadSet.empty, PathTrie.empty, Phase.Open)
+            OverlayState(UpperTrie.empty, Chunk.empty, ReadSet.empty, PathTrie.empty, PathTrie.empty, Phase.Open)
 
         /** The state an overlay is left in once its lifetime is over: nothing staged, nothing
           * admitted. Reached by discard, by a completed commit, and by scope exit.
@@ -731,6 +751,21 @@ private[kyo] class OverlayFileSystem[S](
         }
     end observeKind
 
+    // Records how a path came to hold what it holds. Unconditional, unlike an observation: the most
+    // recent staging event is what a caller asking about identity now should be told about.
+    private def withProvenance(s: OverlayState, cp: CanonicalPath, p: Provenance): OverlayState =
+        s.copy(provenance = s.provenance.updated(cp.parts, p))
+
+    // A token distinct from every other staging event on this overlay. The kind prefix carries no
+    // meaning to a caller comparing two identities; it is there so a token read in a log says what
+    // produced it.
+    private def stagedToken(kind: String)(using Frame): String =
+        // Unsafe: monotone counter increment for a per-event identity token. Read outside any
+        // transaction, because a retried decision must not mint a fresh token on each pass.
+        import AllowUnsafe.embrace.danger
+        s"overlay-$kind:${uniqueSeq.unsafe.getAndIncrement().toHexString}"
+    end stagedToken
+
     // Reconstruct a Path from segment parts (parallel to Path.parts decomposition).
     private def pathFrom(parts: Chunk[String])(using Frame): Path =
         if parts.isEmpty then Path()
@@ -990,35 +1025,47 @@ private[kyo] class OverlayFileSystem[S](
             }
         }
 
+    /** Reports a value that names the same file across two observations, or `Absent` when the path
+      * has no identity to report.
+      *
+      * A watcher correlates a rename by comparing these, so a path this overlay staged has to answer
+      * differently from whatever it replaced, and a moved file has to answer the same as its source.
+      * Both come straight from the recorded provenance; a path the overlay never touched is the
+      * lower's to answer.
+      */
     override private[kyo] def stableIdentity(path: Path)(using Frame): Maybe[String] < (S & Abort[FileReadException]) =
         canonical(path).map { cp =>
             withState { s =>
-                // The journal records canonical paths, so the walk starts from the canonical form and
-                // every comparison below is between canonical segments.
-                var current = cp.parts
-                var index   = s.journal.size - 1
-                var result  = Maybe.empty[String]
-                var done    = false
-                while index >= 0 && !done do
-                    s.journal(index) match
-                        case WriteOp.Move(from, to, _) if current == to =>
-                            current = from
-                        case WriteOp.Copy(_, to, _, _) if current == to =>
-                            result = Present(s"overlay-copy:$index")
-                            done = true
-                        case WriteOp.WriteFile(written, _, _) if current == written =>
-                            result = Present(s"overlay-write:$index")
-                            done = true
-                        case WriteOp.WriteDirectory(written, _) if current == written =>
-                            result = Present(s"overlay-directory:$index")
-                            done = true
-                        case WriteOp.Remove(removed) if current.startsWith(removed) =>
-                            done = true
-                        case _ => ()
+                // Provenance is keyed by canonical path, so the walk starts from the canonical form
+                // and every step below stays in canonical segments.
+                //
+                // A move chain is followed to its origin. The visited set bounds the walk: nothing in
+                // the staging API builds a cycle today, and an unbounded chase would hang rather than
+                // answer, which is harder to diagnose than a wrong answer.
+                @annotation.tailrec
+                def chase(parts: Chunk[String], visited: Set[Chunk[String]]): Maybe[Chunk[String]] =
+                    if visited.contains(parts) then Absent
+                    else
+                        s.provenance.get(parts) match
+                            case Present(Provenance.MovedFrom(origin)) => chase(origin, visited + parts)
+                            case _                                     => Present(parts)
+
+                // A path the overlay hides has no identity to report, whether it was removed outright
+                // or is covered by a whiteout above it. That is asked of the path the caller named,
+                // not of the origin a move chain ends at: a move whiteouts its own source, and the
+                // content that left it is exactly what the target now answers for.
+                val hidden = s.upper.get(cp).contains(Upper.Whiteout) || ancestorWhiteout(s, cp)
+                if hidden then Absent
+                else
+                    chase(cp.parts, Set.empty) match
+                        case Absent => Absent
+                        case Present(origin) =>
+                            s.provenance.get(origin) match
+                                case Present(Provenance.Staged(token)) => Present(token)
+                                // No record of its own, so the lower owns the answer.
+                                case _ => lower.stableIdentity(pathFrom(origin))
                     end match
-                    index -= 1
-                end while
-                if done then result else lower.stableIdentity(pathFrom(current))
+                end if
             }
         }
 
@@ -1148,14 +1195,19 @@ private[kyo] class OverlayFileSystem[S](
                         ensureWriteParent(parent, options, errorPath).andThen {
                             canonical(parent).map { pcp =>
                                 observe(pcp, Observed.Missing).andThen {
-                                    val stat = Path.PathStat(0L, 0L)
+                                    val stat  = Path.PathStat(0L, 0L)
+                                    val token = stagedToken("directory")
                                     stage(parent, FileSystemOperation.Create) { current =>
                                         val opaque =
                                             current.upper.get(pcp).contains(Upper.Whiteout) || ancestorWhiteout(current, pcp)
                                         val entry = if opaque then Upper.OpaqueDir(stat) else Upper.Entry(Path.Entry.Directory(stat))
-                                        current.copy(
-                                            upper = current.upper.updated(pcp, entry),
-                                            journal = current.journal.appended(WriteOp.WriteDirectory(pcp.parts, opaque))
+                                        withProvenance(
+                                            current.copy(
+                                                upper = current.upper.updated(pcp, entry),
+                                                journal = current.journal.appended(WriteOp.WriteDirectory(pcp.parts, opaque))
+                                            ),
+                                            pcp,
+                                            Provenance.Staged(token)
                                         )
                                     }
                                 }
@@ -1173,10 +1225,15 @@ private[kyo] class OverlayFileSystem[S](
         val stat = Path.PathStat(0L, value.size.toLong)
         ensureWriteParent(path, options).andThen {
             canonical(path).map { cp =>
+                val token = stagedToken("write")
                 stage(path, FileSystemOperation.Write) { s =>
-                    s.copy(
-                        upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(value, stat))),
-                        journal = s.journal.appended(WriteOp.WriteFile(cp.parts, value, stat))
+                    withProvenance(
+                        s.copy(
+                            upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(value, stat))),
+                            journal = s.journal.appended(WriteOp.WriteFile(cp.parts, value, stat))
+                        ),
+                        cp,
+                        Provenance.Staged(token)
                     )
                 }
             }
@@ -1195,26 +1252,33 @@ private[kyo] class OverlayFileSystem[S](
         Frame
     ): Unit < (S & Abort[FileReadException | FileWriteException]) =
         ensureWriteParent(path, options).andThen(canonical(path).map { cp =>
-            val lp = lowerPath(cp)
+            val lp    = lowerPath(cp)
+            val token = stagedToken("write")
             transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Write) { s =>
                 s.upper.get(cp) match
                     case Present(Upper.Entry(Path.Entry.File(existing, _))) =>
                         // Already in upper: concatenate without consulting lower, no observation to
                         // record. Both the base and the result come from the same snapshot, so the
                         // transaction rejects the merge if anything else appended in between.
-                        (stagedAppend(s, cp, existing, value), ())
+                        (stagedAppend(s, cp, existing, value, token), ())
                     case _ =>
                         // Not in upper: read lower, record the observation, and stage the result all
                         // in the one state this transaction will apply.
                         // Ancestor Whiteout hides lower content; treat as absent, start fresh.
                         lower.exists(lp).map { lowerFound =>
                             if !lowerFound || ancestorWhiteout(s, cp) then
-                                (stagedAppend(withObservation(s, cp, Observed.Missing), cp, Span.empty[Byte], value), ())
+                                (stagedAppend(withObservation(s, cp, Observed.Missing), cp, Span.empty[Byte], value, token), ())
                             else
                                 lower.readBytes(lp).map { existing =>
                                     lower.stat(lp).map { stat =>
                                         (
-                                            stagedAppend(withObservation(s, cp, Observed.FileContent(existing, stat)), cp, existing, value),
+                                            stagedAppend(
+                                                withObservation(s, cp, Observed.FileContent(existing, stat)),
+                                                cp,
+                                                existing,
+                                                value,
+                                                token
+                                            ),
                                             ()
                                         )
                                     }
@@ -1228,13 +1292,18 @@ private[kyo] class OverlayFileSystem[S](
         s: OverlayState,
         cp: CanonicalPath,
         existing: Span[Byte],
-        value: Span[Byte]
+        value: Span[Byte],
+        token: String
     ): OverlayState =
         val merged = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
         val stat   = Path.PathStat(0L, merged.size.toLong)
-        s.copy(
-            upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(merged, stat))),
-            journal = s.journal.appended(WriteOp.WriteFile(cp.parts, merged, stat))
+        withProvenance(
+            s.copy(
+                upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(merged, stat))),
+                journal = s.journal.appended(WriteOp.WriteFile(cp.parts, merged, stat))
+            ),
+            cp,
+            Provenance.Staged(token)
         )
     end stagedAppend
 
@@ -1245,11 +1314,12 @@ private[kyo] class OverlayFileSystem[S](
 
     def truncate(path: Path, size: Long)(using Frame): Unit < (S & Abort[FileReadException | FileWriteException]) =
         canonical(path).map { cp =>
-            val lp = lowerPath(cp)
+            val lp    = lowerPath(cp)
+            val token = stagedToken("write")
             transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Write) { s =>
                 s.upper.get(cp) match
                     case Present(Upper.Entry(Path.Entry.File(bytes, _))) =>
-                        boundInt(path, "truncate size", size).map(sz => (stagedTruncate(s, cp, bytes, sz), ()))
+                        boundInt(path, "truncate size", size).map(sz => (stagedTruncate(s, cp, bytes, sz, token), ()))
                     case Present(_) => Abort.fail(FileNotFoundException(path))
                     case Absent =>
                         if ancestorWhiteout(s, cp) then Abort.fail(FileNotFoundException(path))
@@ -1257,7 +1327,16 @@ private[kyo] class OverlayFileSystem[S](
                             lower.readBytes(lp).map { bytes =>
                                 lower.stat(lp).map { lStat =>
                                     boundInt(path, "truncate size", size).map { sz =>
-                                        (stagedTruncate(withObservation(s, cp, Observed.FileContent(bytes, lStat)), cp, bytes, sz), ())
+                                        (
+                                            stagedTruncate(
+                                                withObservation(s, cp, Observed.FileContent(bytes, lStat)),
+                                                cp,
+                                                bytes,
+                                                sz,
+                                                token
+                                            ),
+                                            ()
+                                        )
                                     }
                                 }
                             }
@@ -1265,32 +1344,45 @@ private[kyo] class OverlayFileSystem[S](
         }
 
     // Truncation and staging, shared by both arms of truncate so the two cannot drift.
-    private def stagedTruncate(s: OverlayState, cp: CanonicalPath, bytes: Span[Byte], size: Int): OverlayState =
+    private def stagedTruncate(s: OverlayState, cp: CanonicalPath, bytes: Span[Byte], size: Int, token: String): OverlayState =
         val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(size))
         val stat = Path.PathStat(0L, kept.size.toLong)
-        s.copy(
-            upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(kept, stat))),
-            journal = s.journal.appended(WriteOp.WriteFile(cp.parts, kept, stat))
+        withProvenance(
+            s.copy(
+                upper = s.upper.updated(cp, Upper.Entry(Path.Entry.File(kept, stat))),
+                journal = s.journal.appended(WriteOp.WriteFile(cp.parts, kept, stat))
+            ),
+            cp,
+            Provenance.Staged(token)
         )
     end stagedTruncate
 
     def setLastModified(path: Path, epochMs: Long)(using Frame): Unit < (S & Abort[FileReadException | FileWriteException]) =
         canonical(path).map { cp =>
-            val lp = lowerPath(cp)
+            val lp    = lowerPath(cp)
+            val token = stagedToken("write")
             transact[FileReadException | FileWriteException, Unit](path, FileSystemOperation.Write) { s =>
                 def stagedFile(base: OverlayState, bytes: Span[Byte], stat: Path.PathStat): OverlayState =
                     val ns = stat.copy(lastModifiedMs = epochMs)
-                    base.copy(
-                        upper = base.upper.updated(cp, Upper.Entry(Path.Entry.File(bytes, ns))),
-                        journal = base.journal.appended(WriteOp.WriteFile(cp.parts, bytes, ns))
+                    withProvenance(
+                        base.copy(
+                            upper = base.upper.updated(cp, Upper.Entry(Path.Entry.File(bytes, ns))),
+                            journal = base.journal.appended(WriteOp.WriteFile(cp.parts, bytes, ns))
+                        ),
+                        cp,
+                        Provenance.Staged(token)
                     )
                 end stagedFile
                 def stagedDir(base: OverlayState, stat: Path.PathStat, opaque: Boolean): OverlayState =
                     val ns    = stat.copy(lastModifiedMs = epochMs)
                     val entry = if opaque then Upper.OpaqueDir(ns) else Upper.Entry(Path.Entry.Directory(ns))
-                    base.copy(
-                        upper = base.upper.updated(cp, entry),
-                        journal = base.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque))
+                    withProvenance(
+                        base.copy(
+                            upper = base.upper.updated(cp, entry),
+                            journal = base.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque))
+                        ),
+                        cp,
+                        Provenance.Staged(token)
                     )
                 end stagedDir
                 s.upper.get(cp) match
@@ -1318,12 +1410,17 @@ private[kyo] class OverlayFileSystem[S](
 
     def mkDir(path: Path)(using Frame): Unit < (S & Abort[FileReadException | FileStructureException]) =
         canonical(path).map { cp =>
-            val lp = lowerPath(cp)
+            val lp    = lowerPath(cp)
+            val token = stagedToken("directory")
             transact[FileReadException | FileStructureException, Unit](path, FileSystemOperation.Create) { s =>
                 def staged(base: OverlayState, entry: Upper, opaque: Boolean): OverlayState =
-                    base.copy(
-                        upper = base.upper.updated(cp, entry),
-                        journal = base.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque))
+                    withProvenance(
+                        base.copy(
+                            upper = base.upper.updated(cp, entry),
+                            journal = base.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque))
+                        ),
+                        cp,
+                        Provenance.Staged(token)
                     )
                 s.upper.get(cp) match
                     case Present(Upper.OpaqueDir(_))                   => (s, ()) // already opaque dir
@@ -1385,6 +1482,7 @@ private[kyo] class OverlayFileSystem[S](
                     // The source read, the target guard and the staging are one transition: resolving
                     // the source and then staging against a later state is what lets a target created
                     // in between slip past Replace.Never.
+                    val moveToken = stagedToken("copy")
                     transact[FileReadException | FileWriteException | FileStructureException, Unit](
                         to,
                         FileSystemOperation.Move
@@ -1395,13 +1493,13 @@ private[kyo] class OverlayFileSystem[S](
                                     case file: Path.Entry.File =>
                                         // A file move keeps single-node semantics: whiteout the source, stage the
                                         // resolved file at the target, and journal one source-independent Move op.
-                                        (
-                                            s.copy(
-                                                upper = s.upper.updated(fromCp, Upper.Whiteout).updated(toCp, Upper.Entry(file)),
-                                                journal = s.journal.appended(WriteOp.Move(fromCp.parts, toCp.parts, file))
-                                            ),
-                                            ()
+                                        // The target takes the source's identity so a rename reads as one file
+                                        // moving rather than one vanishing and another appearing.
+                                        val moved = s.copy(
+                                            upper = s.upper.updated(fromCp, Upper.Whiteout).updated(toCp, Upper.Entry(file)),
+                                            journal = s.journal.appended(WriteOp.Move(fromCp.parts, toCp.parts, file))
                                         )
+                                        (withProvenance(moved, toCp, Provenance.MovedFrom(fromCp.parts)), ())
                                     case _: Path.Entry.Directory =>
                                         // A directory move relocates the entire subtree: every descendant visible in
                                         // the overlay view (upper-staged plus lower-only) is materialized under `to`,
@@ -1416,7 +1514,11 @@ private[kyo] class OverlayFileSystem[S](
                                                 srcKeys.foldLeft(upperT.updated(fromCp, Upper.Whiteout))((u, k) =>
                                                     u.updated(k, Upper.Whiteout)
                                                 )
-                                            (s.copy(upper = upperW, journal = journalT.appended(WriteOp.Remove(fromCp.parts))), ())
+                                            val movedDir =
+                                                s.copy(upper = upperW, journal = journalT.appended(WriteOp.Remove(fromCp.parts)))
+                                            // A directory move materializes its subtree as fresh staged content and
+                                            // drops the source, which is what the previous journal scan reported too.
+                                            (withProvenance(movedDir, toCp, Provenance.Staged(moveToken)), ())
                                         }
                             }
                         }
@@ -1436,6 +1538,7 @@ private[kyo] class OverlayFileSystem[S](
                     // One transition, for the same reason as move: the target guard and the staging
                     // have to see the same state, or a target created in between defeats
                     // Replace.Never.
+                    val copyToken = stagedToken("copy")
                     transact[FileReadException | FileWriteException | FileStructureException, Unit](
                         to,
                         FileSystemOperation.Copy
@@ -1447,15 +1550,15 @@ private[kyo] class OverlayFileSystem[S](
                                         val copied =
                                             if options.copyAttributes then file
                                             else file.copy(stat = Path.PathStat(0L, file.stat.sizeBytes))
-                                        (
-                                            s.copy(
-                                                upper = s.upper.updated(toCp, Upper.Entry(copied)),
-                                                journal = s.journal.appended(
-                                                    WriteOp.Copy(fromCp.parts, toCp.parts, copied, options.copyAttributes)
-                                                )
-                                            ),
-                                            ()
+                                        val copiedState = s.copy(
+                                            upper = s.upper.updated(toCp, Upper.Entry(copied)),
+                                            journal = s.journal.appended(
+                                                WriteOp.Copy(fromCp.parts, toCp.parts, copied, options.copyAttributes)
+                                            )
                                         )
+                                        // A copy is new content at the target, so it gets an identity of its own
+                                        // rather than the source's.
+                                        (withProvenance(copiedState, toCp, Provenance.Staged(copyToken)), ())
                                     case _: Path.Entry.Directory =>
                                         // A directory copy materializes the entire subtree under `to`, leaving the
                                         // source intact (no whiteout, no Remove op).
@@ -1468,7 +1571,14 @@ private[kyo] class OverlayFileSystem[S](
                                                 nodes,
                                                 options.copyAttributes
                                             )
-                                            (s.copy(upper = upperT, journal = journalT), ())
+                                            (
+                                                withProvenance(
+                                                    s.copy(upper = upperT, journal = journalT),
+                                                    toCp,
+                                                    Provenance.Staged(copyToken)
+                                                ),
+                                                ()
+                                            )
                                         }
                             }
                         }
@@ -1738,7 +1848,8 @@ private[kyo] class OverlayFileSystem[S](
                     cur.copy(
                         upper = cur.upper.removed(cp),
                         journal = journal,
-                        readSet = cur.readSet.removed(cp)
+                        readSet = cur.readSet.removed(cp),
+                        provenance = cur.provenance.removed(parts)
                     )
                 }
                 ()
@@ -1755,10 +1866,15 @@ private[kyo] class OverlayFileSystem[S](
             val dir  = Path(prefix + "-overlay-" + instanceSeed + "-" + seq.toHexString)
             val stat = Path.PathStat(0L, 0L)
             canonical(dir).map { cp =>
+                val token = stagedToken("directory")
                 stage(dir, FileSystemOperation.Create) { cur =>
-                    cur.copy(
-                        upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(stat))),
-                        journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
+                    withProvenance(
+                        cur.copy(
+                            upper = cur.upper.updated(cp, Upper.Entry(Path.Entry.Directory(stat))),
+                            journal = cur.journal.appended(WriteOp.WriteDirectory(cp.parts, opaque = false))
+                        ),
+                        cp,
+                        Provenance.Staged(token)
                     )
                 }.andThen {
                     new Path.TempDirHandle:

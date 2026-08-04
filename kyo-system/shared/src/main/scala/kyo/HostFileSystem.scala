@@ -518,6 +518,11 @@ private[kyo] object HostFileSystem:
             confined(path, FileSystemOperation.Inspect).andThen(host.size(path))
         def stat(path: Path)(using Frame): Path.PathStat < (Sync & Abort[FileReadException]) =
             confined(path, FileSystemOperation.Inspect).andThen(host.stat(path))
+        // Delegated like every other read. Left to the trait's absent default, a confined host
+        // reported no identity at all, so a watcher over one could not tell a rename from a removal
+        // followed by an unrelated creation.
+        override private[kyo] def stableIdentity(path: Path)(using Frame): Maybe[String] < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Inspect).andThen(host.stableIdentity(path))
         def openRead(path: Path)(using Frame): Path.ReadHandle < (Sync & Abort[FileReadException]) =
             confined(path, FileSystemOperation.Read).andThen(host.openRead(path))
         def openReadLines(path: Path, charset: Charset)(using Frame): Path.LineReadHandle < (Sync & Abort[FileReadException]) =
