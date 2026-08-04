@@ -422,6 +422,10 @@ object Path extends PathPlatformSpecific:
           *     still holds its content, so the stream simply waits, indefinitely, for bytes that can no longer arrive.
           *   - Truncating the file in place, which keeps the same file, does rewind and replay as described above.
           *
+          * The rename and delete cases describe POSIX descriptor behavior. Windows keeps the directory entry alive until the last handle
+          * closes and refuses the operation outright for some open modes, so those two outcomes are undefined there. Truncation in place
+          * is not affected.
+          *
           * A consumer that needs to pick up a rotated-in replacement should close the stream and open a new one against the path.
           *
           * @param from

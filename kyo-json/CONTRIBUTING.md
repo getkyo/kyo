@@ -147,6 +147,13 @@ deleted with no effect on the stream:
 - **Truncate in place**: this is the same file, so the loop rewinds to byte 0 and
   replays it.
 
+The rename and delete rows are POSIX descriptor behavior. Windows keeps the
+directory entry alive until the last handle closes and refuses the operation
+outright for some open modes, so those two outcomes are undefined there, which is
+why `PathTest`'s five file-identity tests carry
+`assume(!Platform.isWindows, ...)`. Truncation in place is unaffected. Any new
+test for these outcomes needs the same guard.
+
 A consumer that needs to pick up a rotated-in replacement closes the stream and
 opens a new one against the path. Do not add name-watching to this module; it
 belongs in `kyo-core` if it belongs anywhere, and it is a different contract.
@@ -164,7 +171,7 @@ loop.**
 
 ## `maxLineBytes` and the one unrecoverable failure
 
-`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MB) exists because
+`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) exists because
 a byte stream containing no newline would otherwise grow the framer's residual
 without bound. `maxDepth` and `maxCollectionSize` do not cover this: both
 operate inside a single document, and a stream with no record boundary never
@@ -204,12 +211,26 @@ framing breach. That wrapping is a contract of `kyo-schema-json`; if it changes,
 
 `Json.encode` and `Json.encodeBytes` take `using json: Json` as their LAST
 `using` parameter, after `Schema[A]` and `Frame`, and summon nothing internally.
-That position is load-bearing: it is what lets a `Json` given in a caller's own
-scope flow through `Json.Lines.encodeAll` and `encodeAllBytes` to every
-`Json.encode` call inside them, exactly as it would for a `Json.encode` written
-directly at that call site. Every entry point in this module carries `Json` in
-its `using` clause for the same reason. Do not reorder it, and do not replace it
-with a `summon[Json]` inside a method body.
+Two separate decisions are packed into that, with two separate reasons, and
+neither is "so a caller's given propagates by position":
+
+- **It is a parameter rather than a `summon[Json]` in the body.** A plain
+  `summon` inside an `inline def`'s body is resolved once, when the method is
+  type-checked, not fresh at each call site after inlining. An explicit `using`
+  parameter is resolved per call, which is what makes a caller-scoped `Json`
+  given actually reach the encoder.
+- **It sits last rather than first.** Call sites across the codebase already
+  supply `schema` explicitly as `Json.encode(v)(using someSchema)`, relying on
+  the rule that unsupplied `using` parameters must form a trailing suffix.
+  Putting `json` first would shift that existing explicit argument onto it and
+  break every such call site with a type mismatch. Nine dependent modules
+  contain them.
+
+Given-propagation itself would work identically with `json` first; the position
+is about not breaking existing explicit-argument call sites. Every entry point in
+this module carries `Json` in its `using` clause. Do not reorder it, and do not
+replace it with a `summon[Json]` inside a method body. See `Json.scala:36-47`
+for the full rationale on the source.
 
 ---
 
