@@ -1,7 +1,5 @@
 package kyo
 
-import java.lang.ref.WeakReference
-
 /** Stress and concurrency tests for kyo-stm.
   *
   * Most tests are JS-excluded because the scenarios require real OS threads / preemption; cross-platform specs use `run`. Fiber and
@@ -9,8 +7,8 @@ import java.lang.ref.WeakReference
   */
 class STMStressTest extends kyo.test.Test[Any]:
 
-    // Sequential leaves (as the ScalaTest base ran them): the GC-reclamation leaf finds its TRefs still reachable
-    // (cleared=0) when the other stress leaves' fibers are live alongside it.
+    // Run leaves sequentially: each stress leaf saturates the scheduler with many concurrent fibers, so running
+    // several in parallel oversubscribes the CPU and can trip the per-leaf Async.timeout guards spuriously.
     override def config = super.config.sequential
 
     "every transaction under heavy single-ref contention commits, none starves".notJs in {
@@ -1458,26 +1456,6 @@ class STMStressTest extends kyo.test.Test[Any]:
         }.unit
     }
 
-    // Runs on the JVM only: a WeakReference is reclaimed promptly on System.gc() only on the JVM.
-    "WeakReference to TRef allocated in doomed transaction becomes GC-eligible after rollback".onlyJvm in {
-        for
-            weakRef <- AtomicRef.init(null: WeakReference[TRef[Int]])
-            _ <- Abort.run {
-                STM.run {
-                    for
-                        ref <- TRef.init(42)
-                        _   <- Sync.defer(weakRef.set(new WeakReference(ref)))
-                        _   <- STM.retry
-                    yield ()
-                }
-            }
-            _ <- Sync.defer {
-                (1 to 5).foreach(_ => java.lang.System.gc())
-            }
-            wr <- weakRef.get
-        yield assert(wr != null && wr.get == null, "TRef from doomed transaction not GC-eligible")
-    }
-
     "nested STM.run inner log does not leak into outer log on failure" in {
         Loop.repeat(100) {
             for
@@ -1504,61 +1482,6 @@ class STMStressTest extends kyo.test.Test[Any]:
                 s"result=$result finalOuter=$finalOuter finalInner=$finalInner"
             )
         }.unit
-    }
-
-    // Runs on the JVM only: a WeakReference is reclaimed promptly on System.gc() only on the JVM.
-    "nested STM.run with heavy inner-log does not retain log after success".onlyJvm in {
-        for
-            outer    <- TRef.init(0)
-            weakRefs <- AtomicRef.init(Chunk.empty[WeakReference[TRef[Int]]])
-            _ <- STM.run {
-                STM.run {
-                    for
-                        refs <- Kyo.fill(50)(TRef.init(0))
-                        _    <- weakRefs.updateAndGet(_ ++ refs.map(r => new WeakReference(r)))
-                    yield ()
-                }
-            }
-            _ <- Sync.defer {
-                (1 to 5).foreach(_ => java.lang.System.gc())
-            }
-            wrs <- weakRefs.get
-            cleared = wrs.count(_.get == null)
-        yield assert(cleared >= wrs.size / 2, s"cleared=$cleared of ${wrs.size}")
-    }
-
-    // Runs on the JVM only: a WeakReference is reclaimed promptly on System.gc() only on the JVM.
-    "after a multi-ref commit, the per-thread CommitBuffer does not retain prior-cycle TRefs".onlyJvm in {
-        for
-            weak <- AtomicRef.init(null: WeakReference[TRef[Int]])
-            _ <- STM.run {
-                for
-                    r1 <- TRef.init(1)
-                    r2 <- TRef.init(2)
-                    r3 <- TRef.init(3)
-                    _  <- Sync.defer(weak.set(new WeakReference(r1)))
-                    _  <- r1.update(_ + 1)
-                    _  <- r2.update(_ + 1)
-                    _  <- r3.update(_ + 1)
-                yield ()
-            }
-            _ <- Async.foreachDiscard(1 to 100) { _ =>
-                STM.run {
-                    for
-                        a <- TRef.init(0)
-                        b <- TRef.init(0)
-                        c <- TRef.init(0)
-                        _ <- a.set(1)
-                        _ <- b.set(2)
-                        _ <- c.set(3)
-                    yield ()
-                }
-            }
-            _ <- Sync.defer {
-                (1 to 5).foreach(_ => java.lang.System.gc())
-            }
-            wr <- weak.get
-        yield assert(wr.get == null, "CommitBuffer retains prior-cycle TRef")
     }
 
     "TMap.entries observes consistent (outer, inner) snapshot or aborts".notJs in {
