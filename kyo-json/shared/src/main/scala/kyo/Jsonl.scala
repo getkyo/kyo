@@ -14,6 +14,9 @@ import scala.annotation.tailrec
   * Strict entry points abort on the first undecodable record. The `Results` variants emit one `Result` per record instead, which is what
   * heterogeneous or partially-written logs need.
   *
+  * `read` covers a file that is complete; `follow` covers one still being written, replaying what is already there and then emitting each
+  * record as it is appended.
+  *
   * Arbitrary byte sources need no dedicated entry point, because any `Stream[Byte, S]` is already the input:
   * {{{
   * Stream.fromInputStream(is).into(Jsonl.pipe[Event]())
@@ -171,6 +174,94 @@ object Jsonl:
         Frame
     ): Stream[Result[DecodeException, A], Scope & Sync & Abort[FileReadException]] =
         path.readBytesStream.into(pipeResults[A](maxDepth, maxCollectionSize, maxLineBytes))
+
+    /** Streams a JSONL file's records, continuing to emit as records are appended.
+      *
+      * Reading is one continuous pass that switches from draining to polling once it reaches the end of the file, not a read concatenated
+      * with a tail, so a record appended while the existing content is still being replayed is never missed. The file handle is registered
+      * with the enclosing `Scope` and closed when that scope ends; until then the stream never completes on its own, so a consumer bounds it
+      * with `take`, `takeWhile`, or an interrupt.
+      *
+      * `from` defaults to [[Path.Origin.Start]], which replays the file and then follows, because reading a live agent transcript wants
+      * every record rather than only those written after the reader attached. [[Path.tailBytes]] defaults to [[Path.Origin.End]] instead,
+      * since it is the primitive under `Path.tail` and has to preserve that method's follow-only contract.
+      *
+      * A file truncated below the read position is replayed from its first byte, and that rewind carries no marker in the byte stream. A
+      * record left half written when the truncation happened is therefore still buffered and gets spliced onto the first replayed record.
+      * The spliced record normally fails to parse, which aborts this stream, while [[followResults]] reports it as a single failure element
+      * and then continues correctly; a buffered fragment that happens to compose with the replayed bytes into a well-formed record decodes
+      * to a wrong value with no failure at all. A file truncated on a record boundary, which is the usual shape of a rotated log, carries
+      * nothing across and replays cleanly. Rotation by rename is a different case: the handle stays with the original file, so records
+      * written to the newly created file are never seen at all.
+      *
+      * @param path
+      *   the file to follow
+      * @param from
+      *   where reading begins; [[Path.Origin.Start]] replays, [[Path.Origin.End]] emits only records appended afterwards, and
+      *   [[Path.Origin.Offset]] resumes from a recorded byte position
+      * @param pollDelay
+      *   how long to sleep between polls once the end of the file is reached
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxLineBytes
+      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @return
+      *   an unbounded stream of decoded values, aborting with the first decode or framing failure
+      */
+    def follow[A](
+        path: Path,
+        from: Path.Origin = Path.Origin.Start,
+        pollDelay: Duration = 100.millis,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+    )(using
+        Json,
+        Schema[A],
+        Tag[Emit[Chunk[A]]],
+        Frame
+    ): Stream[A, Scope & Async & Abort[FileReadException | DecodeException]] =
+        path.tailBytes(from, pollDelay).into(pipe[A](maxDepth, maxCollectionSize, maxLineBytes))
+
+    /** Streams a JSONL file's records as per-record `Result`s, continuing to emit as records are appended.
+      *
+      * The variant for heterogeneous or partially written logs, and the one to prefer for a file that may be truncated: an undecodable
+      * record yields one failure element and the stream carries on, so the record spliced across a truncation described in [[follow]] costs
+      * a single failure rather than ending the stream. Every other property of [[follow]] holds unchanged, including the `Path.Origin.Start`
+      * default and the behavior under rotation by rename.
+      *
+      * @param path
+      *   the file to follow
+      * @param from
+      *   where reading begins; [[Path.Origin.Start]] replays, [[Path.Origin.End]] emits only records appended afterwards, and
+      *   [[Path.Origin.Offset]] resumes from a recorded byte position
+      * @param pollDelay
+      *   how long to sleep between polls once the end of the file is reached
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxLineBytes
+      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @return
+      *   an unbounded stream of per-record results, ending only on a record-size breach
+      */
+    def followResults[A](
+        path: Path,
+        from: Path.Origin = Path.Origin.Start,
+        pollDelay: Duration = 100.millis,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+    )(using
+        Json,
+        Schema[A],
+        Tag[Emit[Chunk[Result[DecodeException, A]]]],
+        Frame
+    ): Stream[Result[DecodeException, A], Scope & Async & Abort[FileReadException]] =
+        path.tailBytes(from, pollDelay).into(pipeResults[A](maxDepth, maxCollectionSize, maxLineBytes))
 
     /** Emits `values` and then continues with `next`, skipping the emission when `values` is empty.
       *
