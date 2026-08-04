@@ -390,16 +390,16 @@ object Jsonl:
       * the other does not have. Each chunk of values is encoded by `Json.Lines.encodeAllBytes`, the same call [[encode]] streams, and is
       * written straight out, so what is held at any moment is one chunk of encoded bytes however many values the stream has.
       *
-      * The opening write carries no bytes. It is what makes the file's existence, and for [[write]] its emptiness, a fact about the call
-      * rather than about whether the stream produced anything: writing an empty stream empties the file and appending an empty stream
-      * still creates it, exactly as writing or appending one record does. It also creates the parent directory, which is why every chunk
-      * after it passes `createFolders = false`.
+      * The open carries no bytes and happens before the fold. It is what makes the file's existence, and for [[write]] its emptiness, a
+      * fact about the call rather than about whether the stream produced anything: writing an empty stream empties the file and appending
+      * an empty stream still creates it, exactly as writing or appending one record does. It also creates the parent directory.
       *
-      * The fold goes through `Path.appendBytes` rather than holding one `Path.Unsafe.openWrite` handle across it. A single handle would be
-      * one open and close for the whole stream instead of one per chunk, but `openWrite(append = true)` does not append on Scala.js: the
-      * handle writes at a position it starts at zero, so on an operating system that honors an explicit position for a descriptor opened
-      * to append (macOS does; Linux ignores it) every chunk overwrites the file from its first byte. `Path.appendBytes` appends on every
-      * platform.
+      * One handle is held across the whole fold, so a stream of any length costs one open and one close rather than one of each per chunk.
+      * The fold runs under `Abort.run[Any]` inside the bracket rather than outside it, which is what makes the close happen on every exit:
+      * `Sync.acquireReleaseWith` releases when its body completes or panics but not when it aborts, and a stream's own values can abort for
+      * reasons that have nothing to do with the file. Reifying every outcome into a `Result` first leaves the bracket a computation that
+      * always completes, and the outcome is re-raised once the handle is closed. What a failure leaves behind is the records already
+      * written, which is what a JSONL consumer wants: a prefix of a JSONL file is a JSONL file.
       */
     private def writeAll[A, S](path: Path, values: Stream[A, S], appending: Boolean, createFolders: Boolean)(
         using
@@ -408,14 +408,22 @@ object Jsonl:
         Tag[Emit[Chunk[A]]],
         Frame
     ): Unit < (S & Sync & Abort[FileWriteException]) =
-        val opened =
-            if appending then path.appendBytes(Span.empty[Byte], createFolders)
-            else path.writeBytes(Span.empty[Byte], createFolders)
-        opened.andThen {
-            values.foreachChunk { chunk =>
-                path.appendBytes(Json.Lines.encodeAllBytes(chunk), createFolders = false)
+        Sync.acquireReleaseWith(
+            // Unsafe: `openWrite` is the only surface that hands back a channel a fold can keep writing to.
+            // The handle never leaves this method, and the bracket below owns its close.
+            Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = appending, createFolders = createFolders)))
+        )(handle => Sync.Unsafe.defer(handle.close())) { handle =>
+            Abort.run[Any] {
+                values.foreachChunk { chunk =>
+                    // Unsafe: the same handle, bridged straight back into Sync and Abort on every chunk.
+                    // The Span `encodeAllBytes` just built is shared with nothing, so the Chunk takes its
+                    // backing array rather than copying bytes that are about to be written and dropped.
+                    Sync.Unsafe.defer {
+                        Abort.get(handle.writeBytes(Chunk.fromNoCopy(Json.Lines.encodeAllBytes(chunk).toArrayUnsafe)))
+                    }
+                }
             }
-        }
+        }.map(outcome => Abort.get(outcome.asInstanceOf[Result[Nothing, Unit]]))
     end writeAll
 
     /** Ends `stream` at the first framing breach, keeping that breach as its final element.
