@@ -10,17 +10,23 @@ class JsonLinesTest extends kyo.test.Test[Any]:
     private def text(span: Span[Byte]): String =
         new String(span.toArray, StandardCharsets.UTF_8)
 
-    /** Feed `input` through a fresh framer in fixed-size chunks, returning every record. */
+    /** Feed `input` through a fresh framer in fixed-size chunks, returning every record.
+      *
+      * Every chunk is expected to frame cleanly (`DefaultMaxLineBytes` is never exercised here), so a breach would indicate a bug
+      * unrelated to what these tests are pinning. `require`, not `assert`, surfaces that: this helper is also called from a group
+      * builder (outside any `in { ... }` leaf), where `kyo.test`'s `assert` has no `AssertScope` to report through.
+      */
     private def frameAll(input: String, chunkSize: Int): Chunk[Json.Lines.Record] =
         val all = bytes(input)
         var f   = Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes)
         var out = Chunk.empty[Json.Lines.Record]
         var i   = 0
         while i < all.size do
-            val end             = math.min(i + chunkSize, all.size)
-            val (next, records) = f.feed(all.slice(i, end)).getOrThrow
-            f = next
-            out = out ++ records
+            val end    = math.min(i + chunkSize, all.size)
+            val framed = f.feed(all.slice(i, end))
+            require(framed.error.isEmpty, s"frameAll: unexpected framing failure ${framed.error}")
+            f = framed.framer
+            out = out ++ framed.records
             i = end
         end while
         f.finish match
@@ -140,39 +146,41 @@ class JsonLinesTest extends kyo.test.Test[Any]:
     "limits" - {
 
         "rejects a complete record longer than maxLineBytes" in {
-            val f = Json.Lines.Framer.init(8)
-            val r = f.feed(bytes("{\"aaaaaaaaaaaa\":1}\n"))
-            assert(r.isFailure)
-            r match
-                case Result.Failure(e: LimitExceededException) =>
+            val f      = Json.Lines.Framer.init(8)
+            val framed = f.feed(bytes("{\"aaaaaaaaaaaa\":1}\n"))
+            framed.error match
+                case Present(e: LimitExceededException) =>
                     assert(e.maximum == 8)
                 case other => fail(s"Expected LimitExceededException, got $other")
             end match
         }
 
         "rejects a residual longer than maxLineBytes with no newline in sight" in {
-            val f = Json.Lines.Framer.init(8)
-            assert(f.feed(bytes("aaaaaaaaaaaaaaaaaaaa")).isFailure)
+            val f      = Json.Lines.Framer.init(8)
+            val framed = f.feed(bytes("aaaaaaaaaaaaaaaaaaaa"))
+            assert(framed.error.isDefined)
         }
 
         "accepts a record exactly at maxLineBytes" in {
-            val f            = Json.Lines.Framer.init(8)
-            val (_, records) = f.feed(bytes("12345678\n")).getOrThrow
-            assert(records.size == 1)
+            val f      = Json.Lines.Framer.init(8)
+            val framed = f.feed(bytes("12345678\n"))
+            assert(framed.error.isEmpty)
+            assert(framed.records.size == 1)
         }
 
         // The limit counts the record, not the line terminator, so a CRLF line carries one more
         // byte on the wire than the limit allows for its record.
         "accepts a CRLF record whose content is exactly maxLineBytes" in {
-            val f            = Json.Lines.Framer.init(8)
-            val (_, records) = f.feed(bytes("12345678\r\n")).getOrThrow
-            assert(records.map(_.text) == Chunk("12345678"))
+            val f      = Json.Lines.Framer.init(8)
+            val framed = f.feed(bytes("12345678\r\n"))
+            assert(framed.error.isEmpty)
+            assert(framed.records.map(_.text) == Chunk("12345678"))
         }
 
         "rejects a CRLF record whose content exceeds maxLineBytes" in {
             val f = Json.Lines.Framer.init(8)
-            f.feed(bytes("123456789\r\n")) match
-                case Result.Failure(e: LimitExceededException) =>
+            f.feed(bytes("123456789\r\n")).error match
+                case Present(e: LimitExceededException) =>
                     assert(e.actual == 9)
                     assert(e.maximum == 8)
                 case other => fail(s"Expected LimitExceededException, got $other")
@@ -182,15 +190,51 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // The residual path and the completed-record path must agree: whether the '\n' arrives in
         // this chunk or the next one cannot change whether the record is accepted.
         "measures a pending CRLF residual the same way as a completed record" in {
-            val f            = Json.Lines.Framer.init(8)
-            val (held, none) = f.feed(bytes("12345678\r")).getOrThrow
-            assert(none.isEmpty)
-            val (_, records) = held.feed(bytes("\n")).getOrThrow
-            assert(records.map(_.text) == Chunk("12345678"))
+            val f    = Json.Lines.Framer.init(8)
+            val held = f.feed(bytes("12345678\r"))
+            assert(held.error.isEmpty)
+            assert(held.records.isEmpty)
+            val framed = held.framer.feed(bytes("\n"))
+            assert(framed.error.isEmpty)
+            assert(framed.records.map(_.text) == Chunk("12345678"))
+        }
+
+        // Regression test for a defect where a limit breach discarded every record already framed
+        // in the same `feed` call. `emitFrom` used to fail the whole scan and drop its accumulator;
+        // it must instead stop and return what it already collected.
+        "preserves records framed before a mid-buffer breach in the same chunk" in {
+            val f      = Json.Lines.Framer.init(8)
+            val framed = f.feed(bytes("12345678\n123456789\n"))
+            assert(framed.records.map(_.text) == Chunk("12345678"))
+            framed.error match
+                case Present(e: LimitExceededException) =>
+                    assert(e.actual == 9)
+                    assert(e.maximum == 8)
+                case other => fail(s"Expected LimitExceededException, got $other")
+            end match
         }
     }
 
     case class Event(name: String, count: Int) derives Schema, CanEqual
+
+    "decodeRecord" - {
+
+        "decodes a well-formed record directly" in {
+            val record = Json.Lines.Record(bytes("{\"name\":\"a\",\"count\":1}"), index = 0L, byteOffset = 0L)
+            assert(Json.Lines.decodeRecord[Event](record).getOrThrow == Event("a", 1))
+        }
+
+        "wraps a decode failure with the record's own position, not the framer's" in {
+            val record = Json.Lines.Record(bytes("{\"nope\":true}"), index = 7L, byteOffset = 99L)
+            Json.Lines.decodeRecord[Event](record) match
+                case Result.Failure(e: RecordDecodeException) =>
+                    assert(e.recordIndex == 7L)
+                    assert(e.byteOffset == 99L)
+                    assert(e.record == "{\"nope\":true}")
+                case other => fail(s"expected RecordDecodeException, got $other")
+            end match
+        }
+    }
 
     "decodeAll" - {
 
@@ -224,8 +268,30 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             )
         }
 
+        // Pins that a skipped blank line advances byteOffset without advancing recordIndex all the
+        // way through to a failure's reported position, not just through a successful frameAll.
+        "carries the correct position through a skipped blank line before a bad record" in {
+            val in     = "{\"name\":\"a\",\"count\":1}\n\n{\"nope\":true}\n"
+            val result = Json.Lines.decodeAll[Event](in)
+            assert(result.isFailure)
+            result match
+                case Result.Failure(e: RecordDecodeException) =>
+                    assert(e.recordIndex == 1L)
+                    assert(e.byteOffset == 24L)
+                    assert(e.record == "{\"nope\":true}")
+                case other => fail(s"expected RecordDecodeException, got $other")
+            end match
+        }
+
         "rejects trailing content after a complete value on one line" in {
-            assert(Json.Lines.decodeAll[Event]("{\"name\":\"a\",\"count\":1} {}\n").isFailure)
+            Json.Lines.decodeAll[Event]("{\"name\":\"a\",\"count\":1} {}\n") match
+                case Result.Failure(e: RecordDecodeException) =>
+                    e.cause match
+                        case p: ParseException => assert(p.targetType == "Unexpected trailing content")
+                        case other             => fail(s"expected a ParseException reporting trailing content, got $other")
+                    end match
+                case other => fail(s"expected a RecordDecodeException wrapping a trailing-content ParseException, got $other")
+            end match
         }
     }
 
@@ -236,7 +302,13 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             val rs = Json.Lines.decodeAllResults[Event](Span.from(in.getBytes(StandardCharsets.UTF_8)))
             assert(rs.size == 3)
             assert(rs(0).getOrThrow == Event("a", 1))
-            assert(rs(1).isFailure)
+            rs(1) match
+                case Result.Failure(e: RecordDecodeException) =>
+                    assert(e.recordIndex == 1L)
+                    assert(e.byteOffset == 23L)
+                    assert(e.record == "{\"nope\":true}")
+                case other => fail(s"expected RecordDecodeException, got $other")
+            end match
             assert(rs(2).getOrThrow == Event("c", 3))
         }
 
@@ -247,7 +319,32 @@ class JsonLinesTest extends kyo.test.Test[Any]:
                 maxLineBytes = 8
             )
             assert(rs.size == 1)
-            assert(rs(0).isFailure)
+            rs(0) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.maximum == 8)
+                case other => fail(s"expected LimitExceededException, got $other")
+            end match
+        }
+
+        // Regression test for a defect where decodeAllResults, via Framer.feed, discarded every
+        // already-decoded record when a later record in the same input breached maxLineBytes. The
+        // valid record must survive and precede the failure, not disappear with it.
+        "keeps a valid record decoded before a later record breaches the limit" in {
+            val validLine = "{\"name\":\"a\",\"count\":1}\n"
+            val oversized = "x" * 40
+            val in        = validLine + oversized
+            val rs = Json.Lines.decodeAllResults[Event](
+                Span.from(in.getBytes(StandardCharsets.UTF_8)),
+                maxLineBytes = 30
+            )
+            assert(rs.size == 2)
+            assert(rs(0).getOrThrow == Event("a", 1))
+            rs(1) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.actual == 40)
+                    assert(e.maximum == 30)
+                case other => fail(s"expected LimitExceededException, got $other")
+            end match
         }
     }
 
@@ -264,6 +361,15 @@ class JsonLinesTest extends kyo.test.Test[Any]:
 
         "encodeAll of an empty sequence is empty" in {
             assert(Json.Lines.encodeAll(Seq.empty[Event]) == "")
+        }
+
+        "encodeAllBytes produces the exact expected bytes" in {
+            val expected = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":2}\n"
+            assert(Json.Lines.encodeAllBytes(Seq(Event("a", 1), Event("b", 2))).is(bytes(expected)))
+        }
+
+        "encodeAllBytes of an empty sequence is empty" in {
+            assert(Json.Lines.encodeAllBytes(Seq.empty[Event]).isEmpty)
         }
 
         "round trips through decodeAll" in {
