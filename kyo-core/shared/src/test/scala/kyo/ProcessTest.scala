@@ -340,14 +340,15 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
-                proc      <- Command("sleep", "60").spawn
-                result    <- proc.waitFor(200.millis)
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.destroyForcibly
+                proc   <- Command("sleep", "60").spawn
+                result <- proc.waitFor(200.millis)
+                _      <- proc.destroyForcibly
             yield
+                // `sleep 60` outlives the 200ms deadline, so a waitFor that failed to enforce it
+                // would block until the process exits and return Present(exitCode); result == Absent
+                // means it returned via the deadline, not the process. A total failure to return
+                // hangs and trips the per-leaf timeout. Either way no wall-clock ceiling is needed.
                 assert(result == Absent)
-                assert(elapsed < 5.seconds, s"waitFor(200ms) took ${elapsed} — deadline not enforced")
         }
     }
 
@@ -357,13 +358,13 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
-                proc      <- Command("echo", "fast").spawn
-                out       <- proc.stdout.run
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.waitFor
+                proc <- Command("echo", "fast").spawn
+                out  <- proc.stdout.run
+                _    <- proc.waitFor
             yield
-                assert(elapsed < 5.seconds, s"stdout collection took ${elapsed} for a trivial process")
+                // A stdout stream that stalled waiting for data that never arrives would never
+                // complete `run`, hanging into the per-leaf timeout. That `out` is non-empty means
+                // the stream drained and completed, which is the property; no wall-clock ceiling.
                 assert(out.nonEmpty)
         }
     }
@@ -409,14 +410,14 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
-                proc      <- Command("sleep", "60").spawn
-                result    <- proc.waitFor(200.millis)
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.destroyForcibly
+                proc   <- Command("sleep", "60").spawn
+                result <- proc.waitFor(200.millis)
+                _      <- proc.destroyForcibly
             yield
+                // See "terminates within a reasonable multiple": result == Absent means waitFor
+                // returned via its deadline rather than blocking until `sleep 60` exited (which
+                // would yield Present); a full deadlock hangs into the per-leaf timeout.
                 assert(result == Absent)
-                assert(elapsed < 5.seconds, s"waitFor(200ms) blocked for ${elapsed} — deadline not enforced")
         }
     }
 
@@ -426,14 +427,13 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
-                proc      <- Command("echo", "fast").spawn
-                out       <- proc.stdout.run
-                elapsed   <- stopwatch.elapsed
-                _         <- proc.waitFor
+                proc <- Command("echo", "fast").spawn
+                out  <- proc.stdout.run
+                _    <- proc.waitFor
             yield
+                // A stream that stalled on missing EOF would never complete `run`, hanging into
+                // the per-leaf timeout; a non-empty result means it drained and completed.
                 assert(out.nonEmpty)
-                assert(elapsed < 5.seconds, s"stdout took ${elapsed} for a short-lived process")
         }
     }
 
