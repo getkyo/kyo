@@ -84,6 +84,39 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             val r = frameAll("{\"name\":\"café\"}\n", 1024)
             assert(r.map(_.text) == Chunk("{\"name\":\"café\"}"))
         }
+
+        // Pins the start-index walk in emitFrom: every record after the first is read from an
+        // offset into the fed buffer rather than from a freshly sliced tail, so an off-by-one in
+        // that index shows up as wrong content or a wrong byteOffset somewhere in the middle.
+        // Record N is `{"i":N}`, so lines are 8 bytes for N < 10, 9 bytes for N < 100, 10 after.
+        "frames many records from a single chunk" in {
+            val count = 500
+            val input = (0 until count).map(i => s"{\"i\":$i}").mkString("", "\n", "\n")
+            val r     = frameAll(input, 1 << 20)
+            assert(r.size == count)
+
+            assert(r(0).text == "{\"i\":0}")
+            assert(r(0).index == 0L)
+            assert(r(0).byteOffset == 0L)
+
+            assert(r(250).text == "{\"i\":250}")
+            assert(r(250).index == 250L)
+            assert(r(250).byteOffset == 2390L)
+
+            assert(r(499).text == "{\"i\":499}")
+            assert(r(499).index == 499L)
+            assert(r(499).byteOffset == 4880L)
+        }
+
+        "frames many records identically when the chunk boundaries fall inside records" in {
+            val count = 500
+            val input = (0 until count).map(i => s"{\"i\":$i}").mkString("", "\n", "\n")
+            val whole = frameAll(input, 1 << 20)
+            val split = frameAll(input, 7)
+            assert(split.map(_.text) == whole.map(_.text))
+            assert(split.map(_.index) == whole.map(_.index))
+            assert(split.map(_.byteOffset) == whole.map(_.byteOffset))
+        }
     }
 
     "re-chunking produces identical records at every boundary" - {
@@ -126,6 +159,34 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             val f            = Json.Lines.Framer.init(8)
             val (_, records) = f.feed(bytes("12345678\n")).getOrThrow
             assert(records.size == 1)
+        }
+
+        // The limit counts the record, not the line terminator, so a CRLF line carries one more
+        // byte on the wire than the limit allows for its record.
+        "accepts a CRLF record whose content is exactly maxLineBytes" in {
+            val f            = Json.Lines.Framer.init(8)
+            val (_, records) = f.feed(bytes("12345678\r\n")).getOrThrow
+            assert(records.map(_.text) == Chunk("12345678"))
+        }
+
+        "rejects a CRLF record whose content exceeds maxLineBytes" in {
+            val f = Json.Lines.Framer.init(8)
+            f.feed(bytes("123456789\r\n")) match
+                case Result.Failure(e: LimitExceededException) =>
+                    assert(e.actual == 9)
+                    assert(e.maximum == 8)
+                case other => fail(s"Expected LimitExceededException, got $other")
+            end match
+        }
+
+        // The residual path and the completed-record path must agree: whether the '\n' arrives in
+        // this chunk or the next one cannot change whether the record is accepted.
+        "measures a pending CRLF residual the same way as a completed record" in {
+            val f            = Json.Lines.Framer.init(8)
+            val (held, none) = f.feed(bytes("12345678\r")).getOrThrow
+            assert(none.isEmpty)
+            val (_, records) = held.feed(bytes("\n")).getOrThrow
+            assert(records.map(_.text) == Chunk("12345678"))
         }
     }
 end JsonLinesTest
