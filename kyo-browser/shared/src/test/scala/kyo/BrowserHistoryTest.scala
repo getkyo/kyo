@@ -400,26 +400,21 @@ class BrowserHistoryTest extends BrowserTest:
         val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
         }
+        // The /slow fetch (kicked off after the load event) never completes, so a reload that
+        // wrongly waited for network idle would hang and trip the per-leaf timeout; a correct
+        // Settle.Load returns on the load event regardless. "reload returns" is the whole proof.
         val slowHandler = HttpRoute.getRaw("/slow").response(_.bodyBinary).handler { _ =>
-            Async.sleep(2.seconds).andThen(
+            Async.sleep(1.hour).andThen(
                 HttpResponse.ok(Span.fromUnsafe("ok".getBytes("UTF-8")))
                     .addHeader("Content-Type", "text/plain")
             )
         }
         withLocalhostServer(htmlHandler, slowHandler) { (host, port) =>
             withBrowser {
-                // Use Settle.Load on the initial goto too so we don't burn the budget waiting for the slow tail.
+                // Use Settle.Load on the initial goto too so we don't hang on the never-ending tail.
                 Browser.goto(s"http://$host:$port/", Browser.Settle.Load).andThen {
-                    Clock.now.map { start =>
-                        Browser.reload(settle = Browser.Settle.Load).andThen {
-                            Clock.now.map { end =>
-                                val elapsed = end - start
-                                assert(
-                                    elapsed < 1500.millis,
-                                    s"Expected reload(Settle.Load) to return in <1.5s but took $elapsed"
-                                )
-                            }
-                        }
+                    Browser.reload(settle = Browser.Settle.Load).andThen {
+                        succeed("reload(Settle.Load) returned without waiting for the never-completing /slow fetch")
                     }
                 }
             }
