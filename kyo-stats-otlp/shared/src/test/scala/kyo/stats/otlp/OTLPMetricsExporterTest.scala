@@ -151,20 +151,34 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
             }
         }
 
-        "exports registered gauge at interval".onlyJvm.flaky in {
+        "exports registered gauge at interval".onlyJvm in {
             withCollector { (config, metricCh) =>
                 val uniqueName           = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
                 @volatile var gaugeValue = 99.5
-                val _                    = Stat.initScope("test", "export").initGauge(uniqueName, "test gauge")(gaugeValue)
+                val gauge                = Stat.initScope("test", "export").initGauge(uniqueName, "test gauge")(gaugeValue)
                 for
-                    _        <- OTLPMetricsExporter.run(config)
-                    received <- metricCh.take
+                    _ <- OTLPMetricsExporter.run(config)
+                    // Same Loop+reachability pattern as the counter/histogram tests: the first export may fire
+                    // before the gauge is fully registered, so take up to 10 exports. The registry holds only a
+                    // WeakReference to the gauge, so capture it inside the Loop closure to keep it strongly
+                    // reachable until the Loop completes (otherwise the JVM may GC it mid-test and it vanishes
+                    // from every exported batch). Works on all platforms, unlike Reference.reachabilityFence.
+                    found <- Loop.indexed { i =>
+                        discard(gauge)
+                        metricCh.take.map { received =>
+                            val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
+                            allMetrics.find(_.name == s"test.export.$uniqueName") match
+                                case Some(m)       => Loop.done(m)
+                                case None if i < 9 => Loop.continue
+                                case None => throw new AssertionError(
+                                        s"Gauge test.export.$uniqueName not found after ${i + 1} exports"
+                                    )
+                            end match
+                        }
+                    }
                 yield
-                    val allMetrics = received.resourceMetrics.head.scopeMetrics.head.metrics
-                    val found      = allMetrics.find(_.name == s"test.export.$uniqueName")
-                    assert(found.isDefined)
-                    assert(found.get.gauge.isDefined)
-                    assert(found.get.gauge.get.dataPoints.head.asDouble == Present(99.5))
+                    assert(found.gauge.isDefined)
+                    assert(found.gauge.get.dataPoints.head.asDouble == Present(99.5))
                 end for
             }
         }
