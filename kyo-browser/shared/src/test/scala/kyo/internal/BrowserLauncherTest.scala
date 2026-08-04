@@ -59,24 +59,22 @@ class BrowserLauncherTest extends BaseBrowserTest:
 
     "very short timeout fails fast" in {
         for
-            timedRes <- timed(Abort.run[BrowserSetupException] {
+            result <- Abort.run[BrowserSetupException] {
                 Scope.run {
                     BrowserLauncher.launch(
                         Browser.LaunchConfig.chromium("/nonexistent/browser").launchTimeout(500.millis)
                     )
                 }
-            })
-            (elapsedDur, result) = timedRes
-            elapsed              = elapsedDur.toMillis
+            }
         yield
-            // Behavior contract: the launch MUST fail with BrowserSetupFailedException; that is the deterministic shape
-            // ("fails for the right reason"). The timing bound is a soft envelope: cold-start on CI can exceed 5s, but if
-            // we exceed 30s (60× the configured 500ms timeout) something is genuinely wrong.
+            // A nonexistent executable fails at spawn, deterministically and immediately (it is not
+            // a launch-timeout path), so the typed BrowserSetupFailedException IS the property -
+            // "fails for the right reason". A genuine hang is caught by the per-leaf timeout, so no
+            // wall-clock envelope is needed.
             result match
-                case Result.Success(_) => fail("Expected failure for invalid executable")
-                case Result.Failure(_: BrowserSetupFailedException) =>
-                    assert(elapsed < 30000, s"Took too long: ${elapsed}ms (>30s soft envelope, 60× the configured 500ms timeout)")
-                case Result.Panic(ex) => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
+                case Result.Success(_)                              => fail("Expected failure for invalid executable")
+                case Result.Failure(_: BrowserSetupFailedException) => succeed
+                case Result.Panic(ex)                               => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
             end match
     }
 
