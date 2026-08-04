@@ -973,18 +973,24 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         eventually {
             assert(fatalTask.executions == 1, "fatal task should have been executed once before the thread died")
         }
-        Thread.sleep(200) // let any cleanup paths fire if they exist
+        // Ordering settle (no clean event to await): the worker must finish tearing down the
+        // dead thread before task2 is enqueued, otherwise the enqueue races the death window and
+        // task2 is lost. Kept as an honest settle.
+        Thread.sleep(200)
 
         // Now enqueue a trivial second task. A healthy Worker re-arms via wakeup() ->
         // exec.execute(this) and runs it. A wedged Worker has state stuck at Running,
-        // so the CAS Idle->Running in wakeup() fails and the task never runs.
+        // so the CAS Idle->Running in wakeup() fails and the task never runs. `eventually`
+        // is the barrier: a recovered worker runs task2 and it passes; a wedged worker never
+        // runs it and this fails at eventually's own timeout - no fixed sleep-then-assert-once.
         val task2 = TestTask()
         worker.enqueue(task2)
-        Thread.sleep(500)
 
-        assert(
-            task2.executions == 1,
-            s"Worker should recover and execute the next task after fatal, but task2.executions=${task2.executions}"
-        )
+        eventually {
+            assert(
+                task2.executions == 1,
+                s"Worker should recover and execute the next task after fatal, but task2.executions=${task2.executions}"
+            )
+        }
     }
 }
