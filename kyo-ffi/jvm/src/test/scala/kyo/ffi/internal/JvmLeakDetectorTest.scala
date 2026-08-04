@@ -31,6 +31,10 @@ class JvmLeakDetectorTest extends Test:
         val (_, captured) = captureStderr {
             val g = Ffi.Guard.open()
             JvmLeakDetector.testForceLeak(g.asInstanceOf[JvmGuard])
+            // Close after capturing the forced warning so the real Cleaner registration is cancelled. An unclosed
+            // guard stays armed and the Cleaner thread fires this same warning asynchronously on GC, landing in a
+            // later test's process-global stderr capture (the flake behind JvmLeakDetectorTest's emits-nothing case).
+            discardOutcome(g.close())
         }
         assert(captured.contains(FfiErrors.leakWarning(frame.show)))
     }
@@ -54,6 +58,10 @@ class JvmLeakDetectorTest extends Test:
             val g = Ffi.Guard.open()
             JvmLeakDetector.testForceLeak(g.asInstanceOf[JvmGuard])
             JvmLeakDetector.testForceLeak(g.asInstanceOf[JvmGuard])
+            // Close after the two forced warnings so the real Cleaner registration is cancelled, keeping this
+            // guard from firing asynchronously into a later test's stderr capture. Both emits are already captured,
+            // and close runs the warning with a non-open state (a no-op), so the count assertion is unaffected.
+            discardOutcome(g.close())
         }
         val count = countOccurrences(captured, FfiErrors.leakWarning(frame.show))
         assert(count == 2)

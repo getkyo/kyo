@@ -97,6 +97,15 @@ class GuardRegistryStressTest extends Test:
                 JvmLeakDetector.testForceLeak(guards(i))
                 i += 1
             end while
+            // Close each guard so its real Cleaner registration is cancelled. Left armed, these 16 unclosed guards
+            // fire the same warning asynchronously on GC, landing in another suite's process-global stderr capture
+            // (e.g. JvmLeakDetectorTest's emits-nothing assertion). Closing after the forced-leak loop keeps the
+            // captured count intact (close runs the warning with a non-open state, a no-op).
+            i = 0
+            while i < guardCount do
+                discard(guards(i).close())
+                i += 1
+            end while
             stream.flush()
         finally java.lang.System.setErr(prev)
         end try
