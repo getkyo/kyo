@@ -386,6 +386,83 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** A lower service that records the path of every `syncDirectory` call and then delegates.
+      *
+      * An fsync has no observable effect until the power fails, so a test cannot check that one
+      * happened by reading the filesystem back. Recording which directories were synced is the only
+      * way to state the property, and recording the paths rather than a count is what makes the
+      * assertion specific: it names the directories that had to be synced instead of accepting any
+      * three calls.
+      */
+    final private class RecordingLower(
+        inner: FileSystem.Write[Sync],
+        synced: java.util.concurrent.atomic.AtomicReference[Chunk[Path]]
+    ) extends FileSystem.Write[Sync]:
+        export inner.{syncDirectory as _, *}
+
+        def syncDirectory(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.defer(discard(synced.updateAndGet(_.appended(path)))).andThen(inner.syncDirectory(path))
+    end RecordingLower
+
+    "recovery syncs each recovered file's parent directory" in {
+        // A recovered commit writes the committed marker, which declares it durable. The apply step
+        // used to skip the parent-directory sync on the recovery path while performing it on the
+        // normal one, so a crash straight after recovery lost the recovered files even though the
+        // marker said they had landed. Two files in two directories, so a single sync cannot
+        // accidentally satisfy the assertion.
+        Scope.acquireRelease(FileSystem.host.tempDir("kyo-recovery-sync")) { handle =>
+            // Unsafe: service-vended recursive cleanup at Scope exit, mirroring Path.tempDir.
+            Sync.Unsafe.defer(handle.remove())
+        }.map { handle =>
+            // Resolved before use: on macOS the host hands back a temp directory under /var, which
+            // is a link to /private/var. The overlay syncs the canonical parent, so an unresolved
+            // base would compare two spellings of the same directory.
+            FileSystem.host.realPath(handle.path).map { root =>
+                FileSystem.host(root).map { host =>
+                    val synced = new java.util.concurrent.atomic.AtomicReference(Chunk.empty[Path])
+                    val lower  = new RecordingLower(host, synced)
+                    FileSystem.overlay(lower).map { staged =>
+                        val ov   = staged.asInstanceOf[OverlayFileSystem[Sync]]
+                        val dirA = root / "sync-a"
+                        val dirB = root / "sync-b"
+                        Path.runWith(ov) {
+                            dirA.mkDir
+                                .andThen((dirA / "f1.txt").write("one"))
+                                .andThen(dirB.mkDir)
+                                .andThen((dirB / "f2.txt").write("two"))
+                        }.andThen {
+                            Sync.Unsafe.defer {
+                                ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write (sync test)")
+                            }.andThen {
+                                attemptCrash(ov.commit).andThen {
+                                    // Cleared here, so what the assertion counts is what recovery
+                                    // did and not what the crashed commit did before it.
+                                    Sync.Unsafe.defer {
+                                        ov.afterIntentLogHook = () => ()
+                                        synced.set(Chunk.empty)
+                                    }.andThen {
+                                        ov.recover().andThen {
+                                            Sync.Unsafe.defer(synced.get()).map { calls =>
+                                                assert(
+                                                    calls.contains(dirA),
+                                                    s"recovery never synced $dirA; it synced $calls"
+                                                )
+                                                assert(
+                                                    calls.contains(dirB),
+                                                    s"recovery never synced $dirB; it synced $calls"
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // crash after committed marker, before staging dir cleanup
     // -------------------------------------------------------------------------
