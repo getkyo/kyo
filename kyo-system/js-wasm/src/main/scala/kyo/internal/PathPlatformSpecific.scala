@@ -223,7 +223,7 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle] =
         catchRead {
             val fd = NodeFs.openSync(pathStr, "r")
-            new NodeReadHandle(fd)
+            new NodeReadHandle(fd, safe)
         }
 
     def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle] =
@@ -467,7 +467,12 @@ end NodePathUnsafe
 
 // --- NodeReadHandle ---
 
-final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
+/** Concrete read handle backed by a Node file descriptor.
+  *
+  * Carries the `Path` it was opened under only to name the file in a `FileReadException`, the same reason `NodeWriteHandle` carries one.
+  * Nothing here re-resolves it: every measurement goes through the descriptor.
+  */
+final private[kyo] class NodeReadHandle(fd: Int, path: Path) extends Path.ReadHandle:
 
     // Current read position (Node.js readSync with explicit position)
     private var pos: Long = 0L
@@ -523,6 +528,14 @@ final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
 
     def position(offset: Long)(using AllowUnsafe): Unit =
         pos = offset
+
+    def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
+        // fstat on the descriptor, not stat on the path: it answers for the file this handle holds
+        // even once the name has been renamed away or unlinked. Same translation catchRead applies.
+        try Result.succeed(NodeFs.fstatSync(fd).size.toLong)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
+            case e: Throwable              => Result.panic(e)
 
     def close()(using AllowUnsafe): Unit =
         NodeFs.closeSync(fd)
