@@ -256,15 +256,14 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
                                     assert(cc.conflicts.size == 1)
                                     val conflict = cc.conflicts.head
                                     assert(conflict.path == p)
+                                    // The read consumed the contents, so the reported ancestor carries
+                                    // them along with the stat the read observed.
                                     conflict.ancestor match
-                                        case Absent => assert(false, "expected Present ancestor entry")
-                                        case Present(entry) =>
-                                            entry match
-                                                case Path.Entry.File(_, stat) =>
-                                                    assert(stat.sizeBytes == lowerStat.sizeBytes)
-                                                    assert(stat.lastModifiedMs == lowerStat.lastModifiedMs)
-                                                case Path.Entry.Directory(_) =>
-                                                    assert(false, "expected a File entry")
+                                        case Conflict.Ancestor.Content(Path.Entry.File(_, stat)) =>
+                                            assert(stat.sizeBytes == lowerStat.sizeBytes)
+                                            assert(stat.lastModifiedMs == lowerStat.lastModifiedMs)
+                                        case other =>
+                                            assert(false, s"expected an observed-content File ancestor, got $other")
                                     end match
                                 case other =>
                                     assert(false, s"expected CommitConflict, got $other")
@@ -403,7 +402,10 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
                             case Result.Failure(cc) =>
                                 assert(cc.conflicts.size == 1)
                                 assert(cc.conflicts.head.path == p)
-                                assert(cc.conflicts.head.ancestor.isDefined)
+                                assert(
+                                    cc.conflicts.head.ancestor != Conflict.Ancestor.Unobserved,
+                                    "a path the overlay read was reported as unobserved"
+                                )
                             case other =>
                                 assert(false, s"expected CommitConflict, got $other")
                         }
@@ -957,6 +959,45 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
     // between, the decision was built on a view that no longer holds and applying it discards
     // whatever moved it. Concurrent appends are the shortest case: each reads a base and writes
     // base ++ its own bytes, so a stale base silently drops another append.
+
+    /** Forwards to `inner` and counts content reads.
+      *
+      * A metadata question that reads the whole file has no visible symptom: the answer is right and
+      * the cost is a call that should not have happened. Counting the call is the only way to state
+      * it, so the count is the assertion rather than a timing or a memory figure.
+      */
+    final private class CountingReadLower(
+        inner: FileSystem.Write[Sync],
+        reads: java.util.concurrent.atomic.AtomicInteger
+    ) extends FileSystem.Write[Sync]:
+        export inner.{readBytes as _, *}
+
+        def readBytes(path: Path)(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
+            Sync.defer(discard(reads.incrementAndGet())).andThen(inner.readBytes(path))
+    end CountingReadLower
+
+    "a metadata question does not read the file's contents" in {
+        // exists, stat, isDirectory and isRegularFile each built their read-set record by reading
+        // the whole file, so asking whether a large file exists read all of it. What they need to
+        // record is what they observed, and none of them observed the contents.
+        FileSystem.inMemory.map { lower =>
+            val reads = new java.util.concurrent.atomic.AtomicInteger(0)
+            FileSystem.overlay(new CountingReadLower(lower, reads)).map { ov =>
+                val p = Path("large.bin")
+                Path.runWith(lower)(p.writeBytes(Span.from(Array.fill(4096)(7.toByte)))).andThen {
+                    Sync.defer(reads.set(0)).andThen {
+                        Path.runWith(ov) {
+                            p.exists.andThen(p.stat).andThen(p.isDirectory).andThen(p.isRegularFile)
+                        }.andThen {
+                            Sync.defer(reads.get()).map { count =>
+                                assert(count == 0, s"metadata questions made $count content reads")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     "concurrent appends to one path do not lose an update" in {
         val p = Path("concurrent-append.txt")

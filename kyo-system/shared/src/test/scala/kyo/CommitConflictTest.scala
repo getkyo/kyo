@@ -108,29 +108,44 @@ class CommitConflictTest extends kyo.test.Test[Any]:
         assert(f != d)
     }
 
-    "Conflict construction with Maybe[Path.Entry] ancestor" in {
+    "Conflict construction with an observed-content ancestor" in {
         val entry    = Path.Entry.File(sampleBytes, sampleStat)
         val ours     = Present(Path.Entry.File(sampleBytes, sampleStat))
         val theirs   = Present(Path.Entry.Directory(sampleStat))
-        val conflict = Conflict(samplePath, Present(entry), ours, theirs)
+        val conflict = Conflict(samplePath, Conflict.Ancestor.Content(entry), ours, theirs)
         assert(conflict.path == samplePath)
-        assert(conflict.ancestor == Present(entry))
+        assert(conflict.ancestor == Conflict.Ancestor.Content(entry))
         assert(conflict.ours == ours)
         assert(conflict.theirs == theirs)
     }
 
-    "Conflict with Absent ancestor (path was never observed)" in {
-        val conflict = Conflict(samplePath, Absent, Absent, Absent)
-        assert(conflict.ancestor == Absent)
-        assert(conflict.ours == Absent)
-        assert(conflict.theirs == Absent)
+    "Conflict tells an unobserved path apart from one observed to be missing" in {
+        // Both used to report an absent entry, so a caller could not tell "never looked" from
+        // "looked and it was not there". They call for different resolutions.
+        val unobserved = Conflict(samplePath, Conflict.Ancestor.Unobserved, Absent, Absent)
+        val missing    = Conflict(samplePath, Conflict.Ancestor.Missing, Absent, Absent)
+        assert(unobserved.ancestor == Conflict.Ancestor.Unobserved)
+        assert(missing.ancestor == Conflict.Ancestor.Missing)
+        assert(unobserved != missing)
+    }
+
+    "Conflict carries a metadata ancestor without contents" in {
+        // A metadata question never read the file, so there are no observed bytes to report.
+        val conflict = Conflict(samplePath, Conflict.Ancestor.Metadata(sampleStat, isDirectory = false), Absent, Absent)
+        assert(conflict.ancestor == Conflict.Ancestor.Metadata(sampleStat, isDirectory = false))
+    }
+
+    "Conflict carries a directory listing ancestor" in {
+        val names    = Set("a.txt", "b.txt")
+        val conflict = Conflict(samplePath, Conflict.Ancestor.DirectoryListing(names), Absent, Absent)
+        assert(conflict.ancestor == Conflict.Ancestor.DirectoryListing(names))
     }
 
     "Conflict derives CanEqual" in {
         val entry = Path.Entry.File(sampleBytes, sampleStat)
-        val c1    = Conflict(samplePath, Present(entry), Absent, Absent)
-        val c2    = Conflict(samplePath, Present(entry), Absent, Absent)
-        val c3    = Conflict(samplePath, Absent, Absent, Absent)
+        val c1    = Conflict(samplePath, Conflict.Ancestor.Content(entry), Absent, Absent)
+        val c2    = Conflict(samplePath, Conflict.Ancestor.Content(entry), Absent, Absent)
+        val c3    = Conflict(samplePath, Conflict.Ancestor.Unobserved, Absent, Absent)
         assert(c1 == c2)
         assert(c1 != c3)
     }
@@ -170,7 +185,7 @@ class CommitConflictTest extends kyo.test.Test[Any]:
 
     "CommitConflict construction and conflict list access" in {
         val entry    = Path.Entry.File(sampleBytes, sampleStat)
-        val conflict = Conflict(samplePath, Present(entry), Absent, Absent)
+        val conflict = Conflict(samplePath, Conflict.Ancestor.Content(entry), Absent, Absent)
         val cc       = CommitConflict(Chunk(conflict))
         assert(cc.conflicts.size == 1)
         assert(cc.conflicts.head == conflict)

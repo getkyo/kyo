@@ -88,18 +88,12 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
                     Path.runWith(lower)(p.removeExisting).andThen {
                         Abort.run[CommitConflict](ov.commit).map {
                             case Result.Failure(cc) =>
-                                // Membership rather than an exact count, and only until the read-set
-                                // records what each observation actually claimed. The staged write's
-                                // parent directory is recorded too, and a directory observation is
-                                // currently compared by modification time, so removing the file
-                                // reports the parent as a second conflict on any lower where the
-                                // parent is a real directory. Nothing here depends on that: what the
-                                // case is about is the deleted path being reported and the commit not
-                                // applying.
-                                assert(
-                                    cc.conflicts.exists(_.path == p),
-                                    s"the deleted path was not reported: ${cc.conflicts.map(_.path)}"
-                                )
+                                // Exactly one: the staged write's parent directory is recorded too,
+                                // and recording that it exists rather than when it changed is what
+                                // keeps removing a file inside it from reporting the parent as a
+                                // second, unrelated conflict.
+                                assert(cc.conflicts.size == 1, s"conflicting paths: ${cc.conflicts.map(_.path)}")
+                                assert(cc.conflicts.head.path == p)
                                 // Lower must remain absent (commit did not apply).
                                 Path.runWith(lower)(p.exists).map { e =>
                                     assert(!e)
@@ -356,6 +350,119 @@ class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
                         val live   = liveList.map(_.name.getOrElse("")).sorted
                         assert(staged == Chunk("a.txt"), s"the overlay listed $staged")
                         assert(live == staged, s"the lower listed $live but the overlay listed $staged")
+                    }
+                }
+            }
+        }
+    }
+
+    // What the read-set records is what commit validates against. An observation is only as strong
+    // as the question it answered: a caller that asked whether a path exists is entitled to fail on
+    // a path that stopped existing, not on one whose contents changed underneath an answer that
+    // never depended on them.
+
+    withEachLower("a same-size edit under one timestamp is still a conflict") { (ov, lower, base) =>
+        // A read observed the bytes, so a divergence that leaves size and modification time
+        // untouched is still detectable. Setting the timestamp back explicitly is what makes the
+        // case independent of the host's timestamp granularity.
+        val p = base / "same-size.txt"
+        Path.runWith(lower)(p.write("aaaa").andThen(p.setLastModified(1_000_000L))).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(lower)(p.write("bbbb").andThen(p.setLastModified(1_000_000L))).andThen {
+                    Path.runWith(ov)((base / "same-size-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                assert(
+                                    conflicts.exists(_.path == p),
+                                    s"the edited path was not reported: ${conflicts.map(_.path)}"
+                                )
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("an existence check does not conflict on a content change") { (ov, lower, base) =>
+        // The staged work depended on the path existing, and it still exists. Recording content for
+        // a question that never consulted it turns an unrelated edit into a spurious conflict.
+        val p = base / "checked-only.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.exists).map { found =>
+                assert(found, "the seeded path was not visible through the overlay")
+                Path.runWith(lower)(p.write("edited-elsewhere")).andThen {
+                    Path.runWith(ov)((base / "checked-only-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Success(_) => succeed("no conflict")
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                fail(s"an existence check conflicted on a content change: ${conflicts.map(_.path)}")
+                            case other => fail(s"unexpected outcome: $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("an existence check still conflicts when the path stops existing") { (ov, lower, base) =>
+        // The other half of the same contract: an observation is weakened, not discarded. What the
+        // check actually depended on is still validated.
+        val p = base / "checked-then-deleted.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.exists).andThen {
+                Path.runWith(lower)(p.removeAll).andThen {
+                    Path.runWith(ov)((base / "checked-then-deleted-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                assert(
+                                    conflicts.exists(_.path == p),
+                                    s"the deleted path was not reported: ${conflicts.map(_.path)}"
+                                )
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("writing into a directory does not conflict on a sibling appearing") { (ov, lower, base) =>
+        // ensureWriteParent records the parent so the commit can tell that somewhere to write still
+        // exists. Comparing that directory's modification time instead makes any activity alongside
+        // the staged file a conflict, which is what a directory in active use looks like.
+        val d    = base / "busy-dir"
+        val ours = d / "ours.txt"
+        Path.runWith(lower)((d / "seed.txt").write("seed", Path.WriteOptions(createFolders = true))).andThen {
+            Path.runWith(ov)(ours.write("staged")).andThen {
+                Path.runWith(lower)((d / "sibling.txt").write("landed elsewhere")).andThen {
+                    Abort.run[CommitConflict](ov.commit).map {
+                        case Result.Success(_) => succeed("no conflict")
+                        case Result.Failure(CommitConflict(conflicts)) =>
+                            fail(s"a sibling appearing conflicted the parent: ${conflicts.map(_.path)}")
+                        case other => fail(s"unexpected outcome: $other")
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("listing a directory conflicts when a child appears") { (ov, lower, base) =>
+        // The other half: a caller that listed a directory does depend on what it holds, so the same
+        // sibling that must not conflict above must conflict here.
+        val d = base / "listed-dir"
+        Path.runWith(lower)((d / "seed.txt").write("seed", Path.WriteOptions(createFolders = true))).andThen {
+            Path.runWith(ov)(d.list).andThen {
+                Path.runWith(lower)((d / "appeared.txt").write("new")).andThen {
+                    Path.runWith(ov)((base / "listed-dir-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                assert(
+                                    conflicts.exists(_.path == d),
+                                    s"the listed directory was not reported: ${conflicts.map(_.path)}"
+                                )
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
                     }
                 }
             }

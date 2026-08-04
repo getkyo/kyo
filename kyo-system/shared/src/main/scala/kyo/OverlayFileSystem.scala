@@ -89,13 +89,67 @@ private[kyo] object OverlayFileSystem:
         given CanEqual[UpperTrie, UpperTrie] = CanEqual.derived
     end UpperTrie
 
+    /** What the overlay saw the first time it looked at a lower path.
+      *
+      * The read-set exists so commit can tell whether the lower still matches what the staged work
+      * was built on. That question is only as strong as the observation behind it: a caller that
+      * asked whether a path exists is entitled to fail on a path that stopped existing, not on a
+      * path whose contents changed underneath an answer that never depended on them.
+      *
+      * Recording the observation rather than a uniform full entry is also what keeps a metadata
+      * question from reading the file. `exists` on a large file used to read all of it to build a
+      * record whose contents nothing would consult.
+      *
+      * The two directory cases are separate because the questions differ. Writing into a directory
+      * asks whether there is one to write into, and that answer does not change when a sibling
+      * appears. Listing asks what it holds, and that answer does. One directory case validated by
+      * modification time gets both wrong at once: it makes any sibling activity a conflict for the
+      * first, and for the second it leans on timestamp granularity to notice a change it could
+      * observe directly.
+      */
+    private[kyo] enum Observed derives CanEqual:
+        /** The path was not there. */
+        case Missing
+
+        /** The path was there and was of this kind. Nothing was observed about its stat or its
+          * contents, which is all `exists`, `isDirectory` and `isRegularFile` ever look at.
+          */
+        case Exists(isDirectory: Boolean)
+
+        /** `stat` returned this. A caller that asked for a stat may depend on any of it, the
+          * modification time included.
+          */
+        case Metadata(stat: Path.PathStat, isDirectory: Boolean)
+
+        /** `list` returned these child names. */
+        case DirectoryListing(children: Set[String])
+
+        /** The contents were read. */
+        case FileContent(bytes: Span[Byte], stat: Path.PathStat)
+    end Observed
+
+    object Observed:
+        /** How much an observation claims. A later, stronger observation of the same path replaces a
+          * weaker one, because the stronger one is what the staged work goes on to depend on.
+          *
+          * `Metadata` and `DirectoryListing` share a rank because they cannot describe the same
+          * path: one is a stat, the other a directory's contents.
+          */
+        def strength(o: Observed): Int = o match
+            case Observed.Missing             => 0
+            case Observed.Exists(_)           => 1
+            case Observed.Metadata(_, _)      => 2
+            case Observed.DirectoryListing(_) => 2
+            case Observed.FileContent(_, _)   => 3
+    end Observed
+
     /** Lower observations recorded on first read, keyed by canonical path.
       *
       * Opaque for the same reason as [[UpperTrie]]: commit validates each recorded observation
       * against the lower path the commit actually mutates, so an entry keyed by an unresolved path
       * would validate a different file than the one being written.
       */
-    opaque type ReadSet = Map[Chunk[String], Maybe[Path.Entry]]
+    opaque type ReadSet = Map[Chunk[String], Observed]
 
     object ReadSet:
         import CanonicalPath.parts
@@ -103,11 +157,12 @@ private[kyo] object OverlayFileSystem:
         val empty: ReadSet = Map.empty
 
         extension (self: ReadSet)
-            def contains(cp: CanonicalPath): Boolean = self.contains(cp.parts)
-            def updated(cp: CanonicalPath, observed: Maybe[Path.Entry]): ReadSet =
+            def get(cp: CanonicalPath): Maybe[Observed] = Maybe.fromOption(self.get(cp.parts))
+            def contains(cp: CanonicalPath): Boolean    = self.contains(cp.parts)
+            def updated(cp: CanonicalPath, observed: Observed): ReadSet =
                 self.updated(cp.parts, observed)
             def removed(cp: CanonicalPath): ReadSet = self.removed(cp.parts)
-            def entries: Chunk[(CanonicalPath, Maybe[Path.Entry])] =
+            def entries: Chunk[(CanonicalPath, Observed)] =
                 Chunk.from(self.toIndexedSeq.map((parts, v) => (CanonicalPath.wrap(parts), v)))
         end extension
     end ReadSet
@@ -640,34 +695,41 @@ private[kyo] class OverlayFileSystem[S](
             }
         }: A < (S & Sync & Abort[E | FileIOException])).asInstanceOf[A < (S & Abort[E | FileIOException])]
 
-    // Read-set observations, as state functions rather than as their own transitions, so an
-    // operation's observation and the entry it stages land together. The full observed entry is
-    // recorded, not a stat-only stamp, so Conflict.ancestor is available at commit without re-reading
-    // the lower path.
+    // Records an observation, as a state function rather than as its own transition, so an
+    // operation's observation and the entry it stages land together.
     //
-    // Each keeps an existing record and returns the same state value when there is nothing to add.
-    // Both matter: keeping the first observation is what commit validates against, and returning the
-    // state unchanged is what lets these run inside a retried transaction without spinning.
-    private def withFileStamp(s: OverlayState, cp: CanonicalPath, stat: Path.PathStat, bytes: Span[Byte]): OverlayState =
-        if s.readSet.contains(cp) then s
-        else s.copy(readSet = s.readSet.updated(cp, Present(Path.Entry.File(bytes, stat))))
+    // Keeps the strongest observation recorded for a path. Commit validates the staged work against
+    // what that work was built on, so if a caller checked that a path exists and later read it, the
+    // read is what the staged work depends on. Ranking says that outright instead of leaving it to
+    // whichever observation happened to arrive first.
+    //
+    // Returns the same state value when there is nothing to add, which is what lets this run inside a
+    // retried transaction without spinning.
+    private def withObservation(s: OverlayState, cp: CanonicalPath, observed: Observed): OverlayState =
+        s.readSet.get(cp) match
+            case Present(existing) if Observed.strength(existing) >= Observed.strength(observed) => s
+            case _ => s.copy(readSet = s.readSet.updated(cp, observed))
 
-    private def withDirStamp(s: OverlayState, cp: CanonicalPath, stat: Path.PathStat): OverlayState =
-        if s.readSet.contains(cp) then s
-        else s.copy(readSet = s.readSet.updated(cp, Present(Path.Entry.Directory(stat))))
+    private def observe(cp: CanonicalPath, observed: Observed)(using Frame): Unit < S =
+        modifyPure(withObservation(_, cp, observed))
 
-    private def withAbsentStamp(s: OverlayState, cp: CanonicalPath): OverlayState =
-        if s.readSet.contains(cp) then s
-        else s.copy(readSet = s.readSet.updated(cp, Absent))
-
-    private def stampFile(cp: CanonicalPath, stat: Path.PathStat, bytes: Span[Byte])(using Frame): Unit < S =
-        modifyPure(withFileStamp(_, cp, stat, bytes))
-
-    private def stampDir(cp: CanonicalPath, stat: Path.PathStat)(using Frame): Unit < S =
-        modifyPure(withDirStamp(_, cp, stat))
-
-    private def stampAbsent(cp: CanonicalPath)(using Frame): Unit < S =
-        modifyPure(withAbsentStamp(_, cp))
+    /** Records what a metadata question saw of a lower path, and reports its kind: `Absent` when the
+      * path is missing, `Present(true)` for a regular file, `Present(false)` for a directory.
+      *
+      * No content read. `exists`, `stat`, `isDirectory` and `isRegularFile` all used to record the
+      * full entry, which meant reading a whole file to answer a question that never consulted it and
+      * then failing the commit if anything about those contents later changed.
+      */
+    private def observeKind(cp: CanonicalPath)(using Frame): Maybe[Boolean] < (S & Abort[FileReadException]) =
+        val lp = lowerPath(cp)
+        lower.exists(lp).map { found =>
+            if !found then observe(cp, Observed.Missing).andThen(Maybe.empty[Boolean])
+            else
+                lower.isRegularFile(lp).map { isFile =>
+                    observe(cp, Observed.Exists(isDirectory = !isFile)).andThen(Present(isFile))
+                }
+        }
+    end observeKind
 
     // Reconstruct a Path from segment parts (parallel to Path.parts decomposition).
     private def pathFrom(parts: Chunk[String])(using Frame): Path =
@@ -767,17 +829,7 @@ private[kyo] class OverlayFileSystem[S](
                     case Present(_)              => true
                     case Absent =>
                         if ancestorWhiteout(s, cp) then false
-                        else
-                            lower.exists(lp).map { found =>
-                                if !found then stampAbsent(cp).andThen(false)
-                                else
-                                    lower.stat(lp).map { stat =>
-                                        lower.isRegularFile(lp).map { isFile =>
-                                            (if isFile then lower.readBytes(lp).map(bytes => stampFile(cp, stat, bytes))
-                                             else stampDir(cp, stat)).andThen(true)
-                                        }
-                                    }
-                            }
+                        else observeKind(cp).map(_.isDefined)
             }
         }
 
@@ -794,17 +846,7 @@ private[kyo] class OverlayFileSystem[S](
                     case Present(Upper.Entry(Path.Entry.File(_, _)))   => false
                     case Absent =>
                         if ancestorWhiteout(s, cp) then false
-                        else
-                            lower.exists(lp).map { found =>
-                                if !found then stampAbsent(cp).andThen(false)
-                                else
-                                    lower.isDirectory(lp).map { isDir =>
-                                        lower.stat(lp).map { stat =>
-                                            (if isDir then stampDir(cp, stat)
-                                             else lower.readBytes(lp).map(bytes => stampFile(cp, stat, bytes))).andThen(isDir)
-                                        }
-                                    }
-                            }
+                        else observeKind(cp).map(_.fold(false)(isFile => !isFile))
             }
         }
 
@@ -819,17 +861,7 @@ private[kyo] class OverlayFileSystem[S](
                     case Present(Upper.Entry(Path.Entry.File(_, _)))   => true
                     case Absent =>
                         if ancestorWhiteout(s, cp) then false
-                        else
-                            lower.exists(lp).map { found =>
-                                if !found then stampAbsent(cp).andThen(false)
-                                else
-                                    lower.isRegularFile(lp).map { isFile =>
-                                        lower.stat(lp).map { stat =>
-                                            (if isFile then lower.readBytes(lp).map(bytes => stampFile(cp, stat, bytes))
-                                             else stampDir(cp, stat)).andThen(isFile)
-                                        }
-                                    }
-                            }
+                        else observeKind(cp).map(_.fold(false)(identity))
             }
         }
 
@@ -924,7 +956,7 @@ private[kyo] class OverlayFileSystem[S](
                         else
                             lower.readBytes(lp).map { bytes =>
                                 lower.stat(lp).map { stat =>
-                                    stampFile(cp, stat, bytes).andThen(bytes)
+                                    observe(cp, Observed.FileContent(bytes, stat)).andThen(bytes)
                                 }
                             }
             }
@@ -952,8 +984,7 @@ private[kyo] class OverlayFileSystem[S](
                         else
                             lower.stat(lp).map { ps =>
                                 lower.isRegularFile(lp).map { isFile =>
-                                    (if isFile then lower.readBytes(lp).map(bytes => stampFile(cp, ps, bytes))
-                                     else stampDir(cp, ps)).andThen(ps)
+                                    observe(cp, Observed.Metadata(ps, isDirectory = !isFile)).andThen(ps)
                                 }
                             }
             }
@@ -1064,15 +1095,18 @@ private[kyo] class OverlayFileSystem[S](
                                 lower.exists(lp).map { exists =>
                                     if !exists then Chunk.empty[Path]
                                     else
-                                        lower.stat(lp).map { stat =>
-                                            stampDir(cp, stat).andThen {
-                                                lower.list(lp).map { children =>
-                                                    // Drop lower children that have any upper entry (Entry, Whiteout, or OpaqueDir),
-                                                    // and re-express the survivors under the caller's path rather than the
-                                                    // canonical one the lower was asked about.
-                                                    children.collect {
-                                                        case c if !upperSegs.contains(c.parts.last) => path / c.parts.last
-                                                    }
+                                        lower.list(lp).map { children =>
+                                            // A listing depends on what the directory holds, so that is what is
+                                            // recorded: the names as the lower returned them, before any upper
+                                            // entry is subtracted. Commit compares the same set, which detects a
+                                            // child appearing or vanishing exactly rather than inferring it from
+                                            // the directory's modification time.
+                                            observe(cp, Observed.DirectoryListing(children.flatMap(_.name).toSet)).andThen {
+                                                // Drop lower children that have any upper entry (Entry, Whiteout, or OpaqueDir),
+                                                // and re-express the survivors under the caller's path rather than the
+                                                // canonical one the lower was asked about.
+                                                children.collect {
+                                                    case c if !upperSegs.contains(c.parts.last) => path / c.parts.last
                                                 }
                                             }
                                         }
@@ -1113,7 +1147,7 @@ private[kyo] class OverlayFileSystem[S](
                     case Result.Success((false, _)) =>
                         ensureWriteParent(parent, options, errorPath).andThen {
                             canonical(parent).map { pcp =>
-                                stampAbsent(pcp).andThen {
+                                observe(pcp, Observed.Missing).andThen {
                                     val stat = Path.PathStat(0L, 0L)
                                     stage(parent, FileSystemOperation.Create) { current =>
                                         val opaque =
@@ -1175,11 +1209,14 @@ private[kyo] class OverlayFileSystem[S](
                         // Ancestor Whiteout hides lower content; treat as absent, start fresh.
                         lower.exists(lp).map { lowerFound =>
                             if !lowerFound || ancestorWhiteout(s, cp) then
-                                (stagedAppend(withAbsentStamp(s, cp), cp, Span.empty[Byte], value), ())
+                                (stagedAppend(withObservation(s, cp, Observed.Missing), cp, Span.empty[Byte], value), ())
                             else
                                 lower.readBytes(lp).map { existing =>
                                     lower.stat(lp).map { stat =>
-                                        (stagedAppend(withFileStamp(s, cp, stat, existing), cp, existing, value), ())
+                                        (
+                                            stagedAppend(withObservation(s, cp, Observed.FileContent(existing, stat)), cp, existing, value),
+                                            ()
+                                        )
                                     }
                                 }
                         }
@@ -1220,7 +1257,7 @@ private[kyo] class OverlayFileSystem[S](
                             lower.readBytes(lp).map { bytes =>
                                 lower.stat(lp).map { lStat =>
                                     boundInt(path, "truncate size", size).map { sz =>
-                                        (stagedTruncate(withFileStamp(s, cp, lStat, bytes), cp, bytes, sz), ())
+                                        (stagedTruncate(withObservation(s, cp, Observed.FileContent(bytes, lStat)), cp, bytes, sz), ())
                                     }
                                 }
                             }
@@ -1270,9 +1307,9 @@ private[kyo] class OverlayFileSystem[S](
                                         // The bytes read precedes the stamp so the read-set entry and the staged
                                         // upper entry share the same observed bytes (no double read).
                                         lower.readBytes(lp).map { bytes =>
-                                            (stagedFile(withFileStamp(s, cp, stat, bytes), bytes, stat), ())
+                                            (stagedFile(withObservation(s, cp, Observed.FileContent(bytes, stat)), bytes, stat), ())
                                         }
-                                    else (stagedDir(withDirStamp(s, cp, stat), stat, opaque = false), ())
+                                    else (stagedDir(withObservation(s, cp, Observed.Exists(isDirectory = true)), stat, opaque = false), ())
                                 }
                             }
                 end match
@@ -1298,7 +1335,7 @@ private[kyo] class OverlayFileSystem[S](
                             if !exists then
                                 val st = Path.PathStat(0L, 0L)
                                 (
-                                    staged(withAbsentStamp(s, cp), Upper.Entry(Path.Entry.Directory(st)), opaque = false),
+                                    staged(withObservation(s, cp, Observed.Missing), Upper.Entry(Path.Entry.Directory(st)), opaque = false),
                                     ()
                                 )
                             else
@@ -1307,11 +1344,22 @@ private[kyo] class OverlayFileSystem[S](
                                         // An existing lower dir (or file) gets OpaqueDir, hiding its children.
                                         val st = if isDir then stat else Path.PathStat(0L, 0L)
                                         if isDir then
-                                            (staged(withDirStamp(s, cp, stat), Upper.OpaqueDir(st), opaque = true), ())
+                                            (
+                                                staged(
+                                                    withObservation(s, cp, Observed.Exists(isDirectory = true)),
+                                                    Upper.OpaqueDir(st),
+                                                    opaque = true
+                                                ),
+                                                ()
+                                            )
                                         else
                                             lower.readBytes(lp).map { bytes =>
                                                 (
-                                                    staged(withFileStamp(s, cp, stat, bytes), Upper.OpaqueDir(st), opaque = true),
+                                                    staged(
+                                                        withObservation(s, cp, Observed.FileContent(bytes, stat)),
+                                                        Upper.OpaqueDir(st),
+                                                        opaque = true
+                                                    ),
                                                     ()
                                                 )
                                             }
@@ -1523,14 +1571,14 @@ private[kyo] class OverlayFileSystem[S](
                                         if isFile then
                                             lower.readBytes(lp).map { bytes =>
                                                 lower.stat(lp).map { stat =>
-                                                    stampFile(cp, stat, bytes).andThen {
+                                                    observe(cp, Observed.FileContent(bytes, stat)).andThen {
                                                         Path.Entry.File(bytes, stat): Path.Entry
                                                     }
                                                 }
                                             }
                                         else
                                             lower.stat(lp).map { stat =>
-                                                stampDir(cp, stat).andThen {
+                                                observe(cp, Observed.Exists(isDirectory = true)).andThen {
                                                     Path.Entry.Directory(stat): Path.Entry
                                                 }
                                             }
@@ -1553,7 +1601,7 @@ private[kyo] class OverlayFileSystem[S](
                     case Present(_)              => (staged(s), true)
                     case Absent =>
                         lower.exists(lp).map { found =>
-                            if !found then (withAbsentStamp(s, cp), false)
+                            if !found then (withObservation(s, cp, Observed.Missing), false)
                             else
                                 // The removal's base is recorded before the whiteout hides it, so commit
                                 // still has something to validate the removal against.
@@ -1563,19 +1611,24 @@ private[kyo] class OverlayFileSystem[S](
             }
         }
 
-    // The state with a lower observation recorded for `cp`, reading whatever the observation needs.
-    // The state-function counterpart of the old stampLower, for use inside a transaction.
+    // Records the base a removal is taken against, for use inside a transaction.
+    //
+    // Deliberately stronger than what `remove` literally looks at, which is only whether the path is
+    // there. A commit replays a removal as a recursive delete, so the cost of recording too little is
+    // deleting a file that changed after the caller decided to remove it. Reading the contents here
+    // makes that a conflict the caller can resolve instead. A directory is recorded by presence: its
+    // contents are not read, and the removal takes the whole subtree either way.
     private def observedLower(s: OverlayState, cp: CanonicalPath)(using
         Frame
     ): OverlayState < (S & Abort[FileReadException]) =
         val path = lowerPath(cp)
         lower.exists(path).map { found =>
-            if !found then withAbsentStamp(s, cp)
+            if !found then withObservation(s, cp, Observed.Missing)
             else
                 lower.stat(path).map { stat =>
                     lower.isRegularFile(path).map { isFile =>
-                        if isFile then lower.readBytes(path).map(bytes => withFileStamp(s, cp, stat, bytes))
-                        else withDirStamp(s, cp, stat)
+                        if isFile then lower.readBytes(path).map(bytes => withObservation(s, cp, Observed.FileContent(bytes, stat)))
+                        else withObservation(s, cp, Observed.Exists(isDirectory = true))
                     }
                 }
         }
@@ -1607,11 +1660,11 @@ private[kyo] class OverlayFileSystem[S](
                     case Absent        =>
                         // append mode with no upper entry: seed from lower
                         lower.exists(lp).map { found =>
-                            if !found then stampAbsent(cp).andThen(mkWriteHandle(cp, Span.empty[Byte]))
+                            if !found then observe(cp, Observed.Missing).andThen(mkWriteHandle(cp, Span.empty[Byte]))
                             else
                                 lower.readBytes(lp).map { bytes =>
                                     lower.stat(lp).map { stat =>
-                                        stampFile(cp, stat, bytes).andThen(mkWriteHandle(cp, bytes))
+                                        observe(cp, Observed.FileContent(bytes, stat)).andThen(mkWriteHandle(cp, bytes))
                                     }
                                 }
                         }
@@ -1961,45 +2014,88 @@ private[kyo] class OverlayFileSystem[S](
     // to the staged state without reconstructing a key from the reported path.
     private def validate(s: OverlayState)(using Frame): Chunk[(CanonicalPath, Conflict)] < (S & Abort[FileSystemException]) =
         s.readSet.entries.foldLeft[Chunk[(CanonicalPath, Conflict)] < (S & Abort[FileSystemException])](Chunk.empty) {
-            case (accKyo, (cp, ancestor)) =>
+            case (accKyo, (cp, observed)) =>
                 accKyo.map { acc =>
                     val path = lowerPath(cp)
-                    lower.exists(path).map { found =>
-                        if !found then
-                            if ancestor.isEmpty then acc
+                    liveShape(path).map { live =>
+                        stillMatches(path, observed, live).map { matches =>
+                            if matches then acc
                             else
-                                val conflict =
-                                    Conflict(path, ancestor, s.upper.get(cp).fold[Maybe[Path.Entry]](Absent)(upperToEntry), Absent)
-                                acc.appended((cp, conflict))
-                        else
-                            lower.stat(path).map { liveStat =>
-                                lower.isRegularFile(path).map { isFile =>
-                                    val matches = ancestor match
-                                        case Present(Path.Entry.File(_, aStat)) =>
-                                            isFile && aStat.lastModifiedMs == liveStat.lastModifiedMs && aStat.sizeBytes == liveStat.sizeBytes
-                                        case Present(Path.Entry.Directory(aStat)) =>
-                                            !isFile && aStat.lastModifiedMs == liveStat.lastModifiedMs
-                                        case Absent => false
-                                    if matches then acc
-                                    else
-                                        // theirs: fresh bytes for file divergence; stat only for directory divergence.
-                                        val oursEntry = s.upper.get(cp).fold[Maybe[Path.Entry]](Absent)(upperToEntry)
-                                        val liveEntryKyo: Maybe[Path.Entry] < (S & Abort[FileSystemException]) =
-                                            if isFile then
-                                                lower.readBytes(path).map { bytes =>
-                                                    (Present(Path.Entry.File(bytes, liveStat)): Maybe[Path.Entry])
-                                                }
-                                            else Present[Path.Entry](Path.Entry.Directory(liveStat))
-                                        liveEntryKyo.map { liveEntry =>
-                                            val conflict = Conflict(path, ancestor, oursEntry, liveEntry)
-                                            acc.appended((cp, conflict))
-                                        }
-                                    end if
+                                val ours = s.upper.get(cp).fold[Maybe[Path.Entry]](Absent)(upperToEntry)
+                                liveEntry(path, live).map { theirs =>
+                                    acc.appended((cp, Conflict(path, ancestorOf(observed), ours, theirs)))
                                 }
-                            }
+                        }
                     }
                 }
         }
+
+    // The live lower's shape at `path`: Absent when missing, otherwise its stat and whether it is a
+    // regular file. Read once per validated path and shared by the comparison and the report.
+    private def liveShape(path: Path)(using Frame): Maybe[(Path.PathStat, Boolean)] < (S & Abort[FileSystemException]) =
+        lower.exists(path).map { found =>
+            if !found then Maybe.empty[(Path.PathStat, Boolean)]
+            else lower.stat(path).map(stat => lower.isRegularFile(path).map(isFile => Present((stat, isFile))))
+        }
+
+    // True when the live lower still matches what was observed.
+    //
+    // Each observation is checked against what it actually claimed. Checking more than was observed
+    // reports conflicts the staged work does not depend on; checking less lets a real divergence
+    // through. That is the whole contract, and it is why the observation kinds exist.
+    private def stillMatches(path: Path, observed: Observed, live: Maybe[(Path.PathStat, Boolean)])(using
+        Frame
+    ): Boolean < (S & Abort[FileSystemException]) =
+        live match
+            case Absent =>
+                // Every observation but one claimed the path was there.
+                observed == Observed.Missing
+            case Present((liveStat, isFile)) =>
+                observed match
+                    case Observed.Missing             => false
+                    case Observed.Exists(isDirectory) =>
+                        // Existence and kind only. Comparing a stat here would make any edit next to
+                        // the observation a conflict, and a caller that only asked whether the path
+                        // was there does not depend on its size, its timestamp or its contents.
+                        isDirectory != isFile
+                    case Observed.DirectoryListing(children) =>
+                        // Compared by child names rather than by modification time: it is what `list`
+                        // returned, so it detects an added or removed child exactly, without
+                        // depending on the host's timestamp granularity.
+                        if isFile then false
+                        else lower.list(path).map(entries => entries.flatMap(_.name).toSet == children)
+                    case Observed.Metadata(stat, isDirectory) =>
+                        // A caller that asked for a stat may depend on any of it.
+                        isDirectory != isFile && stat.sizeBytes == liveStat.sizeBytes &&
+                        stat.lastModifiedMs == liveStat.lastModifiedMs
+                    case Observed.FileContent(bytes, stat) =>
+                        // Size first, because it rejects most divergences without reading the file.
+                        // Content second, because a same-size edit inside one timestamp tick is
+                        // invisible to stat and the observed bytes are already in hand to detect it.
+                        if !isFile || stat.sizeBytes != liveStat.sizeBytes then false
+                        else lower.readBytes(path).map(liveBytes => bytes.toArrayUnsafe.sameElements(liveBytes.toArrayUnsafe))
+        end match
+    end stillMatches
+
+    // The live entry reported as `theirs` on a divergence. Only reached once a path has diverged, so
+    // the content read here is not on the path of a commit that succeeds.
+    private def liveEntry(path: Path, live: Maybe[(Path.PathStat, Boolean)])(using
+        Frame
+    ): Maybe[Path.Entry] < (S & Abort[FileSystemException]) =
+        live match
+            case Absent => Absent
+            case Present((stat, isFile)) =>
+                if isFile then lower.readBytes(path).map(bytes => Present(Path.Entry.File(bytes, stat)))
+                else Present[Path.Entry](Path.Entry.Directory(stat))
+
+    // The observation a conflict is measured against, as the caller sees it.
+    private def ancestorOf(observed: Observed): Conflict.Ancestor =
+        observed match
+            case Observed.Missing                  => Conflict.Ancestor.Missing
+            case Observed.Exists(isDirectory)      => Conflict.Ancestor.Presence(isDirectory)
+            case Observed.DirectoryListing(names)  => Conflict.Ancestor.DirectoryListing(names)
+            case Observed.Metadata(stat, isDir)    => Conflict.Ancestor.Metadata(stat, isDir)
+            case Observed.FileContent(bytes, stat) => Conflict.Ancestor.Content(Path.Entry.File(bytes, stat))
 
     private def upperToEntry(u: Upper): Maybe[Path.Entry] =
         u match

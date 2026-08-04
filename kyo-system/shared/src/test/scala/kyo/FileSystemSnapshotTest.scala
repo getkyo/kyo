@@ -25,6 +25,19 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
             case Present(Path.Entry.Directory(_))   => "directory"
             case Absent                             => "absent"
 
+    // Renders the observation a conflict is measured against. Each case names what the overlay
+    // actually saw, so the snapshot moves if a read starts recording more or less than it read.
+    private def ancestorValue(ancestor: Conflict.Ancestor): String =
+        ancestor match
+            case Conflict.Ancestor.Unobserved                 => "unobserved"
+            case Conflict.Ancestor.Missing                    => "missing"
+            case Conflict.Ancestor.Presence(isDirectory)      => if isDirectory then "directory" else "file"
+            case Conflict.Ancestor.DirectoryListing(children) => children.toSeq.sorted.mkString("listing[", ",", "]")
+            case Conflict.Ancestor.Metadata(stat, _)          => s"metadata[${stat.sizeBytes}]"
+            case Conflict.Ancestor.Content(Path.Entry.File(bytes, _)) =>
+                new String(bytes.toArrayUnsafe, StandardCharsets.UTF_8)
+            case Conflict.Ancestor.Content(Path.Entry.Directory(_)) => "directory"
+
     "glob matrix snapshot represents matcher behavior" in {
         val rows = Chunk(
             s"*.txt|alpha.txt=${glob("*.txt").matches("alpha.txt", Glob.CaseSensitivity.Sensitive)}|nested/alpha.txt=${glob("*.txt").matches("nested/alpha.txt", Glob.CaseSensitivity.Sensitive)}",
@@ -87,7 +100,7 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
                                 case Result.Failure(conflict) =>
                                     val value = conflict.conflicts.head
                                     val report =
-                                        s"path=${value.path}\nancestor=${entryValue(value.ancestor)}\nours=${entryValue(value.ours)}\ntheirs=${entryValue(value.theirs)}"
+                                        s"path=${value.path}\nancestor=${ancestorValue(value.ancestor)}\nours=${entryValue(value.ours)}\ntheirs=${entryValue(value.theirs)}"
                                     assert(conflict.conflicts.size == 1)
                                     assert(report == FileSystemSnapshotValues.conflictReport)
                                 case other => assert(false, s"expected CommitConflict, got $other")

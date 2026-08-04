@@ -29,13 +29,15 @@ class FileSystemCommitTest extends kyo.test.Test[Any]:
                                         assert(cc.conflicts.size == 1)
                                         val conflict = cc.conflicts.head
                                         assert(conflict.path == p)
+                                        // The staged work read this path, so the reported ancestor
+                                        // carries the contents that read observed.
                                         conflict.ancestor match
-                                            case Present(Path.Entry.File(bytes, stat)) =>
+                                            case Conflict.Ancestor.Content(Path.Entry.File(bytes, stat)) =>
                                                 assert(new String(bytes.toArrayUnsafe, StandardCharsets.UTF_8) == "1")
                                                 assert(stat.sizeBytes == lowerStat.sizeBytes)
                                                 assert(stat.lastModifiedMs == lowerStat.lastModifiedMs)
                                             case other =>
-                                                assert(false, s"expected Present(Path.Entry.File(...)), got $other")
+                                                assert(false, s"expected an observed-content File ancestor, got $other")
                                         end match
                                         conflict.theirs match
                                             case Present(Path.Entry.File(bytes, _)) =>
