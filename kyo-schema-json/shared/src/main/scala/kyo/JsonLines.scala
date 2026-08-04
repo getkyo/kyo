@@ -44,6 +44,8 @@ object JsonLines:
     private val Bom: Span[Byte] =
         Span(0xef.toByte, 0xbb.toByte, 0xbf.toByte)
 
+    private val NewlineSpan: Span[Byte] = Span(Newline)
+
     /** One framed record, with its position in the overall input.
       *
       * The bytes are the record's own UTF-8 encoding with the line terminator (`'\n'` and any preceding `'\r'`) already removed. They are
@@ -156,25 +158,27 @@ object JsonLines:
             ok
         end startsWithBomPrefix
 
-        private def scan(buf: Span[Byte], offset: Long)(using Frame): Result[LimitExceededException, (Framer, Chunk[Record])] =
-            emitFrom(buf, 0, offset, nextIndex, Chunk.empty).flatMap { case (start, restOffset, index, records) =>
-                // The residual is measured by the same rule a completed record is: a trailing '\r' is the
-                // first half of a terminator that has not arrived yet, so it does not count toward the limit.
-                val restSize = buf.size - start
-                val restLine =
-                    if restSize > 0 && buf(buf.size - 1) == Return then restSize - 1
-                    else restSize
-                if restLine > maxLineBytes then
-                    Result.fail[LimitExceededException, (Framer, Chunk[Record])](
-                        LimitExceededException(LimitName, restLine, maxLineBytes)
-                    )
-                else
-                    val rest = if start == 0 then buf else buf.slice(start, buf.size)
-                    Result.succeed[LimitExceededException, (Framer, Chunk[Record])](
-                        (Framer(rest, index, restOffset, maxLineBytes, false), records)
-                    )
-                end if
-            }
+        private def scan(buf: Span[Byte], offset: Long)(using Frame): Framed =
+            val (start, restOffset, index, records, breach) = emitFrom(buf, 0, offset, nextIndex, Chunk.empty)
+            breach match
+                case Present(e) =>
+                    // A record inside the buffer exceeded the limit. The records collected before it stay;
+                    // the framer itself is not advanced, since the caller must not feed it again.
+                    Framed(this, records, Present(e))
+                case Absent =>
+                    // The residual is measured by the same rule a completed record is: a trailing '\r' is the
+                    // first half of a terminator that has not arrived yet, so it does not count toward the limit.
+                    val restSize = buf.size - start
+                    val restLine =
+                        if restSize > 0 && buf(buf.size - 1) == Return then restSize - 1
+                        else restSize
+                    if restLine > maxLineBytes then
+                        Framed(this, records, Present(LimitExceededException(LimitName, restLine, maxLineBytes)))
+                    else
+                        val rest = if start == 0 then buf else buf.slice(start, buf.size)
+                        Framed(Framer(rest, index, restOffset, maxLineBytes, false), records, Absent)
+                    end if
+            end match
         end scan
 
         /** Walks `buf` from `start`, emitting one record per newline.
@@ -184,7 +188,8 @@ object JsonLines:
           * linear in the chunk with allocation proportional to the output.
           *
           * `offset` is the overall-input offset of `buf(start)`, and the returned `Int` is the index where the unterminated residual
-          * begins.
+          * begins. A record exceeding `maxLineBytes` stops the walk immediately rather than failing the whole scan, so every record
+          * gathered in `acc` up to that point is returned alongside the breach.
           */
         @tailrec
         private def emitFrom(
@@ -193,14 +198,14 @@ object JsonLines:
             offset: Long,
             index: Long,
             acc: Chunk[Record]
-        )(using Frame): Result[LimitExceededException, (Int, Long, Long, Chunk[Record])] =
+        )(using Frame): (Int, Long, Long, Chunk[Record], Maybe[LimitExceededException]) =
             indexOfNewline(buf, start) match
-                case -1 => Result.succeed((start, offset, index, acc))
+                case -1 => (start, offset, index, acc, Absent)
                 case nl =>
                     val lineEnd  = if nl > start && buf(nl - 1) == Return then nl - 1 else nl
                     val lineSize = lineEnd - start
                     if lineSize > maxLineBytes then
-                        Result.fail(LimitExceededException(LimitName, lineSize, maxLineBytes))
+                        (start, offset, index, acc, Present(LimitExceededException(LimitName, lineSize, maxLineBytes)))
                     else
                         val restOffset = offset + (nl + 1 - start)
                         if isBlank(buf, start, lineEnd) then emitFrom(buf, nl + 1, restOffset, index, acc)
@@ -352,7 +357,8 @@ object JsonLines:
       * than discarding the whole file.
       *
       * The one failure this cannot recover from is a record exceeding `maxLineBytes`: no record boundary was found, so there is nothing
-      * to skip to. That surfaces as a final failure element and ends the chunk.
+      * to skip to. That surfaces as a final failure element and ends the chunk, but every record decoded before the breach is kept: a
+      * limit breach on record 5 of a 4-record-so-far log yields 4 successes followed by that one failure, not an empty chunk.
       *
       * @param input
       *   the raw UTF-8 JSONL bytes to decode
@@ -363,7 +369,8 @@ object JsonLines:
       * @param maxLineBytes
       *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
       * @return
-      *   one result per record; a framing failure that finds no record boundary yields a single-element chunk
+      *   one result per record; a framing failure that finds no record boundary is appended as a final failure element after every
+      *   record decoded before it
       */
     def decodeAllResults[A](
         input: Span[Byte],
@@ -371,43 +378,45 @@ object JsonLines:
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
         maxLineBytes: Int = DefaultMaxLineBytes
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
-        Framer.init(maxLineBytes).feed(input) match
-            case Result.Success((framer, records)) =>
-                val decoded = records.map(r => decodeRecord[A](r, maxDepth, maxCollectionSize))
-                framer.finish match
+        val framed  = Framer.init(maxLineBytes).feed(input)
+        val decoded = framed.records.map(r => decodeRecord[A](r, maxDepth, maxCollectionSize))
+        framed.error match
+            case Present(e) => decoded :+ Result.fail(e)
+            case Absent =>
+                framed.framer.finish match
                     case Absent       => decoded
                     case Present(rec) => decoded :+ decodeRecord[A](rec, maxDepth, maxCollectionSize)
-            case Result.Failure(e) => Chunk(Result.fail(e))
-            case Result.Panic(ex)  => Chunk(Result.panic(ex))
+        end match
     end decodeAllResults
 
     /** Encodes every value as one JSONL record per line, each terminated by a newline.
+      *
+      * Delegates to `Json.encode`, so a `Json` given in the caller's scope is honored the same way it would be for a single-value
+      * `Json.encode` call, rather than being permanently bound to whichever `Json` is visible where this method is defined.
       *
       * @param values
       *   the values to encode, in order
       * @return
       *   the JSONL text, or the empty string for an empty input
       */
-    def encodeAll[A](values: Seq[A])(using schema: Schema[A], frame: Frame): String =
-        val json = summon[Json]
-        val sb   = new StringBuilder
-        values.foreach { v =>
-            val w = json.newWriter()
-            schema.writeTo(v, w)
-            discard(sb.append(new String(w.result().toArray, StandardCharsets.UTF_8)).append('\n'))
-        }
+    def encodeAll[A](values: Seq[A])(using Json, Schema[A], Frame): String =
+        val sb = new StringBuilder
+        values.foreach(v => discard(sb.append(Json.encode(v)).append('\n')))
         sb.toString
     end encodeAll
 
     /** Encodes every value as one JSONL record per line, returning raw UTF-8 bytes.
+      *
+      * Builds from `Json.encodeBytes` directly rather than through `encodeAll`, so encoding to bytes never round-trips through a
+      * `String`.
       *
       * @param values
       *   the values to encode, in order
       * @return
       *   the JSONL bytes, or an empty span for an empty input
       */
-    def encodeAllBytes[A](values: Seq[A])(using Schema[A], Frame): Span[Byte] =
-        Span.from(encodeAll(values).getBytes(StandardCharsets.UTF_8))
+    def encodeAllBytes[A](values: Seq[A])(using Json, Schema[A], Frame): Span[Byte] =
+        values.foldLeft(Span.empty[Byte])((acc, v) => acc ++ Json.encodeBytes(v) ++ NewlineSpan)
     end encodeAllBytes
 
     /** Encodes a single value as one JSONL record, terminated by a newline.
@@ -417,10 +426,8 @@ object JsonLines:
       * @return
       *   the value's compact JSON encoding followed by a newline
       */
-    def encodeLine[A](value: A)(using schema: Schema[A], frame: Frame): String =
-        val w = summon[Json].newWriter()
-        schema.writeTo(value, w)
-        new String(w.result().toArray, StandardCharsets.UTF_8) + "\n"
+    def encodeLine[A](value: A)(using Json, Schema[A], Frame): String =
+        Json.encode(value) + "\n"
     end encodeLine
 
 end JsonLines
