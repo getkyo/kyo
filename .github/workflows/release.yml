@@ -24,10 +24,11 @@ jobs:
   # clang emit x86_64 code.
   natives-darwin:
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: macos-14
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
@@ -83,10 +84,11 @@ jobs:
   # run on the glibc host so they use the runner's Node; only the build runs in the container.
   natives-linux-x86_64:
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
@@ -148,10 +150,11 @@ jobs:
   # the same Alpine step on the arm64 host (the temurin alpine image is multi-arch).
   natives-linux-aarch64:
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: ubuntu-24.04-arm
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
@@ -209,10 +212,11 @@ jobs:
   publish:
     needs: [natives-darwin, natives-linux-x86_64, natives-linux-aarch64]
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
