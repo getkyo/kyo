@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.repository == 'getkyo/kyo'
     runs-on: ubuntu-latest
     env:
       JAVA_OPTS: -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
@@ -48,6 +49,7 @@ jobs:
           path: site
   deploy:
     needs: build
+    if: github.repository == 'getkyo/kyo'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

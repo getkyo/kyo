@@ -8,6 +8,7 @@ Thank you for considering contributing to this project! We welcome all contribut
   - [Getting Started](#getting-started)
   - [Configuring Java Options](#configuring-java-options)
   - [How to Build Locally](#how-to-build-locally)
+  - [Running CI in Your Fork](#running-ci-in-your-fork)
   - [Adding a New API](#adding-a-new-api)
   - [LLM Use Guide](#llm-use-guide)
 - [Core Principles](#core-principles)
@@ -128,6 +129,20 @@ Check formatting before submitting:
 ```sh
 sbt "scalafmtCheckAll"
 ```
+
+### Running CI in Your Fork
+
+Pull requests to the main repository currently require maintainer approval before CI runs, so checks may not start right away. To get full CI signal on your own schedule, run the same workflows in your fork. They use only GitHub-hosted runners that are free for public repositories and read no repository secrets, so they run unmodified.
+
+1. **Enable Actions on your fork.** GitHub disables a fork's workflows by default. Open your fork's **Actions** tab (`https://github.com/<your-user>/<your-fork>/actions`) and enable them when prompted.
+
+2. **Run the `ci` workflow.** In the **Actions** tab, select **ci** and click **Run workflow**, then choose your branch. Set **oses** to `linux-x64 linux-arm64` to match what pull-request CI runs. Leave **mode** as `full` for a complete run, or set it to `diff` to test only the modules your branch changed. The Windows pole is not part of PR CI; add `windows-x64` to **oses** to include it.
+
+3. **Or open a fork-internal pull request.** A PR from your working branch against your fork's own `main` triggers the same diff-mode run an upstream PR would, on your runners, with no approval needed. It also runs `release-probe`, a no-secrets publishability check, for free.
+
+Diff mode compares against your fork's `main`, so sync your fork before a diff-mode run (the **Sync fork** button, or `git fetch upstream && git push origin main`) to match upstream. The first run is slower while the runner caches warm up.
+
+When you open your pull request, include a link to the fork CI run if you have one, so reviewers can see the result.
 
 ### Adding a New API
 
