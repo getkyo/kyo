@@ -381,8 +381,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     _    <- pidHolder.set(pid)
                 yield ()
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidHolder.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )
@@ -444,8 +450,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     _    <- pidHolder.set(pid)
                 yield ()
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidHolder.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )
@@ -470,8 +482,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     _    <- pidRef.set(pid)
                 yield ()
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidRef.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )
@@ -495,8 +513,14 @@ class ProcessTest extends kyo.test.Test[Any]:
                     yield ()
                 }
             }
-            _   <- Async.sleep(200.millis)
             pid <- pidRef.get
+            // Poll until the scope-destroyed process has been reaped (kill -0 fails), instead of a fixed sleep.
+            _ <- assertEventually {
+                Abort.run[Throwable](Command("kill", "-0", pid.toString).waitFor).map {
+                    case Result.Success(code) => !code.isSuccess
+                    case Result.Failure(_)    => true
+                }
+            }
             result <- Abort.run[Throwable](
                 Command("kill", "-0", pid.toString).waitFor
             )
