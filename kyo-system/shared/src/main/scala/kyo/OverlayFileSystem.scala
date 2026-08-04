@@ -109,9 +109,13 @@ private[kyo] object OverlayFileSystem:
 
     /** The layout of one commit's staging directory.
       *
-      * The four well-known names live here and nowhere else. The entry name in particular is written
-      * by the staging pass and read back by replay, so a literal duplicated across those two is a
-      * silent mismatch: bytes staged under one name and recovery looking under another.
+      * Every well-known name lives here and nowhere else: the directory's own name in the lower
+      * root, and the four names inside it. Each of those names has a writer and a reader in
+      * different parts of this file, so a literal duplicated across the pair is a silent mismatch.
+      * The entry name is written by the staging pass and read back by replay, which would stage
+      * bytes under one name and look for them under another; the directory name is built by commit
+      * and matched by the disk scan, which would leave every orphaned commit unreplayed while
+      * raising nothing to say so.
       *
       * Deliberately does not carry the temporary directory handle. Recovery reaches a staging
       * directory two ways, in process from a handle and after a restart from a bare path found by
@@ -122,6 +126,30 @@ private[kyo] object OverlayFileSystem:
 
     object StagingDir:
         def apply(path: Path): StagingDir = path
+
+        // The prefix every commit's staging directory carries in the lower root. Read by dirName
+        // and isStagingDirName, which are the writer and the reader of one name.
+        private val namePrefix = "kyo-commit-"
+
+        /** The name a commit's staging directory takes in the lower root.
+          *
+          * Handed to `tempDir`, which appends its own uniquifying suffix.
+          *
+          * The counter is zero-padded to a fixed width, and that padding and the sort in
+          * `recoverFromDisk` are one contract, not two independent choices. Recovery replays
+          * orphaned commits in the order they were made by sorting these names lexicographically,
+          * which is numeric order only while the counter inside them has a fixed width: an unpadded
+          * hex counter would sort "a" ahead of "10" and replay two commits touching one target in
+          * the wrong order.
+          */
+        def dirName(instanceSeed: String, seq: Long): String = namePrefix + f"$instanceSeed-$seq%016x"
+
+        /** Whether a name found in the lower root belongs to a commit staging directory.
+          *
+          * The counterpart to `dirName`, and the reason both live here: a scan that stopped matching
+          * what commit writes would find nothing, raise nothing, and silently never replay.
+          */
+        def isStagingDirName(name: String): Boolean = name.startsWith(namePrefix)
 
         extension (self: StagingDir)
             def path: Path                           = self
@@ -2275,12 +2303,19 @@ private[kyo] class OverlayFileSystem[S](
     // Opens `path`, writes `bytes`, and marks the write logically complete, releasing the handle on
     // every exit.
     //
-    // close() is not only resource release. On both backends it deletes the file when finish() was
-    // never called, and that is what enforces the invariant this protocol rests on: a file in a
-    // staging directory exists only if it was finished. applyReplayEntry decides whether a staged
-    // file was already moved by asking whether it exists, and recovery decides a commit completed by
-    // asking whether the marker exists. A path that skips close() therefore leaves an unfinished
-    // file that a later reader treats as a finished one.
+    // close() is not only resource release. It is half of what enforces the invariant this protocol
+    // rests on: a file in a staging directory exists only if it was finished. applyReplayEntry
+    // decides whether a staged file was already moved by asking whether it exists, and recovery
+    // decides a commit completed by asking whether the marker exists, so an unfinished file left
+    // behind is read by both as a finished one.
+    //
+    // The three lowers an overlay can sit on reach that invariant by two different mechanisms, and
+    // a new lower is safe here only if it reaches it by one of them. The two host backends create
+    // the file at openWrite and delete it in close() when finish() was never called, so skipping
+    // close() there is what leaves the unfinished file. FileSystem.inMemory publishes nothing until
+    // finish(): its close() is a no-op and the buffered bytes are simply dropped, so the file never
+    // appears in the first place. Bracketing is written for the first mechanism and is harmless
+    // under the second.
     //
     // close() runs only in the finalizer, never in the body. NodeWriteHandle.close() raises EBADF on
     // a second call where FileChannel.close() is a no-op, so closing in both places is not available
@@ -2445,11 +2480,9 @@ private[kyo] class OverlayFileSystem[S](
         Sync.Unsafe.defer(uniqueSeq.unsafe.getAndIncrement())
             .asInstanceOf[Long < (S & Abort[FileSystemException])]
             .flatMap { seq =>
-                // Zero-padded so lexicographic order is numeric order: recovery sorts these names to
-                // replay orphaned commits in the order they were made, and an unpadded hex counter
-                // would sort "a" after "10".
-                val commitId = f"$instanceSeed-$seq%016x"
-                lower.tempDir(s"kyo-commit-$commitId").map { handle =>
+                // StagingDir owns the name, including the zero-padding that makes recoverFromDisk's
+                // sort a replay in commit order. See StagingDir.dirName.
+                lower.tempDir(StagingDir.dirName(instanceSeed, seq)).map { handle =>
                     val staging = StagingDir(handle.path)
                     // Write the ownership sentinel as the first entry in the staging dir. recoverFromDisk
                     // skips any kyo-commit-* dir that lacks it to prevent misclassifying user directories
@@ -2638,9 +2671,10 @@ private[kyo] class OverlayFileSystem[S](
         lower.list(root).map { entries =>
             // Sorted before replay. The host's list has no ordering guarantee, unlike every other
             // listing surface in this module, so two orphaned commits touching one target would
-            // otherwise recover to a state that depends on the platform and filesystem. The names
-            // carry a zero-padded commit counter, so sorting them is replaying in commit order.
-            val staging = entries.filter(_.name.exists(_.startsWith("kyo-commit-"))).sortBy(_.name.getOrElse(""))
+            // otherwise recover to a state that depends on the platform and filesystem. This sort
+            // and the zero-padding in StagingDir.dirName are one contract: the names carry a
+            // fixed-width commit counter, so sorting them is replaying in commit order.
+            val staging = entries.filter(_.name.exists(StagingDir.isStagingDirName)).sortBy(_.name.getOrElse(""))
             staging.foldLeft[Unit < (S & Sync & Abort[FileSystemException])](()) { (acc, entry) =>
                 acc.andThen(recoverStagingDir(entry, checkSentinel = true))
             }
