@@ -771,12 +771,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         for
             ref      <- TRef.init(0)
             attempts <- AtomicInt.init(0)
-            writer <- Fiber.initUnscoped {
-                Async.foreachDiscard(1 to 5) { i =>
-                    STM.run(ref.set(i)).andThen(Async.sleep(3.millis))
-                }
-            }
-            result <- Abort.run {
+            reader <- Fiber.initUnscoped(Abort.run {
                 STM.run(STM.defaultRetrySchedule) {
                     for
                         _ <- attempts.incrementAndGet
@@ -784,9 +779,13 @@ class STMStressTest extends kyo.test.Test[Any]:
                         _ <- STM.retryIf(v < 5)
                     yield v
                 }
-            }
-            a <- attempts.get
-            _ <- writer.get
+            })
+            // Let the reader re-run against the unsatisfiable invariant (v < 5) at least once,
+            // then publish the satisfying value so it commits within its bounded retry budget.
+            _      <- assertEventually(attempts.get.map(_ >= 1))
+            _      <- STM.run(ref.set(5))
+            result <- reader.get
+            a      <- attempts.get
         yield assert(
             a <= Async.defaultConcurrency * 16 + 1 && (result == Result.succeed(5) || result.isFailure),
             s"attempts=$a result=$result"
@@ -856,14 +855,16 @@ class STMStressTest extends kyo.test.Test[Any]:
 
     "long Async.sleep inside STM body does not livelock concurrent transactions".notJs in {
         for
-            x         <- TRef.init(1)
-            slowDone  <- AtomicInt.init(0)
-            shortDone <- AtomicInt.init(0)
-            other     <- TRef.init(0)
+            x           <- TRef.init(1)
+            slowDone    <- AtomicInt.init(0)
+            slowStarted <- AtomicInt.init(0)
+            shortDone   <- AtomicInt.init(0)
+            other       <- TRef.init(0)
             slows <- Fiber.initUnscoped {
                 Async.fill(2, 2) {
                     STM.run(STM.defaultRetrySchedule.forever) {
                         for
+                            _ <- Sync.defer(slowStarted.incrementAndGet)
                             v <- x.get
                             _ <- Async.sleep(200.millis)
                             _ <- x.set(v * 2)
@@ -871,7 +872,10 @@ class STMStressTest extends kyo.test.Test[Any]:
                     }.andThen(slowDone.incrementAndGet)
                 }
             }
-            _  <- Async.sleep(50.millis)
+            // Wait until both slow transactions have entered their body (and their long in-body
+            // sleep) before launching the short transactions, so the no-livelock property is
+            // exercised with the slow transactions genuinely in flight.
+            _  <- assertEventually(slowStarted.get.map(_ >= 2))
             _  <- Async.fill(50, 50)(STM.run(STM.defaultRetrySchedule.forever)(other.update(_ + 1)).andThen(shortDone.incrementAndGet))
             _  <- Abort.run(Async.timeout(15.seconds)(slows.get))
             sd <- slowDone.get
@@ -1742,13 +1746,10 @@ class STMStressTest extends kyo.test.Test[Any]:
         for
             ref         <- TRef.init(0)
             sideEffects <- AtomicInt.init(0)
-            // The writer must publish 1..5 in order so `ref` monotonically reaches 5;
-            // Kyo.foreachDiscard is sequential (Async.foreachDiscard would run the writes
-            // in parallel and leave `ref` at an arbitrary final value below 5).
-            writer <- Fiber.initUnscoped(Kyo.foreachDiscard(1 to 5)(i =>
-                Async.sleep(5.millis).andThen(STM.run(STM.defaultRetrySchedule.forever)(ref.set(i)))
-            ))
-            result <- Abort.run(Async.timeout(15.seconds) {
+            _           <- STM.run(ref.set(1))
+            // The reader re-runs its Async.sleep-containing body through the schedule while ref
+            // stays below the threshold (the subject: STM.retry from an Async.sleep body).
+            reader <- Fiber.initUnscoped(Abort.run(Async.timeout(15.seconds) {
                 STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         _ <- sideEffects.incrementAndGet
@@ -1757,9 +1758,14 @@ class STMStressTest extends kyo.test.Test[Any]:
                         _ <- STM.retryIf(v < 5)
                     yield v
                 }
-            })
-            se <- sideEffects.get
-            _  <- writer.get
+            }))
+            // Wait until the reader has retried at least twice against the unsatisfiable value,
+            // then publish the satisfying value so it commits (sideEffects >= 2 proves it truly
+            // retried through the schedule rather than reading 5 on its first attempt).
+            _      <- assertEventually(sideEffects.get.map(_ >= 2))
+            _      <- STM.run(ref.set(5))
+            result <- reader.get
+            se     <- sideEffects.get
         yield assert(result == Result.succeed(5) && se >= 2, s"result=$result sideEffects=$se")
     }
 
