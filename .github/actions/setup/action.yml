@@ -89,6 +89,20 @@ runs:
       shell: bash
       run: bash scripts/apt-install.sh liburing-dev
 
+    # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
+    # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
+    # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
+    - name: Install liburing (Linux)
+      if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
+      uses: nick-fields/retry@v4
+      with:
+        max_attempts: 3
+        timeout_minutes: 5
+        retry_wait_seconds: 15
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
+
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
