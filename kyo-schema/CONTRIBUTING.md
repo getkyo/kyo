@@ -12,6 +12,8 @@ kyo-schema is an eight-module family: the format-agnostic core (`kyo-schema`: Sc
 
 The core depends only on `kyo-data` (no `kyo-kernel`, no `kyo-prelude`, no effect runtime), so it is adoptable as a standalone serialization library; each format module adds only the core [build.sbt:697-708].
 
+That effect-free compile scope is what places the JSONL split where it is. The framing half is pure, so it lives inside the family as `kyo.JsonLines` in `kyo-schema-json`, exported as `Json.Lines` [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:34]: `Framer` is an immutable value a caller threads through its own loop, and `decodeAll` / `decodeAllResults` / `encodeAll` are whole-input functions over it. The effectful half (files, byte streams, follow mode) needs `Sync`, `Async`, `Scope`, and `Stream`, so it is deliberately NOT in the family: it ships as the separate `kyo-json` module, which depends on `kyo-schema-json` and `kyo-core` [build.sbt:791-802]. Putting it in `kyo-schema-json` would put `kyo-core` on the classpath of every consumer of the JSON codec, and `kyo-test-snapshot` is a real consumer with no path to `kyo-core`. **Do not add an effectful JSONL entry point to this family**; new parsing rules belong in `JsonLines.Framer`, new drivers belong in `kyo-json`.
+
 Dependency direction is strictly downward: `internal/` may not import from outside `internal/` other than the public types it implements, and the public surface calls into `internal/` exclusively through named entry points; there is no cycle through `internal -> public -> internal` [kyo-schema/shared/src/main/scala/kyo/internal/SchemaDerivedMacro.scala:13-16].
 
 | Layer | Files | Role |
@@ -412,6 +414,8 @@ Two further leaves follow the same template. `AmbiguousVariantMatchException(pat
 
 `UnknownFieldException(path, fieldName)` is a `DecodeException` (NOT a `NavigationException`: the failure is malformed input against the configured read policy, not user navigation) raised on decode when `denyUnknownFields` is set and a wire field is not accounted for after naming, aliases, and transforms; it surfaces as `Result.Failure` [kyo-schema/shared/src/main/scala/kyo/SchemaException.scala:64-69]. See [Serialization customization](#serialization-customization-the-four-field-builders).
 
+`RecordDecodeException(recordIndex, byteOffset, record, cause)` is the one WRAPPING leaf: a `DecodeException` that carries another `DecodeException` as its `cause` and adds the failing record's position within a multi-record input [kyo-schema/shared/src/main/scala/kyo/SchemaException.scala:169-179]. Every other leaf describes a failure inside one document; this one says which document of many failed, so a consumer of a JSONL log can report "record 41 at byte 9302" instead of "the file is malformed". It does NOT derive `CanEqual`, because `cause` is an arbitrary exception and structural comparison of it would be meaningless. `JsonLines.decodeRecord` is the only site that raises it, and it wraps EVERY decode failure, which is what lets `kyo-json` tell a framing `LimitExceededException` apart from a record's own one [kyo-schema-json/shared/src/main/scala/kyo/JsonLines.scala:298-306].
+
 ### The `reader.frame` propagation rule
 
 `Codec.Reader.frame` carries the user's decode call-site Frame; codec implementations MUST pass `using reader.frame` when throwing decode exceptions so the diagnostic points at the caller, not the codec's internal synthesis site [kyo-schema/shared/src/main/scala/kyo/Codec.scala:28-34].
@@ -430,6 +434,7 @@ The boundary between "throw inside, catch at the public edge" and "return `Resul
 |--------------|-------------|---------|
 | Public decode entry point (`Json.decode`, `Protobuf.decode`, `schema.decode`) | `Result[DecodeException, A]` | Wrap the throw-based reader call in `Result.catching[DecodeException]` [kyo-schema-json/shared/src/main/scala/kyo/Json.scala:62-70] [kyo-schema/shared/src/main/scala/kyo/Schema.scala:172-173]. |
 | Internal reader implementation | Throws | Macro-generated and hand-rolled readers throw `MissingFieldException` / `UnknownVariantException` `using reader.frame` [kyo-schema/shared/src/main/scala/kyo/internal/SchemaCodecRuntime.scala:200-205]. |
+| Multi-record decode entry point (`Json.Lines.decodeAllResults`) | `Chunk[Result[DecodeException, A]]` | One `Result` per record, each failure wrapped in `RecordDecodeException` carrying the record's index and byte offset. The strict sibling (`decodeAll` / `decodeAllBytes`) folds the same chunk to `Result[DecodeException, Chunk[A]]`, short-circuiting on the first failure [kyo-schema-json/shared/src/main/scala/kyo/JsonLines.scala:348-393]. |
 | Navigation on `Structure.Path` | `Result[NavigationException, _]` | Navigation never throws across the public boundary; caller branches on a typed result [kyo-schema/shared/src/main/scala/kyo/Structure.scala:603-607]. |
 
 The two examples in one file: `Json.decode` returns `Result[DecodeException, A]` via `Result.catching`, while `JsonReader` inside throws. `Structure.Path.get` returns `Result[NavigationException, Chunk[Value]]` directly without an internal throw bracket.
