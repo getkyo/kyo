@@ -107,6 +107,31 @@ private[kyo] object OverlayFileSystem:
         given CanEqual[UpperTrie, UpperTrie] = CanEqual.derived
     end UpperTrie
 
+    /** The layout of one commit's staging directory.
+      *
+      * The four well-known names live here and nowhere else. The entry name in particular is written
+      * by the staging pass and read back by replay, so a literal duplicated across those two is a
+      * silent mismatch: bytes staged under one name and recovery looking under another.
+      *
+      * Deliberately does not carry the temporary directory handle. Recovery reaches a staging
+      * directory two ways, in process from a handle and after a restart from a bare path found by
+      * scanning, with no handle in existence anywhere. Requiring a handle would make the disk scan
+      * path unrepresentable.
+      */
+    opaque type StagingDir = Path
+
+    object StagingDir:
+        def apply(path: Path): StagingDir = path
+
+        extension (self: StagingDir)
+            def path: Path                           = self
+            def entry(index: Int)(using Frame): Path = self / s"e$index.dat"
+            def intentLog(using Frame): Path         = self / "intent.kyo"
+            def marker(using Frame): Path            = self / "committed.marker"
+            def sentinel(using Frame): Path          = self / ".kyo-staging"
+        end extension
+    end StagingDir
+
     /** What the overlay saw the first time it looked at a lower path.
       *
       * The read-set exists so commit can tell whether the lower still matches what the staged work
@@ -2288,13 +2313,13 @@ private[kyo] class OverlayFileSystem[S](
     // The index is the entry's position in the plan, and it is the index applyReplayEntry reads
     // back. Both walk the plan the intent log records, so a recovered commit finds each staged
     // file under the name the commit that wrote it used.
-    private def stagePlan(stagingDir: Path, plan: Chunk[ReplayEntry])(using
+    private def stagePlan(staging: StagingDir, plan: Chunk[ReplayEntry])(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException]) =
         plan.zipWithIndex.foldLeft[Unit < (S & Sync & Abort[FileSystemException])](()) { case (acc, (entry, i)) =>
             acc.andThen {
                 entry match
-                    case ReplayEntry.File(_, bytes, _, _) => writeSealed(stagingDir / s"e$i.dat", bytes)
+                    case ReplayEntry.File(_, bytes, _, _) => writeSealed(staging.entry(i), bytes)
                     case _                                => ()
             }
         }
@@ -2303,18 +2328,18 @@ private[kyo] class OverlayFileSystem[S](
     // writeSealed is the completion boundary: without it the file is erased on the way out, so
     // recovery sees no log rather than a torn one. syncDirectory follows the sealed write so the
     // log's dirent is durable after power loss.
-    private def writeIntentLog(stagingDir: Path, plan: Chunk[ReplayEntry])(using
+    private def writeIntentLog(staging: StagingDir, plan: Chunk[ReplayEntry])(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException]) =
-        writeSealed(stagingDir / "intent.kyo", WriteOpLog.encode(plan))
-            .andThen(lower.syncDirectory(stagingDir))
+        writeSealed(staging.intentLog, WriteOpLog.encode(plan))
+            .andThen(lower.syncDirectory(staging.path))
 
     // Writes the zero-byte committed marker. Its existence is the entire signal that a commit
     // completed, which is why it is written through the same seal: a marker that exists without
     // having been finished would report a commit that did not happen.
-    private def writeCommittedMarker(stagingDir: Path)(using Frame): Unit < (S & Sync & Abort[FileSystemException]) =
-        writeSealed(stagingDir / "committed.marker", Span.empty[Byte])
-            .andThen(lower.syncDirectory(stagingDir))
+    private def writeCommittedMarker(staging: StagingDir)(using Frame): Unit < (S & Sync & Abort[FileSystemException]) =
+        writeSealed(staging.marker, Span.empty[Byte])
+            .andThen(lower.syncDirectory(staging.path))
 
     // Apply one plan entry during the commit apply phase. File entries move atomically from their
     // staged copy to the final lower path (POSIX rename on host; CAS on in-memory). Each atomic
@@ -2323,7 +2348,7 @@ private[kyo] class OverlayFileSystem[S](
     //
     // `idempotent` marks the recovery path: a staged file may already have been moved into place,
     // so its absence means the step is done rather than that the commit is broken.
-    private def applyReplayEntry(stagingDir: Path, i: Int, entry: ReplayEntry, idempotent: Boolean)(using
+    private def applyReplayEntry(staging: StagingDir, i: Int, entry: ReplayEntry, idempotent: Boolean)(using
         Frame
     ): Unit < (S & Abort[FileSystemException]) =
         entry match
@@ -2344,7 +2369,7 @@ private[kyo] class OverlayFileSystem[S](
                 clear.andThen(lower.mkDir(target))
             case ReplayEntry.File(parts, _, _, mtime) =>
                 val target = pathFrom(parts)
-                val staged = stagingDir / s"e$i.dat"
+                val staged = staging.entry(i)
                 val materialize =
                     if idempotent then
                         lower.exists(staged).flatMap(has => if has then moveInto(staged, target) else ())
@@ -2376,18 +2401,18 @@ private[kyo] class OverlayFileSystem[S](
     // per-entry hook; (4) restamp staged directory timestamps; (5) write committed.marker. Each
     // crash hook is a test-injection point: recovery tests set the hook to throw, then call
     // recover() to verify resumption.
-    private def applyResolved(stagingDir: Path, plan: Chunk[ReplayEntry])(using
+    private def applyResolved(staging: StagingDir, plan: Chunk[ReplayEntry])(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException]) =
         val n = plan.size
-        stagePlan(stagingDir, plan).andThen {
+        stagePlan(staging, plan).andThen {
             runHook(afterStageHook).andThen { // crash point 1
-                writeIntentLog(stagingDir, plan).andThen {
+                writeIntentLog(staging, plan).andThen {
                     runHook(afterIntentLogHook).andThen { // crash point 2
                         plan.zipWithIndex
                             .foldLeft[Unit < (S & Abort[FileSystemException])](()) { case (acc, (entry, i)) =>
                                 acc.andThen {
-                                    applyReplayEntry(stagingDir, i, entry, idempotent = false).andThen {
+                                    applyReplayEntry(staging, i, entry, idempotent = false).andThen {
                                         runHookKN(afterEntryApplyHook, i + 1, n) // crash point 3
                                     }
                                 }
@@ -2402,7 +2427,7 @@ private[kyo] class OverlayFileSystem[S](
                                         // That held only on the success path until the write was
                                         // bracketed. The afterMarkerHook fires in withCommit after
                                         // applyResolved returns.
-                                        writeCommittedMarker(stagingDir)
+                                        writeCommittedMarker(staging)
                                     }
                                 }
                             }
@@ -2425,12 +2450,13 @@ private[kyo] class OverlayFileSystem[S](
                 // would sort "a" after "10".
                 val commitId = f"$instanceSeed-$seq%016x"
                 lower.tempDir(s"kyo-commit-$commitId").map { handle =>
+                    val staging = StagingDir(handle.path)
                     // Write the ownership sentinel as the first entry in the staging dir. recoverFromDisk
                     // skips any kyo-commit-* dir that lacks it to prevent misclassifying user directories
                     // as orphaned staging dirs. A crash between staging dir creation and sentinel write
                     // leaks an empty dir; disk-scan skips it (no sentinel). Accepted trade.
                     lower.writeBytes(
-                        handle.path / ".kyo-staging",
+                        staging.sentinel,
                         Span.from(Array.empty[Byte]),
                         Path.WriteOptions(createFolders = false)
                     ).andThen {
@@ -2442,7 +2468,7 @@ private[kyo] class OverlayFileSystem[S](
                             remember.andThen(lower.syncDirectory(pathFrom(handle.path.parts.dropRight(1))))
                         persistParent
                             .andThen {
-                                applyResolved(handle.path, plan).andThen {
+                                applyResolved(staging, plan).andThen {
                                     runHook(afterMarkerHook).andThen { // crash point 6
                                         // Committed marker written; safe to remove staging dir.
                                         // Unsafe: clears handle reference and removes the staging directory.
@@ -2529,25 +2555,29 @@ private[kyo] class OverlayFileSystem[S](
     private def recoverStagingDir(stagingDir: Path, checkSentinel: Boolean = false)(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException]) =
+        val staging = StagingDir(stagingDir)
         if !checkSentinel then recoverStagingDirImpl(stagingDir)
         else
-            lower.exists(stagingDir / ".kyo-staging").map { hasSentinel =>
+            lower.exists(staging.sentinel).map { hasSentinel =>
                 if !hasSentinel then () // not kyo-owned; skip to protect user directories
                 else recoverStagingDirImpl(stagingDir)
             }
+        end if
+    end recoverStagingDir
 
     private def recoverStagingDirImpl(stagingDir: Path)(using Frame): Unit < (S & Sync & Abort[FileSystemException]) =
-        val logPath = stagingDir / "intent.kyo"
+        val staging = StagingDir(stagingDir)
+        val logPath = staging.intentLog
         lower.exists(logPath).map { hasLog =>
             if !hasLog then
                 // Staging dir exists but no intent log was written (crash before log write).
                 // The commit was never durable; remove the orphaned staging dir and treat as clean.
-                lower.removeAll(stagingDir)
+                lower.removeAll(staging.path)
             else
-                lower.exists(stagingDir / "committed.marker").map { hasMarker =>
+                lower.exists(staging.marker).map { hasMarker =>
                     if hasMarker then
                         // Committed marker present; the commit was fully applied. Cleanup only.
-                        lower.removeAll(stagingDir)
+                        lower.removeAll(staging.path)
                     else
                         lower.readBytes(logPath).map { logBytes =>
                             WriteOpLog.decode(logPath, logBytes) match
@@ -2555,17 +2585,17 @@ private[kyo] class OverlayFileSystem[S](
                                     // Torn or CRC-failed log: crash artifact from an incomplete
                                     // intent-log write (finish() never called). The commit was
                                     // never durable; discard the staging dir and treat as clean.
-                                    lower.removeAll(stagingDir)
+                                    lower.removeAll(staging.path)
                                 case Result.Success(Present(plan)) =>
                                     plan.zipWithIndex
                                         .foldLeft[Unit < (S & Sync & Abort[FileSystemException])](()) {
                                             case (acc, (entry, i)) =>
-                                                acc.andThen(applyReplayEntry(stagingDir, i, entry, idempotent = true))
+                                                acc.andThen(applyReplayEntry(staging, i, entry, idempotent = true))
                                         }
                                         .andThen {
                                             restampDirectories(plan).andThen {
-                                                writeCommittedMarker(stagingDir).andThen {
-                                                    lower.removeAll(stagingDir)
+                                                writeCommittedMarker(staging).andThen {
+                                                    lower.removeAll(staging.path)
                                                 }
                                             }
                                         }
