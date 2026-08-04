@@ -57,18 +57,21 @@ class RaceZipTest extends CompatTest:
             case other                 => fail(s"expected Failure, got: $other")
         }
     }
-    "zip runs in parallel (timing canary)" in run {
-        // Both legs sleep ~100ms; concurrent execution should keep elapsed
-        // well under 5s on any backend (5s upper bound is loose to tolerate
-        // shared CI runners). The canary catches obviously sequential
-        // implementations. We measure at the test driver via System.nanoTime
-        // because CIO does not expose `flatMap` through the opaque alias.
-        val a     = CIO.delay(100.millis)(CIO.defer { 1 })
-        val b     = CIO.delay(100.millis)(CIO.defer { 2 })
-        val start = java.lang.System.nanoTime()
-        CIO.zip(a, b).map { tup =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-            assert(tup == ((1, 2)) && elapsed < 5_000L, s"tup=$tup elapsed=$elapsed ms (parallelism canary)")
+    "zip runs in parallel (peak-concurrency canary)" in run {
+        // Parallelism is an overlap, not a duration: each leg marks itself active, holds briefly,
+        // then leaves; a peak of 2 means both legs were active at once. A sequential zip would
+        // peak at 1. (The former elapsed < 5s bound could not even distinguish the two - a
+        // sequential run of two 100ms legs is ~200ms, far under 5s.)
+        val active = new AtomicInteger(0)
+        val peak   = new AtomicInteger(0)
+        def leg(v: Int): CIO[Int] =
+            CIO.defer {
+                val cur = active.incrementAndGet()
+                peak.updateAndGet(_ max cur)
+                ()
+            }.flatMap(_ => CIO.delay(100.millis)(CIO.defer { active.decrementAndGet(); v }))
+        CIO.zip(leg(1), leg(2)).map { tup =>
+            assert(tup == ((1, 2)) && peak.get() == 2, s"tup=$tup peak=${peak.get()}")
         }
     }
     "zip arity 4 returns 4-tuple" in run {

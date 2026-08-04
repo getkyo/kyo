@@ -72,13 +72,20 @@ class MeterTest extends CompatTest:
         }
     }
     "concurrent runs respect the permit limit" in run {
-        // Meter(2) + 4 concurrent runs that each sleep 100ms: total elapsed
-        // must be at least 200ms (two batches of two), but well under 5s.
-        val ctr = new AtomicInteger(0)
+        // Meter(2) + 4 runs: the permit limit shows up as concurrency, not elapsed. Each run
+        // marks itself active while holding the permit; the peak active count must be exactly 2 -
+        // never 3+ (the limit holds) and reaching 2 (the limit is actually engaged, not serialised
+        // to 1). The former `elapsed < 5s` bound verified neither and could not tell 2 from 4.
+        val ctr    = new AtomicInteger(0)
+        val active = new AtomicInteger(0)
+        val peak   = new AtomicInteger(0)
         def one: CIO[Int] =
-            CIO.sleep(100.millis).flatMap { _ =>
-                CIO.defer { ctr.incrementAndGet() }
-            }
+            CIO.defer {
+                val cur = active.incrementAndGet()
+                peak.updateAndGet(_ max cur)
+                ()
+            }.flatMap(_ => CIO.sleep(100.millis))
+                .flatMap(_ => CIO.defer { active.decrementAndGet(); ctr.incrementAndGet() })
         val c =
             CMeter.init(2).flatMap { m =>
                 val r1: CIO[Int] = m.run(one)
@@ -87,12 +94,10 @@ class MeterTest extends CompatTest:
                 val r4: CIO[Int] = m.run(one)
                 CIO.zip(r1, r2, r3, r4)
             }
-        val start = java.lang.System.nanoTime()
         c.map { case (a, b, d, e) =>
-            val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
             assert(
-                Set(a, b, d, e) == Set(1, 2, 3, 4) && elapsed < 5_000L,
-                s"results=${(a, b, d, e)} elapsed=$elapsed ms"
+                Set(a, b, d, e) == Set(1, 2, 3, 4) && peak.get() == 2,
+                s"results=${(a, b, d, e)} peak=${peak.get()}"
             )
         }
     }
