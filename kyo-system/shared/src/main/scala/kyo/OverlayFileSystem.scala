@@ -2306,17 +2306,16 @@ private[kyo] class OverlayFileSystem[S](
             }
         }
 
-    // Stage file content for every plan entry that carries bytes. Writes each as "e<i>.dat"
-    // inside stagingDir via the durable write path so staged bytes survive power loss.
-    // Directory entries and whiteouts have no staged file.
+    // Stage file content for every plan entry that carries bytes, under the name its index gives it.
     //
-    // The index is the entry's position in the plan, and it is the index applyReplayEntry reads
-    // back. Both walk the plan the intent log records, so a recovered commit finds each staged
-    // file under the name the commit that wrote it used.
-    private def stagePlan(staging: StagingDir, plan: Chunk[ReplayEntry])(using
+    // The index arrives from the caller rather than being derived here, so the staging pass and the
+    // apply pass cannot disagree about it. StagingDir.entry fixes the name; this fixes the index.
+    // Together they are the whole of a staged file's identity, and both halves now come from one
+    // value.
+    private def stagePlan(staging: StagingDir, indexed: Chunk[(ReplayEntry, Int)])(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException]) =
-        plan.zipWithIndex.foldLeft[Unit < (S & Sync & Abort[FileSystemException])](()) { case (acc, (entry, i)) =>
+        indexed.foldLeft[Unit < (S & Sync & Abort[FileSystemException])](()) { case (acc, (entry, i)) =>
             acc.andThen {
                 entry match
                     case ReplayEntry.File(_, bytes, _, _) => writeSealed(staging.entry(i), bytes)
@@ -2404,12 +2403,13 @@ private[kyo] class OverlayFileSystem[S](
     private def applyResolved(staging: StagingDir, plan: Chunk[ReplayEntry])(using
         Frame
     ): Unit < (S & Sync & Abort[FileSystemException]) =
-        val n = plan.size
-        stagePlan(staging, plan).andThen {
+        val n       = plan.size
+        val indexed = plan.zipWithIndex
+        stagePlan(staging, indexed).andThen {
             runHook(afterStageHook).andThen { // crash point 1
                 writeIntentLog(staging, plan).andThen {
                     runHook(afterIntentLogHook).andThen { // crash point 2
-                        plan.zipWithIndex
+                        indexed
                             .foldLeft[Unit < (S & Abort[FileSystemException])](()) { case (acc, (entry, i)) =>
                                 acc.andThen {
                                     applyReplayEntry(staging, i, entry, idempotent = false).andThen {
@@ -2587,6 +2587,10 @@ private[kyo] class OverlayFileSystem[S](
                                     // never durable; discard the staging dir and treat as clean.
                                     lower.removeAll(staging.path)
                                 case Result.Success(Present(plan)) =>
+                                    // Indexed here rather than shared with the commit that wrote
+                                    // this log, because after a restart the decoded log is the only
+                                    // source. The encoder preserves order, so the positions match
+                                    // the ones the staging pass used.
                                     plan.zipWithIndex
                                         .foldLeft[Unit < (S & Sync & Abort[FileSystemException])](()) {
                                             case (acc, (entry, i)) =>
