@@ -2837,4 +2837,227 @@ class PathTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // =========================================================================
+    // Unsafe.openWrite: the streaming write handle
+    //
+    // Every promise openWrite's scaladoc makes is pinned here: that the handle
+    // streams bytes and strings, that `append = true` adds to what the file
+    // already holds, that `append = false` starts it empty, and that
+    // `createFolders` decides whether a missing parent is created or is an error.
+    //
+    // The multi-write cases carry the weight. A handle that writes every chunk at
+    // a position it never advances, or that advances one it started at zero over a
+    // file opened to append, still produces the right bytes for a single write to
+    // an empty file, so only a second write or existing content tells the two
+    // apart. Whether an operating system honors an explicit write position on a
+    // descriptor opened to append also varies (macOS honors it, Linux appends
+    // regardless), so a handle that carries its own position is right on one
+    // platform and destroys data on another.
+    // =========================================================================
+
+    private def utf8(s: String): Chunk[Byte] = Chunk.from(s.getBytes(StandardCharsets.UTF_8))
+
+    "openWrite with append true adds to content the file already holds, across several writes" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-append")
+            file = dir / "log.txt"
+            _ <- file.write("AAAAAAAAAA")
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("BB")).isSuccess)
+                    assert(handle.writeBytes(utf8("CC")).isSuccess)
+                    assert(handle.writeString("DD", StandardCharsets.UTF_8).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "AAAAAAAAAABBCCDD")
+        end for
+    }
+
+    "openWrite with append true creates a missing file and accumulates across writes" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-append-create")
+            file = dir / "created.txt"
+            existedBefore <- file.exists
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("one")).isSuccess)
+                    assert(handle.writeBytes(utf8("two")).isSuccess)
+                    assert(handle.writeBytes(utf8("three")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield
+            assert(!existedBefore)
+            assert(content == "onetwothree")
+        end for
+    }
+
+    "openWrite with append true resumes at the end after the file is reopened" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-append-reopen")
+            file = dir / "rounds.txt"
+            _ =
+                (0 until 4).foreach { round =>
+                    val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                    try
+                        assert(handle.writeBytes(utf8(s"r$round-")).isSuccess)
+                        assert(handle.writeBytes(utf8(s"$round;")).isSuccess)
+                    finally handle.close()
+                    end try
+                }
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "r0-0;r1-1;r2-2;r3-3;")
+        end for
+    }
+
+    "openWrite with append false empties the file before the first write" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-truncate")
+            file = dir / "replaced.txt"
+            _ <- file.write("original content that is much longer than the replacement")
+            _ =
+                val handle = file.unsafe.openWrite(append = false, createFolders = false).getOrThrow
+                try assert(handle.writeBytes(utf8("new")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "new")
+        end for
+    }
+
+    "openWrite with append false writes successive chunks in order rather than over each other" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-order")
+            file = dir / "ordered.txt"
+            _ <- file.write("zzzzzzzzzzzzzzzzzzzz")
+            _ =
+                val handle = file.unsafe.openWrite(append = false, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("ab")).isSuccess)
+                    assert(handle.writeBytes(utf8("cd")).isSuccess)
+                    assert(handle.writeString("ef", StandardCharsets.UTF_8).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "abcdef")
+        end for
+    }
+
+    "openWrite keeps its position accounting exact over many chunks" in {
+        import AllowUnsafe.embrace.danger
+        val chunks   = 128
+        val chunkLen = 64
+        val expected = (0 until chunks).map(i => (0 until chunkLen).map(_ => ('a' + (i % 26)).toChar).mkString).mkString
+        for
+            dir <- Path.tempDir("kyo-openwrite-chunks")
+            file = dir / "chunks.bin"
+            // Existing content the appending handle must land after, so a position that starts at
+            // zero shows up as a shortfall in `size` as well as in the bytes.
+            preamble = "PREAMBLE"
+            _ <- file.write(preamble)
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    (0 until chunks).foreach { i =>
+                        val text = (0 until chunkLen).map(_ => ('a' + (i % 26)).toChar).mkString
+                        assert(handle.writeBytes(utf8(text)).isSuccess)
+                    }
+                finally handle.close()
+                end try
+            size    <- file.size
+            content <- file.read
+            _       <- dir.removeAll
+        yield
+            assert(size == (preamble.length + chunks * chunkLen).toLong)
+            assert(content == preamble + expected)
+        end for
+    }
+
+    "openWrite writing an empty chunk leaves the file unchanged and the handle usable" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-empty")
+            file = dir / "empty-write.txt"
+            _ <- file.write("head")
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = false).getOrThrow
+                try
+                    assert(handle.writeBytes(Chunk.empty[Byte]).isSuccess)
+                    assert(handle.writeBytes(utf8("tail")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "headtail")
+        end for
+    }
+
+    "openWrite writes a string in the charset it is given" in {
+        import AllowUnsafe.embrace.danger
+        val text = "café"
+        for
+            dir <- Path.tempDir("kyo-openwrite-charset")
+            latin = dir / "latin1.txt"
+            _ =
+                val handle = latin.unsafe.openWrite(append = false, createFolders = false).getOrThrow
+                try assert(handle.writeString(text, StandardCharsets.ISO_8859_1).isSuccess)
+                finally handle.close()
+                end try
+            bytes <- latin.readBytes
+            _     <- dir.removeAll
+        yield
+            // ISO-8859-1 encodes é as one byte; UTF-8 would have produced five bytes, not four.
+            assert(bytes.toArray.toSeq == text.getBytes(StandardCharsets.ISO_8859_1).toSeq)
+            assert(bytes.size == 4)
+        end for
+    }
+
+    "openWrite with createFolders true creates the missing parent directories" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-create-folders")
+            file = dir / "a" / "b" / "deep.txt"
+            _ =
+                val handle = file.unsafe.openWrite(append = true, createFolders = true).getOrThrow
+                try
+                    assert(handle.writeBytes(utf8("deep")).isSuccess)
+                    assert(handle.writeBytes(utf8("-file")).isSuccess)
+                finally handle.close()
+                end try
+            content <- file.read
+            _       <- dir.removeAll
+        yield assert(content == "deep-file")
+        end for
+    }
+
+    "openWrite with createFolders false fails with FileNotFoundException when the parent is missing" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-openwrite-no-folders")
+            file   = dir / "missing" / "unreachable.txt"
+            result = file.unsafe.openWrite(append = true, createFolders = false)
+            exists <- file.exists
+            _      <- dir.removeAll
+        yield
+            assert(!exists)
+            result match
+                case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
+                case other                                    => fail(s"Expected FileNotFoundException, got $other")
+            end match
+        end for
+    }
+
 end PathTest
