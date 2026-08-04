@@ -1462,7 +1462,10 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 }
                 withWsServer(handler) { url =>
                     HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/srv-close") { ws =>
-                        ws.close(4321, "client-bye").andThen(Async.sleep(300.millis))
+                        // Keep the client connection open until the server has actually observed
+                        // the close (it completes `observed` from its closeReason), so the close
+                        // frame is delivered before teardown - the real event, not a fixed settle.
+                        ws.close(4321, "client-bye").andThen(observed.get.unit)
                     }.andThen(observed.get).map { snapshot =>
                         discard(assert(snapshot.exists(_._1 == 4321), s"expected 4321, got $snapshot"))
                     }
