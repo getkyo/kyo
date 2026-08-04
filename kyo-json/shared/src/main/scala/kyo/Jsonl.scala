@@ -121,6 +121,57 @@ object Jsonl:
                 }
             }
 
+    /** Reads a JSONL file as a stream of decoded values, aborting on the first undecodable record.
+      *
+      * The file handle is registered with the enclosing `Scope` and closed when that scope ends.
+      *
+      * @param path
+      *   the file to read
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxLineBytes
+      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @return
+      *   a stream of decoded values, aborting with the first decode or framing failure
+      */
+    def read[A](
+        path: Path,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+    )(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Stream[A, Scope & Sync & Abort[FileReadException | DecodeException]] =
+        path.readBytesStream.into(pipe[A](maxDepth, maxCollectionSize, maxLineBytes))
+
+    /** Reads a JSONL file as a stream of per-record `Result`s, surviving undecodable records.
+      *
+      * The file handle is registered with the enclosing `Scope` and closed when that scope ends.
+      *
+      * @param path
+      *   the file to read
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxLineBytes
+      *   the largest record the framer will accept, in bytes (default `Json.Lines.DefaultMaxLineBytes`)
+      * @return
+      *   a stream of per-record results
+      */
+    def readResults[A](
+        path: Path,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxLineBytes: Int = Json.Lines.DefaultMaxLineBytes
+    )(using
+        Json,
+        Schema[A],
+        Tag[Emit[Chunk[Result[DecodeException, A]]]],
+        Frame
+    ): Stream[Result[DecodeException, A], Scope & Sync & Abort[FileReadException]] =
+        path.readBytesStream.into(pipeResults[A](maxDepth, maxCollectionSize, maxLineBytes))
+
     /** Emits `values` and then continues with `next`, skipping the emission when `values` is empty.
       *
       * A fed chunk that completes no record is the common case whenever chunks are smaller than records, and a byte-at-a-time source hits
