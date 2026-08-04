@@ -14,9 +14,9 @@ import scala.annotation.tailrec
   * Strict entry points abort on the first undecodable record. The `Results` variants emit one `Result` per record instead, which is what
   * heterogeneous or partially-written logs need.
   *
-  * Arbitrary byte sources need no dedicated entry point:
+  * Arbitrary byte sources need no dedicated entry point, because any `Stream[Byte, S]` is already the input:
   * {{{
-  * Stream.init(bytes).into(Jsonl.pipe[Event]())
+  * Stream.fromInputStream(is).into(Jsonl.pipe[Event]())
   * }}}
   *
   * @see
@@ -26,8 +26,14 @@ object Jsonl:
 
     /** A pipe from JSONL bytes to decoded values, aborting on the first undecodable record.
       *
-      * Records framed before a record-size breach are emitted before the abort, so a consumer that has already seen them keeps them: a
-      * breach ends framing but never retracts a record that was already complete.
+      * Every record before the failing one is emitted, and only then does the abort happen. This holds for both ways a chunk can fail, an
+      * undecodable record and a record-size breach, so a consumer that has already seen a record keeps it.
+      *
+      * Emitting the prefix is what makes the output before an abort a function of the data alone. Folding a chunk's records to one
+      * `Result` and aborting before emitting would instead discard the records that preceded the bad one within the same chunk while
+      * keeping those from earlier chunks, which makes how much a consumer receives depend on the upstream source's buffer size: a
+      * 1000-record input failing at record 500 would deliver 499 records to a `foreach` when fed a byte at a time and none of them when
+      * fed in one chunk. Chunking is an upstream detail and must not be observable here.
       *
       * @param maxDepth
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
@@ -54,15 +60,21 @@ object Jsonl:
                                     Emit.valueWith(Chunk(value))(Loop.done)
                                 }
                     case Present(chunk) =>
-                        val framed = framer.feed(Span.from(chunk))
-                        Abort.get(foldResults(decodeRecords[A](framed.records, maxDepth, maxCollectionSize))).map { values =>
-                            framed.error match
-                                case Absent         => emitNonEmpty(values)(Loop.continue(framed.framer))
-                                case Present(error) =>
-                                    // No record boundary was found, so `framed.framer` must not be used again.
-                                    // The records completed before the breach still stand and are emitted first.
-                                    emitNonEmpty(values)(Abort.fail(error))
-                        }
+                        val framed            = framer.feed(Span.from(chunk))
+                        val (values, failure) = decodePrefix[A](framed.records, maxDepth, maxCollectionSize)
+                        failure match
+                            case Present(error) =>
+                                // A record inside this chunk failed to decode. Everything decoded before it is
+                                // emitted first, so the prefix a consumer sees does not depend on the chunking.
+                                emitNonEmpty(values)(Abort.error(error))
+                            case Absent =>
+                                framed.error match
+                                    case Absent         => emitNonEmpty(values)(Loop.continue(framed.framer))
+                                    case Present(error) =>
+                                        // No record boundary was found, so `framed.framer` must not be used again.
+                                        // The records completed before the breach still stand and are emitted first.
+                                        emitNonEmpty(values)(Abort.fail(error))
+                        end match
                 }
             }
 
@@ -130,21 +142,29 @@ object Jsonl:
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
         records.map(record => Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize))
 
-    /** Folds a chunk of per-record results into a single result, short-circuiting on the first failure or panic.
+    /** Decodes records up to the first failure, returning the values decoded before it and that failure.
       *
-      * `JsonLines` keeps an equivalent fold private to its own file, so the strict pipe carries this local copy rather than widening that
-      * one into public API for a combinator neither module wants to publish.
+      * The strict pipe needs the prefix and the failure separately, because it emits the prefix and only then aborts. Folding to a single
+      * `Result` instead, the shape `JsonLines.decodeAllBytes` uses for whole-input decoding, would throw the prefix away, and a pipe that
+      * throws it away leaks the upstream chunk size into what a consumer receives.
+      *
+      * The failure is carried as a `Result.Error`, which covers `Failure` and `Panic`, and it reaches the caller's `Abort.error`
+      * unchanged. A panic therefore stays a panic and is never rewritten into a decode failure.
       */
-    private def foldResults[E, A](results: Chunk[Result[E, A]]): Result[E, Chunk[A]] =
+    private def decodePrefix[A](
+        records: Chunk[Json.Lines.Record],
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using Json, Schema[A], Frame): (Chunk[A], Maybe[Result.Error[DecodeException]]) =
         @tailrec
-        def loop(i: Int, acc: Chunk[A]): Result[E, Chunk[A]] =
-            if i >= results.size then Result.succeed(acc)
+        def loop(i: Int, acc: Chunk[A]): (Chunk[A], Maybe[Result.Error[DecodeException]]) =
+            if i >= records.size then (acc, Absent)
             else
-                results(i) match
-                    case Result.Success(a) => loop(i + 1, acc :+ a)
-                    case Result.Failure(e) => Result.fail(e)
-                    case Result.Panic(ex)  => Result.panic(ex)
+                Json.Lines.decodeRecord[A](records(i), maxDepth, maxCollectionSize) match
+                    case Result.Success(value)                               => loop(i + 1, acc :+ value)
+                    case failure: Result.Failure[DecodeException] @unchecked => (acc, Present(failure))
+                    case panic: Result.Panic                                 => (acc, Present(panic))
         loop(0, Chunk.empty[A])
-    end foldResults
+    end decodePrefix
 
 end Jsonl
