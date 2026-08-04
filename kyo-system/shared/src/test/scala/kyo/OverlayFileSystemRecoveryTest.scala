@@ -586,6 +586,39 @@ class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
+    "host: a directory's staged timestamp survives a commit replayed entirely from the intent log" in {
+        // Recovery replays from the log alone, with no staged state to consult, so a timestamp that
+        // reaches the lower on the in-process path proves nothing about the recovered one. The crash
+        // is at afterIntentLogHook, before any entry is applied, so everything the lower ends up
+        // holding came back out of the log.
+        //
+        // This is the only case that puts a directory's explicit timestamp through the version 3
+        // encoder and decoder. Without it the Present branch of that field is written by the commit
+        // path and read by nothing.
+        withHostTestOverlay { (ov, lower, root) =>
+            val d     = root / "staged-mtime-dir"
+            val stamp = 946684800000L
+            Path.runWith(ov)(d.mkDir.andThen(d.setLastModified(stamp))).andThen {
+                Sync.Unsafe.defer {
+                    ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log write (directory mtime)")
+                }.andThen {
+                    attemptCrash(ov.commit).andThen {
+                        Sync.Unsafe.defer { ov.afterIntentLogHook = () => () }.andThen {
+                            ov.recover().andThen {
+                                Path.runWith(lower)(d.stat).map { live =>
+                                    assert(
+                                        live.lastModifiedMs == stamp,
+                                        s"the recovered directory is dated ${live.lastModifiedMs}, not the staged $stamp"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "in-memory: copy metadata survives mid-apply recovery and an idempotent retry" in {
         withInMemoryTestOverlay { (ov, lower) =>
             val source      = Path("copy-stat-source.txt")
