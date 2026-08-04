@@ -195,16 +195,17 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
                         .andThen(latchPub.release).andThen(Async.never)
                 )))
                 _ <- latchPub.await
-                _ <- Async.sleep(50.millis)
                 _ <- publisherFiber.interrupt.unit
-                // Publisher scope closure should propagate cancellation to subscribers.
-                // Under heavy CI load the propagation can be slow, so interrupt
-                // subscriber fibers directly as a safety net.
-                _ <- Async.sleep(1.second)
-                _ <- fiber1.interrupt.unit
-                _ <- fiber2.interrupt.unit
-                _ <- fiber3.interrupt.unit
-                _ <- fiber4.interrupt.unit
+                // Interrupting the publisher fiber closes its scope, which must propagate
+                // cancellation to every subscriber; their run fibers then complete on their own.
+                // Awaiting each fiber's completion is the real end-of-propagation event, and it
+                // is what this test is actually about, so there is no settle sleep and no
+                // self-defeating manual interrupt of the subscribers (which would end them
+                // regardless of whether propagation worked).
+                _ <- fiber1.getResult
+                _ <- fiber2.getResult
+                _ <- fiber3.getResult
+                _ <- fiber4.getResult
             yield succeed("publisher interruption ended all subscribed parties without hanging")
             end for
         }
