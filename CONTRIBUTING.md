@@ -118,6 +118,61 @@ You can also add these lines to your `.bashrc` or `.zshrc` file for persistent s
 
 ### How to Build Locally
 
+#### Windows toolchains
+
+Builds that reach a kyo-ffi module need a C compiler. The FFI plugin reads the
+`CC` environment variable and otherwise invokes `cc`. If GCC is installed on
+Windows as `gcc.exe` but no `cc.exe` alias exists, set `CC` before starting sbt:
+
+```powershell
+$env:CC = "gcc"
+```
+
+Some modules also use MSVC. Install the Visual Studio Build Tools C++ workload,
+then run the build from a shell initialized by `VsDevCmd.bat` so `cl.exe`,
+`link.exe`, `INCLUDE`, and `LIB` are available. For an x86_64 build:
+
+```powershell
+cmd.exe /k '"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=amd64'
+```
+
+This opens an initialized Command Prompt. Run `powershell` inside it if the
+commands below are being entered in PowerShell.
+
+Confirm the initialized shell sees both tools with `where.exe cl` and
+`where.exe link`. See [kyo-aeron's contributor guide](kyo-aeron/CONTRIBUTING.md#staging-libaeron)
+for that module's required Windows staging step.
+
+On Windows ARM64, install the native ARM64 Podman package explicitly. Scoop can
+otherwise select a package for a different architecture:
+
+```powershell
+scoop install -a arm64 podman
+podman machine init
+podman machine start
+podman info
+```
+
+Run `podman machine init` only when creating the machine. Start an existing
+machine with `podman machine start`.
+
+#### Local build runner
+
+On native Windows, invoke POSIX build scripts through Git Bash. Use the direct
+environment for diff-selected verification:
+
+```powershell
+& $env:SHELL -lc 'scripts/build.sh --env direct testDiff JVM JS'
+```
+
+Do not use `--env podman testDiff`. The container receives a clean source
+archive without `.git`, so the diff selector cannot discover the changed
+modules. Use `--env podman test` when a full Linux container run is needed:
+
+```powershell
+& $env:SHELL -lc 'scripts/build.sh --env podman test JVM JS Native'
+```
+
 Run the following commands to build and test the project locally:
 ```sh
 sbt '+kyoJVM/test' # Runs JVM tests
