@@ -434,7 +434,7 @@ framed match
         // inside `next`, which frames the following chunk; `next.finish` closes it at end of input.
         lines.size
     case Json.Lines.Framed.Halted(lines, breach) =>
-        // Only when the pending bytes outgrew maxLineBytes with no newline among them. There is no
+        // Only when the pending bytes outgrew maxLineSize with no newline among them. There is no
         // record boundary to resume at, so framing is over and no framer comes back.
         lines.size
 end match
@@ -442,7 +442,7 @@ end match
 
 Feeding a framer never mutates it: `feed` returns the advanced framer inside `Framed.Continued` and the receiver stays usable. Each `Record` carries `bytes` (its own UTF-8 encoding, terminator removed), `index`, and `byteOffset`, and `text` decodes those bytes. Do not compare two records with `==`: `Span` has no structural equality, so the derived `equals` compares `bytes` by reference; compare `text` or `bytes.is(other.bytes)` instead.
 
-`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) bounds a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so it arrives as a `Line.Skipped` among the lines, framing resumes after its newline, and `decodeAllBytesResults` reports one `LimitExceededException` failure in its place and decodes the records after it. An oversized residual has no boundary to skip to, so `feed` returns `Framed.Halted` and `decodeAllBytesResults` appends that breach as its last element.
+`maxLineSize` (default `Json.Lines.DefaultMaxLineSize`, `16.mib`) is a `ByteSize` ceiling for a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so it arrives as a `Line.Skipped` among the lines, framing resumes after its newline, and `decodeAllBytesResults` reports one `LimitExceededException` failure in its place and decodes the records after it. An oversized residual has no boundary to skip to, so `feed` returns `Framed.Halted` and `decodeAllBytesResults` appends that breach as its last element. Record indices and byte offsets remain numeric positions.
 
 All of the above is pure and takes whole inputs. Reading a JSONL file, decoding an arbitrary byte stream, and following a file that is still being written live in [kyo-json](../kyo-json), whose `Jsonl` entry point drives this same framer under `Sync` and `Async`.
 

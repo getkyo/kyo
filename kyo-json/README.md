@@ -135,7 +135,7 @@ val untilShutdown =
     Scope.run(Jsonl.follow[LogEvent](logFile).takeWhilePure(_.message != "shutdown").run)
 ```
 
-`take`, `takeWhilePure`, and an interrupt of the fiber running the stream are the three ways out. A bare `.run` on a follow stream over a well-formed log waits forever. Two things do end it: `follow` aborts on the first undecodable record or record-size breach, and `followResults`, which survives both of those, ends when the pending bytes outgrow `maxLineBytes` with no newline among them (see [Limits](#limits)).
+`take`, `takeWhilePure`, and an interrupt of the fiber running the stream are the three ways out. A bare `.run` on a follow stream over a well-formed log waits forever. Two things do end it: `follow` aborts on the first undecodable record or record-size breach, and `followResults`, which survives both of those, ends when the pending bytes outgrow `maxLineSize` with no newline among them (see [Limits](#limits)).
 
 `pollDelay` is how long the follower sleeps between polls once it reaches end of file, `100.millis` by default. Raising it trades latency for fewer wakeups:
 
@@ -207,7 +207,7 @@ Both directions are available on every source, so the choice is per call site ra
 | Any `Stream[Byte, S]` | `Jsonl.pipe` | `Jsonl.pipeResults` |
 | A file still being written | `Jsonl.follow` | `Jsonl.followResults` |
 
-> **Caution:** the `Results` variants survive an undecodable record, and they survive a record longer than `maxLineBytes` (the framer's record-size ceiling, covered under [Limits](#limits)) only when that record's newline arrived. A terminated over-long record has a boundary to resume at, so it costs one failure element and framing carries on with the record after it. Pending bytes that outgrow the ceiling with no newline among them have no boundary to skip to: the stream emits every record framed before them, then that single failure element, and then it ends. Consumers that treat a `Results` stream as unbounded need to handle it ending.
+> **Caution:** the `Results` variants survive an undecodable record, and they survive a record larger than `maxLineSize` (the framer's record-size ceiling, covered under [Limits](#limits)) only when that record's newline arrived. A terminated over-long record has a boundary to resume at, so it costs one failure element and framing carries on with the record after it. Pending bytes that outgrow the ceiling with no newline among them have no boundary to skip to: the stream emits every record framed before them, then that single failure element, and then it ends. Consumers that treat a `Results` stream as unbounded need to handle it ending.
 
 ## Writing and appending
 
@@ -244,17 +244,17 @@ A failure part way through leaves the records already written on disk rather tha
 
 Three parameters bound what a decode can cost, and two of them look interchangeable and are not. All three appear on `read`, `readResults`, `pipe`, `pipeResults`, `follow`, and `followResults`, with the same defaults everywhere.
 
-`maxLineBytes` is the framer's record-size ceiling, `Json.Lines.DefaultMaxLineBytes` (16 MiB) by default. It is what keeps a byte stream containing no newline from growing the framer's pending buffer without bound:
+`maxLineSize` is the framer's `ByteSize` record ceiling, `Json.Lines.DefaultMaxLineSize` (`16.mib`) by default. It is what keeps a byte stream containing no newline from growing the framer's pending buffer without bound:
 
 ```scala
-val capped = Jsonl.read[LogEvent](logFile, maxLineBytes = 64 * 1024)
+val capped = Jsonl.read[LogEvent](logFile, maxLineSize = 64.kib)
 ```
 
-The limit counts the record's own bytes, the ones a decoder sees, and never the line terminator: a `'\n'` and any `'\r'` immediately before it are excluded. A maximum-size record therefore occupies `maxLineBytes + 1` bytes on the wire when it ends in `\n`, and `maxLineBytes + 2` when it ends in `\r\n`. A pending partial record is measured the same way, so a record is accepted or rejected identically whether its terminator arrived in the same chunk or a later one.
+The limit counts the record's own bytes, the ones a decoder sees, and never the line terminator: a `'\n'` and any `'\r'` immediately before it are excluded. A record at the ceiling therefore occupies one additional byte on the wire when it ends in `\n`, and two additional bytes when it ends in `\r\n`. A pending partial record is measured the same way, so a record is accepted or rejected identically whether its terminator arrived in the same chunk or a later one.
 
 What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so framing skips it and resumes at the next record: the `Results` variants report one failure for it and carry on. Pending bytes that outgrow the limit with no newline among them have nothing to skip to, and that is the case the `Results` variants end on.
 
-> **Caution:** a strict `maxLineBytes` breach aborts with a bare `LimitExceededException`, not a `RecordDecodeException`. No record was framed, so there is no record to attribute it to. Both are `DecodeException`, so the effect row does not distinguish them, and a handler that matches only on `RecordDecodeException` will miss the framing breach entirely. Match on `DecodeException`, or on both.
+> **Caution:** a strict `maxLineSize` breach aborts with a bare `LimitExceededException`, not a `RecordDecodeException`. No record was framed, so there is no record to attribute it to. Both are `DecodeException`, so the effect row does not distinguish them, and a handler that matches only on `RecordDecodeException` will miss the framing breach entirely. Match on `DecodeException`, or on both.
 
 `maxDepth` and `maxCollectionSize` bound one record's decoding: how deeply objects and arrays may nest, and how many entries a map, set, or array may hold. They default to `Json.DefaultMaxDepth` and `Json.DefaultMaxCollectionSize`:
 
@@ -262,7 +262,7 @@ What a breach costs depends on whether the offending line was terminated. A term
 val guarded = Jsonl.read[LogEvent](logFile, maxDepth = 8, maxCollectionSize = 1000)
 ```
 
-These operate inside one document and say nothing about how long a record may be. A single line of ten million characters passes any `maxDepth`; `maxLineBytes` is the parameter that rejects it. Breaching either one arrives as a `LimitExceededException` wrapped in a `RecordDecodeException.cause`, because the record was framed and only its decoding failed. Its `limit` field names which of the two was applied.
+These operate inside one document and say nothing about how long a record may be. A single line of ten million characters passes any `maxDepth`; `maxLineSize` is the parameter that rejects it. Breaching either one arrives as a `LimitExceededException` wrapped in a `RecordDecodeException.cause`, because the record was framed and only its decoding failed. Its `limit` field names which of the two was applied.
 
 ## Putting it together
 
@@ -272,7 +272,7 @@ A shipper that resumes where it stopped, watches a live log, and copies the erro
 val shipErrors =
     Jsonl.append(
         errorFile,
-        Jsonl.follow[LogEvent](logFile, Path.Origin.Offset(lastOffset), maxLineBytes = 64 * 1024)
+        Jsonl.follow[LogEvent](logFile, Path.Origin.Offset(lastOffset), maxLineSize = 64.kib)
             .filterPure(_.level == "ERROR")
             .take(100)
     )
