@@ -888,7 +888,7 @@ def process(e: Event): Unit < Sync  = ???
 
 `parseEvent` above is hand-rolled because `kyo-core` carries no codec. For typed JSONL/NDJSON decoding, including per-record error recovery and follow mode, use [kyo-json](../kyo-json/README.md)'s `Jsonl`.
 
-`tailBytes` follows a file at the byte level, doing no text decoding and no line splitting. It is the primitive `tail` is built on, and the one to reach for when the content is not text lines. `Path.Origin` says where reading begins:
+`tailBytes` follows a file at the byte level, doing no text decoding and no line splitting. It is `tail`'s sibling over one shared polling loop rather than the layer beneath it, and the one to reach for when the content is not text lines. `Path.Origin` says where reading begins:
 
 ```scala
 import kyo.*

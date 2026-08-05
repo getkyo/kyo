@@ -21,10 +21,13 @@ the classpath.
 `Jsonl` needs `Sync`, `Async`, `Scope`, `Stream`, `Pipe`, `Poll`, and `Path`.
 Putting it in `kyo-schema-json` would put `kyo-core` on the classpath of every
 consumer of the JSON codec. `kyo-test-snapshot` is a real such consumer: it
-depends on `kyo-schema` and all six format modules and has no path to `kyo-core`
-(`build.sbt`, the `kyo-test-snapshot` block). Folding the effectful surface into
-the codec module would give it, and every project like it, a transitive
-dependency on the effect runtime for a feature it does not use.
+depends on `kyo-schema` and all six format modules and declares no
+`dependsOn(kyo-core)`, so nothing it publishes carries the effect runtime
+(`build.sbt`, the `kyo-test-snapshot` block). It does compile against `kyo-core`
+on the JVM, through an `unmanagedClasspath` entry, which is a build-local path
+that produces no published or transitive dependency. Folding the effectful
+surface into the codec module would replace that with a real one, for it and
+every project like it, for a feature they do not use.
 
 So the split runs along the effect boundary, not along the format boundary:
 
@@ -116,10 +119,11 @@ Two related properties follow from the same reasoning and are also tested:
 
 Both defaults are deliberate and they must not be made to agree.
 
-`Path.tailBytes` is the byte-level primitive `Path.tail` is built on, and
-`Path.tail` has always been follow-only: it emits lines appended after the
-stream attached, and nothing that was already in the file. `tailBytes` defaults
-to `Origin.End` to preserve that contract for its caller.
+`Path.tailBytes` is the byte-level view of a followed file, and follow-only is
+what a byte-level tail means: it emits bytes appended after the stream attached,
+and nothing that was already in the file. `Path.tail` is its sibling over one
+private polling loop, not its caller, and passes `Origin.End` explicitly, so
+`tailBytes`'s default answers only for `tailBytes`.
 
 `Jsonl.follow` defaults to `Origin.Start`. Reading a live agent transcript or an
 application log wants every record, not only those written after the reader
@@ -178,32 +182,36 @@ operate inside a single document, and a stream with no record boundary never
 produces a document to apply them to. A follow stream on an attacker-influenced
 or malfunctioning writer is exactly the shape that hits it.
 
-A breach is the one framing failure with nothing to skip to, since no record
-boundary was found for the pending bytes. That drives the error contract on both
-tiers, and the asymmetry is intentional:
+A breach means one of two different things, and the framer's own type says
+which. A terminated line over the ceiling has a known boundary, so framing skips
+it and resumes after its newline: that is a `Json.Lines.Line.Skipped` inside a
+`Json.Lines.Framed.Continued`, and it reaches this module as one failure element
+sitting where the record sat. Pending bytes that outgrow the ceiling with no
+newline among them have nothing to skip to: that is `Json.Lines.Framed.Halted`,
+which carries no framer, and it is the one unrecoverable framing failure. That
+drives the error contract on both tiers, and the asymmetry is intentional:
 
-| Surface | Undecodable record | `maxLineBytes` breach |
-|---|---|---|
-| `pipe`, `read`, `follow` (strict) | emit every value decoded before it, then abort | emit every value framed before it, then abort |
-| `pipeResults`, `readResults`, `followResults` (lenient) | one failure element, stream carries on | emit the records framed before it, then the failure element, then END the stream |
+| Surface | Undecodable record | Terminated over-long record | Oversized residual |
+|---|---|---|---|
+| `pipe`, `read`, `follow` (strict) | emit every value decoded before it, then abort | emit every value framed before it, then abort | emit every value framed before it, then abort |
+| `pipeResults`, `readResults`, `followResults` (lenient) | one failure element, stream carries on | one failure element, stream carries on | emit the records framed before it, then the failure element, then END the stream |
 
-The lenient surfaces recover from a bad record because there is a next record to
-resume at. They cannot recover from a breach, and staying open would leave a
-consumer waiting on a stream that can never emit again, so they end instead.
-`endAtBreach` does that truncation one layer out from `Path.follow`, because
-that loop's step is pure and a pure step cannot end a stream. The composition
-can: truncating the emitted stream leaves the framer inside the loop untouched,
-so the rewind that rebuilds it is unaffected, and discarding the continuation is
-what puts the unusable post-breach framer out of reach.
+The lenient surfaces recover wherever there is a next record to resume at, which
+covers a bad record and a terminated over-long one alike. That equivalence is
+the point on a follow stream: ending on a skippable breach would let one
+over-long line stop a live log's reader permanently. They cannot recover from an
+oversized residual, and staying open would leave a consumer waiting on a stream
+that can never emit again, so they end instead.
 
-`Framing.Halted` deliberately carries no framer, so there is no value to feed
-again by mistake. Keep it that way.
+`followResults` ends by returning `Path.Step.Stop` from its follow step. `Stop`
+carries no state, so the framer a halt leaves behind has nowhere to go, and the
+loop stops rather than polling bytes no framer can consume. `Framing.Halted`
+carries no framer for the same reason. Keep both that way.
 
-A `LimitExceededException` arriving at `endAtBreach` can only be the framer's,
-because `Json.Lines.decodeRecord` wraps EVERY decode failure in a
-`RecordDecodeException`, so a record's own limit breach can never look like a
-framing breach. That wrapping is a contract of `kyo-schema-json`; if it changes,
-`breachIndex` here breaks silently.
+`Json.Lines.decodeRecord` wraps EVERY decode failure in a
+`RecordDecodeException`, so a record's own limit breach can never be mistaken
+for a framing breach. That wrapping is a contract of `kyo-schema-json`; the
+strict surfaces' `Abort.fail(breach)` path depends on it staying true.
 
 ---
 
@@ -223,8 +231,9 @@ neither is "so a caller's given propagates by position":
   supply `schema` explicitly as `Json.encode(v)(using someSchema)`, relying on
   the rule that unsupplied `using` parameters must form a trailing suffix.
   Putting `json` first would shift that existing explicit argument onto it and
-  break every such call site with a type mismatch. Nine dependent modules
-  contain them.
+  break every such call site with a type mismatch. Four modules contain them:
+  `kyo-ai` (3), `kyo-http` (9), `kyo-mcp` (1), and `kyo-schema-tests` (15,
+  test-only).
 
 Given-propagation itself would work identically with `json` first; the position
 is about not breaking existing explicit-argument call sites. Every entry point in

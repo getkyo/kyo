@@ -75,11 +75,13 @@ byte, so a follower replays existing content), `End` (skip what the file holds
 and emit only what is appended afterwards), and `Offset(bytes)` (resume at a
 recorded position). A negative `Offset` is clamped to 0 on every platform.
 
-`tailBytes` defaults to `Origin.End` because it is the primitive under
-`path.tail` and has to preserve that method's follow-only contract. Downstream
-drivers built on the same polling loop pick their own default; `Jsonl.follow`
-in `kyo-json` defaults to `Origin.Start`. Do not change either default to match
-the other: they are follow-only and replay-then-follow surfaces respectively.
+`tailBytes` defaults to `Origin.End` because it is the byte-level view of a
+followed file, and follow-only is what a byte-level tail means. `path.tail`
+passes `Origin.End` explicitly rather than relying on that default, since the
+two are siblings over one polling loop and neither reads the other's signature.
+Other drivers over the same loop pick their own default; `Jsonl.follow` in
+`kyo-json` defaults to `Origin.Start`. Do not change either default to match the
+other: they are follow-only and replay-then-follow surfaces respectively.
 
 #### Key design points
 
@@ -93,6 +95,11 @@ the other: they are follow-only and replay-then-follow surfaces respectively.
   (they sleep between polls). Both are drivers over one `private[kyo] follow`
   loop, which owns the open, the poll, and the truncation rewind; `tail` layers
   UTF-8 and line buffering on top as the state it threads through that loop.
+- A `follow` step returns `Path.Step`: `Continue(values, state)` to be read from
+  again, or `Stop(values)` to emit those values and complete the stream. `Stop`
+  carries no state on purpose, so a step that is finished cannot hand back state
+  nothing will read. `Jsonl.followResults` in `kyo-json` is the caller that uses
+  it, to stop when its framer can no longer frame anything.
 - Following tracks the OPEN FILE, not the name (`tail -f`, never `tail -F`).
   A rename or a delete of the name is invisible to a running stream; a
   truncation rewinds to byte 0 and replays, restoring the step's initial state

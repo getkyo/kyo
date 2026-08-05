@@ -152,15 +152,17 @@ case class TrailingInputException(format: Codec, detail: String)(using Frame)
   * input. Without that, a fault in a large transcript reports only the shape of the error
   * and leaves the reader to find the offending record by hand.
   *
-  * `byteOffset` is the offset of the record's first byte in the overall input, so a consumer
-  * that records it can resume from that point rather than replaying from the start.
+  * `byteOffset` is the offset of the record's first byte within the input this decode framed,
+  * which is a file offset only when framing began at the file's first byte. A consumer resuming
+  * from it adds back the position framing began at, and treats it as invalidated by anything that
+  * restarts framing, such as a follower replaying a truncated file.
   *
   * The name is format-agnostic because this type lives in the format-agnostic core.
   *
   * @param recordIndex
-  *   zero-based position of the record among the decodable records seen so far
+  *   zero-based position of the record among the non-blank records of the framed input
   * @param byteOffset
-  *   offset of the record's first byte within the overall input
+  *   offset of the record's first byte within the framed input
   * @param record
   *   the raw record text, truncated in the rendered message but complete on the field
   * @param cause
