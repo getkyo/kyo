@@ -116,7 +116,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
 
             "reads bytes across multiple buffer-sized chunks" in {
-                val data = Array.fill(20)(1.toByte)
+                // Every byte differs from its neighbours, so the assertion reads position and not just
+                // length: a chunk emitted out of order, emitted twice, or dropped and replaced by a repeat
+                // of the one before it all change the sequence, and none of them would change the count.
+                val data = Array.tabulate(20)(i => (i + 1).toByte)
                 val is   = new java.io.ByteArrayInputStream(data)
                 for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = 8).run)
                 yield assert(bytes.toArray.toSeq == data.toSeq)
