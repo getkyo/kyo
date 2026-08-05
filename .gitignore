@@ -5,6 +5,9 @@
 .metals
 project/target
 project/project
+project/.boot
+project/.ivy
+project/.sbtboot
 .vscode
 target
 *.log

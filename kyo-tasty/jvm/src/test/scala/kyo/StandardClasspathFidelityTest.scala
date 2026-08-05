@@ -84,12 +84,14 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    "JPMS module count == 69 on platform-modules classpath" in {
+    "JPMS module count >= 65 on platform-modules classpath" in {
         TestClasspaths2.standardWithPlatformModules.map { classpath =>
+            // The JDK module set varies by platform (e.g. Windows ships jdk.crypto.mscapi), so assert a lower bound
+            // rather than an exact count. 69 was measured on JDK 25; the >= 65 floor matches JpmsFidelity2Test.
             val count = classpath.indices.modulesIndex.size
             assert(
-                count == 69,
-                s"Expected exactly 69 JPMS modules; got $count"
+                count >= 65,
+                s"Expected >= 65 JPMS modules (measured 69 on JDK 25); got $count"
             )
             succeed
         }

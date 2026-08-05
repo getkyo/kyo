@@ -58,14 +58,14 @@ on:
         required: false
         default: ''
 
-# A pull request keys its group on the PR number, so a new commit supersedes the in-flight run.
-# A push (to main) keys on the commit sha, so every commit gets its own group and is validated on
-# its own; cancel-in-progress only acts within a group, so a later push never cancels an earlier
-# main run.
+# Both pull requests and main pushes dedup their in-flight runs. A pull request keys on the PR
+# number, so a new commit supersedes the run still validating the previous one. A push to main
+# keys on the branch ref (github.ref is a constant refs/heads/main), so a newer push cancels an
+# earlier main run that is still pending or in progress; only the latest commit is validated.
 concurrency:
   # Custom-mode groups key on the run id (no dedup): the free-form command must never reach
   # the group name, where a multi-line value invalidates the workflow.
-  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.mode == 'custom' && github.run_id || 0 }}-${{ inputs.custom-runner }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.mode == 'custom' && github.run_id || 0 }}-${{ inputs.custom-runner }}
   cancel-in-progress: true
 
 jobs:
@@ -92,7 +92,11 @@ jobs:
             oses="$INPUT_OSES"
             targets="$INPUT_TARGETS"
           else
-            oses='linux-x64 linux-arm64 windows-x64'
+            # windows-x64 is temporarily excluded from push and pull_request runs while
+            # windows-specific failures are worked (container-backed kyo-pod tests do not run on
+            # the windows runner). It stays available on demand via workflow_dispatch with
+            # oses=windows-x64, which is how windows fixes are validated in the meantime.
+            oses='linux-x64 linux-arm64'
             targets='JVM JS Native Wasm'
           fi
 

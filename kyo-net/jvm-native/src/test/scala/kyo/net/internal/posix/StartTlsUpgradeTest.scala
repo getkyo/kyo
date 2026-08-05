@@ -106,6 +106,8 @@ class StartTlsUpgradeTest extends Test:
     }
 
     "STARTTLS on a non-upgradable in-memory connection aborts NetNotUpgradableException" in {
+        if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
+            cancel("builds a real PollerIoDriver, which needs epoll (Linux) or kqueue (macOS/BSD)")
         val driver    = PollerIoDriver.init()
         val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         Sync.ensure(Sync.defer(driver.close())) {

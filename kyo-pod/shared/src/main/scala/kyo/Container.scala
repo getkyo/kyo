@@ -97,7 +97,10 @@ final class Container private[kyo] (
                 case Present(_) => ()
                 case Absent =>
                     Latch.init(1).map { latch =>
-                        Fiber.initUnscoped(latch.release.andThen(backend.waitForExit(id))).map { fiber =>
+                        // autoRemove-tracking observer: the container may live for hours, so pass
+                        // `Duration.Infinity`. If the caller wants an upper bound they cancel the
+                        // fiber (Fiber cancellation propagates through the HTTP client).
+                        Fiber.initUnscoped(latch.release.andThen(backend.waitForExit(id, Duration.Infinity))).map { fiber =>
                             latch.await.andThen(pendingExit.set(Present(fiber)))
                         }
                     }
@@ -131,11 +134,19 @@ final class Container private[kyo] (
     def rename(newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.rename(id, newName)
 
-    /** Block until the container exits and return its exit code. */
+    /** Block until the container exits and return its exit code, waiting indefinitely. Callers that need an upper bound should use
+      * [[waitForExit(timeout:*]] or wrap this call in `Async.timeout`.
+      */
     def waitForExit(using Frame): ExitCode < (Async & Abort[ContainerException]) =
+        waitForExit(Duration.Infinity)
+
+    /** Block until the container exits and return its exit code, giving up after `timeout`. Pass `Duration.Infinity` to wait
+      * indefinitely (equivalent to the no-arg overload).
+      */
+    def waitForExit(timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         pendingExit.get.map {
             case Present(fiber) => fiber.get
-            case Absent         => backend.waitForExit(id)
+            case Absent         => backend.waitForExit(id, timeout)
         }
 
     // --- Health ---
@@ -466,36 +477,43 @@ object Container:
                     b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
                 }
             }.map { cid =>
-                // Register cleanup IMMEDIATELY after create, before start
-                Scope.ensure {
-                    def safeMessage(t: Throwable): String =
-                        try t.getMessage
-                        catch case scala.util.control.NonFatal(_) => "(failed to format)"
+                // Capture the HttpClient active at registration time so the Scope.ensure teardown block
+                // uses the same client that created the container. The runner discharges Scope OUTSIDE any
+                // caller-scoped `HttpClient.let`, so by finalizer time the fiber-local would have unwound
+                // back to the process-shared default client, whose pool would then hold the teardown
+                // connections open past end-of-run and trip the leak check.
+                HttpClient.use { boundClient =>
+                    Scope.ensure {
+                        HttpClient.let(boundClient) {
+                            def safeMessage(t: Throwable): String =
+                                try t.getMessage
+                                catch case scala.util.control.NonFatal(_) => "(failed to format)"
 
-                    def logFailure(op: String)(r: Result[Throwable, Unit])(using Frame): Unit < Sync = r match
-                        case Result.Success(_) => ()
-                        // The container being already absent is the desired end state — nothing to warn about.
-                        // Happens when the caller (or autoRemove) removed it before the Scope finalizer ran.
-                        case Result.Failure(_: ContainerMissingException) => ()
-                        case Result.Failure(e) => Log.warn(s"Container ${cid.value} $op failed: ${safeMessage(e)}")
-                        case Result.Panic(e)   => Log.warn(s"Container ${cid.value} $op panicked: ${safeMessage(e)}")
+                            def logFailure(op: String)(r: Result[Throwable, Unit])(using Frame): Unit < Sync = r match
+                                case Result.Success(_) => ()
+                                // The container being already absent is the desired end state, nothing to warn about.
+                                // Happens when the caller (or autoRemove) removed it before the Scope finalizer ran.
+                                case Result.Failure(_: ContainerMissingException) => ()
+                                case Result.Failure(e) => Log.warn(s"Container ${cid.value} $op failed: ${safeMessage(e)}")
+                                case Result.Panic(e)   => Log.warn(s"Container ${cid.value} $op panicked: ${safeMessage(e)}")
 
-                    val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
-                        case Present(signal) =>
-                            Abort.run[ContainerException](b.kill(cid, signal)).map(logFailure("kill")).andThen(
-                                Abort.run[ContainerException | Timeout](
-                                    Async.timeout(config.stopTimeout)(b.waitForExit(cid))
-                                ).map(r => logFailure("waitForExit")(r.map(_ => ())))
-                            )
-                        case Absent =>
-                            Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
+                            val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
+                                case Present(signal) =>
+                                    Abort.run[ContainerException](b.kill(cid, signal)).map(logFailure("kill")).andThen(
+                                        Abort.run[ContainerException](b.waitForExit(cid, config.stopTimeout))
+                                            .map(r => logFailure("waitForExit")(r.map(_ => ())))
+                                    )
+                                case Absent =>
+                                    Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))
 
-                    shutdown.andThen {
-                        // `removeVolumes = true` reaps anonymous volumes attached to the container (e.g. the
-                        // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
-                        // suite of scope-managed containers leaks daemon-side state until inspect/start latency
-                        // exceeds the test wrapper. Named volumes are unaffected.
-                        Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
+                            shutdown.andThen {
+                                // `removeVolumes = true` reaps anonymous volumes attached to the container (e.g. the
+                                // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
+                                // suite of scope-managed containers leaks daemon-side state until inspect/start latency
+                                // exceeds the test wrapper. Named volumes are unaffected.
+                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
+                            }
+                        }
                     }
                 }.andThen {
                     b.start(cid).andThen {
@@ -791,6 +809,11 @@ object Container:
         restartPolicy: Config.RestartPolicy,
         stopSignal: Maybe[Signal],
         stopTimeout: Duration,
+        /** Wall-clock budget for the host-side port-binding wait that runs after `start`. The daemon's port forwarder can take much longer
+          * than the observed <100ms happy path when several containers boot in parallel or the local Docker VM is under memory / CPU
+          * pressure; bumping this per-fixture avoids spurious teardown when the forwarder is just slow.
+          */
+        portMappingTimeout: Duration,
         healthCheck: HealthCheck
     ) derives CanEqual:
         // --- Builder methods ---
@@ -898,6 +921,8 @@ object Container:
 
         def stopTimeout(timeout: Duration): Config = copy(stopTimeout = timeout)
 
+        def portMappingTimeout(timeout: Duration): Config = copy(portMappingTimeout = timeout)
+
         def healthCheck(hc: HealthCheck): Config = copy(healthCheck = hc)
 
     end Config
@@ -939,6 +964,7 @@ object Container:
             restartPolicy = Config.RestartPolicy.No,
             stopSignal = Absent,
             stopTimeout = 3.seconds,
+            portMappingTimeout = 60.seconds,
             healthCheck = HealthCheck.running
         )
 
@@ -2092,13 +2118,11 @@ object Container:
     /** Threshold (milliseconds) above which elapsed-time strings switch from "Nms" to "Ns" formatting. */
     private val elapsedMillisFormatThreshold: Long = 1000L
 
-    /** Wall-clock budget for `waitForPortMappings` and the bounds of its adaptive backoff. The host-side port forwarding hook on rootless
-      * podman (slirp4netns/pasta) and Docker Desktop's VM completes asynchronously after `start` — typically <100ms but can stretch
-      * dramatically under load when `inspect` itself takes 1–2s per call. The budget is wall-clock so the actual timeout matches the
-      * configured value regardless of `inspect` latency, and the backoff doubles from `min` to `max` to reduce daemon pressure when the
-      * first few attempts fail.
+    /** Bounds of the adaptive backoff used inside `waitForPortMappings`. The host-side port forwarder on rootless podman
+      * (slirp4netns/pasta) and Docker Desktop's VM completes asynchronously after `start`, typically in under 100ms, but it can stretch
+      * dramatically under load when `inspect` itself takes 1 to 2s per call. The wall-clock budget is now caller-tunable per fixture via
+      * [[Container.Config.portMappingTimeout]]; only the poll cadence lives here.
       */
-    private val portMappingBudget: Duration  = 30.seconds
     private val portMappingMinPoll: Duration = 50.millis
     private val portMappingMaxPoll: Duration = 500.millis
 
@@ -2249,8 +2273,9 @@ object Container:
     private def waitForPortMappings(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if container.config.ports.isEmpty then ()
         else
+            val budgetMs = container.config.portMappingTimeout.toMillis
             Clock.now.map { startedAt =>
-                val deadlineMs = startedAt.toJava.toEpochMilli + portMappingBudget.toMillis
+                val deadlineMs = startedAt.toJava.toEpochMilli + budgetMs
                 val maxPollMs  = portMappingMaxPoll.toMillis
                 Loop(portMappingMinPoll.toMillis) { pollMs =>
                     container.backend.inspect(container.id).map { info =>
@@ -2268,7 +2293,7 @@ object Container:
                                     val observed =
                                         info.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}->${p.hostPort}").mkString(", ")
                                     Abort.fail[ContainerException](ContainerOperationException(
-                                        s"Container ${container.id.value} ports not bound on host after ${elapsedMs}ms (budget ${portMappingBudget.toMillis}ms). " +
+                                        s"Container ${container.id.value} ports not bound on host after ${elapsedMs}ms (budget ${budgetMs}ms). " +
                                             s"Configured: [$configured]. Observed via inspect: [$observed]."
                                     ))
                                 else

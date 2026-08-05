@@ -14,10 +14,12 @@ class WithClasspathCacheDirTest extends kyo.test.Test[Any]:
                 val cpRoots: Seq[String] =
                     cpRaw
                         .split(Path.pathSeparator)
-                        .filter(p =>
-                            (p.contains("kyo-tasty/fixtures") || p.contains("kyo-tasty-fixtures-internal")) &&
-                                (p.endsWith(".jar") || p.endsWith("/classes"))
-                        )
+                        .filter { p =>
+                            // java.class.path is backslash-separated on Windows; match against a forward-slash view.
+                            val np = p.replace('\\', '/')
+                            (np.contains("kyo-tasty/fixtures") || np.contains("kyo-tasty-fixtures-internal")) &&
+                            (np.endsWith(".jar") || np.endsWith("/classes"))
+                        }
                         .toSeq
                 // Fall back to all classpath entries if the fixtures jar is not separately discoverable.
                 val rootsK: Chunk[Path] < Sync =

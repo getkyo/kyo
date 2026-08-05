@@ -256,12 +256,19 @@ object ConcreteTag:
             end match
         end <:<
 
-        /** Returns a string representation of this ConcreteTag
+        /** Renders the TYPE this ConcreteTag describes, with no wrapper around it.
+          *
+          * `Int`, `(Int | String)`, `Person`. This is what a message about a value's type should
+          * interpolate, since a sentence already saying "value of type" does not want the tag's own name
+          * repeated inside it. Use [[show]] when the ConcreteTag itself is the subject.
+          *
+          * Unlike `toClass.getSimpleName` this is total and lossless: unions, intersections, literal types
+          * and `Nothing` each render as themselves, where `toClass` collapses all of them to `Object`.
           *
           * @return
-          *   A string describing the structure of this ConcreteTag
+          *   the rendered type, without the enclosing `ConcreteTag[...]`
           */
-        def show: String =
+        def showType: String =
             def showInner(tag: ConcreteTag[Any]): String =
                 given CanEqual[Any, Any] = CanEqual.derived
                 tag match
@@ -283,8 +290,15 @@ object ConcreteTag:
                 end match
             end showInner
 
-            s"ConcreteTag[${showInner(self)}]"
-        end show
+            showInner(self)
+        end showType
+
+        /** Returns a string representation of this ConcreteTag
+          *
+          * @return
+          *   A string describing the structure of this ConcreteTag
+          */
+        def show: String = s"ConcreteTag[$showType]"
     end extension
 
 end ConcreteTag

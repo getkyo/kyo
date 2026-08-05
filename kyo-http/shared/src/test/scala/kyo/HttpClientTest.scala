@@ -212,7 +212,7 @@ class HttpClientTest extends BaseHttpTest:
                 captured match
                     case Present(hc) =>
                         // Unsafe: isPoolClosed is a plain field read, no I/O or unchecked state; AllowUnsafe is required only
-                        // because ConnectionPool's accessors are unconditionally AllowUnsafe-gated (see ConnectionPool.scala).
+                        // because ConnectionPool's accessors are unconditionally AllowUnsafe-gated (see kyo-net's ConnectionPool.scala).
                         import AllowUnsafe.embrace.danger
                         assert(hc.isPoolClosed, "HttpClient.init's Scope release must close the pool once its Scope exits")
                     case Absent =>

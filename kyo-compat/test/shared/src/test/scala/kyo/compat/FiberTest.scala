@@ -143,9 +143,9 @@ class FiberTest extends CompatTest:
     "onComplete callback failure does not crash the surrounding fiber" in run {
         // When a user-provided onComplete callback fails, the surrounding
         // chain MUST keep running. Each backend reports the unhandled
-        // failure through its native runtime mechanism (ZIO's logger,
-        // CE's IORuntime error reporter, etc.) — the surface only
-        // promises that the caller's program isn't taken down with it.
+        // failure through its native runtime mechanism (for example ZIO's
+        // logger). The surface only promises that the caller's program
+        // isn't taken down with it.
         val ctr = new java.util.concurrent.atomic.AtomicInteger(0)
         val c =
             CFiber.init(CIO.defer { 1 }).flatMap { fib =>

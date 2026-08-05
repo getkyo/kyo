@@ -285,13 +285,14 @@ These modules work on Windows with a documented limitation, and are marked with 
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | kyo-core          | `KyoApp` installs no SIGINT/SIGTERM handler, so shutdown runs no graceful finalization. Everything else is fully supported.                                                      |
 | kyo-case-app      | Shares `KyoApp`'s entrypoint, so the same signal-handling gap applies.                                                                                                          |
+| kyo-net           | No native transport ships for Windows, so it runs the NIO transport with JDK TLS rather than io_uring, kqueue, or BoringSSL. Everything else is fully supported.                 |
 | kyo-stats-machine | `machine.memory.free` is not reported (Windows draws no distinction between free and available memory), and `machine.cpu.system.rate` is derived as kernel time minus idle.      |
 | kyo-pod           | Container operations require a container runtime configured for the images you run; a daemon in Windows-containers mode cannot run Linux images.                                 |
 | kyo-browser       | Chrome auto-download covers Windows x86_64 but not Windows ARM, for which Google publishes no build; pass a `Browser.LaunchConfig` naming a system-installed Chromium instead.   |
 
 ## Modules
 
-Every module ships its own README. Open the linked README for the full surface, features, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean published artifacts: ✅ marks the platforms each module is published for. A † marks a module with a documented Windows limitation, detailed under [Windows support](#windows-support); every module builds and tests on Windows for the JVM and Scala.js targets.
+Every module ships its own README. Open the linked README for the full surface, features, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean supported targets: ✅ marks the platforms each module is built and tested for. JVM, Scala.js, and Scala Native artifacts are published to Maven Central; WebAssembly cross-builds and is tested in CI but ships no published artifact. A † marks a module with a documented Windows limitation, detailed under [Windows support](#windows-support); every module builds and tests on Windows for the JVM and Scala.js targets.
 
 ### Core
 
@@ -307,11 +308,14 @@ What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you 
 
 ### Applications
 
-The vertical an application developer assembles: HTTP services and clients, derived codecs, runtime config and feature flags, durable workflows, web UIs, and a GraphQL surface.
+The vertical an application developer assembles: HTTP services and clients, SQL access, derived codecs, runtime config and feature flags, durable workflows, web UIs, and a GraphQL surface.
 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
 | [kyo-http](kyo-http/README.md)               | ✅  | ✅  | ✅     | ✅   | HTTP/1.1 client and server with shared API across JVM/JS/Native/WASM, bidirectional OpenAPI                |
+| [kyo-sql](kyo-sql/README.md)                 | ✅  | ✅  | ✅     | ✅   | Raw SQL and a typed DSL over one AST; the database is a `DB` dependency in the effect row, no JDBC          |
+| [kyo-sql-postgres](kyo-sql-postgres/README.md) | ✅  | ✅  | ✅     | ✅   | PostgreSQL driver speaking the wire protocol on kyo-net, plus `COPY` and `LISTEN`/`NOTIFY`                 |
+| [kyo-sql-mysql](kyo-sql-mysql/README.md)     | ✅  | ✅  | ✅     | ✅   | MySQL driver speaking the wire protocol on kyo-net, plus `LOAD DATA LOCAL INFILE`                          |
 | [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
 | [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec for kyo-schema: `Json.encode`/`decode` text and bytes, safety limits, JSON Schema generation    |
 | [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |
@@ -369,7 +373,8 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-mcp](kyo-mcp/README.md)            | ✅  | ✅  | ✅     | ✅   | Model Context Protocol client and server built on kyo-jsonrpc with typed tools, prompts, and resources     |
 | [kyo-lsp](kyo-lsp/README.md)            | ✅  | ✅  | ✅     | ✅   | Language Server Protocol 3.17 servers and clients with typed handlers, documents, progress, and cancel     |
 | [kyo-compiler](kyo-compiler/README.md)  | ✅  |     |        |      | Scala 3 presentation compiler pool for diagnostics, completions, hover, signatures, and symbols            |
-| [kyo-aeron](kyo-aeron/README.md)        | ✅  |     |        |      | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API              |
+| [kyo-aeron](kyo-aeron/README.md)        | ✅  | ✅  | ✅     | ✅   | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API              |
+| [kyo-net](kyo-net/README.md)†           | ✅  | ✅  | ✅     | ✅   | TCP, Unix sockets, stdio, and TLS on one C transport: io_uring, epoll, kqueue, NIO, Node, BoringSSL        |
 | [kyo-ffi](kyo-ffi/README.md)            | ✅  | ✅  | ✅     | ✅   | Bind a C library once with typed Scala signatures; safe calls from JVM (Panama), JS/WASM (koffi), and Native |
 | [kyo-tasty](kyo-tasty/README.md)        | ✅  | ✅  | ✅     | ✅   | Cross-platform TASTy reflection over a pure sealed model; Scala 3 reflection without a live JVM             |
 
@@ -506,4 +511,4 @@ Lastly, the name "Kyo" comes from a Buddhist term for "Sutra," a compiled teachi
 
 ## License
 
-See the [LICENSE.txt](LICENSE.txt) file for details.
+See [LICENSE.txt](LICENSE.txt) for details.

@@ -359,6 +359,10 @@ lazy val kyoJVM: Project = project
         `kyo-schema-ion`.jvm,
         `kyo-schema-yaml`.jvm,
         `kyo-schema-tests`.jvm,
+        `kyo-sql`.jvm,
+        `kyo-sql-postgres`.jvm,
+        `kyo-sql-mysql`.jvm,
+        `kyo-sql-tests`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-ai`.jvm,
@@ -438,6 +442,10 @@ lazy val kyoJS = project
         `kyo-schema-ion`.js,
         `kyo-schema-yaml`.js,
         `kyo-schema-tests`.js,
+        `kyo-sql`.js,
+        `kyo-sql-postgres`.js,
+        `kyo-sql-mysql`.js,
+        `kyo-sql-tests`.js,
         `kyo-http`.js,
         `kyo-aeron`.js,
         `kyo-flow`.js,
@@ -499,6 +507,10 @@ lazy val kyoNative = project
         `kyo-schema-ion`.native,
         `kyo-schema-yaml`.native,
         `kyo-schema-tests`.native,
+        `kyo-sql`.native,
+        `kyo-sql-postgres`.native,
+        `kyo-sql-mysql`.native,
+        `kyo-sql-tests`.native,
         `kyo-http`.native,
         `kyo-aeron`.native,
         `kyo-flow`.native,
@@ -552,6 +564,10 @@ lazy val kyoWasm = project
         `kyo-schema-ion`.wasm,
         `kyo-schema-yaml`.wasm,
         `kyo-schema-tests`.wasm,
+        `kyo-sql`.wasm,
+        `kyo-sql-postgres`.wasm,
+        `kyo-sql-mysql`.wasm,
+        `kyo-sql-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
         `kyo-ffi`.wasm,
@@ -874,6 +890,108 @@ lazy val `kyo-schema-yaml` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-sql` =
+    // Backend-agnostic core: the Postgres and MySQL wire drivers below depend on this module and are never
+    // depended on by it, so nothing here may name a type either declares. Compiling this module with no backend
+    // on the classpath is the gate for that (a same-package name is invisible to a grep).
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-core`)
+        // kyo-schema-json (not kyo-schema): SqlSchema is a self-contained codec typeclass; kyo-schema enters
+        // only at the JSON tier, for Sql.jsonColumn's Schema-based overload.
+        .dependsOn(`kyo-schema-json`)
+        .dependsOn(`kyo-net`)
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        // CommonJS: the test path reaches Node builtins (kyo.Path -> node:fs, kyo-pod -> node:child_process,
+        // kyo-core entropy -> node:crypto); without it fastLinkJS fails to link them.
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        // openssl-native-settings: kyo-net's Native C shims reference TLS symbols (TLS_client_method,
+        // X509_free, ...), so a Native binary that reaches them must link libssl/libcrypto or nativeLink fails.
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .wasmSettings(`wasm-settings`)
+
+// The two backend modules below are deliberately symmetric (same platforms, edges, settings); a difference is
+// a bug unless it names a wire feature only one engine has. Both take `test->test` on `kyo-sql` (not just
+// `compile->compile`) to reuse its test fixtures (`Test`, `FakeServer`, `OwnContainer`, `StubConnection`, the
+// mocks) rather than duplicate them. Other edges (`kyo-core`, `kyo-net`, `kyo-schema-json`) arrive transitively;
+// `kyo-pod` is redeclared because `kyo-sql` takes it test-scope only and that does not propagate.
+lazy val `kyo-sql-postgres` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql-postgres"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        // CommonJS, same as kyo-sql: the test path reaches Node builtins (kyo-pod's harness, kyo-core entropy).
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        // openssl-native-settings: this module's auth/TLS sources reach kyo-net's Native C shims, so a test
+        // binary that touches them must link libssl/libcrypto or nativeLink fails.
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-sql-mysql` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql-mysql"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .wasmSettings(`wasm-settings`)
+
+// Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
+// cross-backend suites that name both clients/factories to prove they behave the same through one abstract
+// surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
+// both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
+// module (the other's suites could not see it). `test->test` on all three lets the suites reuse core's `Test`
+// base and mocks plus each engine's fixtures; `publish / skip` keeps the shipped artifact count at three.
+lazy val `kyo-sql-tests` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-postgres` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql-tests"))
+        .withKyoTest
+        .settings(`kyo-settings`, publish / skip := true)
+        .jvmSettings(mimaCheck(false))
+        // No README, so nothing to validate. Left unset the plugin would look for one that does not exist.
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`,
+            // Scala Native resolves ServiceLoader at LINK time, so a META-INF/services provider works only when
+            // also enlisted here; without this, runtime backend discovery finds nothing on Native.
+            Test / nativeConfig ~= (_.withServiceProviders(Map("kyo.db.Backend" -> Seq(
+                "kyo.internal.postgres.PostgresBackendFactory",
+                "kyo.internal.mysql.MysqlBackendFactory"
+            ))))
+        )
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-core` =
@@ -3061,10 +3179,14 @@ lazy val `native-settings-base` = Seq(
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
-    // A dependency's nativeBundled FFI C (kyo-net's kyo_uring.c and TLS shims) is compiled into THIS Native binary
-    // (Scala Native scans every scala-native dir on the classpath), but nativeConfig does not propagate across a
-    // project dependency; so fold each dependency's plugin-written FFI compile/link flags off the classpath, else the
-    // link fails (SSL_CTX_ctrl macro / undefined io_uring_*). A module owning its FFI flags wires them directly.
+    // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
+    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
+    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // A dependency's bundled FFI C (kyo-net's kyo_uring.c and TLS shims) compiles into THIS Native binary, but
+    // nativeConfig does not propagate across a project dependency, so fold each dep's FFI compile/link flags in
+    // here or the link fails (SSL_CTX_ctrl macro / undefined io_uring_*).
     nativeConfig := {
         val base         = nativeConfig.value
         val cp           = (Compile / dependencyClasspath).value
@@ -3110,6 +3232,11 @@ lazy val `js-settings` = Seq(
     Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
+    // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
+    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
+    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
     // CI links every module's test binary in one sbt process; retaining each module's incremental
     // linker state overflows the 12G sbt heap now that the schema family links per-format
     // binaries. Batch mode drops that state after each link: incremental relink speed is
@@ -3138,6 +3265,11 @@ lazy val `wasm-settings` = Seq(
         ))
     ),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
+    // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
+    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
+    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
     // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
     scalaJSLinkerConfig := {
         val c = scalaJSLinkerConfig.value
@@ -3262,7 +3394,38 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
                 Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
             else
                 Def.task((scripted.toTask("")).value)
-        }).value
+        }).value,
+        // Bundle the cross-binding conformance suite (kyo-compat/test + test-streams)
+        // into the plugin jar as resources, plus an INDEX, so an external binding can
+        // pull it in via `.compatConformance`. Copied verbatim from the canonical suite
+        // the in-repo bindings compile against, so the bundle stays byte-identical.
+        Compile / resourceGenerators += Def.task {
+            val outDir  = (Compile / resourceManaged).value / "kyo-compat-testkit"
+            val suites  = Seq("test" -> "test", "test-streams" -> "streams")
+            val buckets = Seq("shared", "jvm", "js", "native")
+            val base    = (ThisBuild / baseDirectory).value / "kyo-compat"
+            IO.delete(outDir)
+            val index     = scala.collection.mutable.ArrayBuffer.empty[String]
+            val generated = scala.collection.mutable.ArrayBuffer.empty[File]
+            for {
+                (suiteDir, suiteTag) <- suites
+                bucket               <- buckets
+                root = base / suiteDir / bucket / "src" / "test" / "scala"
+                if root.exists
+                src <- (root ** "*.scala").get
+            } {
+                val rel   = root.toPath.relativize(src.toPath).toString.replace('\\', '/')
+                val scope = s"$suiteTag-$bucket"
+                val dest  = outDir / scope / rel
+                IO.copyFile(src, dest)
+                index += s"$scope\t$rel"
+                generated += dest
+            }
+            val indexFile = outDir / "INDEX"
+            IO.write(indexFile, index.sorted.mkString("\n") + "\n")
+            generated += indexFile
+            generated.toSeq
+        }.taskValue
     )
 
 // ===========================================================================

@@ -24,10 +24,11 @@ jobs:
   # clang emit x86_64 code.
   natives-darwin:
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: macos-14
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
@@ -71,7 +72,7 @@ jobs:
             test -s "kyonet-natives/$f" || { echo "producer natives-darwin is missing $f" >&2; exit 1; }
           done
           ls -l kyonet-natives
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: natives-darwin
           path: kyonet-natives
@@ -83,10 +84,11 @@ jobs:
   # run on the glibc host so they use the runner's Node; only the build runs in the container.
   natives-linux-x86_64:
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
@@ -138,7 +140,7 @@ jobs:
             test -s "kyonet-natives/$f" || { echo "producer natives-linux-x86_64 is missing $f" >&2; exit 1; }
           done
           ls -l kyonet-natives
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-x86_64
           path: kyonet-natives
@@ -148,10 +150,11 @@ jobs:
   # the same Alpine step on the arm64 host (the temurin alpine image is multi-arch).
   natives-linux-aarch64:
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: ubuntu-24.04-arm
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
@@ -200,7 +203,7 @@ jobs:
             test -s "kyonet-natives/$f" || { echo "producer natives-linux-aarch64 is missing $f" >&2; exit 1; }
           done
           ls -l kyonet-natives
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: natives-linux-aarch64
           path: kyonet-natives
@@ -209,10 +212,11 @@ jobs:
   publish:
     needs: [natives-darwin, natives-linux-x86_64, natives-linux-aarch64]
     if: |
-      (github.event_name == 'push') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       github.event.comment.body == '/release')
+      github.repository == 'getkyo/kyo' && (
+        (github.event_name == 'push') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
     env:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
@@ -230,7 +234,7 @@ jobs:
       # host's). merge-multiple flattens the per-producer artifacts into one directory; the filenames
       # (lib<id>-<os>-<arch>.<ext>) are unique across producers, so nothing collides.
       - name: Download producer natives into ffiPrebuiltDir
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: natives-*
           path: kyonet-prebuilt
