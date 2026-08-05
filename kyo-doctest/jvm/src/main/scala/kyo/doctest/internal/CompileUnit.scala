@@ -43,13 +43,14 @@ private[kyo] object CompileUnit:
       *   Compile units ready to feed to Driver.compile.
       */
     def group(blocks: Chunk[Block]): Chunk[CompileUnit] =
-        if blocks.isEmpty then Chunk.empty
+        val activeBlocks = blocks.filter(_.expect != Block.Expectation.Skipped)
+        if activeBlocks.isEmpty then Chunk.empty
         else
-            val setupBlocks    = extractSetupBlocks(blocks)
-            val nonSetupBlocks = blocks.filter(f => !isSetup(f))
+            val setupBlocks    = extractSetupBlocks(activeBlocks)
+            val nonSetupBlocks = activeBlocks.filter(f => !isSetup(f))
             if nonSetupBlocks.isEmpty then
                 // Only setup blocks: compile them as a standalone Env("__doc__") unit.
-                groupEnvBlocks(blocks.filter(isSetup), Chunk.empty)
+                groupEnvBlocks(activeBlocks.filter(isSetup), Chunk.empty)
             else
                 groupNonSetup(nonSetupBlocks, setupBlocks)
             end if
