@@ -789,12 +789,16 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
+                        |```scala doctest:scope=inherited
+                        |val shared = 41
+                        |```
+                        |
                         |```scala doctest:scope=inherited expect=skipped
                         |this is not valid scala at all !!!! @@@
                         |```
                         |
                         |```scala doctest:scope=inherited
-                        |val compiled = 42
+                        |val compiled = shared + 1
                         |```
                         |""".stripMargin
             withTempFile("README.md", md) { kyoFile =>
@@ -811,8 +815,8 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                     result <- Abort.run(Scope.run(Doctest.check(config)))
                 yield result match
                     case Result.Success(report) =>
-                        assert(report.totalBlocks == 2, s"expected 2 blocks, got ${report.totalBlocks}")
-                        assert(report.compiled == 1, s"expected 1 compiled block, got compiled=${report.compiled}")
+                        assert(report.totalBlocks == 3, s"expected 3 blocks, got ${report.totalBlocks}")
+                        assert(report.compiled == 2, s"expected 2 compiled blocks, got compiled=${report.compiled}")
                         assert(report.cacheHits == 0, s"skipped block should not use cache, got cacheHits=${report.cacheHits}")
                         assert(report.failures.isEmpty, s"skipped block should not produce failures, got ${report.failures}")
                     case Result.Failure(e) =>
