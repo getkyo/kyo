@@ -823,6 +823,41 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         }
     }
 
+    "expect=skipped-only source does not compile configured predef" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Test
+                        |
+                        |```scala doctest:expect=skipped
+                        |this is not valid scala at all !!!! @@@
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus,
+                        predef = Chunk("this configured predef is invalid !!!")
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.totalBlocks == 1, s"expected 1 block, got ${report.totalBlocks}")
+                        assert(report.compiled == 0, s"skipped block should not be compiled, got compiled=${report.compiled}")
+                        assert(report.cacheHits == 0, s"skipped block should not use cache, got cacheHits=${report.cacheHits}")
+                        assert(report.failures.isEmpty, s"skipped block should not produce failures, got ${report.failures}")
+                    case Result.Failure(e) =>
+                        fail(s"unexpected failure: $e")
+                    case Result.Panic(t) =>
+                        fail(s"unexpected panic: ${t.getMessage}")
+            }
+        }
+    }
+
     "invalid classpath surfaces Abort DriverInitFailed" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
