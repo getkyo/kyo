@@ -71,6 +71,32 @@ class ContainerPredefTest extends BasePodTest:
             }
         }
         "buildContainerConfig" - {
+            // The command line is `mysqld` followed by the memory caps followed by the caller's own args, and
+            // the ORDER is load-bearing twice over. `mysqld` is the executable, so anything that replaces the
+            // whole command drops it. The caller's args come last because MySQL takes the last spelling of a
+            // repeated flag, which is what lets a fixture raise a cap the defaults lower.
+            //
+            // This pins the contract because the failure mode is silent: five fixtures were calling
+            // `.command(...)` on the RESULT of this method, which replaced the line and dropped all three
+            // caps, and the official image's entrypoint hides it by prepending `mysqld` to any argv whose
+            // first element starts with a dash. The containers booted and simply took the memory back,
+            // roughly 350MB each from performance_schema alone.
+            "command line is mysqld, then the default caps, then the caller's serverArgs, in that order" in {
+                val cfg  = MySQL.buildContainerConfig(MySQL.Config.default.appendServerArgs("--sql-mode=ANSI"))
+                val args = cfg.command.map(_.args)
+                assert(
+                    args == Present(Chunk("mysqld") ++ MySQL.defaultServerArgs ++ Chunk("--sql-mode=ANSI")),
+                    s"command line lost its executable, its caps or its ordering; got $args"
+                )
+                assert(
+                    args.map(_.head) == Present("mysqld"),
+                    "the first element is the executable, so anything replacing the command line drops it"
+                )
+                assert(
+                    MySQL.defaultServerArgs.forall(a => args.exists(_.contains(a))),
+                    s"every default memory cap must survive into the command line; got $args"
+                )
+            }
             "default config (non-root user, non-empty password) sets MYSQL_USER/PASSWORD/ROOT_PASSWORD" in {
                 val cfg = MySQL.buildContainerConfig(MySQL.Config.default)
                 val env = cfg.env

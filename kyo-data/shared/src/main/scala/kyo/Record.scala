@@ -154,6 +154,12 @@ object Record:
         /** Type-level function that wraps the value component of a `Name ~ Value` pair in `G`. */
         type MapValue[G[_]] = [x] =>> x match
             case n ~ v => n ~ G[v]
+
+        /** Type-level function that produces a `Name ~ G[Name, Value]` pair for each `Name ~ Value`, preserving the singleton field name in
+          * the type produced by `G`.
+          */
+        type MapNamedValue[G[_ <: String & Singleton, _]] = [x] =>> x match
+            case n ~ v => n ~ G[n & String & Singleton, v]
     end `~`
 
     /** Match type that looks up the value type for `Name` in a tuple of `Name ~ Value` pairs. */
@@ -203,6 +209,12 @@ object Record:
       */
     inline def stage[A](using f: Fields[A]): StageOps[A, f.AsTuple] = new StageOps(())
 
+    /** Like `stage`, but the polymorphic function receives a `Field[n, v]` whose singleton name `n` is exposed as a type parameter, and the
+      * type constructor `G[_ <: String, _]` may use that singleton name in the produced type. Result type uses `Fields[A].MapNamed[G]` so
+      * each field name is preserved at the type level.
+      */
+    inline def stageNamed[A](using f: Fields[A]): StageNamedOps[A, f.AsTuple] = new StageNamedOps(())
+
     /** Intermediate builder for staging without a type class constraint. Apply a polymorphic function `Field[?, v] => G[v]` to produce a
       * record where each field `Name ~ V` becomes `Name ~ G[V]`.
       */
@@ -215,6 +227,19 @@ object Record:
           */
         inline def using[TC[_]]: StageWith[A, T, TC] = new StageWith(())
     end StageOps
+
+    /** Builder produced by `stageNamed`. Apply a polymorphic function `[n <: String & Singleton, v] => Field[n, v] => G[n, v]` to produce a
+      * record where each field `Name ~ V` becomes `Name ~ G[Name, V]`.
+      *
+      * The `n <: String & Singleton` bound carries the per-field name singleton through to the polyfunction body, so macros invoked inside
+      * the body can read the concrete field name via `TypeRepr.of[N]` matching `ConstantType(StringConstant(_))`.
+      */
+    class StageNamedOps[A, T <: Tuple](dummy: Unit) extends AnyVal:
+        inline def apply[G[_ <: String & Singleton, _]](fn: [n <: String & Singleton, v] => Field[n, v] => G[n, v])(using
+            f: Fields[A]
+        ): Record[f.MapNamed[G]] =
+            new Record(stageNamedLoop[f.AsTuple, G](fn)).asInstanceOf[Record[f.MapNamed[G]]]
+    end StageNamedOps
 
     /** Intermediate builder for staging with a type class constraint `TC`. Apply a polymorphic function `(Field[?, v], TC[v]) => G[v]` to
       * produce a record where each field `Name ~ V` becomes `Name ~ G[V]`. Fails at compile time if any field's value type lacks a `TC`
@@ -262,6 +287,16 @@ object Record:
                 val name  = constValue[n & String]
                 val value = fn[v](Field(name, summonInline[Tag[v]]), summonInline[TC[v]])
                 stageLoopWith[rest, TC, G](fn) ++ Dict[String, Any](name -> value)
+
+    private[kyo] inline def stageNamedLoop[T <: Tuple, G[_ <: String & Singleton, _]](
+        fn: [n <: String & Singleton, v] => Field[n, v] => G[n, v]
+    ): Dict[String, Any] =
+        inline erasedValue[T] match
+            case _: EmptyTuple => Dict.empty[String, Any]
+            case _: ((n ~ v) *: rest) =>
+                val name  = constValue[n & String]
+                val value = fn[n & String & Singleton, v](Field(name, summonInline[Tag[v]]))
+                stageNamedLoop[rest, G](fn) ++ Dict[String, Any](name -> value)
 
     /** Creates a record from a case class or other `Product` type. Each product element becomes a field whose name matches the element
       * label. The return type is a `Record` with the appropriate field intersection, inferred transparently by the macro. Fails at compile

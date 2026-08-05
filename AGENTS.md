@@ -187,7 +187,7 @@ To create or rewrite a module's README, invoke the `/readme <module-path>` skill
 
 ## Common Gotchas
 
-1. **`kyo.System` shadows `java.lang.System`**: use fully qualified `java.lang.System` when needed
+1. **`kyo.System` shadows `java.lang.System`**, and **`kyo.SecureRandom` shadows `java.security.SecureRandom`**: use the fully qualified JDK name when both are in scope
 2. **Effect handlers are not inline**: `Abort.run`, `Var.run` are regular methods; only suspend/create methods are inline
 3. **`Frame` required on every effectful method**, but not on pure data accessors like `capacity` or `size`
 4. **Overloads delegate to canonical**: never duplicate logic across method variants

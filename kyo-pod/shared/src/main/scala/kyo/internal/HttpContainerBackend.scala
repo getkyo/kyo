@@ -410,20 +410,22 @@ final private[kyo] class HttpContainerBackend(
         val seconds = timeout.toMillis / 1000
         // Start the /wait call as a background fiber BEFORE sending stop, so the exit code is
         // captured before auto-remove cleanup can race and remove the container from the daemon.
-        Fiber.initUnscoped(waitForExit(id)).map { waitFiber =>
-            // The daemon's `/stop?t=$seconds` waits up to `seconds` for graceful shutdown, then
-            // SIGKILLs the container; its HTTP response returns only once the container has
-            // actually stopped. The HTTP-client deadline must therefore cover the *full* grace
-            // period plus SIGKILL and API overhead — `timeout + 30s`. Clamping it down to
-            // `timeout` (the daemon's grace contract) guaranteed a spurious HttpTimeoutException
-            // whenever the daemon used most of its grace window. `c.timeout.max(...)` keeps any
-            // longer caller override.
-            HttpClient.withConfig(c => c.timeout(c.timeout.max(timeout + 30.seconds))) {
-                postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
-            }.andThen {
-                // Docker HTTP API returns before the container fully transitions to "exited".
-                // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
-                waitFiber.get.andThen(awaitTerminalState(id))
+        // Duration.Infinity: `timeout` is the daemon's grace window, not the client's deadline; the exit code
+        // must be captured even if the container takes longer, and the `/stop` response bounds the visible wait.
+        Fiber.initUnscoped(waitForExit(id, Duration.Infinity)).map { waitFiber =>
+            // Interrupt the observer on every exit, or its long-poll /wait connection leaks a unix socket on
+            // the shared HttpClient pool. No-op if the fiber already completed via the join below.
+            Sync.ensure(waitFiber.interrupt.unit) {
+                // `/stop?t=$seconds` grants that grace before SIGKILL and replies only once stopped, so the
+                // HTTP deadline must cover grace + SIGKILL + overhead (`timeout + 30s`), not just `timeout`
+                // (which would trip a spurious HttpTimeoutException). `max` keeps a longer caller override.
+                HttpClient.withConfig(c => c.timeout(c.timeout.max(timeout + 30.seconds))) {
+                    postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
+                }.andThen {
+                    // Docker HTTP API returns before the container fully transitions to "exited".
+                    // Join the pre-started /wait fiber to confirm exit and preserve the exit code.
+                    waitFiber.get.andThen(awaitTerminalState(id))
+                }
             }
         }
     end stop
@@ -472,19 +474,42 @@ final private[kyo] class HttpContainerBackend(
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
 
-    def waitForExit(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
-        Abort.run[ContainerException](
-            withErrorMapping(ctxContainer(id)) {
-                HttpClient.postJson[WaitResponse](url(s"/containers/${id.value}/wait"), "")
-            }.map(resp => ExitCode(resp.StatusCode))
-        ).map {
-            case Result.Success(code)                         => code
-            case Result.Failure(_: ContainerMissingException) =>
-                // Container was auto-removed before wait completed — exit code lost
-                ExitCode.Success
-            case Result.Failure(other) => Abort.fail(other)
-            case Result.Panic(ex)      => Abort.fail(ContainerBackendException(s"waitForExit panicked for ${id.value}", ex))
-        }
+    def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
+        // `/wait` is a long-poll. Two deadlines cooperate: the HTTP transport gets `timeout + 30s` (so a wait
+        // completing near `timeout` is not lost to the transport), and `Async.timeout(timeout)` below bounds
+        // the caller-observable wait to `timeout` (matching the shell backend). Both are no-ops for Infinity.
+        val httpDeadline = if timeout == Duration.Infinity then Duration.Infinity else timeout + 30.seconds
+        val call: ExitCode < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException](
+                withErrorMapping(ctxContainer(id)) {
+                    // Preserve any caller-set longer deadline via `max`, same pattern as `stop`.
+                    HttpClient.withConfig(c => c.timeout(c.timeout.max(httpDeadline))) {
+                        HttpClient.postJson[WaitResponse](url(s"/containers/${id.value}/wait"), "")
+                    }
+                }.map(resp => ExitCode(resp.StatusCode))
+            ).map {
+                case Result.Success(code)                         => code
+                case Result.Failure(_: ContainerMissingException) =>
+                    // Container was auto-removed before wait completed, so the exit code is lost
+                    ExitCode.Success
+                case Result.Failure(other) => Abort.fail(other)
+                case Result.Panic(ex)      => Abort.fail(ContainerBackendException(s"waitForExit panicked for ${id.value}", ex))
+            }
+        if timeout == Duration.Infinity then call
+        else
+            Abort.run[Timeout](Async.timeout(timeout)(call)).map {
+                case Result.Success(code) => code
+                case Result.Failure(_) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit for ${id.value} exceeded $timeout")
+                    )
+                case Result.Panic(ex) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
+                    )
+            }
+        end if
+    end waitForExit
 
     // --- Checkpoint/Restore ---
 

@@ -482,6 +482,58 @@ def take3(s: Schedule, now: Instant): List[Duration] =
 
 `schedule.show` returns a string that resembles the source-level constructor call; `toString` delegates to `show`. The result is suitable for logs and debug output.
 
+## Storage sizes
+
+When code talks about a quantity of storage (a buffer cap, a file rotation threshold, a transfer limit), reach for `ByteSize`. It is an opaque type over `Long` (representing bytes). Construct it through the unit extensions (`64L.mib`, `1L.gib`), the factory method (`ByteSize.fromBytes`), or parse it from text.
+
+```scala doctest:expect=runs
+import kyo.*
+
+val small: ByteSize   = 512L.bytes
+val medium: ByteSize  = 64L.mib
+val large: ByteSize   = 1L.gib
+val fromInt: ByteSize = 512.mib // Int constructor, identical result to 512L.mib
+val fromKb: ByteSize  = 100.kb  // decimal unit: 100,000 bytes
+
+assert(medium.toBytes == 67108864L)
+assert(fromInt == 512L.mib)
+assert(fromKb.toBytes == 100000L)
+assert(ByteSize.Zero.toBytes == 0L)
+
+val parsed: Result[ByteSize.InvalidByteSize, ByteSize] = ByteSize.parse("64MiB")
+assert(parsed == Result.succeed(64L.mib))
+```
+
+> **Note:** Negative inputs to `ByteSize.fromBytes` and the unit extensions clamp to `ByteSize.Zero`. There is no `Infinity` sentinel; the maximum representable value is `Long.MaxValue` bytes.
+
+Arithmetic saturates on overflow: addition and multiplication that would exceed `Long.MaxValue` clamp to `Long.MaxValue`; subtraction clamps to `ByteSize.Zero`.
+
+```scala doctest:expect=runs
+import kyo.*
+
+val a: ByteSize       = 32L.mib + 32L.mib
+val b: ByteSize       = 1L.gib - 256L.mib
+val c: ByteSize       = 1L.mib * 128.0
+val clamped: ByteSize = ByteSize.fromBytes(Long.MaxValue) + 1L.bytes
+
+assert(a == 64L.mib)
+assert(b == 768L.mib)
+assert(c == 128L.mib)
+assert(clamped == ByteSize.fromBytes(Long.MaxValue))
+```
+
+`ByteSize` also offers `to(unit)` for converting to a `Double` in a given unit, and `show` for a human-readable string at the coarsest lossless binary unit.
+
+```scala doctest:expect=runs
+import kyo.*
+
+val size: ByteSize = 64L.mib
+
+assert(size.to(ByteSize.Units.GiB) == 0.0625)
+assert(size.show == "64.mib")
+assert(ByteSize.Zero.show == "ByteSize.Zero")
+```
+
 ## Records and named fields
 
 A record is a named collection of typed fields whose shape is known at compile time but is not declared as a case class. `kyo-data` offers `Record[F]`, where `F` is an intersection of `Name ~ Value` pairs encoding the schema directly in the type. The macro-derived `Fields[F]` companion provides runtime metadata; `Field[Name, Value]` is the reified per-field descriptor.
@@ -765,6 +817,7 @@ When `kyo-config` is on the classpath, kyo-data types can be used directly as `F
 | Type | Format | Example |
 |------|--------|---------|
 | `Duration` | number + unit (optional space) | `"5s"`, `"100ms"`, `"2minutes"`, `"infinity"` |
+| `ByteSize` | number + unit (optional space), or bare digits (bytes) | `"64MiB"`, `"1.5GiB"`, `"1024"` |
 | `Chunk[A]` | comma-separated | `"a,b,c"` |
 | `Span[A]` | comma-separated | `"1,2,3"` |
 | `Dict[K,V]` | key=value pairs, comma-separated | `"host=localhost,port=8080"` |

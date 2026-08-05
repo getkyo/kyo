@@ -53,9 +53,11 @@ jobs:
     needs: prep
     # JVM full runs peak at ~95-100 min on Linux (browser/UI/caliban suites serialize under a
     # shared Chrome instance that cannot take concurrent CDP connections) and run slower on the
-    # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. 240 min
-    # bounds a genuine hang while giving the slowest pole real headroom.
-    timeout-minutes: 240
+    # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. The binding
+    # pole is the Native aggregate build+test on the slower linux-arm64 runner: linux-x64 Native
+    # completes in ~200 min, so arm64 needs headroom well past 240 min and hit the old cap. 360 min
+    # (the GitHub-hosted job ceiling) bounds a genuine hang while giving the slowest pole real headroom.
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -97,8 +99,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           # github.sha, not github.ref: a queued job must validate the commit that triggered the
-          # run, not whatever the branch tip is when the job starts. The concurrency group in
-          # ci.yml keys main pushes on the sha for the same reason.
+          # run, not whatever the branch tip is when the job starts.
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
 
