@@ -192,10 +192,14 @@ object JsonLines:
           * Reached only while `atStart`, so `pending` holds at most two bytes and every one of them already matched the mark: that is the
           * only way a framer stays in its start state. Comparing resumes at `pendingSize` rather than at zero for exactly that reason,
           * which keeps the cross-boundary read here bounded to the three bytes of the mark.
+          *
+          * `total` is a `Long` for the same reason [[settle]] takes one: this is the other place the pending total grows, and a chunk
+          * large enough to wrap it would leave a framer holding a negative total and reading `Bom` at a negative index. The total is
+          * narrowed only on the branch that proves it below the mark's three bytes.
           */
         private def feedAtStart(chunk: Span[Byte])(using Frame): Framed =
-            val total   = pendingSize + chunk.size
-            val decided = math.min(total, Bom.size)
+            val total   = pendingSize.toLong + chunk.size
+            val decided = math.min(total, Bom.size.toLong).toInt
             var i       = pendingSize
             var marked  = true
             while marked && i < decided do
@@ -207,7 +211,7 @@ object JsonLines:
                 // Still undecided: the bytes so far are a proper prefix of the mark, and a proper prefix
                 // holds no newline, so there is nothing to emit while waiting for the rest.
                 Framed.Continued(
-                    Framer(hold(pending, chunk), total, nextIndex, residualOffset, maxLineBytes, true),
+                    Framer(hold(pending, chunk), total.toInt, nextIndex, residualOffset, maxLineBytes, true),
                     Chunk.empty
                 )
             else
@@ -266,10 +270,10 @@ object JsonLines:
 
         /** Measures what is left unresolved and either halts on it or hands back the framer that carries it forward.
           *
-          * `heldSize` arrives as a `Long` because this is the one place the pending total grows. A chunk landing against a ceiling near
-          * `Int.MaxValue` would otherwise wrap it negative, and a framer carrying a negative total frames nonsense rather than halting. A
-          * total too large for an `Int` is over every ceiling an `Int` can express, so it halts like any other breach, with the reported
-          * size saturating rather than wrapping.
+          * `heldSize` arrives as a `Long` because the pending total grows here, and a chunk landing against a ceiling near `Int.MaxValue`
+          * would otherwise wrap it negative: a framer carrying a negative total frames nonsense rather than halting. A total too large for
+          * an `Int` is over every ceiling an `Int` can express, so it halts like any other breach, with the reported size saturating
+          * rather than wrapping. [[feedAtStart]], the only other place the total grows, widens the same way.
           */
         private def settle(held: Chunk[Span[Byte]], heldSize: Long, offset: Long, index: Long, lines: Chunk[Line])(using Frame): Framed =
             // The residual is measured by the same rule a completed record is: a trailing '\r' is the
@@ -377,10 +381,14 @@ object JsonLines:
             while i < indexed.size && written < size do
                 val piece = indexed(i)
                 val n     = math.min(piece.size, size - written)
+                // Unsafe: reads the piece's backing array to copy out of it rather than element by element.
+                // `n` is clamped to the piece, nothing is written back, and the array is not retained.
                 Array.copy(piece.toArrayUnsafe, 0, out, written, n)
                 written += n
                 i += 1
             end while
+            // Unsafe: the same read-only bulk copy, bounded by what the pieces left unwritten, which the
+            // caller sized against `tail`.
             if written < size then Array.copy(tail.toArrayUnsafe, 0, out, written, size - written)
             // Unsafe: `out` is allocated here, filled here, and handed straight to the caller as its only
             // reference, so wrapping it without a defensive copy cannot alias anything.
