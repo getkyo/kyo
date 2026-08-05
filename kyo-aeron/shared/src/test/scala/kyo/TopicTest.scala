@@ -89,17 +89,45 @@ class TopicTest extends Test:
         }
     }
 
+    // started.await only proves both subscriber fibers started, not that both aeron images are
+    // receiving; a one-shot publish can close before a fan-out subscriber's image connects, and aeron
+    // never redelivers to a late image, so that subscriber hangs. As in TopicRoundTripTest, a leading
+    // probe phase emits sentinel Message(-1) values until both subscribers signal first receipt, then
+    // the real batch follows in the SAME publication. Each subscriber taps readiness on first receipt
+    // and filters the sentinels out before taking its quota.
+    val fanOutProbe        = Message(-1)
+    val fanOutProbeBackoff = 5.millis
+    val fanOutMaxProbes    = 2000 // bounded: ~10 s ceiling at 5 ms; stops if an image never connects
+
     "multiple subscribers" - {
         "fan-out to multiple subscribers" in {
             val messages = Seq(Message(1), Message(2), Message(3))
 
             Topic.run {
                 for
-                    started <- Latch.init(2)
-                    fiber1  <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
-                    fiber2  <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
-                    _       <- started.await
-                    _       <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
+                    started    <- Latch.init(2)
+                    receiving1 <- Latch.init(1)
+                    receiving2 <- Latch.init(1)
+                    fiber1 <- Fiber.initUnscoped(started.release.andThen(
+                        Topic.stream[Message](uri).tap(_ => receiving1.release).filterPure(_.value >= 0).take(messages.size).run
+                    ))
+                    fiber2 <- Fiber.initUnscoped(started.release.andThen(
+                        Topic.stream[Message](uri).tap(_ => receiving2.release).filterPure(_.value >= 0).take(messages.size).run
+                    ))
+                    _ <- started.await
+                    _ <- Fiber.initUnscoped {
+                        val probes =
+                            Stream.unfold(0, chunkSize = 1) { step =>
+                                receiving1.pending.map { w1 =>
+                                    receiving2.pending.map { w2 =>
+                                        if (w1 == 0 && w2 == 0) || step >= fanOutMaxProbes then Absent: Maybe[(Message, Int)]
+                                        else
+                                            Async.sleep(fanOutProbeBackoff).andThen(Present((fanOutProbe, step + 1)): Maybe[(Message, Int)])
+                                    }
+                                }
+                            }
+                        Topic.publish[Message](uri)(probes.concat(Stream.init(messages)))
+                    }
                     result1 <- fiber1.get
                     result2 <- fiber2.get
                 yield
@@ -113,10 +141,14 @@ class TopicTest extends Test:
 
             Topic.run {
                 for
-                    started <- Latch.init(2)
+                    started    <- Latch.init(2)
+                    receiving1 <- Latch.init(1)
+                    receiving2 <- Latch.init(1)
                     slowFiber <-
                         Fiber.initUnscoped(started.release.andThen(
                             Topic.stream[Message](uri)
+                                .tap(_ => receiving1.release)
+                                .filterPure(_.value >= 0)
                                 .map(r => Async.delay(1.millis)(r))
                                 .take(messages.size)
                                 .run
@@ -124,11 +156,25 @@ class TopicTest extends Test:
                     fastFiber <-
                         Fiber.initUnscoped(started.release.andThen(
                             Topic.stream[Message](uri)
+                                .tap(_ => receiving2.release)
+                                .filterPure(_.value >= 0)
                                 .take(messages.size)
                                 .run
                         ))
-                    _    <- started.await
-                    _    <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
+                    _ <- started.await
+                    _ <- Fiber.initUnscoped {
+                        val probes =
+                            Stream.unfold(0, chunkSize = 1) { step =>
+                                receiving1.pending.map { w1 =>
+                                    receiving2.pending.map { w2 =>
+                                        if (w1 == 0 && w2 == 0) || step >= fanOutMaxProbes then Absent: Maybe[(Message, Int)]
+                                        else
+                                            Async.sleep(fanOutProbeBackoff).andThen(Present((fanOutProbe, step + 1)): Maybe[(Message, Int)])
+                                    }
+                                }
+                            }
+                        Topic.publish[Message](uri)(probes.concat(Stream.init(messages)))
+                    }
                     slow <- slowFiber.get
                     fast <- fastFiber.get
                 yield
@@ -224,10 +270,14 @@ class TopicTest extends Test:
 
         Topic.run {
             for
-                started <- Latch.init(2)
+                started    <- Latch.init(2)
+                receiving1 <- Latch.init(1)
+                receiving2 <- Latch.init(1)
                 failingFiber <- Fiber.initUnscoped(
                     started.release.andThen(
                         Topic.stream[Message](uri)
+                            .tap(_ => receiving1.release)
+                            .filterPure(_.value >= 0)
                             .map(_ => Abort.fail("Planned failure"): Message < Abort[String])
                             .take(messageCount)
                             .run
@@ -236,12 +286,25 @@ class TopicTest extends Test:
                 normalFiber <- Fiber.initUnscoped(
                     started.release.andThen(
                         Topic.stream[Message](uri)
+                            .tap(_ => receiving2.release)
+                            .filterPure(_.value >= 0)
                             .take(messageCount)
                             .run
                     )
                 )
-                _             <- started.await
-                _             <- Topic.publish(uri)(Stream.init(messages))
+                _ <- started.await
+                _ <- Fiber.initUnscoped {
+                    val probes =
+                        Stream.unfold(0, chunkSize = 1) { step =>
+                            receiving1.pending.map { w1 =>
+                                receiving2.pending.map { w2 =>
+                                    if (w1 == 0 && w2 == 0) || step >= fanOutMaxProbes then Absent: Maybe[(Message, Int)]
+                                    else Async.sleep(fanOutProbeBackoff).andThen(Present((fanOutProbe, step + 1)): Maybe[(Message, Int)])
+                                }
+                            }
+                        }
+                    Topic.publish[Message](uri)(probes.concat(Stream.init(messages)))
+                }
                 failingResult <- failingFiber.getResult
                 normalResult  <- normalFiber.get
             yield

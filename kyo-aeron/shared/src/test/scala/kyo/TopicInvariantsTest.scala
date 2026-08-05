@@ -225,19 +225,43 @@ class TopicInvariantsTest extends Test:
     // emit materializes its own addSubscription call. A shared subscription would let only one consumer
     // receive each message.
     "two concurrent Topic.stream consumers get distinct subscriptions (per-emit safety)" in {
-        val messages = Seq(1, 2, 3)
+        val messages     = Seq(1, 2, 3)
+        val probe        = -1
+        val probeBackoff = 5.millis
+        val maxProbes    = 2000 // bounded: ~10 s ceiling at 5 ms; stops if an image never connects
         Topic.run {
             for
-                started <- Latch.init(2)
+                started    <- Latch.init(2)
+                receiving1 <- Latch.init(1)
+                receiving2 <- Latch.init(1)
+                // started.await only proves both consumer fibers started, not that both aeron images
+                // are receiving; a one-shot publish can close before a late image connects, and aeron
+                // never redelivers, so that consumer would hang. Probe with sentinel -1 until both
+                // signal first receipt, then the real batch follows in the SAME publication.
                 consumer1 <- Fiber.initUnscoped(using Topic.isolate)(
-                    started.release.andThen(Topic.stream[Int]("aeron:ipc").take(messages.size).run)
+                    started.release.andThen(
+                        Topic.stream[Int]("aeron:ipc").tap(_ => receiving1.release).filterPure(_ >= 0).take(messages.size).run
+                    )
                 )
                 consumer2 <- Fiber.initUnscoped(using Topic.isolate)(
-                    started.release.andThen(Topic.stream[Int]("aeron:ipc").take(messages.size).run)
+                    started.release.andThen(
+                        Topic.stream[Int]("aeron:ipc").tap(_ => receiving2.release).filterPure(_ >= 0).take(messages.size).run
+                    )
                 )
                 _ <- started.await
                 // Publish 2 * messages.size messages so both consumers can receive their own set.
-                _         <- Fiber.initUnscoped(Topic.publish[Int]("aeron:ipc")(Stream.init(messages ++ messages)))
+                _ <- Fiber.initUnscoped {
+                    val probes =
+                        Stream.unfold(0, chunkSize = 1) { step =>
+                            receiving1.pending.map { w1 =>
+                                receiving2.pending.map { w2 =>
+                                    if (w1 == 0 && w2 == 0) || step >= maxProbes then Absent: Maybe[(Int, Int)]
+                                    else Async.sleep(probeBackoff).andThen(Present((probe, step + 1)): Maybe[(Int, Int)])
+                                }
+                            }
+                        }
+                    Topic.publish[Int]("aeron:ipc")(probes.concat(Stream.init(messages ++ messages)))
+                }
                 received1 <- consumer1.get
                 received2 <- consumer2.get
             yield
