@@ -25,9 +25,17 @@ class ReporterTest extends AnyFreeSpec with NonImplicitAssertions {
         val f = new File(path)
         if (!f.exists()) ""
         else {
-            val s = Source.fromFile(f)
-            try s.mkString
-            finally s.close()
+            try {
+                val s = Source.fromFile(f)
+                try s.mkString
+                finally s.close()
+            } catch {
+                // The writer replaces this file atomically every topStatusFileMs. On Windows opening it
+                // for reading while that replace is in flight fails with a sharing violation ("used by
+                // another process"); treat it as "not readable this instant" and let the poll loop retry,
+                // rather than failing the test on a transient, expected Windows file-locking window.
+                case _: java.io.IOException => ""
+            }
         }
     }
 
