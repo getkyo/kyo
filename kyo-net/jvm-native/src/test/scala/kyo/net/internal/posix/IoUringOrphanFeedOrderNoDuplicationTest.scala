@@ -99,7 +99,7 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer { clientEngine.free(); serverEngine.free() }) {
-                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                        val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                         // Shared ordered log spanning BOTH delivery mechanisms: inboundSink (the orphan's path) and the ordinary recv's own
                         // promise (the second, queued-then-drained recv's path). One queue makes "in order, no loss, no duplication" a single,

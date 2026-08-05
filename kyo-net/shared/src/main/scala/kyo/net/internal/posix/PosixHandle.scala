@@ -63,7 +63,8 @@ final private[net] class PosixHandle private (
     // plain read-then-clear let both paths feed the peer's flight to the handshake engine, corrupting the record stream. Whichever side
     // wins a `compareAndSet(Present(arr), Absent)` on this slot is the sole feeder for that chunk; the loser sees the winner's `Absent` and
     // skips.
-    val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]]
+    val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]],
+    val createdAt: Frame
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
       * [[growReadBufferForFullRead]]): the field is `var` so the grow can swap in a larger buffer, but every read of it is a coherent snapshot
@@ -386,7 +387,7 @@ final private[net] class PosixHandle private (
       * [[WriteState.Backpressured]]) because the drain path runs on the engine FIFO worker and cannot reach the WritePump's WriteState atomic cell
       * directly; the handle is the shared bridge between the two carriers.
       */
-    @volatile var backpressurePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
+    @volatile var backpressurePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
 
     /** Whether the last recv on this fd filled the read buffer exactly (n == readBufferSize). When true, the kernel may still hold residual
       * bytes that an edge-triggered backend will never re-signal (epoll fires once per empty->ready transition; a filled buffer leaves data in
@@ -442,7 +443,7 @@ final private[net] class PosixHandle private (
       * happens-before barrier for the change worker's `rc < 0` failure path). Single owner for the write side: only `awaitAccept` writes
       * this field, and at most one accept is in flight per handle.
       */
-    @volatile var pendingAcceptPromise: Maybe[Promise.Unsafe[Int, Abort[Closed]]] = Absent
+    @volatile var pendingAcceptPromise: Maybe[Promise.Unsafe[Int, Abort[Closed | NetException]]] = Absent
 
     /** The pending writable promise for this fd, stored directly on the handle alongside the poll-fiber-confined `pendingWritables` map entry.
       * The map entry routes the readiness event to the right waiter on the poll fiber; this field lets the cancel/close paths fail the promise
@@ -451,7 +452,7 @@ final private[net] class PosixHandle private (
       * fiber on `dispatchWritable` and by the cancel/close paths. At most one writable is armed per handle at a time. The arming handle's id is
       * `id` itself, so the stale-fd guard reads `handle.id` rather than a separately-stored copy.
       */
-    @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
+    @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
 
     /** Latch: the peer has closed its write side (a FIN) or the connection hit a hard error (RST). Written only by the poll carrier at the FIN/error
       * edges its standing registration delivers, even while the ReadPump is backpressured with no read armed. `@volatile` because the grace timer
@@ -648,7 +649,7 @@ private[net] object PosixHandle:
       * The readiness poller ignores it (epoll/kqueue signal connect via write-readiness), so it defaults to `Absent` for an already-connected
       * (e.g. accepted) socket.
       */
-    def socket(fd: Int, bufSize: Int, connectTarget: Maybe[(Buffer[Byte], Int)])(using
+    def socket(fd: Int, bufSize: Int, connectTarget: Maybe[(Buffer[Byte], Int)], createdAt: Frame)(using
         AllowUnsafe
     ): PosixHandle =
         new PosixHandle(
@@ -664,11 +665,12 @@ private[net] object PosixHandle:
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
-            lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
+            lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            createdAt = createdAt
         )
 
     /** stdio handle: split fds, read end 0 and write end 1 (the split-fd case). */
-    def stdio(bufSize: Int)(using AllowUnsafe): PosixHandle =
+    def stdio(bufSize: Int, createdAt: Frame)(using AllowUnsafe): PosixHandle =
         new PosixHandle(
             0,
             1,
@@ -682,7 +684,8 @@ private[net] object PosixHandle:
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
-            lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
+            lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            createdAt = createdAt
         )
 
     /** Actually release the resources the handle owns: the TLS engine (if any) and the reused read buffer. Called exactly once, under the
@@ -731,7 +734,7 @@ private[net] object PosixHandle:
         // abandons an in-flight, not-yet-fully-sent write (a caller closing before a backpressured flush drains): CloseDuringBackpressuredFlushTest
         // pins exactly that as correct ("close while the flush is parked on writability: frees once, clears pending state"). A blanket
         // check here fired on every such legitimate abrupt close under the full suite (confirmed via CloseDuringBackpressuredFlushTest,
-        // IoUringDriverCrossTailMockedTest, FlushReArmPendingCoalesceTest), so it would spam production logs on ordinary early disconnects, not just
+        // FlushReArmPendingCoalesceTest), so it would spam production logs on ordinary early disconnects, not just
         // genuine bugs. The sound version of this doctrine for the send tail lives at the reap-and-declare-drained point instead (see
         // onTlsSendComplete's fully-drained branch in IoUringDriver), where "should be exactly zero" is actually always true.
         h.pendingCipher = Absent
@@ -752,9 +755,9 @@ private[net] object PosixHandle:
             given Frame = Frame.internal
             bp.completeDiscard(
                 Result.fail(kyo.Closed(
-                    "PosixHandle",
-                    Frame.internal,
-                    s"fd=${h.readFd}/${h.writeFd} closed while a write was parked on backpressure"
+                    s"connection fd=${h.readFd}/${h.writeFd}",
+                    h.createdAt,
+                    "closed while a write was parked on backpressure"
                 ))
             )
         }
@@ -781,9 +784,9 @@ private[net] object PosixHandle:
         h.queuedRecv match
             case PosixHandle.QueuedRecv.Queued(p, _, _) =>
                 p.completeDiscard(Result.fail(kyo.Closed(
-                    "PosixHandle",
-                    Frame.internal,
-                    s"fd=${h.readFd}/${h.writeFd} closed while a recv was queued"
+                    s"connection fd=${h.readFd}/${h.writeFd}",
+                    h.createdAt,
+                    "closed while a recv was queued"
                 )(using Frame.internal)))
             case _ => ()
         end match
@@ -828,13 +831,16 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
 
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]                                                          = unbound
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = unbound
-    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = unbound
-    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit     = unbound
-    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit       = unbound
-    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                           = unbound
-    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                         = unbound
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                    = unbound
-    def close()(using AllowUnsafe, Frame): Unit                                                                             = unbound
-    def label: String                                                                                                       = "NoDriver"
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        unbound
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        unbound
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        unbound
+    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = unbound
+    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                               = unbound
+    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                          = unbound
+    def close()(using AllowUnsafe, Frame): Unit                                                   = unbound
+    def label: String                                                                             = "NoDriver"
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"
 end NoDriver

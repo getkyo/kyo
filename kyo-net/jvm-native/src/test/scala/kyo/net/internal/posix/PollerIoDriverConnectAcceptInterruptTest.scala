@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import scala.jdk.CollectionConverters.*
 
@@ -99,9 +100,9 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
-                val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitConnect(handle, promise)
 
                 for
@@ -141,9 +142,9 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
-                val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitConnect(handle, promise)
 
                 for
@@ -160,7 +161,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                     // Closed. Both run in ONE synchronous block with no suspension between them, so the close is the deterministic deliverer (no
                     // poll-cycle can resolve the fresh promise from a kernel event in between). A stranded prior entry from cancel would block this
                     // re-arm or leave the fresh promise pending; here it resolves with Closed, proving the slot is clean and the registration live.
-                    fresh = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    fresh = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                     second <- Sync.defer {
                         driver.awaitWritable(handle, fresh)
                         driver.close()
@@ -188,9 +189,9 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
-                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                val promise = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                 driver.awaitAccept(handle, promise)
 
                 for
@@ -226,9 +227,9 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
-                val handle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
-                val promise = Promise.Unsafe.init[Int, Abort[Closed]]()
+                val promise = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                 driver.awaitAccept(handle, promise)
 
                 for
@@ -243,7 +244,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
                     // Re-arm a FRESH accept waiter on the same fd after cancel, then connect a REAL client so the listen fd becomes
                     // accept-ready: the fresh accept promise resolves with the -1 readiness sentinel (the accept-ready signal). If cancel had
                     // stranded the old pendingAccepts entry, this fresh promise's delivery would be blocked / mis-routed.
-                    fresh = Promise.Unsafe.init[Int, Abort[Closed]]()
+                    fresh = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
                     _      <- Sync.defer(driver.awaitAccept(handle, fresh))
                     client <- connectClient(port)
                     second <- Abort.run[Closed](fresh.safe.get)

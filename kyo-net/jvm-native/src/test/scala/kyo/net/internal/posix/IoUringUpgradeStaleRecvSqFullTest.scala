@@ -58,8 +58,8 @@ class IoUringUpgradeStaleRecvSqFullTest extends Test:
         withDriver(1) { drv =>
             PosixTestSockets.loopbackPair().map { case (fillerClient, fillerAccepted) =>
                 PosixTestSockets.loopbackPair().map { case (targetClient, targetAccepted) =>
-                    val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    val targetH = PosixHandle.socket(targetAccepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val fillerH = PosixHandle.socket(fillerAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val targetH = PosixHandle.socket(targetAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val gate    = new java.util.concurrent.CountDownLatch(1)
                     val pinIn   = Promise.Unsafe.init[Unit, Abort[Closed]]()
                     drv.submitEngineOp { () =>

@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
@@ -92,7 +93,7 @@ class PollerIoDriverConcurrentInterestTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](8)(i => (i + 1).toByte)
 
                     // Park a READ on the accepted fd: no data has arrived, so it stays pending. On epoll this arms EPOLLIN.
@@ -102,7 +103,7 @@ class PollerIoDriverConcurrentInterestTest extends Test:
                     // Park a WRITABLE on the SAME fd. The freshly-connected socket is writable, so this completes. On a last-write-wins epoll this is
                     // the arm that REPLACES the read's EPOLLIN with EPOLLOUT; once it fires, EPOLLONESHOT disables the
                     // whole fd and the parked read's interest is gone.
-                    val writePromise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    val writePromise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                     driver.awaitWritable(acceptedH, writePromise)
 
                     for

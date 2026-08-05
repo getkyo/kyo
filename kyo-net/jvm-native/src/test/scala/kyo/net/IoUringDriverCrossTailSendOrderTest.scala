@@ -77,7 +77,7 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the test write")
                 withRecordingDriver { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         // Post-STARTTLS state: upgrade has fired, TLS engine is present.
                         handle.tls = Present(serverEngine)
                         // Prevent double-free: the driver calls engineFreeSink when it tears down the handle, but withEngines
@@ -119,7 +119,7 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the test writes")
                 withRecordingDriver { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
-                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         handle.tls = Present(serverEngine)
                         handle.engineFreeSink = _ => ()
                         // Simulate: raw send in flight (the handshake's final flight).

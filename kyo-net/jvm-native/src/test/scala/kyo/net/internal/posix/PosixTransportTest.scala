@@ -61,7 +61,7 @@ class PosixTransportTest extends Test:
 
     "PosixTransport.stdio" - {
         "the stdio handle splits the fds to (readFd=0, writeFd=1)" in {
-            val h = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
+            val h = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal)
             assert(h.readFd == 0, s"readFd=${h.readFd}")
             assert(h.writeFd == 1, s"writeFd=${h.writeFd}")
         }
@@ -99,13 +99,13 @@ class PosixTransportTest extends Test:
                     loopbackPair().map { case (client, accepted) =>
                         val writer =
                             transport.openWith(
-                                PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent),
+                                PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                                 driver,
                                 kyo.net.NetConfig.DefaultChannelCapacity
                             )
                         val reader =
                             transport.openWith(
-                                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent),
+                                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                                 driver,
                                 kyo.net.NetConfig.DefaultChannelCapacity
                             )
@@ -135,7 +135,7 @@ class PosixTransportTest extends Test:
             val real     = PollerBackend.default()
             val pollerFd = real.create()
             val driver   = TestDrivers.forBackend(RecordingPollerBackend(real), pollerFd, spy)
-            val handle   = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize) // readFd=0, writeFd=1
+            val handle   = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize, Frame.internal) // readFd=0, writeFd=1
             // closeHandle issues sockets.close ONLY when readFd == writeFd (a socket); the split stdio handle (0 != 1) skips that branch.
             driver.closeHandle(handle)
             // Free the real poller fd and scratch the recording backend allocated (the poll loop was never started).

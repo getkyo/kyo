@@ -57,7 +57,7 @@ class JsIoDriverTest extends kyo.net.Test:
         given Frame = Frame.internal
         val driver  = JsIoDriver.init()
         openPair().map { case (serverSock, clientSock) =>
-            val handle = JsHandle.init(serverSock, driver)
+            val handle = JsHandle.init(serverSock, driver, Frame.internal)
             // Backpressured: no awaitRead is armed. The peer writes 3 bytes then half-closes (FIN via end()).
             discard(clientSock.write(buffer(Array[Byte](10, 20, 30))))
             discard(clientSock.end())
@@ -77,7 +77,7 @@ class JsIoDriverTest extends kyo.net.Test:
         given Frame = Frame.internal
         val driver  = JsIoDriver.init()
         openPair().map { case (serverSock, clientSock) =>
-            val handle = JsHandle.init(serverSock, driver)
+            val handle = JsHandle.init(serverSock, driver, Frame.internal)
             // The peer stays connected and sends nothing: resuming yields no data and no 'end', so readableEnded/destroyed stay false.
             assert(!driver.isPeerClosed(handle), "first isPeerClosed returns false")
             Async.sleep(300.millis).map { _ =>

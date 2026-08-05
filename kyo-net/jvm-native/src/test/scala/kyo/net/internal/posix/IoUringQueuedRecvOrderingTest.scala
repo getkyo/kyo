@@ -61,7 +61,7 @@ class IoUringQueuedRecvOrderingTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Marks this a post-upgrade-shaped handle: submitRecv's single-recv-ordering gate only applies to handles that went
                     // through (or are simulating having gone through) a STARTTLS upgrade.
                     acceptedH.isUpgraded = true

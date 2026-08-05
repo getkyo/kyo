@@ -85,12 +85,12 @@ final private[net] class PosixTransport private[posix] (
     import PosixTransport.AcceptDrain
 
     /** Backoff before re-arming accept interest after `accept` returned `EMFILE`/`ENFILE` (out of file descriptors). The pending connection
-      * stays in the backlog and the listen fd stays read-ready, so an immediate re-arm re-fires the same error in a tight CPU spin; the backoff
-      * breaks the spin while keeping the accept loop alive, so accepting resumes once a fd frees. 50ms drops the carrier from 100% CPU to one
-      * cheap retry per interval yet recovers promptly when a fd frees (libuv backs off ~1s on the same condition; a shorter interval here
-      * resumes serving faster without measurably loading an otherwise idle poll loop).
+      * stays in the backlog and the listen fd stays read-ready, so an immediate re-arm re-fires the same error in a tight CPU spin. The backoff
+      * breaks the spin while keeping the accept loop alive, so accepting resumes once a fd frees. The default 50ms drops the carrier from 100%
+      * CPU to one cheap retry per interval yet recovers promptly when a fd frees. Tunable via `-Dkyo.net.acceptResourceBackoff` (milliseconds),
+      * the same flag the io_uring driver reads, so both backends back off identically under descriptor exhaustion.
       */
-    private val acceptResourceBackoff: Duration = 50.millis
+    private val acceptResourceBackoff: Duration = kyo.net.acceptResourceBackoff().millis
 
     /** Cap on consecutive `EINTR`/`ECONNABORTED` retries within a single drain cycle. These are transient (accept(2) says retry like `EAGAIN`),
       * but bounding the in-cycle retries stops a persistently-firing transient error from itself spinning the drain; past the cap the cycle
@@ -205,13 +205,16 @@ final private[net] class PosixTransport private[posix] (
       * `Closed` (the CAS fails) so fd 0/1 are never double-owned. The connection closes its driver registration on scope exit but never closes
       * fds 0/1 (the process owns them).
       */
-    override def stdio(channelCapacity: Int, readChunkSize: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+    override def stdio(channelCapacity: Int, readChunkSize: Int)(using
+        allow: AllowUnsafe,
+        frame: Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] =
         if !stdioClaimed.compareAndSet(false, true) then
             // Exactly one stdio per process (no double-ownership of fd 0/1).
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else
             Fiber.Unsafe.init {
-                val handle           = PosixHandle.stdio(readChunkSize)
+                val handle           = PosixHandle.stdio(readChunkSize, frame)
                 val conn: Connection = openWith(handle, selectDriver(handle.readFd), channelCapacity)
                 if !conn.start() then
                     // Unreachable: openWith (:211-217) registers the connection nowhere a concurrent close could reach before start() runs
@@ -430,7 +433,7 @@ final private[net] class PosixTransport private[posix] (
         promise: IOPromise[NetException, Connection],
         connectTimeout: Duration,
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         encoded match
             case Absent =>
                 promise.completeDiscard(Result.fail(connectFail(host, port, "")))
@@ -448,7 +451,7 @@ final private[net] class PosixTransport private[posix] (
                     val driver = pool.next()
                     // The handle carries the caller's read size for the rest of its life (PosixHandle.readBufferSize), so every later read on
                     // this connection uses it without the config having to be reachable from the handle.
-                    val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)))
+                    val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)), createdAt = frame)
                     handle.peerCloseGrace = config.peerCloseGrace
                     handle.driver = driver
                     // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
@@ -482,7 +485,7 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         timeout: Duration
-    )(using AllowUnsafe, Frame): () => Unit =
+    )(using allow: AllowUnsafe, frame: Frame): () => Unit =
         // A Unix connect is bounded too, though not because the kernel parks it: the OS connect settles promptly on every arm this transport ships: a
         // non-blocking AF_UNIX connect completes inline or fails fast, never reporting "in progress" (measured on Linux 6.x and macOS, and
         // IORING_OP_CONNECT against a full backlog reaps -EAGAIN immediately). What the deadline actually bounds is this transport's own
@@ -509,7 +512,7 @@ final private[net] class PosixTransport private[posix] (
             def disarm(): Unit =
                 // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
                 disarmed.set(true)
-                timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "connect completed before deadline")))
+                timer.interruptDiscard(Result.Panic(Interrupted(frame, "connect completed before deadline")))
             end disarm
             // Backstop for every way this connect can end before its TCP phase completes: an OS failure, the caller interrupting, a listener
             // teardown. The TCP-phase handoff in completeOrTls is what disarms it on the success path.
@@ -576,8 +579,8 @@ final private[net] class PosixTransport private[posix] (
         promise: IOPromise[NetException, Connection],
         checkSoError: Boolean,
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
-        val writablePromise = new IOPromise[Closed, Unit]
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
+        val writablePromise = new IOPromise[Closed | NetException, Unit]
         writablePromise.onComplete { result =>
             result match
                 case Result.Success(_) =>
@@ -588,10 +591,10 @@ final private[net] class PosixTransport private[posix] (
                         promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err))))
                     else completeOrTls(handle, addr, driver, target, port, tls, promise, config)
                     end if
-                case Result.Failure(closed) =>
+                case Result.Failure(cause) =>
                     addr.close()
                     closeUnwiredHandle(handle, driver, connectPhase = true)
-                    promise.completeDiscard(Result.fail(connectFail(host, port, closed)))
+                    promise.completeDiscard(Result.fail(connectFail(host, port, cause)))
                 case Result.Panic(e) =>
                     addr.close()
                     closeUnwiredHandle(handle, driver, connectPhase = true)
@@ -599,18 +602,18 @@ final private[net] class PosixTransport private[posix] (
             end match
         }
         // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-        // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent only
-        // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs this
-        // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
-        // suspended computation.
-        driver.awaitConnect(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        // plainly-constructed IOPromise[Closed | NetException, Unit], even though both erase to the same runtime object; the alias is transparent
+        // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs this
+        // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Unit values above (a
+        // driver-side connect failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+        driver.awaitConnect(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
         // If the connect promise is completed before the writable arm resolves (an external interrupt: e.g. an Async.timeout connectTimeout
         // interrupts the awaiting fiber, which interrupts this promise), the arm is still parked with the socket in SYN_SENT. Forward the
         // completion to the arm so its onComplete runs the connect-failure cleanup (closeUnwiredHandle), reclaiming the in-flight connect fd
         // instead of leaking it until the OS TCP timeout. completeDiscard is at-most-once: a normal connect outcome (the arm completed first)
         // makes this a no-op, and the arm's own onComplete then completes this promise.
         promise.onComplete { _ =>
-            writablePromise.completeDiscard(Result.panic(Closed("PosixTransport", summon[Frame], "connect interrupted before completion")))
+            writablePromise.completeDiscard(Result.panic(Interrupted(frame, "connect interrupted before completion")))
         }
     end awaitConnectThen
 
@@ -649,7 +652,7 @@ final private[net] class PosixTransport private[posix] (
         tls: Maybe[(NetTlsConfig, String)],
         promise: IOPromise[NetException, Connection],
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         addr.close()
         // The TCP phase is established here, so its deadline stops owning the connection. Transport.connectTls documents connectTimeout as
         // bounding the TCP phase and NetTlsConfig.handshakeTimeout as bounding the handshake, worst case their sum; leaving the connect timer
@@ -726,11 +729,7 @@ final private[net] class PosixTransport private[posix] (
                     }
                     // The handshake settled first: interrupt the timer so it never fires.
                     promise.onComplete { _ =>
-                        deadline.interruptDiscard(Result.Panic(Closed(
-                            "PosixTransport",
-                            summon[Frame],
-                            "handshake settled before deadline"
-                        )))
+                        deadline.interruptDiscard(Result.Panic(Interrupted(frame, "handshake settled before deadline")))
                     }
                 end if
                 driveHandshake(
@@ -951,7 +950,7 @@ final private[net] class PosixTransport private[posix] (
         tls: Maybe[NetTlsConfig],
         promise: IOPromise[NetException, NetListener],
         config: kyo.net.NetConfig
-    )(using AllowUnsafe, Frame): Unit =
+    )(using allow: AllowUnsafe, frame: Frame): Unit =
         encoded match
             case Absent =>
                 promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
@@ -980,7 +979,16 @@ final private[net] class PosixTransport private[posix] (
                                         val resolved = resolvePort(fd, family)
                                         (resolved, NetAddress.Tcp(host, resolved))
                                 val listener =
-                                    new PosixListener(fd, actualPort, host, address, sockets, listeners, AtomicBoolean.Unsafe.init(false))
+                                    new PosixListener(
+                                        fd,
+                                        actualPort,
+                                        host,
+                                        address,
+                                        frame,
+                                        sockets,
+                                        listeners,
+                                        AtomicBoolean.Unsafe.init(false)
+                                    )
                                 discard(listeners.add(listener))
                                 // Flip fd non-blocking BEFORE arming the poller (atomic with awaitAccept arming; no busy-spin window).
                                 if shim.kyo_posix_set_nonblocking(fd) != 0 then
@@ -1012,7 +1020,7 @@ final private[net] class PosixTransport private[posix] (
     )(using AllowUnsafe, Frame): Unit =
         discard(acceptLoopsActive.incrementAndGet())
         val driver = pool.next()
-        val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent)
+        val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
 
         // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
         // for the driver's model. On the readiness drivers `closeListener` cancels synchronously (clearing the fd-keyed pendingAccepts /
@@ -1038,7 +1046,7 @@ final private[net] class PosixTransport private[posix] (
             if listener.isClosed then
                 discard(acceptLoopsActive.decrementAndGet())
             else
-                val acceptPromise = new IOPromise[Closed, Int]
+                val acceptPromise = new IOPromise[Closed | NetException, Int]
                 acceptPromise.onComplete {
                     case Result.Success(fd) =>
                         // io_uring completes with the real accepted fd (>= 0); the poller uses -1 as a readiness sentinel.
@@ -1056,18 +1064,18 @@ final private[net] class PosixTransport private[posix] (
                                 scheduleAcceptAfterBackoff()
                         end match
                     case Result.Failure(_) =>
-                        // Listener closed; driver completed the accept promise with Failure(Closed).
+                        // Listener closed (Failure(Closed)) or a driver-side accept failure (Failure(NetConnectionIoException)); either stops the loop.
                         discard(acceptLoopsActive.decrementAndGet())
                     case Result.Panic(e) =>
                         Log.live.unsafe.error("PosixTransport accept loop panic", e)
                         discard(acceptLoopsActive.decrementAndGet())
                 }
                 // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
-                // plainly-constructed IOPromise[Closed, Int], even though both erase to the same runtime object; the alias is transparent
-                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitAccept's fixed Promise.Unsafe-typed parameter needs
-                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Int values above, never
-                // a suspended computation.
-                driver.awaitAccept(handle, acceptPromise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed]]])
+                // plainly-constructed IOPromise[Closed | NetException, Int], even though both erase to the same runtime object; the alias is
+                // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitAccept's fixed Promise.Unsafe-typed parameter
+                // needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed | NetException/Int
+                // values above (a driver-side accept failure is delivered as NetConnectionIoException on this row), never a suspended computation.
+                driver.awaitAccept(handle, acceptPromise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed | NetException]]])
         end scheduleNextAccept
 
         // Re-arm accept interest after the resource-exhaustion backoff, without blocking the poll-loop carrier. `Clock.live.unsafe.sleep`
@@ -1132,7 +1140,7 @@ final private[net] class PosixTransport private[posix] (
         if !prepareClientSocket(clientFd, nodelay = true, config) then closeRawFd(clientFd)
         else
             val driver = pool.next()
-            val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent)
+            val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
             handle.peerCloseGrace = config.peerCloseGrace
             handle.driver = driver
             tls match
@@ -1266,8 +1274,8 @@ final private[net] class PosixTransport private[posix] (
       *     whether a timer is armed.
       */
     private def armHandshakeDeadline(clientFd: Int, timeout: Duration, onDeadline: () => Unit)(using
-        AllowUnsafe,
-        Frame
+        allow: AllowUnsafe,
+        frame: Frame
     ): PosixTransport.ArmedDeadline =
         if !timeout.isFinite then
             val settled = AtomicBoolean.Unsafe.init(false)
@@ -1289,7 +1297,7 @@ final private[net] class PosixTransport private[posix] (
                 disarm = () =>
                     if settled.compareAndSet(false, true) then
                         // The handshake won the race: disarm the deadline so the timer never fires (its onComplete sees the guard already set).
-                        timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "handshake completed before deadline")))
+                        timer.interruptDiscard(Result.Panic(Interrupted(frame, "handshake completed before deadline")))
                         true
                     else false,
                 hasFired = () => fired.get()
@@ -1563,7 +1571,7 @@ final private[net] class PosixTransport private[posix] (
         tls: NetTlsConfig,
         channelCapacity: Int,
         isServer: Boolean
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         conn match
             case posixConn: InternalConnection[PosixHandle] @unchecked if posixConn.handle.isInstanceOf[PosixHandle] =>
                 // One upgrade per connection: win the one-shot claim BEFORE arming any shared upgrade state (the abandon thunk below, the
@@ -1716,7 +1724,7 @@ final private[net] class PosixTransport private[posix] (
                             }
                             out.onComplete { _ =>
                                 deadline.interruptDiscard(
-                                    Result.Panic(Closed("PosixTransport", summon[Frame], "upgrade settled before deadline"))
+                                    Result.Panic(Interrupted(frame, "upgrade settled before deadline"))
                                 )
                             }
                         end if
@@ -2114,7 +2122,7 @@ final private[net] class PosixTransport private[posix] (
         onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit
     )(using AllowUnsafe, Frame): Unit =
-        val writablePromise = new IOPromise[Closed, Unit]
+        val writablePromise = new IOPromise[Closed | NetException, Unit]
         writablePromise.onComplete {
             case Result.Success(_)      => cont()
             case Result.Failure(closed) => onFailed(closed)
@@ -2125,7 +2133,7 @@ final private[net] class PosixTransport private[posix] (
         // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitWritable's fixed Promise.Unsafe-typed parameter needs this
         // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
         // suspended computation.
-        handle.driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        handle.driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
     end awaitWritable
 
     private def isWouldBlock(errno: Int): Boolean =
@@ -2500,6 +2508,7 @@ final private[net] class PosixListener(
     val port: Int,
     val host: String,
     val address: NetAddress,
+    val createdAt: Frame,
     private val sockets: SocketBindings,
     private val registry: java.util.Set[PosixListener],
     // CAS-guarded close flag: close() flips it so a second close() is a no-op (idempotent listener teardown).

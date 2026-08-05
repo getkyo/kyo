@@ -96,7 +96,7 @@ class TlsEngineIoCorruptRecordTest extends Test:
                 // Now the actual subject: feedAndDecrypt over the coalesced [good][corrupt] batch. The driver gets only this array; there is no
                 // separate error signal. feedAndDecrypt must surface the fatal record rather than returning the good prefix.
                 val harness = new TlsEngineIoHarness
-                val handle  = PosixHandle.socket(202, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle  = PosixHandle.socket(202, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val cipher  = Buffer.fromArray[Byte](coalesced)
                 val delivered =
                     try harness.feedAndDecryptForTest(server, cipher, coalesced.length, handle)

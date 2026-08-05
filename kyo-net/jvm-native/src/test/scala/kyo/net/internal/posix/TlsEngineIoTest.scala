@@ -53,7 +53,7 @@ class TlsEngineIoTest extends Test:
                     assert(TlsEngineLoopback.handshake(client, server), "handshake did not complete")
                     val harness   = new TlsEngineIoHarness
                     val recording = RecordingTlsEngine(server)
-                    val handle    = PosixHandle.socket(99, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle    = PosixHandle.socket(99, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                     // Two records arriving together: feedAndDecrypt loops readPlain once per record, then once more to see the drain.
                     val r1        = Array.tabulate[Byte](32)(i => i.toByte)
@@ -99,7 +99,7 @@ class TlsEngineIoTest extends Test:
                     assert(TlsEngineLoopback.handshake(client, server), "handshake did not complete")
                     val harness = new TlsEngineIoHarness
                     val engine  = RecordingTlsEngine(server)
-                    val handle  = PosixHandle.socket(100, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle  = PosixHandle.socket(100, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                     // First multi-record decode allocates the accumulator.
                     val a1         = Array.tabulate[Byte](20)(i => i.toByte)
@@ -139,7 +139,7 @@ class TlsEngineIoTest extends Test:
                     assert(TlsEngineLoopback.handshake(client, server), "handshake did not complete")
                     val harness = new TlsEngineIoHarness
                     val engine  = RecordingTlsEngine(server)
-                    val handle  = PosixHandle.socket(101, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle  = PosixHandle.socket(101, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                     val record    = Array.tabulate[Byte](40)(i => (i + 1).toByte)
                     val cipher    = encryptRecords(client, Seq(record))
