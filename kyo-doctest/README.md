@@ -1,6 +1,6 @@
 # kyo-doctest
 
-kyo-doctest validates the Scala code blocks inside your Markdown by compiling them, so the examples in your docs cannot rot. `KyoDoctestPlugin` auto-enables on every JVM project. Running `sbt doctest` finds the project's `README.md`, extracts every ```` ```scala ```` block, and type-checks each one against the project's own classpath, failing the build on any unexpected outcome. A project opts out with `.disablePlugins(KyoDoctestPlugin)`. Each fenced block is treated as an independent compile unit by default, so examples stay copy-pasteable. An info-string DSL (`doctest:scope=...`, `doctest:expect=...`, `doctest:platform=...`, `doctest:setup`) lets a doc author chain blocks, declare blocks that must fail to compile, hide a setup fixture inside an HTML comment, or restrict a block to a single platform.
+kyo-doctest validates the Scala code blocks inside your Markdown by compiling them, so the examples in your docs cannot rot. `KyoDoctestPlugin` auto-enables on every JVM project. Running `sbt doctest` finds the project's `README.md`, extracts every ```` ```scala ```` block, and type-checks each one against the project's own classpath, failing the build on any unexpected outcome. A project opts out with `.disablePlugins(KyoDoctestPlugin)`. Each fenced block is treated as an independent compile unit by default, so examples stay copy-pasteable. An info-string DSL (`doctest:scope=...`, `doctest:expect=...`, `doctest:platform=...`, `doctest:timeout=...`, `doctest:setup`) lets a doc author chain blocks, declare blocks that must fail to compile, hide a setup fixture inside an HTML comment, restrict a block to a single platform, or configure its runtime limit.
 
 There are two surfaces. `kyo-doctest-plugin` is the user-facing sbt plugin: it exposes the task and setting keys that almost every user touches. `kyo-doctest` is the JVM-only runner library that the plugin forks into over a temp JSON config, never called directly by users. Anyone wiring doctest into a non-sbt build (Mill, a CI script, an editor integration) calls `kyo.doctest.Doctest.check` directly with a `Doctest.Config`.
 
@@ -99,9 +99,9 @@ lazy val myKyoLib = project
 
 ## Writing validatable Markdown
 
-The Markdown DSL lives entirely on the code block's info string (`scala doctest:KEY=VALUE`) and on optional file-level `<!-- doctest:default -->` comments. Three orthogonal axes (scope, expectation, platform) and a `setup` sugar cover the cases that come up writing real READMEs. A separate axis, the **carrier**, controls whether readers see the block at all.
+The Markdown DSL lives entirely on the code block's info string (`scala doctest:KEY=VALUE`) and on optional file-level `<!-- doctest:default -->` comments. Four orthogonal axes (scope, expectation, platform, timeout) and a `setup` sugar cover the cases that come up writing real READMEs. A separate axis, the **carrier**, controls whether readers see the block at all.
 
-The defaults you get without writing any DSL are deliberate: `scope=isolated`, `expect=compiles`, `platform=jvm,js,native` (or the subset of those the project supports). That means a bare `scala` fenced block must type-check on its own, with no leakage from prior blocks. **The default is "compiles," not "runs." A block whose body throws at runtime still passes validation unless you opt in with `expect=runs` or `expect=crashes`.**
+The defaults you get without writing any DSL are deliberate: `scope=isolated`, `expect=compiles`, `platform=jvm,js,native` (or the subset of those the project supports), and `timeout=30s`. That means a bare `scala` fenced block must type-check on its own, with no leakage from prior blocks. **The default is "compiles," not "runs." A block whose body throws at runtime still passes validation unless you opt in with `expect=runs` or `expect=crashes`.**
 
 ### Scope: what names a block sees
 
@@ -156,6 +156,18 @@ Expectation answers "what counts as a valid outcome for this block?" The default
 
 `expect=runs`: the block must type-check AND execute without throwing. Use this when the example value is the point of the example (numeric results, side effects on a fixture).
 
+Runtime blocks execute in an isolated child JVM. The default limit is 30 seconds, and `timeout=DURATION` changes it for one block. Durations must be finite and greater than zero, for example `timeout=250ms` or `timeout=45s`. A timeout, an uncaught exception, or termination through `System.exit` fails an `expect=runs` block without terminating the doctest runner. Runtime-bearing compile units are recompiled and re-executed on every validation run because their behavior can depend on ambient state.
+
+For a named environment, the deadline resets when execution enters each block and uses that block's resolved timeout. Setup and inherited code that runs before the current block starts uses the default 30-second limit.
+
+````markdown
+```scala doctest:expect=runs timeout=45s
+assert(1 + 1 == 2)
+```
+````
+
+Runtime expectations require doctest's generated object wrapper. A block whose first declaration is a top-level `package` is still supported by compile-only expectations, but `expect=runs` and `expect=crashes` report that the form cannot be executed.
+
 ```scala
 List(1, 2, 3).map(_ * 2) // doctest:expect=runs
 // The block compiles AND runs; the validator throws if execution raises.
@@ -172,6 +184,8 @@ val n: Int = "not an int"
 `expect=warns`: the block must compile and produce at least one compiler warning. Useful for showing deprecation behavior.
 
 `expect=crashes`: the block must throw at runtime. Symmetrical to `fails-compile`: the example IS the failure being demonstrated.
+
+An uncaught exception or explicit process termination satisfies `expect=crashes`. Normal completion, timeout, class-loading failure, and failure to launch the isolated JVM are reported as missed expectations or runtime infrastructure failures.
 
 `expect=skipped`: the block is parsed (so its line range surfaces in error reports) but neither compiled nor executed. Use for `scala` blocks that hold pseudocode or partial fragments you want to keep in the document.
 
@@ -222,12 +236,12 @@ alice.name
 When most blocks in a file share the same scope or expectation, repeating the modifier on every block adds noise. A single HTML comment at the top of the file sets defaults that every block inherits.
 
 ````markdown
-<!-- doctest:default scope=inherited expect=runs -->
+<!-- doctest:default scope=inherited expect=runs timeout=45s -->
 
 # My Document
 
 ```scala doctest:expect=skipped
-// Inherits scope=inherited, expect=runs from the file default.
+// Inherits scope=inherited, expect=runs, timeout=45s from the file default.
 val x = 1
 ```
 
@@ -237,7 +251,7 @@ val y: Int = x + 1
 ```
 ````
 
-The resolution rule is three-tier: per-block tokens win, then per-file defaults, then the hardcoded defaults (`Isolated`, `Compiles`, all three platforms).
+The resolution rule is three-tier: per-block tokens win, then per-file defaults, then the hardcoded defaults (`Isolated`, `Compiles`, all three platforms, 30 seconds).
 
 > **Caution:** the `<!-- doctest:default ... -->` comment must appear in the first non-blank lines of the file, before any non-comment content. A defaults block that appears after the first content line is treated as an ordinary HTML comment and silently ignored.
 
@@ -391,7 +405,9 @@ Under sbt, the plugin (`kyo-doctest-plugin`) forks a JVM running the runner (`ky
 
 Inside the fork, a single warm Dotty `Driver` is built once and reused across every block. Dotty's `ContextBase` pins a compiler context to the thread that created it, so all compiles are dispatched to one dedicated compiler thread regardless of which fiber invoked them. The cost of parsing scalac options and initialising the compiler is paid once, not once per block.
 
-Re-runs are incremental. A content-hash `BlockCache` keys each block on a SHA-256 of its body, its scope-closure bodies, the classpath fingerprint, the Scala version, and the sorted scalac options. A block whose hash matches a stored entry serves its prior outcome from disk and skips recompilation. Editing one paragraph re-validates only the blocks whose content actually changed, which is why a warm `doctest` run is faster than recompiling every block the way mdoc does.
+Re-runs are incremental for compile-only blocks. A content-hash `BlockCache` keys each block on a SHA-256 of its body, its scope-closure bodies, the classpath fingerprint, the Scala version, and the sorted scalac options. A compile-only block whose hash matches a stored entry serves its prior outcome from disk and skips recompilation. Editing one paragraph re-validates only the compile-only blocks whose content actually changed, which is why a warm `doctest` run is faster than recompiling every block the way mdoc does.
+
+Compile units containing `expect=runs` or `expect=crashes` bypass the cache. After a successful compile, doctest starts a fresh JVM with the compiler output directory first in a child-first class loader and the platform class loader as its parent. This prevents a block from resolving classes from the runner's application class loader. The child reports normal completion or the uncaught throwable through a private result file. The runner kills the child after 30 seconds, so a non-cooperative loop or `System.exit` cannot hang or terminate the validation process. Runtime stack frames are translated from synthetic source lines back to their Markdown lines. A shared `scope=env` unit executes once; if it throws, blocks before the throwing block retain their observed outcome, the throwing block receives the exception, and later runtime blocks report that they were not executed.
 
 ## Putting it together
 

@@ -10,7 +10,8 @@ import kyo.doctest.*
   *   2. Open (or create) the BlockCache directory.
   *   3. Compute a classpath fingerprint (once for the whole run).
   *   4. For each source file: parse blocks, group into CompileUnits; for each unit: cache lookup, compile on miss.
-  *   5. Translate all compiler diagnostics back to README positions and assemble a Report.
+  *   5. Execute runtime-bearing units in isolated child JVMs.
+  *   6. Translate compiler diagnostics and runtime failures back to README positions, then assemble a Report.
   */
 private[kyo] object Orchestrator:
 
@@ -122,23 +123,179 @@ private[kyo] object Orchestrator:
         // EVERY block in the unit, not just the first: appending the remaining blocks' bodies to the
         // scope closure makes editing any block (not only blocks(0)) invalidate the entry. For
         // isolated/inherited/nested units `drop(1)` is empty, so their keys are unchanged.
-        val firstWrapped = unit.blocks(0)
-        val scopeClosure = firstWrapped.setupBlocks.map(_.body) ++ unit.blocks.drop(1).map(_.block.body)
-        cache.lookup(firstWrapped.block, scopeClosure, fingerprint, scalaVer, scalacOpts).flatMap {
-            case Maybe.Present(entry) =>
-                // Cache hit: build outcomes from stored result, no compile needed.
-                val posMap = PositionMap.init(unit.blocks)
-                Chunk.from(unit.blocks.toSeq.map(wb => toOutcomeFromResult(wb, entry.result, posMap, fromCache = true)))
-            case Maybe.Absent =>
-                // Cache miss: compile, record, produce outcomes.
-                driver.compile(unit.syntheticSource).flatMap { result =>
-                    cache.record(firstWrapped.block, scopeClosure, fingerprint, scalaVer, scalacOpts, result).map { _ =>
-                        val posMap = PositionMap.init(unit.blocks)
-                        Chunk.from(unit.blocks.toSeq.map(wb => toOutcomeFromResult(wb, result, posMap, fromCache = false)))
+        val firstWrapped    = unit.blocks(0)
+        val scopeClosure    = firstWrapped.setupBlocks.map(_.body) ++ unit.blocks.drop(1).map(_.block.body)
+        val requiresRuntime = unit.blocks.exists(wb => isRuntimeExpectation(wb.block.expect))
+
+        if requiresRuntime then
+            // Compile every runtime-bearing unit on every run. The cache stores diagnostics, not class files,
+            // and runtime behavior may depend on ambient state that must be observed again.
+            val runtimeUnit = CompileUnit.instrumentRuntime(unit)
+            driver.compile(runtimeUnit.syntheticSource).flatMap { result =>
+                toOutcomesFromResult(runtimeUnit, result, driver, fromCache = false)
+            }
+        else
+            cache.lookup(firstWrapped.block, scopeClosure, fingerprint, scalaVer, scalacOpts).flatMap {
+                case Maybe.Present(entry) =>
+                    toOutcomesFromResult(unit, entry.result, driver, fromCache = true)
+                case Maybe.Absent =>
+                    driver.compile(unit.syntheticSource).flatMap { result =>
+                        cache.record(firstWrapped.block, scopeClosure, fingerprint, scalaVer, scalacOpts, result).flatMap { _ =>
+                            toOutcomesFromResult(unit, result, driver, fromCache = false)
+                        }
                     }
-                }
-        }
+            }
+        end if
     end processUnit
+
+    private def toOutcomesFromResult(
+        unit: CompileUnit,
+        result: Driver.Outcome,
+        driver: Driver,
+        fromCache: Boolean
+    )(using Frame): Chunk[BlockOutcome] < (Sync & Async) =
+        val posMap = PositionMap.init(unit.blocks)
+        result match
+            case Driver.Outcome.Ok(warnings) =>
+                unit.blocks.find(wb => isRuntimeExpectation(wb.block.expect)) match
+                    case Some(runtimeBlock) =>
+                        val blockTimeouts = unit.blocks.toSeq.map(wb => wb.block.lineStart -> wb.block.timeout).toMap
+                        driver.execute(runtimeBlock, blockTimeouts).map { runtimeResult =>
+                            Chunk.from(unit.blocks.toSeq.map { wb =>
+                                if isRuntimeExpectation(wb.block.expect) then
+                                    toRuntimeOutcome(wb, unit, runtimeResult, posMap, fromCache, warnings.size)
+                                else
+                                    toOutcomeFromResult(wb, result, posMap, fromCache)
+                            })
+                        }
+                    case None =>
+                        Sync.defer(Chunk.from(unit.blocks.toSeq.map(wb => toOutcomeFromResult(wb, result, posMap, fromCache))))
+            case _: Driver.Outcome.Failed =>
+                Sync.defer(Chunk.from(unit.blocks.toSeq.map(wb => toOutcomeFromResult(wb, result, posMap, fromCache))))
+        end match
+    end toOutcomesFromResult
+
+    private def isRuntimeExpectation(expectation: Block.Expectation): Boolean =
+        expectation == Block.Expectation.Runs || expectation == Block.Expectation.Crashes
+
+    private def toRuntimeOutcome(
+        wb: WrappedBlock,
+        unit: CompileUnit,
+        result: RuntimeExecutor.Outcome,
+        posMap: PositionMap,
+        fromCache: Boolean,
+        warnings: Int
+    ): BlockOutcome =
+        val block = wb.block
+        val effectiveResult: Result.Partial[String, RuntimeExecutor.Outcome] = result match
+            case thrown: RuntimeExecutor.Outcome.Threw =>
+                posMap.translateRuntime(kyo.Path(thrown.synthFile), thrown.synthLine) match
+                    case Present((owner, ownerLine)) =>
+                        val blocks     = unit.blocks.toSeq.map(_.block)
+                        val ownerIndex = blocks.indexOf(owner)
+                        val blockIndex = blocks.indexOf(block)
+                        if ownerIndex < 0 then
+                            Result.Failure(
+                                s"block was not executed because inherited or setup code failed: ${formatRuntimeFailure(thrown, posMap)}"
+                            )
+                        else if blockIndex < ownerIndex then Result.Success(RuntimeExecutor.Outcome.Completed)
+                        else if blockIndex == ownerIndex then Result.Success(thrown)
+                        else
+                            Result.Failure(s"block was not executed because runtime failed at ${owner.file}:$ownerLine")
+                        end if
+                    case Absent => Result.Success(thrown)
+            case timedOut @ RuntimeExecutor.Outcome.TimedOut(_, progress) =>
+                attributeProcessOutcome(block, unit, timedOut, progress)
+            case exited @ RuntimeExecutor.Outcome.ProcessExited(_, _, progress) =>
+                attributeProcessOutcome(block, unit, exited, progress)
+            case other => Result.Success(other)
+
+        effectiveResult match
+            case Result.Failure(message)  => BlockOutcome.Failure(block, message, fromCache)
+            case Result.Success(observed) => toRuntimeOutcome(block, observed, posMap, fromCache, warnings)
+    end toRuntimeOutcome
+
+    private def attributeProcessOutcome(
+        block: Block,
+        unit: CompileUnit,
+        outcome: RuntimeExecutor.Outcome,
+        progress: RuntimeExecutor.Progress
+    ): Result.Partial[String, RuntimeExecutor.Outcome] =
+        progress match
+            case RuntimeExecutor.Progress.NotStarted =>
+                Result.Failure("runtime process terminated before the child runner started")
+            case RuntimeExecutor.Progress.Started =>
+                Result.Failure("block was not executed because inherited, setup, or class-loading code terminated the runtime process")
+            case RuntimeExecutor.Progress.Block(activeLine) =>
+                val blocks      = unit.blocks.toSeq.map(_.block)
+                val activeIndex = blocks.indexWhere(_.lineStart == activeLine)
+                val blockIndex  = blocks.indexOf(block)
+                if activeIndex < 0 then Result.Failure(s"runtime process reported unknown active block line $activeLine")
+                else if blockIndex < activeIndex then Result.Success(RuntimeExecutor.Outcome.Completed)
+                else if blockIndex == activeIndex then Result.Success(outcome)
+                else
+                    val active = blocks(activeIndex)
+                    Result.Failure(s"block was not executed because runtime terminated in ${active.file}:${active.lineStart}")
+                end if
+    end attributeProcessOutcome
+
+    private def toRuntimeOutcome(
+        block: Block,
+        result: RuntimeExecutor.Outcome,
+        posMap: PositionMap,
+        fromCache: Boolean,
+        warnings: Int
+    ): BlockOutcome =
+        block.expect match
+            case Block.Expectation.Runs =>
+                result match
+                    case RuntimeExecutor.Outcome.Completed =>
+                        BlockOutcome.Success(block, fromCache, warnings)
+                    case thrown: RuntimeExecutor.Outcome.Threw =>
+                        BlockOutcome.Failure(block, formatRuntimeFailure(thrown, posMap), fromCache)
+                    case RuntimeExecutor.Outcome.TimedOut(after, _) =>
+                        BlockOutcome.Failure(block, s"runtime execution timed out after ${after.show}", fromCache)
+                    case RuntimeExecutor.Outcome.ProcessExited(code, stderr, _) =>
+                        val details = if stderr.isEmpty then "" else s": ${stderr.trim}"
+                        BlockOutcome.Failure(block, s"runtime process exited with code $code$details", fromCache)
+                    case RuntimeExecutor.Outcome.LaunchFailed(message) =>
+                        BlockOutcome.Failure(block, s"runtime process could not be launched: $message", fromCache)
+                    case RuntimeExecutor.Outcome.LoadFailed(message) =>
+                        BlockOutcome.Failure(block, s"compiled block could not be loaded: $message", fromCache)
+                    case RuntimeExecutor.Outcome.Unsupported(message) =>
+                        BlockOutcome.Failure(block, message, fromCache)
+
+            case Block.Expectation.Crashes =>
+                result match
+                    case RuntimeExecutor.Outcome.Completed =>
+                        BlockOutcome.Failure(block, "expected a runtime failure but the block completed normally", fromCache)
+                    case _: RuntimeExecutor.Outcome.Threw | _: RuntimeExecutor.Outcome.ProcessExited =>
+                        BlockOutcome.Success(block, fromCache, warnings)
+                    case RuntimeExecutor.Outcome.TimedOut(after, _) =>
+                        BlockOutcome.Failure(block, s"runtime execution timed out after ${after.show}", fromCache)
+                    case RuntimeExecutor.Outcome.LaunchFailed(message) =>
+                        BlockOutcome.Failure(block, s"runtime process could not be launched: $message", fromCache)
+                    case RuntimeExecutor.Outcome.LoadFailed(message) =>
+                        BlockOutcome.Failure(block, s"compiled block could not be loaded: $message", fromCache)
+                    case RuntimeExecutor.Outcome.Unsupported(message) =>
+                        BlockOutcome.Failure(block, message, fromCache)
+
+            case _ =>
+                BlockOutcome.Failure(block, "internal error: runtime outcome for a compile-only expectation", fromCache)
+        end match
+    end toRuntimeOutcome
+
+    private def formatRuntimeFailure(thrown: RuntimeExecutor.Outcome.Threw, posMap: PositionMap): String =
+        val description =
+            if thrown.message.isEmpty then thrown.className
+            else s"${thrown.className}: ${thrown.message}"
+        posMap.translateRuntime(kyo.Path(thrown.synthFile), thrown.synthLine) match
+            case Present((block, readmeLine)) =>
+                s"${block.file}:$readmeLine: error: $description"
+            case _ =>
+                s"runtime error: $description"
+        end match
+    end formatRuntimeFailure
 
     // Translates a Driver.Outcome to a BlockOutcome for one wrapped block.
     private def toOutcomeFromResult(
