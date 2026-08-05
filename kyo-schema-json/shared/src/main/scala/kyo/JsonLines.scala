@@ -126,23 +126,37 @@ object JsonLines:
       * their own loop rather than the framer owning one, so the same framer serves a whole-input decode and a live stream without
       * duplication. Feeding a framer never mutates it: [[feed]] returns the advanced framer, and the receiver stays usable.
       *
+      * The bytes seen since the last record terminator are held as a sequence of pending pieces rather than as one buffer, and joined
+      * exactly once, when a record is actually resolved. Concatenating on every feed instead would copy the whole residual again per
+      * chunk, so a record spanning k chunks of size c would cost O(c*k^2) bytes copied: at the shipped defaults a single newline-free 16
+      * MiB run copies about 17 GB before the ceiling stops it. Appending a piece is O(1) and joining copies each byte once, which makes
+      * the cost linear in the record.
+      *
+      * A pending piece exists only because no newline was found in it, since a piece is held only after the chunk it came from was
+      * scanned and came up empty. So each `feed` scans only the chunk just handed to it, and only four things read across the boundary
+      * between the pieces held and that chunk: joining a record, stripping a `'\r'` that ended a piece when its `'\n'` opens the chunk,
+      * testing a line for blankness, and recognizing a byte order mark.
+      *
       * A byte order mark is recognized across chunk boundaries. While the bytes seen so far are still a proper prefix of the mark, the
       * framer holds them and stays in its start state rather than guessing, so a one-byte-at-a-time feed strips the mark exactly as a
       * whole-input feed does.
       *
-      * @param residual
-      *   bytes seen since the last record terminator
+      * @param pending
+      *   the bytes seen since the last record terminator, in arrival order, none of which holds a newline
+      * @param pendingSize
+      *   total size of `pending`, carried so the `maxLineBytes` check never has to join anything to measure it
       * @param nextIndex
       *   index the next emitted record will carry
       * @param residualOffset
-      *   overall-input offset of `residual`'s first byte
+      *   overall-input offset of the first pending byte
       * @param maxLineBytes
       *   record size ceiling
       * @param atStart
       *   true until a byte that settles the byte order mark question is consumed
       */
     final case class Framer private[kyo] (
-        residual: Span[Byte],
+        pending: Chunk[Span[Byte]],
+        pendingSize: Int,
         nextIndex: Long,
         residualOffset: Long,
         maxLineBytes: Int,
@@ -159,17 +173,8 @@ object JsonLines:
           *   arrives as a [[Line.Skipped]] inside [[Framed.Continued]], and framing carries on after its terminator.
           */
         def feed(chunk: Span[Byte])(using Frame): Framed =
-            val combined = if residual.isEmpty then chunk else residual ++ chunk
-            if atStart && startsWithBomPrefix(combined) then
-                if combined.size < Bom.size then
-                    // Still undecided: the bytes so far are a proper prefix of the mark, and a proper
-                    // prefix holds no newline, so there is nothing to emit while waiting for the rest.
-                    Framed.Continued(Framer(combined, nextIndex, residualOffset, maxLineBytes, true), Chunk.empty)
-                else
-                    scan(combined.slice(Bom.size, combined.size), residualOffset + Bom.size)
-            else scan(combined, residualOffset)
-            end if
-        end feed
+            if atStart then feedAtStart(chunk)
+            else scanChunk(pending, pendingSize, residualOffset, chunk)
 
         /** Returns the unterminated trailing record, if the input ended without a newline.
           *
@@ -177,38 +182,109 @@ object JsonLines:
           *   the final record when the residual holds anything other than whitespace, `Absent` otherwise
           */
         def finish: Maybe[Record] =
-            val trimmed = stripReturn(residual)
-            if isBlank(trimmed, 0, trimmed.size) then Absent
-            else Present(Record(trimmed, nextIndex, residualOffset))
+            val size = if pendingSize > 0 && lastByte(pending) == Return then pendingSize - 1 else pendingSize
+            if isBlankPrefix(pending, Span.empty[Byte], size) then Absent
+            else Present(Record(join(pending, pendingSize, Span.empty[Byte], size), nextIndex, residualOffset))
         end finish
 
-        private def startsWithBomPrefix(buf: Span[Byte]): Boolean =
-            val n  = math.min(buf.size, Bom.size)
-            var i  = 0
-            var ok = true
-            while ok && i < n do
-                if buf(i) != Bom(i) then ok = false
+        /** Settles the byte order mark question, then frames normally.
+          *
+          * Reached only while `atStart`, so `pending` holds at most two bytes and every one of them already matched the mark: that is the
+          * only way a framer stays in its start state. Comparing resumes at `pendingSize` rather than at zero for exactly that reason,
+          * which keeps the cross-boundary read here bounded to the three bytes of the mark.
+          */
+        private def feedAtStart(chunk: Span[Byte])(using Frame): Framed =
+            val total   = pendingSize + chunk.size
+            val decided = math.min(total, Bom.size)
+            var i       = pendingSize
+            var marked  = true
+            while marked && i < decided do
+                if chunk(i - pendingSize) != Bom(i) then marked = false
                 i += 1
-            ok
-        end startsWithBomPrefix
+            end while
+            if !marked then scanChunk(pending, pendingSize, residualOffset, chunk)
+            else if total < Bom.size then
+                // Still undecided: the bytes so far are a proper prefix of the mark, and a proper prefix
+                // holds no newline, so there is nothing to emit while waiting for the rest.
+                Framed.Continued(
+                    Framer(hold(pending, chunk), total, nextIndex, residualOffset, maxLineBytes, true),
+                    Chunk.empty
+                )
+            else
+                // The whole mark is in hand, and every byte of it was held or is at the head of this chunk,
+                // so nothing pending survives it.
+                scanChunk(Chunk.empty, 0, residualOffset + Bom.size, chunk.slice(Bom.size - pendingSize, chunk.size))
+            end if
+        end feedAtStart
 
-        private def scan(buf: Span[Byte], offset: Long)(using Frame): Framed =
-            val (start, restOffset, index, lines) = emitFrom(buf, 0, offset, nextIndex, Chunk.empty)
+        /** Resolves every line `chunk` completes, given the pieces held before it.
+          *
+          * `offset` is the overall-input offset of the first held byte, or of `chunk(0)` when nothing is held. Only the first newline in
+          * `chunk` can close a line that spans the held pieces, because a held piece is held precisely because it had no newline in it.
+          * Every line after that one lies entirely inside `chunk`, which is what lets [[emitFrom]] keep its single-array walk.
+          */
+        private def scanChunk(held: Chunk[Span[Byte]], heldSize: Int, offset: Long, chunk: Span[Byte])(using Frame): Framed =
+            indexOfNewline(chunk, 0) match
+                case -1 =>
+                    settle(hold(held, chunk), heldSize.toLong + chunk.size, offset, nextIndex, Chunk.empty)
+                case nl =>
+                    val (index, lines) = resolveSpanning(held, heldSize, offset, chunk, nl)
+                    val (start, restOffset, restIndex, restLines) =
+                        emitFrom(chunk, nl + 1, offset + heldSize + nl + 1, index, lines)
+                    settle(
+                        hold(Chunk.empty, chunk.slice(start, chunk.size)),
+                        chunk.size - start,
+                        restOffset,
+                        restIndex,
+                        restLines
+                    )
+            end match
+        end scanChunk
+
+        /** Resolves the one line that ends at `chunk(nl)`, the only line this chunk can complete that began before it.
+          *
+          * Measuring the line never joins anything: its size is the held total plus `nl`, and the `'\r'` that would trim it is the byte
+          * before the newline, which is either in `chunk` or is the last held byte. Only a kept line is joined, and it is joined once,
+          * into an array sized to the record exactly.
+          */
+        private def resolveSpanning(
+            held: Chunk[Span[Byte]],
+            heldSize: Int,
+            offset: Long,
+            chunk: Span[Byte],
+            nl: Int
+        )(using Frame): (Long, Chunk[Line]) =
+            val end       = heldSize + nl
+            val hasReturn = if nl > 0 then chunk(nl - 1) == Return else heldSize > 0 && lastByte(held) == Return
+            val lineSize  = if hasReturn then end - 1 else end
+            if lineSize > maxLineBytes then
+                (nextIndex + 1, Chunk(Line.Skipped(LimitExceededException(LimitName, lineSize, maxLineBytes))))
+            else if isBlankPrefix(held, chunk, lineSize) then (nextIndex, Chunk.empty)
+            else (nextIndex + 1, Chunk(Line.Kept(Record(join(held, heldSize, chunk, lineSize), nextIndex, offset))))
+            end if
+        end resolveSpanning
+
+        /** Measures what is left unresolved and either halts on it or hands back the framer that carries it forward.
+          *
+          * `heldSize` arrives as a `Long` because this is the one place the pending total grows. A chunk landing against a ceiling near
+          * `Int.MaxValue` would otherwise wrap it negative, and a framer carrying a negative total frames nonsense rather than halting. A
+          * total too large for an `Int` is over every ceiling an `Int` can express, so it halts like any other breach, with the reported
+          * size saturating rather than wrapping.
+          */
+        private def settle(held: Chunk[Span[Byte]], heldSize: Long, offset: Long, index: Long, lines: Chunk[Line])(using Frame): Framed =
             // The residual is measured by the same rule a completed record is: a trailing '\r' is the
             // first half of a terminator that has not arrived yet, so it does not count toward the limit.
-            val restSize = buf.size - start
             val restLine =
-                if restSize > 0 && buf(buf.size - 1) == Return then restSize - 1
-                else restSize
-            if restLine > maxLineBytes then
+                if heldSize > 0 && lastByte(held) == Return then heldSize - 1
+                else heldSize
+            if restLine > maxLineBytes || heldSize > Int.MaxValue then
                 // No newline anywhere in the residual, so there is no boundary to resume at and no framer
                 // worth handing back. The lines resolved before it stay.
-                Framed.Halted(lines, LimitExceededException(LimitName, restLine, maxLineBytes))
+                Framed.Halted(lines, LimitExceededException(LimitName, math.min(restLine, Int.MaxValue.toLong).toInt, maxLineBytes))
             else
-                val rest = if start == 0 then buf else buf.slice(start, buf.size)
-                Framed.Continued(Framer(rest, index, restOffset, maxLineBytes, false), lines)
+                Framed.Continued(Framer(held, heldSize.toInt, index, offset, maxLineBytes, false), lines)
             end if
-        end scan
+        end settle
 
         /** Walks `buf` from `start`, resolving one line per newline.
           *
@@ -263,11 +339,74 @@ object JsonLines:
           * @param maxLineBytes
           *   the largest record the framer will emit, in bytes
           * @return
-          *   a framer holding no residual, at record index zero and byte offset zero
+          *   a framer holding no pending bytes, at record index zero and byte offset zero
           */
         def init(maxLineBytes: Int = DefaultMaxLineBytes): Framer =
-            Framer(Span.empty[Byte], 0L, 0L, maxLineBytes, true)
+            Framer(Chunk.empty, 0, 0L, 0L, maxLineBytes, true)
     end Framer
+
+    /** Appends `piece` to the pending pieces, dropping it when it carries nothing.
+      *
+      * Keeping empty pieces out is what lets [[lastByte]] read the last held byte off the last piece.
+      *
+      * `Chunk.append` builds an append chain, on which `append` and `last` are both O(1) but `apply` is O(k). That is why [[join]] and
+      * [[isBlankPrefix]] each take `toIndexed` once and walk the result: indexing the chain directly would make walking the pieces
+      * quadratic in their count, which is the same shape of defect in the piece count that this representation removes in bytes.
+      */
+    private def hold(pieces: Chunk[Span[Byte]], piece: Span[Byte]): Chunk[Span[Byte]] =
+        if piece.isEmpty then pieces else pieces.append(piece)
+
+    /** The last byte of the last pending piece. Requires a non-empty `pieces`, which every caller checks by its running total. */
+    private def lastByte(pieces: Chunk[Span[Byte]]): Byte =
+        val piece = pieces.last
+        piece(piece.size - 1)
+
+    /** Joins the first `size` bytes of `pieces` followed by `tail` into one span.
+      *
+      * One allocation sized to the record exactly, and one copy of each byte. `size` may fall short of the total available, which is how a
+      * trailing `'\r'` is dropped without a second pass: the join stops at `size` no matter which piece that byte sits in.
+      */
+    private def join(pieces: Chunk[Span[Byte]], piecesSize: Int, tail: Span[Byte], size: Int): Span[Byte] =
+        if size <= 0 then Span.empty[Byte]
+        else if piecesSize == 0 then tail.slice(0, size)
+        else
+            val out     = new Array[Byte](size)
+            val indexed = pieces.toIndexed
+            var i       = 0
+            var written = 0
+            while i < indexed.size && written < size do
+                val piece = indexed(i)
+                val n     = math.min(piece.size, size - written)
+                Array.copy(piece.toArrayUnsafe, 0, out, written, n)
+                written += n
+                i += 1
+            end while
+            if written < size then Array.copy(tail.toArrayUnsafe, 0, out, written, size - written)
+            // Unsafe: `out` is allocated here, filled here, and handed straight to the caller as its only
+            // reference, so wrapping it without a defensive copy cannot alias anything.
+            Span.fromUnsafe(out)
+        end if
+    end join
+
+    /** Whether the first `size` bytes of `pieces` followed by `tail` are all blank.
+      *
+      * Short-circuits on the first non-blank byte, so a long record costs one byte read rather than a join.
+      */
+    private def isBlankPrefix(pieces: Chunk[Span[Byte]], tail: Span[Byte], size: Int): Boolean =
+        val indexed = pieces.toIndexed
+        var i       = 0
+        var seen    = 0
+        var blank   = true
+        while blank && i < indexed.size && seen < size do
+            val piece = indexed(i)
+            val n     = math.min(piece.size, size - seen)
+            blank = isBlank(piece, 0, n)
+            seen += n
+            i += 1
+        end while
+        if blank && seen < size then isBlank(tail, 0, size - seen)
+        else blank
+    end isBlankPrefix
 
     private def indexOfNewline(buf: Span[Byte], from: Int): Int =
         var i     = from
@@ -278,10 +417,6 @@ object JsonLines:
         end while
         found
     end indexOfNewline
-
-    private def stripReturn(line: Span[Byte]): Span[Byte] =
-        if line.nonEmpty && line(line.size - 1) == Return then line.slice(0, line.size - 1)
-        else line
 
     private def isBlank(buf: Span[Byte], from: Int, until: Int): Boolean =
         var i     = from
