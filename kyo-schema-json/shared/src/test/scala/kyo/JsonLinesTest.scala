@@ -24,7 +24,10 @@ class JsonLinesTest extends kyo.test.Test[Any]:
       * group builder (outside any `in { ... }` leaf), where `kyo.test`'s `assert` has no `AssertScope` to report through.
       */
     private def frameAll(input: String, chunkSize: Int): Chunk[Json.Lines.Record] =
-        val all = bytes(input)
+        frameAllBytes(bytes(input), chunkSize)
+
+    /** The `Span[Byte]` form of [[frameAll]], for inputs that are not valid UTF-8 text. */
+    private def frameAllBytes(all: Span[Byte], chunkSize: Int): Chunk[Json.Lines.Record] =
         var f   = Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes)
         var out = Chunk.empty[Json.Lines.Record]
         var i   = 0
@@ -44,7 +47,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         f.finish match
             case Present(rec) => out :+ rec
             case Absent       => out
-    end frameAll
+    end frameAllBytes
 
     /** The lines a single `feed` of `input` resolved, requiring that framing continued.
       *
@@ -55,6 +58,50 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         framer.feed(bytes(input)) match
             case Json.Lines.Framed.Continued(_, lines) => lines
             case Json.Lines.Framed.Halted(_, breach)   => throw new AssertionError(s"unexpected framing halt $breach")
+
+    /** Feeds `input` and returns the advanced framer, requiring that framing continued and resolved no line.
+      *
+      * The boundary tests below build a framer holding a partial record across several feeds, so a line resolved before the boundary under
+      * test would mean the fixture, not the framer, is wrong.
+      */
+    private def holding(framer: Json.Lines.Framer, input: String): Json.Lines.Framer =
+        framer.feed(bytes(input)) match
+            case Json.Lines.Framed.Continued(next, lines) =>
+                require(lines.isEmpty, s"holding: unexpected resolved line in $lines")
+                next
+            case Json.Lines.Framed.Halted(_, breach) => throw new AssertionError(s"unexpected framing halt $breach")
+
+    /** Feeds `input` through a fresh framer of ceiling `maxLineBytes` in `chunkSize` pieces.
+      *
+      * Returns every line resolved along the way and the breach that ended framing, if one did. Unlike [[frameAll]] this keeps skipped
+      * lines and survives a halt, which is what the limit tests are pinning.
+      */
+    private def frameLines(
+        input: String,
+        chunkSize: Int,
+        maxLineBytes: Int
+    ): (Chunk[Json.Lines.Line], Maybe[LimitExceededException]) =
+        val all  = bytes(input)
+        var f    = Json.Lines.Framer.init(maxLineBytes)
+        var live = true
+        var out  = Chunk.empty[Json.Lines.Line]
+        var halt = Maybe.empty[LimitExceededException]
+        var i    = 0
+        while live && i < all.size do
+            val end = math.min(i + chunkSize, all.size)
+            f.feed(all.slice(i, end)) match
+                case Json.Lines.Framed.Continued(next, lines) =>
+                    f = next
+                    out = out ++ lines
+                case Json.Lines.Framed.Halted(lines, breach) =>
+                    out = out ++ lines
+                    halt = Maybe(breach)
+                    live = false
+            end match
+            i = end
+        end while
+        (out, halt)
+    end frameLines
 
     "framing" - {
 
@@ -165,6 +212,107 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // A framer holds the bytes it has not resolved yet as pending pieces and joins them only when a record completes, so the pieces it
+    // holds are never rescanned for a newline. The first six pin the four places where resolving a line still has to read across the
+    // boundary between the pieces held and the chunk just fed: joining a record, stripping a '\r', testing a line for blankness, and
+    // recognizing a byte order mark. The last two pin what the representation itself promises.
+    "chunk boundaries" - {
+
+        "joins a record spanning many chunks identically to the same record fed whole" in {
+            val body  = (0 until 4000).map(i => ('a' + (i % 26)).toChar).mkString
+            val input = "{\"head\":1}\n" + body + "\n{\"tail\":2}\n"
+            val whole = frameAll(input, 1 << 20)
+            val split = frameAll(input, 13)
+            assert(whole.map(_.text) == Chunk("{\"head\":1}", body, "{\"tail\":2}"))
+            assert(split.map(_.text) == whole.map(_.text))
+            assert(split.map(_.index) == whole.map(_.index))
+            assert(split.map(_.byteOffset) == whole.map(_.byteOffset))
+        }
+
+        "strips a carriage return ending one chunk when its newline opens the next" in {
+            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "{\"a\":1}"), "\r")
+            val lines  = kept(linesOf(framer, "\n{\"b\":2}\n"))
+            assert(lines.map(_.text) == Chunk("{\"a\":1}", "{\"b\":2}"))
+            assert(lines.map(_.index) == Chunk(0L, 1L))
+            assert(lines.map(_.byteOffset) == Chunk(0L, 9L))
+        }
+
+        "recognizes a blank line split across chunks as blank" in {
+            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "  "), " \t")
+            val lines  = kept(linesOf(framer, " \n{\"a\":1}\n"))
+            assert(lines.map(_.text) == Chunk("{\"a\":1}"))
+            assert(lines.map(_.index) == Chunk(0L))
+            assert(lines.map(_.byteOffset) == Chunk(6L))
+        }
+
+        // The counterpart of the test above: the blankness walk has to read every pending piece, not just the last one, so a non-blank
+        // byte sitting in an earlier piece still makes the line a record.
+        "keeps a split line whose only non-blank byte arrived in an earlier chunk" in {
+            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "  x"), "  ")
+            val lines  = kept(linesOf(framer, " \n"))
+            assert(lines.map(_.text) == Chunk("  x   "))
+            assert(lines.map(_.index) == Chunk(0L))
+            assert(lines.map(_.byteOffset) == Chunk(0L))
+        }
+
+        "strips a byte order mark fed one byte at a time and counts it in the offsets after it" in {
+            val r = frameAll("﻿{\"a\":1}\n{\"b\":2}\n", 1)
+            assert(r.map(_.text) == Chunk("{\"a\":1}", "{\"b\":2}"))
+            assert(r.map(_.index) == Chunk(0L, 1L))
+            assert(r.map(_.byteOffset) == Chunk(3L, 11L))
+        }
+
+        // Two bytes of the mark then a byte that is not the third: the framer must hand back every byte it was holding rather than
+        // dropping a mark it never saw. The bytes are not valid UTF-8, so this frames raw bytes rather than text.
+        "keeps a truncated byte order mark prefix that never completes" in {
+            val input = Span(0xef.toByte, 0xbb.toByte, 'x'.toByte, '\n'.toByte)
+            val r     = frameAllBytes(input, 1)
+            assert(r.size == 1)
+            assert(r(0).bytes.is(Span(0xef.toByte, 0xbb.toByte, 'x'.toByte)))
+            assert(r(0).index == 0L)
+            assert(r(0).byteOffset == 0L)
+        }
+
+        // The framer's own promise: feeding it never mutates it, so the receiver stays usable. That is what makes it safe to carry
+        // through a Loop and to restore after a rewind. It holds the bytes it has not resolved yet as pending pieces, so this is the
+        // assertion that rejects backing those pieces with a growable buffer a later feed writes into: the two continuations below would
+        // then see each other's bytes.
+        "leaves the receiver usable after a feed, so two continuations of one framer stay independent" in {
+            val framer = holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "{\"a\":1")
+            val first  = kept(linesOf(framer, "}\n"))
+            val second = kept(linesOf(framer, "23}\n"))
+            assert(first.map(_.text) == Chunk("{\"a\":1}"))
+            assert(second.map(_.text) == Chunk("{\"a\":123}"))
+            assert(first.map(_.byteOffset) == Chunk(0L))
+            assert(second.map(_.byteOffset) == Chunk(0L))
+        }
+
+        // The regression guard for the cost defect this representation exists to remove: joining the bytes held on every feed makes a
+        // record spanning k chunks copy O(k^2) bytes, so a newline-free run large against the read buffer burns memory bandwidth for as
+        // long as maxLineBytes allows. Timing that would be flaky, so this pins the allocation-independent shape instead: a newline-free
+        // feed adds one piece and joins nothing, the running total tracks what is held without joining to measure it, and the join
+        // happens once, when the record completes. An implementation that concatenates eagerly leaves `pending` holding one piece.
+        "holds one pending piece per newline-free feed and joins only when a record completes" in {
+            val piece  = "0123456789"
+            val feeds  = 64
+            var framer = Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes)
+            var n      = 0
+            while n < feeds do
+                framer = holding(framer, piece)
+                n += 1
+                assert(framer.pending.size == n)
+                assert(framer.pendingSize == n * piece.length)
+            end while
+            framer.feed(bytes("\n")) match
+                case Json.Lines.Framed.Continued(next, lines) =>
+                    assert(kept(lines).map(_.text) == Chunk(piece * feeds))
+                    assert(next.pending.isEmpty)
+                    assert(next.pendingSize == 0)
+                case other => fail(s"Expected framing to continue, got $other")
+            end match
+        }
+    }
+
     "limits" - {
 
         "rejects a complete record longer than maxLineBytes" in {
@@ -214,6 +362,34 @@ class JsonLinesTest extends kyo.test.Test[Any]:
                     assert(lines.isEmpty)
                     assert(kept(linesOf(held, "\n")).map(_.text) == Chunk("12345678"))
                 case other => fail(s"Expected framing to continue, got $other")
+        }
+
+        // The ceiling is enforced against the pending bytes as they accumulate, so where it fires cannot depend on how the record was
+        // split. A record whose content is exactly the ceiling still frames when it arrives one byte per feed.
+        "accepts a record exactly at maxLineBytes when it arrives one byte at a time" in {
+            val (lines, halt) = frameLines("12345678\n", 1, 8)
+            assert(halt.isEmpty)
+            assert(kept(lines).map(_.text) == Chunk("12345678"))
+        }
+
+        // One byte over, the pending bytes breach before the terminator arrives, so this is a halt rather than a skip: the framer cannot
+        // know a boundary is coming. Feeding the same line whole instead yields a Line.Skipped, which "rejects a complete record longer
+        // than maxLineBytes" pins.
+        "halts on a record one byte over maxLineBytes when it arrives one byte at a time" in {
+            val (lines, halt) = frameLines("123456789\n87654321\n", 1, 8)
+            assert(lines.isEmpty)
+            halt match
+                case Present(e) =>
+                    assert(e.actual == 9)
+                    assert(e.maximum == 8)
+                case Absent => fail("Expected framing to halt on the oversized pending bytes")
+            end match
+        }
+
+        "measures a pending CRLF residual by the same rule when it arrives one byte at a time" in {
+            val (lines, halt) = frameLines("12345678\r\n", 1, 8)
+            assert(halt.isEmpty)
+            assert(kept(lines).map(_.text) == Chunk("12345678"))
         }
 
         // A terminated over-long line has a known boundary, so framing skips to it and carries on.
