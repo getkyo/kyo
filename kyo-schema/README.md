@@ -428,22 +428,21 @@ val framer = Json.Lines.Framer.init()
 val framed: Json.Lines.Framed =
     framer.feed(Span.from(chunk.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
 
-val records: Chunk[Json.Lines.Record] = framed.records
-// two records; the unterminated `{"id"` stays in framed.framer
-
-val next: Json.Lines.Framer = framed.framer
-// feed this with the following chunk
-
-val breach: Maybe[LimitExceededException] = framed.error
-// Absent unless a record exceeded maxLineBytes
-
-next.finish
-// Present(Record(...)) for a trailing record with no newline, Absent otherwise
+framed match
+    case Json.Lines.Framed.Continued(next, lines) =>
+        // `lines` holds Line.Kept(Record) for `{"id":1}` and `{"id":2}`. The unterminated `{"id"` is
+        // inside `next`, which frames the following chunk; `next.finish` closes it at end of input.
+        lines.size
+    case Json.Lines.Framed.Halted(lines, breach) =>
+        // Only when the pending bytes outgrew maxLineBytes with no newline among them. There is no
+        // record boundary to resume at, so framing is over and no framer comes back.
+        lines.size
+end match
 ```
 
-Feeding a framer never mutates it: `feed` returns the advanced framer in `Framed.framer` and the receiver stays usable. Each `Record` carries `bytes` (its own UTF-8 encoding, terminator removed), `index`, and `byteOffset`, and `text` decodes those bytes. Do not compare two records with `==`: `Span` has no structural equality, so the derived `equals` compares `bytes` by reference; compare `text` or `bytes.is(other.bytes)` instead.
+Feeding a framer never mutates it: `feed` returns the advanced framer inside `Framed.Continued` and the receiver stays usable. Each `Record` carries `bytes` (its own UTF-8 encoding, terminator removed), `index`, and `byteOffset`, and `text` decodes those bytes. Do not compare two records with `==`: `Span` has no structural equality, so the derived `equals` compares `bytes` by reference; compare `text` or `bytes.is(other.bytes)` instead.
 
-`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) bounds a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. A breach surfaces as `Framed.error`, and in `decodeAllResults` as a final `LimitExceededException` failure after every record decoded before it. It is the one failure that cannot be skipped past, because no record boundary was found to skip to.
+`maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) bounds a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so it arrives as a `Line.Skipped` among the lines, framing resumes after its newline, and `decodeAllResults` reports one `LimitExceededException` failure in its place and decodes the records after it. An oversized residual has no boundary to skip to, so `feed` returns `Framed.Halted` and `decodeAllResults` appends that breach as its last element.
 
 All of the above is pure and takes whole inputs. Reading a JSONL file, decoding an arbitrary byte stream, and following a file that is still being written live in [kyo-json](../kyo-json), whose `Jsonl` entry point drives this same framer under `Sync` and `Async`.
 

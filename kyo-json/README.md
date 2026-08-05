@@ -112,7 +112,7 @@ val resumeWhereLeft  = Jsonl.follow[LogEvent](logFile, Path.Origin.Offset(lastOf
 
 `Path.Origin.Start` replays every record already in the file and then follows. It is the default for `Jsonl.follow`, because reading a live transcript wants the whole conversation rather than only the turns written after the reader attached.
 
-> **Note:** `Path.tailBytes` takes the same `from` parameter with the opposite default, `Path.Origin.End`, because it is the primitive under `Path.tail` and has to preserve that method's follow-only contract. A reader who knows `tail -f` will guess `Jsonl.follow`'s default wrong.
+> **Note:** `Path.tailBytes` takes the same `from` parameter with the opposite default, `Path.Origin.End`, because it is the byte-level view of a followed file and follow-only is what a byte-level tail means. It is `Path.tail`'s sibling over one polling loop rather than a layer beneath `Jsonl.follow`, so the two defaults are independent choices. A reader who knows `tail -f` will guess `Jsonl.follow`'s default wrong.
 
 `Path.Origin.End` skips whatever the file already holds, which is what a monitor watching for new errors wants. `Path.Origin.Offset(bytes)` resumes at a recorded byte position, and the position to record is one the consumer kept itself.
 
@@ -120,7 +120,7 @@ val resumeWhereLeft  = Jsonl.follow[LogEvent](logFile, Path.Origin.Offset(lastOf
 
 ### Bounding the stream
 
-The stream never completes on its own. Until the enclosing scope ends there is always the possibility of another record, so the consumer decides when it has read enough:
+A well-formed log never completes the stream on its own. Until the enclosing scope ends there is always the possibility of another record, so the consumer decides when it has read enough:
 
 ```scala
 val firstFiveErrors =
@@ -135,7 +135,7 @@ val untilShutdown =
     Scope.run(Jsonl.follow[LogEvent](logFile).takeWhilePure(_.message != "shutdown").run)
 ```
 
-`take`, `takeWhilePure`, and an interrupt of the fiber running the stream are the three ways out. A bare `.run` on a follow stream waits forever.
+`take`, `takeWhilePure`, and an interrupt of the fiber running the stream are the three ways out. A bare `.run` on a follow stream over a well-formed log waits forever. Two things do end it: `follow` aborts on the first undecodable record or record-size breach, and `followResults`, which survives both of those, ends when the pending bytes outgrow `maxLineBytes` with no newline among them (see [Limits](#limits)).
 
 `pollDelay` is how long the follower sleeps between polls once it reaches end of file, `100.millis` by default. Raising it trades latency for fewer wakeups:
 
@@ -207,7 +207,7 @@ Both directions are available on every source, so the choice is per call site ra
 | Any `Stream[Byte, S]` | `Jsonl.pipe` | `Jsonl.pipeResults` |
 | A file still being written | `Jsonl.follow` | `Jsonl.followResults` |
 
-> **Caution:** the `Results` variants survive an undecodable record, and do not survive a record longer than `maxLineBytes` (the framer's record-size ceiling, covered under [Limits](#limits)). A breach means no record boundary was found, so there is nothing to skip to. The stream emits every record framed before the breach, then that single failure element, and then it ends. Consumers that treat a `Results` stream as unbounded need to handle it ending.
+> **Caution:** the `Results` variants survive an undecodable record, and they survive a record longer than `maxLineBytes` (the framer's record-size ceiling, covered under [Limits](#limits)) only when that record's newline arrived. A terminated over-long record has a boundary to resume at, so it costs one failure element and framing carries on with the record after it. Pending bytes that outgrow the ceiling with no newline among them have no boundary to skip to: the stream emits every record framed before them, then that single failure element, and then it ends. Consumers that treat a `Results` stream as unbounded need to handle it ending.
 
 ## Writing and appending
 
@@ -251,6 +251,8 @@ val capped = Jsonl.read[LogEvent](logFile, maxLineBytes = 64 * 1024)
 ```
 
 The limit counts the record's own bytes, the ones a decoder sees, and never the line terminator: a `'\n'` and any `'\r'` immediately before it are excluded. A maximum-size record therefore occupies `maxLineBytes + 1` bytes on the wire when it ends in `\n`, and `maxLineBytes + 2` when it ends in `\r\n`. A pending partial record is measured the same way, so a record is accepted or rejected identically whether its terminator arrived in the same chunk or a later one.
+
+What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so framing skips it and resumes at the next record: the `Results` variants report one failure for it and carry on. Pending bytes that outgrow the limit with no newline among them have nothing to skip to, and that is the case the `Results` variants end on.
 
 > **Caution:** a strict `maxLineBytes` breach aborts with a bare `LimitExceededException`, not a `RecordDecodeException`. No record was framed, so there is no record to attribute it to. Both are `DecodeException`, so the effect row does not distinguish them, and a handler that matches only on `RecordDecodeException` will miss the framing breach entirely. Match on `DecodeException`, or on both.
 

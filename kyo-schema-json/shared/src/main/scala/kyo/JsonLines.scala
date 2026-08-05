@@ -28,9 +28,9 @@ object JsonLines:
       * `maxCollectionSize` limits operate inside a single document and do not cover this.
       *
       * The limit counts the record's own bytes, the ones a decoder will see, and never the line terminator: a `'\n'` and any `'\r'`
-      * immediately before it are excluded. A `\r\n`-terminated line therefore holds one more byte on the wire than the limit allows for
-      * its record. A pending residual is measured the same way, so a record is accepted or rejected identically whether its terminator
-      * arrived in the same chunk or a later one.
+      * immediately before it are excluded. A maximum-size record therefore occupies one more byte on the wire than the limit when it ends
+      * in `'\n'`, and two more when it ends in `"\r\n"`. A pending residual is measured the same way, so a record is accepted or rejected
+      * identically whether its terminator arrived in the same chunk or a later one.
       */
     val DefaultMaxLineBytes: Int = 16 * 1024 * 1024
 
@@ -52,9 +52,9 @@ object JsonLines:
       * carried as bytes rather than text so that framing never has to decode, which is what keeps a record identical no matter how the
       * input was split into chunks.
       *
-      * `index` counts only records that were emitted, so blank and whitespace-only lines do not consume an index. `byteOffset` counts
-      * every byte of the overall input, including skipped blank lines and a leading byte order mark, so it addresses the record in the
-      * original source.
+      * `index` is the line's position among the non-blank lines, so blank and whitespace-only lines do not consume an index while a line
+      * skipped for exceeding `maxLineBytes` does, exactly as an undecodable record does. `byteOffset` counts every byte of the overall
+      * input, including skipped blank lines and a leading byte order mark, so it addresses the record in the original source.
       *
       * Do not compare two records with `==`. `Span` is an opaque array with no structural equality, so the derived `equals` compares
       * `bytes` by reference and two records holding identical content never match. Compare [[text]] or `bytes.is(other.bytes)` instead.
@@ -62,7 +62,7 @@ object JsonLines:
       * @param bytes
       *   the record's UTF-8 bytes, with any line terminator removed
       * @param index
-      *   zero-based position among non-blank records
+      *   zero-based position among non-blank lines
       * @param byteOffset
       *   offset of the record's first byte within the overall input
       */
@@ -71,20 +71,54 @@ object JsonLines:
         def text: String = new String(bytes.toArray, StandardCharsets.UTF_8)
     end Record
 
+    /** One line a framer resolved out of the input.
+      *
+      * A line is either framed as a record or rejected for exceeding `maxLineBytes`. Both travel in one ordered sequence, so a rejected
+      * line stays exactly where it sat among the records around it, which is what lets a lenient consumer report one failure for it and
+      * carry on with the next record.
+      */
+    enum Line:
+        /** A line within the size ceiling, framed with its position in the input. */
+        case Kept(record: Record)
+
+        /** A terminated line over the size ceiling. Its terminator is the boundary framing resumed at, so the lines after it are framed
+          * normally and carry their ordinary index and offset.
+          */
+        case Skipped(breach: LimitExceededException)
+    end Line
+
     /** The outcome of feeding one chunk to a [[Framer]].
       *
-      * `records` always holds every record framed from the fed chunk before any breach, whether or not `error` is present: a limit
-      * breach never discards records that were already complete. See [[Framer.feed]] for what `error` and `framer` mean together.
+      * `lines` always holds every line the fed chunk resolved, in order, whichever case this is: a size breach never discards a line that
+      * was already resolved.
       *
-      * @param framer
-      *   the advanced framer, safe to use again (including calling `feed` or `finish` on it) only when `error` is `Absent`. When
-      *   `error` is `Present`, this still holds the pre-chunk residual, so `finish` on it would emit a bogus partial record.
-      * @param records
-      *   every record framed from this chunk, in order, up to the breach if there was one
-      * @param error
-      *   `Present` when no record boundary could be found for the current residual
+      * The two cases are the two things a size breach can mean, and they are separate states rather than one state carrying a flag. A
+      * terminated line over the ceiling has a known boundary, so framing skips to it and carries on: that breach is a [[Line.Skipped]]
+      * inside a [[Continued]]. A pending residual over the ceiling has no boundary to skip to, so framing is over, and [[Halted]] carries
+      * no framer for exactly that reason.
       */
-    final case class Framed(framer: Framer, records: Chunk[Record], error: Maybe[LimitExceededException])
+    enum Framed:
+        /** Every line this chunk resolved, and the framer that frames the next one.
+          *
+          * @param framer
+          *   the advanced framer, safe to `feed` again or to call `finish` on
+          * @param lines
+          *   every line this chunk resolved, in order
+          */
+        case Continued(framer: Framer, lines: Chunk[Line])
+
+        /** Every line resolved before the pending residual outgrew `maxLineBytes`, and that breach.
+          *
+          * No record boundary was found for the residual, so there is nothing to skip to and framing is over. There is no framer to carry
+          * on with, and `finish` is not reachable either: the bytes that would have produced a trailing record are the ones that breached.
+          *
+          * @param lines
+          *   every line resolved before the residual breached, in order
+          * @param breach
+          *   the residual's size against the ceiling it exceeded
+          */
+        case Halted(lines: Chunk[Line], breach: LimitExceededException)
+    end Framed
 
     /** Immutable, resumable framer over arbitrary byte chunks.
       *
@@ -115,17 +149,14 @@ object JsonLines:
         atStart: Boolean
     ):
 
-        /** Feeds a chunk, returning every record it completed along with the advanced framer.
+        /** Feeds a chunk, returning every line it resolved along with the framer for the next one.
           *
           * @param chunk
           *   the next bytes of the input, of any size including empty
           * @return
-          *   a [[Framed]] holding every record this chunk completed and, if a record or the pending residual exceeds `maxLineBytes`,
-          *   the breach as `error`. `records` is populated even when `error` is present: a breach ends framing but never discards a
-          *   record that was already complete. When `error` is `Present`, no record boundary could be found for the offending bytes,
-          *   so the returned `framer` must not be used again for anything, including feeding it further or calling `finish` on it: it
-          *   still holds the pre-chunk residual, so `finish` on it would emit a bogus partial record. When `error` is `Absent`,
-          *   `framer` is safe to feed with the next chunk or to call `finish` on.
+          *   [[Framed.Continued]] holding every line this chunk resolved and the advanced framer, or [[Framed.Halted]] when the pending
+          *   residual outgrew `maxLineBytes` with no record boundary to skip to. A terminated line over the ceiling is not a halt: it
+          *   arrives as a [[Line.Skipped]] inside [[Framed.Continued]], and framing carries on after its terminator.
           */
         def feed(chunk: Span[Byte])(using Frame): Framed =
             val combined = if residual.isEmpty then chunk else residual ++ chunk
@@ -133,7 +164,7 @@ object JsonLines:
                 if combined.size < Bom.size then
                     // Still undecided: the bytes so far are a proper prefix of the mark, and a proper
                     // prefix holds no newline, so there is nothing to emit while waiting for the rest.
-                    Framed(Framer(combined, nextIndex, residualOffset, maxLineBytes, true), Chunk.empty, Absent)
+                    Framed.Continued(Framer(combined, nextIndex, residualOffset, maxLineBytes, true), Chunk.empty)
                 else
                     scan(combined.slice(Bom.size, combined.size), residualOffset + Bom.size)
             else scan(combined, residualOffset)
@@ -162,37 +193,33 @@ object JsonLines:
         end startsWithBomPrefix
 
         private def scan(buf: Span[Byte], offset: Long)(using Frame): Framed =
-            val (start, restOffset, index, records, breach) = emitFrom(buf, 0, offset, nextIndex, Chunk.empty)
-            breach match
-                case Present(e) =>
-                    // A record inside the buffer exceeded the limit. The records collected before it stay;
-                    // the framer itself is not advanced, since the caller must not feed it again.
-                    Framed(this, records, Present(e))
-                case Absent =>
-                    // The residual is measured by the same rule a completed record is: a trailing '\r' is the
-                    // first half of a terminator that has not arrived yet, so it does not count toward the limit.
-                    val restSize = buf.size - start
-                    val restLine =
-                        if restSize > 0 && buf(buf.size - 1) == Return then restSize - 1
-                        else restSize
-                    if restLine > maxLineBytes then
-                        Framed(this, records, Present(LimitExceededException(LimitName, restLine, maxLineBytes)))
-                    else
-                        val rest = if start == 0 then buf else buf.slice(start, buf.size)
-                        Framed(Framer(rest, index, restOffset, maxLineBytes, false), records, Absent)
-                    end if
-            end match
+            val (start, restOffset, index, lines) = emitFrom(buf, 0, offset, nextIndex, Chunk.empty)
+            // The residual is measured by the same rule a completed record is: a trailing '\r' is the
+            // first half of a terminator that has not arrived yet, so it does not count toward the limit.
+            val restSize = buf.size - start
+            val restLine =
+                if restSize > 0 && buf(buf.size - 1) == Return then restSize - 1
+                else restSize
+            if restLine > maxLineBytes then
+                // No newline anywhere in the residual, so there is no boundary to resume at and no framer
+                // worth handing back. The lines resolved before it stay.
+                Framed.Halted(lines, LimitExceededException(LimitName, restLine, maxLineBytes))
+            else
+                val rest = if start == 0 then buf else buf.slice(start, buf.size)
+                Framed.Continued(Framer(rest, index, restOffset, maxLineBytes, false), lines)
+            end if
         end scan
 
-        /** Walks `buf` from `start`, emitting one record per newline.
+        /** Walks `buf` from `start`, resolving one line per newline.
           *
-          * Carries `start` as an index rather than re-slicing the tail after each record: `Span.slice` copies, so slicing per record
-          * would make framing a chunk of k records cost O(chunk size * k). Only an emitted record copies, which keeps the total cost
-          * linear in the chunk with allocation proportional to the output.
+          * Carries `start` as an index rather than re-slicing the tail after each line: `Span.slice` copies, so slicing per record would
+          * make framing a chunk of k records cost O(chunk size * k). Only a kept record copies, which keeps the total cost linear in the
+          * chunk with allocation proportional to the output.
           *
           * `offset` is the overall-input offset of `buf(start)`, and the returned `Int` is the index where the unterminated residual
-          * begins. A record exceeding `maxLineBytes` stops the walk immediately rather than failing the whole scan, so every record
-          * gathered in `acc` up to that point is returned alongside the breach.
+          * begins. A line over `maxLineBytes` is recorded as a [[Line.Skipped]] and the walk continues past its terminator, since that
+          * terminator is a record boundary like any other. It consumes a record index, because it is a non-blank line that a lenient
+          * consumer sees one failure for, so an index keeps naming a line's position whether or not the line was kept.
           */
         @tailrec
         private def emitFrom(
@@ -200,27 +227,31 @@ object JsonLines:
             start: Int,
             offset: Long,
             index: Long,
-            acc: Chunk[Record]
-        )(using Frame): (Int, Long, Long, Chunk[Record], Maybe[LimitExceededException]) =
+            acc: Chunk[Line]
+        )(using Frame): (Int, Long, Long, Chunk[Line]) =
             indexOfNewline(buf, start) match
-                case -1 => (start, offset, index, acc, Absent)
+                case -1 => (start, offset, index, acc)
                 case nl =>
-                    val lineEnd  = if nl > start && buf(nl - 1) == Return then nl - 1 else nl
-                    val lineSize = lineEnd - start
+                    val lineEnd    = if nl > start && buf(nl - 1) == Return then nl - 1 else nl
+                    val lineSize   = lineEnd - start
+                    val restOffset = offset + (nl + 1 - start)
                     if lineSize > maxLineBytes then
-                        (start, offset, index, acc, Present(LimitExceededException(LimitName, lineSize, maxLineBytes)))
+                        emitFrom(
+                            buf,
+                            nl + 1,
+                            restOffset,
+                            index + 1,
+                            acc :+ Line.Skipped(LimitExceededException(LimitName, lineSize, maxLineBytes))
+                        )
+                    else if isBlank(buf, start, lineEnd) then emitFrom(buf, nl + 1, restOffset, index, acc)
                     else
-                        val restOffset = offset + (nl + 1 - start)
-                        if isBlank(buf, start, lineEnd) then emitFrom(buf, nl + 1, restOffset, index, acc)
-                        else
-                            emitFrom(
-                                buf,
-                                nl + 1,
-                                restOffset,
-                                index + 1,
-                                acc :+ Record(buf.slice(start, lineEnd), index, offset)
-                            )
-                        end if
+                        emitFrom(
+                            buf,
+                            nl + 1,
+                            restOffset,
+                            index + 1,
+                            acc :+ Line.Kept(Record(buf.slice(start, lineEnd), index, offset))
+                        )
                     end if
             end match
         end emitFrom
@@ -359,9 +390,11 @@ object JsonLines:
       * The variant for heterogeneous or partially-written logs: a truncated tail or an unrecognized record type yields one failure rather
       * than discarding the whole file.
       *
-      * The one failure this cannot recover from is a record exceeding `maxLineBytes`: no record boundary was found, so there is nothing
-      * to skip to. That surfaces as a final failure element and ends the chunk, but every record decoded before the breach is kept: a
-      * limit breach on record 5 of a 4-record-so-far log yields 4 successes followed by that one failure, not an empty chunk.
+      * A record exceeding `maxLineBytes` is one failure element too, as long as its terminator arrived: the boundary is known, so framing
+      * skips the record and the records after it decode normally. Only an oversized trailing residual, which has no boundary to skip to,
+      * cannot be recovered from; it surfaces as a final failure element and ends the chunk. Either way every record decoded before the
+      * breach is kept: a limit breach on record 5 of a 4-record-so-far log yields 4 successes followed by that one failure, not an empty
+      * chunk.
       *
       * @param input
       *   the raw UTF-8 JSONL bytes to decode
@@ -372,8 +405,8 @@ object JsonLines:
       * @param maxLineBytes
       *   the largest record the framer will accept, in bytes (default `DefaultMaxLineBytes`)
       * @return
-      *   one result per record; a framing failure that finds no record boundary is appended as a final failure element after every
-      *   record decoded before it
+      *   one result per record, including one failure per record skipped for exceeding `maxLineBytes`; an oversized trailing residual,
+      *   which finds no record boundary, is appended as a final failure element after every record decoded before it
       */
     def decodeAllResults[A](
         input: Span[Byte],
@@ -381,16 +414,32 @@ object JsonLines:
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
         maxLineBytes: Int = DefaultMaxLineBytes
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
-        val framed  = Framer.init(maxLineBytes).feed(input)
-        val decoded = framed.records.map(r => decodeRecord[A](r, maxDepth, maxCollectionSize))
-        framed.error match
-            case Present(e) => decoded :+ Result.fail(e)
-            case Absent =>
-                framed.framer.finish match
+        Framer.init(maxLineBytes).feed(input) match
+            case Framed.Continued(framer, lines) =>
+                val decoded = decodeLines[A](lines, maxDepth, maxCollectionSize)
+                framer.finish match
                     case Absent       => decoded
                     case Present(rec) => decoded :+ decodeRecord[A](rec, maxDepth, maxCollectionSize)
+            case Framed.Halted(lines, breach) =>
+                decodeLines[A](lines, maxDepth, maxCollectionSize) :+ Result.fail(breach)
         end match
     end decodeAllResults
+
+    /** Decodes every kept line and turns every skipped one into the failure a consumer sees in its place.
+      *
+      * Keeping the two in one pass is what preserves the ordering the framer resolved them in, so a skipped record's failure sits
+      * between the results of the records around it rather than being appended after them.
+      */
+    private def decodeLines[A](
+        lines: Chunk[Line],
+        maxDepth: Int,
+        maxCollectionSize: Int
+    )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
+        lines.map {
+            case Line.Kept(record)    => decodeRecord[A](record, maxDepth, maxCollectionSize)
+            case Line.Skipped(breach) => Result.fail(breach)
+        }
+    end decodeLines
 
     /** Encodes every value as one JSONL record per line, each terminated by a newline.
       *
