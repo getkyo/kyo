@@ -228,8 +228,16 @@ class CdpBackendIntegrationTest extends BrowserTest:
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
+                        // Nothing is in flight, so close returns immediately (a hang trips the leaf timeout).
                         _ <- backend.close(1.second)
-                    yield succeed
+                        // Assert the close EFFECT, not just that it returned: a subsequent send must raise
+                        // ConnectionLost, proving the connection was actually closed.
+                        afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
+                    yield afterClose match
+                        case Result.Failure(_: BrowserConnectionLostException) => succeed
+                        case Result.Success(_) =>
+                            fail("expected the connection to be closed after close(1.second) but a send succeeded")
+                        case other => fail(s"expected BrowserConnectionLostException after close, got $other")
                 }
             }
         }.orFail("Unexpected")

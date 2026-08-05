@@ -458,9 +458,12 @@ class BrowserDownloadTest extends BrowserTest:
     // Trigger three downloads in sequence (`a.txt`, `b.txt`, `c.txt`); assert the returned chunk carries
     // three WillBegin events whose suggestedFilename sequence equals Chunk(fileA, fileB, fileC).
     //
-    // The body waits via a Promise that the test's own onDownload handler completes when the THIRD
-    // WillBegin event lands; this gates the body's return on the drainer fiber having delivered all three
-    // events into the recordDownloads chunk. Mirror of the L1 / L5 collectEvents + done.get pattern.
+    // recordDownloads captures events into an internal chunk that is not exposed until the body returns,
+    // and onDownload registers a single per-session dispatcher (a nested onDownload would REPLACE
+    // recordDownloads' capture handler, not compose with it), so there is no in-body event to await for
+    // "all three WillBegin drained". The bounded settle is an honest wait for that internal async drain,
+    // not a proxy for a different pipeline (an earlier file-existence barrier was reverted: file writes
+    // are a separate pipeline from event drain and could race it).
     "recordDownloads captures every DownloadEvent emitted during the body in arrival order" in {
         withBrowser {
             for
@@ -482,13 +485,9 @@ class BrowserDownloadTest extends BrowserTest:
                         Browser.click(Browser.Selector.id("a")).andThen(
                             Browser.click(Browser.Selector.id("b")).andThen(
                                 Browser.click(Browser.Selector.id("c")).andThen(
-                                    // Gate on the three downloaded files landing. Each WillBegin fires at
-                                    // its download's start, well before the file is written, so once all
-                                    // three files exist every WillBegin has already been dispatched into
-                                    // the recordDownloads chunk.
-                                    assertEventually(
-                                        Kyo.foreach(Chunk(fileA, fileB, fileC))(f => (tempPath / f).exists).map(_.forall(identity))
-                                    )
+                                    // Bounded settle for the internal event drain (see the note above the
+                                    // test: recordDownloads exposes no in-body completion event).
+                                    Async.sleep(2.seconds)
                                 )
                             )
                         )
