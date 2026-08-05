@@ -297,7 +297,7 @@ object JsonLines:
     /** Folds a chunk of per-record results into a single result, short-circuiting on the first
       * failure or panic.
       *
-      * `decodeAllBytes` reduces `decodeAllResults` through this. It is not a general-purpose
+      * `decodeAllBytes` reduces `decodeAllBytesResults` through this. It is not a general-purpose
       * combinator, so it stays private to this file rather than joining `Result` itself.
       */
     private def foldResults[E, A](results: Chunk[Result[E, A]]): Result[E, Chunk[A]] =
@@ -382,7 +382,7 @@ object JsonLines:
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
         maxLineBytes: Int = DefaultMaxLineBytes
     )(using Json, Schema[A], Frame): Result[DecodeException, Chunk[A]] =
-        foldResults(decodeAllResults[A](input, maxDepth, maxCollectionSize, maxLineBytes))
+        foldResults(decodeAllBytesResults[A](input, maxDepth, maxCollectionSize, maxLineBytes))
     end decodeAllBytes
 
     /** Decodes every record, returning one `Result` per record instead of failing the whole input.
@@ -408,7 +408,7 @@ object JsonLines:
       *   one result per record, including one failure per record skipped for exceeding `maxLineBytes`; an oversized trailing residual,
       *   which finds no record boundary, is appended as a final failure element after every record decoded before it
       */
-    def decodeAllResults[A](
+    def decodeAllBytesResults[A](
         input: Span[Byte],
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
@@ -423,7 +423,7 @@ object JsonLines:
             case Framed.Halted(lines, breach) =>
                 decodeLines[A](lines, maxDepth, maxCollectionSize) :+ Result.fail(breach)
         end match
-    end decodeAllResults
+    end decodeAllBytesResults
 
     /** Decodes every kept line and turns every skipped one into the failure a consumer sees in its place.
       *
