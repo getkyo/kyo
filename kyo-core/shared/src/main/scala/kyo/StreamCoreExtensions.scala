@@ -237,8 +237,12 @@ object StreamCoreExtensions:
           * @param bufferSize
           *   read buffer size in bytes
           */
-        def fromInputStream(is: java.io.InputStream, bufferSize: Int = 8192)(using Frame): Stream[Byte, Sync & Scope] =
-            streamFromJavaInputStream(is, bufferSize)
+        def fromInputStream(is: java.io.InputStream, bufferSize: ByteSize = 8.kib)(using Frame): Stream[Byte, Sync & Scope] =
+            val bytes = bufferSize.toBytes
+            if bytes == 0L || bytes > Int.MaxValue then
+                throw new IllegalArgumentException(s"bufferSize must be between 1 and ${Int.MaxValue} bytes, got $bytes")
+            streamFromJavaInputStream(is, bytes.toInt)
+        end fromInputStream
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *

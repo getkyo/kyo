@@ -917,8 +917,11 @@ import kyo.*
 def source: java.io.InputStream = ???
 
 val bytes: Stream[Byte, Sync & Scope] =
-    Stream.fromInputStream(source, bufferSize = 8192)
+    Stream.fromInputStream(source, bufferSize = 8.kib)
 ```
+
+Buffer capacities are `ByteSize` values. File resume offsets remain numeric byte positions, so `Path.Origin.Offset` continues to take a
+`Long`.
 
 `readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), `tail` (follow file updates), and `tailBytes` (follow file updates at the byte level) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
 

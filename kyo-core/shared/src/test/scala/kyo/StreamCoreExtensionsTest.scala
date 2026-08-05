@@ -121,8 +121,22 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 // of the one before it all change the sequence, and none of them would change the count.
                 val data = Array.tabulate(20)(i => (i + 1).toByte)
                 val is   = new java.io.ByteArrayInputStream(data)
-                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = 8).run)
+                for bytes <- Scope.run(Stream.fromInputStream(is, bufferSize = 8.bytes).run)
                 yield assert(bytes.toArray.toSeq == data.toSeq)
+            }
+
+            "rejects a zero-byte buffer before reading" in {
+                val is = new java.io.ByteArrayInputStream(Array[Byte](1))
+                val ex = intercept[IllegalArgumentException](Stream.fromInputStream(is, bufferSize = ByteSize.Zero))
+                assert(ex.getMessage == "bufferSize must be between 1 and 2147483647 bytes, got 0")
+            }
+
+            "rejects a buffer larger than an array can address before reading" in {
+                val is = new java.io.ByteArrayInputStream(Array[Byte](1))
+                val ex = intercept[IllegalArgumentException](
+                    Stream.fromInputStream(is, bufferSize = (Int.MaxValue.toLong + 1L).bytes)
+                )
+                assert(ex.getMessage == "bufferSize must be between 1 and 2147483647 bytes, got 2147483648")
             }
         }
     }
