@@ -8,6 +8,7 @@ import kyo.net.Test
 class ConnectionPoolTest extends Test:
 
     import AllowUnsafe.embrace.danger
+    given Frame = Frame.internal
 
     val key1 = NetAddress.Tcp("host1", 80)
     val key2 = NetAddress.Tcp("host2", 80)
@@ -131,6 +132,64 @@ class ConnectionPoolTest extends Test:
         val result = pool.poll(key1)
         assert(result == Maybe.empty)
         assert(discardCount.get() == 2)
+    }
+
+    "release that observes close mid-publish disposes the connection, never orphans it (fd-leak race regression, CI #1837)" in {
+        // The shared-transport fd leak: release(key, conn) passes its `closed` check, then close() runs (drains every host
+        // pool, sets closed, clears the map). Release then re-creates a host pool via computeIfAbsent and publishes into a
+        // ring nothing else will ever drain, so the connection's socket is never closed (the CI dump: pendingCloses=0, recv
+        // still armed). The raceProbe seam fires close() in exactly that window, so the interleaving is deterministic on
+        // every platform. The connection must still be disposed exactly once.
+        val discardCount = AtomicInt.Unsafe.init(0)
+        val pool =
+            ConnectionPool.init[NetAddress, String](2, kyo.Duration.Infinity, _ => true, _ => discard(discardCount.incrementAndGet()))
+        pool.raceProbe = () => discard(pool.close())
+        pool.release(key1, "c")
+        assert(
+            discardCount.get() == 1,
+            s"the connection must be disposed exactly once (1); got ${discardCount.get()} (0 = orphaned/leaked)"
+        )
+    }
+
+    "close drains concurrently with releases without orphaning or double-disposing (concurrency smoke)" in {
+        // The linearizable-drain path under real preemption: `n` concurrent releases race one close on a ring sized to hold
+        // them, so close catches slots mid-publish and its drain must spin over them rather than stop. Every released
+        // connection ends up extracted by close or discarded, exactly once. This also guards the drain's spin against
+        // deadlock under contention. JS has no in-method preemption, so it passes by construction.
+        val n         = 32
+        val scenarios = 1000
+        val expected  = (0 until n).map("c" + _).toSet
+        Loop(0) { s =>
+            if s >= scenarios then Loop.done(assert(true))
+            else
+                val discarded = AtomicRef.Unsafe.init(Chunk.empty[String])
+                val pool =
+                    ConnectionPool.init[NetAddress, String](
+                        n,
+                        kyo.Duration.Infinity,
+                        _ => true,
+                        c => discard(discarded.updateAndGet(_ :+ c))
+                    )
+                for
+                    latch     <- Latch.init(1)
+                    releasers <- Fiber.init(Async.foreach(0 until n, n)(j => latch.await.map(_ => Sync.defer(pool.release(key1, "c" + j)))))
+                    closer    <- Fiber.init(latch.await.map(_ => Sync.defer(pool.close())))
+                    _         <- latch.release
+                    _         <- releasers.get
+                    extracted <- closer.get
+                yield
+                    // Exactly-once per connection: every released id lands in exactly one of the two sets, none orphaned, none doubled.
+                    val ext = extracted.toArray.toSet
+                    val dis = discarded.get().toArray.toSet
+                    if (ext ++ dis) == expected && ext.intersect(dis).isEmpty then Loop.continue(s + 1)
+                    else
+                        Loop.done(assert(
+                            (ext ++ dis) == expected && ext.intersect(dis).isEmpty,
+                            s"scenario $s: exactly-once violated. orphaned=${expected -- ext -- dis}, double-disposed=${ext.intersect(dis)}"
+                        ))
+                    end if
+                end for
+        }
     }
 
 end ConnectionPoolTest

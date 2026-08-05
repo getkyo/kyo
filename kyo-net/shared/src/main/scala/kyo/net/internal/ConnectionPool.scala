@@ -33,6 +33,11 @@ final private[kyo] class ConnectionPool[K, C](
     /** True once `close()` has run. For testing the client's close/release path only. */
     private[kyo] def isClosed(using AllowUnsafe): Boolean = closed
 
+    // Test seam (default no-op): a deterministic interleaving point for the release-vs-close linearizability regression in
+    // ConnectionPoolTest. It runs after release() has observed the pool open but before it publishes, so a test can drive
+    // close() into exactly the window the shared-transport fd leak lives in. Never set outside that test.
+    private[internal] var raceProbe: () => Unit = ConnectionPool.noRaceProbe
+
     /** Try to get a live idle connection for the given host. */
     def poll(key: K)(using AllowUnsafe): Maybe[C] =
         if closed then Maybe.empty
@@ -41,7 +46,21 @@ final private[kyo] class ConnectionPool[K, C](
     /** Return a connection to the idle pool. If the ring is full, discard it. */
     def release(key: K, conn: C)(using AllowUnsafe): Unit =
         if closed then discardConn(conn)
-        else getPool(key).release(conn, discardConn)
+        else
+            raceProbe()
+            val hostPool = getPool(key)
+            hostPool.release(conn, discardConn)
+            // close() can race this release: it sets `closed`, drains every host pool, and clears the map, any of which may
+            // fall between the `closed` read above and the publish just done. A connection published into a ring close()
+            // already drained (or a fresh pool getPool re-created after pools.clear()) would otherwise never be drained again
+            // and its socket never closed. Re-read `closed`. If it is now set, drain and discard this host pool ourselves. The
+            // ring's head CAS makes disposal exactly-once against close()'s own drain.
+            if closed then
+                hostPool.drainDiscard(discardConn)
+                // Drop the entry we may have re-created after close()'s pools.clear() so it does not linger. The two-arg remove
+                // unmaps only this exact instance, so a fresh pool another releaser inserted for the same key is left alone.
+                kyo.discard(pools.remove(key, hostPool))
+            end if
 
     /** Discard a connection without returning it to the pool. */
     def discard(conn: C)(using AllowUnsafe): Unit =
@@ -80,6 +99,9 @@ final private[kyo] class ConnectionPool[K, C](
 end ConnectionPool
 
 private[kyo] object ConnectionPool:
+
+    // The shared default for `raceProbe`: a single no-op instance so a production pool allocates no per-instance lambda.
+    private[internal] val noRaceProbe: () => Unit = () => ()
 
     def init[K, C](
         maxConnectionsPerHost: Int,
@@ -178,28 +200,51 @@ private[kyo] object ConnectionPool:
         def unreserve(): Unit =
             kyo.discard(inFlight.decrementAndGet())
 
-        /** Close the pool. Drains idle connections for the caller to close. */
-        def close[C](into: ChunkBuilder[C]): Unit =
+        /** Drain every slot claimed for release, from `head` up to `tail`, applying `sink` to each connection.
+          *
+          * A concurrent `release` publishes in two steps: it CASes `tail` to claim a slot, then stores the connection and
+          * `lazySet`s the slot's sequence to mark it readable. A drain that stopped at the first slot whose sequence is not yet
+          * visible would treat a slot being published right now as the end of the ring and leave that connection behind, never
+          * drained again. So while `head` is below `tail` a stale sequence means a claim is mid-publish: spin until its store
+          * lands rather than terminate. A claimer between its CAS and its store is running on its own carrier (release never
+          * suspends), so the wait is bounded. A single-threaded runtime has no release in flight while this runs, so the spin
+          * is never taken. Ends when `head == tail`.
+          */
+        private def drainClaimed[C](sink: C => Unit): Unit =
             @tailrec def loop(): Unit =
                 val currentHead = head.get()
-                val idx         = (currentHead % capacity).toInt
-                val seq         = sequences.get(idx)
-                if seq < currentHead + 1 then ()
-                else if head.compareAndSet(currentHead, currentHead + 1) then
-                    connections(idx) match
-                        case Present(conn) =>
-                            connections(idx) = Absent
-                            kyo.discard(into += conn.asInstanceOf[C])
-                        case Absent =>
-                            connections(idx) = Absent
-                    end match
-                    sequences.lazySet(idx, currentHead + capacity)
-                    loop()
-                else loop()
+                val currentTail = tail.get()
+                if currentHead >= currentTail then ()
+                else
+                    val idx = (currentHead % capacity).toInt
+                    val seq = sequences.get(idx)
+                    if seq < currentHead + 1 then loop()
+                    else if head.compareAndSet(currentHead, currentHead + 1) then
+                        connections(idx) match
+                            case Present(conn) =>
+                                connections(idx) = Absent
+                                sink(conn.asInstanceOf[C])
+                            case Absent =>
+                                connections(idx) = Absent
+                        end match
+                        sequences.lazySet(idx, currentHead + capacity)
+                        loop()
+                    else loop()
+                    end if
                 end if
             end loop
             loop()
-        end close
+        end drainClaimed
+
+        /** Close the pool. Drains idle connections for the caller to close. */
+        def close[C](into: ChunkBuilder[C]): Unit =
+            drainClaimed[C](conn => kyo.discard(into += conn))
+
+        /** Drain and discard every connection still in the ring, for a `release` that observed the pool closed after it had
+          * already published. Shares [[drainClaimed]] with [[close]], so the same wait-for-a-mid-publish-claim rule applies.
+          */
+        def drainDiscard[C](discardConn: C => Unit): Unit =
+            drainClaimed(discardConn)
 
     end HostPool
 
