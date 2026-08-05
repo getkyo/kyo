@@ -15,7 +15,7 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-core] `Path.Origin`: where a byte-level read begins (`Start`, `End`, `Offset`)
 - [kyo-core] `Stream.fromInputStream`: stream a `java.io.InputStream`'s bytes, closed with the enclosing `Scope`
 - [kyo-schema] `RecordDecodeException`: decode failure for one record in a multi-record input, carrying its index, byte offset, and text
-- [kyo-schema-json] `Json.Lines`: pure JSONL/NDJSON framing (`Framer`, `Record`, `Line`, `Framed`) plus `decodeAll`, `decodeAllBytes`, `decodeAllResults`, `encodeAll`, `encodeAllBytes`, `encodeLine`
+- [kyo-schema-json] `Json.Lines`: pure JSONL/NDJSON framing (`Framer`, `Record`, `Line`, `Framed`) plus `decodeAll`, `decodeAllBytes`, `decodeAllBytesResults`, `encodeAll`, `encodeAllBytes`, `encodeLine`
 - [kyo-json] new module: `Jsonl`, streaming JSONL/NDJSON over files and byte streams with `read`, `follow`, `pipe`, `encode`, `write`, `append`, and per-record error recovery through the `Results` variants
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`
 - [kyo-logging-jpl] `kyo.JavaLog`: bridge `Log` to Java platform logging a.k.a. `System.Logger`

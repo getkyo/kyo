@@ -342,7 +342,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             end match
         }
 
-        // The strict counterpart of the skip: `decodeAllResults` reports the breach and decodes on,
+        // The strict counterpart of the skip: `decodeAllBytesResults` reports the breach and decodes on,
         // and folding those results must stop at it rather than inheriting the recovery.
         "fails on a terminated oversized record rather than skipping it" in {
             val in = "{\"name\":\"a\",\"count\":1}\n" + ("x" * 40) + "\n{\"name\":\"c\",\"count\":3}\n"
@@ -366,11 +366,11 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         }
     }
 
-    "decodeAllResults" - {
+    "decodeAllBytesResults" - {
 
         "keeps going past a bad record" in {
             val in = "{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n"
-            val rs = Json.Lines.decodeAllResults[Event](Span.from(in.getBytes(StandardCharsets.UTF_8)))
+            val rs = Json.Lines.decodeAllBytesResults[Event](Span.from(in.getBytes(StandardCharsets.UTF_8)))
             assert(rs.size == 3)
             assert(rs(0).getOrThrow == Event("a", 1))
             rs(1) match
@@ -385,7 +385,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
 
         "terminates after an oversized record because no boundary was found" in {
             val in = "aaaaaaaaaaaaaaaaaaaaaaaa"
-            val rs = Json.Lines.decodeAllResults[Event](
+            val rs = Json.Lines.decodeAllBytesResults[Event](
                 Span.from(in.getBytes(StandardCharsets.UTF_8)),
                 maxLineBytes = 8
             )
@@ -402,7 +402,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // one element it occupies and nothing else.
         "skips a terminated oversized record and decodes the records after it" in {
             val in = "{\"name\":\"a\",\"count\":1}\n" + ("x" * 40) + "\n{\"name\":\"c\",\"count\":3}\n"
-            val rs = Json.Lines.decodeAllResults[Event](
+            val rs = Json.Lines.decodeAllBytesResults[Event](
                 Span.from(in.getBytes(StandardCharsets.UTF_8)),
                 maxLineBytes = 30
             )
@@ -417,14 +417,14 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             assert(rs(2).getOrThrow == Event("c", 3))
         }
 
-        // Regression test for a defect where decodeAllResults, via Framer.feed, discarded every
+        // Regression test for a defect where decodeAllBytesResults, via Framer.feed, discarded every
         // already-decoded record when a later record in the same input breached maxLineBytes. The
         // valid record must survive and precede the failure, not disappear with it.
         "keeps a valid record decoded before a later record breaches the limit" in {
             val validLine = "{\"name\":\"a\",\"count\":1}\n"
             val oversized = "x" * 40
             val in        = validLine + oversized
-            val rs = Json.Lines.decodeAllResults[Event](
+            val rs = Json.Lines.decodeAllBytesResults[Event](
                 Span.from(in.getBytes(StandardCharsets.UTF_8)),
                 maxLineBytes = 30
             )

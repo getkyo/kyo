@@ -292,6 +292,6 @@ val text: String = Json.Lines.encodeAll(List(sampleEvent))
 val back: Result[DecodeException, Chunk[LogEvent]] = Json.Lines.decodeAll[LogEvent](text)
 ```
 
-`Json.Lines` holds the whole-input pair `decodeAll` / `encodeAll` with their `Span[Byte]` counterparts, the per-record `decodeAllResults`, `encodeLine` for a single record, and `Json.Lines.Framer` for a caller driving its own read loop. It is documented in the [JSONL section of the kyo-schema README](../kyo-schema/README.md#jsonl), and living in kyo-schema-json is what lets it be used with no Kyo effect runtime on the classpath.
+`Json.Lines` holds the whole-input pair `decodeAll` / `encodeAll` with their `Span[Byte]` counterparts, the per-record `decodeAllBytesResults`, `encodeLine` for a single record, and `Json.Lines.Framer` for a caller driving its own read loop. It is documented in the [JSONL section of the kyo-schema README](../kyo-schema/README.md#jsonl), and living in kyo-schema-json is what lets it be used with no Kyo effect runtime on the classpath.
 
 The module's internal contracts, including why the framer is the follow loop's carried state and why every entry point routes through one private framing function, are in [CONTRIBUTING.md](CONTRIBUTING.md).
