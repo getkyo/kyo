@@ -13,9 +13,18 @@ import java.util.concurrent.atomic
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import scala.util.control.NoStackTrace
 
 class KyoFinagleSchedulerServiceTest extends AnyFreeSpec with NonImplicitAssertions with Eventually {
+
+    // ScalaTest's default eventually patience is 150ms, too short for a cross-runtime interrupt to
+    // propagate under load. Give it a generous timeout so the retried raise-and-check does not
+    // false-fail; the happy path still returns in ~1ms.
+    implicit override val patienceConfig: PatienceConfig =
+        PatienceConfig(timeout = Span(5, Seconds), interval = Span(20, Millis))
 
     val scheduler = (new KyoFinagleSchedulerService).create(List("kyo")).get
     twitter.concurrent.Scheduler.setUnsafe(scheduler)

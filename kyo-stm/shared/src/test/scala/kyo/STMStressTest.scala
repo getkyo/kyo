@@ -216,7 +216,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             // schedule-based re-execution, not park-and-notify). Wait until it has attempted
             // the nested read at least once with r1 == 0, so publishing r1 forces a further
             // retry that observes the write (nestedRetries >= 2).
-            _     <- assertEventually(nestedRetries.get.map(_ >= 1))
+            _     <- assertEventually(nestedRetries.get.map(_ >= 2))
             _     <- STM.run(r1.set(42))
             _     <- Abort.run(Async.timeout(5.seconds)(waiter.get))
             woken <- wokeUp.get
@@ -637,7 +637,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             }
             // Wait until the waiter has attempted (and retried) against ref == 0 before
             // publishing, so it is genuinely woken rather than reading 1 on its first attempt.
-            _ <- assertEventually(attempts.get.map(_ >= 1))
+            _ <- assertEventually(attempts.get.map(_ >= 2))
             _ <- STM.run(ref.set(1))
             _ <- Abort.run(Async.timeout(5.seconds)(waiter.get))
             w <- woken.get
@@ -782,7 +782,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             })
             // Let the reader re-run against the unsatisfiable invariant (v < 5) at least once,
             // then publish the satisfying value so it commits within its bounded retry budget.
-            _      <- assertEventually(attempts.get.map(_ >= 1))
+            _      <- assertEventually(attempts.get.map(_ >= 2))
             _      <- STM.run(ref.set(5))
             result <- reader.get
             a      <- attempts.get
@@ -1825,7 +1825,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             }
             // Wait until the waiter has read both refs (still 0) and retried before publishing
             // a, so the write to a wakes a genuinely-blocked waiter whose read-set includes b.
-            _   <- assertEventually(attempts.get.map(_ >= 1))
+            _   <- assertEventually(attempts.get.map(_ >= 2))
             _   <- STM.run(a.set(42))
             _   <- Abort.run(Async.timeout(5.seconds)(waiter.get))
             w   <- woken.get

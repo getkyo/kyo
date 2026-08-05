@@ -663,8 +663,11 @@ class BrowserSettlementTest extends BrowserTest:
         withBrowser {
             Browser.isolate.fresh.use {
                 Async.zip(
-                    // Generous config: waits past 700ms for #slow to populate.
-                    Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(2.seconds))) {
+                    // Effectively-infinite maxDuration (not an infinite POLL interval): the 50ms poll is
+                    // unchanged, so the sibling still matches #slow at 700ms and its positive assertion is
+                    // intact; the 1-hour cap only matters to a fiber that never matches. That makes this a
+                    // clean detectable-hang discriminator for the tight fiber below - no wall-clock ceiling.
+                    Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(1.hour))) {
                         Browser.goto(slowPage).andThen {
                             Browser.waitForText(Browser.Selector.css("#slow"), _ == "arrived").map { result =>
                                 assert(result == "arrived", s"Slow fiber: expected 'arrived' but got '$result'")
@@ -672,32 +675,18 @@ class BrowserSettlementTest extends BrowserTest:
                             }
                         }
                     },
-                    // Tight config: never-matches; must fail fast regardless of sibling's generous config.
-                    // This isolation test can only be verified by elapsed time: a config leak and correct
-                    // isolation BOTH abort with BrowserAssertionTimedOutException, differing only in WHEN.
-                    // So the ceiling must DISCRIMINATE, sitting strictly between the tight-fiber elapsed with
-                    // isolation (~100ms retry budget + data-page goto overhead, well under 1s) and the leaked
-                    // elapsed (the sibling's 2s maxDuration dominates, ~2000ms+). 1500ms catches a leak (>=2000ms
-                    // fails) with margin, while leaving comfortable headroom above the isolated case. A wider
-                    // "3x CI envelope" ceiling (the former <=2400ms) sits ABOVE the ~2000ms leak and so passes
-                    // whether isolation holds or not - vacuous. This is the one test where a wall-clock ceiling
-                    // is the correct assertion (both outcomes match; only timing separates them).
+                    // Tight config: #fast never matches, so with its own 100ms budget this fiber aborts fast.
+                    // If withConfig leaked the sibling's config across the Async.zip boundary, this fiber would
+                    // inherit maxDuration(1.hour) on a never-matching predicate and retry for an hour, hanging
+                    // the zip into the 90s leaf timeout. So the typed abort alone discriminates isolation
+                    // (fast BrowserAssertionTimedOutException) from a leak (hang) - no elapsed ceiling needed.
                     Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(100.millis))) {
                         Browser.goto(fastPage).andThen {
-                            timed {
-                                Abort.run[BrowserElementException | BrowserAssertionException] {
-                                    Browser.waitForText(Browser.Selector.css("#fast"), _ == "never-match")
-                                }
-                            }.map { case (elapsedDur, result) =>
-                                val elapsedMs = elapsedDur.toMillis
+                            Abort.run[BrowserElementException | BrowserAssertionException] {
+                                Browser.waitForText(Browser.Selector.css("#fast"), _ == "never-match")
+                            }.map { result =>
                                 result match
-                                    case Result.Failure(_: BrowserAssertionTimedOutException) =>
-                                        assert(
-                                            elapsedMs <= 1500,
-                                            s"Tight fiber leaked the sibling's 2s config: aborted after ${elapsedMs}ms " +
-                                                "(isolated should abort near the tight 100ms budget, well under 1500ms; a leak aborts near 2000ms)"
-                                        )
-                                        result
+                                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
                                     case other => fail(s"Tight fiber: expected BrowserAssertionTimedOutException but got $other")
                                 end match
                             }
