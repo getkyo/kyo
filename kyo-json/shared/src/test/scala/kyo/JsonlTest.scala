@@ -61,6 +61,21 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         )
 
+    /** Asserts that `result` is the write failure a missing parent directory of `path` raises.
+      *
+      * Pins which write failure was raised and the file it names, not merely that writing failed. A test whose subject is the missing
+      * folder would otherwise pass on a permission error or an I/O error against an unrelated path, which are the failures a wrong
+      * `createFolders` path would substitute.
+      */
+    private def assertMissingParent[A](result: Result[FileWriteException, A], path: Path)(using kyo.test.AssertScope): Unit =
+        result.foldError(
+            value => fail(s"expected a failure, got $value"),
+            {
+                case Result.Failure(e: FileNotFoundException) => assert(e.path == path)
+                case other                                    => fail(s"unexpected error $other")
+            }
+        )
+
     "pipe" - {
 
         "decodes a byte stream into values" in {
@@ -518,6 +533,15 @@ class JsonlTest extends kyo.test.Test[Any]:
                 }
             }
 
+        /** `condition`, but already satisfied once `fiber` has finished.
+          *
+          * The driver loops above wait for something the follower must produce. A follower that instead stops early, by aborting, never
+          * produces it, and the loop would spin forever. Treating "the follower finished" as an exit releases the loop so that the
+          * assertion afterwards reports the abort rather than the test hanging on it.
+          */
+        def doneOr[A, S](fiber: Fiber[A, S])(condition: Boolean < Async)(using Frame): Boolean < Async =
+            fiber.done.map(done => if done then true else condition)
+
         "replays existing records then emits appended ones" in {
             Clock.withTimeControl { control =>
                 for
@@ -638,7 +662,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     )
                     // Emitting the first record is the observable proof that the partial second record
                     // has been read and buffered, so the completing append below cannot land too early.
-                    _ <- advanceUntil(control)(seen.get.map(_.nonEmpty))
+                    _ <- advanceUntil(control)(doneOr(fiber)(seen.get.map(_.nonEmpty)))
                     // Each append closes the pending record and opens a new partial one, so repeating it
                     // only ever adds more Event("split", 7) records and never a malformed one.
                     _   <- writeUntilDone(fiber, control, file.append(completion))
@@ -671,7 +695,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                         )
                     )
                     // The first result proves the read that framed it also buffered `{"nam`.
-                    _ <- advanceUntil(control)(seen.get.map(_.nonEmpty))
+                    _ <- advanceUntil(control)(doneOr(fiber)(seen.get.map(_.nonEmpty)))
                     // A single truncating write: the file never grows back past the follower's position.
                     _   <- file.write(replaced)
                     _   <- advanceUntil(control)(fiber.done)
@@ -710,7 +734,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                         )
                     )
                     // The first value proves the read that framed it also buffered `{"nam`.
-                    _       <- advanceUntil(control)(seen.get.map(_.nonEmpty))
+                    _       <- advanceUntil(control)(doneOr(fiber)(seen.get.map(_.nonEmpty)))
                     _       <- file.write(replaced)
                     _       <- advanceUntil(control)(fiber.done)
                     outcome <- fiber.get
@@ -744,7 +768,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                         )
                     )
                     // Both existing records emitted, so the follower's cursor sits at the end of the file.
-                    _   <- advanceUntil(control)(seen.get.map(_.size >= 2))
+                    _   <- advanceUntil(control)(doneOr(fiber)(seen.get.map(_.size >= 2)))
                     _   <- file.write(replaced)
                     _   <- advanceUntil(control)(fiber.done)
                     _   <- fiber.get
@@ -850,7 +874,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                         )
                     )
                     // The record framed before the breach and the breach itself both arrive in the first read.
-                    _   <- advanceUntil(control)(seen.get.map(_.size >= 2))
+                    _   <- advanceUntil(control)(doneOr(fiber)(seen.get.map(_.size >= 2)))
                     _   <- file.write(replaced)
                     _   <- advanceUntil(control)(fiber.done)
                     _   <- fiber.get
@@ -1081,7 +1105,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 exists <- file.exists
                 _      <- dir.removeAll
             yield
-                assert(r.isFailure)
+                assertMissingParent(r, file)
                 assert(!exists)
             end for
         }
@@ -1110,17 +1134,47 @@ class JsonlTest extends kyo.test.Test[Any]:
                 text   <- file.read
                 _      <- dir.removeAll
             yield
-                assert(r.isFailure)
+                // The stream's own failure reaches the caller unchanged: the write surface neither swallows it
+                // nor rewrites it into a file failure of its own once the handle has been closed.
+                r.foldError(
+                    value => fail(s"expected a failure, got $value"),
+                    {
+                        case Result.Failure(e) => assert(e == "boom")
+                        case other             => fail(s"unexpected error $other")
+                    }
+                )
                 assert(exists)
                 assert(text == "{\"name\":\"a\",\"count\":1}\n")
             end for
         }
 
-        "writes a large stream in bounded memory" in {
-            // 50000 records is far more than a fold that buffered the whole stream would hold comfortably,
-            // and the exact byte length is what catches the arithmetic errors buffering hides: a chunk
-            // written twice, a chunk dropped, or a newline emitted per chunk instead of per record. Reading
-            // the file back pins the record count independently of the length.
+        "writes each chunk before pulling the next one" in {
+            // The bounded-memory property as an observable fact rather than a claim about the heap: the file's
+            // size at the moment a chunk is pulled counts the bytes of every chunk written before it, so the
+            // write happens between pulls and nothing accumulates across the stream. A fold that buffered the
+            // whole stream and wrote once at the end would report 0 at every pull. Each record here encodes to
+            // 23 bytes and the source hands out two at a time, so the second pull must see 46.
+            val values   = Chunk(Event("a", 1), Event("b", 2), Event("c", 3), Event("d", 4))
+            val lineSize = "{\"name\":\"a\",\"count\":1}\n".getBytes(StandardCharsets.UTF_8).length.toLong
+            for
+                dir <- Path.tempDir("kyo-jsonl-write-incremental")
+                file = dir / "out.jsonl"
+                sizes <- AtomicRef.init(Chunk.empty[Long])
+                source = Stream.init(values, 2).mapChunk(chunk =>
+                    file.size.map(size => sizes.updateAndGet(_ :+ size)).andThen(chunk)
+                )
+                _   <- Jsonl.write(file, source)
+                got <- sizes.get
+                _   <- dir.removeAll
+            yield assert(got == Chunk(0L, 2 * lineSize))
+            end for
+        }
+
+        "writes a large stream to exactly the expected byte length and record count" in {
+            // Nothing here observes memory; what it pins is the byte arithmetic over a stream long enough that
+            // the arithmetic errors buffering hides have somewhere to accumulate: a chunk written twice, a chunk
+            // dropped, or a newline emitted per chunk instead of per record. Reading the file back pins the
+            // record count independently of the length. The chunk-at-a-time write is pinned by the test above.
             val n = 50000
             val expectedSize =
                 (0 until n).foldLeft(0L)((acc, i) => acc + Json.encode(Event("e", i)).getBytes(StandardCharsets.UTF_8).length + 1L)
@@ -1188,6 +1242,29 @@ class JsonlTest extends kyo.test.Test[Any]:
             yield assert(text == "{\"name\":\"a\",\"count\":1}\n")
         }
 
+        "splices onto a last record that carries no trailing newline" in {
+            // The documented hazard, pinned as bytes. Appending starts at the file's current end and writes no
+            // separator, so a file whose last line was never terminated gets the appended record stuck onto it.
+            // The state is reachable rather than hypothetical: `pipe` accepts an unterminated final record, so
+            // `read` reads such a file without complaint and nothing before the append reports anything wrong.
+            // A future change that "helpfully" inserted a newline first would fail here, which is the point:
+            // the separator is the caller's to write, and this is the behavior the scaladoc promises.
+            for
+                dir <- Path.tempDir("kyo-jsonl-append-splice")
+                file = dir / "unterminated.jsonl"
+                _    <- file.write("{\"name\":\"a\",\"count\":1}")
+                _    <- Jsonl.append(file, Stream.init(Chunk(Event("b", 2))))
+                text <- file.read
+                r    <- Abort.run[DecodeException](Scope.run(Jsonl.read[Event](file).run))
+                _    <- dir.removeAll
+            yield
+                assert(text == "{\"name\":\"a\",\"count\":1}{\"name\":\"b\",\"count\":2}\n")
+                // Two records became one line, and that line is not a record: the splice is a corruption
+                // rather than a cosmetic join, and it surfaces only on the read that follows it.
+                assertRecordFailure(r, 0L)
+            end for
+        }
+
         "fails when createFolders is false and a parent is missing" in {
             for
                 dir <- Path.tempDir("kyo-jsonl-append-no-folders")
@@ -1196,7 +1273,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 exists <- file.exists
                 _      <- dir.removeAll
             yield
-                assert(r.isFailure)
+                assertMissingParent(r, file)
                 assert(!exists)
             end for
         }

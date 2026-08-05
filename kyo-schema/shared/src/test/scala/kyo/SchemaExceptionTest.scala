@@ -28,7 +28,24 @@ class SchemaExceptionTest extends kyo.test.Test[Any]:
     "RecordDecodeException is a DecodeException" in {
         val cause              = TruncatedInputException(TestCodec, "unexpected end")
         val e: DecodeException = RecordDecodeException(0L, 0L, "{}", cause)
-        assert(e.isInstanceOf[SchemaException])
+        // The marker is what lets the record surfaces declare one `Abort[DecodeException]` channel for
+        // every way a record can fail, so what the membership has to survive is a handler for the marker
+        // catching this failure at run time: `Abort.run` resolves the type it handles by `Tag`, which the
+        // static ascription above does not exercise. The caught value is the record failure itself, with
+        // its position and its underlying cause intact rather than flattened into the marker type.
+        Abort.run[DecodeException](Abort.fail(e)).map { r =>
+            r.foldError(
+                value => fail(s"expected a failure, got $value"),
+                {
+                    case Result.Failure(caught: RecordDecodeException) =>
+                        assert(caught.recordIndex == 0L)
+                        assert(caught.byteOffset == 0L)
+                        assert(caught.record == "{}")
+                        assert(caught.cause == cause)
+                    case other => fail(s"unexpected error $other")
+                }
+            )
+        }
     }
 
 end SchemaExceptionTest
