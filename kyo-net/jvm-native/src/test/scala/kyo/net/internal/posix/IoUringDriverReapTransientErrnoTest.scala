@@ -87,7 +87,7 @@ class IoUringDriverReapTransientErrnoTest extends Test:
             PosixTestSockets.assumeUring()
             withInjectingDriver { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val payload   = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
                     // Arm BEFORE awaitRead: the recv SQE this call submits reaches the real kernel via the real io_uring_submit (never

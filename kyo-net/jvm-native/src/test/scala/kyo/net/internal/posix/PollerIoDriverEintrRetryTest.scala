@@ -73,7 +73,7 @@ class PollerIoDriverEintrRetryTest extends Test:
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle   = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                 discard(driver.start())
                 val payload = Array.tabulate[Byte](16)(i => (i + 1).toByte)
@@ -122,7 +122,7 @@ class PollerIoDriverEintrRetryTest extends Test:
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                val handle   = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle   = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
 
                 discard(driver.start())
                 val payload = Array.tabulate[Byte](16)(i => (i + 1).toByte)

@@ -75,7 +75,7 @@ class ConnectionHalfCloseOutboundTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 // Shrink both kernel buffers so the first large write fills and parks the WritePump in awaitWritable (a real EAGAIN).
                 PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (clientFd, peerFd) =>
-                    val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Build connection A over the recording driver; capacity is large enough to hold the queued tail behind the parked write.
                     val conn = InternalConnection.init(handle, spy, transportConfig.channelCapacity)
 
@@ -110,7 +110,7 @@ class ConnectionHalfCloseOutboundTest extends Test:
                         // teardown's fd close EOF-terminates the drain.
                         PosixTestSockets.halfClose(sock, peerFd)
 
-                        val peerH = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
+                        val peerH = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         Abort.run[Closed](drainPeer(driver, peerH)).map { drainResult =>
                             tornDown.safe.get.map { _ =>
                                 driver.closeHandle(peerH)

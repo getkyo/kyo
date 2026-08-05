@@ -74,6 +74,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                         port = 0,
                         host = "127.0.0.1",
                         address = kyo.net.NetAddress.Tcp("127.0.0.1", 0),
+                        createdAt = Frame.internal,
                         sockets = spy,
                         registry = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[
                             PosixListener,
@@ -81,7 +82,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                         ]()),
                         closedFlag = AtomicBoolean.Unsafe.init(true)
                     )
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
                 val engine    = new RecordingTlsEngine(rawEngine)
                 val reaped    = AtomicBoolean.Unsafe.init(false)

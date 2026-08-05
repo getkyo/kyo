@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -975,7 +976,7 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.awaitRead(handle, promise)
     end awaitRead
 
-    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         discard(awaitWritableCalls.getAndIncrement())
         real.awaitWritable(handle, promise)
         val hook = onAwaitWritable
@@ -991,11 +992,11 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     // and a driver carrier that never gets scheduled.
     @volatile var stallConnect: Boolean = false
 
-    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         if stallConnect then ()
         else real.awaitConnect(handle, promise)
 
-    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         real.awaitAccept(handle, promise)
 
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =

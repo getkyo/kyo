@@ -257,6 +257,13 @@ run_in_container() {
     # Forward the leak-debug flag so the forked test JVM (which inherits the container env) runs leaves serially and attributes each leaked
     # descriptor to the test that opened it (see kyo.test.runner.internal.LeakDebug). Unset by default, so a normal run is unaffected.
     [ -n "${KYO_TEST_LEAK_DEBUG:-}" ] && envs+=(-e "KYO_TEST_LEAK_DEBUG=$KYO_TEST_LEAK_DEBUG")
+    # Docker-out-of-docker for the container-backed suites (kyo-sql / kyo-pod): when KYO_POD_SOCKET names the host podman socket, mount it and
+    # share the host network so kyo-pod inside the container can start sibling DB containers and reach their published ports on localhost. Opt-in,
+    # so a normal run is unaffected.
+    if [ -n "${KYO_POD_SOCKET:-}" ]; then
+        args+=(--network host -v "${KYO_POD_SOCKET}:${KYO_POD_SOCKET}")
+        envs+=(-e "CONTAINER_HOST=unix://${KYO_POD_SOCKET}")
+    fi
     # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
     # against real libssl/libcrypto instead of cancelling.
     [ -n "${STAGE_BORINGSSL:-}" ] && envs+=(-e "STAGE_BORINGSSL=$STAGE_BORINGSSL")
