@@ -73,9 +73,15 @@ private[kyo] object Orchestrator:
         scalaVer: String
     )(using Frame): Chunk[BlockOutcome] < (Sync & Async & Scope & Abort[Doctest.Error]) =
         MarkdownParser.parse(sourcePath).flatMap { blocks =>
-            val withPredef = injectPredef(blocks, config.predef, sourcePath)
-            val units      = CompileUnit.group(withPredef)
-            processUnits(units, driver, cache, fingerprint, scalaVer, config)
+            val skippedOutcomes = blocks
+                .filter(_.expect == Block.Expectation.Skipped)
+                .map(block => BlockOutcome.Skipped(block, fromCache = false))
+            val activeBlocks = blocks.filter(_.expect != Block.Expectation.Skipped)
+            val withPredef =
+                if activeBlocks.isEmpty then activeBlocks
+                else injectPredef(activeBlocks, config.predef, sourcePath)
+            val units = CompileUnit.group(withPredef)
+            processUnits(units, driver, cache, fingerprint, scalaVer, config).map(outcomes => skippedOutcomes ++ outcomes)
         }
 
     // Prepends a synthetic setup block built from the configured predef, so every block (including
