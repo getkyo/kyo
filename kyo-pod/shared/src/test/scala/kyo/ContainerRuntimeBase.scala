@@ -45,11 +45,19 @@ private[kyo] trait ContainerRuntimeBase:
 
     lazy val available: Seq[String] =
         import AllowUnsafe.embrace.danger
-        val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
-        getEnv("KYO_POD_RUNTIME") match
-            case Present(rt) => if all.contains(rt) then Seq(rt) else Seq.empty
-            case Absent      => all
-        end match
+        // The windows-latest CI runner ships a Docker daemon in Windows-container mode, which cannot
+        // pull or run Linux images (alpine, postgres, redis, nginx), so `docker` CLI existence reports
+        // available while every container operation fails at `docker pull`. These are Linux-container
+        // integration tests; skip them on Windows (matching the POSIX-on-Windows gates in kyo-net)
+        // rather than let them fail. Non-Windows behavior is unchanged.
+        if kyo.internal.Platform.isWindows then Seq.empty
+        else
+            val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
+            getEnv("KYO_POD_RUNTIME") match
+                case Present(rt) => if all.contains(rt) then Seq(rt) else Seq.empty
+                case Absent      => all
+            end match
+        end if
     end available
 
     /** macOS Podman Machine sockets, lazily computed once. */
