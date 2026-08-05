@@ -397,16 +397,17 @@ object Path extends PathPlatformSpecific:
                     val (toEmit, newPending) =
                         if text.endsWith("\n") then (parts.dropRight(1), "")
                         else (parts.dropRight(1), parts.last)
-                    (Chunk.from(toEmit), (newLeftover, newPending))
+                    Step.Continue(Chunk.from(toEmit), (newLeftover, newPending))
             }
         end tail
 
         /** Streams the file's bytes, continuing to emit as content is appended.
           *
-          * The byte-level primitive under [[tail]]: it polls for new content and does no text decoding or line splitting. On end of file
-          * it sleeps `pollDelay` and retries; if the file has shrunk below the current position it rewinds to offset 0 and replays the
-          * file from there. The rewind sleeps one `pollDelay` of its own before replaying, so a caller timing a replay sees one poll
-          * interval between the shrink and the first replayed byte.
+          * The byte-level view of a followed file: it polls for new content and does no text decoding or line splitting. [[tail]] is its
+          * sibling rather than its caller, since both are step functions over one private polling loop, so this is the one to reach for
+          * when the content is not text lines. On end of file it sleeps `pollDelay` and retries; if the file has shrunk below the current
+          * position it rewinds to offset 0 and replays the file from there. The rewind sleeps one `pollDelay` of its own before replaying,
+          * so a caller timing a replay sees one poll interval between the shrink and the first replayed byte.
           *
           * That rewind carries no marker: the first byte replayed after a truncation is indistinguishable from an ordinary appended byte.
           * A consumer that carries state across chunks, such as a framer holding a partial record, will therefore splice that stale
@@ -442,7 +443,7 @@ object Path extends PathPlatformSpecific:
         )(using Frame): Stream[Byte, Async & Scope & Abort[FileReadException]] =
             follow[Byte, Unit](self, from, pollDelay, bufferSize, ()) { (_, buf, n) =>
                 // The loop reuses `buf`, so each emitted chunk gets its own copy
-                (Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, n)), ())
+                Step.Continue(Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, n)), ())
             }
 
         // --- Write ---
@@ -642,6 +643,19 @@ object Path extends PathPlatformSpecific:
         case Unreadable(error: Result.Error[FileReadException])
     end Poll
 
+    /** What one [[Path.follow]] step produced from a block of bytes.
+      *
+      * `Stop` carries no state, which is what keeps a step that has finished from handing back state nothing will ever read. A step that
+      * knows its own consumer is done says so here rather than leaving the loop polling a file whose bytes can no longer be used.
+      */
+    private[kyo] enum Step[+V, +St]:
+        /** Emit `values`, then read again carrying `state`. */
+        case Continue(values: Chunk[V], state: St)
+
+        /** Emit `values`, then complete the stream. */
+        case Stop(values: Chunk[V])
+    end Step
+
     /** Reads once from `handle` at cursor `pos` and classifies what it found.
       *
       * Both quantities the classification compares come from the handle: the bytes it just read and the size of the file it holds. A size
@@ -667,7 +681,8 @@ object Path extends PathPlatformSpecific:
       * Opens a `Scope`-managed read handle, seeks to the position `from` selects, then reads until the end of the file, sleeping
       * `pollDelay` between polls. `step` turns each freshly read block of bytes into the values to emit and the state carried into the next
       * read, which is what lets `tail` buffer an incomplete UTF-8 sequence and a partial line across reads while `tailBytes` carries
-      * nothing.
+      * nothing. A step that returns [[Step.Stop]] ends the stream after its own values, which is how a consumer that can no longer use the
+      * file's bytes stops the loop without an effect of its own.
       *
       * Everything the loop measures comes from the open handle, so it follows a file rather than a name: renaming the file, replacing the
       * name with another file, and deleting the name are all invisible to it, and it keeps reading the file it opened.
@@ -686,7 +701,7 @@ object Path extends PathPlatformSpecific:
         bufferSize: Int,
         initialState: St
     )(
-        step: (St, Array[Byte], Int) => (Chunk[V], St)
+        step: (St, Array[Byte], Int) => Step[V, St]
     )(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, Async & Scope & Abort[FileReadException]] =
         Stream {
             Scope.acquireRelease(
@@ -712,9 +727,13 @@ object Path extends PathPlatformSpecific:
                                 Sync.Unsafe.defer {
                                     poll(handle, buf, pos) match
                                         case Poll.Data(n) =>
-                                            val (values, next) = step(state, buf, n)
-                                            if values.isEmpty then Loop.continue(pos + n, next)
-                                            else Emit.valueWith(values)(Loop.continue(pos + n, next))
+                                            step(state, buf, n) match
+                                                case Step.Continue(values, next) =>
+                                                    if values.isEmpty then Loop.continue(pos + n, next)
+                                                    else Emit.valueWith(values)(Loop.continue(pos + n, next))
+                                                case Step.Stop(values) =>
+                                                    if values.isEmpty then Loop.done(())
+                                                    else Emit.valueWith(values)(Loop.done(()))
                                         case Poll.Rewound =>
                                             Sync.Unsafe.defer(handle.position(0L))
                                                 .andThen(Async.sleep(pollDelay))

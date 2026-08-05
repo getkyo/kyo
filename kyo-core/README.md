@@ -1,5 +1,3 @@
-/home/damian/.bash_profile: line 6: /home/damian/.cache/mill/download/mill-completion.sh: No such file or directory
-/home/damian/.bash_profile: line 6: /home/damian/.cache/mill/download/mill-completion.sh: No such file or directory
 # kyo-core
 
 `kyo-core` is the runtime layer that turns Kyo's algebraic effects into actual programs that do things: suspend side effects, fork fibers, race and gather concurrent work, manage resources, schedule recurring tasks, and emit logs and metrics. It is the layer between `kyo-prelude` (pure effects and data) and the rest of the ecosystem, providing the I/O substrate that production code targets.
@@ -1005,5 +1003,3 @@ The `KyoApp` lifecycle is extensible via `KyoApp.Base[S]`, `KyoAppRunner`, `KyoA
 `Async.Join` is the arrow effect that backs `Async.race`, `Async.gather`, and `Async.zip` internally. Library code implementing custom structured-concurrency primitives can use it directly as an escape hatch when none of the built-in combinators fit.
 
 Deprecated type aliases preserved for migration: `Resource` (use `Scope`) and `IO` (use `Sync`). Both will be removed in 1.0.
-
-

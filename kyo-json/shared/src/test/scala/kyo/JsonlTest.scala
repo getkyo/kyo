@@ -19,6 +19,14 @@ class JsonlTest extends kyo.test.Test[Any]:
     private def byteStream(s: String, chunkSize: Int = 4096): Stream[Byte, Any] =
         Stream.init(Chunk.from(s.getBytes(StandardCharsets.UTF_8)), chunkSize)
 
+    /** A well-formed record of 61 bytes, over the 30-byte `maxLineBytes` every skip test below sets.
+      *
+      * It decodes cleanly at the default limit, so a test that rejects it is rejecting it for its size alone. Every call site terminates it
+      * with a newline, which is what makes it a skippable breach rather than an oversized residual: the boundary is known, so framing
+      * resumes after it.
+      */
+    private val oversizedLine = "{\"name\":\"" + ("b" * 40) + "\",\"count\":2}"
+
     /** Asserts that `result` is the decode failure for the record at `index`.
       *
       * Pins the exception type and the record's position, not just that something failed, so a failure attributed to the wrong record or
@@ -160,6 +168,29 @@ class JsonlTest extends kyo.test.Test[Any]:
             end for
         }
 
+        "aborts on a terminated oversized record rather than skipping it" in {
+            // The lenient variants skip a terminated breach and carry on; the strict ones must not.
+            // The record after the breach is what separates the two: if it were emitted here, the
+            // strict variant would have inherited the lenient recovery.
+            val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
+            for
+                seen <- AtomicRef.init(Chunk.empty[Event])
+                r <- Abort.run[DecodeException](
+                    byteStream(in).into(Jsonl.pipe[Event](maxLineBytes = 30)).foreach(e => seen.updateAndGet(_ :+ e))
+                )
+                emitted <- seen.get
+            yield
+                assert(emitted == Chunk(Event("a", 1)))
+                r.foldError(
+                    _ => fail("expected a failure"),
+                    {
+                        case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
+                        case other                                     => fail(s"unexpected error $other")
+                    }
+                )
+            end for
+        }
+
         "applies maxDepth and maxCollectionSize to a terminated record" in {
             for
                 depth <- Abort.run[DecodeException](
@@ -259,6 +290,54 @@ class JsonlTest extends kyo.test.Test[Any]:
                 assert(rs(2).getOrThrow == Event("c", 3))
         }
 
+        "aborts on a terminated oversized record rather than skipping it" in {
+            val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
+            for
+                dir <- Path.tempDir("kyo-jsonl-read-skip-strict")
+                file = dir / "oversized.jsonl"
+                _    <- file.write(in)
+                seen <- AtomicRef.init(Chunk.empty[Event])
+                r <- Abort.run[DecodeException](
+                    Scope.run(Jsonl.read[Event](file, maxLineBytes = 30).foreach(e => seen.updateAndGet(_ :+ e)))
+                )
+                emitted <- seen.get
+                _       <- dir.removeAll
+            yield
+                assert(emitted == Chunk(Event("a", 1)))
+                r.foldError(
+                    _ => fail("expected a failure"),
+                    {
+                        case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
+                        case other                                     => fail(s"unexpected error $other")
+                    }
+                )
+            end for
+        }
+
+        "readResults skips a terminated oversized record and keeps decoding the records after it" in {
+            // The file-backed lenient surface must agree with `pipeResults` and `followResults`: one
+            // failure element for the over-long record, and the records behind it still delivered.
+            val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
+            for
+                dir <- Path.tempDir("kyo-jsonl-read-results-skip")
+                file = dir / "oversized.jsonl"
+                _  <- file.write(in)
+                rs <- Scope.run(Jsonl.readResults[Event](file, maxLineBytes = 30).run)
+                _  <- dir.removeAll
+            yield
+                assert(rs.size == 3)
+                assert(rs(0).getOrThrow == Event("a", 1))
+                rs(1).foldError(
+                    _ => fail("expected a failure"),
+                    {
+                        case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
+                        case other                                     => fail(s"unexpected error $other")
+                    }
+                )
+                assert(rs(2).getOrThrow == Event("c", 3))
+            end for
+        }
+
         "read applies maxDepth and maxCollectionSize" in {
             for
                 dir <- Path.tempDir("kyo-jsonl-read-limits")
@@ -340,6 +419,48 @@ class JsonlTest extends kyo.test.Test[Any]:
                     {
                         case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
                         case other                                     => fail(s"unexpected error $other")
+                    }
+                )
+            end for
+        }
+
+        "skips a terminated oversized record and keeps decoding the records after it" in {
+            // "one failure element per bad record, carry on" applies to a breach with a boundary too.
+            // Ending at the breach instead would drop Event("c", 3) and everything behind it.
+            val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
+            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineBytes = 30)).run
+            yield
+                assert(rs.size == 3)
+                assert(rs(0).getOrThrow == Event("a", 1))
+                rs(1).foldError(
+                    _ => fail("expected a failure"),
+                    {
+                        case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
+                        case other                                     => fail(s"unexpected error $other")
+                    }
+                )
+                assert(rs(2).getOrThrow == Event("c", 3))
+            end for
+        }
+
+        "reports the position of a record after a skipped oversized one" in {
+            // The skipped line occupies index 1 and its bytes advance the offset, so the record after
+            // it is record 2 and sits past both earlier lines. A skip that left the index alone, or
+            // one that dropped the skipped line's bytes from the offset, misreports both here.
+            val first = "{\"name\":\"a\",\"count\":1}\n"
+            val in    = first + oversizedLine + "\n{\"nope\":true}\n"
+            val badAt = (first + oversizedLine + "\n").getBytes(StandardCharsets.UTF_8).length.toLong
+            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineBytes = 30)).run
+            yield
+                assert(rs.size == 3)
+                assert(badAt == 85L)
+                rs(2).foldError(
+                    _ => fail("expected a failure"),
+                    {
+                        case Result.Failure(e: RecordDecodeException) =>
+                            assert(e.recordIndex == 2L)
+                            assert(e.byteOffset == badAt)
+                        case other => fail(s"unexpected error $other")
                     }
                 )
             end for
@@ -634,6 +755,78 @@ class JsonlTest extends kyo.test.Test[Any]:
                 yield assert(got == Chunk(Event("a", 1), Event("b", 2), Event("c", 3)))
                 end for
             }
+        }
+
+        "followResults skips a terminated oversized record and keeps following" in {
+            Clock.withTimeControl { control =>
+                // The record and the oversized line are both on disk before the follower starts, so the
+                // first read carries the skip. The third element can then only come from a later poll,
+                // which is the point: a follower that ended at the breach never reaches it, and one
+                // bad line would end a live log's reader permanently.
+                val existing = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n"
+                for
+                    dir <- Path.tempDir("kyo-jsonl-follow-skip")
+                    file = dir / "t.jsonl"
+                    _    <- file.write(existing)
+                    seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
+                    fiber <- Fiber.initUnscoped(
+                        Scope.run(
+                            Jsonl.followResults[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                                .take(3)
+                                .foreach(r => seen.updateAndGet(_ :+ r))
+                        )
+                    )
+                    // Each append adds one complete record, so any number of them leaves the third
+                    // element Event("c", 3) and the assertion holds whenever the follower gets there.
+                    _   <- writeUntilDone(fiber, control, file.append("{\"name\":\"c\",\"count\":3}\n"))
+                    _   <- fiber.get
+                    got <- seen.get
+                    _   <- dir.removeAll
+                yield
+                    assert(got.size == 3)
+                    assert(got(0).getOrThrow == Event("a", 1))
+                    got(1).foldError(
+                        _ => fail("expected a failure"),
+                        {
+                            case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
+                            case other                                     => fail(s"unexpected error $other")
+                        }
+                    )
+                    assert(got(2).getOrThrow == Event("c", 3))
+                end for
+            }
+        }
+
+        "follow aborts on a terminated oversized record after emitting the prefix" in {
+            // Everything is on disk before the follower starts, so the first read frames the record,
+            // skips the oversized line, and reaches the abort without polling. The record after the
+            // breach is on disk too, and `take(2)` is what a follower that skipped the breach would
+            // satisfy with it: the assertion then reports the wrong prefix rather than waiting forever.
+            val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
+            for
+                dir <- Path.tempDir("kyo-jsonl-follow-skip-strict")
+                file = dir / "t.jsonl"
+                _    <- file.write(in)
+                seen <- AtomicRef.init(Chunk.empty[Event])
+                r <- Abort.run[DecodeException](
+                    Scope.run(
+                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                            .take(2)
+                            .foreach(e => seen.updateAndGet(_ :+ e))
+                    )
+                )
+                emitted <- seen.get
+                _       <- dir.removeAll
+            yield
+                assert(emitted == Chunk(Event("a", 1)))
+                r.foldError(
+                    _ => fail("expected a failure"),
+                    {
+                        case Result.Failure(e: LimitExceededException) => assert(e.maximum == 30)
+                        case other                                     => fail(s"unexpected error $other")
+                    }
+                )
+            end for
         }
 
         "followResults keeps the records framed before a limit breach, then ends" in {
