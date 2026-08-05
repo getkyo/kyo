@@ -195,6 +195,15 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
                         .andThen(latchPub.release).andThen(Async.never)
                 )))
                 _ <- latchPub.await
+                // latchPub only proves publisher.subscribe was called for each subscriber; onSubscribe
+                // is delivered asynchronously by the publisher's channel-consumer fiber. Interrupting
+                // before a subscriber is established would orphan it (it never receives onSubscribe or a
+                // terminal signal), and its run fiber would hang. Wait until every subscriber is actually
+                // subscribed, so this tests propagation to established parties rather than racing setup.
+                _ <- subscriber1.awaitSubscribed
+                _ <- subscriber2.awaitSubscribed
+                _ <- subscriber3.awaitSubscribed
+                _ <- subscriber4.awaitSubscribed
                 _ <- publisherFiber.interrupt.unit
                 // Interrupting the publisher fiber closes its scope, which must propagate
                 // cancellation to every subscriber; their run fibers then complete on their own.
