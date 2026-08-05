@@ -460,12 +460,12 @@ final private[kyo] class NioReadHandle(channel: FileChannel, path: Path) extends
     def position(offset: Long)(using AllowUnsafe): Unit =
         discard(channel.position(offset))
 
-    def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
+    def size()(using AllowUnsafe, Frame): Result[FileReadException, ByteSize] =
         // SeekableByteChannel.size reports the channel's file, so a rename or a replacement of the
         // path this channel was opened under leaves the answer unchanged. The path-resolution
         // failures catchRead separates out (not found, denied, is a directory) cannot arise from a
         // measurement of an already-open channel, which leaves the same shape NioWriteHandle uses.
-        try Result.succeed(channel.size())
+        try Result.succeed(channel.size().bytes)
         catch
             case e: IOException => Result.fail(FileIOException(path, e))
             case e: Throwable   => Result.panic(e)

@@ -1553,7 +1553,7 @@ class PathTest extends kyo.test.Test[Any]:
                 file = dir / "tail-utf8.txt"
                 _ <- file.mkFile
                 tailFiber <- Fiber.initUnscoped(
-                    Scope.run(file.tail(50.millis, 16).take(1).run)
+                    Scope.run(file.tail(50.millis, 16.bytes).take(1).run)
                 )
                 _     <- control.advance(50.millis)
                 _     <- file.append(multiByteContent)
@@ -1662,6 +1662,20 @@ class PathTest extends kyo.test.Test[Any]:
     // =========================================================================
     // tailBytes
     // =========================================================================
+
+    "tailBytes rejects a zero-byte buffer before opening the file" in {
+        val ex = intercept[IllegalArgumentException](
+            (Path / "not-opened").tailBytes(bufferSize = ByteSize.Zero)
+        )
+        assert(ex.getMessage == "bufferSize must be between 1 and 2147483647 bytes, got 0")
+    }
+
+    "tailBytes rejects a buffer larger than an array can address before opening the file" in {
+        val ex = intercept[IllegalArgumentException](
+            (Path / "not-opened").tailBytes(bufferSize = (Int.MaxValue.toLong + 1L).bytes)
+        )
+        assert(ex.getMessage == "bufferSize must be between 1 and 2147483647 bytes, got 2147483648")
+    }
 
     /** Repeats `write` until `condition` holds, waking the follower between writes.
       *
