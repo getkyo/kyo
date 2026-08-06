@@ -393,9 +393,19 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         val netKey = SqlConnectionPool.Endpoint(address, config)
         acquireOrReserve(netKey, config).flatMap {
             case Present(conn) =>
-                metrics.recordAcquire
-                    .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
-                    .andThen(onLease(netKey, conn, config)(op(conn)))
+                // The exit finalizer (via onLease) is registered BEFORE the acquire instruments, not after. The ring
+                // has already handed this connection out (poll removed it), and recordAcquire and recordLeaseAcquired
+                // each suspend, so registering the finalizer only after them leaves a window where an interrupt landing
+                // on one of those suspensions strands the connection with no exit registered: a standing armed read the
+                // pool never reclaims and closeAll never sees (the processSharedTransport fd-leak). onLease's
+                // Scope.ensure runs synchronously on this continuation, so moving the instruments inside its body closes
+                // the window; an interrupt now resolves the lease through decideExit like any other. This matches
+                // acquireScoped, which already registers the finalizer ahead of its acquire instrument for this reason.
+                onLease(netKey, conn, config) {
+                    metrics.recordAcquire
+                        .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
+                        .andThen(op(conn))
+                }
             case Absent =>
                 // Per-attempt release of the in-flight reservation, on every edge including an interrupt.
                 //
@@ -420,12 +430,22 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         leaseClock: Clock.Stopwatch
     )(op: C => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         connect(address, password, config).flatMap { conn =>
-            Log.debug(
-                s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
-            )
-                .andThen(metrics.recordAcquire)
-                .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
-                .andThen(onLease(netKey, conn, config)(op(conn)))
+            // The exit finalizer (via onLease) is registered BEFORE the opening log and the acquire instruments, not
+            // after. connect has produced a live connection with a standing read, and Log.debug, recordAcquire and
+            // recordLeaseAcquired each suspend, so registering the finalizer only after them leaves a window where an
+            // interrupt landing on one of those suspensions strands the connection with no exit registered: a standing
+            // armed read the pool never reclaims and closeAll never sees (the processSharedTransport fd-leak). onLease's
+            // Scope.ensure runs synchronously on connect's own continuation, so moving the instruments inside its body
+            // closes the window; an interrupt now resolves the lease through decideExit like any other. This matches
+            // acquireScoped, which already registers the finalizer ahead of its acquire instrument for this reason.
+            onLease(netKey, conn, config) {
+                Log.debug(
+                    s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
+                )
+                    .andThen(metrics.recordAcquire)
+                    .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
+                    .andThen(op(conn))
+            }
         }
 
     /** What one attempt at the ring found, so the loop below can branch on it outside the unsafe block. */
@@ -795,14 +815,19 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                     // produced: back to the idle ring before the caller reads a row, and nothing left for an
                     // interrupt to reclaim.
                     // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation like the rest.
-                    resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey))) {
-                        connect(address, password, config).flatMap { conn =>
-                            Log.debug(
+                    resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
+                        connect(address, password, config)
+                    ).flatMap { conn =>
+                        // The opening log moves AFTER the exit finalizer registers, not before. Left inside the
+                        // resolvingOnce body above (its previous home), the suspending Log.debug sat between connect
+                        // producing a live connection and this Scope.ensure, so an interrupt landing on it stranded the
+                        // connection with no exit registered (the processSharedTransport fd-leak). resolvingOnce's body
+                        // is now connect alone, so this Scope.ensure registers synchronously on connect's continuation.
+                        Scope.ensure(error => decideExit(netKey, conn, config, logger, error))
+                            .andThen(Log.debug(
                                 s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
-                            ).andThen(conn)
-                        }
-                    }.flatMap { conn =>
-                        Scope.ensure(error => decideExit(netKey, conn, config, logger, error)).andThen(held).andThen(conn)
+                            ))
+                            .andThen(held).andThen(conn)
                     }
             }
         }
