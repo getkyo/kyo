@@ -8,7 +8,8 @@ import kyo.proto2.*
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait Ask extends Effect[Const[Unit], Const[Int]]
+sealed trait Ask  extends Effect[Const[Unit], Const[Int]]
+sealed trait Ask2 extends Effect[Const[Unit], Const[Int]]
 
 class PendingTest extends Test[Any]:
 
@@ -227,5 +228,24 @@ class PendingTest extends Test[Any]:
                 def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Any & S2) =
                     cont(f(v))
         )
+
+    "handlers route by tag and nest" in {
+        val ask2: Int < Ask2 =
+            val s = new Kyo.Suspend[Const[Unit], Const[Int], Ask2, Any]:
+                def frame = Frame.derive
+                def input = ()
+                def tag   = Tag[Ask2]
+            s.map(Arrow[Int])
+        end ask2
+        val program: Int < Ask =
+            ask.map(a => ask2.asInstanceOf[Int < Ask].map(b => a * 10 + b))
+        val inner = `<`.eval(Tag[Ask], program)(
+            [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(1))
+        )
+        val outer = `<`.eval(Tag[Ask2], inner.asInstanceOf[Int < Ask2])(
+            [X] => (input: Unit, cont: Arrow[Int, Int, Ask2]) => Maybe(cont(2))
+        )
+        assert(outer.unsafeGet == 12)
+    }
 
 end PendingTest

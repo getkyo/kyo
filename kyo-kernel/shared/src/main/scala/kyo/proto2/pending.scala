@@ -119,12 +119,12 @@ object `<`:
         handle: [X] => (I[X], Arrow[O[X], A, E]) => Maybe[A < E]
     ): A < E =
         val handler: Kyo[Any, Any] => Maybe[Any < Any] =
-            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked =>
+            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked if c.suspend.tag =:= tag =>
                 handle(c.suspend.input, c.cont.optimize).asInstanceOf[Maybe[Any < Any]]
-            case s: Kyo.Suspend[I, O, E, Any] @unchecked =>
+            case s: Kyo.Suspend[I, O, E, Any] @unchecked if s.tag =:= tag =>
                 handle(s.input, Arrow[A].asInstanceOf[Arrow[O[Any], A, E]]).asInstanceOf[Maybe[Any < Any]]
-            case other =>
-                throw new IllegalStateException("unhandled suspension: " + other)
+            case _ =>
+                Maybe.Absent
         end handler
         evalLoop(v.asInstanceOf[Any < Any], handler).asInstanceOf[A < E]
     end eval
