@@ -333,6 +333,7 @@ lazy val kyoJVM: Project = project
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
+        `kyo-system`.jvm,
         `kyo-offheap`.jvm,
         `kyo-ffi`.jvm,
         `kyo-ffi-codegen`,
@@ -417,6 +418,7 @@ lazy val kyoJS = project
         `kyo-prelude`.js,
         `kyo-parse`.js,
         `kyo-core`.js,
+        `kyo-system`.js,
         `kyo-ffi`.js,
         `kyo-ffi-it`.js,
         `kyo-net`.js,
@@ -488,6 +490,7 @@ lazy val kyoNative = project
         `kyo-config`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
+        `kyo-system`.native,
         `kyo-offheap`.native,
         `kyo-ffi`.native,
         `kyo-ffi-it`.native,
@@ -570,6 +573,7 @@ lazy val kyoWasm = project
         `kyo-sql-tests`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
+        `kyo-system`.wasm,
         `kyo-ffi`.wasm,
         `kyo-direct`.wasm,
         `kyo-stm`.wasm,
@@ -1017,6 +1021,18 @@ lazy val `kyo-core` =
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
 
+lazy val `kyo-system` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-system"))
+        .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-offheap` =
     crossProject(JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
@@ -1314,6 +1330,7 @@ lazy val `kyo-actor` =
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1326,6 +1343,7 @@ lazy val `kyo-tasty` =
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json` % "test->compile")
         .withKyoTest
         .settings(
@@ -1461,6 +1479,7 @@ lazy val `kyo-stats-machine` =
         .in(file("kyo-stats-machine"))
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-ffi`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1789,6 +1808,7 @@ lazy val `kyo-net` =
         .crossType(CrossType.Full)
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-core`, `kyo-config`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-ffi`)
         .in(file("kyo-net"))
         .withKyoTest
@@ -2020,6 +2040,7 @@ lazy val `kyo-aeron` =
         .enablePlugins(KyoFfiPlugin)
         .in(file("kyo-aeron"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-ffi`)
         .dependsOn(`kyo-schema`)
         // Schema types the public publish/stream surface; MsgPack encodes the Envelope on the wire and
@@ -2872,6 +2893,7 @@ lazy val `kyo-i18n` =
         .crossType(CrossType.Full)
         .in(file("kyo-i18n"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -3086,6 +3108,7 @@ lazy val `kyo-doctest` =
         .crossType(CrossType.Full)
         .in(file("kyo-doctest"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-direct` % Test)
