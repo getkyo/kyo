@@ -52,7 +52,8 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
                     kyo.Path("RuntimeExecutorTest.scala"),
                     outputDir,
                     cp,
-                    250.millis
+                    Map(7 -> 250.millis),
+                    5.seconds
                 )
             yield result match
                 case RuntimeExecutor.Outcome.TimedOut(after, RuntimeExecutor.Progress.Block(7)) =>
