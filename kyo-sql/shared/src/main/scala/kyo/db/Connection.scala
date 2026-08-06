@@ -350,16 +350,40 @@ object Connection:
     private[kyo] def openSocket[A](host: String, port: Int, onPanic: Throwable => SqlConnectionException < Sync)(
         body: kyo.net.Connection => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
-        Abort.run[kyo.net.NetException](Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(
-            host,
-            port
-        ).safe).flatMap(_.use(identity))).flatMap {
-            case Result.Failure(_) =>
-                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
-            case Result.Panic(t) =>
-                onPanic(t).flatMap(Abort.fail(_))
-            case Result.Success(rawConn) =>
-                closingOnFailure(rawConn)(body(rawConn))
+        // Chain of custody across the connect join. `transport.connect` starts the connection (its read pump is
+        // already running before the connect promise completes) and hands it back through this fiber's `get`. An
+        // interrupt landing after the promise completes but before this fiber's next slice drops the delivered
+        // connection together with the continuation that would have registered its close: a live socket with a
+        // standing armed read that nothing ever reclaims or closes (the processSharedTransport fd-leak). Registering
+        // a finalizer on the connect fiber BEFORE the join keeps the connection reachable on every edge: if the
+        // connect is still in flight the interrupt reaches it (the transport's checked complete closes it); if it has
+        // already produced a connection the onComplete closes it. On the success edge the finalizer sees no error and
+        // does nothing, leaving the connection to the body's own closingOnFailure and, above this, the lease's
+        // decideExit; the isOpen guard makes every close idempotent against those.
+        Scope.run {
+            Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe).flatMap { connFiber =>
+                Scope.ensure { error =>
+                    if error.isDefined then
+                        // Interrupt reaches a still-in-flight connect (transport's checked complete closes it); if the
+                        // connect already produced a connection, getResult returns it here and we close it. Either way
+                        // the delivered-then-dropped connection is closed. isOpen makes it idempotent with the success
+                        // path's own close.
+                        connFiber.interrupt.andThen(connFiber.getResult).map {
+                            case Result.Success(rawConn) => Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
+                            case _                       => ()
+                        }
+                    else ()
+                }.andThen {
+                    Abort.run[kyo.net.NetException](connFiber.get).flatMap {
+                        case Result.Failure(_) =>
+                            Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
+                        case Result.Panic(t) =>
+                            onPanic(t).flatMap(Abort.fail(_))
+                        case Result.Success(rawConn) =>
+                            closingOnFailure(rawConn)(body(rawConn))
+                    }
+                }
+            }
         }
 
     /** Builds a per-connection prepared-statement cache whose eviction enqueues the released server-side handle into `closesRef`.
