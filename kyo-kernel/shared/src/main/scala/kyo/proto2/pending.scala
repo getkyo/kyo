@@ -64,7 +64,14 @@ object `<`:
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
                 def run[C, S3](v: A, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                    cont(f(v))
+                    val w = f(v)
+                    (cont: Any) match
+                        case o: Arrow.Offset if !w.isInstanceOf[Kyo[?, ?]] =>
+                            o.head.run(w.unsafeGet, o.next).asInstanceOf[C < (S2 & S3)]
+                        case _ =>
+                            cont(w)
+                    end match
+                end run
             Arrow.of(arrow)(self)
         end map
 
@@ -196,8 +203,17 @@ object Arrow:
 
     end extension
 
-    final private class Offset(val elems: Array[Transform[?, ?, ?]], val from: Int) extends Transform[Any, Any, Any]:
+    final class Offset private[kyo] (
+        private[kyo] val elems: Array[Transform[?, ?, ?]],
+        private[kyo] val from: Int
+    ) extends Transform[Any, Any, Any]:
         def frame = Frame.internal
+
+        def head: Transform[Any, Any, Any] =
+            elems(from).asInstanceOf[Transform[Any, Any, Any]]
+
+        def next: Arrow[Any, Any, Any] =
+            tail(elems, from + 1)
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             @tailrec def loop(es: Array[Transform[?, ?, ?]], i: Int, cur: Any): Any =
                 if i == es.length then cont(cur.asInstanceOf[Any < Any])
