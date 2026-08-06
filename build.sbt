@@ -875,6 +875,7 @@ lazy val `kyo-schema-ion` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-schema-ion"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -933,6 +934,7 @@ lazy val `kyo-sql-postgres` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql-postgres"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -952,6 +954,7 @@ lazy val `kyo-sql-mysql` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql-mysql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -2255,6 +2258,7 @@ lazy val `kyo-compiler` =
         .crossType(CrossType.Full)
         .in(file("kyo-compiler"))
         .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -2273,6 +2277,7 @@ lazy val `kyo-http` =
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
+        .dependsOn(`kyo-system` % Test)
         .dependsOn(`kyo-net` % "compile->compile;test->test")
         .withKyoTest
         .settings(
@@ -2313,6 +2318,7 @@ lazy val `kyo-ai` =
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
         .dependsOn(`kyo-core`, `kyo-schema-json`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -2349,6 +2355,7 @@ lazy val `kyo-jsonrpc` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
+        .dependsOn(`kyo-system`)
         .in(file("kyo-jsonrpc"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -2383,6 +2390,7 @@ lazy val `kyo-mcp` =
         .in(file("kyo-mcp"))
         .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
+        .dependsOn(`kyo-system` % Test)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         // Test-only dep so the JVM demo MCP servers (jvm/src/test/scala/demo) can drive
@@ -2683,6 +2691,7 @@ lazy val `kyo-pod` =
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
         .dependsOn(`kyo-core`, `kyo-http`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2785,6 +2794,7 @@ lazy val `kyo-browser` =
         .crossType(CrossType.Full)
         .in(file("kyo-browser"))
         .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2853,6 +2863,7 @@ lazy val `kyo-slack` =
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
         .dependsOn(`kyo-http`, `kyo-schema-json`)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2967,6 +2978,7 @@ lazy val `kyo-website` =
         .in(file("kyo-website"))
         .dependsOn(`kyo-ui`)
         .dependsOn(`kyo-parse`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .settings(publish / skip := true)
@@ -3012,6 +3024,7 @@ lazy val `kyo-examples` =
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
         .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
