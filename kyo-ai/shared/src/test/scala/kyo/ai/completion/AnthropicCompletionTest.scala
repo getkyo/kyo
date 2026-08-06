@@ -113,6 +113,69 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
         }
     }
 
+    "the system field is emitted as a block array, so a cache breakpoint has a place to live" in {
+        TestCompletionServer.run { server =>
+            val config = keyedConfig(server.baseUrl)
+            val ctx = Context.empty
+                .systemMessage("instruction one")
+                .systemMessage("instruction two")
+                .userMessage("hello from user")
+            server.enqueueBody(minimalAnthropicBody("ok")).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            AnthropicCompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        val body = caps.head.body
+                        // `string | Array<TextBlockParam>`: the block form is what can carry cache_control.
+                        assert(
+                            body.contains("\"system\":[") || body.contains("\"system\": ["),
+                            s"system should be a block array, not a bare string: $body"
+                        )
+                        assert(
+                            body.contains("\"type\":\"text\"") || body.contains("\"type\": \"text\""),
+                            s"the system block should be a text block: $body"
+                        )
+                        // Merging of the leading run is unchanged: both instructions still travel, together.
+                        assert(body.contains("instruction one"), s"first instruction lost: $body")
+                        assert(body.contains("instruction two"), s"second instruction lost: $body")
+                        assert(body.contains("hello from user"), s"user message lost: $body")
+                    }
+                }
+            }
+        }
+    }
+
+    "an entry declaring the string encoding sends system as a bare string" in {
+        TestCompletionServer.run { server =>
+            val config = keyedConfig(server.baseUrl).systemEncoding(Config.SystemEncoding.Text)
+            val ctx = Context.empty
+                .systemMessage("you are X")
+                .userMessage("hello from user")
+            server.enqueueBody(minimalAnthropicBody("ok")).andThen {
+                LLM.run(config) {
+                    Abort.run[HttpException] {
+                        Abort.run[AIException] {
+                            AnthropicCompletion(config, ctx, Chunk.empty)
+                        }
+                    }
+                }.andThen {
+                    server.captured.map { caps =>
+                        val body = caps.head.body
+                        assert(
+                            body.contains("\"system\":\"you are X\"") || body.contains("\"system\": \"you are X\""),
+                            s"an entry declaring Text should send a bare string: $body"
+                        )
+                        assert(body.contains("hello from user"), s"user message lost: $body")
+                    }
+                }
+            }
+        }
+    }
+
     "a conversation with no leading system message keeps the opening user turn (regression: head was dropped)" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
