@@ -252,12 +252,10 @@ object `<`:
                 Nil
 
     private def discardElems(elems: Array[?], from: Int): List[Throwable] =
-        var errors = List.empty[Throwable]
-        var i      = from
-        while i < elems.length do
-            errors = errors ++ discardArrow(elems(i))
-            i += 1
-        errors
+        @tailrec def loop(i: Int, errors: List[Throwable]): List[Throwable] =
+            if i == elems.length then errors
+            else loop(i + 1, errors ++ discardArrow(elems(i)))
+        loop(from, List.empty)
     end discardElems
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
@@ -448,21 +446,20 @@ object Arrow:
                 val buffer = optimizeBuffer.get()
                 buffer.clear()
                 buffer.push(arr)
-                var pending = 1
-                while pending > 0 do
-                    pending -= 1
-                    buffer.pop() match
-                        case a: Array[Any] @unchecked =>
-                            var i = a.length - 1
-                            while i >= 0 do
-                                buffer.push(a(i))
-                                pending += 1
-                                i -= 1
-                            end while
-                        case t =>
-                            val _ = buffer.add(t)
-                    end match
-                end while
+                @tailrec def push(a: Array[Any], i: Int): Int =
+                    if i < 0 then a.length
+                    else
+                        buffer.push(a(i))
+                        push(a, i - 1)
+                @tailrec def drain(pending: Int): Unit =
+                    if pending > 0 then
+                        buffer.pop() match
+                            case a: Array[Any] @unchecked =>
+                                drain(pending - 1 + push(a, a.length - 1))
+                            case t =>
+                                val _ = buffer.add(t)
+                                drain(pending - 1)
+                drain(1)
                 val result = buffer.toArray(new Array[Transform[?, ?, ?]](buffer.size))
                 buffer.clear()
                 result
@@ -470,35 +467,29 @@ object Arrow:
             def count(a: Array[Any], depth: Int): Int =
                 if depth > SmallLimit then -1
                 else
-                    var total = 0
-                    var i     = 0
-                    var bail  = false
-                    while !bail && i < a.length do
-                        (a(i): Any) match
-                            case inner: Array[Any] @unchecked =>
-                                val c = count(inner, depth + 1)
-                                if c < 0 then bail = true else total += c
-                            case _ =>
-                                total += 1
-                        end match
-                        i += 1
-                    end while
-                    if bail || total > SmallLimit then -1 else total
+                    @tailrec def loop(i: Int, total: Int): Int =
+                        if i == a.length then
+                            if total > SmallLimit then -1 else total
+                        else
+                            (a(i): Any) match
+                                case inner: Array[Any] @unchecked =>
+                                    val c = count(inner, depth + 1)
+                                    if c < 0 then -1 else loop(i + 1, total + c)
+                                case _ =>
+                                    loop(i + 1, total + 1)
+                    loop(0, 0)
             end count
             def fill(a: Array[Any], out: Array[Transform[?, ?, ?]], at: Int): Int =
-                var j = at
-                var i = 0
-                while i < a.length do
-                    (a(i): Any) match
-                        case inner: Array[Any] @unchecked =>
-                            j = fill(inner, out, j)
-                        case t =>
-                            out(j) = t.asInstanceOf[Transform[?, ?, ?]]
-                            j += 1
-                    end match
-                    i += 1
-                end while
-                j
+                @tailrec def loop(i: Int, j: Int): Int =
+                    if i == a.length then j
+                    else
+                        (a(i): Any) match
+                            case inner: Array[Any] @unchecked =>
+                                loop(i + 1, fill(inner, out, j))
+                            case t =>
+                                out(j) = t.asInstanceOf[Transform[?, ?, ?]]
+                                loop(i + 1, j + 1)
+                loop(0, at)
             end fill
             (self: Any) match
                 case _: Array[Transform[?, ?, ?]] @unchecked =>
