@@ -41,9 +41,9 @@ val malformed: Result[Glob.ParseError, Glob] = Glob.parse("[")
 assert(malformed.failure.exists(_.offset == 0))
 ```
 
-`kyo-system` consumes this same value in `Path.list(glob)` and `Path.walk(glob)`. Compile a
-pattern once and pass it through backend-independent path code; filesystem implementations must not
-substitute host glob syntax or host case rules.
+Kyo's file-system module will accept this compiled value directly for directory listing and tree
+walking, so a pattern compiles once and travels through backend-independent path code. Filesystem
+implementations must not substitute host glob syntax or host case rules.
 
 ## Optional and fallible values
 
