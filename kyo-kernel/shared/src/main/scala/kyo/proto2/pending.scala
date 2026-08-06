@@ -185,32 +185,32 @@ object Arrow:
         flat
     end isFlat
 
-    private val flattenStack = new ThreadLocal[java.util.ArrayDeque[Any]]:
-        override def initialValue = new java.util.ArrayDeque[Any]
-
-    private val flattenOut = new ThreadLocal[java.util.ArrayDeque[Any]]:
+    private val flattenBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
 
     private def flatten(arr: Array[Any]): Array[Any] =
         if isFlat(arr) then arr
         else
-            val stack = flattenStack.get()
-            val out   = flattenOut.get()
-            stack.clear()
-            out.clear()
-            stack.push(arr)
-            while !stack.isEmpty do
-                stack.pop() match
+            val buffer = flattenBuffer.get()
+            buffer.clear()
+            buffer.push(arr)
+            var pending = 1
+            while pending > 0 do
+                pending -= 1
+                buffer.pop() match
                     case a: Array[Any] @unchecked =>
                         var i = a.length - 1
                         while i >= 0 do
-                            stack.push(a(i))
+                            buffer.push(a(i))
+                            pending += 1
                             i -= 1
+                        end while
                     case t =>
-                        val _ = out.add(t)
+                        val _ = buffer.add(t)
+                end match
             end while
-            val result = out.toArray.asInstanceOf[Array[Any]]
-            out.clear()
+            val result = buffer.toArray.asInstanceOf[Array[Any]]
+            buffer.clear()
             result
     end flatten
 
