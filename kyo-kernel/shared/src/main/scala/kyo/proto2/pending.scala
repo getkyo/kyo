@@ -87,7 +87,7 @@ object `<`:
         @tailrec def loop(curr: A < E): A < E =
             curr match
                 case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked =>
-                    handle(c.suspend.input, Arrow.optimize(c.cont)) match
+                    handle(c.suspend.input, c.cont.optimize) match
                         case Maybe.Present(next) => loop(next)
                         case _                   => curr
                 case s: Kyo.Suspend[I, O, E, Any] @unchecked =>
@@ -138,7 +138,7 @@ object Arrow:
                     else if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
-                        val flat = (optimize(self): Any).asInstanceOf[Array[Any]]
+                        val flat = (self.optimize: Any).asInstanceOf[Array[Any]]
                         flat(0).asInstanceOf[Transform[Any, Any, Any]]
                             .run(unwrap(v), tail(flat)).asInstanceOf[B < (S & S2)]
 
@@ -151,6 +151,46 @@ object Arrow:
                 arr(1) = f
                 Span.fromUnsafe(arr).asInstanceOf[Arrow[A, C, S & S2]]
 
+        def optimize: Arrow[A, B, S] =
+            def isFlat(arr: Array[Any]): Boolean =
+                var i    = 0
+                var flat = true
+                while flat && i < arr.length do
+                    flat = !arr(i).isInstanceOf[Array[?]]
+                    i += 1
+                flat
+            end isFlat
+            def unfold(arr: Array[Any]): Array[Any] =
+                val buffer = optimizeBuffer.get()
+                buffer.clear()
+                buffer.push(arr)
+                var pending = 1
+                while pending > 0 do
+                    pending -= 1
+                    buffer.pop() match
+                        case a: Array[Any] @unchecked =>
+                            var i = a.length - 1
+                            while i >= 0 do
+                                buffer.push(a(i))
+                                pending += 1
+                                i -= 1
+                            end while
+                        case t =>
+                            val _ = buffer.add(t)
+                    end match
+                end while
+                val result = buffer.toArray.asInstanceOf[Array[Any]]
+                buffer.clear()
+                result
+            end unfold
+            (self: Any) match
+                case arr: Array[Any] @unchecked if !isFlat(arr) =>
+                    Span.fromUnsafe(unfold(arr)).asInstanceOf[Arrow[A, B, S]]
+                case _ =>
+                    self
+            end match
+        end optimize
+
     end extension
 
     private def tail(elems: Array[Any]): Arrow[Any, Any, Any] =
@@ -161,46 +201,6 @@ object Arrow:
 
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
-
-    private[kyo] def optimize[X, Y, Z](arrow: Arrow[X, Y, Z]): Arrow[X, Y, Z] =
-        def isFlat(arr: Array[Any]): Boolean =
-            var i    = 0
-            var flat = true
-            while flat && i < arr.length do
-                flat = !arr(i).isInstanceOf[Array[?]]
-                i += 1
-            flat
-        end isFlat
-        def unfold(arr: Array[Any]): Array[Any] =
-            val buffer = optimizeBuffer.get()
-            buffer.clear()
-            buffer.push(arr)
-            var pending = 1
-            while pending > 0 do
-                pending -= 1
-                buffer.pop() match
-                    case a: Array[Any] @unchecked =>
-                        var i = a.length - 1
-                        while i >= 0 do
-                            buffer.push(a(i))
-                            pending += 1
-                            i -= 1
-                        end while
-                    case t =>
-                        val _ = buffer.add(t)
-                end match
-            end while
-            val result = buffer.toArray.asInstanceOf[Array[Any]]
-            buffer.clear()
-            result
-        end unfold
-        (arrow: Any) match
-            case arr: Array[Any] @unchecked if !isFlat(arr) =>
-                Span.fromUnsafe(unfold(arr)).asInstanceOf[Arrow[X, Y, Z]]
-            case _ =>
-                arrow
-        end match
-    end optimize
 
     private def isEmpty[X, Y, Z](f: Arrow[X, Y, Z]): Boolean =
         (f: Any) match
