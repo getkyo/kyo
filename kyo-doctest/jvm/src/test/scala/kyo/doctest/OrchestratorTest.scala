@@ -409,6 +409,326 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         }
     }
 
+    "expect=runs and expect=crashes execute blocks" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Runtime expectations
+                        |
+                        |```scala doctest:expect=runs
+                        |assert(1 + 1 == 2)
+                        |```
+                        |
+                        |```scala doctest:expect=runs
+                        |val message = "runs exploded"
+                        |throw new IllegalStateException(message)
+                        |```
+                        |
+                        |```scala doctest:expect=crashes
+                        |throw new IllegalArgumentException("expected crash")
+                        |```
+                        |
+                        |```scala doctest:expect=crashes
+                        |val completedNormally = true
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.totalBlocks == 4, s"expected 4 blocks, got ${report.totalBlocks}")
+                        assert(report.failures.size == 2, s"expected 2 failures, got ${report.failures}")
+
+                        val runsFailure = report.failures.find(_.line == 7).getOrElse(
+                            fail(s"expected expect=runs failure at line 7, got ${report.failures}")
+                        )
+                        assert(
+                            runsFailure.message.contains("java.lang.IllegalStateException: runs exploded"),
+                            s"expected runtime exception details, got: ${runsFailure.message}"
+                        )
+                        assert(
+                            runsFailure.message.contains(s"$kyoFile:9"),
+                            s"expected mapped README line 9, got: ${runsFailure.message}"
+                        )
+
+                        val crashesFailure = report.failures.find(_.line == 16).getOrElse(
+                            fail(s"expected expect=crashes failure at line 16, got ${report.failures}")
+                        )
+                        assert(
+                            crashesFailure.message.contains("expected a runtime failure but the block completed normally"),
+                            s"expected missed crash message, got: ${crashesFailure.message}"
+                        )
+                    case Result.Failure(e) =>
+                        fail(s"unexpected failure: $e")
+                    case Result.Panic(t) =>
+                        fail(s"unexpected panic: ${t.getMessage}")
+            }
+        }
+    }
+
+    "runtime expectations recompile and re-execute instead of using cached diagnostics" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Runtime cache
+                        |
+                        |```scala doctest:expect=runs
+                        |assert(java.lang.System.nanoTime() > 0L)
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    first  <- Abort.run(Scope.run(Doctest.check(config)))
+                    second <- Abort.run(Scope.run(Doctest.check(config)))
+                yield (first, second) match
+                    case (Result.Success(firstReport), Result.Success(secondReport)) =>
+                        assert(firstReport.compiled == 1, s"expected first run to compile: $firstReport")
+                        assert(secondReport.compiled == 1, s"expected second run to recompile: $secondReport")
+                        assert(secondReport.cacheHits == 0, s"runtime blocks must not use cache: $secondReport")
+                        assert(secondReport.failures.isEmpty, s"expected second execution to pass: $secondReport")
+                    case other =>
+                        fail(s"unexpected runtime-cache results: $other")
+            }
+        }
+    }
+
+    "runtime expectations in one env are attributed to the block that throws" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Runtime environment
+                        |
+                        |```scala doctest:scope=env:runtime expect=runs
+                        |val first = 1
+                        |```
+                        |
+                        |```scala doctest:scope=env:runtime expect=crashes
+                        |throw new IllegalStateException("env crash")
+                        |```
+                        |
+                        |```scala doctest:scope=env:runtime expect=runs
+                        |val neverReached = first + 1
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.failures.size == 1, s"expected only the unexecuted block to fail: $report")
+                        val failure = report.failures(0)
+                        assert(failure.line == 11, s"expected third block failure, got $failure")
+                        assert(
+                            failure.message.contains("block was not executed because runtime failed"),
+                            s"expected unexecuted-block message, got $failure"
+                        )
+                    case other =>
+                        fail(s"unexpected env runtime result: $other")
+            }
+        }
+    }
+
+    "runtime environments reset and apply each block timeout" in {
+        withTempCacheDir { cacheDir =>
+            val md =
+                """|# Runtime timeouts
+                        |
+                        |```scala doctest:scope=env:timeouts expect=runs timeout=500ms
+                        |val until = java.lang.System.nanoTime() + 120_000_000L; while java.lang.System.nanoTime() < until do java.lang.Thread.onSpinWait()
+                        |```
+                        |
+                        |```scala doctest:scope=env:timeouts expect=runs timeout=75ms
+                        |while true do java.lang.Thread.onSpinWait()
+                        |```
+                        |
+                        |```scala doctest:scope=env:timeouts expect=runs
+                        |val neverReached = true
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.failures.size == 2, s"expected timeout and unexecuted block failures: $report")
+                        val timeoutFailure = report.failures.find(_.line == 7).getOrElse(
+                            fail(s"expected timeout failure at line 7, got ${report.failures}")
+                        )
+                        assert(
+                            timeoutFailure.message.contains("timed out after 75.millis"),
+                            s"expected the second block's timeout, got $timeoutFailure"
+                        )
+                        val unexecutedFailure = report.failures.find(_.line == 11).getOrElse(
+                            fail(s"expected unexecuted failure at line 11, got ${report.failures}")
+                        )
+                        assert(
+                            unexecutedFailure.message.contains("runtime terminated in"),
+                            s"expected unexecuted-block attribution, got $unexecutedFailure"
+                        )
+                    case other =>
+                        fail(s"unexpected env timeout result: $other")
+            }
+        }
+    }
+
+    "System.exit in one env block is attributed without terminating the runner" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Runtime process exit
+                        |
+                        |```scala doctest:scope=env:exit expect=runs
+                        |val completed = true
+                        |```
+                        |
+                        |```scala doctest:scope=env:exit expect=crashes
+                        |java.lang.System.exit(23)
+                        |```
+                        |
+                        |```scala doctest:scope=env:exit expect=runs
+                        |val neverReached = completed
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.failures.size == 1, s"expected only the unexecuted block to fail: $report")
+                        val failure = report.failures(0)
+                        assert(failure.line == 11, s"expected third block failure, got $failure")
+                        assert(
+                            failure.message.contains("runtime terminated in"),
+                            s"expected active-block exit attribution, got $failure"
+                        )
+                    case other =>
+                        fail(s"unexpected env System.exit result: $other")
+            }
+        }
+    }
+
+    "a crash in inherited code does not satisfy the current block's crashes expectation" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Inherited runtime
+                        |
+                        |```scala doctest:scope=inherited
+                        |throw new IllegalStateException("inherited crash")
+                        |```
+                        |
+                        |```scala doctest:scope=inherited expect=crashes
+                        |val currentBlockCompletes = true
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.failures.size == 1, s"expected one inherited-runtime failure: $report")
+                        val failure = report.failures(0)
+                        assert(failure.line == 7, s"expected current block failure, got $failure")
+                        assert(
+                            failure.message.contains("block was not executed because inherited or setup code failed"),
+                            s"expected inherited-code attribution, got $failure"
+                        )
+                        assert(
+                            failure.message.contains(s"$kyoFile:4"),
+                            s"expected inherited crash mapped to README line 4, got $failure"
+                        )
+                    case other =>
+                        fail(s"unexpected inherited runtime result: $other")
+            }
+        }
+    }
+
+    "runtime expectations reject top-level package blocks with a precise failure" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Package runtime
+                        |
+                        |```scala doctest:expect=runs
+                        |package runsPackage
+                        |val value = 1
+                        |```
+                        |
+                        |```scala doctest:expect=crashes
+                        |package crashesPackage
+                        |val value = 2
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.failures.size == 2, s"expected both package runtime blocks to fail: $report")
+                        assert(
+                            report.failures.forall(_.message.contains(
+                                "runtime expectations do not support blocks with top-level package declarations"
+                            )),
+                            s"expected precise unsupported-runtime messages: $report"
+                        )
+                    case other =>
+                        fail(s"unexpected package runtime result: $other")
+            }
+        }
+    }
+
     "expect=warns behaviour" in {
         withTempCacheDir { cacheDir =>
             // This test needs a block that actually emits a warning.
@@ -469,6 +789,48 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
+                        |```scala doctest:scope=inherited
+                        |val shared = 41
+                        |```
+                        |
+                        |```scala doctest:scope=inherited expect=skipped
+                        |this is not valid scala at all !!!! @@@
+                        |```
+                        |
+                        |```scala doctest:scope=inherited
+                        |val compiled = shared + 1
+                        |```
+                        |""".stripMargin
+            withTempFile("README.md", md) { kyoFile =>
+                for
+                    cp    <- testClasspath
+                    nCpus <- System.availableProcessors
+                    config = Doctest.Config(
+                        sources = Chunk(kyoFile),
+                        classpath = cp,
+                        scalaOpts = Chunk.empty,
+                        cache = cacheDir,
+                        parallel = nCpus
+                    )
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                yield result match
+                    case Result.Success(report) =>
+                        assert(report.totalBlocks == 3, s"expected 3 blocks, got ${report.totalBlocks}")
+                        assert(report.compiled == 2, s"expected 2 compiled blocks, got compiled=${report.compiled}")
+                        assert(report.cacheHits == 0, s"skipped block should not use cache, got cacheHits=${report.cacheHits}")
+                        assert(report.failures.isEmpty, s"skipped block should not produce failures, got ${report.failures}")
+                    case Result.Failure(e) =>
+                        fail(s"unexpected failure: $e")
+                    case Result.Panic(t) =>
+                        fail(s"unexpected panic: ${t.getMessage}")
+            }
+        }
+    }
+
+    "expect=skipped-only source does not compile configured predef" in {
+        withTempCacheDir { cacheDir =>
+            val md = """|# Test
+                        |
                         |```scala doctest:expect=skipped
                         |this is not valid scala at all !!!! @@@
                         |```
@@ -482,7 +844,8 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                         classpath = cp,
                         scalaOpts = Chunk.empty,
                         cache = cacheDir,
-                        parallel = nCpus
+                        parallel = nCpus,
+                        predef = Chunk("this configured predef is invalid !!!")
                     )
                     result <- Abort.run(Scope.run(Doctest.check(config)))
                 yield result match

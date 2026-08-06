@@ -31,6 +31,7 @@ final private[kyo] class Driver private (
     ctx: Context,
     compiler: Compiler,
     outputDir: kyo.Path,
+    classpath: Chunk[kyo.Path],
     compilerThread: ExecutorService,
     freshDriver: Boolean,
     driverArgs: Array[String]
@@ -54,6 +55,20 @@ final private[kyo] class Driver private (
             )
             Async.fromCompletionStage(cf)
         }
+
+    /** Executes a compiled synthetic object in an isolated JVM. */
+    def execute(
+        wrapped: WrappedBlock,
+        blockTimeouts: Map[Int, Duration]
+    )(using Frame): RuntimeExecutor.Outcome < (Sync & Async) =
+        wrapped.runtimeClassName match
+            case Present(className) =>
+                RuntimeExecutor.execute(className, wrapped.synthFile, outputDir, classpath, blockTimeouts, Block.DefaultTimeout)
+            case Absent =>
+                Sync.defer(RuntimeExecutor.Outcome.Unsupported(
+                    "runtime expectations do not support blocks with top-level package declarations"
+                ))
+    end execute
 
     private def runOneCompile(source: Driver.Source): Driver.Outcome =
         val reporter = new Driver.CapturingReporter
@@ -283,7 +298,7 @@ private[kyo] object Driver:
                         (configuredCtx, comp)).get()
 
         val (configuredCtx, comp) = setupResult
-        new Driver(configuredCtx, comp, outputDir, compilerThread, freshDriver, allArgs)
+        new Driver(configuredCtx, comp, outputDir, classpath, compilerThread, freshDriver, allArgs)
     end buildDriver
 
 end Driver

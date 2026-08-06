@@ -21,7 +21,15 @@ final private[kyo] case class WrappedBlock(
     syntheticContent: String,
     lineMap: Chunk[(Int, Int)],
     setupBlocks: Chunk[Block]
-) derives CanEqual
+) derives CanEqual:
+
+    def runtimeClassName: Maybe[String] =
+        if syntheticContent.startsWith("package _doctest_synthetic_\nobject ") then
+            val objectName = synthFile.toString.stripSuffix(".scala")
+            Present(s"_doctest_synthetic_.$objectName$$")
+        else Absent
+
+end WrappedBlock
 
 /** Wraps individual blocks into synthetic Scala sources.
   *
