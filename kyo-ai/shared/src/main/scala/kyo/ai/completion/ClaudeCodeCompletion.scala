@@ -39,7 +39,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
     private case class McpServerConfig(`type`: String, url: String, timeout: Int, alwaysLoad: Boolean) derives Schema
     private case class McpConfig(mcpServers: Map[String, McpServerConfig]) derives Schema
     private case class McpBridge(
-        config: String,
+        configPath: Path,
         allowedTools: Chunk[String],
         executedTools: AtomicRef[Chunk[ExecutedTool]],
         resultCapture: AtomicRef[Maybe[String]],
@@ -90,7 +90,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     withResultBridge(config, resultTool, resultSchema) { bridge =>
                         runClaudeCommand(
                             config,
-                            claudeCommand(config, commandArgs(config, context, bridge.config, bridge.allowedTools))
+                            claudeCommand(config, commandArgs(config, context, bridge.configPath.toString, bridge.allowedTools))
                                 .stdin(input + "\n"),
                             config.timeout,
                             bridge
@@ -127,7 +127,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     )
                     raw <- runClaudeCommand(
                         config,
-                        claudeCommand(config, commandArgs(config, context, bridge.config, bridge.allowedTools))
+                        claudeCommand(config, commandArgs(config, context, bridge.configPath.toString, bridge.allowedTools))
                             .stdin(input + "\n"),
                         config.timeout,
                         bridge
@@ -246,9 +246,9 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 // The --max-turns 2 cap (see ClaudeCodeWire.baseCliArgs) ends a resultless invocation with
                 // error_max_turns and a non-zero exit: this backend's normal turn boundary, not a failure, so
                 // the transcript flows to readMessages and the eval loop replays and iterates (how the forced
-                // turn stays reachable). Every other non-zero exit classifies from the terminal result event's
-                // structured api_error_status (via failureStatus), never by regexing stdout. No structured
-                // status (a hard crash with no result event) -> Absent -> AIHarnessException.
+                // turn stays reachable). Every other non-zero exit classifies from the event's structured
+                // authentication error or api_error_status, never by regexing stdout. No structured signal
+                // (a hard crash with no result event) -> Absent -> AIHarnessException.
                 endedAtTurnCap(out).map {
                     case true  => Kyo.lift[String, Any](out)
                     case false =>
@@ -263,9 +263,16 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                                     Present(config.effectiveMaxOutputTokens)
                                 ))
                             case false =>
-                                failureStatus(out).map(status =>
-                                    Abort.fail(commandFailure(status, s"exited with ${code.toInt}: $out$err"))
-                                )
+                                authenticationFailed(out).map {
+                                    case true =>
+                                        Abort.fail[AIGenException](
+                                            AIProviderAuthException("Claude Code", "CLI OAuth session is not authenticated")
+                                        )
+                                    case false =>
+                                        failureStatus(out).map(status =>
+                                            Abort.fail(commandFailure(status, s"exited with ${code.toInt}: $out$err"))
+                                        )
+                                }
                         }
                 }
             case Result.Success(CliResult.TimedOut) =>
@@ -283,6 +290,26 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
       */
     private[completion] def userToolInfos(tools: Chunk[Tool.internal.Info[?, ?, LLM]]): Chunk[Tool.internal.Info[?, ?, LLM]] =
         tools.filterNot(_.name == Completion.resultToolName)
+
+    /** Writes the MCP configuration to a scoped file for the Claude CLI.
+      *
+      * Passing inline JSON is not portable on Windows: executable shims can consume the JSON's quotes while reconstructing the native
+      * command line, after which Claude treats the malformed value as a file path. A file path contains no JSON quoting and also avoids
+      * platform command-line length limits.
+      */
+    private[completion] def mcpConfigFile(config: String)(using Frame): Path < (Sync & Scope & Abort[AIGenException]) =
+        Abort.run[FileFsException | FileWriteException] {
+            for
+                path <- Path.tempScoped("kyo-ai-claude-mcp-", ".json")
+                _    <- path.write(config)
+            yield path
+        }.map {
+            case Result.Success(path) => path
+            case Result.Failure(ex) =>
+                Abort.fail(AIProviderUnavailableException("Claude Code", s"failed to write the MCP bridge config: ${ex.getMessage}"))
+            case Result.Panic(ex) => Abort.panic(ex)
+        }
+    end mcpConfigFile
 
     /** The in-process MCP server exposing kyo's tools to the CLI, the result tool included.
       *
@@ -336,8 +363,11 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
             }
             url     = s"ws://127.0.0.1:${server.port}/mcp"
             timeout = math.min(Int.MaxValue.toLong, math.max(1000L, config.timeout.toMillis)).toInt
+            configPath <- mcpConfigFile(
+                Json.encode(McpConfig(Map(mcpServerName -> McpServerConfig("ws", url, timeout, alwaysLoad = true))))
+            )
             bridge = McpBridge(
-                Json.encode(McpConfig(Map(mcpServerName -> McpServerConfig("ws", url, timeout, alwaysLoad = true)))),
+                configPath,
                 userTools.map(_.name).append(Completion.resultToolName).map(name => s"$mcpToolPrefix$name"),
                 executed,
                 resultCapture,
@@ -396,8 +426,11 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
             }
             url     = s"ws://127.0.0.1:${server.port}/mcp"
             timeout = math.min(Int.MaxValue.toLong, math.max(1000L, config.timeout.toMillis)).toInt
+            configPath <- mcpConfigFile(
+                Json.encode(McpConfig(Map(mcpServerName -> McpServerConfig("ws", url, timeout, alwaysLoad = true))))
+            )
             bridge = McpBridge(
-                Json.encode(McpConfig(Map(mcpServerName -> McpServerConfig("ws", url, timeout, alwaysLoad = true)))),
+                configPath,
                 Chunk(s"$mcpToolPrefix${Completion.resultToolName}"),
                 executed,
                 resultCapture,
