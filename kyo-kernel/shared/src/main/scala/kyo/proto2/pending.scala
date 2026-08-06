@@ -63,8 +63,9 @@ object `<`:
         @nowarn
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
-                def frame             = _frame
-                def run(v: A): B < S2 = f(v)
+                def frame = _frame
+                def run[C, S3](v: A, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                    cont(f(v))
             Arrow.of(arrow)(self)
         end map
 
@@ -106,7 +107,7 @@ object Arrow:
 
     abstract class Transform[-A, +B, -S]:
         def frame: Frame
-        def run(v: A): B < S
+        def run[C, S2](v: A, cont: Arrow[B, C, S2]): C < (S & S2)
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
 
@@ -130,14 +131,16 @@ object Arrow:
                     if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
-                        t.run(unwrap(v).asInstanceOf[A]).asInstanceOf[B < (S & S2)]
+                        t.run(unwrap(v).asInstanceOf[A], Arrow[B]).asInstanceOf[B < (S & S2)]
                 case arr: Array[Any] @unchecked =>
                     if arr.length == 0 then
                         v.asInstanceOf[B < (S & S2)]
                     else if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
-                        drive(flatten(arr), 0, unwrap(v)).asInstanceOf[B < (S & S2)]
+                        val flat = flatten(arr)
+                        flat(0).asInstanceOf[Transform[Any, Any, Any]]
+                            .run(unwrap(v), tail(flat)).asInstanceOf[B < (S & S2)]
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
             if isEmpty(self) then f.asInstanceOf[Arrow[A, C, S & S2]]
@@ -150,19 +153,11 @@ object Arrow:
 
     end extension
 
-    @tailrec private def drive(elems: Array[Any], i: Int, v: Any): Any =
-        if i == elems.length then v
+    private def tail(elems: Array[Any]): Arrow[Any, Any, Any] =
+        if elems.length <= 1 then empty.asInstanceOf[Arrow[Any, Any, Any]]
         else
-            val w = elems(i).asInstanceOf[Transform[Any, Any, Any]].run(v)
-            if w.isInstanceOf[Kyo[?, ?]] then
-                if i + 1 == elems.length then w
-                else w.asInstanceOf[Kyo[Any, Any]].map(remainder(elems, i + 1))
-            else drive(elems, i + 1, unwrap(w))
-            end if
-
-    private def remainder(elems: Array[Any], from: Int): Arrow[Any, Any, Any] =
-        Span.fromUnsafe(java.util.Arrays.copyOfRange(elems.asInstanceOf[Array[AnyRef]], from, elems.length).asInstanceOf[Array[Any]])
-            .asInstanceOf[Arrow[Any, Any, Any]]
+            Span.fromUnsafe(java.util.Arrays.copyOfRange(elems.asInstanceOf[Array[AnyRef]], 1, elems.length).asInstanceOf[Array[Any]])
+                .asInstanceOf[Arrow[Any, Any, Any]]
 
     private[kyo] def flat[X, Y, Z](arrow: Arrow[X, Y, Z]): Arrow[X, Y, Z] =
         (arrow: Any) match
