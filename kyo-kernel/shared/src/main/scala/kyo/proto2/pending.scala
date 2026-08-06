@@ -1,5 +1,6 @@
 package kyo.proto2
 
+import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
@@ -418,13 +419,8 @@ object Arrow:
                     else if probe() then
                         Kyo.Defer(unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
                     else
-                        val head = flat(0).asInstanceOf[Transform[Any, Any, Any]]
-                        try head.run(unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]], 1)).asInstanceOf[B < (S & S2)]
-                        catch
-                            case ex: Throwable =>
-                                KyoException.attach(ex, "map", head.frame)
-                                throw ex
-                        end try
+                        flat(0).asInstanceOf[Transform[Any, Any, Any]]
+                            .run(unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]], 1)).asInstanceOf[B < (S & S2)]
                 case arr: Array[Any] @unchecked =>
                     if arr.length == 0 then
                         v.asInstanceOf[B < (S & S2)]
@@ -575,15 +571,16 @@ object Arrow:
 end Arrow
 
 final private[kyo] class KyoException extends Exception(null, null, false, false):
-    var frames: List[(String, Frame)] = Nil
-    var size: Int                     = 0
-    var installed: Int                = 0
+    var frames: Chunk[(String, Frame)] = Chunk.empty
+    var installed: Int                 = 0
     override def getMessage =
-        frames.reverse.map((op, f) => "at " + KyoException.describe(op, f) + "(" + f.position.show + ")")
+        frames.map((op, f) => "at " + KyoException.describe(op, f) + "(" + f.position.show + ")")
             .mkString("effect trace: ", "; ", "")
 end KyoException
 
 private[kyo] object KyoException:
+
+    private inline def MaxFrames = 64
 
     def describe(op: String, f: Frame): String =
         val cls    = f.className.split('.').last.stripSuffix("$")
@@ -594,20 +591,23 @@ private[kyo] object KyoException:
     def attach(ex: Throwable, op: String, frame: Frame): Unit =
         ex.getSuppressed.collectFirst { case o: KyoException => o } match
             case Some(o) =>
-                o.frames = (op, frame) :: o.frames
-                o.size += 1
+                o.frames = o.frames.append((op, frame))
+                if o.frames.size > MaxFrames then
+                    val dropped = o.frames.size - MaxFrames
+                    o.frames = o.frames.dropLeft(dropped)
+                    o.installed = Integer.max(0, o.installed - dropped)
+                end if
             case None =>
                 val o = new KyoException
-                o.frames = (op, frame) :: Nil
-                o.size = 1
+                o.frames = Chunk((op, frame))
                 ex.addSuppressed(o)
 
     def install(ex: Throwable): Unit =
         ex.getSuppressed.collectFirst { case o: KyoException => o } match
-            case Some(o) if o.size > o.installed =>
-                val collapsed = o.frames.take(o.size - o.installed).reverse.foldRight(List.empty[(String, Frame)]) {
-                    case (f, head :: tail) if f == head => head :: tail
-                    case (f, acc)                       => f :: acc
+            case Some(o) if o.frames.size > o.installed =>
+                val pending = o.frames.dropLeft(o.installed)
+                val collapsed = pending.foldLeft(Chunk.empty[(String, Frame)]) { (acc, f) =>
+                    if acc.nonEmpty && acc.last == f then acc else acc.append(f)
                 }
                 val fresh = collapsed.map { (op, f) =>
                     val cls    = f.className.split('.').last.stripSuffix("$")
@@ -615,8 +615,8 @@ private[kyo] object KyoException:
                     StackTraceElement(op + " @ " + cls, caller, f.position.fileName, f.position.lineNumber)
                 }
                 val user = ex.getStackTrace.filterNot(e => e.getClassName.startsWith("kyo.proto2"))
-                ex.setStackTrace((fresh ++ user).toArray)
-                o.installed = o.size
+                ex.setStackTrace((fresh.toArray ++ user))
+                o.installed = o.frames.size
             case _ =>
                 ()
 end KyoException
