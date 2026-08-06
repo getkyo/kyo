@@ -909,6 +909,7 @@ lazy val `kyo-sql` =
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
         .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1057,6 +1058,7 @@ lazy val `kyo-ffi` =
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(
@@ -2918,6 +2920,7 @@ lazy val `kyo-ui` =
         .in(file("kyo-ui"))
         .dependsOn(`kyo-core`, `kyo-http`)
         .dependsOn(`kyo-browser` % Test)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`
