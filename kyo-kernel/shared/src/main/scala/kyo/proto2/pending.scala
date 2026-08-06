@@ -137,7 +137,7 @@ object Arrow:
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
                         flat(0).asInstanceOf[Transform[Any, Any, Any]]
-                            .run(unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]])).asInstanceOf[B < (S & S2)]
+                            .run(unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]], 1)).asInstanceOf[B < (S & S2)]
                 case arr: Array[Any] @unchecked =>
                     if arr.length == 0 then
                         v.asInstanceOf[B < (S & S2)]
@@ -196,9 +196,27 @@ object Arrow:
 
     end extension
 
-    private def tail(elems: Array[Transform[?, ?, ?]]): Arrow[Any, Any, Any] =
-        if elems.length <= 1 then empty
-        else java.util.Arrays.copyOfRange(elems, 1, elems.length)
+    final private class Offset(val elems: Array[Transform[?, ?, ?]], val from: Int) extends Transform[Any, Any, Any]:
+        def frame = Frame.internal
+        def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            @tailrec def loop(es: Array[Transform[?, ?, ?]], i: Int, cur: Any): Any =
+                if i == es.length then cont(cur.asInstanceOf[Any < Any])
+                else
+                    es(i) match
+                        case o: Offset if i + 1 == es.length =>
+                            loop(o.elems, o.from, cur)
+                        case t =>
+                            val w = t.asInstanceOf[Transform[Any, Any, Any]].run(cur, empty)
+                            if w.isInstanceOf[Kyo[?, ?]] then
+                                tail(es, i + 1).map(cont)(w.asInstanceOf[Any < Any])
+                            else loop(es, i + 1, unwrap(w))
+            loop(elems, from, v).asInstanceOf[C < (Any & S2)]
+        end run
+    end Offset
+
+    private def tail(elems: Array[Transform[?, ?, ?]], from: Int): Arrow[Any, Any, Any] =
+        if from >= elems.length then empty
+        else new Offset(elems, from)
 
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
