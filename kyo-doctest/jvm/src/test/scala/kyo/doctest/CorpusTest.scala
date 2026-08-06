@@ -164,7 +164,9 @@ class CorpusTest extends kyo.test.Test[Any]:
             parsedBlocks <- parseFixtureBlocks("scope-env-named.md")
             _ =
                 // Verify the two distinct env names are present
-                val envNames = parsedBlocks.toSeq.collect { case Block(_, _, _, _, Block.Visibility.Env(name), _, _, _) => name }.distinct
+                val envNames = parsedBlocks.toSeq.collect { case Block(_, _, _, _, Block.Visibility.Env(name), _, _, _, _) =>
+                    name
+                }.distinct
                 assert(
                     envNames.contains("tutorial"),
                     s"expected env:tutorial scope among parsed blocks, got env names: $envNames"

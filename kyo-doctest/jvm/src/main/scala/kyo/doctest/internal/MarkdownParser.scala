@@ -211,17 +211,18 @@ private[kyo] object MarkdownParser:
                 blockState.infoString
 
         ModifierParser.parse(combinedInfo, file, blockState.lineStart).map { perBlock =>
-            val (visibility, expect, platform) = DefaultsParser.applyDefaults(perBlock, fileDefaults)
-            val body                           = blockState.bodyLines.mkString("\n")
+            val defaults = DefaultsParser.applyDefaults(perBlock, fileDefaults)
+            val body     = blockState.bodyLines.mkString("\n")
             Block(
                 file = file,
                 lineStart = blockState.lineStart,
                 lineEnd = lineEnd,
                 body = body,
-                visibility = visibility,
-                expect = expect,
-                platform = platform,
-                carrier = carrier
+                visibility = defaults.visibility,
+                expect = defaults.expectation,
+                platform = defaults.platform,
+                carrier = carrier,
+                timeout = defaults.timeout
             )
         }
     end buildBlock

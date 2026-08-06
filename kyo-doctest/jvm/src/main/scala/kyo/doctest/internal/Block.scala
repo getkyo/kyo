@@ -20,6 +20,8 @@ import kyo.*
   *   The set of platforms this block should be compiled for.
   * @param carrier
   *   How the block is embedded in the Markdown: visible (plain backtick block) or hidden (HTML comment).
+  * @param timeout
+  *   Maximum runtime after this block begins executing.
   */
 final private[kyo] case class Block(
     file: Path,
@@ -29,10 +31,14 @@ final private[kyo] case class Block(
     visibility: Block.Visibility,
     expect: Block.Expectation,
     platform: Set[Block.Target],
-    carrier: Block.Carrier
+    carrier: Block.Carrier,
+    timeout: Duration = Block.DefaultTimeout
 ) derives CanEqual
 
 private[kyo] object Block:
+
+    /** Runtime limit used when neither the block nor its README declares a timeout. */
+    val DefaultTimeout: Duration = 30.seconds
 
     /** Visibility axis: what names are in scope when this block is compiled.
       *
