@@ -63,18 +63,8 @@ object `<`:
         @nowarn
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
-                def frame = _frame
-                def run(v: A, rest: Array[Any], from: Int): Any =
-                    val w = f(v)
-                    if w.isInstanceOf[Kyo[?, ?]] then
-                        if from < rest.length then
-                            w.asInstanceOf[Kyo[B, Any]].map(Arrow.suffix[B, Any](rest, from))
-                        else w
-                    else if from < rest.length then
-                        rest(from).asInstanceOf[Arrow.Transform[Any, Any, Any]].run(w.unsafeGet, rest, from + 1)
-                    else w
-                    end if
-                end run
+                def frame             = _frame
+                def run(v: A): B < S2 = f(v)
             Arrow.of(arrow)(self)
         end map
 
@@ -116,24 +106,9 @@ object Arrow:
 
     abstract class Transform[-A, +B, -S]:
         def frame: Frame
-        def run(v: A, rest: Array[Any], from: Int): Any
+        def run(v: A): B < S
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
-
-    final private class Suffix(span: Array[Any], from: Int) extends Transform[Any, Any, Any]:
-        def frame = Frame.internal
-        def run(v: Any, rest: Array[Any], from2: Int): Any =
-            val w = span(from).asInstanceOf[Transform[Any, Any, Any]].run(v, span, from + 1)
-            if w.isInstanceOf[Kyo[?, ?]] then
-                if from2 < rest.length then
-                    w.asInstanceOf[Kyo[Any, Any]].map(suffix[Any, Any](rest, from2))
-                else w
-            else if from2 < rest.length then
-                rest(from2).asInstanceOf[Transform[Any, Any, Any]].run(unwrap(w), rest, from2 + 1)
-            else w
-            end if
-        end run
-    end Suffix
 
     private def unwrap(v: Any): Any =
         v match
@@ -147,9 +122,6 @@ object Arrow:
 
     inline def of[A, B, S](t: Transform[A, B, S]): Arrow[A, B, S] = t
 
-    def suffix[A, B](span: Array[Any], from: Int): Arrow[A, B, Any] =
-        new Suffix(span, from).asInstanceOf[Arrow[A, B, Any]]
-
     extension [A, B, S](self: Arrow[A, B, S])
 
         def apply[S2](v: A < S2): B < (S & S2) =
@@ -158,16 +130,14 @@ object Arrow:
                     if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
-                        t.run(unwrap(v).asInstanceOf[A], emptyElems, 0).asInstanceOf[B < (S & S2)]
+                        t.run(unwrap(v).asInstanceOf[A]).asInstanceOf[B < (S & S2)]
                 case arr: Array[Any] @unchecked =>
                     if arr.length == 0 then
                         v.asInstanceOf[B < (S & S2)]
                     else if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
-                        val flat = flatten(arr)
-                        flat(0).asInstanceOf[Transform[Any, Any, Any]]
-                            .run(unwrap(v), flat, 1).asInstanceOf[B < (S & S2)]
+                        drive(flatten(arr), 0, unwrap(v)).asInstanceOf[B < (S & S2)]
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
             if isEmpty(self) then f.asInstanceOf[Arrow[A, C, S & S2]]
@@ -179,6 +149,20 @@ object Arrow:
                 Span.fromUnsafe(arr).asInstanceOf[Arrow[A, C, S & S2]]
 
     end extension
+
+    @tailrec private def drive(elems: Array[Any], i: Int, v: Any): Any =
+        if i == elems.length then v
+        else
+            val w = elems(i).asInstanceOf[Transform[Any, Any, Any]].run(v)
+            if w.isInstanceOf[Kyo[?, ?]] then
+                if i + 1 == elems.length then w
+                else w.asInstanceOf[Kyo[Any, Any]].map(remainder(elems, i + 1))
+            else drive(elems, i + 1, unwrap(w))
+            end if
+
+    private def remainder(elems: Array[Any], from: Int): Arrow[Any, Any, Any] =
+        Span.fromUnsafe(java.util.Arrays.copyOfRange(elems.asInstanceOf[Array[AnyRef]], from, elems.length).asInstanceOf[Array[Any]])
+            .asInstanceOf[Arrow[Any, Any, Any]]
 
     private[kyo] def flat[X, Y, Z](arrow: Arrow[X, Y, Z]): Arrow[X, Y, Z] =
         (arrow: Any) match

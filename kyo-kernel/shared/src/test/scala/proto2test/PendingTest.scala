@@ -123,25 +123,20 @@ class PendingTest extends Test[Any]:
         assert(resolve(program, 1, 2, 3) == 123)
     }
 
-    "long append chains resolve" in {
+    "deep append chains resolve without stack growth" in {
         var k: Int < Ask = ask
         var i            = 0
-        while i < 5000 do
+        while i < 100000 do
             k = k.map(_ + 1)
             i += 1
-        assert(resolve(k, 0) == 5000)
+        assert(resolve(k, 0) == 100000)
     }
 
     def transform(f: Int => Int): Arrow[Int, Int, Any] =
         Arrow.of(
             new Arrow.Transform[Int, Int, Any]:
-                def frame = Frame.derive
-                def run(v: Int, rest: Array[Any], from: Int): Any =
-                    val w = f(v)
-                    if from < rest.length then
-                        rest(from).asInstanceOf[Arrow.Transform[Any, Any, Any]].run(w, rest, from + 1)
-                    else w
-                end run
+                def frame                  = Frame.derive
+                def run(v: Int): Int < Any = f(v)
         )
 
 end PendingTest
