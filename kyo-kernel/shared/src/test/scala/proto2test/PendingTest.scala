@@ -169,7 +169,7 @@ class PendingTest extends Test[Any]:
             def cont = Arrow.of(
                 new Arrow.Transform[Int, Int, Any]:
                     def frame = Frame.derive
-                    def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                    def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Any & S2) =
                         throw new RuntimeException("boom")
             )
         val thrown =
@@ -197,7 +197,7 @@ class PendingTest extends Test[Any]:
         val outer = Arrow.of(
             new Arrow.Transform[Int, Int, Any]:
                 def frame = Frame.derive
-                def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Any & S2) =
                     cont(mk("inner", inner))
         )
         assert(mk("outer", outer).eval == 2)
@@ -208,8 +208,8 @@ class PendingTest extends Test[Any]:
         Arrow.of(
             new Arrow.Transform[Int, Int, Ask]:
                 def frame = Frame.derive
-                def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Ask & S2) =
-                    cont(f(v))
+                def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Ask & S2) =
+                    cont(f(v.asInstanceOf[Int]))
         )
 
     "long append chains resolve" in {
@@ -225,8 +225,8 @@ class PendingTest extends Test[Any]:
         Arrow.of(
             new Arrow.Transform[Int, Int, Any]:
                 def frame = Frame.derive
-                def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Any & S2) =
-                    cont(f(v))
+                def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                    cont(f(v.asInstanceOf[Int]))
         )
 
     "handlers route by tag and nest" in {

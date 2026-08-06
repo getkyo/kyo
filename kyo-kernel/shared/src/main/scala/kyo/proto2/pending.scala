@@ -127,8 +127,8 @@ object `<`:
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
-                def run[C, S3](v: A, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                    val w = f(v)
+                def run[C, S3](v: Any, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                    val w = f(v.asInstanceOf[A])
                     (cont: Any) match
                         case o: Arrow.Offset if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(w.unsafeGet, o.next).asInstanceOf[C < (S2 & S3)]
@@ -262,15 +262,15 @@ object `<`:
         Arrow.of(
             new Arrow.Transform[Unit, A, Any]:
                 def frame = Frame.internal
-                def run[C, S2](x: Unit, cont: Arrow[A, C, S2]): C < (Any & S2) =
+                def run[C, S2](x: Any, cont: Arrow[A, C, S2]): C < (Any & S2) =
                     cont(v.asInstanceOf[A < Any])
         )
 
     final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
         extends Arrow.Transform[A, A, S]:
         def frame = bracket.frame
-        def run[C, S2](v: A, cont: Arrow[A, C, S2]): C < (S & S2) =
-            cont(yieldValue(v)(bracket.release(value)))
+        def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
+            cont(yieldValue(v.asInstanceOf[A])(bracket.release(value)))
     end Finalize
 
     private def constant(v: Any < Any): Arrow[Any, Any, Any] =
@@ -379,7 +379,10 @@ object Arrow:
 
     abstract class Transform[-A, +B, -S]:
         def frame: Frame
-        def run[C, S2](v: A, cont: Arrow[B, C, S2]): C < (S & S2)
+        // v is Any rather than A: a typed parameter makes subclasses with a concrete
+        // A carry an erasure bridge, and the extra call level halves how many fused
+        // steps the JIT can inline per compilation.
+        def run[C, S2](v: Any, cont: Arrow[B, C, S2]): C < (S & S2)
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
 
@@ -392,7 +395,7 @@ object Arrow:
 
     def apply[A]: Arrow[A, A, Any] = empty
 
-    inline def of[A, B, S](t: Transform[A, B, S]): Arrow[A, B, S] = t
+    def of[A, B, S](t: Transform[A, B, S]): Arrow[A, B, S] = t
 
     extension [A, B, S](self: Arrow[A, B, S])
 
@@ -404,7 +407,7 @@ object Arrow:
                     else if probe() then
                         Kyo.Defer(unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
                     else
-                        try t.run(unwrap(v).asInstanceOf[A], Arrow[B]).asInstanceOf[B < (S & S2)]
+                        try t.run(unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
                         catch
                             case ex: Throwable =>
                                 KyoException.attach(ex, "map", t.frame)

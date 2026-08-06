@@ -23,8 +23,8 @@ class PendingSchedulerTest extends Test[Any]:
         Arrow.of(
             new Arrow.Transform[Int, Int, Ask]:
                 def frame = Frame.internal
-                def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Ask & S2) =
-                    cont(f(v))
+                def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Ask & S2) =
+                    cont(f(v.asInstanceOf[Int]))
         )
 
     "interrupting a parked fiber runs finalizers without resuming" in {
