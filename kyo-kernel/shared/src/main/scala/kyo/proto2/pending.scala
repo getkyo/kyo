@@ -373,6 +373,7 @@ opaque type Arrow[-A, +B, -S] = Arrow.Transform[A, B, S] | Array[?]
 object Arrow:
 
     private[kyo] inline def Period = 512
+    private inline def SmallLimit  = 32
 
     private[kyo] def probe(): Boolean =
         false
@@ -470,11 +471,51 @@ object Arrow:
                 buffer.clear()
                 result
             end unfold
+            def count(a: Array[Any], depth: Int): Int =
+                if depth > SmallLimit then -1
+                else
+                    var total = 0
+                    var i     = 0
+                    var bail  = false
+                    while !bail && i < a.length do
+                        (a(i): Any) match
+                            case inner: Array[Any] @unchecked =>
+                                val c = count(inner, depth + 1)
+                                if c < 0 then bail = true else total += c
+                            case _ =>
+                                total += 1
+                        end match
+                        i += 1
+                    end while
+                    if bail || total > SmallLimit then -1 else total
+            end count
+            def fill(a: Array[Any], out: Array[Transform[?, ?, ?]], at: Int): Int =
+                var j = at
+                var i = 0
+                while i < a.length do
+                    (a(i): Any) match
+                        case inner: Array[Any] @unchecked =>
+                            j = fill(inner, out, j)
+                        case t =>
+                            out(j) = t.asInstanceOf[Transform[?, ?, ?]]
+                            j += 1
+                    end match
+                    i += 1
+                end while
+                j
+            end fill
             (self: Any) match
                 case _: Array[Transform[?, ?, ?]] @unchecked =>
                     self
                 case arr: Array[Any] @unchecked =>
-                    unfold(arr)
+                    val n = count(arr, 0)
+                    if n == 0 then empty
+                    else if n > 0 then
+                        val out = new Array[Transform[?, ?, ?]](n)
+                        val _   = fill(arr, out, 0)
+                        out
+                    else unfold(arr)
+                    end if
                 case _ =>
                     self
             end match
