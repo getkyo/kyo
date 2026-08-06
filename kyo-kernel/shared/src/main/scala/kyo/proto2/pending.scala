@@ -42,6 +42,27 @@ object Kyo:
 
     end Continue
 
+    abstract class Bracket[R, A, S] extends Kyo[A, S]:
+
+        def acquire: R < S
+        def release(r: R): Unit < S
+        def cont: Arrow[R, A, S]
+        def frame: Frame
+
+        final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
+            val outer = this
+            new Bracket[R, B, S & S2]:
+                def acquire       = outer.acquire
+                def release(r: R) = outer.release(r)
+                def cont          = outer.cont.map(f)
+                def frame         = outer.frame
+            end new
+        end map
+
+        override def toString = "Bracket(" + frame.position.show + ")"
+
+    end Bracket
+
 end Kyo
 
 opaque type <[+A, -S] = A | Kyo[A, S] | Kyo.Nested[A]
@@ -58,6 +79,13 @@ object `<`:
             self match
                 case Kyo.Nested(v) => v.asInstanceOf[A]
                 case _             => self.asInstanceOf[A]
+
+        private[kyo] def discard: Unit =
+            discardValue(self) match
+                case Nil => ()
+                case t :: rest =>
+                    rest.foreach(t.addSuppressed)
+                    throw t
 
         @nowarn
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
@@ -79,9 +107,9 @@ object `<`:
 
     extension [A](self: A < Any)
         def eval: A =
-            self match
-                case kyo: Kyo[?, ?] => throw new IllegalStateException("unhandled suspension: " + kyo)
-                case _              => self.unsafeGet
+            if self.isInstanceOf[Kyo[?, ?]] then
+                evalLoop(self.asInstanceOf[Any < Any], unhandled).unsafeGet.asInstanceOf[A]
+            else self.unsafeGet
     end extension
 
     def eval[I[_], O[_], E <: Effect[I, O], A](
@@ -90,20 +118,142 @@ object `<`:
     )(
         handle: [X] => (I[X], Arrow[O[X], A, E]) => Maybe[A < E]
     ): A < E =
-        @tailrec def loop(curr: A < E): A < E =
-            curr match
-                case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked =>
-                    handle(c.suspend.input, c.cont.optimize) match
-                        case Maybe.Present(next) => loop(next)
-                        case _                   => curr
-                case s: Kyo.Suspend[I, O, E, Any] @unchecked =>
-                    handle(s.input, Arrow[A].asInstanceOf[Arrow[O[Any], A, E]]) match
-                        case Maybe.Present(next) => loop(next)
-                        case _                   => curr
-                case _ =>
-                    curr
-        loop(v)
+        val handler: Kyo[Any, Any] => Maybe[Any < Any] =
+            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked =>
+                handle(c.suspend.input, c.cont.optimize).asInstanceOf[Maybe[Any < Any]]
+            case s: Kyo.Suspend[I, O, E, Any] @unchecked =>
+                handle(s.input, Arrow[A].asInstanceOf[Arrow[O[Any], A, E]]).asInstanceOf[Maybe[Any < Any]]
+            case other =>
+                throw new IllegalStateException("unhandled suspension: " + other)
+        end handler
+        evalLoop(v.asInstanceOf[Any < Any], handler).asInstanceOf[A < E]
     end eval
+
+    private val unhandled: Kyo[Any, Any] => Maybe[Any < Any] =
+        kyo => throw new IllegalStateException("unhandled suspension: " + kyo)
+
+    private inline def BracketDepth = 512
+
+    private def discardValue[A, S](v: A < S): List[Throwable] =
+        v match
+            case kyo: Kyo.Continue[?, ?, ?, ?, ?, ?] => discardArrow(kyo.cont)
+            case _                                   => Nil
+
+    private def discardArrow(arrow: Any): List[Throwable] =
+        arrow match
+            case finalize: Finalize[?, ?, ?] =>
+                try
+                    val _ = finalize.bracket.release(finalize.value).asInstanceOf[Unit < Any].eval
+                    Nil
+                catch
+                    case t: Throwable =>
+                        t :: Nil
+            case o: Arrow.Offset =>
+                discardElems(o.elems, o.from)
+            case arr: Array[Any] @unchecked =>
+                discardElems(arr, 0)
+            case _ =>
+                Nil
+
+    private def discardElems(elems: Array[?], from: Int): List[Throwable] =
+        var errors = List.empty[Throwable]
+        var i      = from
+        while i < elems.length do
+            errors = errors ++ discardArrow(elems(i))
+            i += 1
+        errors
+    end discardElems
+
+    private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
+        Arrow.of(
+            new Arrow.Transform[Unit, A, Any]:
+                def frame = Frame.internal
+                def run[C, S2](x: Unit, cont: Arrow[A, C, S2]): C < (Any & S2) =
+                    cont(v.asInstanceOf[A < Any])
+        )
+
+    final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
+        extends Arrow.Transform[A, A, S]:
+        def frame = bracket.frame
+        def run[C, S2](v: A, cont: Arrow[A, C, S2]): C < (S & S2) =
+            cont(yieldValue(v)(bracket.release(value)))
+    end Finalize
+
+    private def constant(v: Any < Any): Arrow[Any, Any, Any] =
+        Arrow.of(
+            new Arrow.Transform[Any, Any, Any]:
+                def frame = Frame.internal
+                def run[C, S2](x: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                    cont(v)
+        )
+
+    private def reacquire(bracket: Kyo.Bracket[Any, Any, Any]): Arrow[Any, Any, Any] =
+        Arrow.of(
+            new Arrow.Transform[Any, Any, Any]:
+                def frame = Frame.internal
+                def run[C, S2](r: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                    cont(
+                        new Kyo.Bracket[Any, Any, Any]:
+                            def acquire         = r
+                            def release(x: Any) = bracket.release(x)
+                            def cont            = bracket.cont
+                            def frame           = bracket.frame
+                    )
+        )
+
+    private def cleanup(bracket: Kyo.Bracket[Any, Any, Any], resource: Any, t: Throwable): Unit =
+        try
+            val _ = bracket.release(resource).eval
+        catch
+            case t2: Throwable =>
+                t.addSuppressed(t2)
+
+    private def evalLoop(
+        v0: Any < Any,
+        handle: Kyo[Any, Any] => Maybe[Any < Any]
+    ): Any < Any =
+        def drive(v: Any < Any, depth: Int): Any < Any =
+            @tailrec def loop(curr: Any < Any): Any < Any =
+                curr match
+                    case bracket: Kyo.Bracket[Any, Any, Any] @unchecked =>
+                        if depth >= BracketDepth then bracket
+                        else
+                            drive(bracket.acquire, depth + 1) match
+                                case suspended: Kyo[Any, Any] @unchecked =>
+                                    val wrapped = suspended.map(reacquire(bracket))
+                                    if depth == 0 then loop(wrapped) else wrapped
+                                case acquired =>
+                                    val resource = acquired.unsafeGet
+                                    val result =
+                                        try drive(bracket.cont(acquired), depth + 1)
+                                        catch
+                                            case t: Throwable =>
+                                                cleanup(bracket, resource, t)
+                                                throw t
+                                    result match
+                                        case suspended: Kyo[Any, Any] @unchecked =>
+                                            val wrapped = suspended.map(new Finalize[Any, Any, Any](bracket, resource))
+                                            if depth == 0 then loop(wrapped) else wrapped
+                                        case _ =>
+                                            drive(bracket.release(resource), depth + 1) match
+                                                case suspended: Kyo[Any, Any] @unchecked =>
+                                                    val wrapped = suspended.map(constant(result))
+                                                    if depth == 0 then loop(wrapped) else wrapped
+                                                case _ =>
+                                                    result
+                                    end match
+                    case kyo: Kyo[Any, Any] @unchecked =>
+                        if depth == 0 then
+                            handle(kyo) match
+                                case Maybe.Present(next) => loop(next)
+                                case _                   => kyo
+                        else kyo
+                    case _ =>
+                        curr
+            loop(v)
+        end drive
+        drive(v0, 0)
+    end evalLoop
 
 end `<`
 

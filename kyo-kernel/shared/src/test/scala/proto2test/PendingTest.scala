@@ -123,6 +123,94 @@ class PendingTest extends Test[Any]:
         assert(resolve(program, 1, 2, 3) == 123)
     }
 
+    "bracket releases on completion" in {
+        var log = List.empty[String]
+        val b = new Kyo.Bracket[Int, Int, Any]:
+            def frame = Frame.derive
+            def acquire =
+                log :+= "acq"; 42
+            def release(r: Int) =
+                log :+= "rel"; ()
+            def cont = transform(_ + 1)
+        assert(b.map(Arrow[Int]).eval == 43)
+        assert(log == List("acq", "rel"))
+    }
+
+    "bracket releases exactly once across a park" in {
+        var log = List.empty[String]
+        val b = new Kyo.Bracket[Int, Int, Ask]:
+            def frame = Frame.derive
+            def acquire =
+                log :+= "acq"; 42
+            def release(r: Int) =
+                log :+= "rel"; ()
+            def cont = contAsk(v => ask.map(a => a + v))
+        var parked: Any = null
+        val r = `<`.eval(Tag[Ask], b.map(Arrow[Int]))(
+            [X] =>
+                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
+                    parked = cont
+                    Maybe.Absent
+        )
+        assert(log == List("acq"))
+        assert(parked.asInstanceOf[Arrow[Int, Int, Ask]](100).asInstanceOf[Int < Any].eval == 142)
+        assert(log == List("acq", "rel"))
+    }
+
+    "bracket releases on exception" in {
+        var log = List.empty[String]
+        val b = new Kyo.Bracket[Int, Int, Any]:
+            def frame = Frame.derive
+            def acquire =
+                log :+= "acq"; 42
+            def release(r: Int) =
+                log :+= "rel"; ()
+            def cont = Arrow.of(
+                new Arrow.Transform[Int, Int, Any]:
+                    def frame = Frame.derive
+                    def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                        throw new RuntimeException("boom")
+            )
+        val thrown =
+            try
+                val _ = b.map(Arrow[Int]).eval
+                false
+            catch case e: RuntimeException => e.getMessage == "boom"
+        assert(thrown)
+        assert(log == List("acq", "rel"))
+    }
+
+    "nested brackets release in reverse order" in {
+        var log = List.empty[String]
+        def mk(name: String, body: Arrow[Int, Int, Any]): Int < Any =
+            val b = new Kyo.Bracket[Int, Int, Any]:
+                def frame = Frame.derive
+                def acquire =
+                    log :+= s"acq-$name"; 1
+                def release(r: Int) =
+                    log :+= s"rel-$name"; ()
+                def cont = body
+            b.map(Arrow[Int])
+        end mk
+        val inner = transform(_ + 1)
+        val outer = Arrow.of(
+            new Arrow.Transform[Int, Int, Any]:
+                def frame = Frame.derive
+                def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                    cont(mk("inner", inner))
+        )
+        assert(mk("outer", outer).eval == 2)
+        assert(log == List("acq-outer", "acq-inner", "rel-inner", "rel-outer"))
+    }
+
+    def contAsk(f: Int => Int < Ask): Arrow[Int, Int, Ask] =
+        Arrow.of(
+            new Arrow.Transform[Int, Int, Ask]:
+                def frame = Frame.derive
+                def run[C, S2](v: Int, cont: Arrow[Int, C, S2]): C < (Ask & S2) =
+                    cont(f(v))
+        )
+
     "long append chains resolve" in {
         var k: Int < Ask = ask
         var i            = 0
