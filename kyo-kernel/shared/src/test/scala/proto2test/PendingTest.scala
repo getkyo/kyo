@@ -248,4 +248,66 @@ class PendingTest extends Test[Any]:
         assert(outer.unsafeGet == 12)
     }
 
+    "observe reports steps and survives park and resume" in {
+        var seen        = List.empty[Int]
+        val k           = ask.map(_ + 1).map(_ * 2)
+        val observed    = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
+        var parked: Any = null
+        val r = `<`.eval(Tag[Ask], observed)(
+            [X] =>
+                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
+                    parked = cont
+                    Maybe.Absent
+        )
+        assert(seen == Nil)
+        val done = parked.asInstanceOf[Arrow[Int, Int, Ask]](10).asInstanceOf[Int < Any].eval
+        assert(done == 22)
+        assert(seen == List(10, 11))
+    }
+
+    "observe reports steps across a long continuation" in {
+        var seen         = List.empty[Int]
+        var k: Int < Ask = ask
+        var i            = 0
+        while i < 40 do
+            k = k.map(_ + 1)
+            i += 1
+        val observed    = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
+        var parked: Any = null
+        val r = `<`.eval(Tag[Ask], observed)(
+            [X] =>
+                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
+                    parked = cont
+                    Maybe.Absent
+        )
+        assert(seen == Nil)
+        val done = parked.asInstanceOf[Arrow[Int, Int, Ask]](0).asInstanceOf[Int < Any].eval
+        assert(done == 40)
+        assert(seen == (0 until 40).toList)
+    }
+
+    "exceptions carry effect frames in the stack trace" in {
+        val program: Int < Ask = ask.map { _ =>
+            (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
+        }
+        val ex =
+            try
+                val _ = `<`.eval(Tag[Ask], program)(
+                    [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(1))
+                )
+                null
+            catch case e: RuntimeException => e
+        assert(ex.getMessage == "boom")
+        val top = ex.getStackTrace.take(1)
+        assert(top.forall(_.getClassName == "map @ PendingTest"))
+        assert(top.forall(_.getFileName == "PendingTest.scala"))
+    }
+
+    "lift wraps nested computations" in {
+        val inner: Int < Ask          = ask
+        val nested: (Int < Ask) < Any = inner
+        val out                       = nested.unsafeGet
+        assert(resolve(out.map(_ + 1), 41) == 42)
+    }
+
 end PendingTest
