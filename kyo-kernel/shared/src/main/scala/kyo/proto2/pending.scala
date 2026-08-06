@@ -2,7 +2,6 @@ package kyo.proto2
 
 import kyo.Frame
 import kyo.Maybe
-import kyo.Span
 import kyo.Tag
 import language.implicitConversions
 import scala.annotation.nowarn
@@ -101,7 +100,7 @@ object `<`:
 
 end `<`
 
-opaque type Arrow[-A, +B, -S] = Arrow.Transform[A, B, S] | Span[Any]
+opaque type Arrow[-A, +B, -S] = Arrow.Transform[A, B, S] | Array[?]
 
 object Arrow:
 
@@ -116,8 +115,7 @@ object Arrow:
             case n: Kyo.Nested[?] => n.value
             case _                => v
 
-    private val emptyElems       = new Array[Any](0)
-    private val empty: Span[Any] = Span.fromUnsafe(emptyElems)
+    private val empty = new Array[Transform[?, ?, ?]](0)
 
     def apply[A]: Arrow[A, A, Any] = empty
 
@@ -132,35 +130,38 @@ object Arrow:
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
                         t.run(unwrap(v).asInstanceOf[A], Arrow[B]).asInstanceOf[B < (S & S2)]
+                case flat: Array[Transform[?, ?, ?]] @unchecked =>
+                    if flat.length == 0 then
+                        v.asInstanceOf[B < (S & S2)]
+                    else if v.isInstanceOf[Kyo[?, ?]] then
+                        v.asInstanceOf[Kyo[A, S2]].map(self)
+                    else
+                        flat(0).asInstanceOf[Transform[Any, Any, Any]]
+                            .run(unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]])).asInstanceOf[B < (S & S2)]
                 case arr: Array[Any] @unchecked =>
                     if arr.length == 0 then
                         v.asInstanceOf[B < (S & S2)]
                     else if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
-                        val flat = (self.optimize: Any).asInstanceOf[Array[Any]]
-                        flat(0).asInstanceOf[Transform[Any, Any, Any]]
-                            .run(unwrap(v), tail(flat)).asInstanceOf[B < (S & S2)]
+                        self.optimize(v)
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
             if isEmpty(self) then f.asInstanceOf[Arrow[A, C, S & S2]]
             else if isEmpty(f) then self.asInstanceOf[Arrow[A, C, S & S2]]
+            else if self.isInstanceOf[Transform[?, ?, ?]] && f.isInstanceOf[Transform[?, ?, ?]] then
+                val arr = new Array[Transform[?, ?, ?]](2)
+                arr(0) = self.asInstanceOf[Transform[?, ?, ?]]
+                arr(1) = f.asInstanceOf[Transform[?, ?, ?]]
+                arr
             else
                 val arr = new Array[Any](2)
                 arr(0) = self
                 arr(1) = f
-                Span.fromUnsafe(arr).asInstanceOf[Arrow[A, C, S & S2]]
+                arr
 
         def optimize: Arrow[A, B, S] =
-            def isFlat(arr: Array[Any]): Boolean =
-                var i    = 0
-                var flat = true
-                while flat && i < arr.length do
-                    flat = !arr(i).isInstanceOf[Array[?]]
-                    i += 1
-                flat
-            end isFlat
-            def unfold(arr: Array[Any]): Array[Any] =
+            def unfold(arr: Array[Any]): Array[Transform[?, ?, ?]] =
                 val buffer = optimizeBuffer.get()
                 buffer.clear()
                 buffer.push(arr)
@@ -179,13 +180,15 @@ object Arrow:
                             val _ = buffer.add(t)
                     end match
                 end while
-                val result = buffer.toArray.asInstanceOf[Array[Any]]
+                val result = buffer.toArray(new Array[Transform[?, ?, ?]](buffer.size))
                 buffer.clear()
                 result
             end unfold
             (self: Any) match
-                case arr: Array[Any] @unchecked if !isFlat(arr) =>
-                    Span.fromUnsafe(unfold(arr)).asInstanceOf[Arrow[A, B, S]]
+                case _: Array[Transform[?, ?, ?]] @unchecked =>
+                    self
+                case arr: Array[Any] @unchecked =>
+                    unfold(arr)
                 case _ =>
                     self
             end match
@@ -193,11 +196,9 @@ object Arrow:
 
     end extension
 
-    private def tail(elems: Array[Any]): Arrow[Any, Any, Any] =
-        if elems.length <= 1 then empty.asInstanceOf[Arrow[Any, Any, Any]]
-        else
-            Span.fromUnsafe(java.util.Arrays.copyOfRange(elems.asInstanceOf[Array[AnyRef]], 1, elems.length).asInstanceOf[Array[Any]])
-                .asInstanceOf[Arrow[Any, Any, Any]]
+    private def tail(elems: Array[Transform[?, ?, ?]]): Arrow[Any, Any, Any] =
+        if elems.length <= 1 then empty
+        else java.util.Arrays.copyOfRange(elems, 1, elems.length)
 
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
