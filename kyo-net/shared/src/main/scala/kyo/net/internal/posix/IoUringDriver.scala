@@ -1388,7 +1388,7 @@ final private[net] class IoUringDriver private[posix] (
                         pend.append(k).append("->").append(v.getClass.getSimpleName)
                             .append("(fd=").append(v.handle.readFd).append(",id=").append(v.handle.id)
                             .append(if v.handle.connectTarget.isDefined then ",client" else ",server")
-                            .append(",@").append(v.handle.createdAt.render).append(") ")
+                            .append(",@").append(kyo.Frame.Position.show(v.handle.createdAt.position)).append(") ")
                     )
                 )
                 val infl = new StringBuilder

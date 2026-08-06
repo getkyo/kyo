@@ -391,34 +391,49 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         leaseClock: Clock.Stopwatch
     )(op: C => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         val netKey = SqlConnectionPool.Endpoint(address, config)
-        acquireOrReserve(netKey, config).flatMap {
-            case Present(conn) =>
-                // The exit finalizer (via onLease) is registered BEFORE the acquire instruments, not after. The ring
-                // has already handed this connection out (poll removed it), and recordAcquire and recordLeaseAcquired
-                // each suspend, so registering the finalizer only after them leaves a window where an interrupt landing
-                // on one of those suspensions strands the connection with no exit registered: a standing armed read the
-                // pool never reclaims and closeAll never sees (the processSharedTransport fd-leak). onLease's
-                // Scope.ensure runs synchronously on this continuation, so moving the instruments inside its body closes
-                // the window; an interrupt now resolves the lease through decideExit like any other. This matches
-                // acquireScoped, which already registers the finalizer ahead of its acquire instrument for this reason.
-                onLease(netKey, conn, config) {
-                    metrics.recordAcquire
-                        .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
-                        .andThen(op(conn))
+        // Chain of custody across the acquire->lease handover. Whether the ring hands a pooled connection back
+        // ([[acquireOrReserve]] claims it into `custody` in the same step it polls it) or a fresh one is opened (the
+        // factory claims it the instant it is constructed, via `custodyLocal`), the connection is owned from the moment
+        // it exists. onLease's exit finalizer registers only in a continuation, so an interrupt dropping that
+        // continuation would otherwise strand the connection with no reclaim and no close (the processSharedTransport
+        // fd-leak); the orphan finalizer registered here BEFORE the acquire closes any connection the handover dropped.
+        // onLease's `take` hands ownership to decideExit on the success edge, and `taken` keeps the two exactly-once.
+        Sync.Unsafe.defer(new Connection.Custody).flatMap { custody =>
+            Scope.run {
+                Scope.ensure { _ =>
+                    // closeNow is the non-suspending close, as in the pool's discard callback. The slot and any in-flight
+                    // reservation are freed by their own finalizers, so a dropped connection only owes the socket here.
+                    Sync.Unsafe.defer(custody.orphan()).map {
+                        case Present(conn) => Sync.Unsafe.defer(conn.closeNow)
+                        case Absent        => ()
+                    }
+                }.andThen {
+                    Connection.custodyLocal.let(Present(custody)) {
+                        acquireOrReserve(netKey, config).flatMap {
+                            case Present(conn) =>
+                                onLease(netKey, conn, config) {
+                                    Sync.Unsafe.defer(custody.take())
+                                        .andThen(metrics.recordAcquire)
+                                        .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
+                                        .andThen(op(conn))
+                                }
+                            case Absent =>
+                                // Per-attempt release of the in-flight reservation, on every edge including an interrupt.
+                                //
+                                // Under Retry the body is re-evaluated per attempt, and a finalizer registered against the
+                                // outer computation fires once, on the outermost completion. After N failed connect attempts
+                                // the pool's in-flight count would sit at maxConnections, tryReserve would return false
+                                // forever, and the next acquireOrReserve would spin on poll-Absent / tryReserve-false: an
+                                // unbounded CPU spin that hangs the fiber and burns a core. Resolving per attempt is what
+                                // keeps that count honest, and the original failure is re-raised unchanged for Retry.
+                                // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation.
+                                resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
+                                    connectAndRun(address, password, netKey, config, leaseClock, custody)(op)
+                                )
+                        }
+                    }
                 }
-            case Absent =>
-                // Per-attempt release of the in-flight reservation, on every edge including an interrupt.
-                //
-                // Under Retry the body is re-evaluated per attempt, and a finalizer registered against the outer
-                // computation fires once, on the outermost completion. After N failed connect attempts the pool's
-                // in-flight count would sit at maxConnections, tryReserve would return false forever, and the next
-                // acquireOrReserve would spin on poll-Absent / tryReserve-false: an unbounded CPU spin that hangs the
-                // fiber and burns a core. Resolving per attempt is what keeps that count honest, and the original
-                // failure is re-raised unchanged for the caller and for Retry.
-                // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation like the rest.
-                resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
-                    connectAndRun(address, password, netKey, config, leaseClock)(op)
-                )
+            }
         }
     end acquireAndRun
 
@@ -427,21 +442,17 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         password: Maybe[String],
         netKey: SqlConnectionPool.Endpoint,
         config: SqlConfig,
-        leaseClock: Clock.Stopwatch
+        leaseClock: Clock.Stopwatch,
+        custody: Connection.Custody
     )(op: C => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
+        // The connection's custody is owned by [[acquireAndRun]] (orphan finalizer + `custodyLocal`), and the factory
+        // has already claimed the connection into it. onLease's `take` hands ownership to decideExit on the success edge.
         connect(address, password, config).flatMap { conn =>
-            // The exit finalizer (via onLease) is registered BEFORE the opening log and the acquire instruments, not
-            // after. connect has produced a live connection with a standing read, and Log.debug, recordAcquire and
-            // recordLeaseAcquired each suspend, so registering the finalizer only after them leaves a window where an
-            // interrupt landing on one of those suspensions strands the connection with no exit registered: a standing
-            // armed read the pool never reclaims and closeAll never sees (the processSharedTransport fd-leak). onLease's
-            // Scope.ensure runs synchronously on connect's own continuation, so moving the instruments inside its body
-            // closes the window; an interrupt now resolves the lease through decideExit like any other. This matches
-            // acquireScoped, which already registers the finalizer ahead of its acquire instrument for this reason.
             onLease(netKey, conn, config) {
-                Log.debug(
-                    s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
-                )
+                Sync.Unsafe.defer(custody.take())
+                    .andThen(Log.debug(
+                        s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
+                    ))
                     .andThen(metrics.recordAcquire)
                     .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
                     .andThen(op(conn))
@@ -482,26 +493,37 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     private def acquireOrReserve(netKey: SqlConnectionPool.Endpoint, config: SqlConfig)(using
         Frame
     ): Maybe[C] < (Async & Abort[SqlException]) =
-        Clock.stopwatch.flatMap { transitClock =>
-            Loop(()) { _ =>
-                // Unsafe: isClosed, poll and tryReserve are lock-free ring operations requiring AllowUnsafe,
-                // and none of them suspends.
-                Sync.Unsafe.defer {
-                    if pool.isClosed then RingAttempt.PoolClosed
-                    else
-                        pool.poll(netKey) match
-                            case Present(conn) => RingAttempt.Took(conn)
-                            case Absent        => if pool.tryReserve(netKey) then RingAttempt.Reserved else RingAttempt.InTransit
-                }.flatMap {
-                    case RingAttempt.Took(conn) =>
-                        healthy(conn, config).flatMap {
-                            case true  => Loop.done[Unit, Maybe[C]](Present(conn))
-                            case false => withinAcquireBudget(transitClock, config).andThen(Loop.continue(()))
-                        }
-                    case RingAttempt.Reserved   => Loop.done[Unit, Maybe[C]](Absent)
-                    case RingAttempt.PoolClosed => Abort.fail(SqlConnectionPoolClosedException())
-                    case RingAttempt.InTransit =>
-                        withinAcquireBudget(transitClock, config).andThen(Async.sleep(1.milli).andThen(Loop.continue(())))
+        // The lease's custody, if the acquire path set one. A connection the ring hands over is claimed into it in the
+        // SAME unsafe block that polls it, with no suspension between: the poll has already vacated the ring's slot, so
+        // an interrupt landing after the poll but before this returns (the healthy probe suspends, and so does every
+        // step up to onLease) would otherwise strand the connection with nothing owning it. Claiming at the poll keeps
+        // the orphan finalizer able to close it on that edge.
+        Connection.custodyLocal.use { maybeCustody =>
+            Clock.stopwatch.flatMap { transitClock =>
+                Loop(()) { _ =>
+                    // Unsafe: isClosed, poll and tryReserve are lock-free ring operations requiring AllowUnsafe,
+                    // and none of them suspends; the custody claim is a plain field write under the same AllowUnsafe.
+                    Sync.Unsafe.defer {
+                        if pool.isClosed then RingAttempt.PoolClosed
+                        else
+                            pool.poll(netKey) match
+                                case Present(conn) =>
+                                    maybeCustody match
+                                        case Present(custody) => custody.claim(conn)
+                                        case Absent           => ()
+                                    RingAttempt.Took(conn)
+                                case Absent => if pool.tryReserve(netKey) then RingAttempt.Reserved else RingAttempt.InTransit
+                    }.flatMap {
+                        case RingAttempt.Took(conn) =>
+                            healthy(conn, config).flatMap {
+                                case true  => Loop.done[Unit, Maybe[C]](Present(conn))
+                                case false => withinAcquireBudget(transitClock, config).andThen(Loop.continue(()))
+                            }
+                        case RingAttempt.Reserved   => Loop.done[Unit, Maybe[C]](Absent)
+                        case RingAttempt.PoolClosed => Abort.fail(SqlConnectionPoolClosedException())
+                        case RingAttempt.InTransit =>
+                            withinAcquireBudget(transitClock, config).andThen(Async.sleep(1.milli).andThen(Loop.continue(())))
+                    }
                 }
             }
         }

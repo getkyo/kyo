@@ -158,9 +158,11 @@ class SqlConnectionCancelTest extends kyo.Test:
 
         def isOpen(using Frame): Boolean < Sync = Sync.Unsafe.defer(socketOpen.get())
 
-        def close(using Frame): Unit < Async = Abort.run[SqlException](emit("closed")).unit
+        def close(using Frame): Unit < Async =
+            Sync.Unsafe.defer(socketOpen.set(false)).andThen(Abort.run[SqlException](emit("closed")).unit)
 
         def closeNow(using Frame, AllowUnsafe): Unit =
+            socketOpen.set(false)
             discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](events.offer("closed"))))
 
         // --- the in-flight window, maintained exactly as the real adapters maintain it ---
@@ -768,6 +770,105 @@ class SqlConnectionCancelTest extends kyo.Test:
                     outcome match
                         case Result.Failure(_: SqlConnectionQueryTimeoutException) => succeed
                         case other => fail(s"expected the query timeout to surface, got $other")
+                }
+            }
+        }
+    }
+
+    "a lease interrupted at the connect handover closes the connection, never leaks it" in {
+        // The processSharedTransport fd-leak, at the pool boundary rather than the io_uring driver: `open` produces a
+        // live connection and hands it back across an async join (connect -> onLease, and the connect budget's
+        // timeoutWithError). An interrupt landing after `open` completes but before the exit finalizer registers drops
+        // the delivered connection with the continuation that would have owned it, so it is never reclaimed and never
+        // closed. Reproduced here without a driver by gating `open`'s completion on a latch and interrupting the lease
+        // fiber back-to-back with the release, so the interrupt races the delivery; looped so the race is hit. Every
+        // probe carries a socketOpen flag its close lowers; after closing the pool, any probe still open is a
+        // connection the pool leaked. A finite acquireTimeout keeps connect wrapping `open` in timeoutWithError, so the
+        // budget's own handover join is exercised too. Interrupts are not `leftSessionIdle`, so a reclaim destroys
+        // rather than pools, the pool stays empty, and every iteration takes the connect path.
+        val config = baseConfig("handover").copy(acquireTimeout = 30.seconds)
+        Channel.initUnscoped[String](1024).flatMap { events =>
+            AtomicLong.init(0).flatMap { ids =>
+                Sync.Unsafe.defer(new java.util.concurrent.ConcurrentLinkedQueue[AtomicBoolean.Unsafe]()).flatMap { probes =>
+                    AtomicRef.init(Maybe.empty[Latch]).flatMap { gateRef =>
+                        AtomicRef.init(Maybe.empty[Latch]).flatMap { enteredRef =>
+                            // The probe is constructed and claimed into the lease's custody in one synchronous step AFTER the
+                            // gate, mirroring how openSocket claims the connection it builds: so a drop of the delivery above
+                            // `open` finds the connection already owned by the pool's orphan finalizer. Constructing it before
+                            // the gate instead would leave a probe orphaned if the post-gate continuation were the one dropped.
+                            def createAndClaim(id: Long)(using Frame): Probe < (Async & Abort[SqlException]) =
+                                Sync.Unsafe.defer {
+                                    val socketOpen = AtomicBoolean.Unsafe.init(true)
+                                    probes.add(socketOpen)
+                                    new Probe(
+                                        id,
+                                        events,
+                                        Script(),
+                                        AtomicBoolean.Unsafe.init(false),
+                                        AtomicBoolean.Unsafe.init(false),
+                                        socketOpen
+                                    )
+                                }.flatMap { probe =>
+                                    Connection.custodyLocal.use {
+                                        case Present(custody) => Sync.Unsafe.defer(custody.claim(probe))
+                                        case Absent           => ()
+                                    }.andThen(probe)
+                                }
+                            val factory = new Connection.Factory[Probe]:
+                                def open(a: SqlConfig.Address, password: Maybe[String], c: SqlConfig)(using
+                                    Frame
+                                ): Probe < (Async & Abort[SqlException]) =
+                                    ids.incrementAndGet.flatMap { id =>
+                                        gateRef.get.flatMap {
+                                            case Present(gate) =>
+                                                enteredRef.get.flatMap {
+                                                    case Present(entered) => entered.release
+                                                    case Absent           => ()
+                                                }.andThen(gate.await).andThen(createAndClaim(id))
+                                            case Absent => createAndClaim(id)
+                                        }
+                                    }
+                            Sync.Unsafe.defer(SqlConnectionPool.init(config, factory, Absent, summon[Frame])).flatMap { pool =>
+                                Loop(0) { i =>
+                                    if i >= 400 then Loop.done(())
+                                    else
+                                        Latch.init(1).flatMap { gate =>
+                                            Latch.init(1).flatMap { entered =>
+                                                gateRef.set(Present(gate)).andThen(enteredRef.set(Present(entered))).andThen {
+                                                    Fiber.initUnscoped(
+                                                        Abort.run[SqlException](pool.leaseStatement(
+                                                            address,
+                                                            Absent,
+                                                            config
+                                                        )(_.simpleQuery(Sql.hang)))
+                                                    ).flatMap { fiber =>
+                                                        entered.await
+                                                            .andThen(gate.release)
+                                                            .andThen(fiber.interrupt)
+                                                            .andThen(untilCancelsSettled(pool))
+                                                            .andThen(Loop.continue(i + 1))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                }.andThen {
+                                    // Stop gating so the close path is not held, then close the pool: every reclaimed or
+                                    // pooled connection is closed here, so a probe still open afterwards was leaked.
+                                    gateRef.set(Absent).andThen(pool.closeAll(1.second)).andThen {
+                                        Sync.Unsafe.defer {
+                                            var leaked = 0
+                                            val it     = probes.iterator()
+                                            while it.hasNext do if it.next().get() then leaked += 1
+                                            assert(
+                                                leaked == 0,
+                                                s"$leaked connection(s) leaked at the connect handover: opened, never reclaimed, never closed"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

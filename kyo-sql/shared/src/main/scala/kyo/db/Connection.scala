@@ -10,6 +10,7 @@ import kyo.Cache
 import kyo.Chunk
 import kyo.Duration
 import kyo.Frame
+import kyo.Local
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -211,6 +212,36 @@ end Connection
   */
 object Connection:
 
+    /** One lease's connection custody, threaded from the pool's acquire path down to the [[Factory]] so a freshly-opened connection is owned by
+      * a finalizer from the instant it exists.
+      *
+      * The factory calls [[claim]] the moment it has constructed the connection (see [[openSocket]]); the acquire path calls [[take]] as it
+      * registers the lease's own exit finalizer; and the pool's orphan finalizer, registered BEFORE the acquire, disposes a connection that was
+      * claimed but never taken. That last case is a connection the interrupt-drop lost: an interrupt landing after the factory produced the
+      * connection but before the acquire's continuation registered the exit finalizer drops that continuation, so without this the connection is
+      * neither reclaimed nor closed and outlives the run (the processSharedTransport fd-leak). `take` and `orphan` both read `taken`, so exactly
+      * one of the lease's exit and the orphan close ever fires.
+      */
+    final class Custody(using AllowUnsafe):
+        private val ref   = AtomicRef.Unsafe.init(Maybe.empty[Connection])
+        private val taken = AtomicBoolean.Unsafe.init(false)
+
+        /** The factory delivered a live connection into this lease's custody. */
+        def claim(conn: Connection)(using AllowUnsafe): Unit = ref.set(Maybe(conn))
+
+        /** The lease registered its own exit finalizer, so the orphan finalizer must defer to it. */
+        def take()(using AllowUnsafe): Unit = taken.set(true)
+
+        /** A connection claimed but never taken, i.e. one the acquire-to-lease handover dropped; [[Absent]] otherwise. */
+        def orphan()(using AllowUnsafe): Maybe[Connection] = if taken.get() then Absent else ref.get()
+    end Custody
+
+    /** The current lease's [[Custody]], set by the pool's acquire path across the connect and made visible to the [[Factory]], which claims into
+      * it the instant it constructs the connection. Inheritable, so it reaches the factory even when the connect budget runs it in a
+      * `timeoutWithError` child fiber.
+      */
+    val custodyLocal: Local[Maybe[Custody]] = Local.init(Maybe.empty)
+
     /** How the pool opens one session, and the only thing it is given that knows which engine is behind it.
       *
       * An implementation owns everything that reaching a specific server involves: the TLS negotiation the engine's handshake defines, the
@@ -380,7 +411,18 @@ object Connection:
                         case Result.Panic(t) =>
                             onPanic(t).flatMap(Abort.fail(_))
                         case Result.Success(rawConn) =>
-                            closingOnFailure(rawConn)(body(rawConn))
+                            closingOnFailure(rawConn)(body(rawConn).flatMap { a =>
+                                // Claim the constructed connection into the lease's custody, if the pool set one, so a drop of
+                                // the delivery ABOVE openSocket (the connect budget's timeoutWithError, the connect->onLease
+                                // handover) still leaves the connection owned by the pool's orphan finalizer. This runs on the
+                                // body's own success continuation, so closingOnFailure and the connect guard above still cover
+                                // the window before the claim. The cast is safe: every factory that calls openSocket
+                                // constructs a Connection as its `A`.
+                                custodyLocal.use {
+                                    case Present(custody) => Sync.Unsafe.defer(custody.claim(a.asInstanceOf[Connection]))
+                                    case Absent           => ()
+                                }.andThen(a)
+                            })
                     }
                 }
             }
