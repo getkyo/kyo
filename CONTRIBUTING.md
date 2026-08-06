@@ -162,6 +162,7 @@ If you want to contribute a new method or type, feel free to:
 | `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)        |
 | `kyo-prelude`     | Effect types without `Sync` (`Abort`, `Env`, `Var`, etc.) |
 | `kyo-core`        | Methods requiring `Sync`                                  |
+| `kyo-system`      | File system, OS process, and environment methods          |
 | `kyo-combinators` | Extensions or composition helpers                         |
 
 Add corresponding tests in the same subproject.
@@ -302,7 +303,6 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 | `Log`         | Logging                | `trace`, `debug`, `info`, `warn`, `error` with level control           |
 | `Console`     | Console I/O            | `readLine`, `print`, `printLine`, `printErr`                           |
 | `Random`      | Random generation      | Seeded or context-bound; use for testability                           |
-| `System`      | Environment/properties | Type-safe access with custom `Parser`s                                 |
 | `Retry`       | Retry with policy      | Takes a `Schedule` from kyo-data                                       |
 
 **kyo-core** — concurrency primitives:
@@ -328,6 +328,16 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 | `Timeout`     | Operation timed out | Used by `Async.timeout` and related APIs                         |
 | `Interrupted` | Fiber interrupted   | Used for cancellation; extends `Panic` semantics                 |
 | `Rejected`    | Admission rejected  | Load shedding signal from `Admission`                            |
+
+**kyo-system** (file system, OS processes, and environment):
+
+| Kyo primitive   | Purpose                | Notes                                                                          |
+| --------------- | ---------------------- | ------------------------------------------------------------------------------ |
+| `Path`          | File system operations | Immutable, cross-platform; construct with `/`, effect-tracked read/write       |
+| `Command`       | OS process launch      | Builds and runs external processes; `spawn`, `text`, `waitFor`                 |
+| `Process`       | Running process handle | `stdout`, `stderr`, `stdin`, `waitFor`, `destroy`                              |
+| `System`        | Environment/properties | Type-safe access with custom `Parser`s                                         |
+| `FileException` | File I/O errors        | Sealed hierarchy: `FileReadException`, `FileWriteException`, `FileFsException` |
 
 Accept generic collections in public APIs, use `Chunk` internally:
 ```scala
