@@ -828,6 +828,13 @@ class AsyncTest extends kyo.test.Test[Any]:
         succeed("compile-time subtyping check: Abort[Nothing] <: Async")
     }
 
+    "defaultConcurrency flag key matches the documented -D property" in {
+        // StaticFlag derives its key from the enclosing objects' JVM class name, so renaming or
+        // renesting `async.concurrency.default` would silently change the key and break the
+        // -Dkyo.async.concurrency.default override documented in kyo-core/README.md.
+        assert(async.concurrency.default.name == "kyo.async.concurrency.default")
+    }
+
     "collectAll concurrency" - {
         "empty sequence" in {
             Async.collectAll(Seq(), 2).map { r =>
