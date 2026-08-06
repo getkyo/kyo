@@ -151,12 +151,30 @@ object `<`:
     final private class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            @tailrec def loop(es: Array[Arrow.Transform[?, ?, ?]], i: Int, cur: Any): Any =
+                if i == es.length then cur
+                else
+                    es(i) match
+                        case o: Arrow.Offset =>
+                            loop(o.elems, o.from, cur)
+                        case t0 =>
+                            val t = t0.asInstanceOf[Arrow.Transform[Any, Any, Any]]
+                            observer(t.frame, cur)
+                            val w = t.run(cur, Arrow[Any])
+                            if w.isInstanceOf[Kyo[?, ?]] then
+                                val rest =
+                                    if i + 1 < es.length then
+                                        Arrow.map(Arrow.of[Any, Any, Any](this))(Arrow.of(new Arrow.Offset(es, i + 1)))
+                                    else Arrow.of[Any, Any, Any](this)
+                                w.asInstanceOf[Kyo[Any, Any]].map(rest)
+                            else loop(es, i + 1, w.asInstanceOf[Any < Any].unsafeGet)
+                            end if
             (cont: Any) match
                 case o: Arrow.Offset =>
-                    observer(o.head.frame, v)
-                    o.head.run(v, Arrow.map(Arrow.of[Any, Any, Any](this))(o.next)).asInstanceOf[C < (Any & S2)]
+                    loop(o.elems, o.from, v).asInstanceOf[C < (Any & S2)]
                 case _ =>
                     cont(v.asInstanceOf[Any < Any])
+            end match
         end run
     end Observe
 
@@ -189,15 +207,18 @@ object `<`:
         handle: [X] => (I[X], Arrow[O[X], A, E]) => Maybe[A < E]
     ): A < E =
         val handler: Kyo[Any, Any] => Maybe[Any < Any] =
-            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked if c.suspend.tag =:= tag =>
+            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked if sameTag(c.suspend.tag, tag) =>
                 handle(c.suspend.input, c.cont.optimize).asInstanceOf[Maybe[Any < Any]]
-            case s: Kyo.Suspend[I, O, E, Any] @unchecked if s.tag =:= tag =>
+            case s: Kyo.Suspend[I, O, E, Any] @unchecked if sameTag(s.tag, tag) =>
                 handle(s.input, Arrow[A].asInstanceOf[Arrow[O[Any], A, E]]).asInstanceOf[Maybe[Any < Any]]
             case _ =>
                 Maybe.Absent
         end handler
         evalLoop(v.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), handler).asInstanceOf[A < E]
     end eval
+
+    private def sameTag[A, B](a: Tag[A], b: Tag[B]): Boolean =
+        (a.asInstanceOf[AnyRef] eq b.asInstanceOf[AnyRef]) || a =:= b
 
     private val never: () => Boolean = () => false
 
