@@ -24,6 +24,27 @@ val message: String = result match
 
 `Result` distinguishes a parsed value, an expected failure, and an unexpected panic in one type; the full API is covered in "Optional and fallible values" below.
 
+## Portable path matching
+
+`Glob` compiles slash-separated path patterns without using platform filesystem or regular-expression APIs. `/` is the separator on every platform, dot-prefixed names have no special treatment, and case sensitivity is always explicit. A complete `**` segment matches any number of path segments; `*` and `?` stay within one segment. Character classes, ranges, negation, alternatives, and backslash escaping are supported. A double star anywhere except a complete segment is rejected.
+
+```scala
+import kyo.*
+
+val scalaSources: Glob = glob"**/*.{scala,java}"
+
+assert(scalaSources.matches("src/main/App.scala", Glob.CaseSensitivity.Sensitive))
+assert(!scalaSources.matches("src/main/App.SCALA", Glob.CaseSensitivity.Sensitive))
+assert(scalaSources.matches("src/main/App.SCALA", Glob.CaseSensitivity.Insensitive))
+
+val malformed: Result[Glob.ParseError, Glob] = Glob.parse("[")
+assert(malformed.failure.exists(_.offset == 0))
+```
+
+`kyo-system` consumes this same value in `Path.list(glob)` and `Path.walk(glob)`. Compile a
+pattern once and pass it through backend-independent path code; filesystem implementations must not
+substitute host glob syntax or host case rules.
+
 ## Optional and fallible values
 
 Code that loads, parses, or fetches things produces values that may be absent or may fail. The standard library spreads this across `Option`, `Either`, and `Try`. `kyo-data` replaces all three with two opaque types that allocate nothing for the happy path and distinguish expected failure from unexpected panic.
