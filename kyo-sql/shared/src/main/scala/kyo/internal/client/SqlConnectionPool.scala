@@ -403,9 +403,17 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 Scope.ensure { _ =>
                     // closeNow is the non-suspending close, as in the pool's discard callback. The slot and any in-flight
                     // reservation are freed by their own finalizers, so a dropped connection only owes the socket here.
-                    Sync.Unsafe.defer(custody.orphan()).map {
-                        case Present(conn) => Sync.Unsafe.defer(conn.closeNow)
-                        case Absent        => ()
+                    // The isOpen guard keeps this a no-op for a connection already closed elsewhere: acquireOrReserve
+                    // claims a ring-polled connection before the health probe runs, so a connection the probe found dead
+                    // and destroyed can sit in the custody until the retry overwrites it, and closing it again would be a
+                    // redundant second socket close.
+                    Sync.Unsafe.defer(custody.orphan()).flatMap {
+                        case Present(conn) =>
+                            conn.isOpen.flatMap {
+                                case true  => Sync.Unsafe.defer(conn.closeNow)
+                                case false => ()
+                            }
+                        case Absent => ()
                     }
                 }.andThen {
                     Connection.custodyLocal.let(Present(custody)) {
