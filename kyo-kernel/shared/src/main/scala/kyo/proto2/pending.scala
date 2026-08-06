@@ -87,7 +87,7 @@ object `<`:
         @tailrec def loop(curr: A < E): A < E =
             curr match
                 case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked =>
-                    handle(c.suspend.input, Arrow.flat(c.cont)) match
+                    handle(c.suspend.input, Arrow.optimize(c.cont)) match
                         case Maybe.Present(next) => loop(next)
                         case _                   => curr
                 case s: Kyo.Suspend[I, O, E, Any] @unchecked =>
@@ -138,7 +138,7 @@ object Arrow:
                     else if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else
-                        val flat = flatten(arr)
+                        val flat = (optimize(self): Any).asInstanceOf[Array[Any]]
                         flat(0).asInstanceOf[Transform[Any, Any, Any]]
                             .run(unwrap(v), tail(flat)).asInstanceOf[B < (S & S2)]
 
@@ -159,34 +159,20 @@ object Arrow:
             Span.fromUnsafe(java.util.Arrays.copyOfRange(elems.asInstanceOf[Array[AnyRef]], 1, elems.length).asInstanceOf[Array[Any]])
                 .asInstanceOf[Arrow[Any, Any, Any]]
 
-    private[kyo] def flat[X, Y, Z](arrow: Arrow[X, Y, Z]): Arrow[X, Y, Z] =
-        (arrow: Any) match
-            case arr: Array[Any] @unchecked =>
-                Span.fromUnsafe(flatten(arr)).asInstanceOf[Arrow[X, Y, Z]]
-            case _ =>
-                arrow
-
-    private def isEmpty[X, Y, Z](f: Arrow[X, Y, Z]): Boolean =
-        (f: Any) match
-            case arr: Array[Any] @unchecked => arr.length == 0
-            case _                          => false
-
-    private def isFlat(arr: Array[Any]): Boolean =
-        var i    = 0
-        var flat = true
-        while flat && i < arr.length do
-            flat = !arr(i).isInstanceOf[Array[?]]
-            i += 1
-        flat
-    end isFlat
-
-    private val flattenBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
+    private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
 
-    private def flatten(arr: Array[Any]): Array[Any] =
-        if isFlat(arr) then arr
-        else
-            val buffer = flattenBuffer.get()
+    private[kyo] def optimize[X, Y, Z](arrow: Arrow[X, Y, Z]): Arrow[X, Y, Z] =
+        def isFlat(arr: Array[Any]): Boolean =
+            var i    = 0
+            var flat = true
+            while flat && i < arr.length do
+                flat = !arr(i).isInstanceOf[Array[?]]
+                i += 1
+            flat
+        end isFlat
+        def unfold(arr: Array[Any]): Array[Any] =
+            val buffer = optimizeBuffer.get()
             buffer.clear()
             buffer.push(arr)
             var pending = 1
@@ -207,6 +193,18 @@ object Arrow:
             val result = buffer.toArray.asInstanceOf[Array[Any]]
             buffer.clear()
             result
-    end flatten
+        end unfold
+        (arrow: Any) match
+            case arr: Array[Any] @unchecked if !isFlat(arr) =>
+                Span.fromUnsafe(unfold(arr)).asInstanceOf[Arrow[X, Y, Z]]
+            case _ =>
+                arrow
+        end match
+    end optimize
+
+    private def isEmpty[X, Y, Z](f: Arrow[X, Y, Z]): Boolean =
+        (f: Any) match
+            case arr: Array[Any] @unchecked => arr.length == 0
+            case _                          => false
 
 end Arrow
