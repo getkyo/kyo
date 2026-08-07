@@ -603,13 +603,19 @@ object Arrow:
             self match
                 case o: Offset[Any, Any, Any, Any] @unchecked =>
                     Maybe(o.asInstanceOf[Step[A, B, S]])
-                case at: AndThen[?, ?, ?, ?] =>
-                    self.optimize.step
-                case t: Transform[?, ?, ?] =>
-                    if t.asInstanceOf[AnyRef] eq empty then Maybe.Absent
-                    else Maybe(new Offset(t.asInstanceOf[Transform[Any, Any, Any]], empty).asInstanceOf[Step[A, B, S]])
+                case _ =>
+                    stepSlow(self)
 
     end extension
+
+    private def stepSlow[A, B, S](self: Arrow[A, B, S]): Maybe[Step[A, B, S]] =
+        self match
+            case at: AndThen[?, ?, ?, ?] =>
+                self.optimize.step
+            case t: Transform[?, ?, ?] =>
+                if t.asInstanceOf[AnyRef] eq empty then Maybe.Absent
+                else Maybe(new Offset(t.asInstanceOf[Transform[Any, Any, Any]], empty).asInstanceOf[Step[A, B, S]])
+    end stepSlow
 
     private def rescue[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
         Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]

@@ -48,7 +48,7 @@ object PendingAllocBench:
             PendingBench.runEcho(PendingBench.echo(1).map(_ + 1).map(_ + 1).map(_ + 1))
 
         measure("suspensionStep", 500000):
-            PendingBench.runEchoStep(PendingBench.echo(1).map(_ + 1).map(_ + 1).map(_ + 1))
+            PendingBench.runEchoStepSuspension(PendingBench.echo(1).map(_ + 1).map(_ + 1).map(_ + 1))
 
         measure("stateCont10", 200000):
             def program: Int < BenchCounter =

@@ -50,7 +50,18 @@ object PendingBench:
         )
     end runCounter
 
-    def runEchoStep(v: => Int < BenchEcho): Int =
+    // one resume handler per workload: the s.head.run site profiles receivers
+    // per handler, so sharing one handler across workloads pools its profile
+    def runEchoStepNarrow(v: => Int < BenchEcho): Int =
+        `<`.eval(echoTag, v)(
+            [X] =>
+                (in: Int, cont: Arrow[Int, Int, BenchEcho]) =>
+                    cont.step match
+                        case Maybe.Present(s) => s.head.run(in, s.next)
+                        case Maybe.Absent     => in
+        )
+
+    def runEchoStepSuspension(v: => Int < BenchEcho): Int =
         `<`.eval(echoTag, v)(
             [X] =>
                 (in: Int, cont: Arrow[Int, Int, BenchEcho]) =>
@@ -77,25 +88,30 @@ object PendingBench:
         )
     end runCounterStep
 
+    private var rowFilter: String = null
+
     def time(name: String, reps: Int)(body: => Any): String =
-        var best      = Long.MaxValue
-        var last: Any = null
-        var i         = 0
-        while i < reps do
-            val t0 = java.lang.System.nanoTime
-            last =
-                try body
-                catch case t: Throwable => t.getClass.getSimpleName
-            val d = (java.lang.System.nanoTime - t0) / 1000000
-            if d < best then best = d
-            i += 1
-        end while
-        val line = s"$name: ${best}ms (result=$last)"
-        println(line)
-        line
+        if rowFilter != null && name != rowFilter then ""
+        else
+            var best      = Long.MaxValue
+            var last: Any = null
+            var i         = 0
+            while i < reps do
+                val t0 = java.lang.System.nanoTime
+                last =
+                    try body
+                    catch case t: Throwable => t.getClass.getSimpleName
+                val d = (java.lang.System.nanoTime - t0) / 1000000
+                if d < best then best = d
+                i += 1
+            end while
+            val line = s"$name: ${best}ms (result=$last)"
+            println(line)
+            line
     end time
 
     def main(args: Array[String]): Unit =
+        rowFilter = if args.isEmpty then null else args(0)
         val warm = Frame.derive
         Predef.locally(warm)
         inline def N = 1000000
@@ -155,7 +171,7 @@ object PendingBench:
             var i   = 0
             var acc = 0
             while i < 100000 do
-                acc += runEchoStep(
+                acc += runEchoStepSuspension(
                     echo(0)
                         .map(_ => echo(1)).map(_ => 2).map(_ => echo(3)).map(_ => 4)
                         .map(_ => echo(5)).map(_ => 6).map(_ => echo(7)).map(_ => 8)
@@ -170,6 +186,6 @@ object PendingBench:
                     echo(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                         .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(loop)
                 else echo(i)
-            runEchoStep(echo(0).map(loop))
+            runEchoStepNarrow(echo(0).map(loop))
     end main
 end PendingBench
