@@ -331,4 +331,63 @@ class PendingTest extends Test[Any]:
         assert(result.eval == 20)
     }
 
+    "flatMap supports for-comprehensions" in {
+        val v =
+            for
+                a <- ask
+                b <- ask
+            yield a + b
+        assert(resolve(v, 10, 20) == 30)
+    }
+
+    "andThen sequences and keeps the second result" in {
+        var order = List.empty[Int]
+        val v = ask.map { a =>
+            order = order :+ a
+            a
+        }.andThen(ask.map { b =>
+            order = order :+ b
+            b
+        })
+        assert(resolve(v, 1, 2) == 2)
+        assert(order == List(1, 2))
+    }
+
+    "unit discards the result and keeps the effects" in {
+        var seen = -1
+        val v = ask.map { a =>
+            seen = a
+            a
+        }.unit
+        val result = ControlEffect.handle(Tag[Ask], v)(
+            [C] => (input, cont) => cont(7)
+        ).eval
+        assert(result == ())
+        assert(seen == 7)
+    }
+
+    "handle applies a transformation" in {
+        assert(ask.handle(resolve(_, 5)) == 5)
+    }
+
+    "handle chains transformations in sequence" in {
+        def inc(b: => Int): Int    = b + 1
+        def double(c: => Int): Int = c * 2
+        assert(ask.handle(resolve(_, 3), inc, double) == 8)
+    }
+
+    "handle chains five transformations" in {
+        def inc(b: => Int): Int         = b + 1
+        def double(c: => Int): Int      = c * 2
+        def dec(d: => Int): Int         = d - 1
+        def toString(e: => Int): String = e.toString
+        assert(ask.handle(resolve(_, 3), inc, double, dec, toString) == "7")
+    }
+
+    "flatten collapses a nested computation" in {
+        val inner: Int < Ask          = ask
+        val nested: (Int < Ask) < Any = inner
+        assert(resolve(nested.flatten, 9) == 9)
+    }
+
 end PendingTest
