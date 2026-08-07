@@ -8,6 +8,7 @@ import language.implicitConversions
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
+import scala.annotation.targetName
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
@@ -498,6 +499,229 @@ object Kyo:
                     }
                 }
         loop()
+    end groupMap
+
+    /** Transforms each map entry into a new entry. */
+    def foreach[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => (K2, V2) < S)(using Frame): Map[K2, V2] < S =
+        val it = source.iterator
+        def loop(acc: Map[K2, V2]): Map[K2, V2] < S =
+            if !it.hasNext then acc
+            else f(it.next()).map(kv => loop(acc + kv))
+        loop(Map.empty)
+    end foreach
+
+    /** Transforms each map entry into a value, collecting the results. */
+    @targetName("foreachToChunk")
+    def foreach[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => B < S)(using Frame): Chunk[B] < S =
+        val it = source.iterator
+        def loop(acc: Chunk[B]): Chunk[B] < S =
+            if !it.hasNext then acc
+            else f(it.next()).map(b => loop(acc.append(b)))
+        loop(Chunk.empty)
+    end foreach
+
+    /** Transforms each map entry into entries, concatenating the results. */
+    def foreachConcat[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[(K2, V2)] < S)(using
+        Frame
+    ): Map[K2, V2] < S =
+        val it = source.iterator
+        def loop(acc: Map[K2, V2]): Map[K2, V2] < S =
+            if !it.hasNext then acc
+            else f(it.next()).map(kvs => loop(acc ++ kvs))
+        loop(Map.empty)
+    end foreachConcat
+
+    /** Transforms each map entry into values, concatenating the results. */
+    @targetName("foreachConcatToChunk")
+    def foreachConcat[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[B] < S)(using Frame): Chunk[B] < S =
+        val it = source.iterator
+        def loop(acc: Chunk[B]): Chunk[B] < S =
+            if !it.hasNext then acc
+            else f(it.next()).map(bs => loop(acc.concat(Chunk.from(bs))))
+        loop(Chunk.empty)
+    end foreachConcat
+
+    /** Applies an effect-producing function to each map entry, discarding the results. */
+    def foreachDiscard[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Any < S)(using Frame): Unit < S =
+        val it = source.iterator
+        def loop(): Unit < S =
+            if !it.hasNext then ()
+            else f(it.next()).map(_ => loop())
+        loop()
+    end foreachDiscard
+
+    /** Keeps the entries whose effectful predicate evaluates to true. */
+    def filter[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
+        val it = source.iterator
+        def loop(acc: Map[K1, V1]): Map[K1, V1] < S =
+            if !it.hasNext then acc
+            else
+                val kv = it.next()
+                f(kv).map(keep => loop(if keep then acc + kv else acc))
+        loop(Map.empty)
+    end filter
+
+    /** Keeps the entries whose key passes the effectful predicate. */
+    def filterKeys[K1, V1, S](source: Map[K1, V1])(f: K1 => Boolean < S)(using Frame): Map[K1, V1] < S =
+        filter(source)(kv => f(kv._1))
+
+    /** Folds the map entries with an effect-producing operator. */
+    def foldLeft[K1, V1, B, S](source: Map[K1, V1])(acc: B)(f: (B, (K1, V1)) => B < S)(using Frame): B < S =
+        val it = source.iterator
+        def loop(b: B): B < S =
+            if !it.hasNext then b
+            else f(b, it.next()).map(loop)
+        loop(acc)
+    end foldLeft
+
+    /** Applies an effect-producing partial transformation to entries, keeping the Present results. */
+    def collect[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[(K2, V2)] < S)(using Frame): Map[K2, V2] < S =
+        val it = source.iterator
+        def loop(acc: Map[K2, V2]): Map[K2, V2] < S =
+            if !it.hasNext then acc
+            else
+                f(it.next()).map {
+                    case Maybe.Present(kv) => loop(acc + kv)
+                    case Maybe.Absent      => loop(acc)
+                }
+        loop(Map.empty)
+    end collect
+
+    /** Applies an effect-producing partial transformation to entries, keeping the Present values. */
+    @targetName("collectToChunk")
+    def collect[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using Frame): Chunk[B] < S =
+        val it = source.iterator
+        def loop(acc: Chunk[B]): Chunk[B] < S =
+            if !it.hasNext then acc
+            else
+                f(it.next()).map {
+                    case Maybe.Present(b) => loop(acc.append(b))
+                    case Maybe.Absent     => loop(acc)
+                }
+        loop(Chunk.empty)
+    end collect
+
+    /** Runs the effects in the map's values, collecting the results. */
+    def collectAll[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Map[K1, V1] < S =
+        val it = source.iterator
+        def loop(acc: Map[K1, V1]): Map[K1, V1] < S =
+            if !it.hasNext then acc
+            else
+                val (k, v) = it.next()
+                v.map(v1 => loop(acc.updated(k, v1)))
+        loop(Map.empty)
+    end collectAll
+
+    /** Runs the effects in the map's values, discarding the results. */
+    def collectAllDiscard[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Unit < S =
+        val it = source.iterator
+        def loop(): Unit < S =
+            if !it.hasNext then ()
+            else it.next()._2.map(_ => loop())
+        loop()
+    end collectAllDiscard
+
+    /** Returns the first Present result of the effectful transformation over entries, if any. */
+    def findFirst[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using Frame): Maybe[B] < S =
+        val it = source.iterator
+        def loop(): Maybe[B] < S =
+            if !it.hasNext then Maybe.Absent
+            else
+                f(it.next()).map {
+                    case found @ Maybe.Present(_) => (found: Maybe[B])
+                    case Maybe.Absent             => loop()
+                }
+        loop()
+    end findFirst
+
+    /** Takes entries, in iteration order, while the effectful predicate evaluates to true. */
+    def takeWhile[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
+        val it = source.iterator
+        def loop(acc: Map[K1, V1]): Map[K1, V1] < S =
+            if !it.hasNext then acc
+            else
+                val kv = it.next()
+                f(kv).map(keep => if keep then loop(acc + kv) else acc)
+        loop(Map.empty)
+    end takeWhile
+
+    /** Splits the entries, in iteration order, at the first whose effectful predicate evaluates to false. */
+    def span[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): (Map[K1, V1], Map[K1, V1]) < S =
+        val it = source.iterator
+        def loop(prefix: Map[K1, V1]): (Map[K1, V1], Map[K1, V1]) < S =
+            if !it.hasNext then (prefix, Map.empty)
+            else
+                val kv = it.next()
+                f(kv).map { keep =>
+                    if keep then loop(prefix + kv)
+                    else (prefix, (Map.newBuilder[K1, V1] += kv ++= it).result())
+                }
+        loop(Map.empty)
+    end span
+
+    /** Drops entries, in iteration order, while the effectful predicate evaluates to true. */
+    def dropWhile[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
+        span(source)(f).map(_._2)
+
+    /** Partitions the entries by an effectful predicate: (matching, non matching). */
+    def partition[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using
+        Frame
+    ): (Map[K1, V1], Map[K1, V1]) < S =
+        val it = source.iterator
+        def loop(yes: Map[K1, V1], no: Map[K1, V1]): (Map[K1, V1], Map[K1, V1]) < S =
+            if !it.hasNext then (yes, no)
+            else
+                val kv = it.next()
+                f(kv).map(matches => if matches then loop(yes + kv, no) else loop(yes, no + kv))
+        loop(Map.empty, Map.empty)
+    end partition
+
+    /** Partitions the entries by an effectful Either transformation: (lefts, rights). */
+    def partitionMap[K1, V1, K2, V2, K3, V3, S](source: Map[K1, V1])(f: ((K1, V1)) => Either[(K2, V2), (K3, V3)] < S)(using
+        Frame
+    ): (Map[K2, V2], Map[K3, V3]) < S =
+        val it = source.iterator
+        def loop(lefts: Map[K2, V2], rights: Map[K3, V3]): (Map[K2, V2], Map[K3, V3]) < S =
+            if !it.hasNext then (lefts, rights)
+            else
+                f(it.next()).map {
+                    case Left(kv)  => loop(lefts + kv, rights)
+                    case Right(kv) => loop(lefts, rights + kv)
+                }
+        loop(Map.empty, Map.empty)
+    end partitionMap
+
+    /** Computes the running fold of the entries, starting with `z`. */
+    def scanLeft[K1, V1, B, S](source: Map[K1, V1])(z: B)(op: (B, (K1, V1)) => B < S)(using Frame): Chunk[B] < S =
+        val it = source.iterator
+        def loop(b: B, acc: Chunk[B]): Chunk[B] < S =
+            if !it.hasNext then acc
+            else op(b, it.next()).map(next => loop(next, acc.append(next)))
+        loop(z, Chunk(z))
+    end scanLeft
+
+    /** Groups the entries by an effectful key function. */
+    def groupBy[K1, V1, K2, S](source: Map[K1, V1])(f: ((K1, V1)) => K2 < S)(using Frame): Map[K2, Map[K1, V1]] < S =
+        val it = source.iterator
+        def loop(acc: Map[K2, Map[K1, V1]]): Map[K2, Map[K1, V1]] < S =
+            if !it.hasNext then acc
+            else
+                val kv = it.next()
+                f(kv).map(k2 => loop(acc.updated(k2, acc.getOrElse(k2, Map.empty) + kv)))
+        loop(Map.empty)
+    end groupBy
+
+    /** Groups the entries by an effectful key function, transforming each with an effectful value function. */
+    def groupMap[K1, V1, K2, V2, S](source: Map[K1, V1])(key: ((K1, V1)) => K2 < S)(f: ((K1, V1)) => V2 < S)(using
+        Frame
+    ): Map[K2, Chunk[V2]] < S =
+        val it = source.iterator
+        def loop(acc: Map[K2, Chunk[V2]]): Map[K2, Chunk[V2]] < S =
+            if !it.hasNext then acc
+            else
+                val kv = it.next()
+                key(kv).map(k2 => f(kv).map(v2 => loop(acc.updated(k2, acc.getOrElse(k2, Chunk.empty).append(v2)))))
+        loop(Map.empty)
     end groupMap
 
     // for kyo-direct

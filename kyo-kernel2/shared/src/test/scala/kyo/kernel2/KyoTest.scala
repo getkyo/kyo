@@ -745,4 +745,94 @@ class KyoTest extends Test[Any]:
         }
     }
 
+    // kernel2-specific coverage beyond the ported suite: the current kernel ships the Map-keyed
+    // combinator family without kernel-level tests; these pin the kernel2 implementations
+    "map combinators" - {
+        val source = Map(1 -> "a", 2 -> "bb", 3 -> "ccc")
+
+        "foreach to entries" in {
+            assert(Kyo.foreach(source) { case (k, v) => (k * 10, v.length) }.eval == Map(10 -> 1, 20 -> 2, 30 -> 3))
+        }
+
+        "foreach to values" in {
+            assert(Kyo.foreach[Int, String, Int, Any](source) { case (k, v) => k + v.length }.eval.toSet == Set(2, 4, 6))
+        }
+
+        "foreachConcat to entries" in {
+            assert(Kyo.foreachConcat(source) { case (k, v) => List(k -> v, (k * 10) -> v) }.eval.size == 6)
+        }
+
+        "foreachDiscard" in {
+            var sum = 0
+            Kyo.foreachDiscard(source)((k, _) => sum += k).eval
+            assert(sum == 6)
+        }
+
+        "filter and filterKeys" in {
+            assert(Kyo.filter(source)((_, v) => v.length > 1).eval == Map(2 -> "bb", 3 -> "ccc"))
+            assert(Kyo.filterKeys(source)(_ % 2 == 1).eval == Map(1 -> "a", 3 -> "ccc"))
+        }
+
+        "foldLeft" in {
+            assert(Kyo.foldLeft(source)(0)((acc, kv) => acc + kv._1).eval == 6)
+        }
+
+        "collect to entries and values" in {
+            assert(Kyo.collect(source) { case (k, v) => if k > 1 then Maybe((k, v.length)) else Maybe.empty }.eval == Map(2 -> 2, 3 -> 3))
+            assert(Kyo.collect[Int, String, Int, Any](source) { case (k, _) => if k > 1 then Maybe(k) else Maybe.empty }.eval.toSet == Set(
+                2,
+                3
+            ))
+        }
+
+        "collectAll and collectAllDiscard" in {
+            val effects: Map[Int, String < Any] = Map(1 -> "a", 2 -> "b")
+            assert(Kyo.collectAll(effects).eval == Map(1 -> "a", 2 -> "b"))
+            var count                          = 0
+            val counting: Map[Int, Unit < Any] = Map(1 -> Effect.defer(count += 1), 2 -> Effect.defer(count += 1))
+            Kyo.collectAllDiscard(counting).eval
+            assert(count == 2)
+        }
+
+        "findFirst" in {
+            assert(Kyo.findFirst(source)((k, v) => if v.length == 2 then Maybe(k) else Maybe.empty).eval == Maybe(2))
+            assert(Kyo.findFirst(source)((_, v) => if v.length == 9 then Maybe(v) else Maybe.empty).eval == Maybe.empty)
+        }
+
+        "partition and partitionMap" in {
+            val (even, odd) = Kyo.partition(source)((k, _) => k % 2 == 0).eval
+            assert(even == Map(2 -> "bb"))
+            assert(odd == Map(1 -> "a", 3 -> "ccc"))
+            val (lefts, rights) = Kyo.partitionMap(source)((k, v) =>
+                if k % 2 == 0 then Left(k -> v) else Right(v -> k)
+            ).eval
+            assert(lefts == Map(2 -> "bb"))
+            assert(rights == Map("a" -> 1, "ccc" -> 3))
+        }
+
+        "scanLeft" in {
+            assert(Kyo.scanLeft(Map(1 -> 1, 2 -> 2))(0)((acc, kv) => acc + kv._2).eval == Chunk(0, 1, 3))
+        }
+
+        "groupBy and groupMap" in {
+            assert(Kyo.groupBy(source)((_, v) => v.length % 2).eval == Map(
+                1 -> Map(1 -> "a", 3 -> "ccc"),
+                0 -> Map(2 -> "bb")
+            ))
+            assert(Kyo.groupMap(source)((_, v) => v.length % 2)((k, _) => k).eval == Map(
+                1 -> Chunk(1, 3),
+                0 -> Chunk(2)
+            ))
+        }
+
+        "takeWhile, dropWhile, span follow iteration order" in {
+            val ordered = scala.collection.immutable.ListMap(1 -> "a", 2 -> "bb", 3 -> "ccc")
+            assert(Kyo.takeWhile(ordered)((k, _) => k < 3).eval == Map(1 -> "a", 2 -> "bb"))
+            assert(Kyo.dropWhile(ordered)((k, _) => k < 3).eval == Map(3 -> "ccc"))
+            val (prefix, suffix) = Kyo.span(ordered)((k, _) => k < 2).eval
+            assert(prefix == Map(1 -> "a"))
+            assert(suffix == Map(2 -> "bb", 3 -> "ccc"))
+        }
+    }
+
 end KyoTest

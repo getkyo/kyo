@@ -196,7 +196,7 @@ Recorded tier-1 divergences (each ruled by the user):
   combinator once; the current kernel's per-collection specializations
   (List, Seq, Chunk, Set) are performance work for the optimization
   round, since overload resolution binds the generic variant
-  source-compatibly. The Map-keyed family is still to port. Node
+  source-compatibly. The Map-keyed family is ported with kernel2-specific tests (the current kernel ships it without kernel-level coverage). Node
   toString renders shape, tag, and position rather than the current
   kernel's frame snippet until the trace round (KyoTest adaptation).
 
