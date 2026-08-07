@@ -44,6 +44,7 @@ assert(malformed.failure.exists(_.offset == 0))
 ```
 
 `Glob.ParseError` extends `KyoException` and retains the zero-based offset and reason for invalid syntax.
+The `glob"..."` literal embeds its compiled automaton and does not parse the pattern again when the program starts.
 
 Kyo's file-system module will accept this compiled value directly for directory listing and tree
 walking, so a pattern compiles once and travels through backend-independent path code. Filesystem

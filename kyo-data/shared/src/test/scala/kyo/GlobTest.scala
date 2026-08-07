@@ -206,6 +206,23 @@ class GlobTest extends kyo.test.Test[Any]:
     }
 
     "literal interpolation" - {
+        "preserves every compiled matcher form" in {
+            val literal = glob"src/**/file[!a-c]?*.{scala,java}"
+            assert(literal == parse("src/**/file[!a-c]?*.{scala,java}"))
+            assert(literal.matches("src/filez1.scala", Glob.CaseSensitivity.Sensitive))
+            assert(literal.matches("src/main/filez1suffix.java", Glob.CaseSensitivity.Sensitive))
+            assert(!literal.matches("src/filea1.scala", Glob.CaseSensitivity.Sensitive))
+            assert(!literal.matches("src/filez1.txt", Glob.CaseSensitivity.Sensitive))
+        }
+
+        "preserves a maximum-length automaton across encoding parts" in {
+            val pattern = "*[!a-c]" + "a" * (4096 - 7)
+            val value   = parse(pattern)
+            val parts   = Glob.encodeV1(value)
+            assert(parts.size > 1)
+            assert(Glob.fromEncodedV1(pattern, parts) == value)
+        }
+
         "valid literals compile" in {
             val errors = typeCheckErrors("""
                 import kyo.*

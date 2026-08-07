@@ -70,6 +70,132 @@ object Glob:
         private[kyo] val segments: Chunk[PathSegment]
     )
 
+    private inline val EncodedRecursiveSegment = 0
+    private inline val EncodedAutomatonSegment = 1
+    private inline val EncodedEpsilon          = 0
+    private inline val EncodedAnyCharacter     = 1
+    private inline val EncodedLiteral          = 2
+    private inline val EncodedCharacterClass   = 3
+    private inline val EncodingPartSize        = 4096
+
+    // V1 stores counts and state indices in single UTF-16 code units. The 4096-character
+    // pattern limit keeps every value representable. Splitting the result keeps each
+    // generated string constant well below JVM constant-pool limits.
+    private[kyo] def encodeV1(self: Glob): Chunk[String] =
+        val encoded = new java.lang.StringBuilder()
+
+        def append(value: Int): Unit = discard(encoded.append(value.toChar))
+
+        append(self.segments.size)
+        self.segments.foreach {
+            case Recursive => append(EncodedRecursiveSegment)
+            case Segment(Automaton(transitions, accept)) =>
+                append(EncodedAutomatonSegment)
+                append(accept)
+                append(transitions.size)
+                transitions.foreach { state =>
+                    append(state.size)
+                    state.foreach {
+                        case Epsilon(to) =>
+                            append(EncodedEpsilon)
+                            append(to)
+                        case Consume(to, matcher) =>
+                            matcher match
+                                case _: AnyCharacter.type =>
+                                    append(EncodedAnyCharacter)
+                                    append(to)
+                                case Literal(expected) =>
+                                    append(EncodedLiteral)
+                                    append(to)
+                                    discard(encoded.append(expected))
+                                case CharacterClass(negated, ranges) =>
+                                    append(EncodedCharacterClass)
+                                    append(to)
+                                    append(if negated then 1 else 0)
+                                    append(ranges.size)
+                                    ranges.foreach { range =>
+                                        discard(encoded.append(range.start))
+                                        discard(encoded.append(range.end))
+                                    }
+                            end match
+                    }
+                }
+        }
+
+        Chunk.from(encoded.toString.grouped(EncodingPartSize))
+    end encodeV1
+
+    private[kyo] def expression(self: Glob)(using scala.quoted.Quotes): scala.quoted.Expr[Glob] =
+        import scala.quoted.*
+
+        val parts = encodeV1(self).map(Expr(_))
+        '{ kyo.internal.GlobLiteral.fromEncodedV1(${ Expr(self.source) }, Chunk(${ Varargs(parts) }*)) }
+    end expression
+
+    private[kyo] def fromEncodedV1(source: String, parts: Chunk[String]): Glob =
+        var partIndex = 0
+        var charIndex = 0
+        var current   = parts(0)
+
+        def read(): Int =
+            while charIndex == current.length do
+                partIndex += 1
+                current = parts(partIndex)
+                charIndex = 0
+            end while
+            val value = current.charAt(charIndex).toInt
+            charIndex += 1
+            value
+        end read
+
+        val segmentCount = read()
+        val segments     = ArrayBuffer.empty[PathSegment]
+        var segmentIndex = 0
+        while segmentIndex < segmentCount do
+            read() match
+                case EncodedRecursiveSegment => segments += Recursive
+                case EncodedAutomatonSegment =>
+                    val accept      = read()
+                    val stateCount  = read()
+                    val transitions = ArrayBuffer.empty[Chunk[Transition]]
+                    var stateIndex  = 0
+                    while stateIndex < stateCount do
+                        val transitionCount = read()
+                        val state           = ArrayBuffer.empty[Transition]
+                        var transitionIndex = 0
+                        while transitionIndex < transitionCount do
+                            val kind = read()
+                            val to   = read()
+                            val transition =
+                                kind match
+                                    case EncodedEpsilon      => Epsilon(to)
+                                    case EncodedAnyCharacter => Consume(to, AnyCharacter)
+                                    case EncodedLiteral      => Consume(to, Literal(read().toChar))
+                                    case EncodedCharacterClass =>
+                                        val negated    = read() == 1
+                                        val rangeCount = read()
+                                        val ranges     = ArrayBuffer.empty[CharacterRange]
+                                        var rangeIndex = 0
+                                        while rangeIndex < rangeCount do
+                                            ranges += CharacterRange(read().toChar, read().toChar)
+                                            rangeIndex += 1
+                                        Consume(to, CharacterClass(negated, Chunk.from(ranges)))
+                                    case value => throw new IllegalStateException(s"invalid encoded glob transition kind: $value")
+                            state += transition
+                            transitionIndex += 1
+                        end while
+                        transitions += Chunk.from(state)
+                        stateIndex += 1
+                    end while
+                    segments += Segment(Automaton(Chunk.from(transitions), accept))
+                case value => throw new IllegalStateException(s"invalid encoded glob segment kind: $value")
+            end match
+            segmentIndex += 1
+        end while
+
+        Compiled(source, Chunk.from(segments))
+    end fromEncodedV1
+
     sealed private[kyo] trait PathSegment derives CanEqual
     private case object Recursive                          extends PathSegment
     final private case class Segment(automaton: Automaton) extends PathSegment
@@ -465,7 +591,7 @@ end extension
 
 extension (inline sc: StringContext)
 
-    /** Compiles a constant glob literal and reports invalid syntax at compile time. */
+    /** Compiles and embeds a constant glob literal, reporting invalid syntax at compile time. */
     inline def glob(): Glob = ${ GlobMacro.literal('sc) }
 end extension
 
@@ -483,15 +609,8 @@ private[kyo] object GlobMacro:
         Glob.parse(value)(using Frame.internal) match
             case Result.Failure(error) =>
                 quotes.reflect.report.errorAndAbort(s"invalid glob at offset ${error.offset}: ${error.reason}")
-            case Result.Panic(error) => throw error
-            case Result.Success(_) =>
-                '{
-                    Glob.parse(${ Expr(value) })(using Frame.internal) match
-                        case Result.Success(glob) => glob
-                        case Result.Failure(error) =>
-                            throw new IllegalStateException(s"validated glob failed at offset ${error.offset}: ${error.reason}")
-                        case Result.Panic(error) => throw error
-                }
+            case Result.Panic(error)  => throw error
+            case Result.Success(glob) => Glob.expression(glob)
         end match
     end literal
 end GlobMacro
