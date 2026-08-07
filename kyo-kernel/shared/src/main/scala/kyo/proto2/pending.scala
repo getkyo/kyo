@@ -407,11 +407,16 @@ object Arrow:
             a
         end cells
 
-        def get(slot: Int): Long =
-            cells(slot)
+        // returns the previous depth; does not write at or past Limit, so the
+        // shared overflow cell is never mutated
+        def increase(slot: Int): Long =
+            val depth = cells(slot)
+            if depth < Limit then cells(slot) = depth + 1
+            depth
+        end increase
 
-        def set(slot: Int, value: Long): Unit =
-            cells(slot) = value
+        def decrease(slot: Int): Unit =
+            cells(slot) -= 1
 
         def slot(): Int =
             val tid = Thread.currentThread().threadId
@@ -505,18 +510,16 @@ object Arrow:
                     case t: Transform[A, B, S] @unchecked =>
                         if probe() then applySlow(self, v)
                         else
-                            val slot  = Depth.slot()
-                            val depth = Depth.get(slot)
-                            if depth >= Depth.Limit then rescue(self, v)
+                            val slot = Depth.slot()
+                            if Depth.increase(slot) >= Depth.Limit then rescue(self, v)
                             else
-                                Depth.set(slot, depth + 1)
                                 try
                                     val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                                    Depth.set(slot, depth)
+                                    Depth.decrease(slot)
                                     r
                                 catch
                                     case ex: Throwable =>
-                                        Depth.set(slot, depth)
+                                        Depth.decrease(slot)
                                         KyoException.attach(ex, "map", t.frame)
                                         throw ex
                                 end try
