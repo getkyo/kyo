@@ -53,46 +53,50 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
 
     "SoftFail missing root accumulates FileNotFound in classpath.errors" in {
         // Use a real temp dir with a non-existent sub-path to trigger FileNotFound.
-        Path.tempDir("kyo-err-f2-missing").map { tmp =>
-            val missing = (tmp / "no-such-root").toString
-            Scope.run {
-                ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.SoftFail, 1).map { classpath =>
-                    assert(
-                        classpath.errors.nonEmpty,
-                        "Expected classpath.errors to be non-empty after SoftFail init with missing root."
-                    )
-                    val hasFileNotFound = classpath.errors.exists {
-                        case TastyError.FileNotFound(_) => true
-                        case _                          => false
+        Scope.run {
+            Path.run(Path.tempDir("kyo-err-f2-missing")).map { tmp =>
+                val missing = (tmp / "no-such-root").toString
+                Scope.run {
+                    ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.SoftFail, 1).map { classpath =>
+                        assert(
+                            classpath.errors.nonEmpty,
+                            "Expected classpath.errors to be non-empty after SoftFail init with missing root."
+                        )
+                        val hasFileNotFound = classpath.errors.exists {
+                            case TastyError.FileNotFound(_) => true
+                            case _                          => false
+                        }
+                        assert(
+                            hasFileNotFound,
+                            s"Expected classpath.errors to contain TastyError.FileNotFound; got ${classpath.errors}."
+                        )
+                        assert(
+                            classpath.symbols.isEmpty,
+                            s"Expected classpath.symbols.size == 0 on all-missing classpath; got ${classpath.symbols.size}."
+                        )
+                        succeed
                     }
-                    assert(
-                        hasFileNotFound,
-                        s"Expected classpath.errors to contain TastyError.FileNotFound; got ${classpath.errors}."
-                    )
-                    assert(
-                        classpath.symbols.isEmpty,
-                        s"Expected classpath.symbols.size == 0 on all-missing classpath; got ${classpath.symbols.size}."
-                    )
-                    succeed
                 }
             }
         }
     }
 
     "FailFast missing root still raises FileNotFound" in {
-        Path.tempDir("kyo-err-f2-failfast").map { tmp =>
-            val missing = (tmp / "no-such-root").toString
-            Scope.run {
-                Abort.run[TastyError](ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.FailFast, 1)).map { result =>
-                    result match
-                        case Result.Failure(TastyError.FileNotFound(_)) =>
-                            succeed
-                        case Result.Success(_) =>
-                            fail("Expected FailFast init with missing root to abort; succeeded instead.")
-                        case Result.Failure(other) =>
-                            fail(s"Expected TastyError.FileNotFound but got: $other")
-                        case Result.Panic(t) =>
-                            fail(s"Unexpected panic: ${t.getMessage}")
+        Scope.run {
+            Path.run(Path.tempDir("kyo-err-f2-failfast")).map { tmp =>
+                val missing = (tmp / "no-such-root").toString
+                Scope.run {
+                    Abort.run[TastyError](ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.FailFast, 1)).map { result =>
+                        result match
+                            case Result.Failure(TastyError.FileNotFound(_)) =>
+                                succeed
+                            case Result.Success(_) =>
+                                fail("Expected FailFast init with missing root to abort; succeeded instead.")
+                            case Result.Failure(other) =>
+                                fail(s"Expected TastyError.FileNotFound but got: $other")
+                            case Result.Panic(t) =>
+                                fail(s"Unexpected panic: ${t.getMessage}")
+                    }
                 }
             }
         }

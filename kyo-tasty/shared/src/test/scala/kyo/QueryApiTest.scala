@@ -312,16 +312,18 @@ class QueryApiTest extends kyo.test.Test[Any]:
 
     "strict mode fails with TastyError for corrupt TASTy" in {
         // FailFast mode: write a corrupt file to a temp dir and use ClasspathOrchestrator.init.
-        Path.tempDir("kyo-qa-failfast").map { dir =>
-            (dir / "Corrupt.tasty").writeBytes(Span.from(Array[Byte](0, 1, 2, 3, 4, 5))).map { _ =>
-                Scope.run {
-                    Abort.run[TastyError](ClasspathOrchestrator.init(Seq(dir.toString), Tasty.ErrorMode.FailFast, 1)).map {
-                        case Result.Success(_) =>
-                            fail("Expected failure in strict mode with corrupt TASTy")
-                        case Result.Failure(_) =>
-                            succeed
-                        case Result.Panic(t) =>
-                            throw t
+        Scope.run {
+            Path.run(Path.tempDir("kyo-qa-failfast")).map { dir =>
+                Path.run((dir / "Corrupt.tasty").writeBytes(Span.from(Array[Byte](0, 1, 2, 3, 4, 5)))).map { _ =>
+                    Scope.run {
+                        Abort.run[TastyError](ClasspathOrchestrator.init(Seq(dir.toString), Tasty.ErrorMode.FailFast, 1)).map {
+                            case Result.Success(_) =>
+                                fail("Expected failure in strict mode with corrupt TASTy")
+                            case Result.Failure(_) =>
+                                succeed
+                            case Result.Panic(t) =>
+                                throw t
+                        }
                     }
                 }
             }
@@ -351,15 +353,17 @@ class QueryApiTest extends kyo.test.Test[Any]:
 
     // SoftFail with a real missing root produces FileNotFound in classpath.errors.
     "missing root produces FileNotFound in classpath.errors" in {
-        Path.tempDir("kyo-qa-missing").map { tmp =>
-            val missing = (tmp / "no-such-root").toString
-            Scope.run {
-                ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.SoftFail, 1).map { classpath =>
-                    val errs = classpath.errors
-                    assert(errs.size == 1, s"Expected exactly 1 error; got: $errs")
-                    errs.head match
-                        case TastyError.FileNotFound(_) => succeed
-                        case other                      => fail(s"Expected FileNotFound; got: $other")
+        Scope.run {
+            Path.run(Path.tempDir("kyo-qa-missing")).map { tmp =>
+                val missing = (tmp / "no-such-root").toString
+                Scope.run {
+                    ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.SoftFail, 1).map { classpath =>
+                        val errs = classpath.errors
+                        assert(errs.size == 1, s"Expected exactly 1 error; got: $errs")
+                        errs.head match
+                            case TastyError.FileNotFound(_) => succeed
+                            case other                      => fail(s"Expected FileNotFound; got: $other")
+                    }
                 }
             }
         }

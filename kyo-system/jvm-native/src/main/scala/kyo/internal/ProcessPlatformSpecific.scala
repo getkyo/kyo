@@ -442,15 +442,31 @@ final private[kyo] class JvmCommandUnsafe(
             case Result.Panic(ex) =>
                 p.completeDiscard(Result.panic(ex))
             case Result.Success(proc: JvmProcessUnsafe) =>
-                discard(proc.jp.onExit().whenComplete { (exitedProcess, error) =>
-                    if error != null then
-                        p.completeDiscard(Result.panic(error))
-                    else
-                        try
-                            val bytes = readAll(exitedProcess.getInputStream)
-                            p.completeDiscard(Result.succeed(new String(bytes, StandardCharsets.UTF_8)))
-                        catch
-                            case e: IOException => p.completeDiscard(Result.panic(e))
+                // Drained while the process runs, and completed at end of stream rather than at exit.
+                //
+                // Reading only after onExit deadlocks any child that writes more than the pipe
+                // buffer, roughly 64KB: the child blocks on write, so it never exits, so onExit
+                // never fires, so the read that would unblock it never starts. Process.scala
+                // documents this hazard for the stdout-plus-stderr case; it was reproduced here on
+                // a single stream.
+                //
+                // End of stream is the right completion point for this operation: it yields the
+                // output text and does not report exit status, and the child closes stdout when it
+                // exits. The onExit handler remains only to surface a spawn failure, and completing
+                // an already-completed promise is a no-op, so whichever arrives first wins.
+                val out = proc.jp.getInputStream
+                // Unsafe: bridges a blocking pipe read off the scheduler. The thread ends at end of
+                // stream, which the child reaches by exiting.
+                val reader = new Thread(
+                    () =>
+                        try p.completeDiscard(Result.succeed(new String(readAll(out), StandardCharsets.UTF_8)))
+                        catch case e: IOException => p.completeDiscard(Result.panic(e)),
+                    "kyo-command-text"
+                )
+                reader.setDaemon(true)
+                reader.start()
+                discard(proc.jp.onExit().whenComplete { (_, error) =>
+                    if error != null then p.completeDiscard(Result.panic(error))
                 })
         end match
         p

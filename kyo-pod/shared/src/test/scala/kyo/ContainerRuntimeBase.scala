@@ -19,7 +19,10 @@ private[kyo] trait ContainerRuntimeBase:
 
     private[kyo] def socketExists(path: String)(using AllowUnsafe): Boolean =
         val p = kyo.Path(path)
-        p.unsafe.exists() || p.unsafe.exists(followLinks = false)
+        // Unsafe: synchronous runtime probing has no user call site from which to propagate a Frame.
+        p.unsafe.exists()(using summon[AllowUnsafe], Frame.internal).getOrElse(false) ||
+        p.unsafe.exists(followLinks = false)(using summon[AllowUnsafe], Frame.internal).getOrElse(false)
+    end socketExists
 
     private[kyo] def getEnv(name: String)(using AllowUnsafe): Maybe[String] =
         kyo.System.live.unsafe.env(name)

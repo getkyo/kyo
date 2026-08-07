@@ -1,8 +1,8 @@
 # kyo-core
 
-`kyo-core` is the runtime layer that turns Kyo's algebraic effects into actual programs that do things: suspend side effects, fork fibers, race and gather concurrent work, manage resources, schedule recurring tasks, and emit logs and metrics. It is the layer between `kyo-prelude` (pure effects and data) and the rest of the ecosystem, providing the I/O substrate that production code targets.
+`kyo-core` is the runtime layer that turns Kyo's algebraic effects into actual programs that do things: suspend side effects, fork fibers, race and gather concurrent work, manage resources, talk to the file system and OS, schedule recurring tasks, and emit logs and metrics. It is the layer between `kyo-prelude` (pure effects and data) and the rest of the ecosystem, providing the I/O substrate that production code targets.
 
-Two effects anchor the model and split responsibility. `Sync` marks pure suspension of side effects: code that runs to completion without parking. `Async` adds the fiber scheduler on top: parking, races, structured cancellation, bounded-concurrency collection ops. Most application code reads as a chain of effectful values (`Console.printLine(...)`, `Cache.get(key)`, `Async.foreach(items)(process)`) terminating at a `KyoApp` `run` block that discharges the effects at the application boundary. `Fiber[A, S]` is the low-level primitive those combinators sit on top of; application code rarely names it directly, because `Async`, `Scope`, `Channel`, `Hub`, and friends do the fiber work for you.
+Two effects anchor the model and split responsibility. `Sync` marks pure suspension of side effects: code that runs to completion without parking. `Async` adds the fiber scheduler on top: parking, races, structured cancellation, bounded-concurrency collection ops. Most application code reads as a chain of effectful values (`Console.printLine(...)`, `Path("data") / "users.json" read`, `Async.foreach(items)(process)`) terminating at a `KyoApp` `run` block that discharges the effects at the application boundary. `Fiber[A, S]` is the low-level primitive those combinators sit on top of; application code rarely names it directly, because `Async`, `Scope`, `Channel`, `Hub`, and friends do the fiber work for you.
 
 ```scala
 import kyo.*
@@ -203,7 +203,7 @@ val charges: Chunk[Txn] < (Async & Abort[ChargeError]) =
     }
 ```
 
-The default concurrency is `Async.defaultConcurrency`, which is `2 * Runtime.getRuntime.availableProcessors()`. Override globally with the `-Dkyo.async.concurrency.default=N` system property or the `KYO_ASYNC_CONCURRENCY_DEFAULT` environment variable (checked in that order, system property first), or override per call with the `concurrency` parameter. On Scala.js, Wasm, and Scala Native, the environment variable is the only one of the two global channels that takes effect.
+The default concurrency is `Async.defaultConcurrency`, which is `2 * Runtime.getRuntime.availableProcessors()`. Override globally with `-Dkyo.async.concurrency.default=N` or per call with the `concurrency` parameter.
 
 `Async.foreachDiscard` and `Async.collectAllDiscard` drop the results when you don't need them: a useful saving for large fan-out cases that produce `Unit`.
 
@@ -790,6 +790,12 @@ val withTimeout: Result[Timeout, Int] < (Async & Sync) =
 
 `Async.timeoutWithError(d, error)(v)` lets you raise a domain-specific error on expiry instead.
 
+## Files, processes, and the OS
+
+> **File system, processes, and environment:** `Path`, `Command`, `Process`, `System`, and the
+> `FileSystemException` hierarchy live in [`kyo-system`](../kyo-system/README.md); add it to your
+> dependencies to use them.
+
 ## Ambient services
 
 `Console`, `Random`, `UUIDGenerator`, and `Log` are dynamically scoped context services. Their defaults target the platform console, a non-cryptographic `java.util.Random`, secure UUID entropy, and the console logger respectively. Tests can swap them out per scope without threading them as arguments.
@@ -958,7 +964,7 @@ val decompressed: Stream[Byte, Sync & Scope & Abort[StreamCompression.StreamComp
 
 ## Putting it together
 
-The example below combines several effects from this module into one cohesive program: `KyoApp` discharges the effect row at the application boundary, `Meter.initRateLimiter` enforces a system-wide rate limit, `Async.foreach` fans out work with bounded concurrency, and `Log.info` emits structured log lines. Everything composes into a single value that `KyoApp` then runs.
+The example below combines several effects from this module into one cohesive program: `KyoApp` discharges the effect row at the application boundary, `Meter.initRateLimiter` enforces a system-wide rate limit, `Async.foreach` fans out work with bounded concurrency, `Console.printLine` emits the rendered output, and `Log.info` emits structured log lines. Everything composes into a single value that `KyoApp` then runs.
 
 ```scala
 import kyo.*
@@ -974,10 +980,10 @@ object Checkout extends KyoApp:
 
         // Bounded-concurrency fan-out: rate-limit charges to 50/sec
         Meter.initRateLimiter(rate = 50, period = 1.second).map { limiter =>
-            // Process each order: charge, persist receipt, log
+            // Process each order: charge, print receipt, log
             Async.foreach(orders, concurrency = 16) { order =>
                 limiter.run(charge(order)).map { txn =>
-                    persistReceipt(order.id, render(order, txn)).andThen {
+                    Console.printLine(render(order, txn)).andThen {
                         Log.info(s"order ${order.id} -> ${txn.id}")
                     }
                 }
@@ -985,10 +991,9 @@ object Checkout extends KyoApp:
         }
     }
 
-    def loadPending: Chunk[Order]                              = ???
-    def charge(o: Order): Txn < (Async & Abort[ChargeError])   = ???
-    def render(o: Order, t: Txn): String                       = ???
-    def persistReceipt(id: Long, content: String): Unit < Sync = ???
+    def loadPending: Chunk[Order]                            = ???
+    def charge(o: Order): Txn < (Async & Abort[ChargeError]) = ???
+    def render(o: Order, t: Txn): String                     = ???
 end Checkout
 ```
 
@@ -996,7 +1001,7 @@ The resulting type of the `run` block is `Chunk[Unit] < (Async & Scope & Abort[A
 
 ## Low-level extension points
 
-Every public type in kyo-core has a companion `Unsafe` object (`Sync.Unsafe`, `Async`-by-way-of `Fiber.Unsafe`, `Channel.Unsafe`, `Queue.Unsafe`, `Cache.Unsafe`, `Exchange.Unsafe`, `Console.Unsafe`, `Latch.Unsafe`, ...). The `Unsafe` API skips the effect-tracking layer and works against raw values, gated by an `AllowUnsafe` evidence import. Application code should use the safe surface; the `Unsafe` API is for library integrations, performance-critical inner loops, and bridging into non-Kyo code.
+Every public type in kyo-core has a companion `Unsafe` object (`Sync.Unsafe`, `Async`-by-way-of `Fiber.Unsafe`, `Channel.Unsafe`, `Queue.Unsafe`, `Cache.Unsafe`, `Exchange.Unsafe`, `Console.Unsafe`, `Path.Unsafe`, ...). The `Unsafe` API skips the effect-tracking layer and works against raw values, gated by an `AllowUnsafe` evidence import. Application code should use the safe surface; the `Unsafe` API is for library integrations, performance-critical inner loops, and bridging into non-Kyo code.
 
 The `KyoApp` lifecycle is extensible via `KyoApp.Base[S]`, `KyoAppRunner`, `KyoAppInterrupts`, and `KyoAppRunnerWithInterrupts`. Override these to customise initialization, interrupt handling, or the effect set the `run` block accepts.
 

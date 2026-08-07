@@ -29,7 +29,7 @@ private[kyo] object UdsBackend:
                 Scope.ensure {
                     wire.close
                         .andThen(Sync.Unsafe.defer(listener.close()))
-                        .andThen(Abort.run[FileFsException](sockPath.remove).unit)
+                        .andThen(Abort.run[FileSystemException](Path.run(sockPath.remove)).unit)
                 }.andThen {
                     JsonRpcTransport.fromWire(wire, framer, codec)
                 }

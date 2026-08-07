@@ -30,10 +30,10 @@ private[kyo] trait PathDirectories:
     private[kyo] def osPlatform: String
 
     /** Creates a temporary file. Platform-specific. */
-    private[kyo] def temp(prefix: String, suffix: String)(using Frame): Path < (Sync & Abort[FileFsException])
+    private[kyo] def temp(prefix: String, suffix: String)(using Frame): Path < (Sync & Abort[FileStructureException])
 
     /** Creates a temporary directory. Platform-specific. */
-    private[kyo] def tempDir(prefix: String)(using Frame): Path < (Sync & Abort[FileFsException])
+    private[kyo] def tempDirUnscoped(prefix: String)(using Frame): Path < (Sync & Abort[FileStructureException])
 
     // --- Concrete shared logic ---
 
@@ -73,10 +73,10 @@ private[kyo] trait PathDirectories:
     private[kyo] def tempScoped(
         prefix: String = "kyo",
         suffix: String = ".tmp"
-    )(using Frame): Path < (Sync & Scope & Abort[FileFsException]) =
+    )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
         temp(prefix, suffix).map { p =>
             Scope.acquireRelease(p) { q =>
-                Abort.run[FileFsException](q.removeAll).unit
+                Abort.run[FileSystemException](Path.run(q.removeAll)).unit
             }
         }
 
@@ -187,107 +187,5 @@ private[kyo] trait PathDirectories:
             template = make(home.parts ++ Chunk("AppData", "Roaming", "Microsoft", "Windows", "Templates")),
             video = makeChild(home, "Videos")
         )
-
-end PathDirectories
-
-private[kyo] object PathDirectories:
-
-    import scala.annotation.tailrec
-
-    /** Converts a glob pattern to a Regex. Supports `*`, `**`, `?`, `[...]`, `[!...]`, `{a,b}`, and `\x` escapes. */
-    def globToRegex(glob: String): scala.util.matching.Regex =
-        val sb  = new StringBuilder("^")
-        val len = glob.length
-
-        // Copies characters inside [...] until closing ']'
-        @tailrec def charClass(i: Int, first: Boolean): Int =
-            if i >= len then
-                i
-            else if !first && glob.charAt(i) == ']' then
-                sb.append(']')
-                i + 1
-            else if glob.charAt(i) == '\\' && i + 1 < len then
-                sb.append("\\\\")
-                sb.append(glob.charAt(i + 1))
-                charClass(i + 2, false)
-            else
-                sb.append(glob.charAt(i))
-                charClass(i + 1, false)
-
-        // Copies characters inside {...} until closing '}'
-        @tailrec def braceExpansion(i: Int): Int =
-            if i >= len || glob.charAt(i) == '}' then
-                if i < len then i + 1 // skip '}'
-                else i
-            else if glob.charAt(i) == ',' then
-                sb.append('|')
-                braceExpansion(i + 1)
-            else if glob.charAt(i) == '\\' && i + 1 < len then
-                sb.append("\\Q")
-                sb.append(glob.charAt(i + 1))
-                sb.append("\\E")
-                braceExpansion(i + 2)
-            else
-                val inner = glob.charAt(i)
-                // Escape regex metacharacters inside alternation
-                if ".+^$|()".indexOf(inner) >= 0 then
-                    sb.append('\\')
-                sb.append(inner)
-                braceExpansion(i + 1)
-
-        @tailrec def loop(i: Int): Unit =
-            if i < len then
-                val c = glob.charAt(i)
-                c match
-                    case '\\' if i + 1 < len =>
-                        // Escape next character literally
-                        sb.append("\\Q")
-                        sb.append(glob.charAt(i + 1))
-                        sb.append("\\E")
-                        loop(i + 2)
-                    case '*' if i + 1 < len && glob.charAt(i + 1) == '*' =>
-                        sb.append(".*")
-                        loop(i + 2)
-                    case '*' =>
-                        sb.append("[^/\\\\]*")
-                        loop(i + 1)
-                    case '?' =>
-                        sb.append("[^/\\\\]")
-                        loop(i + 1)
-                    case '[' =>
-                        // Pass through character class to regex
-                        sb.append('[')
-                        val next = i + 1
-                        // Handle negation: [! or [^ both mean negated class
-                        val afterNeg =
-                            if next < len && (glob.charAt(next) == '!' || glob.charAt(next) == '^') then
-                                sb.append('^')
-                                next + 1
-                            else
-                                next
-                        // Copy until closing ]
-                        val afterClass = charClass(afterNeg, first = true)
-                        loop(afterClass)
-                    case '{' =>
-                        // Alternation: {a,b,c} -> (?:a|b|c)
-                        sb.append("(?:")
-                        val afterBrace = braceExpansion(i + 1)
-                        sb.append(')')
-                        loop(afterBrace)
-                    // Escape regex metacharacters
-                    case '.' | '(' | ')' | '+' | '|' | '^' | '$' | '@' | '%' =>
-                        sb.append('\\')
-                        sb.append(c)
-                        loop(i + 1)
-                    case _ =>
-                        sb.append(c)
-                        loop(i + 1)
-                end match
-        end loop
-
-        loop(0)
-        sb.append("$")
-        sb.toString.r
-    end globToRegex
 
 end PathDirectories

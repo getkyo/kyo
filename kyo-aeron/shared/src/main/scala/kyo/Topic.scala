@@ -58,24 +58,29 @@ object Topic:
       *   [[TopicTransportFailedException]] instead.
       */
     def run[A, S](v: A < (Topic & S))(using Frame): A < (Async & S) =
-        Abort.run[FileFsException](Path.tempDir("kyo-aeron-embedded")).map {
-            case Result.Success(dir) =>
-                AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
-                    // The driver deletes its own directory on close, once its conductor has stopped.
-                    // This removal is the backstop for the paths that leaves behind: a driver that
-                    // failed to launch, or one whose close did not complete. It is expected to find
-                    // nothing, and a finalizer that raises would replace the result of the body it
-                    // guards, so its outcome is dropped rather than reported.
-                    Sync.ensure(Abort.run[FileFsException](dir.removeAll).unit) {
+        Scope.run {
+            Abort.run[FileSystemException](Path.run(Path.tempDir("kyo-aeron-embedded"))).map {
+                case Result.Success(dir) =>
+                    AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
+                        // The driver deletes its own directory on close, once its conductor has
+                        // stopped. The scope that owns the temp dir is the backstop for the paths
+                        // that leaves behind: a driver that failed to launch, or one whose close did
+                        // not complete. Path.tempDir registers a recursive removal that discards its
+                        // outcome, so the backstop finding nothing is not an error and cannot replace
+                        // the result of the body it guards.
+                        //
+                        // Closing the runtime from inside the scope is what orders the two: the
+                        // client and driver are shut down on the way out, and only then does the
+                        // scope remove the directory underneath them.
                         Sync.ensure(Sync.Unsafe.defer(runtime.close())) {
                             runWith(runtime.transport)(v)
                         }
                     }
-                }
-            case Result.Failure(e) =>
-                Abort.panic(e)
-            case Result.Panic(t) =>
-                Abort.panic(t)
+                case Result.Failure(e) =>
+                    Abort.panic(e)
+                case Result.Panic(t) =>
+                    Abort.panic(t)
+            }
         }
 
     /** Runs `v` against an Aeron media driver already running at `aeronDir`.

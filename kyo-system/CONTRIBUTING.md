@@ -1,144 +1,196 @@
 # Contributing to kyo-system
 
-This file documents the internal design contracts, invariants, and conventions
-specific to `kyo-system`. Read the root `CONTRIBUTING.md` first; everything there
-applies here, and this file extends it with module-local rules.
+Read the repository root [CONTRIBUTING.md](../CONTRIBUTING.md) first. This guide records the
+filesystem, process, and environment conventions specific to `kyo-system`.
 
----
+## Architecture
 
-## Path API
+`kyo-system` is a four-platform cross-project for JVM, JavaScript, Native, and Wasm. Public
+filesystem behavior belongs in `shared`; platform leaves contain only host integration.
 
-### Safe-tier surface
+The module owns these capability boundaries:
 
-`Path` is an opaque type wrapping `Path.Unsafe`. The safe tier (extension
-methods on `Path`, defined in `object Path`) provides effect-tracked I/O:
+| Surface | Safe API | Capability or residual |
+|---|---|---|
+| Filesystem reads | `Path`, `FileSystem.Read` | `PathRead` |
+| Filesystem writes | `Path`, `FileSystem.Write` | `PathWrite` |
+| Filesystem observation | `Path.Watcher`, `FileSystem.Watch` | `PathWatch` |
+| Commands and processes | `Command`, `Process` | `Sync`, `Async`, `Scope` |
+| Environment | `System` | `Sync` |
 
-| Safe method                       | Effect row                                             |
-|-----------------------------------|--------------------------------------------------------|
-| `path.exists`                     | `Boolean < Sync`                                       |
-| `path.isDirectory`                | `Boolean < Sync`                                       |
-| `path.isRegularFile`              | `Boolean < Sync`                                       |
-| `path.isSymbolicLink`             | `Boolean < Sync`                                       |
-| `path.realPath`                   | `Path < (Sync & Abort[FileException])`                 |
-| `path.size`                       | `Long < (Sync & Abort[FileReadException])`             |
-| `path.read`                       | `String < (Sync & Abort[FileReadException])`           |
-| `path.readBytes`                  | `Span[Byte] < (Sync & Abort[FileReadException])`       |
-| `path.readLines`                  | `Chunk[String] < (Sync & Abort[FileReadException])`    |
-| `path.readStream`                 | `Stream[String, Scope & Sync & Abort[...]]`            |
-| `path.readBytesStream`            | `Stream[Byte, Scope & Sync & Abort[...]]`              |
-| `path.readLinesStream`            | `Stream[String, Scope & Sync & Abort[...]]`            |
-| `path.tail`                       | `Stream[String, Async & Scope & Abort[...]]`           |
-| `path.write`, `writeBytes`, ...   | `Unit < (Sync & Abort[FileWriteException])`            |
-| `path.append`, `appendBytes`, ... | `Unit < (Sync & Abort[FileWriteException])`            |
-| `path.mkDir`, `mkFile`            | `Unit < (Sync & Abort[FileFsException])`               |
-| `path.list`                       | `Chunk[Path] < (Sync & Abort[FileFsException])`        |
-| `path.walk`                       | `Stream[Path, Sync & Scope & Abort[FileFsException]]`  |
-| `path.move`, `copy`, `remove`     | `(Unit|Boolean) < (Sync & Abort[FileFsException])`     |
+`PathWrite <: PathRead`: write authority includes read authority. `PathWatch` is independent.
+`Path.runReadOnly` intentionally cannot discharge a `PathWrite` operation. Keep this negative
+capability law visible in return types and compile-time tests.
 
-#### Companion-level constants
+### Source layout
 
-```scala
-Path.pathSeparator  // ":" on Unix, ";" on Windows, Node's path.delimiter on JS
-Path.fileSeparator  // "/" on Unix, "\\" on Windows, Node's path.sep on JS
+```text
+kyo-system/
+  shared/src/main/scala/kyo/
+    Path.scala
+    FileSystem.scala
+    HostFileSystem.scala
+    InMemoryFileSystem.scala
+    OverlayFileSystem.scala
+    ZipReadOnlyFileSystem.scala
+    ZipRewriteFileSystem.scala
+    FileSystemException.scala
+    Command.scala
+    Process.scala
+    System.scala
+  jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala
+  js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala
 ```
 
-Both are `val` on `object Path`, computed once at companion-object
-initialization via `platformPathSeparator` / `platformFileSeparator` on the
-`PathPlatformSpecific` trait.
+## Filesystem authority and selection
 
-#### Key design points
+`FileSystem.Read[S]` contains only inspection and read operations. `FileSystem.Write[S]` extends it
+with mutation, typed write channels, durable replacement, and structure changes. A backend mixes in
+`FileSystem.Watch[S]` only when it can satisfy the complete watcher contract.
 
-- `Path` is immutable. All I/O goes through `Sync.Unsafe.defer` at the safe
-  tier and `AllowUnsafe` at the abstract-class tier.
-- Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`)
-  require only `Sync`, not `Abort`: they return `false` for inaccessible paths.
-- Streaming methods carry `Scope` so the underlying OS handle is closed when the
-  enclosing scope exits, regardless of whether it completes normally or aborts.
-- `path.tail` is the only streaming method that adds `Async` (it sleeps between
-  polls).
+The built-in factories are:
 
-### Unsafe tier
+| Factory | Authority | Purpose |
+|---|---|---|
+| `FileSystem.host` | write and watch | Local host filesystem |
+| `FileSystem.host(root)` | write and watch | Canonically root-confined host access |
+| `FileSystem.inMemory` | write and watch | Hermetic shared implementation |
+| `FileSystem.overlay(lower)` | write, watch, staged changes | Copy-on-write staging |
+| `FileSystem.zipReadOnly(path)` | read | Immutable archive view |
+| `FileSystem.zip(path)` | write and staged changes | Whole-archive rewrite |
 
-`Path.Unsafe` is the abstract class that platform implementations extend. Each
-abstract method takes `(using AllowUnsafe, Frame)` (or just `AllowUnsafe` for
-handle operations). The safe-tier extension methods delegate to `self.unsafe.*`
-inside `Sync.Unsafe.defer`.
+`FileSystem.let(backend)(program)` changes the backend used by the default Path runners for a
+dynamic scope. Selection uses `Local`, propagates to child fibers, and restores the previous backend
+on exit. `Path.runWith` and `Path.runReadOnlyWith` select a backend explicitly for one runner.
 
-The safe-tier lift for a method that returns a `Result` is always:
+Never widen a read-only factory to `FileSystem.Write`. Authority is part of the public contract.
 
-```scala
-def myOp(using Frame): T < (Sync & Abort[SomeException]) =
-    Sync.Unsafe.defer(Abort.get(self.unsafe.myOp()))
-```
+## Path operation flow
 
-For a method that returns a plain value (no failure), omit the `Abort.get`:
+1. A safe extension suspends a `Path.Op` under `PathRead` or `PathWrite`.
+2. `Path.run`, `Path.runReadOnly`, or an explicit-service runner dispatches the operation.
+3. A backend returns its own effect `S` plus a precise filesystem failure marker.
+4. Platform host code bridges a `Path.Unsafe` operation through `Sync.Unsafe.defer`.
 
-```scala
-def myFlag(using Frame): Boolean < Sync =
-    Sync.Unsafe.defer(self.unsafe.myFlag())
-```
+Safe Path methods carry capability effects. Backend methods carry backend effects and precise
+`Abort` rows. Do not expose platform exceptions or hide backend effects with casts.
 
-### Adding a new Path operation
+Every unsafe bridge must have a nearby `// Unsafe:` comment explaining the boundary. Unsafe methods
+return `Result`; safe backend methods lift those results into `Abort`.
 
-1. Add the abstract method to `Path.Unsafe` in
-   `shared/src/main/scala/kyo/Path.scala`. Decide its `Result` error type:
-   `FileReadException`, `FileWriteException`, or `FileFsException`.
+## Portable matching and named policies
 
-2. Add the safe-tier extension method directly below the other safe methods in
-   `object Path` (`extension (self: Path)`). Always lift with
-   `Sync.Unsafe.defer(Abort.get(...))`.
+Path listing and walking accept `Glob`, defined in `kyo-data`. Backends must not compile their own
+regular expressions or use host glob APIs. Match paths relative to the listed or walked root and use
+the backend's default case sensitivity unless the caller supplies one.
 
-3. Implement in `jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala`
-   on `NioPathUnsafe` using `java.nio.file.*`.
+Movement and copying use `Path.MoveOptions` and `Path.CopyOptions`. File writes use
+`Path.WriteOptions`. Add policy fields to these values instead of restoring Boolean argument
+clusters. Required atomicity must either succeed atomically or fail before mutating the target.
 
-4. Implement in `js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala`
-   on the JS path class using the `NodeFs` / `NodePath` facades.
+## Scoped channels and durable replacement
 
-5. Add cross-platform test leaves in
-   `shared/src/test/scala/kyo/PathTest.scala`. Use `runJVM { ... }` only for
-   leaves that test mechanics that genuinely require JVM APIs (e.g., `mmap`
-   internals). Contract-level tests belong in the cross-platform shared tree.
+`Path.ReadChannel[S]`, `Path.WriteChannel[S]`, and `Path.ReadWriteChannel[S]` expose positioned
+operations according to authority. Acquisition occurs through the matching `FileSystem` tier and is
+owned by `Scope`. Public channels do not expose `close`; resource release belongs to the acquiring
+scope.
 
-### Cross-platform discipline
+`FileSystem.WriteOpen` separates capability from existence policy:
 
-Source tree layout for `Path`:
+- `Existing` requires an existing regular file.
+- `Create` opens an existing file or creates it.
+- `CreateNew` fails if any target already exists.
 
-| Tree              | Content                                                     |
-|-------------------|-------------------------------------------------------------|
-| `shared/src/main` | `Path.scala` (opaque type, safe tier, abstract `Unsafe`)    |
-| `shared/src/main` | `internal/PathDirectories.scala` (shared dir logic)         |
-| `jvm-native/src/main` | `NioPathUnsafe` backed by `java.nio.file.Path`          |
-| `js-wasm/src/main`    | Node.js-backed impl using `NodeFs` / `NodePath` facades |
+`durableReplace` has a fixed workflow: reserve a sibling temporary file, open it create-new, write,
+sync file content and metadata, close it, require an atomic replacement move, then sync the parent
+directory. Cleanup before movement leaves the original target unchanged. Failure of the final
+directory sync is still reported, although replacement has already occurred. Never add a non-atomic
+fallback.
 
-The JS implementation uses `@JSImport("node:fs", ...)` and
-`@JSImport("node:path", ...)` facades (`NodeFs`, `NodePath`, `NodeStats`).
-These facades are the only place where `js.native` / `@js.native` appears in
-path-related code.
+## Locks and watchers
 
-When adding a new platform-specific capability, supply a stub in every platform
-leaf. On a non-supporting platform the stub must raise the appropriate
-`FileException` or return a documented no-op; it must never throw a raw
-exception.
+Locks are advisory, scope-managed values. `Path.LockMode` selects shared or exclusive compatibility.
+`Path.LockWait` selects immediate, unbounded, or deadline-bounded acquisition. Fiber waiting must use
+`Async`; never block an OS thread. Ownership checks and cleanup failures remain typed.
 
----
+Watchers use the independent `PathWatch` capability. Acquisition returns only after backend
+registration is active. Events are normalized as `PathChange`; overflow and root invalidation are
+stream values. Invalidation is terminal: emit it exactly once, close the stream, and release the
+registration. Staged backends expose only changes visible in their staged view.
 
-## FileException hierarchy
+## Confinement and archives
 
-`FileException` is a sealed abstract base. `FileReadException`,
-`FileWriteException`, and `FileFsException` are sealed marker traits on it,
-one per operation category. Each concrete case class implements only the
-traits of the operations that can actually raise it, so a single exception
-can carry more than one marker:
+`FileSystem.host(root)` resolves the root canonically. Existing targets are checked by real path;
+missing write targets are checked through their nearest existing parent. Prefix-only string checks
+are security defects because symlinks can escape them. `Path.confinedTo(root)` provides the same
+canonical containment rule when the checked path is itself needed as a value.
 
-| Concrete case class              | Read | Write | Fs |
-|-----------------------------------|:----:|:-----:|:--:|
-| `FileNotFoundException`           | x    | x     | x  |
-| `FileAccessDeniedException`       | x    | x     | x  |
-| `FileIsADirectoryException`       | x    | x     |    |
-| `FileNotADirectoryException`      |      |       | x  |
-| `FileAlreadyExistsException`      |      |       | x  |
-| `FileDirectoryNotEmptyException`  |      |       | x  |
-| `FileIOException`                 | x    | x     | x  |
+Archive behavior is shared across all platforms. `zipReadOnly` exposes no mutation surface.
+`zip` stages entry changes and materializes the complete archive on commit through durable
+replacement. Do not add platform archive libraries or in-place writes to compressed entries.
 
-Use the most specific subtype. Do not use `FileIOException` when a more
-specific variant exists (e.g., `FileNotFoundException` for a missing file).
+## Explicit staged writes
+
+Use these public combinators:
+
+| API | Behavior |
+|---|---|
+| `Path.commitWritesOnSuccess(program)` | Isolate changes and commit after success |
+| `Path.discardWrites(program)` | Isolate changes and always discard |
+| `Path.stageWrites(program)` | Return result plus one-shot `FileSystem.StagedChanges` |
+
+`StagedChanges.commit` validates observed lower entries before replay. `commitWith` resolves each
+`CommitConflict` using `FileSystem.Resolution`. `discard` terminates without touching the lower
+backend. Every terminal method is one-shot and a second terminal action must fail explicitly.
+
+Do not claim multi-file external atomicity. The staging API provides isolation before commit,
+conflict detection, deterministic replay, and durable replacement for materialized archive files.
+
+## Error contracts
+
+`FileSystemException` is the umbrella. Concrete exceptions mix in only the marker traits for the
+operations that can raise them:
+
+- `FileReadException`
+- `FileWriteException`
+- `FileStructureException`
+- `FileLockException`
+- `FileWatchException`
+
+Use `FileIOException(path, operation, cause)` only when no more precise leaf describes the failure.
+Preserve `Result.Panic` as a panic. Do not translate interruption, programmer defects, or unexpected
+throwables into expected filesystem failures.
+
+## Adding an operation
+
+1. Decide whether the operation needs read, write, or watch authority.
+2. Add a focused shared test that proves behavior and its precise failure case.
+3. Add the safe Path surface and reified operation when it is a Path capability operation.
+4. Add the narrowest `FileSystem` tier method and precise effect row.
+5. Implement shared backends: in-memory, overlay, and archive backends where supported.
+6. Implement both platform leaves for host behavior.
+7. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
+8. Extend the reusable conformance suite when the contract applies to multiple backends.
+9. Compile and test JVM, JavaScript, Native, and Wasm.
+
+Do not add an operation to the unsafe tier without completing every layer above it.
+
+## Testing
+
+Shared behavior belongs in `shared/src/test`. A test file must share a prefix with its production
+source. Platform tests are reserved for genuine host integration differences.
+
+Use the reusable suites for backend laws:
+
+- `FileSystemReadTestSuite`
+- `FileSystemWriteTestSuite`
+- `FileSystemChannelTestSuite`
+- `FileSystemDurabilityTestSuite`
+- `FileSystemLockTestSuite`
+- `FileSystemWatchTestSuite`
+
+Test capability rows with `typeCheck` and `typeCheckErrors`. Use deterministic `Async` coordination
+for watcher and lock tests. Never use sleeps or blocking primitives to make scheduling tests pass.
+
+Before submission, run the affected module tests on all four platforms and the module doctest. Read
+formatted files again after sbt completes because compilation formats sources.

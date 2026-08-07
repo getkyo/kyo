@@ -1,0 +1,317 @@
+package kyo
+
+import java.nio.charset.StandardCharsets
+
+class InMemoryFileSystemTest extends kyo.test.Test[Any]:
+
+    // Helper: run a path program through a fresh in-memory service.
+    private def withInMem[A, S](program: FileSystem.Write[Sync] => A < (Sync & Abort[FileSystemException] & S))
+        : A < (Sync & Abort[FileSystemException] & S) =
+        FileSystem.inMemory.map(svc => program(svc))
+
+    "read after write returns the written string" in {
+        withInMem { svc =>
+            val p = Path("hello.txt")
+            Path.runWith(svc)(p.write("hello world").andThen(p.read)).map { result =>
+                assert(result == "hello world")
+            }
+        }
+    }
+
+    "list after three writes returns exactly those three names sorted" in {
+        withInMem { svc =>
+            val dir = Path("dir")
+            val prog =
+                dir.mkDir.andThen {
+                    (dir / "c.txt").write("c").andThen {
+                        (dir / "a.txt").write("a").andThen {
+                            (dir / "b.txt").write("b").andThen {
+                                dir.list
+                            }
+                        }
+                    }
+                }
+            Path.runWith(svc)(prog).map { paths =>
+                assert(paths.map(_.name.getOrElse("")) == Chunk("a.txt", "b.txt", "c.txt"))
+            }
+        }
+    }
+
+    "Glob selection is root-relative and case-configurable" in {
+        withInMem { svc =>
+            val dir = Path("dir")
+            val prog =
+                (dir / "top.JSON").write("top").andThen {
+                    (dir / "nested" / "deep.json").write("deep").andThen {
+                        dir.list(glob"*.json").map { defaultMatches =>
+                            dir.list(glob"*.json", Glob.CaseSensitivity.Insensitive).map { insensitiveMatches =>
+                                Scope.run(dir.walk(glob"**/*.json").run).map { walked =>
+                                    (defaultMatches, insensitiveMatches, walked)
+                                }
+                            }
+                        }
+                    }
+                }
+            Path.runWith(svc)(prog).map { (defaultMatches, insensitiveMatches, walked) =>
+                assert(defaultMatches.isEmpty)
+                assert(insensitiveMatches.map(_.parts.last) == Chunk("top.JSON"))
+                assert(walked.map(_.parts.last) == Chunk("deep.json"))
+            }
+        }
+    }
+
+    "append then read returns the concatenation" in {
+        withInMem { svc =>
+            val p    = Path("app.txt")
+            val prog = p.write("foo").andThen(p.append("bar")).andThen(p.read)
+            Path.runWith(svc)(prog).map { result =>
+                assert(result == "foobar")
+            }
+        }
+    }
+
+    "truncate reduces the byte count and read returns only the kept prefix" in {
+        withInMem { svc =>
+            val p    = Path("trunc.txt")
+            val data = "abcdefgh"
+            val prog = p.write(data).andThen(p.truncate(4)).andThen(p.readBytes.map(b =>
+                (b.size.toLong, new String(b.toArrayUnsafe, StandardCharsets.UTF_8))
+            ))
+            Path.runWith(svc)(prog).map { case (sz, content) =>
+                assert(sz == 4L)
+                assert(content == "abcd")
+            }
+        }
+    }
+
+    "move leaves source absent and target holding the bytes" in {
+        withInMem { svc =>
+            val a = Path("mv-a.txt")
+            val b = Path("mv-b.txt")
+            val prog =
+                a.write("moved").andThen(a.move(b)).andThen {
+                    Abort.run[FileSystemException](a.exists).map(aRes => b.readBytes.map(bBytes => (aRes, bBytes)))
+                }
+            Path.runWith(svc)(prog).map { case (aRes, bBytes) =>
+                assert(aRes == Result.succeed(false))
+                assert(new String(bBytes.toArray, StandardCharsets.UTF_8) == "moved")
+            }
+        }
+    }
+
+    "copy leaves both source and target holding the bytes" in {
+        withInMem { svc =>
+            val a    = Path("cp-a.txt")
+            val b    = Path("cp-b.txt")
+            val prog = a.write("shared").andThen(a.copy(b)).andThen(a.read.map(ar => b.read.map(br => (ar, br))))
+            Path.runWith(svc)(prog).map { case (ar, br) =>
+                assert(ar == "shared")
+                assert(br == "shared")
+            }
+        }
+    }
+
+    "copyAttributes controls whether a copy preserves source metadata" in {
+        withInMem { svc =>
+            val source      = Path("copy-stat-source.txt")
+            val fresh       = Path("copy-stat-fresh.txt")
+            val preserved   = Path("copy-stat-preserved.txt")
+            val sourceMtime = 1234567L
+            Path.runWith(svc) {
+                source.write("content")
+                    .andThen(source.setLastModified(sourceMtime))
+                    .andThen(source.copy(fresh, Path.CopyOptions(copyAttributes = false)))
+                    .andThen(source.copy(preserved, Path.CopyOptions(copyAttributes = true)))
+                    .andThen(source.stat.map(sourceStat => fresh.stat.map(freshStat => preserved.stat.map((sourceStat, freshStat, _)))))
+            }.map { (sourceStat, freshStat, preservedStat) =>
+                assert(sourceStat.lastModifiedMs == sourceMtime)
+                assert(freshStat.lastModifiedMs != sourceMtime)
+                assert(preservedStat == sourceStat)
+            }
+        }
+    }
+
+    "move onto an existing target without replaceExisting aborts FileAlreadyExistsException" in {
+        withInMem { svc =>
+            val a = Path("me-a.txt")
+            val b = Path("me-b.txt")
+            // Abort.run must be OUTSIDE Path.runWith: exceptions raised by the service during
+            // PathWrite dispatch propagate out of Path.runWith, not into the inner Abort.run scope.
+            val prog = a.write("a").andThen(b.write("b")).andThen(a.move(b, Path.MoveOptions(replace = Path.Replace.Never)))
+            Abort.run[FileSystemException](Path.runWith(svc)(prog)).map { result =>
+                assert(result.isFailure)
+                assert(result.failure.exists(_.isInstanceOf[FileAlreadyExistsException]))
+            }
+        }
+    }
+
+    "copy onto an existing target without replaceExisting aborts FileAlreadyExistsException" in {
+        withInMem { svc =>
+            val a    = Path("ce-a.txt")
+            val b    = Path("ce-b.txt")
+            val prog = a.write("a").andThen(b.write("b")).andThen(a.copy(b, Path.CopyOptions(replace = Path.Replace.Never)))
+            Abort.run[FileSystemException](Path.runWith(svc)(prog)).map { result =>
+                assert(result.isFailure)
+                assert(result.failure.exists(_.isInstanceOf[FileAlreadyExistsException]))
+            }
+        }
+    }
+
+    "stat after write reflects the written byte count" in {
+        withInMem { svc =>
+            val p    = Path("stat.txt")
+            val data = "12345"
+            val prog = p.write(data).andThen(p.stat)
+            Path.runWith(svc)(prog).map { st =>
+                assert(st.sizeBytes == data.getBytes(StandardCharsets.UTF_8).length.toLong)
+            }
+        }
+    }
+
+    "isSymbolicLink returns false for both files and directories" in {
+        withInMem { svc =>
+            val f = Path("sym-f.txt")
+            val d = Path("sym-d")
+            val prog =
+                f.write("x").andThen(d.mkDir).andThen {
+                    f.isSymbolicLink.map(fi => d.isSymbolicLink.map(di => (fi, di)))
+                }
+            Path.runWith(svc)(prog).map { case (fi, di) =>
+                assert(!fi)
+                assert(!di)
+            }
+        }
+    }
+
+    "two concurrent writes to sibling paths both land without lost updates" in {
+        FileSystem.inMemory.map { svc =>
+            val aPath = Path("race-a.txt")
+            val bPath = Path("race-b.txt")
+            val aData = Span.from("alpha".getBytes(StandardCharsets.UTF_8))
+            val bData = Span.from("beta".getBytes(StandardCharsets.UTF_8))
+            for
+                gate   <- Latch.init(1)
+                fiberA <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(aPath.writeBytes(aData))))
+                fiberB <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(bPath.writeBytes(bData))))
+                _      <- gate.release
+                _      <- fiberA.get
+                _      <- fiberB.get
+                aBytes <- Path.runWith(svc)(aPath.readBytes)
+                bBytes <- Path.runWith(svc)(bPath.readBytes)
+            yield
+                assert(new String(aBytes.toArray, StandardCharsets.UTF_8) == "alpha")
+                assert(new String(bBytes.toArray, StandardCharsets.UTF_8) == "beta")
+            end for
+        }
+    }
+
+    "two concurrent appends to the same path both land without lost content" in {
+        FileSystem.inMemory.map { svc =>
+            val p = Path("concurrent-append.txt")
+            Path.runWith(svc)(p.write("")).andThen {
+                for
+                    gate   <- Latch.init(1)
+                    fiberA <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(p.append("AAA"))))
+                    fiberB <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(p.append("BBB"))))
+                    _      <- gate.release
+                    _      <- fiberA.get
+                    _      <- fiberB.get
+                    result <- Path.runWith(svc)(p.read)
+                yield
+                    // Both appends must land; order is non-deterministic under concurrent scheduling.
+                    assert(result == "AAABBB" || result == "BBBAAA", s"expected both appends to land, got: '$result'")
+                end for
+            }
+        }
+    }
+
+    "writeBytes with createFolders=false fails when parent directory does not exist" in {
+        FileSystem.inMemory.map { svc =>
+            val nested = Path("missing-parent", "file.txt")
+            Abort.run[FileSystemException](
+                Path.runWith(svc)(nested.writeBytes(Span.from(Array[Byte](1, 2, 3)), Path.WriteOptions(createFolders = false)))
+            ).map { result =>
+                assert(result.isFailure, "expected FileNotFoundException but got success")
+                assert(
+                    result.failure.exists(_.isInstanceOf[FileNotFoundException]),
+                    s"expected FileNotFoundException, got: ${result.failure}"
+                )
+            }
+        }
+    }
+
+    "writeTo abort before finish leaves target absent" in {
+        FileSystem.inMemory.map { svc =>
+            val target = Path("sink-abort.bin")
+            // A stream that fails mid-way; the write handle's finish() is never called so no bytes land.
+            val failingStream: Stream[Byte, Abort[FileSystemException]] =
+                Stream.init(Chunk[Byte](1, 2, 3)).concat(
+                    Stream.init(Abort.fail[FileSystemException](FileNotFoundException(target)).map(_ => Chunk.empty[Byte]))
+                )
+            val prog =
+                Abort.run[FileSystemException](
+                    Scope.run(
+                        Path.runWith(svc)(failingStream.writeTo(target))
+                    )
+                ).andThen(
+                    Abort.run[FileSystemException](Path.runWith(svc)(target.exists))
+                )
+            prog.map { existsResult =>
+                assert(existsResult == Result.succeed(false))
+            }
+        }
+    }
+
+    "writeTo with a complete stream writes the exact bytes to the target" in {
+        FileSystem.inMemory.map { svc =>
+            val target  = Path("sink-ok.bin")
+            val payload = Chunk[Byte](10, 20, 30, 40)
+            val prog =
+                Scope.run(
+                    Path.runWith(svc)(Stream.init(payload).writeTo(target))
+                ).andThen(
+                    Path.runWith(svc)(target.readBytes)
+                )
+            prog.map { bytes =>
+                assert(bytes.toArrayUnsafe sameElements payload.toArray)
+            }
+        }
+    }
+
+    "tempDir scope cleanup removes only the in-memory entry and does not touch a coincident host directory" in {
+        FileSystem.inMemory.map { svc =>
+            AtomicRef.init[Maybe[Path]](Absent).map { pathRef =>
+                // Open a scope that creates an in-memory temp dir; simultaneously create a
+                // real host directory at the same path string.
+                Scope.run(
+                    Path.runWith(svc) {
+                        Path.tempDir("conf-tmp").map { tmpPath =>
+                            pathRef.set(Present(tmpPath)).andThen {
+                                // Unsafe: creates a host-FS directory to verify that in-memory remove does not touch it.
+                                Sync.Unsafe.defer(Abort.get(tmpPath.unsafe.mkDir()))
+                            }
+                        }
+                    }
+                ).andThen {
+                    // Scope exit has called TempDirHandle.remove() on the in-memory service.
+                    pathRef.use {
+                        case Absent => fail("tempDir path was never captured")
+                        case Present(p) =>
+                            Path.runWith(svc)(p.exists).map { inMemExists =>
+                                assert(!inMemExists, s"in-memory entry should be gone after scope exit: $p")
+                            }.andThen {
+                                // Unsafe: checks host-FS existence to verify the real dir is untouched.
+                                Sync.Unsafe.defer(Abort.get(p.unsafe.exists())).map { hostExists =>
+                                    assert(hostExists, s"coincident host dir should still exist: $p")
+                                }
+                            }.andThen {
+                                // Unsafe: cleans up the host-FS temp directory created by this test.
+                                Sync.Unsafe.defer(discard(p.unsafe.removeAll()))
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+end InMemoryFileSystemTest

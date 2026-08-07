@@ -1,6 +1,6 @@
 package kyo
 
-class ExitCodeTest extends kyo.test.Test[Any]:
+class ProcessExitCodeTest extends kyo.test.Test[Any]:
 
     "ExitCode(0) is ExitCode.Success" in {
         assert(ExitCode(0) == ExitCode.Success)
@@ -259,4 +259,4 @@ class ExitCodeTest extends kyo.test.Test[Any]:
         }
     }
 
-end ExitCodeTest
+end ProcessExitCodeTest

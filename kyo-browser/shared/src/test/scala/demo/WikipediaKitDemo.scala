@@ -21,7 +21,7 @@ final class WikipediaKitDemo extends BrowserDemo[WikipediaKitDemo.KitResult]("wi
 
     def flow(using Frame): KitResult < (Browser & Async & Scope & Abort[Throwable]) =
         for
-            outputDir <- Path.tempDir("kyo-browser-wikipedia-kit-")
+            outputDir <- Path.run(Path.tempDir("kyo-browser-wikipedia-kit-"))
 
             _ <- step(1, s"Navigate to $articleUrl")
             _ <- Browser.goto(articleUrl)
@@ -41,9 +41,9 @@ final class WikipediaKitDemo extends BrowserDemo[WikipediaKitDemo.KitResult]("wi
             _   <- log(s"pdf bytes    = ${pdf.size}")
 
             _ <- step(5, s"Write artifacts to ${outputDir.toString}/")
-            _ <- (outputDir / "summary.txt").write(content.take(4000))
+            _ <- Path.run((outputDir / "summary.txt").write(content.take(4000)))
             _ <- infoboxImg.writeFileBinary(outputDir / "infobox.png")
-            _ <- (outputDir / "article.pdf").writeBytes(pdf)
+            _ <- Path.run((outputDir / "article.pdf").writeBytes(pdf))
             _ <- log(s"wrote three artifacts to ${outputDir.toString}/")
 
             _        <- step(6, "Render infobox PNG inline to the terminal")
