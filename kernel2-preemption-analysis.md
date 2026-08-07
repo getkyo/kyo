@@ -2,12 +2,17 @@
 
 Question: can kernel2 reuse the Safepoint depth counter as the preemption
 poll, the way the JVM folds safepoint polls into an existing memory
-access? Answer: yes. A preempter sets a high bit in the victim thread's
-depth cell; the existing `depth >= Limit` compare in `guardedRun` becomes
-the poll, so the eager path pays zero additional cost. The concurrency
-works out because the design never asks the cell to be reliable: the cell
-is a latency accelerator, and correctness stays with the authoritative
-preempt state the drive already checks.
+access? Two variants were explored. The poison-bit variant sets a high
+bit in the depth cell itself, making the existing `depth >= Limit`
+compare the poll at zero added cost, at the price of a benign-but-real
+lost-update race that periodic re-assertion covers. The recommended
+variant (see "The pending-request counter") moves the signal to the
+padding long of the same cache line and uses only atomic operations on
+it: the poll costs one extra load and compare, and delivery becomes
+guaranteed rather than probabilistic, serving preemption and interruption
+through one channel. In both variants correctness stays anchored on the
+authoritative preempt and interrupt state the boundary drive already
+checks; the cell is a latency carrier.
 
 ## The two mechanisms today
 
@@ -189,15 +194,70 @@ two-level split the current kernel has:
   correctly mid-cleanup, but the slice-level finalizer registry that
   IOTask keeps needs its own carrier.
 
+## The pending-request counter (recommended)
+
+A refinement that supersedes the poison bit: keep the depth cell strictly
+single-writer and carry the signal in a dedicated per-thread counter that
+only ever sees atomic operations. This removes every probabilistic
+argument above.
+
+- Placement: the padding of the existing cells cache line. Each slot
+  already occupies 8 longs with only index 0 (depth) used; the pending
+  counter lives at index `slot + 1`. No new array: a separate
+  AtomicLongArray would both cost a second cache line on the poll and
+  false-share neighboring slots' counters (8 per line), while the padding
+  slot is exclusive to the thread and rides the line `guardedRun` already
+  loads.
+- Requesters (coordinator tick, any interrupter): `getAndAdd(+1)` through
+  the array VarHandle. An atomic RMW is never lost, no matter how many
+  requesters race, and requests coalesce naturally into the count.
+- Poll: `guardedRun` adds one load and compare on the already-resident
+  line: `if depth >= Limit || pending != 0 then rescue`. The pending load
+  is opaque mode (eventual visibility and access atomicity at plain-load
+  cost; full volatile would also work but buys ordering nothing here,
+  since ordering is carried by the authoritative state).
+- Consume: only the boundary drive, after consulting the authoritative
+  preempt and interrupt state: `getAndSet(0)`. This is the piece that
+  makes delivery airtight where the poison and a plain flag are not: a
+  request arriving concurrently with the consume lands on the fresh zero
+  and remains pending, forcing another bounce and another authoritative
+  check. Nothing is ever erased unobserved.
+- Non-boundary drives treat `pending != 0` exactly as the poison bit:
+  return the remainder suspended, cascading the park outward; never
+  consume.
+
+The concurrency argument collapses to two sentences. The depth cell is
+single-writer plain, untouched by this design. The pending cell is only
+ever accessed by atomic RMWs (requesters) and atomic reads (poll) and one
+atomic exchange (consume), so there is no interleaving that loses a
+request or corrupts a value.
+
+What this costs relative to the poison bit: the poll is no longer
+literally free, it is one extra load, compare, and predicted branch per
+eager transform, against the cache line the depth access just touched.
+The JMH suite (eagerMap5, resumeFused, deepBind10k are the sensitive
+rows) measures the real delta when implemented. What it buys: delivery
+becomes guaranteed instead of probabilistic, the re-assert authorities
+are needed only for retargeting (a request aimed at a thread the fiber
+already left) rather than for delivery, and the safety argument requires
+no reasoning about stomp windows at all.
+
+Everything else in this document carries over unchanged: the cascade
+semantics through non-boundary drives, the task-to-slot mapping for
+interrupt targeting, the Task-precedent periodic re-assertion (now only
+for stale targeting), the stride backstop, and the promise CAS as the
+correctness anchor. One channel serves preemption and interruption
+alike; the boundary drive decides which it was by reading the
+authoritative state, never by decoding the counter.
+
 ## Alternatives considered
 
-- Flag in the padding cell (`cells(slot + 1)`, same cache line, currently
-  unused padding): restores strict single-writer-per-cell (preempter
-  writes the flag, owner only reads and clears it), removing races 1-3
-  entirely. Costs one extra load and compare in `guardedRun`. The load
-  hits the already-loaded cache line, so it is nearly free, but it is not
-  zero, and the poison-bit races were shown benign. Keep as the fallback
-  if the bit packing complicates something unforeseen.
+- Plain flag in the padding cell (set 1, clear 0, no atomics): removes
+  the owner stomp (the owner never writes the flag location) but leaves a
+  set-versus-clear race between a requester and the consumer that can
+  erase an unobserved request. Superseded by the pending-request counter,
+  which keeps the same placement and poll cost and closes that last race
+  by making every access an atomic RMW, read, or exchange.
 - Porting the interceptor as a per-thread reference consulted in
   `guardedRun`: a reference load on a separate cache line plus a
   megamorphic call per map. Rejected for the hot path; it also reintroduces
