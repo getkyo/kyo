@@ -145,7 +145,7 @@ object `<`:
                             cont(w)
                     end match
                 end run
-            Arrow.of(arrow)(self)
+            arrow(self)
         end map
 
     end extension
@@ -515,27 +515,14 @@ object Arrow:
                         else o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
                     case t: Transform[A, B, S] @unchecked =>
                         if probe() then applySlow(self, v)
-                        else
-                            val slot = Depth.slot()
-                            if Depth.increase(slot) >= Depth.Limit then rescue(self, v)
-                            else
-                                try
-                                    val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                                    Depth.decrease(slot)
-                                    r
-                                catch
-                                    case ex: Throwable =>
-                                        Depth.decrease(slot)
-                                        KyoException.attach(ex, "map", t.frame)
-                                        throw ex
-                                end try
-                            end if
+                        else guardedRun(t, v)
+                        end if
                     case _ =>
                         applySlow(self, v)
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-            if isEmpty(self) then f.asInstanceOf[Arrow[A, C, S & S2]]
-            else if isEmpty(f) then self.asInstanceOf[Arrow[A, C, S & S2]]
+            if self.asInstanceOf[AnyRef] eq empty then f.asInstanceOf[Arrow[A, C, S & S2]]
+            else if f.asInstanceOf[AnyRef] eq empty then self.asInstanceOf[Arrow[A, C, S & S2]]
             else new AndThen(self, f)
 
         def optimize: Arrow[A, B, S] =
@@ -599,6 +586,22 @@ object Arrow:
 
     private def rescue[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
         Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+
+    private def guardedRun[A, B, S, S2](t: Transform[A, B, S], v: A < S2): B < (S & S2) =
+        val slot = Depth.slot()
+        if Depth.increase(slot) >= Depth.Limit then rescue(t, v)
+        else
+            try
+                val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
+                Depth.decrease(slot)
+                r
+            catch
+                case ex: Throwable =>
+                    Depth.decrease(slot)
+                    KyoException.attach(ex, "map", t.frame)
+                    throw ex
+        end if
+    end guardedRun
 
     private def applySlow[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
         self match
