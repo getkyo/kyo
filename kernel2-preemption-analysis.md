@@ -1,39 +1,46 @@
 # kernel2 preemption via Safepoint
 
-## Implemented design: the slot wrapper swap
+## Implemented design: a sealed two-state machine per slot
 
-Safepoint is a class holding the owning thread (checked by reference
-identity, never by id, which the JVM may reuse after a thread dies) and
-the single-writer plain depth; threads claim instances through an
-AtomicReferenceArray. `enter` and `exit` stay pure depth accounting with
-no preemption code at all. A requester publishes its condition (promise
-CAS, preempt state) and then compare-and-swaps the victim's slot to a
-wrapper instance: same thread, depth pinned at the limit, holding the
-original. The victim's next `Safepoint.get`, a volatile read it performs
-on every frame anyway, returns the wrapper, so every subsequent frame
-refuses and bounces onto the rescue trampoline; frames already entered
-keep exiting against the original instance, unaffected. Non-boundary
-drives observe the wrapper (`preempted` on a fresh `get`) and return
-their remainder, cascading the park; the boundary drive consumes it
-(`clearPreempt` swaps the original back) before consulting the
-authoritative state, the volatile exchange ordering the requester's
-condition writes before that check.
+Safepoint is a sealed hierarchy with two states, and a thread's slot in
+the AtomicReferenceArray holds its current state. `Active` is the
+claimed state doing the real work: single-writer plain depth accounting
+in `enter` and `exit`, with no preemption code at all. `Parked` refuses
+every frame; it carries `resume: Maybe[Active]`, where Present means "a
+preemption request is pending, restore this on consume" and Absent is
+the shared Overflow token (no slot could be claimed, permanently
+parked). Ownership is checked by thread reference identity, never by
+id, which the JVM may reuse after a thread dies.
 
-Delivery cannot be lost: both the request and its consumption are CAS of
-the slot, which the owner never writes outside claiming. Reclamation of
-a dead owner's slot swaps in a fresh instance, so no stale request can
-survive. Requests aimed at the Overflow instance are no-ops (it already
-refuses every frame). One channel serves time-slice preemption and
-interruption; the boundary drive distinguishes them by reading the
-authoritative state. The Task-precedent periodic authorities
-(coordinator tick, BlockingMonitor scan) are still wanted, but only for
-retargeting a request whose fiber migrated before the CAS landed, never
-for delivery.
+A preemption request is the declared transition: the requester publishes
+its condition (promise CAS, preempt state), then compare-and-swaps the
+victim's slot from its Active to a Parked carrying it. The victim's
+next `Safepoint.get`, a volatile read it performs on every frame anyway,
+returns the parked state, so every subsequent frame refuses and bounces
+onto the rescue trampoline; frames already entered keep exiting against
+the Active they captured, unaffected. Consumption is the reverse
+transition, performed by the boundary drive before consulting the
+authoritative state; the exchange orders the requester's condition
+writes before that check. `preempted` and `clearPreempt` live on the
+companion and read the current thread's slot, so a stashed token cannot
+be asked a question only the slot can answer.
 
-One subtlety the wrapper introduces: `preempted` and `clearPreempt` are
-meaningful on a freshly obtained Safepoint; a reference held from before
-the request still names the original instance, which never reports
-pending. Drives comply naturally by calling `get` at every check site.
+Delivery cannot be lost: both transitions are CAS of the slot, which
+the owner never writes outside claiming. Reclamation of a dead owner's
+slot installs a fresh Active, so no stale request survives. One channel
+serves time-slice preemption and interruption; the boundary drive
+distinguishes them by reading the authoritative state. The
+Task-precedent periodic authorities (coordinator tick, BlockingMonitor
+scan) are still wanted, but only for retargeting a request whose fiber
+migrated before the CAS landed, never for delivery.
+
+An earlier iteration encoded refusal by pinning the wrapper's depth
+counter at the limit inside a single final class. The sealed split
+replaced it: refusal became a typed fact instead of a magic counter
+value, the query surface moved to the companion, and the `enter`
+callsite became bimorphic with overwhelming Active skew, which C2
+devirtualizes speculatively; measured identical (5.79 vs 5.77 ns/op on
+eagerMap5, all other rows unchanged).
 
 ### Why this shape: the measurement trail
 
@@ -48,7 +55,8 @@ array, or an object field, roughly 1.4 ns per frame:
 |---|---|
 | baseline, no preemption (plain long array) | 3.68 |
 | Safepoint class, no preemption (control) | 4.70 |
-| implemented: wrapper swap (poll rides get's existing volatile load) | 5.77 |
+| implemented: sealed state machine, poll rides get's volatile load | 5.79 |
+| same mechanism, single class with depth pinned at the limit | 5.77 |
 | pending field checked as separate predicted branch | 7.4 |
 | any variant folding a flag load into the depth read | 10.6 |
 | ThreadLocal instead of the slot array, before any poll | 6.03 |
