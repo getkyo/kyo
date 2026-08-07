@@ -1,8 +1,9 @@
 package kyo.internal
 
 /** Table-driven CRC32 with the reflected IEEE 802.3 polynomial (0xEDB88320). Produces bit-identical
-  * output to `java.util.zip.CRC32` for any input. Backs [[ZipArchive]]'s per-entry checksum.
-  * No `java.util.zip`; works on JVM, JS, Native.
+  * output to `java.util.zip.CRC32` for any input. Promoted from the inline copy that lived in
+  * `OverlayFileSystem.scala`'s `WriteOpLog` (commit-plan record framing); this shared copy now
+  * also backs [[ZipArchive]]'s per-entry checksum. No `java.util.zip`; works on JVM, JS, Native.
   *
   * Named `FileSystemCrc32` rather than `CRC32` to avoid colliding with the already-shipped, same-API
   * `kyo.internal.CRC32` in `kyo-eventlog` (a distinct module that depends on `kyo-system`, so both

@@ -19,12 +19,20 @@ abstract class FileSystemStagedChangesConformanceTest[S >: Async] extends kyo.te
             (S & Async & Scope & Abort[FileSystemException])
     )(using Frame): A < (Async & Scope & Abort[FileSystemException])
 
+    /** Declares whether a commit can succeed on this platform.
+      *
+      * A backend whose lower cannot make a commit durable here, such as a host without directory synchronization, must refuse the
+      * commit rather than claim it. When this is false the suite asserts that refusal, and that the staged write is still visible.
+      */
+    protected def supportsCommit: Boolean = true
+
     "staged suite isolates writes until commit" in {
         withFileSystem { (fileSystem, staged, root) =>
             val path = root / "staged.txt"
             fileSystem.write(path, "value", Path.WriteOptions()).andThen {
-                Abort.run[CommitConflict](staged.commit).map { committed =>
-                    assert(committed == Result.unit, s"commit failed: $committed")
+                Abort.run[FileSystemException | CommitConflict](staged.commit).map { committed =>
+                    if supportsCommit then assert(committed == Result.unit, s"commit failed: $committed")
+                    else assert(committed.isFailure, s"an unsupported commit reported $committed")
                     fileSystem.read(path).map(value => assert(value == "value"))
                 }
             }

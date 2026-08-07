@@ -12,6 +12,8 @@ import kyo.ffi.Ffi
   * another runtime's descriptor table.
   */
 private[kyo] trait DurableFileBindings extends Ffi:
+    def kyo_durable_mkdir(path: String, error: Buffer[Int])(using AllowUnsafe): Int
+    def kyo_durable_verify_directory(path: String, error: Buffer[Int])(using AllowUnsafe): Int
     def kyo_durable_open(target: String, temporary: String, error: Buffer[Int])(using AllowUnsafe): Long
 
     /** Answers 0, an OS error code, or, when a write makes no progress, the negated count of bytes left unwritten. */

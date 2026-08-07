@@ -1,7 +1,7 @@
 package kyo.internal
 
-/** Tests for [[FileSystemCrc32]], the table-driven CRC32 implementation behind [[ZipArchive]]'s
-  * per-entry checksum.
+/** Tests for [[FileSystemCrc32]], the table-driven CRC32 implementation shared by
+  * [[OverlayFileSystem]]'s intent-log framing and [[ZipArchive]]'s per-entry checksum.
   */
 class FileSystemCrc32Test extends kyo.test.Test[Any]:
 
