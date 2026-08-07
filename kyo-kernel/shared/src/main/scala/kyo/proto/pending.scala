@@ -16,7 +16,7 @@ sealed abstract class Kyo[+A, -S]:
 
 object Kyo:
 
-    case class Nested[+A](value: A):
+    class Nested[+A](val value: A):
         override def toString = "Nested"
 
     abstract class Suspend[I[_], O[_], E <: Effect[I, O], A] extends Kyo[O[A], E]:
@@ -25,10 +25,10 @@ object Kyo:
         def tag: Tag[E]
         def frame: Frame
 
-        def map[B, S](f: Arrow[O[A], B, S]): B < (E & S) =
+        final def map[B, S](f: Arrow[O[A], B, S]): B < (E & S) =
             Continue[I, O, E, A, B, S](this, f)
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): O[A] < E =
+        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): O[A] < E =
             map(f.asInstanceOf[Arrow[O[A], O[A], Any]])
 
         override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
@@ -119,8 +119,8 @@ object `<`:
 
         def unsafeGet: A =
             self match
-                case Nested(v) => v.asInstanceOf[A]
-                case _         => self.asInstanceOf[A]
+                case self: Nested[?] => self.value.asInstanceOf[A]
+                case _               => self.asInstanceOf[A]
 
         private[kyo] def discard: Unit =
             discardValue(self) match

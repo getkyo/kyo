@@ -24,7 +24,7 @@ class PendingTest extends Test[Any]:
 
     def resolve(v: Int < Ask, answers: Int*): Int =
         var remaining = answers.toList
-        val result = `<`.eval(Tag[Ask], v)(
+        val result = `<`.evalPartial(Tag[Ask], v)(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     remaining match
@@ -34,7 +34,7 @@ class PendingTest extends Test[Any]:
                         case Nil =>
                             Maybe.Absent
         )
-        Kyo.unwrap(result).asInstanceOf[Int]
+        result.asInstanceOf[Int < Any].eval
     end resolve
 
     "eager chain evaluates during construction" in {
@@ -66,7 +66,7 @@ class PendingTest extends Test[Any]:
             k = k.map(_ + 1)
             i += 1
         var parked: Any = null
-        val r = `<`.eval(Tag[Ask], k)(
+        val r = `<`.evalPartial(Tag[Ask], k)(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont
@@ -83,7 +83,7 @@ class PendingTest extends Test[Any]:
             k = k.map(_ + 1)
             i += 1
         var parked: Any = null
-        val r = `<`.eval(Tag[Ask], k)(
+        val r = `<`.evalPartial(Tag[Ask], k)(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont
@@ -101,7 +101,7 @@ class PendingTest extends Test[Any]:
             k = k.map(_ + 1)
             i += 1
         var parked: Any = null
-        val r = `<`.eval(Tag[Ask], k)(
+        val r = `<`.evalPartial(Tag[Ask], k)(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont
@@ -147,7 +147,7 @@ class PendingTest extends Test[Any]:
                 log :+= "rel"; ()
             def cont = contAsk(v => ask.map(a => a + v))
         var parked: Any = null
-        val r = `<`.eval(Tag[Ask], b.map(Arrow[Int]))(
+        val r = `<`.evalPartial(Tag[Ask], b.map(Arrow[Int]))(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont
@@ -239,13 +239,13 @@ class PendingTest extends Test[Any]:
         end ask2
         val program: Int < Ask =
             ask.map(a => ask2.asInstanceOf[Int < Ask].map(b => a * 10 + b))
-        val inner = `<`.eval(Tag[Ask], program)(
+        val inner = `<`.evalPartial(Tag[Ask], program)(
             [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(1))
         )
         val outer = `<`.eval(Tag[Ask2], inner.asInstanceOf[Int < Ask2])(
-            [X] => (input: Unit, cont: Arrow[Int, Int, Ask2]) => Maybe(cont(2))
+            [X] => (input: Unit, cont: Arrow[Int, Int, Ask2]) => cont(2)
         )
-        assert(Kyo.unwrap(outer).asInstanceOf[Int] == 12)
+        assert(outer == 12)
     }
 
     "observe reports steps and survives park and resume" in {
@@ -253,7 +253,7 @@ class PendingTest extends Test[Any]:
         val k           = ask.map(_ + 1).map(_ * 2)
         val observed    = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
         var parked: Any = null
-        val r = `<`.eval(Tag[Ask], observed)(
+        val r = `<`.evalPartial(Tag[Ask], observed)(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont
@@ -274,7 +274,7 @@ class PendingTest extends Test[Any]:
             i += 1
         val observed    = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
         var parked: Any = null
-        val r = `<`.eval(Tag[Ask], observed)(
+        val r = `<`.evalPartial(Tag[Ask], observed)(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont
@@ -292,7 +292,7 @@ class PendingTest extends Test[Any]:
         }
         val ex =
             try
-                val _ = `<`.eval(Tag[Ask], program)(
+                val _ = `<`.evalPartial(Tag[Ask], program)(
                     [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(1))
                 )
                 null
@@ -306,7 +306,7 @@ class PendingTest extends Test[Any]:
     "lift wraps nested computations" in {
         val inner: Int < Ask          = ask
         val nested: (Int < Ask) < Any = inner
-        val out                       = Kyo.unwrap(nested).asInstanceOf[Int < Ask]
+        val out                       = nested.eval
         assert(resolve(out.map(_ + 1), 41) == 42)
     }
 

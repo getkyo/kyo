@@ -45,7 +45,7 @@ class PendingSchedulerTest extends Test[Any]:
             )
         )
         val outer = transform(v => mk("inner", inner))
-        val remainder = `<`.eval(Tag[Ask], mk("outer", outer))(
+        val remainder = `<`.evalPartial(Tag[Ask], mk("outer", outer))(
             [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe.Absent
         )
         assert(log == List("acq-outer", "acq-inner"))
@@ -63,7 +63,7 @@ class PendingSchedulerTest extends Test[Any]:
                 log :+= "rel"; ()
             def cont = transform(v => ask.map(a => a + v))
         var parked: Any = null
-        val remainder = `<`.eval(Tag[Ask], bracket.map(Arrow[Int]))(
+        val remainder = `<`.evalPartial(Tag[Ask], bracket.map(Arrow[Int]))(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont
@@ -89,7 +89,7 @@ class PendingSchedulerTest extends Test[Any]:
             k = k.map(_ + 1)
             i += 1
         var parked: Any = null
-        val r = `<`.eval(Tag[Ask], k)(
+        val r = `<`.evalPartial(Tag[Ask], k)(
             [X] =>
                 (input: Unit, cont: Arrow[Int, Int, Ask]) =>
                     parked = cont

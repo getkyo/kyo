@@ -6,6 +6,7 @@ import kyo.Maybe
 import kyo.Tag
 import language.implicitConversions
 import scala.annotation.nowarn
+import scala.annotation.static
 import scala.annotation.tailrec
 
 trait Effect[I[_], O[_]]
@@ -19,46 +20,46 @@ object Kyo:
     // Compiled as a JVM static of class Kyo: hot callers (minted arrow fragments,
     // Arrow.apply, Offset.run) reach it via invokestatic with no module load and,
     // in minted fragments, no captured reference to an enclosing object.
-    def unwrap(v: Any): Any =
+    @static def unwrap(v: Any): Any =
         v match
             case n: Nested[?] => n.value
             case _            => v
 
-    case class Nested[+A](value: A):
-        override def toString = "Nested"
+    @static final class Nested[+A](final val value: A):
+        final override def toString = "Nested"
 
-    abstract class Suspend[I[_], O[_], E <: Effect[I, O], A] extends Kyo[O[A], E]:
+    @static abstract class Suspend[I[_], O[_], E <: Effect[I, O], A] extends Kyo[O[A], E]:
 
         def input: I[A]
         def tag: Tag[E]
         def frame: Frame
 
-        def map[B, S](f: Arrow[O[A], B, S]): B < (E & S) =
+        final def map[B, S](f: Arrow[O[A], B, S]): B < (E & S) =
             Continue[I, O, E, A, B, S](this, f)
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): O[A] < E =
+        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): O[A] < E =
             map(f.asInstanceOf[Arrow[O[A], O[A], Any]])
 
-        override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
+        final override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
 
     end Suspend
 
-    case class Continue[I[_], O[_], E <: Effect[I, O], A, +B, -S](
-        suspend: Suspend[I, O, E, A],
-        cont: Arrow[O[A], B, S]
+    @static final class Continue[I[_], O[_], E <: Effect[I, O], A, +B, -S](
+        final val suspend: Suspend[I, O, E, A],
+        final val cont: Arrow[O[A], B, S]
     ) extends Kyo[B, E & S]:
 
-        def map[C, S2](f: Arrow[B, C, S2]): C < (E & S & S2) =
+        final def map[C, S2](f: Arrow[B, C, S2]): C < (E & S & S2) =
             Continue(suspend, cont.map(f))
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < (E & S) =
+        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < (E & S) =
             Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[O[A], B, S]])
 
         override def toString = "Continue(" + suspend + ")"
 
     end Continue
 
-    abstract class Bracket[R, A, S] extends Kyo[A, S]:
+    @static abstract class Bracket[R, A, S] extends Kyo[A, S]:
 
         def acquire: R < S
         def release(r: R): Unit < S
@@ -75,7 +76,7 @@ object Kyo:
             end new
         end map
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S =
+        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S =
             val outer = this
             new Bracket[R, A, S]:
                 def acquire =
@@ -88,19 +89,22 @@ object Kyo:
             end new
         end prepend
 
-        override def toString = "Bracket(" + frame.position.show + ")"
+        final override def toString = "Bracket(" + frame.position.show + ")"
 
     end Bracket
 
-    final private[kyo] case class Defer[A, +B, -S](value: A, cont: Arrow[A, B, S]) extends Kyo[B, S]:
+    @static final private[kyo] class Defer[A, +B, -S](
+        final val value: A,
+        final val cont: Arrow[A, B, S]
+    ) extends Kyo[B, S]:
 
-        def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
+        final def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Defer(value, cont.map(f))
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
+        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
             Defer(value, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[A, B, S]])
 
-        override def toString = "Defer"
+        final override def toString = "Defer"
 
     end Defer
 
@@ -125,7 +129,9 @@ object `<`:
                 case t :: rest =>
                     rest.foreach(t.addSuppressed)
                     throw t
+    end extension
 
+    extension [A, S](inline self: A < S)
         @nowarn
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
@@ -152,7 +158,7 @@ object `<`:
                 v
     end observe
 
-    final private class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
+    @static final class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             @tailrec def loop(es: Array[Arrow.Transform[?, ?, ?]], i: Int, cur: Any): Any =
@@ -184,7 +190,7 @@ object `<`:
 
     extension [A](self: A < Any)
 
-        def eval: A =
+        inline def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
                 Kyo.unwrap(evalLoop(self.asInstanceOf[Any < Any], never, 1, unhandled)).asInstanceOf[A]
             else Kyo.unwrap(self).asInstanceOf[A]
@@ -194,35 +200,36 @@ object `<`:
 
     end extension
 
-    def eval[I[_], O[_], E <: Effect[I, O], A](
-        tag: Tag[E],
-        v: A < E
-    )(
-        handle: [X] => (I[X], Arrow[O[X], A, E]) => Maybe[A < E]
-    ): A < E =
-        eval(tag, v, never, Arrow.Period)(handle)
-
-    def eval[I[_], O[_], E <: Effect[I, O], A](
+    def evalPartial[I[_], O[_], E <: Effect[I, O], A](
         tag: Tag[E],
         v: A < E,
-        preempt: () => Boolean,
-        period: Int
+        preempt: () => Boolean = never,
+        period: Int = Arrow.Period
     )(
         handle: [X] => (I[X], Arrow[O[X], A, E]) => Maybe[A < E]
     ): A < E =
         val handler: Kyo[Any, Any] => Maybe[Any < Any] =
-            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked if sameTag(c.suspend.tag, tag) =>
+            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked if c.suspend.tag =:= tag =>
                 handle(c.suspend.input, c.cont.optimize).asInstanceOf[Maybe[Any < Any]]
-            case s: Kyo.Suspend[I, O, E, Any] @unchecked if sameTag(s.tag, tag) =>
+            case s: Kyo.Suspend[I, O, E, Any] @unchecked if s.tag =:= tag =>
                 handle(s.input, Arrow[A].asInstanceOf[Arrow[O[Any], A, E]]).asInstanceOf[Maybe[Any < Any]]
             case _ =>
                 Maybe.Absent
         end handler
         evalLoop(v.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), handler).asInstanceOf[A < E]
-    end eval
+    end evalPartial
 
-    private def sameTag[A, B](a: Tag[A], b: Tag[B]): Boolean =
-        (a.asInstanceOf[AnyRef] eq b.asInstanceOf[AnyRef]) || a =:= b
+    def eval[I[_], O[_], E <: Effect[I, O], A](
+        tag: Tag[E],
+        v: A < E
+    )(
+        handle: [X] => (I[X], Arrow[O[X], A, E]) => A < E
+    ): A =
+        Kyo.unwrap(
+            evalPartial(tag, v)(
+                [X] => (input: I[X], cont: Arrow[O[X], A, E]) => Maybe(handle(input, cont))
+            )
+        ).asInstanceOf[A]
 
     private val never: () => Boolean = () => false
 
@@ -269,7 +276,7 @@ object `<`:
                     cont(v.asInstanceOf[A < Any])
         )
 
-    final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
+    @static final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
         extends Arrow.Transform[A, A, S]:
         def frame = bracket.frame
         def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
@@ -511,7 +518,7 @@ object Arrow:
 
     end extension
 
-    final class Offset private[kyo] (
+    @static final class Offset private[kyo] (
         private[kyo] val elems: Array[Transform[?, ?, ?]],
         private[kyo] val from: Int
     ) extends Transform[Any, Any, Any]:
