@@ -124,4 +124,15 @@ class FileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    "overlay factories preserve generic write effects and expose watching for Sync" in {
+        val errors = typeCheckErrors("""
+            given kyo.Frame = kyo.Frame.internal
+            val synchronous: (kyo.FileSystem.Write[kyo.Sync] & kyo.FileSystem.Watch) < (kyo.Sync & kyo.Scope) =
+                kyo.FileSystem.overlay(kyo.FileSystem.host)
+            def generic[S, S2](lower: kyo.FileSystem.Write[S])(using kyo.Isolate[S, kyo.Sync, S2]):
+                kyo.FileSystem.Write[S & kyo.Sync] < (kyo.Sync & kyo.Scope) = kyo.FileSystem.overlay(lower)
+        """)
+        assert(errors.isEmpty, errors.mkString("\n"))
+    }
+
 end FileSystemTest
