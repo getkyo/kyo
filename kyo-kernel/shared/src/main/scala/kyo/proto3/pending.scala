@@ -399,9 +399,6 @@ object Arrow:
     private[kyo] inline def Period = 512
     private inline def SmallLimit  = 32
 
-    private[kyo] def probe(): Boolean =
-        false
-
     final private[kyo] class Depth private ()
 
     private[kyo] object Depth:
@@ -522,12 +519,9 @@ object Arrow:
             else
                 self match
                     case o: Offset[Any, Any, Any, Any] @unchecked =>
-                        if probe() then applySlow(self, v)
-                        else o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
+                        o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
                     case t: Transform[A, B, S] @unchecked =>
-                        if probe() then applySlow(self, v)
-                        else guardedRun(t, v)
-                        end if
+                        guardedRun(t, v)
                     case _ =>
                         applySlow(self, v)
 
@@ -639,9 +633,7 @@ object Arrow:
     private def applySlow[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
         self match
             case at: AndThen[?, ?, ?, ?] =>
-                if probe() then
-                    Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
-                else self.optimize(v)
+                self.optimize(v)
             case _ =>
                 Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
     end applySlow
@@ -660,26 +652,23 @@ object Arrow:
         def run[C, S2](v: Any, cont: Arrow[B, C, S2]): C < (S & S2) =
             val k = cont.asInstanceOf[Arrow[Any, Any, Any]]
             @tailrec def loop(o: Offset[Any, Any, Any, Any], cur: Any): Any =
-                if probe() then
-                    Kyo.Defer(cur, o.map(k).asInstanceOf[Arrow[Any, Any, Any]])
-                else
-                    o.head match
-                        case jump: Offset[Any, Any, Any, Any] @unchecked if isEmpty(o.next) =>
-                            loop(jump, cur)
-                        case t =>
-                            val w =
-                                try t.run(cur, empty)
-                                catch
-                                    case ex: Throwable =>
-                                        KyoException.attach(ex, "map", t.frame)
-                                        throw ex
-                            if w.isInstanceOf[Kyo[?, ?]] then
-                                o.next.map(k)(w.asInstanceOf[Any < Any])
-                            else
-                                (o.next: Any) match
-                                    case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unwrap(w))
-                                    case _                                        => k(Kyo.unwrap(w).asInstanceOf[Any < Any])
-                            end if
+                o.head match
+                    case jump: Offset[Any, Any, Any, Any] @unchecked if isEmpty(o.next) =>
+                        loop(jump, cur)
+                    case t =>
+                        val w =
+                            try t.run(cur, empty)
+                            catch
+                                case ex: Throwable =>
+                                    KyoException.attach(ex, "map", t.frame)
+                                    throw ex
+                        if w.isInstanceOf[Kyo[?, ?]] then
+                            o.next.map(k)(w.asInstanceOf[Any < Any])
+                        else
+                            (o.next: Any) match
+                                case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unwrap(w))
+                                case _                                        => k(Kyo.unwrap(w).asInstanceOf[Any < Any])
+                        end if
             loop(this.asInstanceOf[Offset[Any, Any, Any, Any]], v).asInstanceOf[C < (S & S2)]
         end run
 
