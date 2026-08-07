@@ -47,7 +47,11 @@ private[kyo] object Safepoint:
         cells(slot) -= 1
 
     @static def slot(): Int =
-        val tid = Thread.currentThread().threadId
+        // getId, not threadId: threadId is absent from the Scala.js javalib and fails JS and
+        // Wasm linking (it type-checks against the JDK, then breaks at link). getId is
+        // deprecated-not-removed and returns the same identifier. This is shared code, so it
+        // must link on every platform.
+        val tid = Thread.currentThread().getId(): @scala.annotation.nowarn("cat=deprecation")
         val i   = tid.toInt & Mask
         if owners.get(i) == tid then i << Shift
         else slow(tid)
@@ -79,7 +83,8 @@ private[kyo] object Safepoint:
     end claim
 
     @static private[kyo] def owned: Boolean =
-        val tid = Thread.currentThread().threadId
+        // getId, not threadId, so shared code links on Scala.js and Wasm; see `slot` above.
+        val tid = Thread.currentThread().getId(): @scala.annotation.nowarn("cat=deprecation")
         @tailrec def scan(i: Int): Boolean =
             if i == Slots then false
             else if owners.get(i) == tid then true

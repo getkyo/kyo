@@ -289,6 +289,18 @@ per read, non-inline drive) is deliberately unoptimized; the proto3 ledger
 defines the recovery targets. The fork-time environment snapshot for
 Isolate arrives with the environment threading work in a later round.
 
+Platform support beyond the JVM is parked by user ruling (JVM-only for
+now). Recorded state for the platform round: kyo-kernel2 JS does not link.
+Safepoint's Thread.threadId calls were replaced with the deprecated getId
+(the old kernel's pattern, identical on the JVM) after
+kyo-kernel2JS/Test/fastLinkJS reproduced the link failure; the remaining
+linker error is Thread.isAlive in Safepoint.dead (slot reclamation),
+absent from the Scala.js javalib. Candidate fix: guard with kyo-data's
+per-platform inline Platform constants so the call folds away on JS and
+Wasm at compile time (precedent: Platform.isJS at Tag.scala:319). The
+frozen proto2 and proto3 prototypes in kyo-kernel use isAlive in shared
+code as well and carry the same latent JS-link issue.
+
 ## Visibility policy
 
 Public is exactly the user surface plus what inline expansion forces:
