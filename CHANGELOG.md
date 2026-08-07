@@ -12,6 +12,12 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-schema] `Schema.stringOrderedDictSchema` and `Schema.orderedDictSchema`: derive a `Schema` for a case class with an `OrderedDict` field
 - [kyo-core] `Fiber.use`: use a forked fiber within a function and clean it up
 - [kyo-core] `Fiber.initUnscoped`: fork a fiber without guaranteeing cleanup (formerly `Fiber.init`)
+- [kyo-system] `Path.tailBytes`: follow a file at the byte level, starting from the beginning, the end, or a recorded offset
+- [kyo-system] `Path.Origin`: where a byte-level read begins (`Start`, `End`, `Offset`)
+- [kyo-core] `Stream.fromInputStream`: stream a `java.io.InputStream`'s bytes, closed with the enclosing `Scope`
+- [kyo-schema] `RecordDecodeException`: decode failure for one record in a multi-record input, carrying its index, byte offset, and text
+- [kyo-schema-json] `Json.Lines`: pure JSONL/NDJSON framing (`Framer`, `Record`, `Line`, `Framed`) plus `decodeAll`, `decodeAllBytes`, `decodeAllBytesResults`, `encodeAll`, `encodeAllBytes`, `encodeLine`
+- [kyo-schema-json] `Jsonl`: streaming JSONL/NDJSON over files and byte streams with `read`, `follow`, `pipe`, `encode`, `write`, `append`, and per-record error recovery through the `Results` variants
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`
 - [kyo-logging-jpl] `kyo.JavaLog`: bridge `Log` to Java platform logging a.k.a. `System.Logger`
 - [kyo-logging-slf4j] `kyo.SLF4JLog`: bridge `Log` to SLF4J 2.0 API
@@ -31,3 +37,4 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-core] `Log.live`: defaulting to `Unsafe.ConsoleLogger` for all platforms
 - [kyo-core] `Path`, `System`, `Process`, `Command`, `CommandException`, `FileException`, and the `Stream` `writeTo` and `writeLinesTo` sinks have moved to a new `kyo-system` module. Add `"io.getkyo" %% "kyo-system"` to keep using them. No import or signature changes are needed, since the package is still `kyo`.
 - [kyo-core] `Async.defaultConcurrency` now resolves through `StaticFlag`, which adds an environment-variable channel (`KYO_ASYNC_CONCURRENCY_DEFAULT`, checked after the `kyo.async.concurrency.default` system property) and changes the exception type thrown on a malformed value.
+- [kyo-system] `Path.Unsafe.openWrite(append = true)`: now appends on Scala.js and Wasm. The Node handle wrote at an explicit position, which makes the call a positioned write, and POSIX leaves `O_APPEND` without effect there, so on macOS every write overwrote the file from its first byte. Writes now go at the file description's own cursor.

@@ -94,7 +94,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     // --- Streaming read handles ---
 
     def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle] =
-        catchRead(new NioReadHandle(FileChannel.open(jpath, StandardOpenOption.READ)))
+        catchRead(new NioReadHandle(FileChannel.open(jpath, StandardOpenOption.READ), safe))
 
     def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle] =
         catchRead(new NioLineReadHandle(Files.newBufferedReader(jpath, charset)))
@@ -401,8 +401,12 @@ final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extend
 
 end NioWriteHandle
 
-/** Concrete read handle backed by a `java.nio.channels.FileChannel`. */
-final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHandle:
+/** Concrete read handle backed by a `java.nio.channels.FileChannel`.
+  *
+  * Carries the `Path` it was opened under only to name the file in a `FileReadException`, the same reason `NioWriteHandle` carries one.
+  * Nothing here re-resolves it: every measurement goes through the channel.
+  */
+final private[kyo] class NioReadHandle(channel: FileChannel, path: Path) extends Path.ReadHandle:
 
     // Single-owner cache of the last wrapped buffer: a repeated read into the same reused array reuses
     // this ByteBuffer instead of allocating a fresh wrapper per call. Confined to this handle instance.
@@ -455,6 +459,16 @@ final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHa
 
     def position(offset: Long)(using AllowUnsafe): Unit =
         discard(channel.position(offset))
+
+    def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
+        // SeekableByteChannel.size reports the channel's file, so a rename or a replacement of the
+        // path this channel was opened under leaves the answer unchanged. The path-resolution
+        // failures catchRead separates out (not found, denied, is a directory) cannot arise from a
+        // measurement of an already-open channel, which leaves the same shape NioWriteHandle uses.
+        try Result.succeed(channel.size())
+        catch
+            case e: IOException => Result.fail(FileIOException(path, e))
+            case e: Throwable   => Result.panic(e)
 
     def close()(using AllowUnsafe): Unit =
         channel.close()
