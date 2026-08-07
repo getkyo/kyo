@@ -1,5 +1,11 @@
 # Contributing to kyo-system
 
+This file documents the internal design contracts, invariants, and conventions
+specific to `kyo-system`. Read the root `CONTRIBUTING.md` first; everything there
+applies here, and this file extends it with module-local rules.
+
+---
+
 ## Path API
 
 ### Safe-tier surface
@@ -118,23 +124,21 @@ exception.
 
 ## FileException hierarchy
 
-```
-FileException (sealed)
-  FileReadException (sealed)
-    FileNotFoundException
-    FileAccessDeniedException
-    FileIOException
-  FileWriteException (sealed)
-    FileWriteIOException
-    FileWriteAccessDeniedException
-    FileWriteNotFoundException
-  FileFsException (sealed)
-    FileFsIOException
-    FileFsAccessDeniedException
-    FileFsNotFoundException
-```
+`FileException` is a sealed abstract base. `FileReadException`,
+`FileWriteException`, and `FileFsException` are sealed marker traits on it,
+one per operation category. Each concrete case class implements only the
+traits of the operations that can actually raise it, so a single exception
+can carry more than one marker:
+
+| Concrete case class              | Read | Write | Fs |
+|-----------------------------------|:----:|:-----:|:--:|
+| `FileNotFoundException`           | x    | x     | x  |
+| `FileAccessDeniedException`       | x    | x     | x  |
+| `FileIsADirectoryException`       | x    | x     |    |
+| `FileNotADirectoryException`      |      |       | x  |
+| `FileAlreadyExistsException`      |      |       | x  |
+| `FileDirectoryNotEmptyException`  |      |       | x  |
+| `FileIOException`                 | x    | x     | x  |
 
 Use the most specific subtype. Do not use `FileIOException` when a more
 specific variant exists (e.g., `FileNotFoundException` for a missing file).
-
----

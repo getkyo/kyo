@@ -138,7 +138,7 @@ val example: Unit < (Async & Sync & Scope & Abort[CommandException]) =
     }
 ```
 
-`Process.stdout`, `Process.stderr`, and `Process.stdin` expose the streams directly. `Process.waitFor`, `Process.waitFor(timeout)`, `Process.exitCode`, `Process.destroy`, `Process.destroyForcibly` cover lifecycle.
+`Process.stdout` and `Process.stderr` expose the output streams directly. `Process.waitFor`, `Process.waitFor(timeout)`, `Process.exitCode`, `Process.destroy`, `Process.destroyForcibly` cover lifecycle. Stdin is provided up front via the `Command` builder (`Command.stdin`), not read back off `Process`; the unsafe tier exposes `Process.unsafe.stdinJava` for callers that opened the pipe with `Command.pipeStdin`.
 
 > **Caution:** Reading `stdout` and `stderr` sequentially can deadlock when output exceeds the ~64KB pipe buffer (the producer blocks on the unread stream). Use `Process.collectOutput` to drain both concurrently.
 
