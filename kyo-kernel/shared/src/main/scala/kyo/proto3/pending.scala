@@ -604,7 +604,7 @@ object Arrow:
           * decomposes by identity; a composition is optimized first; a lone
           * transform is wrapped in a fresh node.
           */
-        def step: Maybe[Step[A, B, S]] =
+        inline def step: Maybe[Step[A, B, S]] =
             self match
                 case o: Offset[Any, Any, Any, Any] @unchecked =>
                     Maybe(o.asInstanceOf[Step[A, B, S]])
@@ -613,7 +613,7 @@ object Arrow:
 
     end extension
 
-    private def stepSlow[A, B, S](self: Arrow[A, B, S]): Maybe[Step[A, B, S]] =
+    def stepSlow[A, B, S](self: Arrow[A, B, S]): Maybe[Step[A, B, S]] =
         self match
             case at: AndThen[?, ?, ?, ?] =>
                 self.optimize.step
