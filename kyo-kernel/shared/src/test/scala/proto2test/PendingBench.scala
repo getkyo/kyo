@@ -95,6 +95,10 @@ object PendingBench:
             def program: Int < BenchCounter =
                 counterOp(Maybe.Absent).map(n => if n <= 0 then n else counterOp(Maybe(n - 1)).map(_ => program).map(_ + 1))
             runCounter(program, 100000)
+        val _ = time("stateMap1M", 2):
+            def program: Int < BenchCounter =
+                counterOp(Maybe.Absent).map(n => if n <= 0 then n else counterOp(Maybe(n - 1)).map(_ => program).map(_ + 1))
+            runCounter(program, 1000000)
         val _ = time("suspension", 5):
             var i   = 0
             var acc = 0
