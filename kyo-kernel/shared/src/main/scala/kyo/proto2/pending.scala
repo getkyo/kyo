@@ -161,27 +161,26 @@ object `<`:
     final class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            @tailrec def loop(es: Array[Arrow.Transform[?, ?, ?]], i: Int, cur: Any): Any =
-                if i == es.length then cur
-                else
-                    es(i) match
-                        case o: Arrow.Offset =>
-                            loop(o.elems, o.from, cur)
-                        case t0 =>
-                            val t = t0.asInstanceOf[Arrow.Transform[Any, Any, Any]]
-                            observer(t.frame, cur)
-                            val w = t.run(cur, Arrow[Any])
-                            if w.isInstanceOf[Kyo[?, ?]] then
-                                val rest =
-                                    if i + 1 < es.length then
-                                        Arrow.map(Arrow.of[Any, Any, Any](this))(Arrow.tail(es, i + 1))
-                                    else Arrow.of[Any, Any, Any](this)
-                                w.asInstanceOf[Kyo[Any, Any]].map(rest)
-                            else loop(es, i + 1, Kyo.unwrap(w))
-                            end if
+            @tailrec def loop(o: Arrow.Offset, cur: Any): Any =
+                o.head match
+                    case jump: Arrow.Offset if Arrow.isEmpty(o.next) =>
+                        loop(jump, cur)
+                    case t =>
+                        observer(t.frame, cur)
+                        val w = t.run(cur, Arrow[Any])
+                        if w.isInstanceOf[Kyo[?, ?]] then
+                            val rest =
+                                if Arrow.isEmpty(o.next) then Arrow.of[Any, Any, Any](this)
+                                else Arrow.map(Arrow.of[Any, Any, Any](this))(o.next)
+                            w.asInstanceOf[Kyo[Any, Any]].map(rest)
+                        else
+                            (o.next: Any) match
+                                case n: Arrow.Offset => loop(n, Kyo.unwrap(w))
+                                case _               => Kyo.unwrap(w)
+                        end if
             (cont: Any) match
                 case o: Arrow.Offset =>
-                    loop(o.elems, o.from, v).asInstanceOf[C < (Any & S2)]
+                    loop(o, v).asInstanceOf[C < (Any & S2)]
                 case _ =>
                     cont(v.asInstanceOf[Any < Any])
             end match
@@ -255,11 +254,19 @@ object `<`:
                         KyoException.attach(t, "release", finalize.bracket.frame)
                         t :: Nil
             case o: Arrow.Offset =>
-                discardElems(o.elems, o.from)
+                discardChain(o)
             case arr: Array[Any] @unchecked =>
                 discardElems(arr, 0)
             case _ =>
                 Nil
+
+    private def discardChain(o: Arrow.Offset): List[Throwable] =
+        @tailrec def loop(cur: Any, errors: List[Throwable]): List[Throwable] =
+            cur match
+                case o: Arrow.Offset => loop(o.next, errors ++ discardArrow(o.head))
+                case _               => errors
+        loop(o, Nil)
+    end discardChain
 
     private def discardElems(elems: Array[?], from: Int): List[Throwable] =
         @tailrec def loop(i: Int, errors: List[Throwable]): List[Throwable] =
@@ -440,7 +447,17 @@ object Arrow:
                 arr
 
         def optimize: Arrow[A, B, S] =
-            def unfold(arr: Array[Any]): Array[Transform[?, ?, ?]] =
+            def respine(node: Any, rest: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                node match
+                    case arr: Array[Any] @unchecked =>
+                        @tailrec def loop(i: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                            if i < 0 then acc
+                            else loop(i - 1, respine(arr(i), acc))
+                        loop(arr.length - 1, rest)
+                    case t =>
+                        new Offset(t.asInstanceOf[Transform[Any, Any, Any]], rest)
+            end respine
+            def unfold(arr: Array[Any]): Arrow[Any, Any, Any] =
                 val buffer = optimizeBuffer.get()
                 buffer.clear()
                 buffer.push(arr)
@@ -458,7 +475,11 @@ object Arrow:
                                 val _ = buffer.add(t)
                                 drain(pending - 1)
                 drain(1)
-                val result = buffer.toArray(new Array[Transform[?, ?, ?]](buffer.size))
+                val it = buffer.descendingIterator()
+                @tailrec def link(acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                    if !it.hasNext then acc
+                    else link(new Offset(it.next().asInstanceOf[Transform[Any, Any, Any]], acc))
+                val result = link(empty)
                 buffer.clear()
                 result
             end unfold
@@ -477,29 +498,14 @@ object Arrow:
                                     loop(i + 1, total + 1)
                     loop(0, 0)
             end count
-            def fill(a: Array[Any], out: Array[Transform[?, ?, ?]], at: Int): Int =
-                @tailrec def loop(i: Int, j: Int): Int =
-                    if i == a.length then j
-                    else
-                        (a(i): Any) match
-                            case inner: Array[Any] @unchecked =>
-                                loop(i + 1, fill(inner, out, j))
-                            case t =>
-                                out(j) = t.asInstanceOf[Transform[?, ?, ?]]
-                                loop(i + 1, j + 1)
-                loop(0, at)
-            end fill
             (self: Any) match
                 case arr: Array[Transform[?, ?, ?]] @unchecked =>
                     tail(arr.asInstanceOf[Array[Transform[?, ?, ?]]], 0).asInstanceOf[Arrow[A, B, S]]
                 case arr: Array[Any] @unchecked =>
                     val n = count(arr, 0)
                     if n == 0 then empty
-                    else if n > 0 then
-                        val out = new Array[Transform[?, ?, ?]](n)
-                        val _   = fill(arr, out, 0)
-                        tail(out, 0).asInstanceOf[Arrow[A, B, S]]
-                    else tail(unfold(arr), 0).asInstanceOf[Arrow[A, B, S]]
+                    else if n > 0 then respine(arr, empty).asInstanceOf[Arrow[A, B, S]]
+                    else unfold(arr).asInstanceOf[Arrow[A, B, S]]
                     end if
                 case _ =>
                     self
@@ -525,14 +531,10 @@ object Arrow:
     end applySlow
 
     final class Offset private[kyo] (
-        private[kyo] val elems: Array[Transform[?, ?, ?]],
-        private[kyo] val from: Int,
+        val head: Transform[Any, Any, Any],
         private[kyo] val next: Arrow[Any, Any, Any]
     ) extends Transform[Any, Any, Any]:
         def frame = Frame.internal
-
-        def head: Transform[Any, Any, Any] =
-            elems(from).asInstanceOf[Transform[Any, Any, Any]]
 
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             @tailrec def loop(o: Offset, cur: Any): Any =
@@ -559,13 +561,13 @@ object Arrow:
             loop(this, v).asInstanceOf[C < (Any & S2)]
         end run
 
-        override def toString = "Offset(" + from + ")"
+        override def toString = "Offset"
     end Offset
 
     private[kyo] def tail(elems: Array[Transform[?, ?, ?]], from: Int): Arrow[Any, Any, Any] =
         @tailrec def link(i: Int, next: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             if i < from then next
-            else link(i - 1, new Offset(elems, i, next))
+            else link(i - 1, new Offset(elems(i).asInstanceOf[Transform[Any, Any, Any]], next))
         if from >= elems.length then empty
         else link(elems.length - 1, empty)
     end tail
@@ -573,7 +575,7 @@ object Arrow:
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
 
-    private def isEmpty[X, Y, Z](f: Arrow[X, Y, Z]): Boolean =
+    private[kyo] def isEmpty[X, Y, Z](f: Arrow[X, Y, Z]): Boolean =
         (f: Any) match
             case arr: Array[Any] @unchecked => arr.length == 0
             case _                          => false
