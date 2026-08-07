@@ -47,7 +47,6 @@ class SafepointTest extends Test[Any]:
     "preempt request lifecycle" in {
         var initiallyClear    = false
         var clearOnEmpty      = true
-        var staleStillClear   = false
         var visibleAfterSet   = false
         var consumed          = false
         var clearAfterConsume = false
@@ -55,21 +54,19 @@ class SafepointTest extends Test[Any]:
         var restoredSame      = false
         val t = new Thread(() =>
             val safepoint = Safepoint.get
-            initiallyClear = !safepoint.preempted
-            clearOnEmpty = Safepoint.get.clearPreempt()
+            initiallyClear = !Safepoint.preempted
+            clearOnEmpty = Safepoint.clearPreempt()
             safepoint.preempt()
-            staleStillClear = !safepoint.preempted
-            visibleAfterSet = Safepoint.get.preempted
-            consumed = Safepoint.get.clearPreempt()
-            clearAfterConsume = !Safepoint.get.preempted
-            secondConsume = Safepoint.get.clearPreempt()
+            visibleAfterSet = Safepoint.preempted
+            consumed = Safepoint.clearPreempt()
+            clearAfterConsume = !Safepoint.preempted
+            secondConsume = Safepoint.clearPreempt()
             restoredSame = Safepoint.get eq safepoint
         )
         t.start()
         t.join()
         assert(initiallyClear)
         assert(!clearOnEmpty)
-        assert(staleStillClear)
         assert(visibleAfterSet)
         assert(consumed)
         assert(clearAfterConsume)
@@ -79,7 +76,7 @@ class SafepointTest extends Test[Any]:
 
     "a pending request refuses fresh frames without touching in-flight depth" in {
         var first              = false
-        var wrapperRefuses     = false
+        var parkedRefuses      = false
         var inFlightUnaffected = false
         var consumed           = false
         var budget             = 0
@@ -88,9 +85,9 @@ class SafepointTest extends Test[Any]:
             val safepoint = Safepoint.get
             first = safepoint.enter()
             safepoint.preempt()
-            wrapperRefuses = !Safepoint.get.enter()
+            parkedRefuses = !Safepoint.get.enter()
             inFlightUnaffected = safepoint.enter()
-            consumed = Safepoint.get.clearPreempt()
+            consumed = Safepoint.clearPreempt()
             budget = 2
             while safepoint.enter() do budget += 1
             var i = budget
@@ -103,7 +100,7 @@ class SafepointTest extends Test[Any]:
         t.start()
         t.join()
         assert(first)
-        assert(wrapperRefuses)
+        assert(parkedRefuses)
         assert(inFlightUnaffected)
         assert(consumed)
         assert(budget == 512)
@@ -126,7 +123,7 @@ class SafepointTest extends Test[Any]:
                 iterations += 1
             end while
             parked = !proceeding
-            val _ = Safepoint.get.clearPreempt()
+            val _ = Safepoint.clearPreempt()
         )
         t.start()
         while !ready do ()
@@ -144,7 +141,7 @@ class SafepointTest extends Test[Any]:
             bounced = (v: Any) match
                 case _: Kyo[?, ?] => true
                 case _            => false
-            val _ = Safepoint.get.clearPreempt()
+            val _ = Safepoint.clearPreempt()
             evaluated = v.eval
         )
         t.start()
@@ -155,8 +152,8 @@ class SafepointTest extends Test[Any]:
 
     "a request on the overflow safepoint is a no-op" in {
         Safepoint.Overflow.preempt()
-        assert(!Safepoint.Overflow.preempted)
         assert(!Safepoint.Overflow.enter())
+        assert(!Safepoint.preempted)
     }
 
     "a reclaimed slot does not inherit a pending request" in {
@@ -173,7 +170,7 @@ class SafepointTest extends Test[Any]:
         var i            = 0
         while i < 1024 do
             val t = new Thread(() =>
-                if Safepoint.get.preempted then anyPreempted = true
+                if Safepoint.preempted then anyPreempted = true
                 val v = (1: Int < Any).map(_ + 1)
                 (v: Any) match
                     case _: Kyo[?, ?] => allEager = false

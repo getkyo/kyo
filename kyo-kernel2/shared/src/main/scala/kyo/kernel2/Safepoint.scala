@@ -9,77 +9,41 @@ import scala.annotation.tailrec
 
 /** The kernel's runtime guard: a per-thread token gating eager execution behind depth accounting and preemption polling.
   *
-  * Each thread claims a Safepoint instance. Guarded transform executions obtain it with `get` and bracket each frame with `enter` and
-  * `exit`: `enter` refuses when the depth budget is exhausted, and the refusing caller reroutes through a rescue Defer so the trampoline
-  * unwinds the stack or surfaces the park.
+  * A thread's safepoint is a two-state machine held in its claimed slot. `Active` performs the real accounting: guarded transform
+  * executions obtain the current state with `get` and bracket each frame with `enter` and `exit`, and `enter` refuses when the depth
+  * budget is exhausted, rerouting the caller through a rescue Defer so the trampoline unwinds the stack. `Parked` refuses every frame:
+  * it is installed by a preemption request and carries the `Active` to restore, and the shared Overflow token is the degenerate
+  * permanently parked state (no slot could be claimed, nothing to restore).
   *
-  * Preemption rides the same machinery with no cost on the entering path. A requester (`preempt`) publishes its condition (promise
-  * state, preempt flag) first, then swaps the victim's slot to a wrapper instance whose depth is pinned at the limit. The victim's next
-  * `get`, a volatile read it performs on every frame anyway, returns the wrapper, so every subsequent frame refuses and the park
-  * cascades out to the drives; frames already entered keep exiting against the original instance, unaffected. Non-boundary drives
-  * observe the wrapper without consuming it (`preempted`) and return their remainder. The boundary drive consumes it (`clearPreempt`),
-  * swapping the original back before consulting the authoritative state; the swap is a volatile exchange, ordering the requester's
-  * condition writes before that check. Delivery cannot be lost: both the request and its consumption are compare-and-swaps of the slot,
-  * and the owner never writes its slot outside claiming.
+  * Preemption is a state transition, and the poll costs nothing on the entering path. A requester (`preempt`) publishes its condition
+  * (promise state, preempt flag) first, then compare-and-swaps the victim's slot from its `Active` to a `Parked` carrying it. The
+  * victim's next `get`, a volatile read it performs on every frame anyway, returns the parked state, so every subsequent frame refuses
+  * and the park cascades out to the drives; frames already entered keep exiting against the `Active` they captured, unaffected.
+  * Non-boundary drives observe without consuming (`preempted`) and return their remainder. The boundary drive consumes
+  * (`clearPreempt`), swapping the `Active` back before consulting the authoritative state; the exchange orders the requester's
+  * condition writes before that check. Delivery cannot be lost: both transitions are compare-and-swaps of the slot, which the owner
+  * never writes outside claiming.
   *
-  * `preempted` and `clearPreempt` are meaningful on a freshly obtained Safepoint: a reference held from before the request still names
-  * the original instance, which never reports pending. Drives comply naturally, calling `get` at every check site.
+  * `preempted` and `clearPreempt` live on the companion and read the current thread's slot, so a stashed token cannot be asked a
+  * question only the slot can answer. Ownership is checked by thread reference identity, not id: the JVM may reuse a dead thread's id,
+  * and an id match could hand a new thread a dead owner's token while reclamation swaps it out underneath. Reclamation installs a fresh
+  * `Active`, so no state of the previous owner, including a pending request, survives.
   *
-  * Ownership is checked by thread reference identity, not id: the JVM may reuse a dead thread's id, and an id match could hand a new
-  * thread a dead owner's instance while reclamation swaps it out underneath. A dead owner's slot is reclaimed by swapping in a fresh
-  * instance, so no state of the previous owner, including a pending request, survives reclamation. The shared Overflow instance is
-  * returned when no slot can be claimed: its depth is pinned at the limit, every frame refuses and trampolines, and preemption requests
-  * to it are no-ops.
-  *
-  * This is the successor of the current kernel's Safepoint: `enter` and `exit` replace its stack-depth accounting, and the wrapper swap
-  * replaces its interceptor's preemption role.
+  * This is the successor of the current kernel's Safepoint: `enter` and `exit` replace its stack-depth accounting, and the parked
+  * transition replaces its interceptor's preemption role.
   */
-final private[kyo] class Safepoint private (
-    private[kernel2] val thread: Maybe[Thread],
-    private val index: Int,
-    private var depth: Long,
-    private val original: Maybe[Safepoint]
-):
-    import Safepoint.*
+sealed abstract private[kyo] class Safepoint(private[kernel2] val thread: Maybe[Thread]):
 
-    /** Enters a guarded frame: false when the depth budget is exhausted or this is the wrapper of a preempted thread. */
-    def enter(): Boolean =
-        val d = depth
-        if d < Limit then
-            depth = d + 1
-            true
-        else false
-        end if
-    end enter
+    /** Enters a guarded frame: false when the depth budget is exhausted or this safepoint is parked. */
+    def enter(): Boolean
 
     /** Exits a frame entered successfully. Never call after a refused `enter`. */
-    def exit(): Unit =
-        depth -= 1
+    def exit(): Unit
 
     /** Requests preemption of this safepoint's thread. Publish the condition before calling. The request cannot be lost: it is a
-      * compare-and-swap of the thread's slot, which the owner never writes outside claiming. No-op on the Overflow instance and on a
-      * wrapper already carrying a request.
+      * compare-and-swap of the thread's slot, which the owner never writes outside claiming. No-op on a parked safepoint.
       */
-    def preempt(): Unit =
-        if thread.isDefined && original.isEmpty then
-            val _ = slots.compareAndSet(index, this, new Safepoint(thread, index, Limit, Maybe(this)))
-    end preempt
-
-    /** Whether this safepoint carries a preemption request. Observation only; the cascade check for non-boundary drives. */
-    def preempted: Boolean =
-        original.isDefined
-
-    /** Consumes a pending request, true when one was pending. Boundary drives call this before the authoritative check; the exchange
-      * orders the requester's condition writes before that check.
-      */
-    def clearPreempt(): Boolean =
-        original match
-            case Present(o) =>
-                val _ = slots.compareAndSet(index, this, o)
-                true
-            case Absent =>
-                false
-    end clearPreempt
+    def preempt(): Unit
 
     private[kernel2] def ownedBy(t: Thread): Boolean =
         thread.exists(_ eq t)
@@ -95,12 +59,42 @@ private[kyo] object Safepoint:
     private inline def Mask   = Slots - 1
     private inline def Probes = 8
 
+    final private[kernel2] class Active private[Safepoint] (thread: Maybe[Thread], private[Safepoint] val index: Int)
+        extends Safepoint(thread):
+
+        private var depth = 0L
+
+        def enter(): Boolean =
+            val d = depth
+            if d < Limit then
+                depth = d + 1
+                true
+            else false
+            end if
+        end enter
+
+        def exit(): Unit =
+            depth -= 1
+
+        def preempt(): Unit =
+            val _ = slots.compareAndSet(index, this, new Parked(Present(this), thread))
+    end Active
+
+    final private[kernel2] class Parked private[Safepoint] (
+        private[Safepoint] val resume: Maybe[Active],
+        thread: Maybe[Thread]
+    ) extends Safepoint(thread):
+        def enter(): Boolean = false
+        def exit(): Unit     = ()
+        def preempt(): Unit  = ()
+    end Parked
+
     @static private val slots = new AtomicReferenceArray[Safepoint](Slots)
 
-    /** The shared overflow safepoint: depth pinned at the limit so `enter` always refuses, exempt from preemption requests. */
-    @static private[kyo] val Overflow: Safepoint = new Safepoint(Absent, -1, Limit, Absent)
+    /** The shared overflow safepoint: permanently parked, every frame refuses and trampolines, preemption requests are no-ops. */
+    @static private[kyo] val Overflow: Safepoint = new Parked(Absent, Absent)
 
-    /** The current thread's safepoint, or the wrapper carrying its pending preemption request. */
+    /** The current thread's safepoint state. */
     @static def get: Safepoint =
         val self = Thread.currentThread()
         // getId, not threadId: threadId is absent from the Scala.js javalib and fails JS and
@@ -113,20 +107,41 @@ private[kyo] object Safepoint:
         else slow(self, tid)
     end get
 
+    /** Whether the current thread has a pending preemption request. Observation only; the cascade check for non-boundary drives. */
+    @static def preempted: Boolean =
+        get match
+            case parked: Parked => parked.resume.isDefined
+            case _              => false
+
+    /** Consumes the current thread's pending request, true when one was pending. Boundary drives call this before the authoritative
+      * check; the exchange orders the requester's condition writes before that check.
+      */
+    @static def clearPreempt(): Boolean =
+        get match
+            case parked: Parked =>
+                parked.resume match
+                    case Present(active) =>
+                        val _ = slots.compareAndSet(active.index, parked, active)
+                        true
+                    case Absent =>
+                        false
+            case _ =>
+                false
+
     @static private def slow(self: Thread, tid: Long): Safepoint =
         @tailrec def probe(i: Int, remaining: Int): Safepoint =
             if remaining == 0 then Overflow
             else
                 val sp = slots.get(i)
                 if sp eq null then
-                    val fresh = new Safepoint(Maybe(self), i, 0L, Absent)
+                    val fresh = new Active(Maybe(self), i)
                     if slots.compareAndSet(i, null, fresh) then fresh
                     else probe(i, remaining)
                 else if sp.ownedBy(self) then sp
                 else if !sp.alive then
-                    // a dead owner's slot is reclaimed by swapping in a fresh instance, so no state
+                    // a dead owner's slot is reclaimed by installing a fresh Active, so no state
                     // of the previous owner, including a pending request, survives
-                    val fresh = new Safepoint(Maybe(self), i, 0L, Absent)
+                    val fresh = new Active(Maybe(self), i)
                     if slots.compareAndSet(i, sp, fresh) then fresh
                     else probe(i, remaining)
                 else probe((i + 1) & Mask, remaining - 1)
