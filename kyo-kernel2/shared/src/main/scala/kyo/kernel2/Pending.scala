@@ -92,7 +92,10 @@ object `<`:
 
     extension [A, S](self: A < S)
 
-        def discard: Unit =
+        // runtime machinery, not user surface: the abandon trigger for a parked computation,
+        // running the finalizers its brackets carry. The scheduler calls it when dropping a
+        // continuation that will never be resumed.
+        private[kyo] def discard: Unit =
             discardValue(self) match
                 case Nil => ()
                 case t :: rest =>

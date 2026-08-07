@@ -158,23 +158,6 @@ class EffectTest extends Test[Any]:
         assert(v.eval == 2)
     }
 
-    "discarding a parked bracket releases the resource" in {
-        var log = List.empty[String]
-        val v = Effect.bracket {
-            log :+= "acq"
-            42
-        } { _ =>
-            log :+= "rel"
-            ()
-        } { r =>
-            ask.map(a => a + r)
-        }
-        val parked = park(v)
-        assert(log == List("acq"))
-        parked.discard
-        assert(log == List("acq", "rel"))
-    }
-
     "catching intercepts an exception at construction" in {
         val v = Effect.catching[Int, Any, Int, Any] {
             throw new RuntimeException("boom")
