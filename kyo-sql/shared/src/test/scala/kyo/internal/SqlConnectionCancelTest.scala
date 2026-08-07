@@ -810,8 +810,14 @@ class SqlConnectionCancelTest extends kyo.Test:
                                     )
                                 }.flatMap { probe =>
                                     Connection.custodyLocal.use {
-                                        case Present(custody) => Sync.Unsafe.defer(custody.claim(probe))
-                                        case Absent           => ()
+                                        case Present(custody) =>
+                                            Sync.Unsafe.defer(custody.claim(() =>
+                                                probe.isOpen.flatMap {
+                                                    case true  => Sync.Unsafe.defer(probe.closeNow)
+                                                    case false => ()
+                                                }
+                                            ))
+                                        case Absent => ()
                                     }.andThen(probe)
                                 }
                             val factory = new Connection.Factory[Probe]:

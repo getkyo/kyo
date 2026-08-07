@@ -222,18 +222,24 @@ object Connection:
       * neither reclaimed nor closed and outlives the run (the processSharedTransport fd-leak). `take` and `orphan` both read `taken`, so exactly
       * one of the lease's exit and the orphan close ever fires.
       */
+    /** How the orphan finalizer closes a dropped connection. A thunk rather than a typed connection because the thing that must be closed
+      * differs by path: a fresh connect owns a raw [[kyo.net.Connection]] before the engine wraps it into a [[Connection]], while a ring poll
+      * hands over the [[Connection]] itself. Each claimer supplies its own close, `isOpen`-guarded, so the orphan just runs it.
+      */
+    type CustodyClose = () => Unit < (Async & Abort[Throwable])
+
     final class Custody(using AllowUnsafe):
-        private val ref   = AtomicRef.Unsafe.init(Maybe.empty[Connection])
+        private val ref   = AtomicRef.Unsafe.init(Maybe.empty[CustodyClose])
         private val taken = AtomicBoolean.Unsafe.init(false)
 
-        /** The factory delivered a live connection into this lease's custody. */
-        def claim(conn: Connection)(using AllowUnsafe): Unit = ref.set(Maybe(conn))
+        /** The factory delivered a live connection into this lease's custody, with `close` the way to dispose it. */
+        def claim(close: CustodyClose)(using AllowUnsafe): Unit = ref.set(Maybe(close))
 
         /** The lease registered its own exit finalizer, so the orphan finalizer must defer to it. */
         def take()(using AllowUnsafe): Unit = taken.set(true)
 
-        /** A connection claimed but never taken, i.e. one the acquire-to-lease handover dropped; [[Absent]] otherwise. */
-        def orphan()(using AllowUnsafe): Maybe[Connection] = if taken.get() then Absent else ref.get()
+        /** The close of a connection claimed but never taken, i.e. one the acquire-to-lease handover dropped; [[Absent]] otherwise. */
+        def orphan()(using AllowUnsafe): Maybe[CustodyClose] = if taken.get() then Absent else ref.get()
     end Custody
 
     /** The current lease's [[Custody]], set by the pool's acquire path across the connect and made visible to the [[Factory]], which claims into
@@ -412,15 +418,19 @@ object Connection:
                             onPanic(t).flatMap(Abort.fail(_))
                         case Result.Success(rawConn) =>
                             closingOnFailure(rawConn)(body(rawConn).flatMap { a =>
-                                // Claim the constructed connection into the lease's custody, if the pool set one, so a drop of
-                                // the delivery ABOVE openSocket (the connect budget's timeoutWithError, the connect->onLease
-                                // handover) still leaves the connection owned by the pool's orphan finalizer. This runs on the
-                                // body's own success continuation, so closingOnFailure and the connect guard above still cover
-                                // the window before the claim. The cast is safe: every factory that calls openSocket
-                                // constructs a Connection as its `A`.
+                                // Claim the raw socket into the lease's custody, if the pool set one, so a drop of the delivery
+                                // ABOVE openSocket (the connect budget's timeoutWithError, the connect->onLease handover) still
+                                // leaves the socket owned by the pool's orphan finalizer, which closes it. The raw socket rather
+                                // than `a` because `a` is the engine's own connection type, not necessarily a Connection, and it
+                                // is closing the socket that undoes the fd-leak. Runs on the body's own success continuation, so
+                                // closingOnFailure and the connect guard above still cover the window before the claim; the
+                                // isOpen guard keeps it a no-op once the lease's own close has run.
                                 custodyLocal.use {
-                                    case Present(custody) => Sync.Unsafe.defer(custody.claim(a.asInstanceOf[Connection]))
-                                    case Absent           => ()
+                                    case Present(custody) =>
+                                        Sync.Unsafe.defer(custody.claim(() =>
+                                            Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
+                                        ))
+                                    case Absent => ()
                                 }.andThen(a)
                             })
                     }

@@ -401,19 +401,14 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         Sync.Unsafe.defer(new Connection.Custody).flatMap { custody =>
             Scope.run {
                 Scope.ensure { _ =>
-                    // closeNow is the non-suspending close, as in the pool's discard callback. The slot and any in-flight
-                    // reservation are freed by their own finalizers, so a dropped connection only owes the socket here.
-                    // The isOpen guard keeps this a no-op for a connection already closed elsewhere: acquireOrReserve
-                    // claims a ring-polled connection before the health probe runs, so a connection the probe found dead
-                    // and destroyed can sit in the custody until the retry overwrites it, and closing it again would be a
-                    // redundant second socket close.
+                    // Run the claimer's own close for a connection the acquire->lease handover dropped. Each claim carries
+                    // an isOpen-guarded close, so this is a no-op for a connection already closed elsewhere (a ring-polled
+                    // connection the health probe found dead and destroyed can sit in the custody until the retry
+                    // overwrites it). The slot and any in-flight reservation are freed by their own finalizers, so a
+                    // dropped connection only owes the socket here.
                     Sync.Unsafe.defer(custody.orphan()).flatMap {
-                        case Present(conn) =>
-                            conn.isOpen.flatMap {
-                                case true  => Sync.Unsafe.defer(conn.closeNow)
-                                case false => ()
-                            }
-                        case Absent => ()
+                        case Present(close) => close()
+                        case Absent         => ()
                     }
                 }.andThen {
                     Connection.custodyLocal.let(Present(custody)) {
@@ -517,8 +512,15 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                             pool.poll(netKey) match
                                 case Present(conn) =>
                                     maybeCustody match
-                                        case Present(custody) => custody.claim(conn)
-                                        case Absent           => ()
+                                        case Present(custody) =>
+                                            custody.claim(() =>
+                                                conn.isOpen.flatMap {
+                                                    case true  => Sync.Unsafe.defer(conn.closeNow)
+                                                    case false => ()
+                                                }
+                                            )
+                                        case Absent => ()
+                                    end match
                                     RingAttempt.Took(conn)
                                 case Absent => if pool.tryReserve(netKey) then RingAttempt.Reserved else RingAttempt.InTransit
                     }.flatMap {
