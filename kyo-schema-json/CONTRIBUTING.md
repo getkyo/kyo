@@ -1,58 +1,48 @@
-# kyo-json contributor guide
+# kyo-schema-json contributor guide
 
 This file documents the design contracts, invariants, and conventions specific
-to `kyo-json`. Read the root [CONTRIBUTING.md](../CONTRIBUTING.md) first;
+to `kyo-schema-json`. Read the root [CONTRIBUTING.md](../CONTRIBUTING.md) first;
 everything there applies here, and this file extends it with module-local rules.
 
 ---
 
-## Why this module exists at all
+## Module boundary
 
-`kyo-json` holds one object, `Jsonl`, and it is a separate published artifact
-rather than a few more methods on `kyo-schema-json`. That split is deliberate
-and load-bearing.
+`kyo-schema-json` owns the complete JSON surface. `Json` handles one whole JSON
+value, `Json.Lines` provides pure JSONL framing and whole-input operations, and
+`Jsonl` drives that same framing over streams and files.
 
-The `kyo-schema-*` family is effect-free at compile scope. `kyo-schema` depends
-only on `kyo-data`; each format module adds only the core. Nothing in the family
-sees `kyo-kernel`, `kyo-prelude`, or `kyo-core`, which is what makes the family
-adoptable as a standalone serialization library with no Kyo effect runtime on
-the classpath.
+The format-agnostic `kyo-schema` core remains effect-free and depends only on
+`kyo-data`. This format module also depends on `kyo-system`, which brings the
+effect runtime and cross-platform file API needed by `Jsonl`. Consumers that
+need JSON therefore get one artifact and one coherent set of serialization
+rules instead of choosing between separate codec and streaming artifacts.
 
-`Jsonl` needs `Sync`, `Async`, `Scope`, `Stream`, `Pipe`, `Poll`, and `Path`.
-Putting it in `kyo-schema-json` would put `kyo-core` on the classpath of every
-consumer of the JSON codec. `kyo-test-snapshot` is a real such consumer: it
-depends on `kyo-schema` and all six format modules and declares no
-`dependsOn(kyo-core)`, so nothing it publishes carries the effect runtime
-(`build.sbt`, the `kyo-test-snapshot` block). It does compile against `kyo-core`
-on the JVM, through an `unmanagedClasspath` entry, which is a build-local path
-that produces no published or transitive dependency. Folding the effectful
-surface into the codec module would replace that with a real one, for it and
-every project like it, for a feature they do not use.
+The boundary inside the module is strict:
 
-So the split runs along the effect boundary, not along the format boundary:
+| Surface | Role |
+|---|---|
+| `Json` | Whole-value JSON text and bytes, plus JSON Schema generation |
+| `Json.Lines` | Pure framing and whole-input JSONL decode and encode |
+| `Jsonl` | Effectful byte-stream and file drivers over `Json.Lines` |
 
-| Half | Home | Depends on |
-|---|---|---|
-| Pure framing and whole-input decode/encode (`Json.Lines`) | `kyo-schema-json` | `kyo-schema`, `kyo-data` |
-| Effectful drivers (`Jsonl`) | `kyo-json` | `kyo-schema-json`, `kyo-core` |
-
-**Do not move `Jsonl` into `kyo-schema-json`, and do not add an effectful entry
-point to any `kyo-schema-*` module.**
+New framing and parsing rules belong in `JsonLines.scala`. `Jsonl.scala` owns
+only the effectful drivers that feed bytes to that pure implementation.
 
 ---
 
-## The central invariant: all parsing lives in `Json.Lines.Framer`
+## The central `Jsonl` invariant: all parsing delegates to `Json.Lines`
 
-Every byte of framing and every JSON parse in this module happens inside
-`Json.Lines.Framer` and `Json.Lines.decodeRecord`, both in `kyo-schema-json`.
+Every byte of framing and every JSON parse driven by `Jsonl` happens inside
+`Json.Lines.Framer` and `Json.Lines.decodeRecord`.
 `Jsonl` contains no newline scanning, no line splitting, no byte-order-mark
 handling, no CRLF handling, no blank-line skipping, and no JSON parsing.
 
-Exactly one function in this module feeds the framer, the private `frameChunk`.
-Every public entry point routes its bytes through it. The only other framer
-calls are `Framer.init` at the top of each driver and `Framer.finish` at end of
-input in `pipe` and `pipeResults`, which the follow drivers cannot make because
-a follow stream has no end of input.
+Exactly one function in `Jsonl` feeds the framer, the private `frameChunk`.
+Every public `Jsonl` entry point routes its bytes through it. The only other
+framer calls in `Jsonl` are `Framer.init` at the top of each driver and
+`Framer.finish` at end of input in `pipe` and `pipeResults`, which the follow
+drivers cannot make because a follow stream has no end of input.
 
 - `pipe` and `pipeResults` drive it from a `Poll[Chunk[Byte]]` loop, carrying the
   framer as the loop's state.
@@ -160,7 +150,7 @@ test for these outcomes needs the same guard.
 
 A consumer that needs to pick up a rotated-in replacement closes the stream and
 opens a new one against the path. Do not add name-watching to this module; it
-belongs in `kyo-core` if it belongs anywhere, and it is a different contract.
+belongs in `kyo-system` if it belongs anywhere, and it is a different contract.
 
 The rewind is the case that constrains this module's design. `Path.follow`
 restores the step's INITIAL state at a rewind, and the framer is that state, so a
@@ -260,7 +250,7 @@ regardless of how many values the stream has.
 Three details of `writeAll` are contracts rather than incidental:
 
 - **One handle across the whole fold**, so a stream of any length costs one open
-  and one close rather than one of each per chunk. `kyo-core` exposes no `Path`
+  and one close rather than one of each per chunk. `kyo-system` exposes no `Path`
   stream sink, which is why this is hand-rolled over `Path.Unsafe.openWrite`
   instead of composing an existing combinator.
 - **The fold runs under `Abort.run[Any]` INSIDE the bracket**, not outside it.
@@ -301,15 +291,16 @@ which costs a read on every call and races another writer.
 
 The module is cross-platform (JVM, JS, Native, Wasm) with all source and tests
 in `shared/`. There is no platform-specific source. Everything platform-varying
-is already handled by `Path` and `Stream` in `kyo-core`, so a change here that
-needs a `jvm/` or `js/` source file is a sign the change belongs in `kyo-core`
-instead.
+is already handled by `Path` in `kyo-system` and `Stream` in `kyo-core`. A
+`Jsonl` change that needs platform-specific source is a sign the behavior
+belongs in one of those lower modules.
 
 ---
 
 ## Testing conventions
 
-`JsonlTest` is the single test file, matching the single source file. Its
+`JsonlTest` matches `Jsonl.scala` and keeps its effectful cases separate from
+the pure `JsonTest` and `JsonLinesTest` suites. Its
 helpers pin the things that silently pass otherwise, and new tests should use
 them:
 

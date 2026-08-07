@@ -100,7 +100,30 @@ def parseEvent(line: String): Event = ???
 def process(e: Event): Unit < Sync  = ???
 ```
 
-`readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), and `tail` (follow file updates) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
+For typed JSONL/NDJSON decoding, including per-record error recovery and follow mode, use `Jsonl` from [kyo-schema-json](../kyo-schema-json/README.md).
+
+`tailBytes` follows a file without text decoding or line splitting. `Path.Origin` controls where reading begins:
+
+```scala
+import kyo.*
+
+val path = Path("var", "log", "events.ndjson")
+
+val fromStart: Stream[Byte, Async & Scope & Abort[FileReadException]] =
+    path.tailBytes(Path.Origin.Start)
+
+val fromEnd: Stream[Byte, Async & Scope & Abort[FileReadException]] =
+    path.tailBytes()
+
+val fromOffset: Stream[Byte, Async & Scope & Abort[FileReadException]] =
+    path.tailBytes(Path.Origin.Offset(4096))
+```
+
+`tailBytes` defaults to `Origin.End`, so it emits only bytes appended after the stream attaches. `Origin.Start` replays the file before following it, and `Origin.Offset` resumes from a recorded byte position.
+
+Following tracks the open file, not the path name. Rename-based rotation keeps reading the original file, deletion produces no further bytes and no failure while the open handle remains valid, and truncation in place rewinds to byte 0. Rename and deletion follow POSIX descriptor behavior; Windows may refuse those operations for an open file. A consumer that needs a replacement rotated into the original name must close the stream and open a new one.
+
+`readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), `tail` (follow text lines), and `tailBytes` (follow raw bytes) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
 
 > **Note:** Streaming reads carry `Scope` in their effect type. The OS handle is released only when the enclosing `Scope` closes (normal completion, error, or cancellation).
 

@@ -932,6 +932,17 @@ def activeCount: Long = ???
 
 The companion methods are imported with `kyo.*` and become available on the `Stream` companion and on existing `Stream` values.
 
+`Stream.fromInputStream` turns a `java.io.InputStream` into scoped byte chunks and closes it when the enclosing `Scope` ends:
+
+```scala
+import kyo.*
+
+def source: java.io.InputStream = ???
+
+val bytes: Stream[Byte, Sync & Scope] =
+    Stream.fromInputStream(source, bufferSize = 8192)
+```
+
 ### `StreamCompression` (JVM only)
 
 `StreamCompression` is a JVM-only object (in `kyo-core/jvm`) that adds gzip and deflate operators directly to `Stream[Byte, Ctx]` via an extension. All four operators are available after importing `kyo.*`.
