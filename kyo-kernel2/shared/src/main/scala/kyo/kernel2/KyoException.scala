@@ -1,4 +1,4 @@
-package kyo.proto4
+package kyo.kernel2
 
 import kyo.Chunk
 import kyo.Frame
@@ -53,7 +53,7 @@ private[kyo] object KyoException:
                     val caller = if f.callerName == "$anonfun" then "<lambda>" else f.callerName
                     StackTraceElement(op + " @ " + cls, caller, f.position.fileName, f.position.lineNumber)
                 }
-                val user = ex.getStackTrace.filterNot(e => e.getClassName.startsWith("kyo.proto4"))
+                val user = ex.getStackTrace.filterNot(e => e.getClassName.startsWith("kyo.kernel2"))
                 ex.setStackTrace((fresh.toArray ++ user))
                 o.installed = o.frames.size
             case _ =>

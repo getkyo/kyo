@@ -1,8 +1,8 @@
-package proto4test
+package kernel2test
 
 import kyo.Maybe
 import kyo.Tag
-import kyo.proto4.*
+import kyo.kernel2.*
 import language.implicitConversions
 
 object PendingAllocBench:

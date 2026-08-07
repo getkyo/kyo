@@ -1,8 +1,8 @@
-package proto4test
+package kernel2test
 
 import kyo.Const
 import kyo.Tag
-import kyo.proto4.*
+import kyo.kernel2.*
 import kyo.test.Test
 import language.implicitConversions
 

@@ -1,4 +1,4 @@
-# proto4 design
+# kernel2 design
 
 The fourth kernel prototype: proto3's substrate (Arrow, AndThen, Offset,
 typed Step, sync drive, depth-guarded stack safety) plus the ratified
@@ -225,11 +225,11 @@ Decisions made or corrected during the build, now the source of truth:
 
 ## Correctness-first baseline (informational)
 
-The proto4 drive is deliberately unoptimized (non-inline, chain search per
+The kernel2 drive is deliberately unoptimized (non-inline, chain search per
 dispatch, context resolution per read); the proto3 ledger defines the
 recovery targets for the performance round. JS and Native compile clean.
 
-| row | proto3 | proto4 |
+| row | proto3 | kernel2 |
 |---|---|---|
 | eager5 / eager10 alloc | 0.0 / 0.0 | 0.0 / 0.0 |
 | suspension / suspensionStep alloc | 152 | 304 |
@@ -249,7 +249,7 @@ on delimiter-free chains, restoring linear parking.
 
 ## Ruled follow-ups
 
-- Port kyo's Loop into proto4 and revisit handleLoop's Outcome against
+- Port kyo's Loop into kernel2 and revisit handleLoop's Outcome against
   Loop.Outcome2 (ruled: fix other issues first).
 - Variance restored on ControlEffect with the kernel's S2 split across the
   handle family; handleFirst and handleLoop take (handle, done) in one

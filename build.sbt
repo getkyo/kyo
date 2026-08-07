@@ -330,6 +330,7 @@ lazy val kyoJVM: Project = project
         `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
+        `kyo-kernel2`.jvm,
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
@@ -410,6 +411,7 @@ lazy val kyoJS = project
         `kyo-scheduler`.js,
         `kyo-data`.js,
         `kyo-kernel`.js,
+        `kyo-kernel2`.js,
         `kyo-prelude`.js,
         `kyo-parse`.js,
         `kyo-core`.js,
@@ -476,6 +478,7 @@ lazy val kyoNative = project
         `kyo-prelude`.native,
         `kyo-parse`.native,
         `kyo-kernel`.native,
+        `kyo-kernel2`.native,
         `kyo-stats-registry`.native,
         `kyo-config`.native,
         `kyo-scheduler`.native,
@@ -542,6 +545,7 @@ lazy val kyoWasm = project
         `kyo-stats-registry`.wasm,
         `kyo-data`.wasm,
         `kyo-kernel`.wasm,
+        `kyo-kernel2`.wasm,
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
         `kyo-schema`.wasm,
@@ -720,6 +724,20 @@ lazy val `kyo-kernel` =
         .jvmConfigure(_.settings(
             doctestFreshDriver := true
         ))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-kernel2` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-data`)
+        .withKyoTest
+        .in(file("kyo-kernel2"))
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)

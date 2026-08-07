@@ -1,4 +1,4 @@
-package kyo.proto4
+package kyo.kernel2
 
 import scala.annotation.static
 import scala.annotation.tailrec

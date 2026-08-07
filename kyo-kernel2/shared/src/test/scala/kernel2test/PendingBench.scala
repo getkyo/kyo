@@ -1,10 +1,10 @@
-package proto4test
+package kernel2test
 
 import kyo.Const
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
-import kyo.proto4.*
+import kyo.kernel2.*
 import language.implicitConversions
 
 sealed trait BenchEcho    extends ControlEffect[Const[Int], Const[Int]]
