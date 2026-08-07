@@ -1,8 +1,7 @@
-package kernel2test
+package kyo.kernel2
 
 import kyo.Maybe
 import kyo.Tag
-import kyo.kernel2.*
 import kyo.test.Test
 import language.implicitConversions
 

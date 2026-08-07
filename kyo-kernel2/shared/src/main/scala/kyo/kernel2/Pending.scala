@@ -6,6 +6,8 @@ import kyo.Maybe
 import kyo.Render
 import kyo.Tag
 import kyo.kernel2.internal.CanLift
+import kyo.kernel2.internal.Handler
+import kyo.kernel2.internal.KyoException
 import kyo.kernel2.internal.LiftMacro
 import language.implicitConversions
 import scala.annotation.nowarn

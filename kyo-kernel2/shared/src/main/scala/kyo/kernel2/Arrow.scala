@@ -4,6 +4,8 @@ import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.internal.KyoException
+import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
 import scala.annotation.static

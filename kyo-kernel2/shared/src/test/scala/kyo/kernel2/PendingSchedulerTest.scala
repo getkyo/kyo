@@ -5,16 +5,16 @@ import kyo.Tag
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+sealed trait SchedulerAsk extends ArrowEffect[Const[Unit], Const[Int]]
 
 class PendingSchedulerTest extends Test[Any]:
 
-    def ask: Int < Ask =
-        ArrowEffect.suspend[Any](Tag[Ask], ())
+    def ask: Int < SchedulerAsk =
+        ArrowEffect.suspend[Any](Tag[SchedulerAsk], ())
 
     "interrupting a parked fiber runs finalizers without resuming" in {
         var log = List.empty[String]
-        def mk(name: String)(body: Int => Int < Ask): Int < Ask =
+        def mk(name: String)(body: Int => Int < SchedulerAsk): Int < SchedulerAsk =
             Effect.bracket {
                 log :+= s"acq-$name"
                 1
@@ -30,7 +30,7 @@ class PendingSchedulerTest extends Test[Any]:
                 }
             }
         }
-        val remainder = ArrowEffect.handlePartial(Tag[Ask], program)(
+        val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
             [C] => (input, cont) => Maybe.Absent
         )
         assert(log == List("acq-outer", "acq-inner"))
@@ -50,7 +50,7 @@ class PendingSchedulerTest extends Test[Any]:
             ask.map(a => a + v)
         }
         var parked: Any = null
-        val remainder = ArrowEffect.handlePartial(Tag[Ask], program)(
+        val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
             [C] =>
                 (input, cont) =>
                     parked = cont
@@ -73,13 +73,13 @@ class PendingSchedulerTest extends Test[Any]:
         } { v =>
             ask.map(a => ask.map(b => a + b + v))
         }
-        var k: Int < Ask = program
-        var i            = 0
+        var k: Int < SchedulerAsk = program
+        var i                     = 0
         while i < 40 do
             k = k.map(_ + 1)
             i += 1
         var captured: Any = null
-        val r = ArrowEffect.handlePartial(Tag[Ask], k)(
+        val r = ArrowEffect.handlePartial(Tag[SchedulerAsk], k)(
             [C] =>
                 (input, cont) =>
                     captured = cont

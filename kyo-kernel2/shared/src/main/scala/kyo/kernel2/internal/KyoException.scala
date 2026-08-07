@@ -1,4 +1,4 @@
-package kyo.kernel2
+package kyo.kernel2.internal
 
 import kyo.Chunk
 import kyo.Frame

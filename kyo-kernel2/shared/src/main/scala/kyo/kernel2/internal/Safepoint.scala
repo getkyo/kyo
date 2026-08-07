@@ -1,4 +1,4 @@
-package kyo.kernel2
+package kyo.kernel2.internal
 
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.Maybe

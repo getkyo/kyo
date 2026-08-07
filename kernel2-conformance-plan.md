@@ -135,6 +135,43 @@ The conformance pass leaves a placeholder note, not a file.
 
 Per file: extract the current kernel's public signatures, diff against
 kernel2, implement the missing surface in kernel2's semantics (never
-port old internals), add tests for each added operation in the matching
-kernel2 test file, run the kernel2 JVM suite, run the JMH sensitive rows
-when the change touches the hot path, commit per file.
+port old internals), run the kernel2 JVM suite, run the JMH sensitive
+rows when the change touches the hot path, commit per file.
+
+Tests conform too, and serve as the oracle: each conformance step ports
+the current kernel's matching test file (`kyo/kernel/<Name>Test.scala`,
+package `kyo.kernel`) to `kyo/kernel2/<Name>Test.scala` (package
+`kyo.kernel2`), changing only the imports and whatever the port reveals.
+A ported test that fails to compile or pass is a conformance gap: fix
+kernel2, or adapt the test minimally and record the divergence here
+when it touches tier-2 internals by design. kernel2's own suites in
+`kernel2test` stay, covering kernel2-specific behavior.
+
+Recorded tier-1 divergences (each ruled by the user):
+- Function parameters are plain functions, not `Safepoint ?=>` context
+  functions (no reason for the given-threading in kernel2).
+- ArrowEffect handler clauses must receive plain function continuations
+  like the current kernel's; the Arrow-typed continuation stays only in
+  `handlePartial`, whose consumer (IOTask) gets adapted at swap time.
+- `Effect.catching` is a by-name method rather than inline, keeping its
+  interception transform private.
+- `discard` is private[kyo] runtime machinery (abandon trigger for
+  parked computations); `unit` is the public conformant operation.
+- Combinators avoid nested inlining (each mints its own transform):
+  forced by opaque-alias transparency across the defining file, and
+  preferred anyway for compile-time cost.
+
+## Structure ruling
+
+The package stays `kyo.kernel2`: an attempt to compile the module as
+`package kyo.kernel` collides with the current kernel's classes, which
+reach the test classpath through the kyo-test runner, and dropping
+kyo-test for the module was judged not worth it. The file layout still
+mirrors the current kernel within the kernel2 package: user-facing
+sources at `kyo/kernel2/` (Pending, Effect, ArrowEffect, ContextEffect,
+Loop, plus the kernel2-only Arrow and Kyo), machinery under
+`kyo/kernel2/internal/` (Safepoint, Handler, KyoException, CanLift,
+LiftMacro). Tests are consolidated in package `kyo.kernel2` at
+`kyo/kernel2/`: the former `kernel2test` package is gone, its suites
+merged into the ported oracle files (PendingTest, EffectTest) or moved
+alongside them, and internal tests sit at `kyo/kernel2/internal/`.

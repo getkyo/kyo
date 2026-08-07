@@ -1,8 +1,10 @@
-package kyo.kernel2
+package kyo.kernel2.internal
 
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.<
+import kyo.kernel2.Arrow
 
 /** The park-time reification of an effect handler: a delimiter in the continuation chain.
   *

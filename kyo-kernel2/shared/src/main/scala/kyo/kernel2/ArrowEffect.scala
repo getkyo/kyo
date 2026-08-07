@@ -3,6 +3,7 @@ package kyo.kernel2
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.internal.Handler
 import scala.annotation.nowarn
 
 /** An effect whose operations are functions awaiting implementation.

@@ -1,5 +1,6 @@
-package kyo.kernel2
+package kyo.kernel2.internal
 
+import kyo.kernel2.*
 import kyo.test.Test
 import language.implicitConversions
 
