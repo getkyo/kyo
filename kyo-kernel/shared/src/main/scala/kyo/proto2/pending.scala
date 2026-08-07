@@ -416,6 +416,15 @@ object Arrow:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(v.asInstanceOf[Any < Any])
 
+    // Spliced into long chains every Period elements by optimize: hops unwind here
+    // via the returned Defer and evalLoop's trampoline drives the next segment, so
+    // a resumed chain's stack depth is bounded by the segment size. The interior
+    // hops carry no check; the cadence lives in the chain structure itself.
+    private val segmentBoundary = new Transform[Any, Any, Any]:
+        def frame = Frame.internal
+        def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            Kyo.Defer(v, cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
+
     def apply[A]: Arrow[A, A, Any] = empty.asInstanceOf[Arrow[A, A, Any]]
 
     def of[A, B, S](t: Transform[A, B, S]): Arrow[A, B, S] = t
@@ -482,10 +491,12 @@ object Arrow:
                                 drain(pending - 1)
                 drain(1)
                 val it = buffer.descendingIterator()
-                @tailrec def link(acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                @tailrec def link(acc: Arrow[Any, Any, Any], n: Int): Arrow[Any, Any, Any] =
                     if !it.hasNext then acc
-                    else link(new Offset(it.next().asInstanceOf[Transform[Any, Any, Any]], acc))
-                val result = link(empty)
+                    else if n == Period then
+                        link(new Offset(segmentBoundary, acc), 0)
+                    else link(new Offset(it.next().asInstanceOf[Transform[Any, Any, Any]], acc), n + 1)
+                val result = link(empty, 0)
                 buffer.clear()
                 result
             end unfold

@@ -219,6 +219,15 @@ class PendingTest extends Test[Any]:
                     cont(f(v.asInstanceOf[Int]))
         )
 
+    "deep resumed continuation is stack safe" in {
+        var k: Int < Ask = ask
+        var i            = 0
+        while i < 100000 do
+            k = k.map(_ + 1)
+            i += 1
+        assert(resolve(k, 0) == 100000)
+    }
+
     "long append chains resolve" in {
         var k: Int < Ask = ask
         var i            = 0
