@@ -21,6 +21,13 @@ class PendingTest extends Test[Any]:
     def resume(k: Int < Ask, v: Int): Int < Ask =
         k.asInstanceOf[Kyo.Continue[Const[Unit], Const[Int], Ask, Any, Int, Any]].cont(v)
 
+    "lift wraps nested computations" in {
+        val inner: Int < Ask          = ask
+        val nested: (Int < Ask) < Any = inner
+        val out                       = nested.unsafeGet
+        assert(resume(out.map(_ + 1), 41).asInstanceOf[Int < Any].eval == 42)
+    }
+
     def transform(f: Int => Int < Ask): Arrow[Int, Int, Ask] =
         new Arrow.Transform[Int, Int, Ask]:
             def frame                                                       = Frame.derive

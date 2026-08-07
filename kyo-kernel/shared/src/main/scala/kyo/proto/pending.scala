@@ -111,7 +111,10 @@ object `<`:
     import Kyo.Nested
     import Kyo.Suspend
 
-    implicit def lift[A](v: A): A < Any = v
+    implicit def lift[A](v: A): A < Any =
+        v match
+            case _: Kyo[?, ?] | _: Kyo.Nested[?] => Kyo.Nested(v).asInstanceOf[A < Any]
+            case _                               => v
 
     implicit private[kyo] inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
 
