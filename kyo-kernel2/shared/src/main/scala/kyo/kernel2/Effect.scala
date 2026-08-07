@@ -70,7 +70,7 @@ object Effect:
       * This is the kernel's lazy primitive: side effects wrapped in `defer` do not run at construction time.
       */
     @nowarn("msg=anonymous")
-    inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
+    private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         Kyo.Defer(
             (),
             Arrow.of(
@@ -92,7 +92,7 @@ object Effect:
       * computation completes or is discarded.
       */
     @nowarn("msg=anonymous")
-    inline def bracket[R, A, S](
+    private[kyo] inline def bracket[R, A, S](
         inline acquireF: => R < S
     )(
         inline releaseF: R => Unit < S

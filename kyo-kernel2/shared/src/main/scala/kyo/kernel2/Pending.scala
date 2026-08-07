@@ -323,7 +323,7 @@ object `<`:
             self.map(v => v)
     end extension
 
-    def observe[A, S](observer: (Frame, Any) => Unit)(v: A < S): A < S =
+    private[kyo] def observe[A, S](observer: (Frame, Any) => Unit)(v: A < S): A < S =
         v match
             case kyo: Kyo[A, S] @unchecked =>
                 kyo.prepend(Arrow.of(new Observe(observer)).asInstanceOf[Arrow[Any, Any, Any]])

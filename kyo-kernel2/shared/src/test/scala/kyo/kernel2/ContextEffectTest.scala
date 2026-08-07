@@ -114,7 +114,7 @@ class ContextEffectTest extends Test[Any]:
                     cont(1)
         )
         assert(handled.eval == 6)
-        val k = captured.asInstanceOf[Arrow[Int, Int, CtxOp]]
+        val k = captured.asInstanceOf[Int => Int < CtxOp]
         assert(k(10).asInstanceOf[Int < Any].eval == 15)
         assert(k(20).asInstanceOf[Int < Any].eval == 25)
     }

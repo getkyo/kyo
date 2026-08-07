@@ -246,7 +246,7 @@ class ArrowEffectTest extends Test[Any]:
     "handleLoop threads state and applies done with the final state" in {
         val program = echo(1).map(a => echo(2).map(b => echo(3).map(c => a + b + c)))
         val handled: (Int, Int) < Any = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
-            [C] => (state, in, cont) => Loop.continue(state + in, cont(in)),
+            [C] => (in, state, cont) => Loop.continue(state + in, cont(in)),
             (state, a) => (state, a)
         )
         assert(handled.eval == (6, 6))
@@ -262,7 +262,7 @@ class ArrowEffectTest extends Test[Any]:
         }
         val handled = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
             [C] =>
-                (state, in, cont) =>
+                (in, state, cont) =>
                     if in >= 100 then Loop.done(-1)
                     else Loop.continue(state + in, cont(in)),
             (state, a) => a
@@ -275,7 +275,7 @@ class ArrowEffectTest extends Test[Any]:
         val program: Int < (Echo & Get) = echo(1).map(_ + 1)
         val handled: Int < Get = ArrowEffect.handleLoop(Tag[Echo], 0, program.asInstanceOf[Int < (Echo & Get)])(
             [C] =>
-                (state, in, cont) =>
+                (in, state, cont) =>
                     get.map(g => Loop.continue(state + g, cont(in + g))),
             (state, a) => state * 1000 + a
         )
@@ -289,7 +289,7 @@ class ArrowEffectTest extends Test[Any]:
         val program: Int < (Echo & Get) =
             echo(1).map(a => get.map(b => echo(2).map(c => a + b + c)))
         val handled: Int < Get = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
-            [C] => (state, in, cont) => Loop.continue(state + in, cont(in)),
+            [C] => (in, state, cont) => Loop.continue(state + in, cont(in)),
             (state, a) => state * 1000 + a
         )
         val parked = ArrowEffect.handlePartial(Tag[Get], handled)(

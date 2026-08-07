@@ -844,16 +844,16 @@ class PendingTest extends Test[Any]:
     "handler hosts phase 2 end to end" in {
         var remaining = List(7, 3)
         val program   = ask.map(a => ask.map(_ + a)).map(_ * 2)
-        val result = ArrowEffect.handle(Tag[Ask], program)(
+        val result = ArrowEffect.handlePartial(Tag[Ask], program)(
             [C] =>
                 (input, cont) =>
                     val a = remaining.head
                     remaining = remaining.tail
                     cont.step match
-                        case Maybe.Present(s) => s.head.run(a, s.next).asInstanceOf[Int < Ask]
-                        case Maybe.Absent     => a
+                        case Maybe.Present(s) => Maybe(s.head.run(a, s.next).asInstanceOf[Int < Ask])
+                        case Maybe.Absent     => Maybe(`<`.liftSlow(a).asInstanceOf[Int < Ask])
         )
-        assert(result.eval == 20)
+        assert(result.asInstanceOf[Int < Any].eval == 20)
     }
 
     "flatMap supports for-comprehensions" in {

@@ -42,13 +42,13 @@ class KernelBench:
         ).eval
 
     def runEchoStep(v: => Int < BenchEcho): Int =
-        ArrowEffect.handle(echoTag, v)(
+        ArrowEffect.handlePartial(echoTag, v)(
             [C] =>
                 (in, cont) =>
                     cont.step match
-                        case Maybe.Present(s) => s.head.run(in, s.next).asInstanceOf[Int < BenchEcho]
-                        case Maybe.Absent     => in
-        ).eval
+                        case Maybe.Present(s) => Maybe(s.head.run(in, s.next).asInstanceOf[Int < BenchEcho])
+                        case Maybe.Absent     => Maybe(`<`.liftSlow(in).asInstanceOf[Int < BenchEcho])
+        ).asInstanceOf[Int < Any].eval
 
     def runCounter(v: => Int < BenchCounter, n0: Int): Int =
         var state = n0

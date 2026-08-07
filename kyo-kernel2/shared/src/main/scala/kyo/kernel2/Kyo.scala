@@ -18,7 +18,7 @@ object Kyo:
     /** Lifts a value into the effect context without suspension, including nested computations. The explicit route for intentional
       * nesting, which the implicit lift rejects at compile time.
       */
-    inline def lift[A, S](inline v: A): A < S = v
+    private[kyo] inline def lift[A, S](inline v: A): A < S = v
 
     // Compiled as a JVM static of class Kyo: hot callers (minted arrow fragments,
     // Arrow.apply, Offset.run) reach it via invokestatic with no module load and,

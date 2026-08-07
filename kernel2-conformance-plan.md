@@ -160,6 +160,17 @@ Recorded tier-1 divergences (each ruled by the user):
 - Combinators avoid nested inlining (each mints its own transform):
   forced by opaque-alias transparency across the defining file, and
   preferred anyway for compile-time cost.
+- The multi-tag handle overloads (2, 3, 4 effects in one call) are not
+  provided: handlePartial covers the runtime boundary need, and
+  downstream multi-tag call sites get adapted at swap time.
+- handleResume and handleStop stay as kernel2-only handler formats:
+  effects will migrate to them where applicable since they are cheaper
+  to execute (no continuation capture).
+- Kyo.lift, Effect.defer, Effect.bracket, and observe are private[kyo]:
+  kernel machinery and effect-module surface, not user API.
+- ArrowEffect handler clauses take plain function continuations, per
+  the current kernel's signatures; the Arrow continuation remains only
+  in handlePartial.
 
 ## Structure ruling
 

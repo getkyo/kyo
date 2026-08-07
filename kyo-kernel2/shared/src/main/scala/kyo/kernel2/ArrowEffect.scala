@@ -54,11 +54,11 @@ object ArrowEffect:
     ): B < (E & S) =
         suspend[A](using _frame)[I, O, E](effectTag, operationInput).map(f)
 
-    /** Handles `E` with a first-class continuation (the ctl format).
+    /** Handles `E` with the continuation as a function (the ctl format).
       *
-      * The clause receives each operation's input and the continuation from the operation to this handler as an [[Arrow]]. The clause
-      * decides everything: invoke the continuation once to resume, not at all to abort, or several times. The handler is deep: effects of
-      * `E` in the clause's result, including through resumed continuations, dispatch back to this handler.
+      * The clause receives each operation's input and the continuation from the operation to this handler. The clause decides everything:
+      * invoke the continuation once to resume, not at all to abort, or several times. The handler is deep: effects of `E` in the clause's
+      * result, including through resumed continuations, dispatch back to this handler.
       *
       * Handling evaluates immediately: the region runs as far as it can, and the result is either its value or the computation parked on
       * an effect this handler does not cover, with the handler traveling in it.
@@ -67,9 +67,17 @@ object ArrowEffect:
         effectTag: Tag[E],
         v: A < (E & S)
     )(
-        clause: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
+        handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
-        install(v, new Handler.Cont(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.Clause], frame))
+        val clause: Handler.Clause =
+            [C] =>
+                (input, cont) =>
+                    handle(
+                        input.asInstanceOf[I[C]],
+                        o => cont(`<`.liftSlow(o)).asInstanceOf[A < (E & S & S2)]
+                    ).asInstanceOf[Any < Any]
+        install(v, new Handler.Cont(effectTag.asInstanceOf[Tag[Any]], clause, frame))
+    end handle
 
     /** Handles `E` by answering each operation in place (the fun format).
       *
@@ -107,45 +115,94 @@ object ArrowEffect:
         effectTag: Tag[E],
         v: A < (E & S)
     )(
-        handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < S2,
+        handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
         done: A => B < S2
     )(using frame: Frame): B < (S & S2) =
+        val clause: Handler.Clause =
+            [C] =>
+                (input, cont) =>
+                    handle(
+                        input.asInstanceOf[I[C]],
+                        o => cont(`<`.liftSlow(o)).asInstanceOf[A < (E & S)]
+                    ).asInstanceOf[Any < Any]
         install(
             v,
             new Handler.First(
                 effectTag.asInstanceOf[Tag[Any]],
-                handle.asInstanceOf[Handler.Clause],
+                clause,
                 done.asInstanceOf[Any => Any < Any],
                 frame
             )
         )
+    end handleFirst
 
-    /** Handles `E` with handler state threaded through the operations.
+    /** Handles `E` without handler state.
       *
-      * The clause receives the current state, the operation's input, and the continuation, and decides: `Loop.continue(nextState,
-      * next)` keeps handling `next` (typically the resumed continuation) with the new state, `Loop.done(result)` leaves the region with
-      * a final result, discarding the continuation. `done` produces the result when the region completes normally, from the final state
-      * and value. The handler is deep for computations passed through Continue; effects raised while the outcome itself is computed
-      * dispatch to outer handlers.
+      * The clause decides per operation: `Loop.continue(next)` keeps handling `next` (typically the resumed continuation),
+      * `Loop.done(result)` leaves the region, discarding the continuation. Effects raised while the outcome itself is computed dispatch to
+      * outer handlers.
       */
-    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S, S2](
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        handle: [C] => (I[C], O[C] => A < (E & S)) => Loop.Outcome[A < (E & S), A] < S2
+    )(using frame: Frame): A < (S & S2) =
+        handleLoop[I, O, E, A, A, S, S2, Unit](effectTag, (), v)(
+            [C] =>
+                (input, _, cont) =>
+                    handle(input, cont).map {
+                        case next: Loop.Continue[A < (E & S)] @unchecked => Loop.continue((), next._1)
+                        case res                                         => res.asInstanceOf[Loop.Outcome2[Unit, A < (E & S), A]]
+                },
+            (_, a) => a
+        )
+
+    /** Handles `E` with handler state threaded through the operations, the region's value passing through unchanged. */
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
         effectTag: Tag[E],
         state: State,
         v: A < (E & S)
     )(
-        handle: [C] => (State, I[C], Arrow[O[C], A, E & S]) => Loop.Outcome2[State, A < (E & S), B] < (E & S & S2),
-        done: (State, A) => B < S2
+        handle: [C] => (I[C], State, O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), A] < S2
+    )(using frame: Frame): A < (S & S2) =
+        handleLoop[I, O, E, A, A, S, S2, State](effectTag, state, v)(handle, (_, a) => a)
+
+    /** Handles `E` with handler state and custom completion.
+      *
+      * The clause receives the operation's input, the current state, and the continuation, and decides: `Loop.continue(nextState, next)`
+      * keeps handling `next` (typically the resumed continuation) with the new state, `Loop.done(result)` leaves the region with a final
+      * result, discarding the continuation. `done` produces the result when the region completes normally, from the final state and value.
+      * The handler is deep for computations passed through Continue; effects raised while the outcome itself is computed dispatch to outer
+      * handlers.
+      */
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+        effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        handle: [C] => (I[C], State, O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), B] < S2,
+        done: (State, A) => B < (S & S2)
     )(using frame: Frame): B < (S & S2) =
+        val clause: Handler.LoopClause =
+            [C] =>
+                (state, input, cont) =>
+                    handle(
+                        input.asInstanceOf[I[C]],
+                        state.asInstanceOf[State],
+                        o => cont(`<`.liftSlow(o)).asInstanceOf[A < (E & S)]
+                    ).asInstanceOf[Any < Any]
         install(
             v,
             new Handler.Loop(
                 effectTag.asInstanceOf[Tag[Any]],
                 state,
-                handle.asInstanceOf[Handler.LoopClause],
+                clause,
                 done.asInstanceOf[(Any, Any) => Any < Any],
                 frame
             )
         )
+    end handleLoop
 
     /** Drives the computation, handling `E` as the effect of last resort (the runtime boundary).
       *
