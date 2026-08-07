@@ -9,7 +9,10 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 
-sealed abstract class Arrow[-A, +B, -S]
+sealed abstract class Arrow[-A, +B, -S]:
+    /** Whether any delimiter lives in this arrow: lets dispatch skip handler-free subtrees. */
+    private[kyo] def hasHandler: Boolean
+end Arrow
 
 object Arrow:
 
@@ -28,6 +31,7 @@ object Arrow:
     private inline def SmallLimit  = 32
 
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
+        private[kyo] def hasHandler: Boolean = false
         def frame: Frame
         // v is Any rather than A: a typed parameter makes subclasses with a concrete
         // A carry an erasure bridge, and the extra call level halves how many fused
@@ -40,7 +44,8 @@ object Arrow:
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:
-        override def toString = "AndThen(" + a + ", " + b + ")"
+        override private[kyo] val hasHandler = a.hasHandler || b.hasHandler
+        override def toString                = "AndThen(" + a + ", " + b + ")"
     end AndThen
 
     private val empty = new Transform[Any, Any, Any]:
@@ -200,6 +205,7 @@ object Arrow:
         val head: Transform[A, X0, S],
         val next: Arrow[X0, B, S]
     ) extends Transform[A, B, S], Step[A, B, S]:
+        override private[kyo] val hasHandler = head.hasHandler || next.hasHandler
         type X = X0
         def frame = Frame.internal
 

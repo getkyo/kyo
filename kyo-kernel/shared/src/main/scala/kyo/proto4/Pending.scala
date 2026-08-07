@@ -343,7 +343,7 @@ object `<`:
                     o.head match
                         case h: Handler.Operation if h.effectTag <:< suspendTag =>
                             act(h, o.next, pending, prefixRev)
-                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked if inner.hasHandler =>
                             search(inner, o.next :: pending, prefixRev)
                         case t =>
                             search(o.next, pending, t :: prefixRev)
@@ -361,7 +361,8 @@ object `<`:
             end match
         end search
 
-        search(chain, Nil, Nil)
+        if !chain.hasHandler then Maybe.Absent
+        else search(chain, Nil, Nil)
     end dispatchControl
 
     /** Consults the drive-boundary clause for a suspension no delimiter matched.
@@ -397,7 +398,7 @@ object `<`:
                     o.head match
                         case h: Handler.Context if h.effectTag <:< readTag =>
                             collect(o.next, pending, h.transform :: acc)
-                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked if inner.hasHandler =>
                             collect(inner, o.next :: pending, acc)
                         case _ =>
                             collect(o.next, pending, acc)
@@ -413,7 +414,8 @@ object `<`:
                         case Nil     => acc2
             end match
         end collect
-        collect(chain, Nil, Nil) match
+        val matches = if chain.hasHandler then collect(chain, Nil, Nil) else Nil
+        matches match
             case Nil => Maybe.Absent
             case outermostFirst =>
                 var m: Maybe[Any]                 = Maybe.Absent

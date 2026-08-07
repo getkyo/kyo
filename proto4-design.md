@@ -224,9 +224,26 @@ Decisions made or corrected during the build, now the source of truth:
 ## Correctness-first baseline (informational)
 
 The proto4 drive is deliberately unoptimized (non-inline, chain search per
-dispatch, context resolution per read). Numbers recorded after phase 5 in
-the gate log; the proto3 ledger defines the recovery targets for the
-performance round.
+dispatch, context resolution per read); the proto3 ledger defines the
+recovery targets for the performance round. JS and Native compile clean.
+
+| row | proto3 | proto4 |
+|---|---|---|
+| eager5 / eager10 alloc | 0.0 / 0.0 | 0.0 / 0.0 |
+| suspension / suspensionStep alloc | 152 | 304 |
+| stateCont10 / stateStep10 alloc | 904 | 3552 |
+| narrowIter alloc | 4664 | 9104 |
+| resumeFused10 alloc | 0.0 | 0.0 |
+| state / stateStep time | 33-45ms | 69 / 65ms |
+| narrowBindMap time | 123-142ms | 185ms |
+| stateMap 10k / 100k / 1M | 3 / 9 / 62ms | 3 / 42 / 457ms |
+
+One algorithmic issue was found and fixed in this round rather than
+deferred: dispatch descended into handler-free nested chains, making
+stateMap quadratic (100k at 43 seconds). Chain nodes now carry a
+hasHandler bit computed at construction; dispatch and context resolution
+skip handler-free subtrees as opaque prefix elements and bail immediately
+on delimiter-free chains, restoring linear parking.
 
 ## Ruled follow-ups
 

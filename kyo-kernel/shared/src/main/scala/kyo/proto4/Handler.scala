@@ -16,6 +16,7 @@ import kyo.Tag
   * constructors, and each cast in the drive is justified by the tag match that precedes it.
   */
 sealed abstract private[kyo] class Handler extends Arrow.Transform[Any, Any, Any]:
+    final override private[kyo] def hasHandler: Boolean = true
     def effectTag: Tag[Any]
 
 private[kyo] object Handler:
