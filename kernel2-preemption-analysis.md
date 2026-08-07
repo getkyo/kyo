@@ -1,18 +1,76 @@
-# kernel2 preemption via the depth cell
+# kernel2 preemption via Safepoint
 
-Question: can kernel2 reuse the Safepoint depth counter as the preemption
-poll, the way the JVM folds safepoint polls into an existing memory
-access? Two variants were explored. The poison-bit variant sets a high
-bit in the depth cell itself, making the existing `depth >= Limit`
-compare the poll at zero added cost, at the price of a benign-but-real
-lost-update race that periodic re-assertion covers. The recommended
-variant (see "The preempt word") moves the signal to the padding long of
-the same cache line as a 0-or-1 flag the owner never writes: the poll
-costs one extra load and compare, and delivery becomes guaranteed rather
-than probabilistic, serving preemption and interruption through one
-channel. In both variants correctness stays anchored on the
-authoritative preempt and interrupt state the boundary drive already
-checks; the cell is a latency carrier.
+## Implemented design: the slot wrapper swap
+
+Safepoint is a class holding the owning thread (checked by reference
+identity, never by id, which the JVM may reuse after a thread dies) and
+the single-writer plain depth; threads claim instances through an
+AtomicReferenceArray. `enter` and `exit` stay pure depth accounting with
+no preemption code at all. A requester publishes its condition (promise
+CAS, preempt state) and then compare-and-swaps the victim's slot to a
+wrapper instance: same thread, depth pinned at the limit, holding the
+original. The victim's next `Safepoint.get`, a volatile read it performs
+on every frame anyway, returns the wrapper, so every subsequent frame
+refuses and bounces onto the rescue trampoline; frames already entered
+keep exiting against the original instance, unaffected. Non-boundary
+drives observe the wrapper (`preempted` on a fresh `get`) and return
+their remainder, cascading the park; the boundary drive consumes it
+(`clearPreempt` swaps the original back) before consulting the
+authoritative state, the volatile exchange ordering the requester's
+condition writes before that check.
+
+Delivery cannot be lost: both the request and its consumption are CAS of
+the slot, which the owner never writes outside claiming. Reclamation of
+a dead owner's slot swaps in a fresh instance, so no stale request can
+survive. Requests aimed at the Overflow instance are no-ops (it already
+refuses every frame). One channel serves time-slice preemption and
+interruption; the boundary drive distinguishes them by reading the
+authoritative state. The Task-precedent periodic authorities
+(coordinator tick, BlockingMonitor scan) are still wanted, but only for
+retargeting a request whose fiber migrated before the CAS landed, never
+for delivery.
+
+One subtlety the wrapper introduces: `preempted` and `clearPreempt` are
+meaningful on a freshly obtained Safepoint; a reference held from before
+the request still names the original instance, which never reports
+pending. Drives comply naturally by calling `get` at every check site.
+
+### Why this shape: the measurement trail
+
+Every candidate was benchmarked on eagerMap5 (5 eager maps + eval, the
+purest hot path; baseline without any preemption 3.68 ns/op). The
+decisive discovery: folding any second load into the depth read puts an
+L1 load latency on the serial per-frame dependence chain, and it costs
+the same whether the load is opaque, plain, same cache line, separate
+array, or an object field, roughly 1.4 ns per frame:
+
+| variant | eagerMap5 ns/op |
+|---|---|
+| baseline, no preemption (plain long array) | 3.68 |
+| Safepoint class, no preemption (control) | 4.70 |
+| implemented: wrapper swap (poll rides get's existing volatile load) | 5.77 |
+| pending field checked as separate predicted branch | 7.4 |
+| any variant folding a flag load into the depth read | 10.6 |
+| ThreadLocal instead of the slot array, before any poll | 6.03 |
+
+The wrapper swap wins because the poll is a load the hot path already
+performs (`get`'s volatile slot read), so preemption adds zero
+instructions to `enter`; the remaining 1.1 ns over the class control is
+the Maybe sentinel checks and run variance, and the class control's 1 ns
+over the raw-array baseline is the instance indirection. ThreadLocal
+(the current kernel's carrier) was measured on request and rejected: it
+costs more than the slot array before any preemption support at all.
+The JIT-level explanation for the fold's cost: with a single memory
+word, C2 collapses the whole enter/exit accounting of an inlined chain
+into registers; a second dependent load makes it real memory traffic on
+the critical path.
+
+The sections below record the exploration that led here (the poison bit
+in the depth word, the padded preempt word, their concurrency analyses)
+and the still-valid protocol pieces that carry over: the two-level
+authoritative-state anchoring, the cascade through non-boundary drives,
+the consume-then-check ordering, the task-to-slot targeting, and the
+Task re-assert precedent.
 
 ## The two mechanisms today
 
