@@ -86,7 +86,46 @@ the bit through an array VarHandle. Rules:
 
 Interrupts ride the same path: `IOPromise.interrupt` CAS-completes the
 promise (authoritative, unchanged), then best-effort poisons the thread
-currently running the task to cut the latency of the fiber noticing.
+currently running the task to cut the latency of the fiber noticing. The
+poison is thread-addressed while today's preempt flag is task-addressed,
+so the interrupt path needs a task-to-slot mapping: IOTask stashes its
+slot index in a field at slice entry (`run`) and clears it at slice exit,
+the mirror image of `Worker.currentTask`; `onComplete` reads it and
+poisons. A stale or missed read is benign as always.
+
+### Retriggering a stomped poison: the Task precedent
+
+The owner's plain RMW can erase a just-set poison (the stomp race). The
+scheduler's own `Task.State` shows how kyo already manages exactly this
+class of signal: a bit-packed field mutated by non-atomic RMWs from three
+parties (worker `addRuntime`, coordinator `doPreempt`, interrupter
+`resetRuntime`), where lost writes are accepted by classification and the
+signals that matter are re-asserted from authoritative sources rather
+than protected by atomics. Task's own preempt bit is even cleared by the
+owner as a matter of course (`addRuntime` drops bit 31), and the design
+does not care, because both signal sources are periodic authorities, not
+one-shot events:
+
+- Time-slice preemption: the coordinator's periodic pass calls
+  `Worker.checkStalling`, which calls `task.doPreempt()` on every tick
+  while the task remains past its slice. Re-poisoning the worker's cell
+  at that same site makes the poison level-triggered: a stomped bit is
+  re-CASed one tick later.
+- Interrupts: not one-shot either. The BlockingMonitor scans on a ~2ms
+  cadence (immediate first scan via `wake()` on interrupt) and
+  re-dispatches `Thread.interrupt()` for any running task whose
+  `needsInterrupt()` holds, until the task observes the interrupt.
+  Re-poisoning belongs in that same scan: while a running task needs
+  interrupting, re-CAS its worker's poison each pass. `onComplete`
+  provides the immediate first poison for latency; the monitor provides
+  the guaranteed retrigger.
+
+So every poison source has a standing re-assert authority in the existing
+architecture, and the never-lossy anchor stays the promise's CAS state
+(Task's comment: the preempt bit is redundant once interrupted, because
+eval stops on the completed promise). The poison bit adds a faster
+observation point, not a new correctness dependency, which is exactly the
+role Task already assigns to its own lossy bits.
 
 ## The concurrency analysis
 
@@ -208,8 +247,9 @@ second load and compare.
 1. Non-boundary drives observing the bit: per Defer pop only, or also per
    suspension dispatch? Per-pop is where the bounce manifests, likely
    sufficient.
-2. Re-arm policy on the preempter (re-poison every coordinator tick while
-   the flag is up, or fire once and rely on stride).
+2. Resolved above: re-arm rides the existing periodic authorities
+   (coordinator tick via `checkStalling` for time slices, BlockingMonitor
+   scan for interrupts), the Task re-assert pattern.
 3. `handlePartial`'s last-resort clause runs host code (IOTask body);
    audit that a poison landing mid-clause only defers values the clause
    already treats as suspended remainders.
