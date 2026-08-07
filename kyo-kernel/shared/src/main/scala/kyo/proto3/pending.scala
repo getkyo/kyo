@@ -114,7 +114,18 @@ opaque type <[+A, -S] = A | Kyo[A, S] | Kyo.Nested[A]
 
 object `<`:
 
-    implicit def lift[A](v: A): A < Any =
+    // Inline with compile-time elision: a value type is provably not a computation
+    // (Kyo, Nested, and the opaque < all erase to references bounded by Any), so
+    // those sites lift by identity with no call and no tests. Everything else
+    // keeps the runtime check in liftSlow.
+    implicit inline def lift[A](v: A): A < Any =
+        scala.compiletime.summonFrom {
+            case _: (A <:< AnyVal) => v.asInstanceOf[A < Any]
+            case _: (A <:< String) => v.asInstanceOf[A < Any]
+            case _                 => liftSlow(v)
+        }
+
+    def liftSlow[A](v: A): A < Any =
         v match
             case _: Kyo[?, ?] | _: Kyo.Nested[?] => Kyo.Nested(v).asInstanceOf[A < Any]
             case _                               => v
