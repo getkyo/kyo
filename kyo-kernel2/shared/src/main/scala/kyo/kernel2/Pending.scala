@@ -6,6 +6,7 @@ import kyo.Maybe
 import kyo.Render
 import kyo.Tag
 import kyo.kernel2.internal.CanLift
+import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Handler
 import kyo.kernel2.internal.KyoException
 import kyo.kernel2.internal.LiftMacro
@@ -589,10 +590,62 @@ object `<`:
                         r.default match
                             case Maybe.Present(d) => Maybe(chain(liftSlow(d())))
                             case Maybe.Absent     => Maybe.Absent
+            case s: Kyo.ContextSnapshot if boundary =>
+                Maybe(chain(liftSlow(snapshotContext(chain))))
             case _ =>
                 Maybe.Absent
         end match
     end dispatch
+
+    /** Materializes every visible context binding from the chain into a Context, the fork-time snapshot.
+      *
+      * Per tag, the resolution is the same fold resolveContext performs for a single read: matching delimiters innermost to outermost,
+      * each transform receiving the resolution of the delimiters outside it.
+      */
+    private def snapshotContext(chain: Arrow[Any, Any, Any]): Context =
+        @tailrec def collect(
+            cur: Arrow[Any, Any, Any],
+            pending: List[Arrow[Any, Any, Any]],
+            acc: List[Handler.Context]
+        ): List[Handler.Context] =
+            cur match
+                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                    o.head match
+                        case h: Handler.Context =>
+                            collect(o.next, pending, h :: acc)
+                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked if inner.hasHandler =>
+                            collect(inner, o.next :: pending, acc)
+                        case _ =>
+                            collect(o.next, pending, acc)
+                case at: Arrow.AndThen[?, ?, ?, ?] =>
+                    collect(at.asInstanceOf[Arrow[Any, Any, Any]].optimize, pending, acc)
+                case t: Arrow.Transform[?, ?, ?] =>
+                    val acc2 =
+                        t match
+                            case h: Handler.Context => h :: acc
+                            case _                  => acc
+                    pending match
+                        case p :: ps => collect(p, ps, acc2)
+                        case Nil     => acc2
+            end match
+        end collect
+        val outermostFirst = if chain.hasHandler then collect(chain, Nil, Nil) else Nil
+        if outermostFirst.isEmpty then Context.empty
+        else
+            // built through set so the Noninheritable flag entry is maintained like any other binding write
+            var ctx = Context.empty
+            outermostFirst.map(_.effectTag).distinct.foreach { tag =>
+                var m: Maybe[Any] = Maybe.Absent
+                outermostFirst.foreach { h =>
+                    if h.effectTag <:< tag then m = Maybe(h.transform(m))
+                }
+                m match
+                    case Maybe.Present(v) => ctx = ctx.set(tag.asInstanceOf[Tag[ContextEffect[Any]]], v)
+                    case Maybe.Absent     => ()
+            }
+            ctx
+        end if
+    end snapshotContext
 
     private def dispatchControl(suspendTag: Tag[Any], input: Any, chain: Arrow[Any, Any, Any]): Maybe[Any < Any] =
 

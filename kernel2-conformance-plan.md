@@ -31,11 +31,11 @@ Two tiers, because downstream splits the same way:
 | ArrowEffect.scala | ControlEffect.scala | conform; naming decision below |
 | ContextEffect.scala | ContextEffect.scala | conform (small gap) |
 | Loop.scala | Loop.scala | conform (near-conformant) |
-| Isolate.scala | missing | the environment-threading round; out of this pass |
+| Isolate.scala | Isolate.scala | ported: snapshot-based runDetached, derive macro, oracle green |
 | internal/Safepoint.scala | Safepoint.scala | move to internal/; API intentionally different (tier 2) |
 | internal/package.scala (Kyo node hierarchy) | Kyo.scala | keep kernel2 shape; placement decision below |
-| internal/Context.scala | none (Handler.Context) | tier 2, replaced by design |
-| internal/Trace.scala | KyoException.scala | tier 2; trace enrichment is a later round |
+| internal/Context.scala | internal/Context.scala | ported as the fork-time snapshot carrier |
+| internal/Trace.scala | internal/Trace.scala (stub) + KyoException.scala | stub keeps boundary signatures; trace round fills it |
 | internal/CanLift.scala, LiftMacro.scala | lift/liftSlow in Pending | tier 2; conform the user-visible auto-lift behavior only |
 | internal/KyoInternal.scala | none | tier 2 |
 | (none) | Arrow.scala, Handler.scala | kernel2-only, stays (Arrow user-facing by ruling) |
@@ -105,9 +105,20 @@ exact signatures and close small gaps. Expected to be the quickest file.
 
 ### Isolate.scala
 
-Not in this pass: kernel2's fork-time environment snapshot is the
-recorded environment-threading round, and Isolate's API depends on it.
-The conformance pass leaves a placeholder note, not a file.
+Ported. The one new kernel capability is the fork-time environment
+snapshot: a ContextSnapshot suspension resolved at boundary drives by
+walking the chain and folding every visible context delimiter per tag
+into a Context (built through set so the Noninheritable flag entry is
+maintained), with `inherit` filtering applied in runDetached before the
+fork sees it. The snapshot gets the same late resolution as a context
+read: bindings installed between construction and the boundary are
+visible. Isolate itself is a library port: the three-phase class,
+andThen with the Identity fast path, the derive macro with its
+pedagogical error, and runDetached over the snapshot. Trace is a stub
+type keeping runDetached's two-parameter shape until the trace round;
+internal.restoring (interceptor-based) is not ported, since kernel2's
+preemption replaces the interceptor and the IOTask adaptation uses it
+directly.
 
 ## Decisions needed
 

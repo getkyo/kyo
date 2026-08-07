@@ -19,6 +19,14 @@ abstract class ContextEffect[+V] extends Effect
 
 object ContextEffect:
 
+    /** A marker trait for context effects that do not persist across asynchronous boundaries.
+      *
+      * When a context effect extends this trait, its values will not be inherited by child fibers after an asynchronous operation.
+      * Instead, child fibers start with fresh values, making these effects behave similarly to non-inheritable thread locals.
+      */
+    trait Noninheritable:
+        self: ContextEffect[?] =>
+
     /** Reads the value of `E` from the innermost binding in scope. */
     @nowarn("msg=anonymous")
     inline def suspend[V, E <: ContextEffect[V]](

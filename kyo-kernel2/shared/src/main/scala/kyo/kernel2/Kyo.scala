@@ -70,6 +70,10 @@ object Kyo:
 
     end ContextRead
 
+    /** A whole-environment read: resolves at boundary drives to the visible context bindings, the fork-time snapshot carrier. */
+    final private[kyo] class ContextSnapshot(val frame: Frame) extends Suspension[kyo.kernel2.internal.Context, Any]:
+        override def toString = "ContextSnapshot(" + frame.position.show + ")"
+
     final private[kyo] class Continue[X, +B, -S](
         val suspend: Suspension[X, ?],
         val cont: Arrow[X, B, S]
