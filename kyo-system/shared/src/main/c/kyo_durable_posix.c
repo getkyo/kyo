@@ -400,6 +400,111 @@ static int kyo_verify_private(int fd, int directory) {
 #endif
 }
 
+/* Verify a directory already owned by the replay protocol. This is separate
+ * from exclusive creation: an acquisition collision must never be adopted.
+ * The final identity check detects substitutions observed during verification;
+ * subsequent pathname operations retain the host backend's best-effort model. */
+int32_t kyo_durable_verify_directory(const char *path, int32_t *errors) {
+    errors[0] = 0;
+    errors[1] = 0;
+    int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    int error = fd < 0 ? errno : 0;
+    struct stat original;
+    if (error == 0 && fstat(fd, &original) != 0) error = errno;
+#if defined(__linux__)
+    if (error == 0) {
+        struct statfs fs;
+        if (fstatfs(fd, &fs) != 0) error = errno;
+        else error = kyo_posix_acl_filesystem_type((unsigned long)fs.f_type);
+    }
+#elif !defined(__APPLE__)
+    if (error == 0) error = ENOTSUP;
+#endif
+    if (error == 0) error = kyo_verify_private(fd, 1);
+    if (error == 0) {
+        struct stat current;
+        if (lstat(path, &current) != 0) error = errno;
+        else if (!S_ISDIR(current.st_mode) || current.st_dev != original.st_dev ||
+                 current.st_ino != original.st_ino) error = EAGAIN;
+    }
+    if (fd >= 0 && close(fd) != 0 && error == 0) error = errno;
+    if (error == 0) return 0;
+    errors[0] = kyo_error_kind(error);
+    errors[1] = error;
+    return -1;
+}
+
+int32_t kyo_durable_mkdir(const char *path, int32_t *errors) {
+    errors[0] = 0;
+    errors[1] = 0;
+    int error = 0;
+    int created = 0;
+    int identified = 0;
+    int fd = -1;
+    struct stat original;
+#if defined(__APPLE__)
+    error = kyo_validate_parent(path, 1);
+    if (error == 0) {
+        if (kyo_private_create(path, 1) != 0) error = errno;
+        else created = 1;
+    }
+#elif defined(__linux__)
+    char *parent = strdup(path);
+    if (parent == NULL) error = ENOMEM;
+    else {
+        char *separator = strrchr(parent, '/');
+        if (separator == parent) separator[1] = '\0';
+        else if (separator != NULL) *separator = '\0';
+        error = kyo_posix_acl_filesystem(separator == NULL ? "." : parent);
+        free(parent);
+    }
+    if (error == 0) {
+        /* The requested group/other mode bounds inherited POSIX ACL grants,
+         * including named users through the ACL mask, from creation onward. */
+        if (mkdir(path, 0700) != 0) error = errno;
+        else created = 1;
+    }
+#else
+    error = ENOTSUP;
+#endif
+    if (error == 0) {
+        if (lstat(path, &original) != 0) error = errno;
+        else identified = 1;
+    }
+    if (error == 0) {
+        fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0) error = errno;
+    }
+    if (error == 0) {
+        struct stat actual;
+        if (fstat(fd, &actual) != 0) error = errno;
+        else if (actual.st_dev != original.st_dev || actual.st_ino != original.st_ino) error = EAGAIN;
+#if defined(__linux__)
+        /* A parent's default ACL can remove owner traversal from mkdir(0700).
+         * Restore owner access only on our identified private directory. The
+         * zero group bits keep inherited named ACL entries masked throughout. */
+        else if (actual.st_uid != geteuid() || (actual.st_mode & 0077) != 0) error = ENOTSUP;
+        else if ((actual.st_mode & 0700) != 0700 && fchmod(fd, 0700) != 0) error = errno;
+#endif
+    }
+    if (error == 0) error = kyo_verify_private(fd, 1);
+    if (fd >= 0 && close(fd) != 0 && error == 0) error = errno;
+    if (error != 0) {
+        /* Never clean up a collision or recursively remove directory contents.
+         * The pathname must still identify the empty directory we acquired. */
+        if (created && identified) {
+            struct stat current;
+            if (lstat(path, &current) == 0 && S_ISDIR(current.st_mode) &&
+                current.st_uid == geteuid() && current.st_dev == original.st_dev &&
+                current.st_ino == original.st_ino) rmdir(path);
+        }
+        errors[0] = kyo_error_kind(error);
+        errors[1] = error;
+        return -1;
+    }
+    return 0;
+}
+
 int64_t kyo_durable_open(const char *target, const char *temporary, int32_t *errors) {
     errors[0] = 0;
     errors[1] = 0;

@@ -27,6 +27,33 @@ private object FileSystemConformanceFixtures:
             fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
         }
 
+    def overlay(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystem.inMemory.map { lower =>
+            FileSystem.overlay(lower).map { overlay =>
+                val root = Path("overlay-conformance")
+                overlay.mkDir(root).map(_ => (overlay, overlay, root))
+            }
+        }
+
+    def overlayOverHost(prefix: String)(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        host(prefix).map { (_, root) =>
+            FileSystem.host(root).map { lower =>
+                FileSystem.overlay(lower).map(overlay => (overlay, overlay, root))
+            }
+        }
+
     def zip(using
         Frame
     ): (
@@ -115,6 +142,94 @@ class HostFileSystemDurabilityConformanceTest extends FileSystemDurabilityTest:
     ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
         FileSystemConformanceFixtures.host("kyo-host-durability-suite")
 end HostFileSystemDurabilityConformanceTest
+
+class OverlayFileSystemReadConformanceTest extends FileSystemReadTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map { (fileSystem, _, root) =>
+            val file = root / "read.txt"
+            fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
+        }
+end OverlayFileSystemReadConformanceTest
+
+class OverlayFileSystemWriteConformanceTest extends FileSystemWriteTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map((fileSystem, _, root) => (fileSystem, root))
+end OverlayFileSystemWriteConformanceTest
+
+class OverlayFileSystemChannelConformanceTest extends FileSystemChannelTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map((fileSystem, _, root) => (fileSystem, root))
+end OverlayFileSystemChannelConformanceTest
+
+class OverlayFileSystemDurabilityConformanceTest extends FileSystemDurabilityTest:
+    private[kyo] def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map((fileSystem, _, root) => (fileSystem, root))
+end OverlayFileSystemDurabilityConformanceTest
+
+class OverlayFileSystemStagedChangesConformanceTest extends FileSystemStagedChangesTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay
+end OverlayFileSystemStagedChangesConformanceTest
+
+class OverlayOverHostFileSystemReadConformanceTest extends FileSystemReadTest:
+    override protected def realPathRequiresExistence: Boolean = true
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-read-suite").map { (fileSystem, _, root) =>
+            val file = root / "read.txt"
+            fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
+        }
+end OverlayOverHostFileSystemReadConformanceTest
+
+class OverlayOverHostFileSystemWriteConformanceTest extends FileSystemWriteTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-write-suite").map((fileSystem, _, root) => (fileSystem, root))
+end OverlayOverHostFileSystemWriteConformanceTest
+
+class OverlayOverHostFileSystemChannelConformanceTest extends FileSystemChannelTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-channel-suite").map((fileSystem, _, root) => (fileSystem, root))
+end OverlayOverHostFileSystemChannelConformanceTest
+
+class OverlayOverHostFileSystemDurabilityConformanceTest extends FileSystemDurabilityTest:
+    private[kyo] def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-durability-suite").map((fileSystem, _, root) =>
+            (fileSystem, root)
+        )
+end OverlayOverHostFileSystemDurabilityConformanceTest
+
+class OverlayOverHostFileSystemStagedChangesConformanceTest extends FileSystemStagedChangesTestSuite:
+    override private[kyo] def supportsCommit: Boolean = !kyo.internal.Platform.isWindows
+    protected def createFileSystem(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-staged-suite")
+end OverlayOverHostFileSystemStagedChangesConformanceTest
 
 class ZipReadOnlyFileSystemReadConformanceTest extends FileSystemReadTest:
     protected def createFileSystem(using

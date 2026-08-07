@@ -289,7 +289,15 @@ not have. Five details of it are contracts rather than incidental:
   before there is a handle to release, so it needs no bracket of its own.
 
   A backend still mediates every byte, because every `writeChunk` in the tree
-  dispatches on the handle alone.
+  dispatches on the handle alone. Under a plain runner the service called here is
+  also the one the runner would have dispatched to. Under a staged-write scope it
+  is not: `Path`'s staging combinators install their overlay as a `PathWrite`
+  handler rather than into `FileSystem.local`, so the overlay vends the handle
+  while this call reaches the lower service. The bytes still land in the overlay's
+  staging, because they follow the handle rather than the service. That is what
+  makes handle-only dispatch an invariant rather than an accident: a `writeChunk`
+  that consulted the path, or the service's own state, would send staged writes to
+  the wrong place.
 - **`Abort.run[Any]` runs INSIDE the bracket**, not outside it.
   `Sync.acquireReleaseWith` releases when its body completes or panics but not
   when it aborts, and the body can abort from the write above, from the stream's

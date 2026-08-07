@@ -209,6 +209,13 @@ object FileSystem:
         // scoped temp: vends a service-correct removal handle so cleanup runs through the creating service
         def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (S & Abort[FileStructureException])
 
+        /** Creates a staging directory whose contents are accessible only to its creating user.
+          * Access restrictions must be effective at creation, before any file is written inside it.
+          */
+        private[kyo] def privateTempDir(prefix: String)(using Frame): Path.TempDirHandle < (S & Abort[FileStructureException])
+
+        /** Creates a private staging directory or verifies an existing directory without changing its contents. */
+        private[kyo] def privateMkDir(path: Path)(using Frame): Unit < (S & Abort[FileReadException | FileStructureException])
         def temp(prefix: String, suffix: String)(using Frame): Path.TempFileHandle < (S & Abort[FileStructureException])
 
         /** Opens `path` for positioned writes according to `open`. The channel is closed when the
@@ -258,6 +265,19 @@ object FileSystem:
           * permissions. Concurrent external permission changes are not serialized by this operation.
           */
         def durableReplace(target: Path, bytes: Span[Byte])(using
+            Frame
+        ): Unit < (S & Abort[FileReadException | FileWriteException | FileStructureException])
+
+        /** Whether final placement must acquire the destination parent's normal creation permissions.
+          * Overlays follow the retained permission source through their lower rather than treating
+          * a volatile staged entry as an existing host file.
+          */
+        private[kyo] def replacementNeedsDefaultPermissions(path: Path)(using Frame): Boolean < (S & Abort[FileReadException])
+
+        /** Seals a replacement at `target` with the permissions of its eventual destination.
+          * Staging protocols use this before publishing a replayable file.
+          */
+        private[kyo] def durableReplacePreserving(target: Path, bytes: Span[Byte], permissionSource: Path)(using
             Frame
         ): Unit < (S & Abort[FileReadException | FileWriteException | FileStructureException])
 
@@ -370,7 +390,8 @@ object FileSystem:
     private[kyo] def durableReplace[S](
         fileSystem: FileSystem.Write[S],
         target: Path,
-        bytes: Span[Byte]
+        bytes: Span[Byte],
+        permissionSource: Maybe[Path] = Absent
     )(using
         Frame
     ): Unit < (S & Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
@@ -393,7 +414,7 @@ object FileSystem:
                                 FileSystem.WriteOpen.CreateNew,
                                 close =>
                                     acquired = Present((close, handle)),
-                                preservePermissionsFrom = Present(target)
+                                preservePermissionsFrom = Present(permissionSource.getOrElse(target))
                             )
                         ).map {
                             case Result.Success((channel, release, _))         => (temporary, channel, release)
@@ -472,6 +493,8 @@ object FileSystem:
         FileSystem.host
     )
 
+    private val stagedWatchLocal = Local.init[Maybe[FileSystem.Watch]](Absent)
+
     /** Runs `value` with `fileSystem` selected as the backend used by [[Path.run]] and
       * [[Path.runReadOnly]]. The selection is inherited by child fibers and restored when the
       * dynamic scope exits.
@@ -502,6 +525,12 @@ object FileSystem:
 
     private[kyo] def useWatchErased[A, S](f: FileSystem.Watch => A < S)(using Frame): A < S =
         watchLocal.use(f)
+
+    private[kyo] def useStagedWatchErased[A, S](f: Maybe[FileSystem.Watch] => A < S)(using Frame): A < S =
+        stagedWatchLocal.use(f)
+
+    private[kyo] def letStagedWatchErased[A, S, FS](fileSystem: FileSystem.Watch)(value: A < S)(using Frame): A < S =
+        stagedWatchLocal.let(Present(fileSystem.asInstanceOf[FileSystem.Watch]))(value)
 
     private[kyo] def letErased[A, S, FS](fileSystem: FileSystem.Write[FS])(value: A < S)(using Frame): A < S =
         local.let(fileSystem.asInstanceOf[FileSystem.Write[Any]])(
@@ -549,6 +578,58 @@ object FileSystem:
       */
     def inMemory(using Frame): (FileSystem.Write[Sync] & FileSystem.Watch) < Sync = InMemoryFileSystem.init
 
+    /** Copy-on-write overlay over `lower`: reads fall through, writes stage in an upper
+      * layer, and an explicit commit replays that staged layer onto `lower`.
+      *
+      * Persistent lowers must support directory synchronization. Windows host commits fail at the
+      * staging-parent barrier before publishing any staged target; reads and discarded writes still
+      * work. Recovery of an existing intent can fail after partially applying its plan and retains
+      * the intent for another recovery attempt.
+      *
+      * Does not scan `lower` for a commit a previous process left half-applied. A scan is a
+      * directory walk, and this constructor has no root to walk: the staged-write scopes in
+      * [[Path]] build an overlay over a forwarding service that has no root at all. Use
+      * [[overlayRecovering]] when the lower is a real filesystem whose staging directories can
+      * outlive the process that made them.
+      */
+    def overlay[S, S2](lower: FileSystem.Write[S])(using
+        Frame,
+        Isolate[S, Sync, S2]
+    ): (StagedChanges[S & Sync & Abort[FileSystemException]] & Write[S & Sync]) < (Sync & Scope) =
+        OverlayFileSystem.init(lower)
+
+    /** Overlay over a synchronous backend, with asynchronous observation of its staged view. */
+    @scala.annotation.targetName("overlaySync")
+    def overlay(lower: FileSystem.Write[Sync])(using
+        Frame
+    ): (StagedChanges[Sync & Abort[FileSystemException]] & Write[Sync] & Watch) < (Sync & Scope) =
+        OverlayFileSystem.initSync(lower)
+
+    /** Copy-on-write overlay over `lower` that first replays any commit a previous process left
+      * half-applied under `root`.
+      *
+      * The durable commit protocol writes each staged file into a staging directory, records the
+      * plan in an intent log, applies it, and only then writes a marker declaring the commit
+      * complete. A process that dies partway through leaves that staging directory behind, and
+      * nothing in the next process's memory refers to it. This constructor is how the next process
+      * finds it: the scan runs before the overlay is returned, so a caller never stages work on top
+      * of a lower that still holds a half-applied commit.
+      */
+    def overlayRecovering[S, S2](lower: FileSystem.Write[S], root: Path)(using
+        Frame,
+        Isolate[S, Sync, S2]
+    ): (StagedChanges[S & Sync & Abort[FileSystemException]] & Write[S & Sync]) <
+        (S & Sync & Scope & Abort[FileSystemException]) =
+        OverlayFileSystem.initRecovering(lower, root)
+
+    /** Recovers a synchronous overlay and exposes asynchronous observation of its staged view. */
+    @scala.annotation.targetName("overlayRecoveringSync")
+    def overlayRecovering(lower: FileSystem.Write[Sync], root: Path)(using
+        Frame
+    ): (StagedChanges[Sync & Abort[FileSystemException]] & Write[Sync] & Watch) <
+        (Sync & Scope & Abort[FileSystemException]) =
+        OverlayFileSystem.initSync(lower).map(overlay => overlay.recoverFromDisk(root).andThen(overlay))
+
     /** Read-only view over a zip/jar archive: entries are files and entry-path prefixes are
       * directories. The returned value has no mutation, channel, or lock surface. Its commit
       * strategy is `Auto`: there is nothing to stage, every read is served directly
@@ -565,10 +646,10 @@ object FileSystem:
       * they stood when first observed (or from nothing, when `archive` does not yet exist),
       * writes stage in an in-memory upper, and [[StagedChanges.commit]] rewrites the whole archive
       * with the staged entries applied, atomically moved into place. There are no in-place
-      * random-access writes into a compressed entry: a [[StagedChanges.commit]] here never
-      * validates a read-set against a live lower and never raises `CommitConflict`; every commit
-      * method rewrites the whole archive unconditionally, uniformly STORED (uncompressed) on every
-      * platform via `kyo.internal.ZipArchive.write`.
+      * random-access writes into a compressed entry: unlike [[overlay]], a [[StagedChanges.commit]]
+      * here never validates a read-set against a live lower and never raises `CommitConflict`;
+      * every commit method rewrites the whole archive unconditionally, uniformly STORED
+      * (uncompressed) on every platform via `kyo.internal.ZipArchive.write`.
       */
     def zip(archive: Path)(using
         Frame
