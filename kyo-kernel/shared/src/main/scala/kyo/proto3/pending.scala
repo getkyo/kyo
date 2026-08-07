@@ -588,6 +588,10 @@ object Arrow:
                 case at: AndThen[?, ?, ?, ?] =>
                     if count(at, 0) > 0 then respine(at, empty).asInstanceOf[Arrow[A, B, S]]
                     else unfold(at).asInstanceOf[Arrow[A, B, S]]
+                case o: Offset[Any, Any, Any, Any] @unchecked =>
+                    self
+                case t: Transform[?, ?, ?] if !isEmpty(t) =>
+                    new Offset(t.asInstanceOf[Transform[Any, Any, Any]], empty).asInstanceOf[Arrow[A, B, S]]
                 case _ =>
                     self
             end match
