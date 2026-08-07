@@ -141,3 +141,38 @@ handler, tag matched, plus `Maybe` routing in `evalPartial`):
    ordinary `Arrow` values in the public composition algebra.
 5. Routing policy (mask/override) and the linear-effect fast-path metadata,
    both explicitly parked as above-kernel or later concerns.
+
+## Rulings from the current design round (August 2026)
+
+Settled in discussion on top of the recovered record, in order:
+
+1. The sync path stays. Handling is a drive that executes now, clause as a
+   loop argument in per-site inline bytecode, clause-now on a match, zero
+   nodes per handled step (the current kernel's property, on the proto3
+   substrate).
+2. Handle* become Arrow types, but only as the park-time reification. When
+   the drive must suspend, the handler appends its delimiter node to the
+   parked continuation (one AndThen at first park); thereafter the existing
+   chain-prepend machinery carries the handler with the chain for free, so
+   retention costs nothing per hop (better than the current kernel's re-wrap
+   per hop, and no always-suspend cost like the kernel2 draft). Delimiters
+   are pass-through Transforms (segmentBoundary precedent): identity on
+   values, dispatch targets for suspensions. Dispatch after a park becomes
+   chain search for the first matching delimiter; HandleResume needs no
+   chain surgery at all, HandleStop jumps to the delimiter's next,
+   HandleCont pays the O(prefix) capture re-link, the only mode that must.
+3. Isolate stays, as a library protocol above the kernel, not kernel nodes.
+4. The ArrowEffect/ContextEffect split stays. The load-bearing relationship:
+   the kinds are distinguished by boundary semantics, and Isolate is the
+   boundary protocol. Context state is copyable (no write-back, nothing to
+   reconcile, forks by environment copy with Noninheritable filtering, no
+   instances needed, which is what makes forks over Env/Local zero-burden).
+   Arrow state is interpretive (lives in the handler, forks by
+   handle-into-value plus an explicit, semantically meaningful join policy,
+   which is why instances and strategies exist, and why Abort and Choice
+   have none).
+5. Consequently the kernel owes Isolate exactly three capabilities: a
+   snapshotable drive-threaded environment at fork points (settles the
+   HandleContext question toward threaded environment, not per-read chain
+   search), HandleLoop with done as the handler-into-value primitive, and
+   parked chains as shippable immutable data.
