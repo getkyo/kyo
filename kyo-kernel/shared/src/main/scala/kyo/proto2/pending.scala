@@ -387,52 +387,48 @@ object Arrow:
     private[kyo] def probe(): Boolean =
         false
 
-    final private[kyo] class Depth:
-        var value: Int = 0
-
     private inline def SlotCount = 256
     private inline def SlotMask  = SlotCount - 1
     private inline def MaxProbes = 8
+    private inline def SlotShift = 3
 
     private inline def Transferring = -1L
 
     private val slotOwners  = new java.util.concurrent.atomic.AtomicLongArray(SlotCount)
     private val slotThreads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](SlotCount)
-    private val slotHolders = Array.fill(SlotCount)(new Depth)
 
-    // Handed to threads that exhaust the probe budget: pinned at SafeDepth so the
-    // guard always fires and such threads run fully trampolined. The fire path
-    // never writes the holder, so sharing it is race free; correct and stack safe,
-    // just slower, for workloads with more live threads than slots.
-    private val saturated =
-        val d = new Depth
-        d.value = SafeDepth
-        d
-    end saturated
+    // One depth cell per slot, strided a cache line apart, plus a trailing cell
+    // pinned at SafeDepth for threads that exhaust the probe budget: the guard
+    // always fires for them and they run fully trampolined. The fire path never
+    // writes, so sharing that cell is race free.
+    private val slotDepths =
+        val cells = new Array[Long]((SlotCount + 1) << SlotShift)
+        cells(SlotCount << SlotShift) = SafeDepth
+        cells
+    end slotDepths
 
     // A thread reserves a slot by installing its id with a CAS and finds it again by
     // probing from its hash, so the steady state is one volatile read, one compare,
-    // and a plain field on an exclusively owned holder: no atomics, no ThreadLocal
-    // map lookup, and exact depth since a slot has a single writer. A slot whose
+    // and a plain long cell that only the owner ever touches: no atomics, no
+    // ThreadLocal, and exact depth since a cell has a single writer. A slot whose
     // recorded thread has died is stolen on probe collision through the Transferring
     // sentinel: the CAS to the sentinel elects one stealer, which publishes its
-    // Thread and resets the holder before exposing its id, so a concurrent prober
-    // can never judge the slot by a stale thread entry and double claim it. Past
-    // the probe budget the shared saturated holder keeps it correct.
-    private def currentDepth(): Depth =
+    // Thread and resets the cell before exposing its id, so a concurrent prober
+    // can never judge the slot by a stale thread entry and double claim it.
+    private def currentDepth(): Int =
         val tid = Thread.currentThread().threadId
         val i   = tid.toInt & SlotMask
-        if slotOwners.get(i) == tid then slotHolders(i)
+        if slotOwners.get(i) == tid then i << SlotShift
         else slowDepth(tid)
     end currentDepth
 
-    private def slowDepth(tid: Long): Depth =
+    private def slowDepth(tid: Long): Int =
         val self = Thread.currentThread()
-        @tailrec def probe(i: Int, remaining: Int): Depth =
-            if remaining == 0 then saturated
+        @tailrec def probe(i: Int, remaining: Int): Int =
+            if remaining == 0 then SlotCount << SlotShift
             else
                 val owner = slotOwners.get(i)
-                if owner == tid then slotHolders(i)
+                if owner == tid then i << SlotShift
                 else if owner == 0L && slotOwners.compareAndSet(i, 0L, Transferring) then
                     claim(i, self, tid)
                 else if owner != 0L && owner != Transferring then
@@ -445,11 +441,11 @@ object Arrow:
         probe(tid.toInt & SlotMask, MaxProbes)
     end slowDepth
 
-    private def claim(i: Int, self: Thread, tid: Long): Depth =
+    private def claim(i: Int, self: Thread, tid: Long): Int =
         slotThreads.set(i, self)
-        slotHolders(i).value = 0
+        slotDepths(i << SlotShift) = 0L
         slotOwners.set(i, tid)
-        slotHolders(i)
+        i << SlotShift
     end claim
 
     private[kyo] def ownsDepthSlot: Boolean =
@@ -512,17 +508,18 @@ object Arrow:
                     case t: Transform[A, B, S] @unchecked =>
                         if probe() then applySlow(self, v)
                         else
-                            val depth = currentDepth()
-                            if depth.value >= SafeDepth then rescue(self, v)
+                            val slot  = currentDepth()
+                            val depth = slotDepths(slot)
+                            if depth >= SafeDepth then rescue(self, v)
                             else
-                                depth.value += 1
+                                slotDepths(slot) = depth + 1
                                 try
                                     val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                                    depth.value -= 1
+                                    slotDepths(slot) = depth
                                     r
                                 catch
                                     case ex: Throwable =>
-                                        depth.value -= 1
+                                        slotDepths(slot) = depth
                                         KyoException.attach(ex, "map", t.frame)
                                         throw ex
                                 end try
