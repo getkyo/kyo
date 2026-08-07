@@ -27,12 +27,10 @@ class SafepointTest extends Test[Any]:
 
     "enter refuses at the depth budget and recovers on exit" in {
         var budget    = 0
-        var refused   = false
         var recovered = false
         val t = new Thread(() =>
             val safepoint = Safepoint.get
             while safepoint.enter() do budget += 1
-            refused = true
             var i = budget
             while i > 0 do
                 safepoint.exit()
@@ -43,52 +41,57 @@ class SafepointTest extends Test[Any]:
         t.start()
         t.join()
         assert(budget == 512)
-        assert(refused)
         assert(recovered)
     }
 
     "preempt request lifecycle" in {
         var initiallyClear    = false
         var clearOnEmpty      = true
+        var staleStillClear   = false
         var visibleAfterSet   = false
         var consumed          = false
         var clearAfterConsume = false
         var secondConsume     = true
+        var restoredSame      = false
         val t = new Thread(() =>
             val safepoint = Safepoint.get
             initiallyClear = !safepoint.preempted
-            clearOnEmpty = safepoint.clearPreempt()
+            clearOnEmpty = Safepoint.get.clearPreempt()
             safepoint.preempt()
-            visibleAfterSet = safepoint.preempted
-            consumed = safepoint.clearPreempt()
-            clearAfterConsume = !safepoint.preempted
-            secondConsume = safepoint.clearPreempt()
+            staleStillClear = !safepoint.preempted
+            visibleAfterSet = Safepoint.get.preempted
+            consumed = Safepoint.get.clearPreempt()
+            clearAfterConsume = !Safepoint.get.preempted
+            secondConsume = Safepoint.get.clearPreempt()
+            restoredSame = Safepoint.get eq safepoint
         )
         t.start()
         t.join()
         assert(initiallyClear)
         assert(!clearOnEmpty)
+        assert(staleStillClear)
         assert(visibleAfterSet)
         assert(consumed)
         assert(clearAfterConsume)
         assert(!secondConsume)
+        assert(restoredSame)
     }
 
-    "a pending request refuses enter without consuming depth budget" in {
-        var first         = false
-        var whilePending1 = true
-        var whilePending2 = true
-        var consumed      = false
-        var budget        = 0
-        var reusable      = false
+    "a pending request refuses fresh frames without touching in-flight depth" in {
+        var first              = false
+        var wrapperRefuses     = false
+        var inFlightUnaffected = false
+        var consumed           = false
+        var budget             = 0
+        var reusable           = false
         val t = new Thread(() =>
             val safepoint = Safepoint.get
             first = safepoint.enter()
             safepoint.preempt()
-            whilePending1 = safepoint.enter()
-            whilePending2 = safepoint.enter()
-            consumed = safepoint.clearPreempt()
-            budget = 1
+            wrapperRefuses = !Safepoint.get.enter()
+            inFlightUnaffected = safepoint.enter()
+            consumed = Safepoint.get.clearPreempt()
+            budget = 2
             while safepoint.enter() do budget += 1
             var i = budget
             while i > 0 do
@@ -100,30 +103,30 @@ class SafepointTest extends Test[Any]:
         t.start()
         t.join()
         assert(first)
-        assert(!whilePending1)
-        assert(!whilePending2)
+        assert(wrapperRefuses)
+        assert(inFlightUnaffected)
         assert(consumed)
         assert(budget == 512)
         assert(reusable)
     }
 
-    "a request from another thread reaches a running enter loop" in {
+    "a request from another thread reaches a running frame loop" in {
         @volatile var workerSafepoint: Safepoint = Safepoint.Overflow
         @volatile var ready                      = false
         var parked                               = false
         val t = new Thread(() =>
-            val safepoint = Safepoint.get
-            workerSafepoint = safepoint
+            workerSafepoint = Safepoint.get
             ready = true
             var proceeding = true
             var iterations = 0L
             while proceeding && iterations < 1_000_000_000L do
-                if safepoint.enter() then safepoint.exit()
+                val sp = Safepoint.get
+                if sp.enter() then sp.exit()
                 else proceeding = false
                 iterations += 1
             end while
             parked = !proceeding
-            val _ = safepoint.clearPreempt()
+            val _ = Safepoint.get.clearPreempt()
         )
         t.start()
         while !ready do ()
@@ -136,13 +139,12 @@ class SafepointTest extends Test[Any]:
         var bounced   = false
         var evaluated = 0
         val t = new Thread(() =>
-            val safepoint = Safepoint.get
-            safepoint.preempt()
+            Safepoint.get.preempt()
             val v = (1: Int < Any).map(_ + 1)
             bounced = (v: Any) match
                 case _: Kyo[?, ?] => true
                 case _            => false
-            val _ = safepoint.clearPreempt()
+            val _ = Safepoint.get.clearPreempt()
             evaluated = v.eval
         )
         t.start()
@@ -157,7 +159,7 @@ class SafepointTest extends Test[Any]:
         assert(!Safepoint.Overflow.enter())
     }
 
-    "claiming a slot wipes a stale request" in {
+    "a reclaimed slot does not inherit a pending request" in {
         var staleSafepoint: Safepoint = Safepoint.Overflow
         val a = new Thread(() =>
             val _ = (1: Int < Any).map(_ + 1).eval
@@ -166,16 +168,22 @@ class SafepointTest extends Test[Any]:
         a.start()
         a.join()
         staleSafepoint.preempt()
-        assert(staleSafepoint.preempted)
-        var i = 0
-        while staleSafepoint.preempted && i < 4096 do
+        var anyPreempted = false
+        var allEager     = true
+        var i            = 0
+        while i < 1024 do
             val t = new Thread(() =>
-                val _ = Safepoint.get
+                if Safepoint.get.preempted then anyPreempted = true
+                val v = (1: Int < Any).map(_ + 1)
+                (v: Any) match
+                    case _: Kyo[?, ?] => allEager = false
+                    case _            => ()
             )
             t.start()
             t.join()
             i += 1
         end while
-        assert(!staleSafepoint.preempted)
+        assert(!anyPreempted)
+        assert(allEager)
     }
 end SafepointTest
