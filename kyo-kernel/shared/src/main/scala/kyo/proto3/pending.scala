@@ -329,65 +329,94 @@ object `<`:
     private def preempted(v: Any < Any): Boolean =
         v.isInstanceOf[Kyo.Defer[?, ?, ?]]
 
+    // Out of line so the inline trampoline's loop is non-recursive: bracket
+    // driving is the only recursive path, and with it out of the expanded eval
+    // body the per-eval handler closure stays local to the compiled unit and
+    // can scalar-replace. Depths past the top level never handle suspensions,
+    // so this path needs no handler.
+    private def driveBracket(
+        bracket: Kyo.Bracket[Any, Any, Any],
+        depth: Int,
+        preempt: () => Boolean,
+        stride: Int
+    ): Any < Any =
+        if depth >= BracketDepth then bracket
+        else
+            def drive(v: Any < Any): Any < Any =
+                @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
+                    curr match
+                        case nested: Kyo.Bracket[Any, Any, Any] @unchecked =>
+                            driveBracket(nested, depth + 1, preempt, stride)
+                        case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
+                            if n == 0 then
+                                if preempt() then curr
+                                else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
+                            else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
+                        case kyo: Kyo[Any, Any] @unchecked =>
+                            kyo
+                        case _ =>
+                            curr
+                loop(v, 0)
+            end drive
+            drive(bracket.acquire) match
+                case suspended: Kyo[Any, Any] @unchecked =>
+                    suspended.map(reacquire(bracket))
+                case acquired =>
+                    val resource = Kyo.unwrap(acquired)
+                    val result =
+                        try drive(bracket.cont(acquired))
+                        catch
+                            case t: Throwable =>
+                                cleanup(bracket, resource, t)
+                                throw t
+                    result match
+                        case suspended: Kyo[Any, Any] @unchecked =>
+                            suspended.map(new Finalize[Any, Any, Any](bracket, resource))
+                        case _ =>
+                            drive(bracket.release(resource)) match
+                                case suspended: Kyo[Any, Any] @unchecked =>
+                                    suspended.map(constant(result))
+                                case _ =>
+                                    result
+                    end match
+            end match
+    end driveBracket
+
     // Inline so every eval site gets a private copy of the trampoline: the
     // handle(kyo) dispatch and the suspension-shape tests then profile per
-    // handler instead of pooling across every eval in the program.
+    // handler instead of pooling across every eval in the program. The loop
+    // itself is non-recursive (brackets drive out of line), so the handler
+    // closure it takes stays local and scalar-replaces at bracket-free sites.
     private inline def evalLoop(
         v0: Any < Any,
         preempt: () => Boolean,
         stride: Int,
         handle: Kyo[Any, Any] => Maybe[Any < Any]
     ): Any < Any =
-        def drive(v: Any < Any, depth: Int): Any < Any =
-            @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
-                curr match
-                    case bracket: Kyo.Bracket[Any, Any, Any] @unchecked =>
-                        if depth >= BracketDepth then bracket
-                        else
-                            drive(bracket.acquire, depth + 1) match
-                                case suspended: Kyo[Any, Any] @unchecked =>
-                                    val wrapped = suspended.map(reacquire(bracket))
-                                    if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
-                                case acquired =>
-                                    val resource = Kyo.unwrap(acquired)
-                                    val result =
-                                        try drive(bracket.cont(acquired), depth + 1)
-                                        catch
-                                            case t: Throwable =>
-                                                cleanup(bracket, resource, t)
-                                                throw t
-                                    result match
-                                        case suspended: Kyo[Any, Any] @unchecked =>
-                                            val wrapped = suspended.map(new Finalize[Any, Any, Any](bracket, resource))
-                                            if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
-                                        case _ =>
-                                            drive(bracket.release(resource), depth + 1) match
-                                                case suspended: Kyo[Any, Any] @unchecked =>
-                                                    val wrapped = suspended.map(constant(result))
-                                                    if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
-                                                case _ =>
-                                                    result
-                                    end match
-                    case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
-                        if n == 0 then
-                            if preempt() then curr
-                            else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
-                        else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
-                    case kyo: Kyo[Any, Any] @unchecked =>
-                        if depth == 0 then
-                            handle(kyo) match
-                                case Maybe.Present(next) =>
-                                    if n == 0 then
-                                        if preempt() then next
-                                        else loop(next, stride - 1)
-                                    else loop(next, n - 1)
-                                case _ => kyo
-                        else kyo
-                    case _ =>
-                        curr
-            loop(v, 0)
-        end drive
-        try drive(v0, 0)
+        @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
+            curr match
+                case bracket: Kyo.Bracket[Any, Any, Any] @unchecked =>
+                    driveBracket(bracket, 0, preempt, stride) match
+                        case suspended: Kyo[Any, Any] @unchecked =>
+                            if !preempted(suspended) then loop(suspended, n) else suspended
+                        case result =>
+                            result
+                case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
+                    if n == 0 then
+                        if preempt() then curr
+                        else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
+                    else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
+                case kyo: Kyo[Any, Any] @unchecked =>
+                    handle(kyo) match
+                        case Maybe.Present(next) =>
+                            if n == 0 then
+                                if preempt() then next
+                                else loop(next, stride - 1)
+                            else loop(next, n - 1)
+                        case _ => kyo
+                case _ =>
+                    curr
+        try loop(v0, 0)
         catch
             case ex: Throwable =>
                 KyoException.install(ex)
