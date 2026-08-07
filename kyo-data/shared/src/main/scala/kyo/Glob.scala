@@ -25,7 +25,7 @@ object Glob:
     private val MaxAlternativeBranches = 256
 
     /** A glob that matches every path, including the empty path. */
-    val all: Glob = Compiled(Chunk(Recursive))
+    val all: Glob = Compiled("**", Chunk(Recursive))
 
     /** Selects how literal characters and character classes are compared.
       *
@@ -50,10 +50,12 @@ object Glob:
       * @param reason
       *   explanation of the invalid syntax
       */
-    final case class ParseError(offset: Int, reason: String) derives CanEqual
+    final case class ParseError(offset: Int, reason: String)(using Frame)
+        extends KyoException(reason)
+        derives CanEqual
 
     /** Parses and compiles a glob pattern. */
-    def parse(value: String): Result[ParseError, Glob] =
+    def parse(value: String)(using Frame): Result[ParseError, Glob] =
         if value.length > MaxPatternLength then
             Result.fail(ParseError(MaxPatternLength, s"pattern exceeds maximum length of $MaxPatternLength"))
         else
@@ -61,7 +63,12 @@ object Glob:
 
     given CanEqual[Glob, Glob] = CanEqual.derived
 
-    final private[kyo] case class Compiled(private[kyo] val segments: Chunk[PathSegment])
+    given Render[Glob] = Render.from(_.source)
+
+    final private[kyo] case class Compiled(
+        private[kyo] val source: String,
+        private[kyo] val segments: Chunk[PathSegment]
+    )
 
     sealed private[kyo] trait PathSegment derives CanEqual
     private case object Recursive                          extends PathSegment
@@ -176,7 +183,7 @@ object Glob:
     final private case class AtomClass(negated: Boolean, ranges: Chunk[CharacterRange]) extends Atom
     final private case class AtomAlternatives(branches: Chunk[Chunk[Atom]])             extends Atom
 
-    final private class Parser(value: String):
+    final private class Parser(value: String)(using Frame):
         private val length = value.length
 
         def parse(): Result[ParseError, Glob] =
@@ -198,7 +205,7 @@ object Glob:
                         end if
                         index += 1
                     end while
-                    failure.fold(Result.succeed(Compiled(Chunk.from(compiled))))(Result.fail)
+                    failure.fold(Result.succeed(Compiled(value, Chunk.from(compiled))))(Result.fail)
         end parse
 
         private def splitSegments(): Result[ParseError, Chunk[(String, Int)]] =
@@ -221,7 +228,7 @@ object Glob:
         end splitSegments
     end Parser
 
-    final private class SegmentParser(value: String, baseOffset: Int):
+    final private class SegmentParser(value: String, baseOffset: Int)(using Frame):
         private val length = value.length
         private var index  = 0
 
@@ -444,6 +451,9 @@ end Glob
 
 extension (self: Glob)
 
+    /** Returns the original pattern used to compile this glob. */
+    def show: String = self.source
+
     /** Tests a slash-separated string against this glob. */
     def matches(value: String, caseSensitivity: Glob.CaseSensitivity): Boolean =
         Glob.matchSegments(self, Glob.splitValue(value), caseSensitivity)
@@ -468,13 +478,15 @@ private[kyo] object GlobMacro:
         if parts.size != 1 then
             quotes.reflect.report.errorAndAbort("glob literals do not accept interpolated values")
         val value = parts.head
-        Glob.parse(value) match
+        // The macro implementation has no runtime caller frame. Parse failures are
+        // re-emitted by the compiler at the glob literal's source position.
+        Glob.parse(value)(using Frame.internal) match
             case Result.Failure(error) =>
                 quotes.reflect.report.errorAndAbort(s"invalid glob at offset ${error.offset}: ${error.reason}")
             case Result.Panic(error) => throw error
             case Result.Success(_) =>
                 '{
-                    Glob.parse(${ Expr(value) }) match
+                    Glob.parse(${ Expr(value) })(using Frame.internal) match
                         case Result.Success(glob) => glob
                         case Result.Failure(error) =>
                             throw new IllegalStateException(s"validated glob failed at offset ${error.offset}: ${error.reason}")

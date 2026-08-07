@@ -26,6 +26,13 @@ class GlobTest extends kyo.test.Test[Any]:
         assert(!scalaSources.matches("src/main/App.SCALA", Glob.CaseSensitivity.Sensitive))
         assert(scalaSources.matches("src/main/App.SCALA", Glob.CaseSensitivity.Insensitive))
         assert(Glob.parse("[").failure.exists(_.offset == 0))
+        val error = parseError("[")
+        assert(error.isInstanceOf[KyoException])
+        assert(error.getMessage.contains(error.reason))
+        assert(scalaSources.show == "**/*.{scala,java}")
+        assert(Glob.all.show == "**")
+        assert(Render[Glob].asString(scalaSources) == "**/*.{scala,java}")
+        assert(render"$scalaSources" == "**/*.{scala,java}")
         assert(summon[CanEqual[Glob.CaseSensitivity, Glob.CaseSensitivity]] != null)
         assert(summon[CanEqual[Glob.ParseError, Glob.ParseError]] != null)
     }
