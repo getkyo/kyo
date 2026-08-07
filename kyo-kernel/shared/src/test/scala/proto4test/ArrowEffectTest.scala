@@ -151,7 +151,9 @@ class ArrowEffectTest extends Test[Any]:
         val partial: Int < Get = ArrowEffect.handleResume(Tag[Echo], program)(
             [C] => (in) => in * 10
         )
-        val parked = partial.drive()
+        val parked = ArrowEffect.handlePartial(Tag[Get], partial)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
         val result = ArrowEffect.handleResume(Tag[Get], parked)(
             [C] => (_) => 5
         )
@@ -204,7 +206,9 @@ class ArrowEffectTest extends Test[Any]:
         val handled: Int < Get = ArrowEffect.handleResume(Tag[Echo], program)(
             [C] => (in) => in * 10
         )
-        val parked = handled.drive()
+        val parked = ArrowEffect.handlePartial(Tag[Get], handled)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
         val resumed = ArrowEffect.handleResume(Tag[Get], parked)(
             [C] => (_) => 2
         )
@@ -283,11 +287,100 @@ class ArrowEffectTest extends Test[Any]:
         val handled: Int < Get = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
             [C] => (state, in, cont) => ArrowEffect.Outcome.Continue(state + in, cont(in))
         )((state, a) => state * 1000 + a)
-        val parked = handled.drive()
+        val parked = ArrowEffect.handlePartial(Tag[Get], handled)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
         val result = ArrowEffect.handleResume(Tag[Get], parked)(
             [C] => (_) => 10
         )
         assert(result.eval == 3013)
+    }
+
+    "handlePartial handles operations deeply at the drive boundary" in {
+        import kyo.Maybe
+        val program = echo(1).map(a => echo(a + 1).map(b => a + b))
+        val result = ArrowEffect.handlePartial(Tag[Echo], program)(
+            [C] => (in, cont) => Maybe(cont(in * 10))
+        )
+        assert(result.asInstanceOf[Int < Any].eval == 120)
+    }
+
+    "handlePartial parks on Absent and the captured continuation resumes" in {
+        import kyo.Maybe
+        val program       = echo(1).map(a => echo(a + 1).map(b => a + b))
+        var captured: Any = null
+        var slices        = 0
+        def slice(v: Int < Echo): Int < Echo =
+            ArrowEffect.handlePartial(Tag[Echo], v)(
+                [C] =>
+                    (in, cont) =>
+                        slices += 1
+                        captured = cont
+                        Maybe.Absent
+            )
+        val parked1 = slice(program)
+        val k1      = captured.asInstanceOf[Arrow[Int, Int, Echo]]
+        val parked2 = slice(k1(10))
+        val k2      = captured.asInstanceOf[Arrow[Int, Int, Echo]]
+        val done    = k2(100)
+        assert(done.asInstanceOf[Int < Any].eval == 110)
+        assert(slices == 2)
+    }
+
+    "installed delimiters win over the handlePartial clause" in {
+        import kyo.Maybe
+        var lastResort = 0
+        val program    = echo(1).map(a => echo(a + 1).map(b => a + b))
+        val handled    = ArrowEffect.handleResume(Tag[Echo], program)([C] => (in) => in * 10)
+        val result = ArrowEffect.handlePartial(Tag[Echo], handled.asInstanceOf[Int < Echo])(
+            [C] =>
+                (in, cont) =>
+                    lastResort += 1
+                    Maybe(cont(in))
+        )
+        assert(result.asInstanceOf[Int < Any].eval == 120)
+        assert(lastResort == 0)
+    }
+
+    "handlePartial resumption re-installs traveling delimiters" in {
+        import kyo.Maybe
+        val program: Int < (Echo & Get) =
+            get.map(a => echo(a + 1).map(b => get.map(c => a + b + c)))
+        val bound: Int < Echo = ArrowEffect.handleResume(Tag[Get], program.asInstanceOf[Int < (Get & Echo)])(
+            [C] => (_) => 5
+        ).asInstanceOf[Int < Echo]
+        var captured: Any = null
+        val parked = ArrowEffect.handlePartial(Tag[Echo], bound)(
+            [C] =>
+                (in, cont) =>
+                    captured = cont
+                    Maybe.Absent
+        )
+        val k = captured.asInstanceOf[Arrow[Int, Int, Echo]]
+        assert(k(100).asInstanceOf[Int < Any].eval == 110)
+    }
+
+    "handlePartial polls preemption across dispatches" in {
+        import kyo.Maybe
+        def program(i: Int): Int < Echo =
+            if i == 0 then 0
+            else echo(i).map(_ => program(i - 1))
+        var polls = 0
+        val r = ArrowEffect.handlePartial(
+            Tag[Echo],
+            program(10000),
+            () =>
+                polls += 1; polls == 2
+            ,
+            512
+        )(
+            [C] => (in, cont) => Maybe(cont(in))
+        )
+        assert(polls == 2)
+        val rest = ArrowEffect.handlePartial(Tag[Echo], r)(
+            [C] => (in, cont) => Maybe(cont(in))
+        )
+        assert(rest.asInstanceOf[Int < Any].eval == 0)
     }
 
 end ArrowEffectTest

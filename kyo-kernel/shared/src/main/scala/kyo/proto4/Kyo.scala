@@ -23,7 +23,7 @@ object Kyo:
             case n: Nested[?] => n.value
             case _            => v
 
-    final class Nested[+A](val value: A):
+    final private[kyo] class Nested[+A](val value: A):
         override def toString = "Nested"
 
     /** A bare suspension: an effect request with no continuation attached yet.
@@ -61,7 +61,7 @@ object Kyo:
 
     end ContextRead
 
-    final class Continue[X, +B, -S](
+    final private[kyo] class Continue[X, +B, -S](
         val suspend: Suspension[X, ?],
         val cont: Arrow[X, B, S]
     ) extends Kyo[B, S]:

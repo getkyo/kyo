@@ -10,9 +10,10 @@ performance work follows in a later round against the proto3 ledger.
 
 1. The public API is fully typed; internal dispatch uses casts justified by
    tag evidence, each confined to the drive and documented.
-2. Handling is driving. Every handle API maps its delimiter arrow onto the
-   computation and drives immediately. Parking is automatic: a drive that
-   finds no matching delimiter returns the pending computation as a value.
+2. Handling is installation. Every handle API appends its delimiter arrow
+   and returns; one drive at the boundary executes everything. Parking is
+   automatic: a drive that finds no matching delimiter returns the pending
+   computation as a value.
 3. Handlers live in the chain. A delimiter is an ordinary `Arrow.Transform`
    (pass-through on values, dispatch target for suspensions), so the
    existing prepend machinery carries installed handlers across parks with
@@ -31,7 +32,7 @@ performance work follows in a later round against the proto3 ledger.
 
 ```scala
 abstract class Effect
-abstract class ArrowEffect[-I[_], +O[_]] extends Effect
+abstract class ArrowEffect[I[_], O[_]] extends Effect   // invariant: see deltas
 abstract class ContextEffect[+V]        extends Effect
 ```
 
@@ -121,8 +122,9 @@ object ContextEffect:
 Consolidation: the loop-argument protocols `<`.eval(tag)(handler) and
 `<`.evalPartial are removed; their roles are covered by the formats
 (handleFirst covers capture-and-park) and by parking being automatic.
-`v.eval` (total, S = Any) and `v.eval(preempt, period)` (scheduler
-protocol) remain. No multi-effect overloads.
+`v.eval` (total, S = Any) and `v.eval(preempt, period)` (preemptible)
+remain, and ArrowEffect.handlePartial is the boundary drive for a last
+effect. No multi-effect overloads.
 
 ## Dispatch semantics
 
@@ -177,6 +179,54 @@ decompose with `step` like any chain.
 5. Polish: visibility tightening (drive is non-inline, so node internals
    return to private[kyo]), Arrow scaladoc as user-facing API, JS/Native
    compile gates, bench snapshot recorded as the correctness-first baseline.
+
+## Implementation deltas (recorded as built)
+
+Decisions made or corrected during the build, now the source of truth:
+
+1. Handling is installation only for the delimiter formats. handle appends
+   the delimiter and returns; one drive at the boundary (eval, or a
+   handlePartial boundary) serves arbitrarily nested handlers, which is
+   what makes preemption compose with handling. The runtime boundary is
+   ArrowEffect.handlePartial: it drives immediately, consulting its clause
+   as the handler of last resort for operations no delimiter matched, with
+   the Maybe protocol (Present continues, Absent parks after the clause
+   captured the continuation) and the preemption budget. eval(preempt,
+   period) stays as the plain preemptible evaluation on a fully handled
+   row; there is no separate public drive. The sync-path fusion opportunity
+   moves entirely into the drive and is later performance work. NOTE: the
+   installation-only semantics deviates from the earlier sync-path ruling
+   (clause-now at the handle site) and is pending an explicit ruling.
+2. ArrowEffect's parameters are invariant. Variant parameters make inference
+   solve the operation constructors to their extremes at tag-driven sites;
+   subtype dispatch across effect families is future work that must bring
+   its own inference design. Clause lambdas follow the current kernel's
+   convention: no parameter ascriptions, the expected type flows in.
+3. Delimiters split into a sealed Operation layer (Cont, Resume, Stop,
+   First, Loop) and the Context binding; arrow dispatch searches only
+   Operation delimiters.
+4. The loop outcome transform sits in the chain before the suffix, so
+   effects raised while an outcome is computed dispatch to outer handlers;
+   the replacement delimiter re-appends by arrow application, which also
+   runs done when the continued computation is already a value. Outcome is
+   covariant with explicit case extensions so the result type infers from
+   done.
+5. Defer re-evaluates per drive; bracket re-acquires per drive (multi-shot
+   coherence). Mapping over a bracket composes inside the resource scope
+   (release last), the inherited proto3 semantics, kept.
+6. discard is public: it is the abandonment operation of the bracket
+   lifecycle.
+7. Fixed en passant: pass-through positions re-lift raw values (a value
+   that is itself a computation must cross the chain as data), and Defer
+   construction sites store the lifted value; both were latent Nested
+   hazards inherited from proto3.
+
+## Correctness-first baseline (informational)
+
+The proto4 drive is deliberately unoptimized (non-inline, chain search per
+dispatch, context resolution per read). Numbers recorded after phase 5 in
+the gate log; the proto3 ledger defines the recovery targets for the
+performance round.
 
 ## Known deferred concerns
 

@@ -1,6 +1,7 @@
 package kyo.proto4
 
 import kyo.Frame
+import kyo.Maybe
 import kyo.Tag
 import scala.annotation.nowarn
 
@@ -153,6 +154,33 @@ object ArrowEffect:
                 frame
             )
         )
+
+    /** Drives the computation, handling `E` as the effect of last resort (the runtime boundary).
+      *
+      * Unlike the installing handle APIs, this drives immediately and the clause is not a delimiter: it is consulted only for operations
+      * of `E` that no installed delimiter matched, making it the outermost handler. The clause receives the operation input and the full
+      * continuation (delimiters included) and decides: `Present(next)` continues the drive with `next`, deep across operations; `Absent`
+      * parks the drive with the suspension still pending, typically after capturing the continuation to resume out of band. This is the
+      * scheduler integration point: a task drives its computation handling the runtime's own effect here, parks on `Absent`, and re-enters
+      * with the same clause on the next slice. Preemption polls on the same cadence as the plain drive.
+      */
+    def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S),
+        preempt: () => Boolean = `<`.neverPreempt,
+        period: Int = Arrow.Period
+    )(
+        clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
+    )(using frame: Frame): A < (E & S) =
+        `<`.drivePartial(
+            v.asInstanceOf[Any < Any],
+            preempt,
+            period,
+            new `<`.LastResort(
+                effectTag.asInstanceOf[Tag[Any]],
+                clause.asInstanceOf[[C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]]
+            )
+        ).asInstanceOf[A < (E & S)]
 
     private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
         h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]).asInstanceOf[B < S2]

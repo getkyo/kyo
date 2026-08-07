@@ -84,21 +84,24 @@ class ContextEffectTest extends Test[Any]:
         assert(handled.eval == "id-7")
     }
 
-    "an unhandled read parks and a later binding completes it" in {
+    "a binding installed after composition completes the read" in {
         val program = env.map(_ + 1)
-        val parked  = program.drive()
-        assert(ContextEffect.handle(Tag[Env], 10)(parked).eval == 11)
+        assert(ContextEffect.handle(Tag[Env], 10)(program).eval == 11)
     }
 
     "bindings travel with parked computations" in {
         val program: Int < (Env & CtxOp) =
             op.map(a => env.map(b => a + b))
         val bound: Int < CtxOp = ContextEffect.handle(Tag[Env], 5)(program)
-        val parked             = bound.drive()
-        val resumed = ArrowEffect.handleResume(Tag[CtxOp], parked)(
-            [C] => (_) => 100
+        var captured: Any      = null
+        val parked = ArrowEffect.handlePartial(Tag[CtxOp], bound)(
+            [C] =>
+                (in, cont) =>
+                    captured = cont
+                    kyo.Maybe.Absent
         )
-        assert(resumed.eval == 105)
+        val resumed = captured.asInstanceOf[Arrow[Int, Int, CtxOp]](100)
+        assert(resumed.asInstanceOf[Int < Any].eval == 105)
     }
 
     "a multi shot continuation re-resolves reads consistently" in {

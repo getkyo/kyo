@@ -32,12 +32,12 @@ class PendingTest extends Test[Any]:
 
     def park(v: Int < Ask): Arrow[Int, Int, Ask] =
         var parked: Arrow[Int, Int, Ask] = null
-        val _ = ArrowEffect.handleFirst(Tag[Ask], v)(
+        val _ = ArrowEffect.handlePartial(Tag[Ask], v)(
             [C] =>
                 (input, cont) =>
                     parked = cont
-                    -1
-        )(a => a).eval
+                    Maybe.Absent
+        )
         parked
     end park
 
@@ -135,7 +135,7 @@ class PendingTest extends Test[Any]:
         val handled = ArrowEffect.handle(Tag[Ask], program(10000))(
             [C] => (input, cont) => cont(0)
         )
-        val r = handled.drive(
+        val r = handled.eval(
             () =>
                 polls += 1; polls == 2
             ,
@@ -153,7 +153,7 @@ class PendingTest extends Test[Any]:
             i += 1
         val resumed = park(k)(0).asInstanceOf[Int < Any]
         var polls   = 0
-        val suspended = resumed.drive(
+        val suspended = resumed.eval(
             () =>
                 polls += 1; polls == 2
             ,
@@ -173,7 +173,7 @@ class PendingTest extends Test[Any]:
             park(k)(0).asInstanceOf[Int < Any]
         end parkAndResume
         var p512 = 0
-        assert(parkAndResume().drive(
+        assert(parkAndResume().eval(
             () =>
                 p512 += 1;
                 false
@@ -181,7 +181,7 @@ class PendingTest extends Test[Any]:
             512
         ).eval == 10000)
         var p4096 = 0
-        assert(parkAndResume().drive(
+        assert(parkAndResume().eval(
             () =>
                 p4096 += 1;
                 false

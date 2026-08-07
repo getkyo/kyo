@@ -81,12 +81,12 @@ object PendingAllocBench:
                 k = k.map(_ + 1)
                 i += 1
             var parked: Any = null
-            val _ = ArrowEffect.handleFirst(PendingBench.echoTag, k)(
+            val _ = ArrowEffect.handlePartial(PendingBench.echoTag, k)(
                 [C] =>
                     (input, cont) =>
                         parked = cont
-                        -1
-            )(a => a).eval
+                        Maybe.Absent
+            )
             val cont = parked.asInstanceOf[Arrow[Int, Int, BenchEcho]]
             measure("resumeFused10", 1000000):
                 cont(7).asInstanceOf[Int < Any].eval

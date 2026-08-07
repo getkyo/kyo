@@ -97,18 +97,6 @@ object `<`:
         end run
     end Observe
 
-    extension [A, S](self: A < S)
-
-        /** Drives the computation as far as it can go.
-          *
-          * Runs until a value is produced, an unhandled suspension is reached (the computation parks, waiting for a handler), or `preempt`
-          * returns true at a poll point. The result is the remaining computation: a plain value when done, or a pending computation to be
-          * handled or resumed later.
-          */
-        def drive(preempt: () => Boolean = never, period: Int = Arrow.Period): A < S =
-            driveLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period)).asInstanceOf[A < S]
-    end extension
-
     extension [A](self: A < Any)
 
         /** Evaluates the computation to its value.
@@ -122,9 +110,15 @@ object `<`:
                     case v              => Kyo.unwrap(v).asInstanceOf[A]
             else Kyo.unwrap(self).asInstanceOf[A]
 
+        /** Evaluates within a preemption budget, returning the remaining computation. */
+        def eval(preempt: () => Boolean, period: Int): A < Any =
+            driveLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period)).asInstanceOf[A < Any]
+
     end extension
 
     private val never: () => Boolean = () => false
+
+    private[kyo] def neverPreempt: () => Boolean = never
 
     private inline def BracketDepth = 512
 
@@ -169,8 +163,7 @@ object `<`:
         )
     end yieldValue
 
-    // public because the inline trampoline's bracket arm expands at user sites
-    final class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
+    final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
         extends Arrow.Transform[A, A, S]:
         def frame = bracket.frame
         def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
@@ -210,10 +203,25 @@ object `<`:
     private def preempted(v: Any < Any): Boolean =
         v.isInstanceOf[Kyo.Defer[?, ?, ?]]
 
+    /** The drive-boundary handler of last resort: consulted only when no installed delimiter matches. */
+    final private[kyo] class LastResort(
+        val effectTag: Tag[Any],
+        val clause: [C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]
+    )
+
+    private[kyo] def drivePartial(
+        v0: Any < Any,
+        preempt: () => Boolean,
+        period: Int,
+        last: LastResort
+    ): Any < Any =
+        driveLoop(v0, preempt, Integer.max(1, period / Arrow.Period), last)
+
     private def driveLoop(
         v0: Any < Any,
         preempt: () => Boolean,
-        stride: Int
+        stride: Int,
+        last: LastResort | Null = null
     ): Any < Any =
         def recur(v: Any < Any, depth: Int): Any < Any =
             @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
@@ -251,7 +259,7 @@ object `<`:
                             else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
                         else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
                     case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
-                        dispatch(c) match
+                        dispatch(c).orElse(dispatchLast(c, last)) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -355,6 +363,23 @@ object `<`:
 
         search(chain, Nil, Nil)
     end dispatchArrow
+
+    /** Consults the drive-boundary clause for a suspension no delimiter matched.
+      *
+      * The clause receives the operation input and the full optimized chain as the continuation, delimiters included, so a later
+      * resumption re-installs every traveling handler by construction. Present continues the drive; Absent parks it with the suspension
+      * still pending, typically after the clause captured the continuation for an out-of-band resume.
+      */
+    private def dispatchLast(c: Kyo.Continue[?, ?, ?], last: LastResort | Null): Maybe[Any < Any] =
+        last match
+            case null => Maybe.Absent
+            case last: LastResort =>
+                c.suspend match
+                    case s: Kyo.Suspend[?, ?, ?, ?] if last.effectTag <:< s.tag.asInstanceOf[Tag[Any]] =>
+                        last.clause[Any](s.input, c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize)
+                    case _ =>
+                        Maybe.Absent
+    end dispatchLast
 
     /** Resolves a context read against the chain's binding delimiters.
       *

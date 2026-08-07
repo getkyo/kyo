@@ -15,7 +15,9 @@ class EffectTest extends Test[Any]:
         ArrowEffect.suspend[Any](Tag[EffAsk], ())
 
     def park(v: Int < EffAsk): Int < EffAsk =
-        v.drive()
+        ArrowEffect.handlePartial(Tag[EffAsk], v)(
+            [C] => (input, cont) => Maybe.Absent
+        )
 
     def resume(v: Int < EffAsk, answer: Int): Int =
         ArrowEffect.handle(Tag[EffAsk], v)(
