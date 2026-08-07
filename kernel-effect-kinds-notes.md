@@ -212,20 +212,21 @@ Settled in discussion on top of the recovered record, in order:
    keeps per-site fast paths off the delimiter class while restrictive
    declarations add suspension-side guarantees.
 
-8. The kind family for the new kernel: three declared kinds, defined by
-   what the handler provides. ContextEffect[V] provides a value once per
-   scope (reads, continuation untouched, copy at boundaries).
-   ResumeEffect[I, O] provides a function run per op (answered in place,
-   continuation never materialized, exactly-once by declaration, the
-   natural Isolate bound). ArrowEffect[I, O] provides a control operator
-   (continuation captured, zero to many resumes). Koka's val/fun/ctl triad
-   as declarations. Stop is not a fourth kind: StopEffect[I] =
-   ArrowEffect[I, Const[Nothing]] plus sugar, sound by typing (a ctl clause
-   for O = Nothing provably cannot resume), which fixes Abort's impossible
-   continuation. Loop/state is a handler format over Resume and Arrow, not
-   a kind. One-shot vs multi-shot within Arrow is linearity metadata
-   (Async: arrow one-shot because it must capture to park; Choice: arrow
-   multi-shot). Placements: Env and Local context; Var, Memo, Sync-style
-   defer resume; Abort stop corner; Choice arrow; Emit the declared
-   judgment case (arrow with per-site resume-format delimiters, or Ack
-   output to stay resume).
+8. The kind family, corrected after discussion: two kinds, context and
+   arrow, and that is enough. Resume is a handler format, not a declared
+   effect kind. The Koka analogy pointed at the wrong site: Koka declares
+   fun/ctl on operations because its evidence-passing compiler compiles
+   operation call sites differently per kind; kyo builds the same suspension
+   value regardless, and every machinery difference (run in place, discard,
+   capture, thread state) forks at the handler site, where the delimiter
+   model already branches on the delimiter class. A declared resume kind
+   would also forbid legitimate reinterpretations: Var handled multi-shot is
+   backtracking state, Emit handled abortively is take; cardinality is a
+   property of the handling, not the effect. What survives from the kind
+   exploration: the what-the-handler-provides framing (context provides a
+   value, arrow provides operations; the formats decide function vs control
+   per site), Abort as ArrowEffect[Const[Error[E]], Const[Nothing]] (every
+   handler provably cannot resume, no kind needed), loop as a format, and
+   one-shot linearity as optional metadata on arrow effects such as Async.
+   Formats over arrow: cont, resume, stop, loop, under the subsumption that
+   resume and stop are restricted ctl. Isolability stays judgment.
