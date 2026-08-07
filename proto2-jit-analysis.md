@@ -293,3 +293,29 @@ handler-dispatch cost when the trampoline went per-site, so that pooling was
 not the binding cost there; and inline apply was rejected without measurement
 because its expansion lands inside every mint's fallback arm, the seam the
 capture toggle already proved byte-critical.
+
+### Allocation vs the kernel
+
+Kernel-equivalent rows added to `pendingtest.PendingAllocBench` (mode
+`kernel`): the same programs expressed with `ArrowEffect.suspend` and
+`ArrowEffect.handle`, run under the identical harness, flags
+(`-Xms2G -Xmx3G -Xss10M -XX:+UseCompactObjectHeaders`), and isolated JVMs as
+the proto3 baseline. Two runs each side, bit-identical:
+
+| row | kernel | proto3 |
+|---|---|---|
+| eager5 / eager10 | 0.0 / 0.0 | 0.0 / 0.0 |
+| suspension | 16 | 152 |
+| stateCont10 | 872 | 904 (stateStep10 also 904) |
+| narrowIter | 2872 | 4664 |
+| resumeFused10 | 0.0 | 0.0 |
+
+Both sides hold the eager and resumed-fused floors at zero, and the state row
+is near parity. The kernel allocates far less on the suspension-bearing rows:
+suspension 16 vs 152 and narrowIter 2872 vs 4664. Unverified hypothesis for
+the gap, not yet confirmed with escape analysis logs: the kernel's `handle` is
+an inline def, so the entire drive loop expands at each handler call site and
+suspension construction plus consumption land in one compiled unit where the
+nodes scalar-replace; proto3's parked chain nodes escape into the drive loop
+at park time and are paid per suspension. Closing that per-suspension residual
+is the next allocation target for proto3.
