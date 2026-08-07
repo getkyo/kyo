@@ -319,3 +319,77 @@ suspension construction plus consumption land in one compiled unit where the
 nodes scalar-replace; proto3's parked chain nodes escape into the drive loop
 at park time and are paid per suspension. Closing that per-suspension residual
 is the next allocation target for proto3.
+
+### Census: where the suspension bytes go
+
+Exact per-op census via class-histogram deltas bracketed in-process around a
+steady-state loop under EpsilonGC (nothing collected, so the delta is exactly
+what allocated), canonical flags plus compact headers. The proto-attributable
+objects sum to the bench numbers to the byte.
+
+suspension row, 152 B/op = 11 surviving objects:
+
+| objects | count | bytes | why they survive |
+|---|---|---|---|
+| Suspend (echo anon) | 1 | 16 | the suspension itself, escapes into the handler |
+| Continue (park node) | 1 | 16 | pairs suspend with its continuation at park |
+| AndThen spine | 2 | 32 | composition-time chain of the 3-map continuation |
+| minted fragments | 3 | 24 | one instance per map call, 8 B each (fieldless, compact headers) |
+| Offset chain | 2 | 32 | park-time respine in cont.optimize (3 built, 1 scalar-replaced) |
+| per-eval closures | 2 | 32 | evalPartial's handler Function1 plus eval's Maybe wrapper |
+
+narrowIter row, 4664 B/op:
+
+| objects | count | bytes | share |
+|---|---|---|---|
+| Offset chain | 110 | 1760 | 38% |
+| AndThen spine | 100 | 1600 | 34% |
+| minted fragments | 111 | 888 | 19% |
+| Suspend + Continue | 12 + 12 | 384 | 8% |
+| per-eval closures | 2 | 32 | 1% |
+
+The suspensionStep census is byte-identical to suspension: step decomposition
+is allocation-free by identity, as designed.
+
+The structural finding: on suspension-heavy paths the continuation is
+represented twice. Composition builds the AndThen spine (one node per map on a
+suspended value), then every park rebuilds the same chain as Offset nodes in
+cont.optimize. In narrowIter that double representation is 72% of all bytes.
+AndThen exists for O(1) append, Offset for O(1) caller-site decomposition, and
+the respine is the O(n) conversion between them paid per suspension.
+
+Three escape holes account for every surviving object:
+
+1. Parked data escapes by definition. Suspend, Continue, the spine, and the
+   fragments are reachable from the handler's cont argument; parking is
+   escaping, and no EA can touch it.
+2. The respine recursion defeats EA for the rebuilt chain. Offsets are
+   allocated inside non-inlined recursive respine frames and returned upward;
+   only in shallow chains does the outermost node scalar-replace (3 built, 1
+   elided on the suspension row; 11 built, 0 elided per narrow resume).
+3. The two per-eval closures escape into drive, which is recursive (bracket
+   arm) and never fully inlined. Amortized per eval: 21% of the small
+   suspension row, invisible in narrow.
+
+What EA already elides, confirmed by diffing the census against the static
+walk of the path: every intermediate Continue relink (each map on a suspended
+value constructs Continue(suspend, cont.map(f)); exactly one Continue survives
+per suspension, the final park), all Integer boxes (cache hits), all Maybe
+wrappers (identity encoding), and the step wrap (chain already an Offset).
+
+Reduction levers this census exposes, none executed or measured yet:
+
+- The double representation is the big one (72% of narrow). Any design that
+  parks the composition structure directly, or drives the AndThen spine
+  without materializing Offsets, removes up to a third to two thirds of
+  suspension-row bytes. It trades against the Offset chain being what makes
+  caller-site step dispatch and fragment fusion work, and the rejected
+  pre-link toggle showed park-time wraps are paid always; this needs its own
+  design round.
+- Minted fragments (19% of narrow) allocate per map call although the inline
+  map bakes the lambda into the body and they are fieldless. A per-site cached
+  instance would remove them; anonymous class instantiation inside an inline
+  def has no automatic caching, unlike lambdas.
+- The per-eval closures could be hoisted or the handler shape changed so they
+  do not cross the recursive drive call; 32 B per eval, only visible on tiny
+  evals.
