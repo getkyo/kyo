@@ -28,7 +28,8 @@ object Kyo:
             case n: Nested[?] => n.value
             case _            => v
 
-    final private[kyo] class Nested[+A](val value: A):
+    // a case class so re-wrapping at pass-through positions preserves value equality
+    final private[kyo] case class Nested[+A](value: A):
         override def toString = "Nested"
 
     /** A bare suspension: an effect request with no continuation attached yet.

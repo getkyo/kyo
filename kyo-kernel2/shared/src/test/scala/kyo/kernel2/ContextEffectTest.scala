@@ -127,4 +127,8 @@ class ContextEffectTest extends Test[Any]:
         assert(ContextEffect.handle(Tag[Env], 3)(handled).eval == 7)
     }
 
+    "a bare defaulted read resolves at the boundary" in {
+        val v: Int < Any = ContextEffect.suspend(Tag[Env], 99)
+        assert(v.eval == 99)
+    }
 end ContextEffectTest

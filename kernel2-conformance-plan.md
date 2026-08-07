@@ -170,7 +170,18 @@ Recorded tier-1 divergences (each ruled by the user):
   kernel machinery and effect-module surface, not user API.
 - ArrowEffect handler clauses take plain function continuations, per
   the current kernel's signatures; the Arrow continuation remains only
-  in handlePartial.
+  in handlePartial. The wrapper costs 16 B per dispatched operation.
+- handleCatching is implemented as catching over handle; the current
+  kernel's accept input filter lands test-first with the effect that
+  needs it (Abort).
+- The ported ArrowEffectTest oracle runs with multi-tag scenarios as
+  nested handles, handlePartial scenarios on the single-tag Maybe
+  protocol, interceptor-dependent tests dropped (no interceptor in
+  kernel2), and the tail-recursion depth bound at 20 (kernel2's dispatch
+  cycle is a few frames deeper, still constant). It caught one real
+  kernel bug: bare suspensions (no chain yet) skipped boundary dispatch,
+  so handlePartial clauses and context defaults never applied to them;
+  fixed in driveLoop.
 
 ## Structure ruling
 

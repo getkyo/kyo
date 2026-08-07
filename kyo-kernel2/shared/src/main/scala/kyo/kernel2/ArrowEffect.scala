@@ -204,6 +204,22 @@ object ArrowEffect:
         )
     end handleLoop
 
+    /** Handles `E` and intercepts non-fatal exceptions in one step.
+      *
+      * `recover` receives exceptions thrown at construction, in the handler clause, or in any later step of the computation, including
+      * after parks. `done` maps the region's completion value. The current kernel's `accept` input filter is not carried yet; it lands
+      * with the effect that needs it.
+      */
+    private[kyo] def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
+        effectTag: Tag[E],
+        v: => A < (E & S)
+    )(
+        handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
+        done: A => B < S3 = (v: A) => v,
+        recover: Throwable => B < (S & S2 & S3)
+    )(using frame: Frame): B < (S & S2 & S3) =
+        Effect.catching(ArrowEffect.handle[I, O, E, A, S, S2](effectTag, v)(handle).map(done))(recover)
+
     /** Drives the computation, handling `E` as the effect of last resort (the runtime boundary).
       *
       * Unlike the installing handle APIs, this drives immediately and the clause is not a delimiter: it is consulted only for operations

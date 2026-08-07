@@ -536,6 +536,18 @@ object `<`:
                                     else loop(next, stride - 1)
                                 else loop(next, n - 1)
                             case _ => curr
+                    case s: Kyo.Suspension[?, ?] @unchecked if depth == 0 =>
+                        // a bare suspension has no chain yet: dispatch it as a continue with the
+                        // empty arrow so boundary clauses and context defaults still apply
+                        val c = new Kyo.Continue(s.asInstanceOf[Kyo.Suspension[Any, Any]], Arrow[Any])
+                        dispatch(c, boundary).orElse(dispatchLast(c, last)) match
+                            case Maybe.Present(next) =>
+                                if n == 0 then
+                                    if preempt() then next
+                                    else loop(next, stride - 1)
+                                else loop(next, n - 1)
+                            case _ => curr
+                        end match
                     case kyo: Kyo[Any, Any] @unchecked =>
                         curr
                     case _ =>
