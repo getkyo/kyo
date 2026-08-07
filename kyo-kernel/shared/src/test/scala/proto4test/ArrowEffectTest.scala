@@ -238,4 +238,56 @@ class ArrowEffectTest extends Test[Any]:
         assert(log == List("defer"))
     }
 
+    "handleLoop threads state and applies done with the final state" in {
+        val program = echo(1).map(a => echo(2).map(b => echo(3).map(c => a + b + c)))
+        val handled = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
+            [C] => (state, in, cont) => ArrowEffect.Outcome.Continue(state + in, cont(in))
+        )((state, a) => (state, a))
+        assert(handled.eval == (6, 6))
+    }
+
+    "handleLoop ends the region early with Done" in {
+        var afterOp = false
+        val program = echo(1).map { a =>
+            echo(100).map { b =>
+                afterOp = true
+                a + b
+            }
+        }
+        val handled = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
+            [C] =>
+                (state, in, cont) =>
+                    if in >= 100 then ArrowEffect.Outcome.Done(-1)
+                    else ArrowEffect.Outcome.Continue(state + in, cont(in))
+        )((state, a) => a)
+        assert(handled.eval == -1)
+        assert(!afterOp)
+    }
+
+    "handleLoop forwards effects raised while computing the outcome" in {
+        val program: Int < (Echo & Get) = echo(1).map(_ + 1)
+        val handled: Int < Get = ArrowEffect.handleLoop(Tag[Echo], 0, program.asInstanceOf[Int < (Echo & Get)])(
+            [C] =>
+                (state, in, cont) =>
+                    get.map(g => ArrowEffect.Outcome.Continue(state + g, cont(in + g)))
+        )((state, a) => state * 1000 + a)
+        val result = ArrowEffect.handleResume(Tag[Get], handled)(
+            [C] => (_) => 7
+        )
+        assert(result.eval == 7009)
+    }
+
+    "handleLoop state survives a park on a foreign effect" in {
+        val program: Int < (Echo & Get) =
+            echo(1).map(a => get.map(b => echo(2).map(c => a + b + c)))
+        val handled: Int < Get = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
+            [C] => (state, in, cont) => ArrowEffect.Outcome.Continue(state + in, cont(in))
+        )((state, a) => state * 1000 + a)
+        val parked = handled.drive()
+        val result = ArrowEffect.handleResume(Tag[Get], parked)(
+            [C] => (_) => 10
+        )
+        assert(result.eval == 3013)
+    }
+
 end ArrowEffectTest

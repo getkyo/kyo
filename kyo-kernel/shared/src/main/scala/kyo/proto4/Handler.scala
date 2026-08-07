@@ -40,6 +40,24 @@ private[kyo] object Handler:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(`<`.liftSlow(v))
 
+    /** Erased shape of a stateful loop clause. */
+    type LoopClause = [C] => (Any, Any, Arrow[Any, Any, Any]) => Any < Any
+
+    /** Deep stateful handler: state threads through operations, done runs on completion.
+      *
+      * State evolution never mutates the node: each Outcome.Continue installs a replacement delimiter carrying the next state.
+      */
+    final class Loop(
+        val effectTag: Tag[Any],
+        val state: Any,
+        val clause: LoopClause,
+        val done: (Any, Any) => Any < Any,
+        val frame: Frame
+    ) extends Handler:
+        def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            cont(done(state, v))
+    end Loop
+
     /** Shallow handler: handles only the first operation, then leaves the region. */
     final class First(val effectTag: Tag[Any], val clause: Clause, val done: Any => Any < Any, val frame: Frame) extends Handler:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =

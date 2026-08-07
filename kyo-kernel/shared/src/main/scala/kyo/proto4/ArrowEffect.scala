@@ -121,6 +121,39 @@ object ArrowEffect:
             )
         )
 
+    /** The decision a stateful loop clause returns for each operation. */
+    enum Outcome[+State, +Next, +B]:
+        case Continue(state: State, next: Next) extends Outcome[State, Next, Nothing]
+        case Done(result: B)                    extends Outcome[Nothing, Nothing, B]
+
+    /** Handles `E` with handler state threaded through the operations.
+      *
+      * The clause receives the current state, the operation's input, and the continuation, and decides: `Outcome.Continue(nextState,
+      * next)` keeps handling `next` (typically the resumed continuation) with the new state, `Outcome.Done(result)` leaves the region with
+      * a final result, discarding the continuation. `done` produces the result when the region completes normally, from the final state
+      * and value. The handler is deep for computations passed through Continue; effects raised while the outcome itself is computed
+      * dispatch to outer handlers.
+      */
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S](
+        effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        clause: [C] => (State, I[C], Arrow[O[C], A, E & S]) => Outcome[State, A < (E & S), B] < (E & S)
+    )(
+        done: (State, A) => B < S
+    )(using frame: Frame): B < S =
+        install(
+            v,
+            new Handler.Loop(
+                effectTag.asInstanceOf[Tag[Any]],
+                state,
+                clause.asInstanceOf[Handler.LoopClause],
+                done.asInstanceOf[(Any, Any) => Any < Any],
+                frame
+            )
+        )
+
     private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
         h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]).asInstanceOf[B < S2]
 

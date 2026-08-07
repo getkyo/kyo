@@ -126,9 +126,6 @@ object `<`:
 
     private val never: () => Boolean = () => false
 
-    private val unhandled: Kyo[Any, Any] => Maybe[Any < Any] =
-        kyo => throw new IllegalStateException("unhandled suspension: " + kyo)
-
     private inline def BracketDepth = 512
 
     private def discardValue[A, S](v: A < S): List[Throwable] =
@@ -163,12 +160,14 @@ object `<`:
     end discardChain
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
+        val lifted = liftSlow(v)
         Arrow.of(
             new Arrow.Transform[Unit, A, Any]:
                 def frame = Frame.internal
                 def run[C, S2](x: Any, cont: Arrow[A, C, S2]): C < (Any & S2) =
-                    cont(v.asInstanceOf[A < Any])
+                    cont(lifted.asInstanceOf[A < Any])
         )
+    end yieldValue
 
     // public because the inline trampoline's bracket arm expands at user sites
     final class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
@@ -309,6 +308,9 @@ object `<`:
                 case h: Handler.First =>
                     val k = prefixArrow(prefixRev)
                     Maybe(fullRest(h.clause[Any](input, k)))
+                case h: Handler.Loop =>
+                    val k = prefixArrow(prefixRev)
+                    Maybe(Arrow.map(outcomeStep(h))(fullRest)(h.clause[Any](h.state, input, k)))
             end match
         end act
 
@@ -342,5 +344,27 @@ object `<`:
 
         search(chain, Nil, Nil)
     end dispatch
+
+    /** Interprets a loop clause's Outcome once it materializes.
+      *
+      * This transform sits in the chain before the suffix past the delimiter, so effects raised while the outcome itself is computed
+      * dispatch to outer handlers, never to this loop. Continue re-applies a replacement delimiter carrying the next state to the next
+      * computation: if it suspends, the delimiter travels in its chain (deep with fresh state); if it is already a value, the delimiter's
+      * run applies done with that state. Done leaves the region: the result flows to the suffix and done is not applied, the clause
+      * already produced the final value.
+      */
+    private def outcomeStep(h: Handler.Loop): Arrow[Any, Any, Any] =
+        Arrow.of(
+            new Arrow.Transform[Any, Any, Any]:
+                def frame = h.frame
+                def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                    v match
+                        case ArrowEffect.Outcome.Continue(s2, next) =>
+                            val h2 = new Handler.Loop(h.effectTag, s2, h.clause, h.done, h.frame)
+                            cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next.asInstanceOf[Any < Any]))
+                        case ArrowEffect.Outcome.Done(b) =>
+                            cont(`<`.liftSlow(b))
+        )
+    end outcomeStep
 
 end `<`
