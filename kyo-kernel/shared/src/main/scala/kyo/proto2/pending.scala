@@ -174,7 +174,7 @@ object `<`:
                             if w.isInstanceOf[Kyo[?, ?]] then
                                 val rest =
                                     if i + 1 < es.length then
-                                        Arrow.map(Arrow.of[Any, Any, Any](this))(Arrow.of(new Arrow.Offset(es, i + 1)))
+                                        Arrow.map(Arrow.of[Any, Any, Any](this))(Arrow.tail(es, i + 1))
                                     else Arrow.of[Any, Any, Any](this)
                                 w.asInstanceOf[Kyo[Any, Any]].map(rest)
                             else loop(es, i + 1, Kyo.unwrap(w))
@@ -406,6 +406,13 @@ object Arrow:
 
         def apply[S2](v: A < S2): B < (S & S2) =
             (self: Any) match
+                case o: Offset =>
+                    if v.isInstanceOf[Kyo[?, ?]] then
+                        v.asInstanceOf[Kyo[A, S2]].map(self)
+                    else if probe() then
+                        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+                    else
+                        o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
                 case t: Transform[A, B, S] @unchecked =>
                     if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
@@ -500,16 +507,16 @@ object Arrow:
                 loop(0, at)
             end fill
             (self: Any) match
-                case _: Array[Transform[?, ?, ?]] @unchecked =>
-                    self
+                case arr: Array[Transform[?, ?, ?]] @unchecked =>
+                    tail(arr.asInstanceOf[Array[Transform[?, ?, ?]]], 0).asInstanceOf[Arrow[A, B, S]]
                 case arr: Array[Any] @unchecked =>
                     val n = count(arr, 0)
                     if n == 0 then empty
                     else if n > 0 then
                         val out = new Array[Transform[?, ?, ?]](n)
                         val _   = fill(arr, out, 0)
-                        out
-                    else unfold(arr)
+                        tail(out, 0).asInstanceOf[Arrow[A, B, S]]
+                    else tail(unfold(arr), 0).asInstanceOf[Arrow[A, B, S]]
                     end if
                 case _ =>
                     self
@@ -520,26 +527,23 @@ object Arrow:
 
     final class Offset private[kyo] (
         private[kyo] val elems: Array[Transform[?, ?, ?]],
-        private[kyo] val from: Int
+        private[kyo] val from: Int,
+        private[kyo] val next: Arrow[Any, Any, Any]
     ) extends Transform[Any, Any, Any]:
         def frame = Frame.internal
 
         def head: Transform[Any, Any, Any] =
             elems(from).asInstanceOf[Transform[Any, Any, Any]]
 
-        def next: Arrow[Any, Any, Any] =
-            tail(elems, from + 1)
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            @tailrec def loop(es: Array[Transform[?, ?, ?]], i: Int, cur: Any): Any =
-                if i == es.length then cont(cur.asInstanceOf[Any < Any])
-                else if probe() then
-                    Kyo.Defer(cur, tail(es, i).map(cont).asInstanceOf[Arrow[Any, Any, Any]])
+            @tailrec def loop(o: Offset, cur: Any): Any =
+                if probe() then
+                    Kyo.Defer(cur, o.map(cont).asInstanceOf[Arrow[Any, Any, Any]])
                 else
-                    es(i) match
-                        case o: Offset if i + 1 == es.length =>
-                            loop(o.elems, o.from, cur)
-                        case t0 =>
-                            val t = t0.asInstanceOf[Transform[Any, Any, Any]]
+                    o.head match
+                        case jump: Offset if isEmpty(o.next) =>
+                            loop(jump, cur)
+                        case t =>
                             val w =
                                 try t.run(cur, empty)
                                 catch
@@ -547,17 +551,25 @@ object Arrow:
                                         KyoException.attach(ex, "map", t.frame)
                                         throw ex
                             if w.isInstanceOf[Kyo[?, ?]] then
-                                tail(es, i + 1).map(cont)(w.asInstanceOf[Any < Any])
-                            else loop(es, i + 1, Kyo.unwrap(w))
-            loop(elems, from, v).asInstanceOf[C < (Any & S2)]
+                                o.next.map(cont)(w.asInstanceOf[Any < Any])
+                            else
+                                (o.next: Any) match
+                                    case n: Offset => loop(n, Kyo.unwrap(w))
+                                    case _         => cont(Kyo.unwrap(w).asInstanceOf[Any < Any])
+                            end if
+            loop(this, v).asInstanceOf[C < (Any & S2)]
         end run
 
         override def toString = "Offset(" + from + ")"
     end Offset
 
-    private def tail(elems: Array[Transform[?, ?, ?]], from: Int): Arrow[Any, Any, Any] =
+    private[kyo] def tail(elems: Array[Transform[?, ?, ?]], from: Int): Arrow[Any, Any, Any] =
+        @tailrec def link(i: Int, next: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+            if i < from then next
+            else link(i - 1, new Offset(elems, i, next))
         if from >= elems.length then empty
-        else new Offset(elems, from)
+        else link(elems.length - 1, empty)
+    end tail
 
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
