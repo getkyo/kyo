@@ -21,7 +21,7 @@ class FileSystemTest extends kyo.test.Test[Any]:
         typeCheck("def check(write: kyo.FileSystem.Write[kyo.Sync]): kyo.FileSystem.Read[kyo.Sync] = write")
     }
 
-    "a Read-only backend does not satisfy Write" in {
+    "ZipReadOnlyFileSystem exposes only Read" in {
         typeCheckFailure("def check(read: kyo.FileSystem.Read[kyo.Sync]): kyo.FileSystem.Write[kyo.Sync] = read")(
             "Found"
         )
