@@ -68,7 +68,7 @@ object `<`:
                 v
     end observe
 
-    final class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
+    final private[kyo] class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             @tailrec def loop(o: Arrow.Offset[Any, Any, Any, Any], cur: Any): Any =

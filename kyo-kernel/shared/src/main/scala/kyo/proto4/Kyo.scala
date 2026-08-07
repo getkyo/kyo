@@ -10,7 +10,7 @@ import scala.annotation.static
 import scala.annotation.tailrec
 
 sealed abstract class Kyo[+A, -S]:
-    def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
+    private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
     private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S
 
 object Kyo:
@@ -33,7 +33,7 @@ object Kyo:
       */
     sealed abstract class Suspension[X, -E] extends Kyo[X, E]:
 
-        final def map[B, S](f: Arrow[X, B, S]): B < (E & S) =
+        final private[kyo] def map[B, S](f: Arrow[X, B, S]): B < (E & S) =
             Continue[X, B, E & S](this, f.asInstanceOf[Arrow[X, B, E & S]])
 
         final private[kyo] def prepend(f: Arrow[Any, Any, Any]): X < E =
@@ -66,7 +66,7 @@ object Kyo:
         val cont: Arrow[X, B, S]
     ) extends Kyo[B, S]:
 
-        def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
+        private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Continue(suspend, cont.map(f))
 
         private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
@@ -83,7 +83,7 @@ object Kyo:
         def cont: Arrow[R, A, S]
         def frame: Frame
 
-        final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
+        final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
             val outer = this
             new Bracket[R, B, S & S2]:
                 def acquire       = outer.acquire
@@ -116,7 +116,7 @@ object Kyo:
         val cont: Arrow[A, B, S]
     ) extends Kyo[B, S]:
 
-        def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
+        private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Defer(value, cont.map(f))
 
         private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =

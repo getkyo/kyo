@@ -246,6 +246,23 @@ per read, non-inline drive) is deliberately unoptimized; the proto3 ledger
 defines the recovery targets. The fork-time environment snapshot for
 Isolate arrives with the environment threading work in a later round.
 
+## Visibility policy
+
+Public is exactly the user surface plus what inline expansion forces:
+
+- User surface: the two effect kinds and their companions (suspend and
+  handle families, Outcome), Effect.defer and Effect.bracket, the `<`
+  operations (lift, map, eval, eval(preempt, period), discard, observe),
+  Arrow with apply, map, step, Step, and Transform as the SPI.
+- Inline-forced: node classes instantiated by inline constructors (Suspend,
+  ContextRead, Defer, Bracket), Kyo and Kyo.unwrap, Arrow.of, Offset's type
+  and accessors, liftSlow. These are public but undocumented surface;
+  tightening them requires de-inlining the constructors first.
+- Everything else is private[kyo] or private: the node hierarchy's map and
+  prepend, Continue, Nested, Suspension's operations, Handler and its
+  delimiters, Safepoint, Finalize, Observe, optimize, stepSlow, the drive
+  and dispatch internals, KyoException.
+
 ## Naming
 
 ControlEffect, renamed from ArrowEffect after Arrow became a first-class

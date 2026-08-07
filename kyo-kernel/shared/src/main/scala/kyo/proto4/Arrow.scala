@@ -84,7 +84,7 @@ object Arrow:
             else if f.asInstanceOf[AnyRef] eq empty then self.asInstanceOf[Arrow[A, C, S & S2]]
             else new AndThen(self, f)
 
-        def optimize: Arrow[A, B, S] =
+        private[kyo] def optimize: Arrow[A, B, S] =
             def respine(node: Arrow[?, ?, ?], rest: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
                 node match
                     case at: AndThen[?, ?, ?, ?] =>
@@ -156,7 +156,7 @@ object Arrow:
 
     end extension
 
-    def stepSlow[A, B, S](self: Arrow[A, B, S]): Maybe[Step[A, B, S]] =
+    private[kyo] def stepSlow[A, B, S](self: Arrow[A, B, S]): Maybe[Step[A, B, S]] =
         self match
             case at: AndThen[?, ?, ?, ?] =>
                 self.optimize.step
