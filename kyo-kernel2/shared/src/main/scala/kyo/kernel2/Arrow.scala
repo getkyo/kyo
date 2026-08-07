@@ -23,6 +23,7 @@ object Arrow:
       * the caller's own bytecode, where the receiver profile is private to that site.
       * X is the intermediate type between head and next; callers never name it.
       */
+    // TODO why isn't this private[kyo]
     sealed trait Step[-A, +B, -S]:
         type X
         def head: Transform[A, X, S]
@@ -203,6 +204,7 @@ object Arrow:
       * driven) and the Step handle for its own position, so phase 1 decomposes it for
       * free by identity.
       */
+    // TODO do not use type params like X0, use A, B, C, .. for values and S, S2, S3, .. for effects
     final class Offset[-A, X0, +B, -S] private[kyo] (
         val head: Transform[A, X0, S],
         val next: Arrow[X0, B, S]

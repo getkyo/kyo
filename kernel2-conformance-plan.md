@@ -189,6 +189,16 @@ Recorded tier-1 divergences (each ruled by the user):
   (openDrive/closeDrive on Safepoint), since a drive's real stack
   restarts at its own frame.
 - The ported ContextEffectTest oracle passed unchanged.
+- The kyo.Kyo utilities object (the current kernel module's package-kyo
+  surface: when, unless, zip 2-10, fill, and the collection combinator
+  families) lives on kernel2's Kyo companion, exported as kyo.Kyo at
+  swap time. kernel2 implements the generic Iterable variant of each
+  combinator once; the current kernel's per-collection specializations
+  (List, Seq, Chunk, Set) are performance work for the optimization
+  round, since overload resolution binds the generic variant
+  source-compatibly. The Map-keyed family is still to port. Node
+  toString renders shape, tag, and position rather than the current
+  kernel's frame snippet until the trace round (KyoTest adaptation).
 
 ## Structure ruling
 
