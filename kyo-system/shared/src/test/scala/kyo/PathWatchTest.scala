@@ -108,14 +108,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
-        val fileSystem = FileSystem.host
-        Scope.acquireRelease(fileSystem.tempDir("kyo-path-watch-test"))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
-            use(fileSystem, handle.path)
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("watch-suite-root")
+            fileSystem.mkDir(root).andThen(use(fileSystem, root))
         }
-    end withFileSystem
-
-    private def hostRoot(prefix: String)(using Frame): Path < (Sync & Scope & Abort[FileSystemException]) =
-        Scope.acquireRelease(FileSystem.host.tempDir(prefix))(handle => Sync.Unsafe.defer(handle.remove())).map(_.path)
 
     private def glob(value: String): Glob =
         Glob.parse(value) match
@@ -124,11 +120,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                 throw new AssertionError(s"invalid test glob at ${error.offset}: ${error.reason}")
             case Result.Panic(error) => throw error
 
-    "watcher emits Created after registration" in {
-        hostRoot("kyo-path-watch-created").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "watched"
-            val file       = root / "created.txt"
+    "in-memory watcher emits Created after registration" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("watched")
+            val file = root / "created.txt"
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
@@ -145,10 +140,9 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "mutation during an initial walk is queued by the already-open watcher" in {
-        hostRoot("kyo-path-watch-walk-race").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "walk-race-root"
-            val created    = root / "during-walk.txt"
+        FileSystem.inMemory.map { fileSystem =>
+            val root    = Path("walk-race-root")
+            val created = root / "during-walk.txt"
             Latch.init(1).map { walkStarted =>
                 Latch.init(1).map { finishWalk =>
                     Scope.run {
@@ -180,11 +174,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher emits Modified for an existing file" in {
-        hostRoot("kyo-path-watch-modified").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "modified-root"
-            val file       = root / "modified.txt"
+    "in-memory watcher emits Modified for an existing file" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("modified-root")
+            val file = root / "modified.txt"
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
@@ -200,11 +193,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher emits Removed for a removed child" in {
-        hostRoot("kyo-path-watch-removed").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "removed-root"
-            val file       = root / "removed.txt"
+    "in-memory watcher emits Removed for a removed child" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("removed-root")
+            val file = root / "removed.txt"
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
@@ -220,12 +212,11 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher emits Moved for a rename within the selected view" in {
-        hostRoot("kyo-path-watch-moved").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "moved-root"
-            val from       = root / "from.txt"
-            val to         = root / "to.txt"
+    "in-memory watcher emits Moved for a rename within the selected view" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("moved-root")
+            val from = root / "from.txt"
+            val to   = root / "to.txt"
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
@@ -241,10 +232,9 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher emits Invalidated when its root is removed" in {
-        hostRoot("kyo-path-watch-invalidated").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "invalidated-root"
+    "in-memory watcher emits Invalidated when its root is removed" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("invalidated-root")
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
@@ -260,30 +250,17 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "invalidation is terminal and cannot resume after root recreation" in {
-        // On the clock-driven poll loop, removeAll and the recreation below both land between two
-        // scans unless the removal's own scan is forced through first: the advance after removeAll
-        // is what lets the loop observe the root missing and close the stream before recreation ever
-        // happens, rather than folding straight from "existed" to "exists again" and never noticing.
-        Clock.withTimeControl { clock =>
-            hostRoot("kyo-path-watch-terminal").map { dir =>
-                val fileSystem = FileSystem.host
-                val root       = dir / "terminal-root"
-                val later      = root / "later.txt"
-                Scope.run {
-                    fileSystem.mkDir(root).andThen {
-                        fileSystem.openWatcher(root, WatchOptions()).map { watcher =>
-                            Fiber.initUnscoped(Scope.run(watcher.events.run)).map { fiber =>
-                                fileSystem.removeAll(root).andThen {
-                                    clock.advance(10.millis).andThen {
-                                        fileSystem.mkDir(root).andThen {
-                                            fileSystem.write(later, "later", Path.WriteOptions()).andThen {
-                                                clock.advance(10.millis).andThen {
-                                                    fiber.get.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
-                                                }
-                                            }
-                                        }
-                                    }
+    "in-memory invalidation is terminal and cannot resume after root recreation" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root  = Path("terminal-in-memory-root")
+            val later = root / "later.txt"
+            Scope.run {
+                fileSystem.mkDir(root).andThen {
+                    fileSystem.openWatcher(root, WatchOptions()).map { watcher =>
+                        fileSystem.removeAll(root).andThen {
+                            fileSystem.mkDir(root).andThen {
+                                fileSystem.write(later, "later", Path.WriteOptions()).andThen {
+                                    watcher.events.run.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
                                 }
                             }
                         }
@@ -293,14 +270,13 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher does not invent moves for equal files or directories" in {
-        hostRoot("kyo-path-watch-identity").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "identity-root"
-            val oldFile    = root / "old.txt"
-            val newFile    = root / "new.txt"
-            val oldDir     = root / "old-dir"
-            val newDir     = root / "new-dir"
+    "in-memory watcher does not invent moves for equal files or directories" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root    = Path("identity-root")
+            val oldFile = root / "old.txt"
+            val newFile = root / "new.txt"
+            val oldDir  = root / "old-dir"
+            val newDir  = root / "new-dir"
             Scope.run {
                 fileSystem.write(oldFile, "same", Path.WriteOptions()).andThen(fileSystem.mkDir(oldDir)).andThen {
                     fileSystem.openWatcher(root, WatchOptions()).map { watcher =>
@@ -323,14 +299,13 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher invalidates when its root is moved away" in {
-        hostRoot("kyo-path-watch-moved-away").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "moved-watch-root"
+    "in-memory watcher invalidates when its root is moved away" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("moved-watch-root")
             Scope.run {
                 fileSystem.mkDir(root).andThen {
                     fileSystem.openWatcher(root, WatchOptions(capacity = 1)).map { watcher =>
-                        fileSystem.move(root, dir / "moved-watch-target", Path.MoveOptions()).andThen {
+                        fileSystem.move(root, Path("moved-watch-target"), Path.MoveOptions()).andThen {
                             watcher.events.take(1).run.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
                         }
                     }
@@ -339,15 +314,14 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher invalidates when an ancestor is moved away" in {
-        hostRoot("kyo-path-watch-ancestor-moved").map { dir =>
-            val fileSystem = FileSystem.host
-            val ancestor   = dir / "moved-watch-ancestor"
-            val root       = ancestor / "root"
+    "in-memory watcher invalidates when an ancestor is moved away" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val ancestor = Path("moved-watch-ancestor")
+            val root     = ancestor / "root"
             Scope.run {
                 fileSystem.mkDir(root).andThen {
                     fileSystem.openWatcher(root, WatchOptions(capacity = 1)).map { watcher =>
-                        fileSystem.move(ancestor, dir / "moved-ancestor-target", Path.MoveOptions()).andThen {
+                        fileSystem.move(ancestor, Path("moved-ancestor-target"), Path.MoveOptions()).andThen {
                             watcher.events.take(1).run.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
                         }
                     }
@@ -356,13 +330,12 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "multi-event traces are stably path sorted" in {
-        hostRoot("kyo-path-watch-sorted").map { tempRoot =>
-            val fileSystem = FileSystem.host
-            val root       = tempRoot / "sorted-watch-root"
-            val dir        = root / "dir"
-            val a          = dir / "a.txt"
-            val b          = dir / "b.txt"
+    "in-memory multi-event traces are stably path sorted" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("sorted-watch-root")
+            val dir  = root / "dir"
+            val a    = dir / "a.txt"
+            val b    = dir / "b.txt"
             fileSystem.write(a, "a", Path.WriteOptions()).andThen(fileSystem.write(b, "b", Path.WriteOptions())).andThen {
                 Scope.run {
                     fileSystem.openWatcher(root, WatchOptions(depth = WatchDepth.Recursive)).map { watcher =>
@@ -377,30 +350,19 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
-    "watcher emits Overflow when its bounded queue loses changes" in {
-        // Both writes land before the scan, so the one poll pass that follows sees both new files at
-        // once and folds them into a single Overflow. The read is issued only after the wall-clock-
-        // waiting advances settle that whole pass, deliberately not forked ahead of it: a reader
-        // already parked on take(1) can claim the batch's first successful offer (the plain Created)
-        // before the same pass reaches the offer that trips overflow, which is a real race against
-        // the scan, not an artifact of an uncontrolled clock.
-        Clock.withTimeControl { clock =>
-            hostRoot("kyo-path-watch-overflow").map { dir =>
-                val fileSystem = FileSystem.host
-                val root       = dir / "overflow-root"
-                Scope.run {
-                    Path.runWatchWith(fileSystem) {
-                        Path.runWith(fileSystem) {
-                            for
-                                _       <- root.mkDir
-                                watcher <- root.openWatcher(WatchOptions(capacity = 1))
-                                _       <- (root / "first").write("first")
-                                _       <- (root / "second").write("second")
-                                _       <- clock.advance(Duration.Zero, 10.millis)
-                                _       <- clock.advance(10.millis, 10.millis)
-                                events  <- watcher.events.take(1).run
-                            yield assert(events == Chunk(PathChange.Overflow(root)))
-                        }
+    "in-memory watcher emits Overflow when its bounded queue loses changes" in {
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("overflow-root")
+            Scope.run {
+                Path.runWatchWith(fileSystem) {
+                    Path.runWith(fileSystem) {
+                        for
+                            _       <- root.mkDir
+                            watcher <- root.openWatcher(WatchOptions(capacity = 1))
+                            _       <- (root / "first").write("first")
+                            _       <- (root / "second").write("second")
+                            events  <- watcher.events.take(1).run
+                        yield assert(events == Chunk(PathChange.Overflow(root)))
                     }
                 }
             }
@@ -408,25 +370,17 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "watch capacity is an exact logical bound" in {
-        // Same reasoning as the Overflow case above: the read is issued only after the scan settles,
-        // never forked ahead of it, so it cannot claim one of the batch's earlier successful offers
-        // before the same pass reaches the one that overflows.
-        Clock.withTimeControl { clock =>
-            hostRoot("kyo-path-watch-capacity").map { dir =>
-                val fileSystem = FileSystem.host
-                val root       = dir / "capacity-root"
-                Scope.run {
-                    Path.runWatchWith(fileSystem) {
-                        Path.runWith(fileSystem) {
-                            for
-                                _       <- root.mkDir
-                                watcher <- root.openWatcher(WatchOptions(capacity = 3))
-                                _       <- Kyo.foreachDiscard(0 until 4)(index => (root / s"$index.txt").write(index.toString))
-                                _       <- clock.advance(Duration.Zero, 10.millis)
-                                _       <- clock.advance(10.millis, 10.millis)
-                                events  <- watcher.events.take(1).run
-                            yield assert(events == Chunk(PathChange.Overflow(root)))
-                        }
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("capacity-root")
+            Scope.run {
+                Path.runWatchWith(fileSystem) {
+                    Path.runWith(fileSystem) {
+                        for
+                            _       <- root.mkDir
+                            watcher <- root.openWatcher(WatchOptions(capacity = 3))
+                            _       <- Kyo.foreachDiscard(0 until 4)(index => (root / s"$index.txt").write(index.toString))
+                            events  <- watcher.events.take(1).run
+                        yield assert(events == Chunk(PathChange.Overflow(root)))
                     }
                 }
             }
@@ -434,11 +388,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "immediate depth excludes descendants below direct children" in {
-        hostRoot("kyo-path-watch-immediate").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "immediate-root"
-            val nested     = root / "nested"
-            val direct     = root / "direct.txt"
+        FileSystem.inMemory.map { fileSystem =>
+            val root   = Path("immediate-root")
+            val nested = root / "nested"
+            val direct = root / "direct.txt"
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
@@ -456,11 +409,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "recursive depth includes descendants" in {
-        hostRoot("kyo-path-watch-recursive").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "recursive-root"
-            val nested     = root / "nested"
-            val file       = nested / "selected.txt"
+        FileSystem.inMemory.map { fileSystem =>
+            val root   = Path("recursive-root")
+            val nested = root / "nested"
+            val file   = nested / "selected.txt"
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
@@ -477,11 +429,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "glob matching is root relative and observes explicit case policy" in {
-        hostRoot("kyo-path-watch-glob").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "glob-root"
-            val ignored    = root / "other" / "FILE.TXT"
-            val selected   = root / "selected" / "FILE.TXT"
+        FileSystem.inMemory.map { fileSystem =>
+            val root     = Path("glob-root")
+            val ignored  = root / "other" / "FILE.TXT"
+            val selected = root / "selected" / "FILE.TXT"
             val options = WatchOptions(
                 depth = WatchDepth.Recursive,
                 glob = glob("selected/*.txt"),
@@ -504,30 +455,20 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "FileSystemDefault uses the backend case policy" in {
-        // Which file the glob selects depends on the host volume's own case policy, so the write
-        // order and the expected event both branch on it rather than assuming Sensitive: on an
-        // insensitive volume "IGNORED.TXT" matches "*.txt" too, so writing it first would make it
-        // the first captured event instead of "selected.txt".
-        hostRoot("kyo-path-watch-default-case").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "default-case-root"
-            val upper      = root / "IGNORED.TXT"
-            val lower      = root / "selected.txt"
+        FileSystem.inMemory.map { fileSystem =>
+            val root     = Path("default-case-root")
+            val ignored  = root / "IGNORED.TXT"
+            val selected = root / "selected.txt"
             Scope.run {
                 Path.runWatchWith(fileSystem) {
                     Path.runWith(fileSystem) {
                         for
-                            _               <- root.mkDir
-                            watcher         <- root.openWatcher(WatchOptions(glob = glob("*.txt")))
-                            caseSensitivity <- fileSystem.defaultCaseSensitivity
-                            _ <- caseSensitivity match
-                                case Glob.CaseSensitivity.Sensitive   => upper.write("ignored").andThen(lower.write("selected"))
-                                case Glob.CaseSensitivity.Insensitive => upper.write("selected")
-                            expected = caseSensitivity match
-                                case Glob.CaseSensitivity.Sensitive   => lower
-                                case Glob.CaseSensitivity.Insensitive => upper
-                            events <- watcher.events.take(1).run
-                        yield assert(events == Chunk(PathChange.Created(expected)))
+                            _       <- root.mkDir
+                            watcher <- root.openWatcher(WatchOptions(glob = glob("*.txt")))
+                            _       <- ignored.write("ignored")
+                            _       <- selected.write("selected")
+                            events  <- watcher.events.take(1).run
+                        yield assert(events == Chunk(PathChange.Created(selected)))
                     }
                 }
             }
@@ -535,9 +476,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "glob-filtered moves normalize entering and leaving the selected view" in {
-        hostRoot("kyo-path-watch-move-filter").map { dir =>
-            val fileSystem   = FileSystem.host
-            val root         = dir / "move-filter-root"
+        FileSystem.inMemory.map { fileSystem =>
+            val root         = Path("move-filter-root")
             val outside      = root / "value.bin"
             val inside       = root / "value.txt"
             val outsideAgain = root / "renamed.bin"
@@ -561,9 +501,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "watcher resources are released with their acquisition scope" in {
-        hostRoot("kyo-path-watch-scope").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "scope-root"
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("scope-root")
             Path.runWith(fileSystem)(root.mkDir).andThen {
                 Scope.run(fileSystem.openWatcher(root, WatchOptions())).map { watcher =>
                     Scope.run(watcher.events.run).map(events => assert(events.isEmpty))
@@ -573,10 +512,9 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "PathWatch runner uses the Local-selected watch backend" in {
-        hostRoot("kyo-path-watch-local").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "local-watch-root"
-            val file       = root / "created.txt"
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("local-watch-root")
+            val file = root / "created.txt"
             FileSystem.let(fileSystem) {
                 Scope.run {
                     Path.runWatch {
@@ -596,11 +534,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
 
     "polling watcher surfaces a terminal typed scan failure" in {
         Clock.withTimeControl { clock =>
-            hostRoot("kyo-path-watch-fault").map { dir =>
-                val delegate = FileSystem.host
+            FileSystem.inMemory.map { delegate =>
                 AtomicBoolean.init(false).map { failList =>
                     AtomicBoolean.init(true).map { rootIsDirectory =>
-                        val root = dir / "fault-watch-root"
+                        val root = Path("fault-watch-root")
                         val fs   = new FaultRead(delegate, failList, rootIsDirectory)
                         delegate.mkDir(root).andThen {
                             fs.openWatcher(root, WatchOptions()).map { watcher =>
@@ -624,11 +561,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
 
     "polling watcher invalidates when its root becomes a file" in {
         Clock.withTimeControl { clock =>
-            hostRoot("kyo-path-watch-root-file").map { dir =>
-                val delegate = FileSystem.host
+            FileSystem.inMemory.map { delegate =>
                 AtomicBoolean.init(false).map { failList =>
                     AtomicBoolean.init(true).map { rootIsDirectory =>
-                        val root = dir / "file-watch-root"
+                        val root = Path("file-watch-root")
                         val fs   = new FaultRead(delegate, failList, rootIsDirectory)
                         delegate.mkDir(root).andThen {
                             fs.openWatcher(root, WatchOptions()).map { watcher =>
@@ -649,11 +585,10 @@ class PathWatchTest extends FileSystemWatchTestSuite:
 
     "polling invalidation is terminal and cannot resume after root recreation" in {
         Clock.withTimeControl { clock =>
-            hostRoot("kyo-path-watch-terminal-polling").map { dir =>
-                val delegate = FileSystem.host
+            FileSystem.inMemory.map { delegate =>
                 AtomicBoolean.init(false).map { failList =>
                     AtomicBoolean.init(true).map { rootIsDirectory =>
-                        val root = dir / "terminal-polling-root"
+                        val root = Path("terminal-polling-root")
                         val fs   = new FaultRead(delegate, failList, rootIsDirectory)
                         delegate.mkDir(root).andThen {
                             fs.openWatcher(root, WatchOptions()).map { watcher =>
@@ -686,9 +621,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         // test: a slower or busier machine completes fewer scans, never more, so load can only move
         // the result away from the failure. At a 5ms interval a paced loop performs roughly 40 scans
         // in 200ms; the bound sits far above that and orders of magnitude below a free-running loop.
-        hostRoot("kyo-path-watch-pacing").map { dir =>
-            val delegate = FileSystem.host
-            val root     = dir / "poll-pacing-root"
+        FileSystem.inMemory.map { delegate =>
+            val root = Path("poll-pacing-root")
             AtomicInt.init(0).map { scans =>
                 val fs = new CountingRead(delegate, scans)
                 delegate.mkDir(root).andThen {
@@ -713,10 +647,9 @@ class PathWatchTest extends FileSystemWatchTestSuite:
 
     "polling recovery preserves the precise existence-check failure" in {
         Clock.withTimeControl { clock =>
-            hostRoot("kyo-path-watch-recovery-failure").map { dir =>
-                val delegate = FileSystem.host
-                val root     = dir / "recovery-failure-root"
-                val child    = root / "child.txt"
+            FileSystem.inMemory.map { delegate =>
+                val root  = Path("recovery-failure-root")
+                val child = root / "child.txt"
                 AtomicBoolean.init(false).map { faults =>
                     val panicCheck = new java.util.concurrent.atomic.AtomicBoolean(false)
                     Kyo.unit.map { _ =>
@@ -745,9 +678,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "polling recovery preserves existence-check panics".timeout(5.seconds) in {
-        hostRoot("kyo-path-watch-recovery-panic").map { dir =>
-            val delegate   = FileSystem.host
-            val root       = dir / "recovery-panic-root"
+        FileSystem.inMemory.map { delegate =>
+            val root       = Path("recovery-panic-root")
             val child      = root / "child.txt"
             val marker     = new RuntimeException("check panic")
             val panicCheck = new java.util.concurrent.atomic.AtomicBoolean(true)
@@ -786,10 +718,9 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "FileSystem.let coherently selects the watch backend" in {
-        hostRoot("kyo-path-watch-coherent-local").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "coherent-local-watch"
-            val file       = root / "created.txt"
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("coherent-local-watch")
+            val file = root / "created.txt"
             FileSystem.let(fileSystem) {
                 Scope.run {
                     Path.runWatch {
@@ -818,9 +749,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "PathWatch runs watchers in concurrent child fibers" in {
-        hostRoot("kyo-path-watch-concurrent-fibers").map { dir =>
-            val fileSystem = FileSystem.host
-            val roots      = Chunk(dir / "isolated-watch-one", dir / "isolated-watch-two")
+        FileSystem.inMemory.map { fileSystem =>
+            val roots = Chunk(Path("isolated-watch-one"), Path("isolated-watch-two"))
             FileSystem.let(fileSystem) {
                 Scope.run {
                     Path.runWatch {
@@ -846,9 +776,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "interrupting a PathWatch child releases its watchers" in {
-        hostRoot("kyo-path-watch-interrupted").map { dir =>
-            val fileSystem = FileSystem.host
-            val root       = dir / "interrupted-watch"
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("interrupted-watch")
             fileSystem.mkDir(root).andThen {
                 AtomicRef.init[Maybe[Path.Watcher]](Absent).map { acquired =>
                     Latch.init(1).map { ready =>

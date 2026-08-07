@@ -1,6 +1,5 @@
 package kyo
 
-import java.nio.charset.Charset
 import scala.compiletime.testing.typeCheckErrors
 
 /** Tests for the top-level [[FileSystem]] surface: installation through [[Path.runWith]] and the
@@ -9,76 +8,6 @@ import scala.compiletime.testing.typeCheckErrors
 class FileSystemTest extends kyo.test.Test[Any]:
 
     private val selectedPath = Path("selected.txt")
-
-    /** Rebases `write` and `read`, the only two ops this suite exercises, under `root`. Two
-      * instances backed by the real host filesystem then behave as independent stores addressable
-      * through the same literal `Path` value, which is what these `FileSystem.let` selection tests
-      * need: the store a read reaches must depend only on which service is ambient.
-      */
-    final private class IsolatedFileSystem(root: Path) extends FileSystem.Write[Sync]:
-        private val delegate = FileSystem.host
-        // Delegated by name, not a wildcard: a wildcard emits one forwarder per member in an order
-        // the compiler does not fix, so this class's TASTy differs between clean builds, which
-        // reaches the doctest classpath fingerprint and costs the module its cached results.
-        // `read` and `write` are absent because this class overrides them below. Omitting any other
-        // member fails to compile, since the class must implement all of FileSystem.Write.
-        export delegate.append
-        export delegate.appendBytes
-        export delegate.appendLines
-        export delegate.copy
-        export delegate.defaultCaseSensitivity
-        export delegate.durableReplace
-        export delegate.exists
-        export delegate.isDirectory
-        export delegate.isRegularFile
-        export delegate.isSymbolicLink
-        export delegate.list
-        export delegate.lock
-        export delegate.mkDir
-        export delegate.mkFile
-        export delegate.move
-        export delegate.openRead
-        export delegate.openReadChannel
-        export delegate.openReadChannelUnscoped
-        export delegate.openReadLines
-        export delegate.openReadWriteChannel
-        export delegate.openReadWriteChannelUnscoped
-        export delegate.openWalk
-        export delegate.openWrite
-        export delegate.openWriteChannel
-        export delegate.openWriteChannelUnscoped
-        export delegate.readBytes
-        export delegate.readLines
-        export delegate.realPath
-        export delegate.remove
-        export delegate.removeAll
-        export delegate.removeExisting
-        export delegate.setLastModified
-        export delegate.siblingTemporary
-        export delegate.size
-        export delegate.stat
-        export delegate.syncDirectory
-        export delegate.temp
-        export delegate.tempDir
-        export delegate.tempFileHandle
-        export delegate.truncate
-        export delegate.tryLock
-        export delegate.writeBytes
-        export delegate.writeChunk
-        export delegate.writeLines
-        export delegate.writeString
-        def write(path: Path, value: String, options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            delegate.write(root / path, value, options)
-        def read(path: Path)(using Frame): String < (Sync & Abort[FileReadException]) =
-            delegate.read(root / path)
-        def read(path: Path, charset: Charset)(using Frame): String < (Sync & Abort[FileReadException]) =
-            delegate.read(root / path, charset)
-    end IsolatedFileSystem
-
-    private def isolatedFileSystem(prefix: String)(using Frame): FileSystem.Write[Sync] < (Sync & Scope & Abort[FileSystemException]) =
-        Scope.acquireRelease(FileSystem.host.tempDir(prefix))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
-            IsolatedFileSystem(handle.path)
-        }
 
     "Read exposes no write member" in {
         typeCheckFailure(
@@ -113,16 +42,16 @@ class FileSystemTest extends kyo.test.Test[Any]:
         )
     }
 
-    private def services: (FileSystem.Write[Sync], FileSystem.Write[Sync]) < (Sync & Scope & Abort[FileSystemException]) =
+    private def services: (FileSystem.Write[Sync], FileSystem.Write[Sync]) < (Sync & Abort[FileSystemException]) =
         for
-            outer <- isolatedFileSystem("kyo-fs-let-outer")
-            inner <- isolatedFileSystem("kyo-fs-let-inner")
+            outer <- FileSystem.inMemory
+            inner <- FileSystem.inMemory
             _     <- Path.runWith(outer)(selectedPath.write("outer"))
             _     <- Path.runWith(inner)(selectedPath.write("inner"))
         yield (outer, inner)
 
     "top-level FileSystem installs through runWith" in {
-        isolatedFileSystem("kyo-fs-top-level").map { service =>
+        FileSystem.inMemory.map { service =>
             val p = Path("a")
             val program: Unit < (Sync & Abort[FileSystemException]) =
                 Path.runWith(service)(p.write("x"))

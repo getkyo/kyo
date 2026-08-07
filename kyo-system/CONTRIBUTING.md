@@ -30,6 +30,7 @@ kyo-system/
     Path.scala
     FileSystem.scala
     HostFileSystem.scala
+    InMemoryFileSystem.scala
     FileSystemException.scala
     Command.scala
     Process.scala
@@ -50,6 +51,7 @@ The built-in factories are:
 |---|---|---|
 | `FileSystem.host` | write and watch | Local host filesystem |
 | `FileSystem.host(root)` | write and watch | Canonically root-confined host access |
+| `FileSystem.inMemory` | write and watch | Hermetic shared implementation |
 
 `FileSystem.let(backend)(program)` changes the backend used by the default Path runners for a
 dynamic scope. Selection uses `Local`, propagates to child fibers, and restores the previous backend
@@ -163,10 +165,11 @@ throwables into expected filesystem failures.
 2. Add a focused shared test that proves behavior and its precise failure case.
 3. Add the safe Path surface and reified operation when it is a Path capability operation.
 4. Add the narrowest `FileSystem` tier method and precise effect row.
-5. Implement both platform leaves for host behavior.
-6. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
-7. Extend the reusable conformance suite when the contract applies to multiple backends.
-8. Compile and test JVM, JavaScript, Native, and Wasm.
+5. Implement the shared in-memory backend where supported.
+6. Implement both platform leaves for host behavior.
+7. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
+8. Extend the reusable conformance suite when the contract applies to multiple backends.
+9. Compile and test JVM, JavaScript, Native, and Wasm.
 
 Do not add an operation to the unsafe tier without completing every layer above it.
 
