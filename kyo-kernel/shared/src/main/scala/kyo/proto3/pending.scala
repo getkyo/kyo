@@ -142,9 +142,7 @@ object `<`:
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
-                            if w.isInstanceOf[Kyo[?, ?]] && !Arrow.isEmpty(cont) then
-                                w.asInstanceOf[Kyo[B, S2]].map(cont).asInstanceOf[C < (S2 & S3)]
-                            else cont(w)
+                            cont(w)
                     end match
                 end run
             arrow(self)
