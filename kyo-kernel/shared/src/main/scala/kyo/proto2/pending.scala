@@ -426,7 +426,12 @@ object Arrow:
                         else o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
                     case t: Transform[A, B, S] @unchecked =>
                         if probe() then applySlow(self, v)
-                        else t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
+                        else
+                            try t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
+                            catch
+                                case ex: Throwable =>
+                                    KyoException.attach(ex, "map", t.frame)
+                                    throw ex
                     case _ =>
                         applySlow(self, v)
 
