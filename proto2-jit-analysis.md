@@ -274,3 +274,22 @@ Additional design rules from the proto3 record:
     fused step or once per resume must be written in per-site code (a mint or
     a handler body), shared resume helpers are forbidden, and any new pooled
     site must name its amortization boundary.
+
+### The inline round
+
+Four approved inline changes, each its own gated toggle with an interleaved
+A/B (probe was removed outright rather than folded, being dead since the
+depth-guard rescue):
+
+| toggle | time | allocation | value |
+|---|---|---|---|
+| remove probe() | neutral | baseline | dead branches deleted from apply, applySlow, and the drive loop; seam bytes |
+| inline lift (summonFrom elision for value types) | neutral | baseline | zero lift bytecode in every primitive-returning mint (javap-verified); a folded `<:<.refl` residue per site |
+| inline step | neutral | stateStep10 flake gone (904 stable) | phase 1 in caller bytecode unconditionally |
+| inline trampoline (evalLoop, evalPartial, eval) | neutral | suspensionStep 168 to 152, stable | per-eval-site loop copies; the wrap scalar-replaces in every measured shape; handle(kyo) monomorphic per handler |
+
+Two negative findings worth keeping: the state row did not recover the pooled
+handler-dispatch cost when the trampoline went per-site, so that pooling was
+not the binding cost there; and inline apply was rejected without measurement
+because its expansion lands inside every mint's fallback arm, the seam the
+capture toggle already proved byte-critical.
