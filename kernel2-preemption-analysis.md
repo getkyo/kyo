@@ -164,6 +164,33 @@ two-level split the current kernel has:
   megamorphic call per map. Rejected for the hot path; it also reintroduces
   the richer surface (enter with frame and value) that nothing uses.
 
+## Access modes: the array stays plain
+
+The backing storage remains a plain `Array[Long]`, not an
+`AtomicLongArray`, and the owner hot path keeps zero fences and zero
+atomics. Precisely:
+
+- `increase`'s store and `decrease` stay plain array writes.
+- `increase`'s load moves from plain to opaque mode through the
+  VarHandle. Opaque is not volatile: it emits the same machine code as a
+  plain load on x86 and ARM64 (no fence), and only constrains the
+  compiler. That constraint is the point: under plain mode the JIT may
+  legally promote the cell to a register across a hot fully-inlined loop
+  (the owner is the only writer it can see) and never re-read memory, so
+  a poison could go unobserved indefinitely. Opaque forbids that
+  unbounded elimination and guarantees eventual visibility and access
+  atomicity (no 64-bit tearing), at zero runtime cost.
+- The poison set and the boundary-drive clear are CAS through
+  `MethodHandles.arrayElementVarHandle(classOf[Array[Long]])` on the same
+  plain array. Both are cold paths (coordinator tick, stride check).
+
+So the memory layout is unchanged and the hot-path codegen is unchanged;
+atomics exist only on the preempter and consume paths. If even the opaque
+annotation on the depth load is unwanted, the padding-cell alternative
+(above) keeps the depth cell 100 percent plain single-writer and moves
+the opaque load to the flag cell on the same cache line, at the cost of a
+second load and compare.
+
 ## Platform notes
 
 - JVM: `MethodHandles.arrayElementVarHandle(classOf[Array[Long]])` hosted
