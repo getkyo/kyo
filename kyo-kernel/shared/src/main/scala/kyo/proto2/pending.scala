@@ -387,6 +387,8 @@ object Arrow:
     private[kyo] def probe(): Boolean =
         false
 
+    final private[kyo] class Depth private ()
+
     private[kyo] object Depth:
 
         inline def Limit = 512
@@ -397,11 +399,11 @@ object Arrow:
         private inline def Shift        = 3
         private inline def Transferring = -1L
 
-        private val owners  = new java.util.concurrent.atomic.AtomicLongArray(Slots)
-        private val threads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](Slots)
+        @static private val owners  = new java.util.concurrent.atomic.AtomicLongArray(Slots)
+        @static private val threads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](Slots)
 
         // one cache line per cell; the last cell is pinned at Limit and never written
-        private val cells =
+        @static private val cells =
             val a = new Array[Long]((Slots + 1) << Shift)
             a(Slots << Shift) = Limit
             a
@@ -409,23 +411,23 @@ object Arrow:
 
         // returns the previous depth; does not write at or past Limit, so the
         // shared overflow cell is never mutated
-        def increase(slot: Int): Long =
+        @static def increase(slot: Int): Long =
             val depth = cells(slot)
             if depth < Limit then cells(slot) = depth + 1
             depth
         end increase
 
-        def decrease(slot: Int): Unit =
+        @static def decrease(slot: Int): Unit =
             cells(slot) -= 1
 
-        def slot(): Int =
+        @static def slot(): Int =
             val tid = Thread.currentThread().threadId
             val i   = tid.toInt & Mask
             if owners.get(i) == tid then i << Shift
             else slow(tid)
         end slot
 
-        private def slow(tid: Long): Int =
+        @static private def slow(tid: Long): Int =
             val self = Thread.currentThread()
             @tailrec def probe(i: Int, remaining: Int): Int =
                 if remaining == 0 then Slots << Shift
@@ -439,18 +441,18 @@ object Arrow:
             probe(tid.toInt & Mask, Probes)
         end slow
 
-        private def dead(i: Int): Boolean =
+        @static private def dead(i: Int): Boolean =
             val t = threads.get(i)
             (t ne null) && !t.isAlive
 
-        private def claim(i: Int, self: Thread, tid: Long): Int =
+        @static private def claim(i: Int, self: Thread, tid: Long): Int =
             threads.set(i, self)
             cells(i << Shift) = 0L
             owners.set(i, tid)
             i << Shift
         end claim
 
-        private[kyo] def owned: Boolean =
+        @static private[kyo] def owned: Boolean =
             val tid = Thread.currentThread().threadId
             @tailrec def scan(i: Int): Boolean =
                 if i == Slots then false
