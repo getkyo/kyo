@@ -9,6 +9,7 @@ import kyo.kernel2.internal.CanLift
 import kyo.kernel2.internal.Handler
 import kyo.kernel2.internal.KyoException
 import kyo.kernel2.internal.LiftMacro
+import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
 import scala.annotation.static
@@ -554,11 +555,16 @@ object `<`:
                         curr
             loop(v, 0)
         end recur
+        // the drive is a fresh trampoline: it runs with its own depth budget so frames the caller
+        // already committed cannot starve it into re-rescuing the same step forever
+        val safepoint = Safepoint.get
+        val saved     = safepoint.openDrive()
         try recur(v0, 0)
         catch
             case ex: Throwable =>
                 KyoException.install(ex)
                 throw ex
+        finally safepoint.closeDrive(saved)
         end try
     end driveLoop
 

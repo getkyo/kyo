@@ -182,6 +182,13 @@ Recorded tier-1 divergences (each ruled by the user):
   kernel bug: bare suspensions (no chain yet) skipped boundary dispatch,
   so handlePartial clauses and context defaults never applied to them;
   fixed in driveLoop.
+- The ported LoopTest oracle surfaced two more gaps, both fixed: the
+  missing indexed 4-input arity, and a livelock where a drive nested
+  inside eager recursion that exhausted the depth budget re-rescued the
+  same deferred step forever; drives now open a fresh depth budget
+  (openDrive/closeDrive on Safepoint), since a drive's real stack
+  restarts at its own frame.
+- The ported ContextEffectTest oracle passed unchanged.
 
 ## Structure ruling
 

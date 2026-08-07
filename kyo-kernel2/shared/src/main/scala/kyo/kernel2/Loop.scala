@@ -184,6 +184,20 @@ object Loop:
         loop(0)(run(0, input1, input2, input3))
     end indexed
 
+    /** Loops with four state values and the iteration index. */
+    inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
+        inline run: (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
+    )(using inline _frame: Frame): O < S =
+        def loop(idx: Int)(v: Outcome4[A, B, C, D, O] < S): O < S =
+            v.map { o =>
+                (o: Any) match
+                    case next: Continue4[A, B, C, D] @unchecked =>
+                        loop(idx + 1)(run(idx + 1, next._1, next._2, next._3, next._4))
+                    case res => res.asInstanceOf[O]
+            }
+        loop(0)(run(0, input1, input2, input3, input4))
+    end indexed
+
     /** Loops until the iteration completes, without state. */
     inline def foreach[A, S](inline run: => Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
         def loop(v: Outcome[Unit, A] < S): A < S =

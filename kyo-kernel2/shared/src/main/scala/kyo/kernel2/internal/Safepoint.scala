@@ -45,6 +45,17 @@ sealed abstract private[kyo] class Safepoint(private[kernel2] val thread: Maybe[
       */
     def preempt(): Unit
 
+    /** Opens a fresh depth budget for a drive, returning the caller's depth to restore with [[closeDrive]].
+      *
+      * A drive is a trampoline: its real stack restarts at the drive's own frame, so frames the caller has already committed must not
+      * count against it. Without the reset, a drive nested inside eager recursion that exhausted the budget can never enter a frame, and
+      * its rescue regenerates the same deferred step forever.
+      */
+    private[kyo] def openDrive(): Long
+
+    /** Restores the depth saved by [[openDrive]]. */
+    private[kyo] def closeDrive(saved: Long): Unit
+
     private[kernel2] def ownedBy(t: Thread): Boolean =
         thread.exists(_ eq t)
 
@@ -78,6 +89,15 @@ private[kyo] object Safepoint:
 
         def preempt(): Unit =
             val _ = slots.compareAndSet(index, this, new Parked(Present(this), thread))
+
+        private[kyo] def openDrive(): Long =
+            val d = depth
+            depth = 0L
+            d
+        end openDrive
+
+        private[kyo] def closeDrive(saved: Long): Unit =
+            depth = saved
     end Active
 
     final private[kernel2] class Parked private[Safepoint] (
@@ -87,6 +107,9 @@ private[kyo] object Safepoint:
         def enter(): Boolean = false
         def exit(): Unit     = ()
         def preempt(): Unit  = ()
+
+        private[kyo] def openDrive(): Long             = 0L
+        private[kyo] def closeDrive(saved: Long): Unit = ()
     end Parked
 
     @static private val slots = new AtomicReferenceArray[Safepoint](Slots)
