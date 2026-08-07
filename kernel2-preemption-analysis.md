@@ -6,11 +6,11 @@ access? Two variants were explored. The poison-bit variant sets a high
 bit in the depth cell itself, making the existing `depth >= Limit`
 compare the poll at zero added cost, at the price of a benign-but-real
 lost-update race that periodic re-assertion covers. The recommended
-variant (see "The pending-request counter") moves the signal to the
-padding long of the same cache line and uses only atomic operations on
-it: the poll costs one extra load and compare, and delivery becomes
-guaranteed rather than probabilistic, serving preemption and interruption
-through one channel. In both variants correctness stays anchored on the
+variant (see "The preempt word") moves the signal to the padding long of
+the same cache line as a 0-or-1 flag the owner never writes: the poll
+costs one extra load and compare, and delivery becomes guaranteed rather
+than probabilistic, serving preemption and interruption through one
+channel. In both variants correctness stays anchored on the
 authoritative preempt and interrupt state the boundary drive already
 checks; the cell is a latency carrier.
 
@@ -194,43 +194,60 @@ two-level split the current kernel has:
   correctly mid-cleanup, but the slice-level finalizer registry that
   IOTask keeps needs its own carrier.
 
-## The pending-request counter (recommended)
+## The preempt word (recommended)
 
-A refinement that supersedes the poison bit: keep the depth cell strictly
-single-writer and carry the signal in a dedicated per-thread counter that
-only ever sees atomic operations. This removes every probabilistic
-argument above.
+The final shape, superseding the poison bit: keep the depth word strictly
+single-writer and carry the signal in the adjacent long of the same cache
+line, as a 0-or-1 flag the owner never writes. Two words per slot, not
+one bit-packed word: packing depth and flag into one long is exactly the
+poison variant, and the owner's depth RMW rewriting the whole word is
+what created the stomp. The second word exists so the owner never writes
+the signal's location.
 
-- Placement: the padding of the existing cells cache line. Each slot
-  already occupies 8 longs with only index 0 (depth) used; the pending
-  counter lives at index `slot + 1`. No new array: a separate
-  AtomicLongArray would both cost a second cache line on the poll and
-  false-share neighboring slots' counters (8 per line), while the padding
-  slot is exclusive to the thread and rides the line `guardedRun` already
+- Placement: `cells(slot)` is depth, `cells(slot + 1)` is the preempt
+  flag, in the padding of the existing cache line (each slot occupies 8
+  longs with only index 0 used today). No new array: a separate
+  AtomicLongArray would cost a second cache line on the poll and
+  false-share neighboring slots' flags (8 per line), while the padding
+  word is exclusive to the thread and rides the line `guardedRun` already
   loads.
-- Requesters (coordinator tick, any interrupter): `getAndAdd(+1)` through
-  the array VarHandle. An atomic RMW is never lost, no matter how many
-  requesters race, and requests coalesce naturally into the count.
+- Requesters (coordinator tick, any interrupter): publish the condition
+  first (the promise CAS, the preempt state), then `setVolatile(1)` on
+  the flag through the array VarHandle. A plain volatile store suffices:
+  the only writer of 0 is the consumer's exchange, so a 1 cannot be
+  stomped, and concurrent requesters setting an idempotent 1 compose
+  because the meaning of the request lives in the authoritative state,
+  not in the word. (A request count was considered and rejected: the
+  consumer takes the word wholesale either way, so a count of 2 and a
+  flag of 1 are consumed identically; the count bought only telemetry
+  plus a theoretical overflow question, and cost an RMW where a store
+  suffices.)
 - Poll: `guardedRun` adds one load and compare on the already-resident
-  line: `if depth >= Limit || pending != 0 then rescue`. The pending load
-  is opaque mode (eventual visibility and access atomicity at plain-load
-  cost; full volatile would also work but buys ordering nothing here,
-  since ordering is carried by the authoritative state).
-- Consume: only the boundary drive, after consulting the authoritative
-  preempt and interrupt state: `getAndSet(0)`. This is the piece that
-  makes delivery airtight where the poison and a plain flag are not: a
-  request arriving concurrently with the consume lands on the fresh zero
-  and remains pending, forcing another bounce and another authoritative
-  check. Nothing is ever erased unobserved.
-- Non-boundary drives treat `pending != 0` exactly as the poison bit:
+  line: `if depth >= Limit || preempt != 0 then rescue`. The flag load is
+  opaque mode (eventual visibility and access atomicity at plain-load
+  cost; ordering is carried by the authoritative state, so acquire buys
+  nothing here).
+- Consume: only the boundary drive, and in this order: `getAndSet(0)`
+  FIRST, then read the authoritative preempt and interrupt state, then
+  park or continue. Consume-then-check is what makes delivery airtight:
+  a requester stores its condition before its 1, so if the exchange
+  swallowed that 1, the volatile-RMW read establishes happens-before
+  with the requester and the condition is guaranteed visible to the
+  check that follows; a 1 stored after the exchange stays pending and
+  forces another bounce. This is also why consume is an exchange and not
+  a plain store of 0: a blind 0-store racing a 1-store could erase a
+  request whose condition the subsequent check does not yet see.
+- Non-boundary drives treat `preempt != 0` exactly as the poison bit:
   return the remainder suspended, cascading the park outward; never
   consume.
 
-The concurrency argument collapses to two sentences. The depth cell is
-single-writer plain, untouched by this design. The pending cell is only
-ever accessed by atomic RMWs (requesters) and atomic reads (poll) and one
-atomic exchange (consume), so there is no interleaving that loses a
-request or corrupts a value.
+The concurrency argument collapses to two sentences. The depth word is
+single-writer plain, untouched by this design. The preempt word is only
+ever written by volatile stores of 1 (requesters) and one volatile
+exchange to 0 (consumer), and read by the opaque poll, so no interleaving
+loses a request or corrupts a value, and consume-then-check ordering
+guarantees every consumed request's condition is visible to the decision
+that follows.
 
 What this costs relative to the poison bit: the poll is no longer
 literally free, it is one extra load, compare, and predicted branch per
@@ -248,16 +265,16 @@ interrupt targeting, the Task-precedent periodic re-assertion (now only
 for stale targeting), the stride backstop, and the promise CAS as the
 correctness anchor. One channel serves preemption and interruption
 alike; the boundary drive decides which it was by reading the
-authoritative state, never by decoding the counter.
+authoritative state, never by decoding the word.
 
 ## Alternatives considered
 
 - Plain flag in the padding cell (set 1, clear 0, no atomics): removes
   the owner stomp (the owner never writes the flag location) but leaves a
   set-versus-clear race between a requester and the consumer that can
-  erase an unobserved request. Superseded by the pending-request counter,
-  which keeps the same placement and poll cost and closes that last race
-  by making every access an atomic RMW, read, or exchange.
+  erase an unobserved request. Superseded by the preempt word, which
+  keeps the same placement and poll cost and closes that last race with
+  the volatile exchange on consume and consume-then-check ordering.
 - Porting the interceptor as a per-thread reference consulted in
   `guardedRun`: a reference load on a separate cache line plus a
   megamorphic call per map. Rejected for the hot path; it also reintroduces
