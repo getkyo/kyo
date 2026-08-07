@@ -176,3 +176,19 @@ Settled in discussion on top of the recovered record, in order:
    HandleContext question toward threaded environment, not per-read chain
    search), HandleLoop with done as the handler-into-value primitive, and
    parked chains as shippable immutable data.
+
+6. The new kernel keeps the current model, not the current machinery. Kept
+   essentially verbatim: the two-kind split, Isolate's full user surface
+   (rows, stages, composition, derivation, exclusions), Isolate as a library
+   protocol. Same model on new mechanisms: arrow handling becomes the
+   handler-kind taxonomy on the sync drive with delimiter reification at
+   park; context keeps its kind and API but the environment moves from a
+   parameter of every continuation application into drive state plus parked
+   delimiters; the sync path sheds Safepoint per-step enter/exit (depth
+   slots, structural cadence), the fully replicated inline handle loops, and
+   the context-threading calling convention. Not ported: per-hop KyoContinue
+   re-wrap, context in every apply signature, always-suspend Handle* nodes.
+   Open detail: how a resumed chain re-establishes its environment (park
+   snapshot vs collect during the resume walk), constrained by the fork
+   snapshot requirement toward an explicit drive environment view. Optional
+   polish on Isolate: state the Transform laws, revisit capture's CPS shape.
