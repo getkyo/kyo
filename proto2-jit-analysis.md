@@ -217,3 +217,60 @@ Distilled from the measured record, for the production kernel:
    rescue).
 8. Measure under the canonical flags: UseCompactObjectHeaders moves rows by
    15 to 40%, and JIT basins make single runs untrustworthy; interleave arms.
+
+## 8. proto3: typed phased dispatch
+
+proto3 forks proto2 and turns the two-phase dispatch protocol into a typed
+public surface: `Step[A, B, S]` (existential intermediate `X`, `head`, `next`),
+`Offset` typed as both the chain node and its own Step handle, and a `step`
+extension for phase 1. Phase 2 is the existing `Transform.run` and `Kyo.map`;
+the protocol's entire content is where those calls are written. A handler that
+resumes with `cont.step` plus `s.head.run(v, s.next)` hosts the first dispatch
+in its own bytecode, so the receiver profile is private to that handler and the
+fused region roots in the handler instead of behind `apply`'s pooled entry.
+
+Isolated per-JVM interleaved rows, two cycles:
+
+| row | cont resume | step resume |
+|---|---|---|
+| state | 41 / 45ms | 33 / 33ms |
+| narrowBindMap | 130 / 130ms | 99 / 97ms |
+| suspension | 13 / 13ms | 13 / 13ms |
+
+The step-hosted narrow drive reaches kernel parity (99 vs the kernel's 99) and
+closes roughly a third of the proto1 gap (130 to 98 against proto1's 75).
+PrintInlining confirms the mechanism: the state handler's compiled unit shows
+`s.head.run` speculated bimorphically (`callee changed to anon$23::run` and
+`anon$24::run`, TypeProfiles 14261/28522 and 13473/26945) with both fragment
+bodies inlined into the handler, and the lone-transform shape drops
+`guardedRun`'s depth accounting from every resume.
+
+Two follow-on toggles were measured and rejected, each reverted with its
+record in the commit message:
+
+- Fragment-direct suspension capture (`w.map(cont)` in the mint): suspension
+  13 to 16ms, allocation up on every suspension row (suspension 152 to 176,
+  narrowIter 4664 to 5552 B/op). The ~20 added bytes per fragment reopen the
+  hop inline seam, and the pooled capture site (4 receivers, biased, once per
+  suspension) has no fusion win to offset them.
+- Pre-linking lone transforms at optimize time: time neutral, allocation
+  strictly worse (stateCont10 904 to 1240 B/op, paid always). The park-time
+  wrap escapes into the parked handle, while `stepSlow`'s per-resume wrap at a
+  monomorphic handler site usually scalar-replaces to zero.
+
+Additional design rules from the proto3 record:
+
+9. Phase 2 belongs in caller-owned bytecode, and handler lambdas are
+   caller-owned: `step` gives per-handler first-hop fusion with no `inline`.
+   One handler per workload; a handler shared across workloads pools its own
+   site (measured: a shared bench handler's first hop stayed a plain virtual
+   call).
+10. Fragment bytes beat capture-site profiling: relocating an amortized,
+    biased dispatch into the mint is a net loss.
+11. Do not force identity decomposition: a pre-linked wrap that escapes into
+    the parked handle is paid on every park; an EA-erased wrap at a
+    monomorphic site is usually free.
+12. The hosting discipline is auditable: every dispatch that executes once per
+    fused step or once per resume must be written in per-site code (a mint or
+    a handler body), shared resume helpers are forbidden, and any new pooled
+    site must name its amortization boundary.
