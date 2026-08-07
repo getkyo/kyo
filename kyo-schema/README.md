@@ -38,7 +38,7 @@ These are the top-level entry points:
 | Entry point | Purpose |
 |-------------|---------|
 | `Json` / `Ion` / `Yaml` / `Bson` / `Protobuf` / `MsgPack` | Serialize to JSON strings, Ion text or binary, YAML documents, BSON bytes, Protocol Buffers bytes, or MessagePack bytes |
-| `Json.Lines` | Frame and decode line-delimited JSON (JSONL/NDJSON), one JSON value per line |
+| `Json.Lines` / `Jsonl` | Frame in-memory JSONL purely, or stream JSONL over bytes and files with effects |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -54,7 +54,7 @@ The functionality above ships as seven artifacts: a format-agnostic core plus on
 | Artifact | Provides |
 |----------|----------|
 | `kyo-schema` | The core: `Schema`, derivation, validation, annotations, optics, structural conversion, and the `Codec` SPI. No wire format. |
-| `kyo-schema-json` | The `Json` entry point: JSON text and bytes, `Json.Lines` for JSONL/NDJSON framing, plus JSON Schema generation. |
+| `kyo-schema-json` | JSON text and bytes, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files. |
 | `kyo-schema-protobuf` | The `Protobuf` entry point: Protocol Buffers binary, plus `.proto` schema export. |
 | `kyo-schema-msgpack` | The `MsgPack` entry point: MessagePack binary. |
 | `kyo-schema-bson` | The `Bson` entry point: BSON document bytes. |
@@ -69,7 +69,7 @@ Add the format modules you need to your `build.sbt`. Most projects start with JS
 libraryDependencies += "io.getkyo" %% "kyo-schema-json" % "<latest version>"
 ```
 
-`kyo-schema-json` brings in `kyo-schema` transitively; swap or add `kyo-schema-protobuf`, `kyo-schema-msgpack`, `kyo-schema-bson`, `kyo-schema-ion`, or `kyo-schema-yaml` for the other formats, or depend on `kyo-schema` alone for schemas without a codec.
+`kyo-schema-json` brings in `kyo-schema` and `kyo-system` transitively. Swap or add `kyo-schema-protobuf`, `kyo-schema-msgpack`, `kyo-schema-bson`, `kyo-schema-ion`, or `kyo-schema-yaml` for the other formats, or depend on `kyo-schema` alone for schemas without a codec.
 
 All public types live in the `kyo` package:
 
@@ -444,7 +444,7 @@ Feeding a framer never mutates it: `feed` returns the advanced framer inside `Fr
 
 `maxLineBytes` (default `Json.Lines.DefaultMaxLineBytes`, 16 MiB) bounds a single record. Without it a byte stream that never contains a newline would grow the framer's residual without bound, and neither `maxDepth` nor `maxCollectionSize` covers that, since both operate inside one document. What a breach costs depends on whether the offending line was terminated. A terminated one has a known boundary, so it arrives as a `Line.Skipped` among the lines, framing resumes after its newline, and `decodeAllBytesResults` reports one `LimitExceededException` failure in its place and decodes the records after it. An oversized residual has no boundary to skip to, so `feed` returns `Framed.Halted` and `decodeAllBytesResults` appends that breach as its last element.
 
-All of the above is pure and takes whole inputs. Reading a JSONL file, decoding an arbitrary byte stream, and following a file that is still being written live in [kyo-json](../kyo-json), whose `Jsonl` entry point drives this same framer under `Sync` and `Async`.
+All of the above is pure and takes whole inputs. The same `kyo-schema-json` artifact also provides `Jsonl`, which drives this framer over arbitrary byte streams and files under `Sync` and `Async`. See the [kyo-schema-json README](../kyo-schema-json/README.md) for `pipe`, `read`, `follow`, `encode`, `write`, and `append` examples.
 
 ### Ion
 
