@@ -393,6 +393,30 @@ object Arrow:
     private val depthLocal = new ThreadLocal[Depth]:
         override def initialValue = new Depth
 
+    private inline def SlotCount = 256
+    private inline def SlotMask  = SlotCount - 1
+    private inline def MaxProbes = 8
+
+    private val slotOwners  = new java.util.concurrent.atomic.AtomicLongArray(SlotCount)
+    private val slotHolders = Array.fill(SlotCount)(new Depth)
+
+    // A thread reserves a slot by installing its id with a CAS and finds it again by
+    // probing from its hash, so the steady state is one volatile read, one compare,
+    // and a plain field on an exclusively owned holder: no atomics, no ThreadLocal
+    // map lookup, and exact depth since a slot has a single writer. Dead threads do
+    // not release slots yet; past the probe budget the ThreadLocal keeps it correct.
+    private def currentDepth(): Depth =
+        val tid = Thread.currentThread().threadId
+        @tailrec def probe(i: Int, remaining: Int): Depth =
+            if remaining == 0 then depthLocal.get()
+            else
+                val owner = slotOwners.get(i)
+                if owner == tid then slotHolders(i)
+                else if owner == 0L && slotOwners.compareAndSet(i, 0L, tid) then slotHolders(i)
+                else probe((i + 1) & SlotMask, remaining - 1)
+        probe(tid.toInt & SlotMask, MaxProbes)
+    end currentDepth
+
     private inline def SafeDepth = 512
 
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
@@ -444,7 +468,7 @@ object Arrow:
                     case t: Transform[A, B, S] @unchecked =>
                         if probe() then applySlow(self, v)
                         else
-                            val depth = depthLocal.get()
+                            val depth = currentDepth()
                             if depth.value >= SafeDepth then rescue(self, v)
                             else
                                 depth.value += 1
