@@ -390,9 +390,6 @@ object Arrow:
     final private[kyo] class Depth:
         var value: Int = 0
 
-    private val depthLocal = new ThreadLocal[Depth]:
-        override def initialValue = new Depth
-
     private inline def SlotCount = 256
     private inline def SlotMask  = SlotCount - 1
     private inline def MaxProbes = 8
@@ -403,6 +400,16 @@ object Arrow:
     private val slotThreads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](SlotCount)
     private val slotHolders = Array.fill(SlotCount)(new Depth)
 
+    // Handed to threads that exhaust the probe budget: pinned at SafeDepth so the
+    // guard always fires and such threads run fully trampolined. The fire path
+    // never writes the holder, so sharing it is race free; correct and stack safe,
+    // just slower, for workloads with more live threads than slots.
+    private val saturated =
+        val d = new Depth
+        d.value = SafeDepth
+        d
+    end saturated
+
     // A thread reserves a slot by installing its id with a CAS and finds it again by
     // probing from its hash, so the steady state is one volatile read, one compare,
     // and a plain field on an exclusively owned holder: no atomics, no ThreadLocal
@@ -411,7 +418,7 @@ object Arrow:
     // sentinel: the CAS to the sentinel elects one stealer, which publishes its
     // Thread and resets the holder before exposing its id, so a concurrent prober
     // can never judge the slot by a stale thread entry and double claim it. Past
-    // the probe budget the ThreadLocal fallback preserves correctness.
+    // the probe budget the shared saturated holder keeps it correct.
     private def currentDepth(): Depth =
         val tid = Thread.currentThread().threadId
         val i   = tid.toInt & SlotMask
@@ -422,7 +429,7 @@ object Arrow:
     private def slowDepth(tid: Long): Depth =
         val self = Thread.currentThread()
         @tailrec def probe(i: Int, remaining: Int): Depth =
-            if remaining == 0 then depthLocal.get()
+            if remaining == 0 then saturated
             else
                 val owner = slotOwners.get(i)
                 if owner == tid then slotHolders(i)
