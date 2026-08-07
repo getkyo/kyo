@@ -162,9 +162,10 @@ class ArrowEffectTest extends Test[Any]:
 
     "handleFirst handles only the first operation" in {
         val program = echo(1).map(a => echo(a + 1).map(b => a + b))
-        val once: Int < Echo = ArrowEffect.handleFirst[Const[Int], Const[Int], Echo, Int, Int, Echo](Tag[Echo], program)(
-            [C] => (in, cont) => cont(in * 10).asInstanceOf[Int < Echo]
-        )(a => a)
+        val once: Int < Echo = ArrowEffect.handleFirst(Tag[Echo], program)(
+            [C] => (in, cont) => cont(in * 10).asInstanceOf[Int < Echo],
+            a => a
+        )
         val rest = ArrowEffect.handleResume(Tag[Echo], once)(
             [C] => (in) => in + 100
         )
@@ -175,11 +176,11 @@ class ArrowEffectTest extends Test[Any]:
         var doneRan             = false
         val program: Int < Echo = 5.asInstanceOf[Int < Echo]
         val handled = ArrowEffect.handleFirst(Tag[Echo], program)(
-            [C] => (in, cont) => -1
-        ) { a =>
-            doneRan = true
-            a + 1
-        }
+            [C] => (in, cont) => -1,
+            a =>
+                doneRan = true
+                a + 1
+        )
         assert(handled.eval == 6)
         assert(doneRan)
     }
@@ -187,8 +188,9 @@ class ArrowEffectTest extends Test[Any]:
     "handleFirst done runs when the region completes without an operation after install" in {
         val program: Int < Echo = echo(3)
         val handled = ArrowEffect.handleFirst(Tag[Echo], program)(
-            [C] => (in, cont) => cont(in).asInstanceOf[Int < Echo].map(_ + 1000)
-        )(a => a)
+            [C] => (in, cont) => cont(in).asInstanceOf[Int < Echo].map(_ + 1000),
+            a => a
+        )
         assert(handled.asInstanceOf[Int < Any].eval == 1003)
     }
 
@@ -245,8 +247,9 @@ class ArrowEffectTest extends Test[Any]:
     "handleLoop threads state and applies done with the final state" in {
         val program = echo(1).map(a => echo(2).map(b => echo(3).map(c => a + b + c)))
         val handled = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
-            [C] => (state, in, cont) => ArrowEffect.Outcome.Continue(state + in, cont(in))
-        )((state, a) => (state, a))
+            [C] => (state, in, cont) => ArrowEffect.Outcome.Continue(state + in, cont(in)),
+            (state, a) => (state, a)
+        )
         assert(handled.eval == (6, 6))
     }
 
@@ -262,8 +265,9 @@ class ArrowEffectTest extends Test[Any]:
             [C] =>
                 (state, in, cont) =>
                     if in >= 100 then ArrowEffect.Outcome.Done(-1)
-                    else ArrowEffect.Outcome.Continue(state + in, cont(in))
-        )((state, a) => a)
+                    else ArrowEffect.Outcome.Continue(state + in, cont(in)),
+            (state, a) => a
+        )
         assert(handled.eval == -1)
         assert(!afterOp)
     }
@@ -273,8 +277,9 @@ class ArrowEffectTest extends Test[Any]:
         val handled: Int < Get = ArrowEffect.handleLoop(Tag[Echo], 0, program.asInstanceOf[Int < (Echo & Get)])(
             [C] =>
                 (state, in, cont) =>
-                    get.map(g => ArrowEffect.Outcome.Continue(state + g, cont(in + g)))
-        )((state, a) => state * 1000 + a)
+                    get.map(g => ArrowEffect.Outcome.Continue(state + g, cont(in + g))),
+            (state, a) => state * 1000 + a
+        )
         val result = ArrowEffect.handleResume(Tag[Get], handled)(
             [C] => (_) => 7
         )
@@ -285,8 +290,9 @@ class ArrowEffectTest extends Test[Any]:
         val program: Int < (Echo & Get) =
             echo(1).map(a => get.map(b => echo(2).map(c => a + b + c)))
         val handled: Int < Get = ArrowEffect.handleLoop(Tag[Echo], 0, program)(
-            [C] => (state, in, cont) => ArrowEffect.Outcome.Continue(state + in, cont(in))
-        )((state, a) => state * 1000 + a)
+            [C] => (state, in, cont) => ArrowEffect.Outcome.Continue(state + in, cont(in)),
+            (state, a) => state * 1000 + a
+        )
         val parked = ArrowEffect.handlePartial(Tag[Get], handled)(
             [C] => (in, cont) => kyo.Maybe.Absent
         )

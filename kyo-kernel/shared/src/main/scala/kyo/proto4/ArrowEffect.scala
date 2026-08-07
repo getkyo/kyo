@@ -14,15 +14,12 @@ import scala.annotation.nowarn
   * Effects that never resume declare it in their output type: an effect with output `Const[Nothing]` cannot be resumed by any handler,
   * whatever format the handler uses.
   *
-  * The type parameters are invariant so that the operation constructors are inferred exactly from the effect's tag at suspend and handle
-  * sites; a variant declaration would infer them to their extremes.
-  *
   * @tparam I
   *   The operation input constructor
   * @tparam O
   *   The operation output constructor
   */
-abstract class ArrowEffect[I[_], O[_]] extends Effect
+abstract class ArrowEffect[-I[_], +O[_]] extends Effect
 
 object ArrowEffect:
 
@@ -64,12 +61,12 @@ object ArrowEffect:
       *
       * Handling installs the handler and returns immediately; execution happens when the computation is driven.
       */
-    def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
-        clause: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S)
-    )(using frame: Frame): A < S =
+        clause: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
+    )(using frame: Frame): A < (S & S2) =
         install(v, new Handler.Cont(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.Clause], frame))
 
     /** Handles `E` by answering each operation in place (the fun format).
@@ -77,12 +74,12 @@ object ArrowEffect:
       * The clause produces the operation's output; the kernel resumes the continuation exactly once with it. No continuation is exposed or
       * captured. The handler is deep.
       */
-    def handleResume[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    def handleResume[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
-        clause: [C] => I[C] => O[C] < (E & S)
-    )(using frame: Frame): A < S =
+        clause: [C] => I[C] => O[C] < (E & S & S2)
+    )(using frame: Frame): A < (S & S2) =
         install(v, new Handler.Resume(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.InputClause], frame))
 
     /** Handles `E` by ending the region at each operation (the final ctl format).
@@ -90,12 +87,12 @@ object ArrowEffect:
       * The clause produces the region's result directly; the continuation from the operation to this handler never runs. The handler is
       * deep: effects of `E` in the clause's result dispatch back to this handler.
       */
-    def handleStop[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    def handleStop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
-        clause: [C] => I[C] => A < (E & S)
-    )(using frame: Frame): A < S =
+        clause: [C] => I[C] => A < (E & S & S2)
+    )(using frame: Frame): A < (S & S2) =
         install(v, new Handler.Stop(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.InputClause], frame))
 
     /** Handles only the first operation of `E`, shallowly.
@@ -104,19 +101,18 @@ object ArrowEffect:
       * later operations of `E` (including through the invoked continuation) are not handled by it. `done` transforms the region's value
       * when no operation occurs before completion.
       */
-    def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
-        clause: [C] => (I[C], Arrow[O[C], A, E & S]) => B < S
-    )(
-        done: A => B < S
-    )(using frame: Frame): B < S =
+        handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < S2,
+        done: A => B < S2
+    )(using frame: Frame): B < (S & S2) =
         install(
             v,
             new Handler.First(
                 effectTag.asInstanceOf[Tag[Any]],
-                clause.asInstanceOf[Handler.Clause],
+                handle.asInstanceOf[Handler.Clause],
                 done.asInstanceOf[Any => Any < Any],
                 frame
             )
@@ -135,21 +131,20 @@ object ArrowEffect:
       * and value. The handler is deep for computations passed through Continue; effects raised while the outcome itself is computed
       * dispatch to outer handlers.
       */
-    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S](
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S, S2](
         effectTag: Tag[E],
         state: State,
         v: A < (E & S)
     )(
-        clause: [C] => (State, I[C], Arrow[O[C], A, E & S]) => Outcome[State, A < (E & S), B] < (E & S)
-    )(
-        done: (State, A) => B < S
-    )(using frame: Frame): B < S =
+        handle: [C] => (State, I[C], Arrow[O[C], A, E & S]) => Outcome[State, A < (E & S), B] < (E & S & S2),
+        done: (State, A) => B < S2
+    )(using frame: Frame): B < (S & S2) =
         install(
             v,
             new Handler.Loop(
                 effectTag.asInstanceOf[Tag[Any]],
                 state,
-                clause.asInstanceOf[Handler.LoopClause],
+                handle.asInstanceOf[Handler.LoopClause],
                 done.asInstanceOf[(Any, Any) => Any < Any],
                 frame
             )

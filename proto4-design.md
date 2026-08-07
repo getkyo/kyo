@@ -228,6 +228,17 @@ dispatch, context resolution per read). Numbers recorded after phase 5 in
 the gate log; the proto3 ledger defines the recovery targets for the
 performance round.
 
+## Ruled follow-ups
+
+- Port kyo's Loop into proto4 and revisit handleLoop's Outcome against
+  Loop.Outcome2 (ruled: fix other issues first).
+- Variance restored on ArrowEffect with the kernel's S2 split across the
+  handle family; handleFirst and handleLoop take (handle, done) in one
+  argument list, the current kernel's shape.
+- Installation-only handling: analysis delivered (no capability lost;
+  timing, retention, preemption composition, referential transparency
+  differ); awaiting the final ruling.
+
 ## Known deferred concerns
 
 Performance of dispatch (chain search per suspension, context resolution
