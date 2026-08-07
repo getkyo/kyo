@@ -247,6 +247,31 @@ hasHandler bit computed at construction; dispatch and context resolution
 skip handler-free subtrees as opaque prefix elements and bail immediately
 on delimiter-free chains, restoring linear parking.
 
+### JMH baseline (official)
+
+The table above was an ad-hoc harness snapshot; the official kernel2
+baseline is the in-module JMH suite (`kyo-kernel2/jvm/src/jmh`, run with
+`sbt 'kyo-kernel2JVM/Jmh/run -prof gc .*KernelBench.*'`, avgt, fork 1,
+5x1s warmup and measurement, compact object headers). Numbers from the
+first full run:
+
+| benchmark | time (ns/op) | alloc (B/op) | workload unit |
+|---|---|---|---|
+| eagerMap5 | 3.71 ± 0.06 | 0 | 5 eager maps + eval |
+| deepBind10k | 71942 ± 1744 | 160336 | 10k recursive binds (7.2 ns, 16 B per bind) |
+| suspension | 485 ± 12 | 2120 | 6 suspensions + 10 maps, handle + eval |
+| suspensionStep | 491 ± 49 | 2120 | same via cont.step resume |
+| state10 | 828 ± 38 | 4560 | 21 suspensions (11 reads, 10 sets) |
+| stateMap10k | 2294035 ± 45291 | 7832023 | 20k suspensions + maps (115 ns, 392 B per suspension) |
+| narrowIter | 2596 ± 67 | 12024 | 12 suspensions, 10 maps each |
+| resumeFused | 18.8 ± 0.6 | 0 | resume a parked 10-map continuation |
+
+Floors confirmed under JMH: the eager map path and resuming an
+already-fused parked continuation are allocation-free. Suspension-heavy
+rows carry the expected unoptimized dispatch cost (roughly 350-400 B and
+80-115 ns per suspension including the handler search); those are the
+rows the performance round measures against the proto3 ledger.
+
 ## Ruled follow-ups
 
 - Port kyo's Loop into kernel2 and revisit handleLoop's Outcome against
