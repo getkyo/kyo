@@ -397,25 +397,62 @@ object Arrow:
     private inline def SlotMask  = SlotCount - 1
     private inline def MaxProbes = 8
 
+    private inline def Transferring = -1L
+
     private val slotOwners  = new java.util.concurrent.atomic.AtomicLongArray(SlotCount)
+    private val slotThreads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](SlotCount)
     private val slotHolders = Array.fill(SlotCount)(new Depth)
 
     // A thread reserves a slot by installing its id with a CAS and finds it again by
     // probing from its hash, so the steady state is one volatile read, one compare,
     // and a plain field on an exclusively owned holder: no atomics, no ThreadLocal
-    // map lookup, and exact depth since a slot has a single writer. Dead threads do
-    // not release slots yet; past the probe budget the ThreadLocal keeps it correct.
+    // map lookup, and exact depth since a slot has a single writer. A slot whose
+    // recorded thread has died is stolen on probe collision through the Transferring
+    // sentinel: the CAS to the sentinel elects one stealer, which publishes its
+    // Thread and resets the holder before exposing its id, so a concurrent prober
+    // can never judge the slot by a stale thread entry and double claim it. Past
+    // the probe budget the ThreadLocal fallback preserves correctness.
     private def currentDepth(): Depth =
         val tid = Thread.currentThread().threadId
+        val i   = tid.toInt & SlotMask
+        if slotOwners.get(i) == tid then slotHolders(i)
+        else slowDepth(tid)
+    end currentDepth
+
+    private def slowDepth(tid: Long): Depth =
+        val self = Thread.currentThread()
         @tailrec def probe(i: Int, remaining: Int): Depth =
             if remaining == 0 then depthLocal.get()
             else
                 val owner = slotOwners.get(i)
                 if owner == tid then slotHolders(i)
-                else if owner == 0L && slotOwners.compareAndSet(i, 0L, tid) then slotHolders(i)
+                else if owner == 0L && slotOwners.compareAndSet(i, 0L, Transferring) then
+                    claim(i, self, tid)
+                else if owner != 0L && owner != Transferring then
+                    val t = slotThreads.get(i)
+                    if (t ne null) && !t.isAlive && slotOwners.compareAndSet(i, owner, Transferring) then
+                        claim(i, self, tid)
+                    else probe((i + 1) & SlotMask, remaining - 1)
                 else probe((i + 1) & SlotMask, remaining - 1)
+                end if
         probe(tid.toInt & SlotMask, MaxProbes)
-    end currentDepth
+    end slowDepth
+
+    private def claim(i: Int, self: Thread, tid: Long): Depth =
+        slotThreads.set(i, self)
+        slotHolders(i).value = 0
+        slotOwners.set(i, tid)
+        slotHolders(i)
+    end claim
+
+    private[kyo] def ownsDepthSlot: Boolean =
+        val tid = Thread.currentThread().threadId
+        @tailrec def scan(i: Int): Boolean =
+            if i == SlotCount then false
+            else if slotOwners.get(i) == tid then true
+            else scan(i + 1)
+        scan(0)
+    end ownsDepthSlot
 
     private inline def SafeDepth = 512
 
