@@ -46,6 +46,10 @@ import scala.util.control.NonFatal
   */
 opaque type Async <: (Sync & Async.Join) = Async.Join & Sync
 
+private[kyo] object async:
+    object concurrency:
+        object default extends StaticFlag[Int](Runtime.getRuntime().availableProcessors() * 2)
+
 object Async extends AsyncPlatformSpecific:
 
     /** Default concurrency level for collection operations.
@@ -53,15 +57,26 @@ object Async extends AsyncPlatformSpecific:
       * This value determines the maximum number of concurrent operations that can run in parallel for collection processing methods like
       * foreach, collect, and their variants. It defaults to twice the number of available processors.
       *
-      * This default can be overridden in two ways:
+      * This default can be overridden in three ways:
       *
       *   1. Per operation by passing an explicit concurrency parameter
       *   2. Globally by setting the "kyo.async.concurrency.default" system property
+      *   3. Globally by setting the "KYO_ASYNC_CONCURRENCY_DEFAULT" environment variable
+      *
+      * Resolution checks the system property first, then the environment variable, then falls back to the
+      * default. On Scala.js, Wasm, and Scala Native, the system property is not readable from the command line,
+      * so the environment variable is the only channel that reaches this value on those platforms.
       *
       * Example of setting the system property:
       *
       * ```sh
       * java -Dkyo.async.concurrency.default=4 MyApp
+      * ```
+      *
+      * Example of setting the environment variable:
+      *
+      * ```sh
+      * KYO_ASYNC_CONCURRENCY_DEFAULT=4 MyApp
       * ```
       *
       * Consider adjusting this based on:
@@ -72,11 +87,7 @@ object Async extends AsyncPlatformSpecific:
       *
       * Note: This only affects collection processing methods. Operations like race and gather run with unbounded concurrency.
       */
-    val defaultConcurrency =
-        import AllowUnsafe.embrace.danger
-        given Frame = Frame.internal
-        Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
-    end defaultConcurrency
+    val defaultConcurrency: Int = async.concurrency.default()
 
     /** Convenience method for suspending side effects in an Async effect.
       *
