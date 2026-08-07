@@ -394,11 +394,11 @@ Reduction levers this census exposes, none executed or measured yet:
   do not cross the recursive drive call; 32 B per eval, only visible on tiny
   evals.
 
-### The bracket split
+### The bracket split (measured, rejected)
 
-First lever executed from the census: bracket driving moved out of the inline
-trampoline into driveBracket (no handler: nested depths never handle), making
-the expanded eval loop non-recursive. The lifted trampoline loop shrinks from
+First lever executed from the census, reverted on its record: bracket driving
+moved out of the inline trampoline into driveBracket (no handler: nested
+depths never handle), making the expanded eval loop non-recursive. The lifted trampoline loop shrinks from
 542 to 304 bytes. Isolated per-row interleaved A/B, 4 cycles:
 
 | row | A (recursive loop) | B (split) | verdict |
@@ -417,3 +417,8 @@ arm exhausts its budget and fails to inline the defer-arm Arrow.apply (86
 bytes, callee is too large), the 304-byte arm pulls it in. The cont-narrow
 delta is drive-root code layout on the pooled legacy path, the same bucket the
 narrow residual ledger already names, not a semantic cost of the split.
+
+Rejected: the cont-resume narrow regression is reproducible on a supported
+path, and the suspension-row wins do not buy it back. The revert commit
+carries the verdict. Any re-land needs the drive-root layout understood well
+enough that the pooled path holds its band.
