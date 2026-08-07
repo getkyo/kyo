@@ -19,7 +19,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
 
     /** Feed `input` through a fresh framer in fixed-size chunks, returning every record.
       *
-      * Every chunk is expected to frame cleanly (`DefaultMaxLineBytes` is never exercised here), so a skipped line or a halt would
+      * Every chunk is expected to frame cleanly (`DefaultMaxLineSize` is never exercised here), so a skipped line or a halt would
       * indicate a bug unrelated to what these tests are pinning. `require`, not `assert`, surfaces that: this helper is also called from a
       * group builder (outside any `in { ... }` leaf), where `kyo.test`'s `assert` has no `AssertScope` to report through.
       */
@@ -28,7 +28,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
 
     /** The `Span[Byte]` form of [[frameAll]], for inputs that are not valid UTF-8 text. */
     private def frameAllBytes(all: Span[Byte], chunkSize: Int): Chunk[Json.Lines.Record] =
-        var f   = Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes)
+        var f   = Json.Lines.Framer.init(Json.Lines.DefaultMaxLineSize)
         var out = Chunk.empty[Json.Lines.Record]
         var i   = 0
         while i < all.size do
@@ -71,7 +71,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
                 next
             case Json.Lines.Framed.Halted(_, breach) => throw new AssertionError(s"unexpected framing halt $breach")
 
-    /** Feeds `input` through a fresh framer of ceiling `maxLineBytes` in `chunkSize` pieces.
+    /** Feeds `input` through a fresh framer of ceiling `maxLineSize` in `chunkSize` pieces.
       *
       * Returns every line resolved along the way and the breach that ended framing, if one did. Unlike [[frameAll]] this keeps skipped
       * lines and survives a halt, which is what the limit tests are pinning.
@@ -79,10 +79,10 @@ class JsonLinesTest extends kyo.test.Test[Any]:
     private def frameLines(
         input: String,
         chunkSize: Int,
-        maxLineBytes: Int
+        maxLineSize: ByteSize
     ): (Chunk[Json.Lines.Line], Maybe[LimitExceededException]) =
         val all  = bytes(input)
-        var f    = Json.Lines.Framer.init(maxLineBytes)
+        var f    = Json.Lines.Framer.init(maxLineSize)
         var live = true
         var out  = Chunk.empty[Json.Lines.Line]
         var halt = Maybe.empty[LimitExceededException]
@@ -230,7 +230,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         }
 
         "strips a carriage return ending one chunk when its newline opens the next" in {
-            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "{\"a\":1}"), "\r")
+            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineSize), "{\"a\":1}"), "\r")
             val lines  = kept(linesOf(framer, "\n{\"b\":2}\n"))
             assert(lines.map(_.text) == Chunk("{\"a\":1}", "{\"b\":2}"))
             assert(lines.map(_.index) == Chunk(0L, 1L))
@@ -238,7 +238,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         }
 
         "recognizes a blank line split across chunks as blank" in {
-            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "  "), " \t")
+            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineSize), "  "), " \t")
             val lines  = kept(linesOf(framer, " \n{\"a\":1}\n"))
             assert(lines.map(_.text) == Chunk("{\"a\":1}"))
             assert(lines.map(_.index) == Chunk(0L))
@@ -248,7 +248,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // The counterpart of the test above: the blankness walk has to read every pending piece, not just the last one, so a non-blank
         // byte sitting in an earlier piece still makes the line a record.
         "keeps a split line whose only non-blank byte arrived in an earlier chunk" in {
-            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "  x"), "  ")
+            val framer = holding(holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineSize), "  x"), "  ")
             val lines  = kept(linesOf(framer, " \n"))
             assert(lines.map(_.text) == Chunk("  x   "))
             assert(lines.map(_.index) == Chunk(0L))
@@ -278,7 +278,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // assertion that rejects backing those pieces with a growable buffer a later feed writes into: the two continuations below would
         // then see each other's bytes.
         "leaves the receiver usable after a feed, so two continuations of one framer stay independent" in {
-            val framer = holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes), "{\"a\":1")
+            val framer = holding(Json.Lines.Framer.init(Json.Lines.DefaultMaxLineSize), "{\"a\":1")
             val first  = kept(linesOf(framer, "}\n"))
             val second = kept(linesOf(framer, "23}\n"))
             assert(first.map(_.text) == Chunk("{\"a\":1}"))
@@ -289,13 +289,13 @@ class JsonLinesTest extends kyo.test.Test[Any]:
 
         // The regression guard for the cost defect this representation exists to remove: joining the bytes held on every feed makes a
         // record spanning k chunks copy O(k^2) bytes, so a newline-free run large against the read buffer burns memory bandwidth for as
-        // long as maxLineBytes allows. Timing that would be flaky, so this pins the allocation-independent shape instead: a newline-free
+        // long as maxLineSize allows. Timing that would be flaky, so this pins the allocation-independent shape instead: a newline-free
         // feed adds one piece and joins nothing, the running total tracks what is held without joining to measure it, and the join
         // happens once, when the record completes. An implementation that concatenates eagerly leaves `pending` holding one piece.
         "holds one pending piece per newline-free feed and joins only when a record completes" in {
             val piece  = "0123456789"
             val feeds  = 64
-            var framer = Json.Lines.Framer.init(Json.Lines.DefaultMaxLineBytes)
+            var framer = Json.Lines.Framer.init(Json.Lines.DefaultMaxLineSize)
             var n      = 0
             while n < feeds do
                 framer = holding(framer, piece)
@@ -315,8 +315,30 @@ class JsonLinesTest extends kyo.test.Test[Any]:
 
     "limits" - {
 
-        "rejects a complete record longer than maxLineBytes" in {
-            val lines = linesOf(Json.Lines.Framer.init(8), "{\"aaaaaaaaaaaa\":1}\n")
+        "uses a 16 MiB default record ceiling" in {
+            assert(Json.Lines.DefaultMaxLineSize == 16.mib)
+        }
+
+        "rejects a ceiling larger than a Span can address" in {
+            val ex = intercept[IllegalArgumentException](
+                Json.Lines.Framer.init((Int.MaxValue.toLong + 1L).bytes)
+            )
+            assert(ex.getMessage == "maxLineSize must not exceed 2147483647 bytes, got 2147483648")
+        }
+
+        "allows a zero-byte ceiling and rejects the first non-empty record" in {
+            val lines = linesOf(Json.Lines.Framer.init(ByteSize.Zero), "\n1\n")
+            assert(lines.size == 1)
+            lines(0) match
+                case Json.Lines.Line.Skipped(e) =>
+                    assert(e.actual == 1)
+                    assert(e.maximum == 0)
+                case other => fail(s"Expected a skipped line, got $other")
+            end match
+        }
+
+        "rejects a complete record longer than maxLineSize" in {
+            val lines = linesOf(Json.Lines.Framer.init(8.bytes), "{\"aaaaaaaaaaaa\":1}\n")
             assert(lines.size == 1)
             lines(0) match
                 case Json.Lines.Line.Skipped(e) => assert(e.maximum == 8)
@@ -324,8 +346,8 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             end match
         }
 
-        "rejects a residual longer than maxLineBytes with no newline in sight" in {
-            Json.Lines.Framer.init(8).feed(bytes("aaaaaaaaaaaaaaaaaaaa")) match
+        "rejects a residual longer than maxLineSize with no newline in sight" in {
+            Json.Lines.Framer.init(8.bytes).feed(bytes("aaaaaaaaaaaaaaaaaaaa")) match
                 case Json.Lines.Framed.Halted(lines, breach) =>
                     assert(lines.isEmpty)
                     assert(breach.actual == 20)
@@ -333,18 +355,18 @@ class JsonLinesTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected a halt, got $other")
         }
 
-        "accepts a record exactly at maxLineBytes" in {
-            assert(kept(linesOf(Json.Lines.Framer.init(8), "12345678\n")).map(_.text) == Chunk("12345678"))
+        "accepts a record exactly at maxLineSize" in {
+            assert(kept(linesOf(Json.Lines.Framer.init(8.bytes), "12345678\n")).map(_.text) == Chunk("12345678"))
         }
 
         // The limit counts the record, not the line terminator, so a CRLF line carries two more
         // bytes on the wire than the limit allows for its record.
-        "accepts a CRLF record whose content is exactly maxLineBytes" in {
-            assert(kept(linesOf(Json.Lines.Framer.init(8), "12345678\r\n")).map(_.text) == Chunk("12345678"))
+        "accepts a CRLF record whose content is exactly maxLineSize" in {
+            assert(kept(linesOf(Json.Lines.Framer.init(8.bytes), "12345678\r\n")).map(_.text) == Chunk("12345678"))
         }
 
-        "rejects a CRLF record whose content exceeds maxLineBytes" in {
-            val lines = linesOf(Json.Lines.Framer.init(8), "123456789\r\n")
+        "rejects a CRLF record whose content exceeds maxLineSize" in {
+            val lines = linesOf(Json.Lines.Framer.init(8.bytes), "123456789\r\n")
             assert(lines.size == 1)
             lines(0) match
                 case Json.Lines.Line.Skipped(e) =>
@@ -357,7 +379,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // The residual path and the completed-record path must agree: whether the '\n' arrives in
         // this chunk or the next one cannot change whether the record is accepted.
         "measures a pending CRLF residual the same way as a completed record" in {
-            Json.Lines.Framer.init(8).feed(bytes("12345678\r")) match
+            Json.Lines.Framer.init(8.bytes).feed(bytes("12345678\r")) match
                 case Json.Lines.Framed.Continued(held, lines) =>
                     assert(lines.isEmpty)
                     assert(kept(linesOf(held, "\n")).map(_.text) == Chunk("12345678"))
@@ -366,17 +388,17 @@ class JsonLinesTest extends kyo.test.Test[Any]:
 
         // The ceiling is enforced against the pending bytes as they accumulate, so where it fires cannot depend on how the record was
         // split. A record whose content is exactly the ceiling still frames when it arrives one byte per feed.
-        "accepts a record exactly at maxLineBytes when it arrives one byte at a time" in {
-            val (lines, halt) = frameLines("12345678\n", 1, 8)
+        "accepts a record exactly at maxLineSize when it arrives one byte at a time" in {
+            val (lines, halt) = frameLines("12345678\n", 1, 8.bytes)
             assert(halt.isEmpty)
             assert(kept(lines).map(_.text) == Chunk("12345678"))
         }
 
         // One byte over, the pending bytes breach before the terminator arrives, so this is a halt rather than a skip: the framer cannot
         // know a boundary is coming. Feeding the same line whole instead yields a Line.Skipped, which "rejects a complete record longer
-        // than maxLineBytes" pins.
-        "halts on a record one byte over maxLineBytes when it arrives one byte at a time" in {
-            val (lines, halt) = frameLines("123456789\n87654321\n", 1, 8)
+        // than maxLineSize" pins.
+        "halts on a record one byte over maxLineSize when it arrives one byte at a time" in {
+            val (lines, halt) = frameLines("123456789\n87654321\n", 1, 8.bytes)
             assert(lines.isEmpty)
             halt match
                 case Present(e) =>
@@ -387,7 +409,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         }
 
         "measures a pending CRLF residual by the same rule when it arrives one byte at a time" in {
-            val (lines, halt) = frameLines("12345678\r\n", 1, 8)
+            val (lines, halt) = frameLines("12345678\r\n", 1, 8.bytes)
             assert(halt.isEmpty)
             assert(kept(lines).map(_.text) == Chunk("12345678"))
         }
@@ -396,7 +418,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // What this pins is the records AFTER the skip: halting there instead drops every record in
         // the rest of the input, which on a live log means one bad line ends the follower forever.
         "resumes framing after a terminated oversized record" in {
-            val lines = linesOf(Json.Lines.Framer.init(8), "12345678\n123456789\n87654321\n")
+            val lines = linesOf(Json.Lines.Framer.init(8.bytes), "12345678\n123456789\n87654321\n")
             assert(kept(lines).map(_.text) == Chunk("12345678", "87654321"))
             assert(lines.size == 3)
             lines(1) match
@@ -411,7 +433,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // as an undecodable record does, and its bytes and terminator advance the offset. Lines are
         // 9 and 10 bytes, so the record after the skip sits at index 2 and byte 19.
         "counts a skipped oversized record in the index and byte offset of the records after it" in {
-            val records = kept(linesOf(Json.Lines.Framer.init(8), "12345678\n123456789\n87654321\n"))
+            val records = kept(linesOf(Json.Lines.Framer.init(8.bytes), "12345678\n123456789\n87654321\n"))
             assert(records.map(_.index) == Chunk(0L, 2L))
             assert(records.map(_.byteOffset) == Chunk(0L, 19L))
         }
@@ -420,7 +442,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // in the same `feed` call. `emitFrom` used to fail the whole scan and drop its accumulator;
         // it must instead stop and return what it already collected.
         "preserves records framed before a mid-buffer breach in the same chunk" in {
-            val lines = linesOf(Json.Lines.Framer.init(8), "12345678\n123456789\n")
+            val lines = linesOf(Json.Lines.Framer.init(8.bytes), "12345678\n123456789\n")
             assert(kept(lines).map(_.text) == Chunk("12345678"))
             assert(lines.size == 2)
             lines(1) match
@@ -435,7 +457,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // the lines after it are framed, and only the unterminated tail halts. Reporting the halt must
         // not cost the skip that preceded it, nor the record framed between them.
         "reports a skipped record and then halts on an oversized residual in the same chunk" in {
-            Json.Lines.Framer.init(8).feed(bytes("123456789\n12345678\naaaaaaaaaaaa")) match
+            Json.Lines.Framer.init(8.bytes).feed(bytes("123456789\n12345678\naaaaaaaaaaaa")) match
                 case Json.Lines.Framed.Halted(lines, breach) =>
                     assert(kept(lines).map(_.text) == Chunk("12345678"))
                     assert(lines.size == 2)
@@ -522,7 +544,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         // and folding those results must stop at it rather than inheriting the recovery.
         "fails on a terminated oversized record rather than skipping it" in {
             val in = "{\"name\":\"a\",\"count\":1}\n" + ("x" * 40) + "\n{\"name\":\"c\",\"count\":3}\n"
-            Json.Lines.decodeAll[Event](in, maxLineBytes = 30) match
+            Json.Lines.decodeAll[Event](in, maxLineSize = 30.bytes) match
                 case Result.Failure(e: LimitExceededException) =>
                     assert(e.actual == 40)
                     assert(e.maximum == 30)
@@ -563,7 +585,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             val in = "aaaaaaaaaaaaaaaaaaaaaaaa"
             val rs = Json.Lines.decodeAllBytesResults[Event](
                 Span.from(in.getBytes(StandardCharsets.UTF_8)),
-                maxLineBytes = 8
+                maxLineSize = 8.bytes
             )
             assert(rs.size == 1)
             rs(0) match
@@ -580,7 +602,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             val in = "{\"name\":\"a\",\"count\":1}\n" + ("x" * 40) + "\n{\"name\":\"c\",\"count\":3}\n"
             val rs = Json.Lines.decodeAllBytesResults[Event](
                 Span.from(in.getBytes(StandardCharsets.UTF_8)),
-                maxLineBytes = 30
+                maxLineSize = 30.bytes
             )
             assert(rs.size == 3)
             assert(rs(0).getOrThrow == Event("a", 1))
@@ -594,7 +616,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
         }
 
         // Regression test for a defect where decodeAllBytesResults, via Framer.feed, discarded every
-        // already-decoded record when a later record in the same input breached maxLineBytes. The
+        // already-decoded record when a later record in the same input breached maxLineSize. The
         // valid record must survive and precede the failure, not disappear with it.
         "keeps a valid record decoded before a later record breaches the limit" in {
             val validLine = "{\"name\":\"a\",\"count\":1}\n"
@@ -602,7 +624,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             val in        = validLine + oversized
             val rs = Json.Lines.decodeAllBytesResults[Event](
                 Span.from(in.getBytes(StandardCharsets.UTF_8)),
-                maxLineBytes = 30
+                maxLineSize = 30.bytes
             )
             assert(rs.size == 2)
             assert(rs(0).getOrThrow == Event("a", 1))

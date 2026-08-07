@@ -19,7 +19,7 @@ class JsonlTest extends kyo.test.Test[Any]:
     private def byteStream(s: String, chunkSize: Int = 4096): Stream[Byte, Any] =
         Stream.init(Chunk.from(s.getBytes(StandardCharsets.UTF_8)), chunkSize)
 
-    /** A well-formed record of 61 bytes, over the 30-byte `maxLineBytes` every skip test below sets.
+    /** A well-formed record of 61 bytes, over the 30-byte `maxLineSize` every skip test below sets.
       *
       * It decodes cleanly at the default limit, so a test that rejects it is rejecting it for its size alone. Every call site terminates it
       * with a newline, which is what makes it a skippable breach rather than an oversized residual: the boundary is known, so framing
@@ -166,7 +166,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             for
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
-                    byteStream(in).into(Jsonl.pipe[Event](maxLineBytes = 30)).foreach(e =>
+                    byteStream(in).into(Jsonl.pipe[Event](maxLineSize = 30.bytes)).foreach(e =>
                         seen.updateAndGet(_ :+ e)
                     )
                 )
@@ -191,7 +191,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             for
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
-                    byteStream(in).into(Jsonl.pipe[Event](maxLineBytes = 30)).foreach(e => seen.updateAndGet(_ :+ e))
+                    byteStream(in).into(Jsonl.pipe[Event](maxLineSize = 30.bytes)).foreach(e => seen.updateAndGet(_ :+ e))
                 )
                 emitted <- seen.get
             yield
@@ -313,7 +313,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 _    <- file.write(in)
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
-                    Scope.run(Jsonl.read[Event](file, maxLineBytes = 30).foreach(e => seen.updateAndGet(_ :+ e)))
+                    Scope.run(Jsonl.read[Event](file, maxLineSize = 30.bytes).foreach(e => seen.updateAndGet(_ :+ e)))
                 )
                 emitted <- seen.get
                 _       <- dir.removeAll
@@ -337,7 +337,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 dir <- Path.tempDir("kyo-jsonl-read-results-skip")
                 file = dir / "oversized.jsonl"
                 _  <- file.write(in)
-                rs <- Scope.run(Jsonl.readResults[Event](file, maxLineBytes = 30).run)
+                rs <- Scope.run(Jsonl.readResults[Event](file, maxLineSize = 30.bytes).run)
                 _  <- dir.removeAll
             yield
                 assert(rs.size == 3)
@@ -425,7 +425,7 @@ class JsonlTest extends kyo.test.Test[Any]:
 
         "keeps the records framed before a limit breach, then ends" in {
             val in = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"count\":2}\n"
-            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineBytes = 30)).run
+            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineSize = 30.bytes)).run
             yield
                 assert(rs.size == 2)
                 assert(rs(0).getOrThrow == Event("a", 1))
@@ -443,7 +443,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             // "one failure element per bad record, carry on" applies to a breach with a boundary too.
             // Ending at the breach instead would drop Event("c", 3) and everything behind it.
             val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
-            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineBytes = 30)).run
+            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineSize = 30.bytes)).run
             yield
                 assert(rs.size == 3)
                 assert(rs(0).getOrThrow == Event("a", 1))
@@ -465,7 +465,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             val first = "{\"name\":\"a\",\"count\":1}\n"
             val in    = first + oversizedLine + "\n{\"nope\":true}\n"
             val badAt = (first + oversizedLine + "\n").getBytes(StandardCharsets.UTF_8).length.toLong
-            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineBytes = 30)).run
+            for rs <- byteStream(in).into(Jsonl.pipeResults[Event](maxLineSize = 30.bytes)).run
             yield
                 assert(rs.size == 3)
                 assert(badAt == 85L)
@@ -795,7 +795,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                     fiber <- Fiber.initUnscoped(
                         Scope.run(
-                            Jsonl.followResults[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                            Jsonl.followResults[Event](file, pollDelay = pollDelay, maxLineSize = 30.bytes)
                                 .take(3)
                                 .foreach(r => seen.updateAndGet(_ :+ r))
                         )
@@ -834,7 +834,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
                     Scope.run(
-                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineSize = 30.bytes)
                             .take(2)
                             .foreach(e => seen.updateAndGet(_ :+ e))
                     )
@@ -868,7 +868,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                     fiber <- Fiber.initUnscoped(
                         Scope.run(
-                            Jsonl.followResults[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                            Jsonl.followResults[Event](file, pollDelay = pollDelay, maxLineSize = 30.bytes)
                                 .take(3)
                                 .foreach(r => seen.updateAndGet(_ :+ r))
                         )
@@ -909,7 +909,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 seen <- AtomicRef.init(Chunk.empty[Event])
                 r <- Abort.run[DecodeException](
                     Scope.run(
-                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineBytes = 30)
+                        Jsonl.follow[Event](file, pollDelay = pollDelay, maxLineSize = 30.bytes)
                             .take(2)
                             .foreach(e => seen.updateAndGet(_ :+ e))
                     )

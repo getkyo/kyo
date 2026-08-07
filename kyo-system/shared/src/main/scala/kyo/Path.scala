@@ -364,7 +364,7 @@ object Path extends PathPlatformSpecific:
 
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls. */
         def tail(pollDelay: Duration)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
-            tail(pollDelay, 8192)
+            tail(pollDelay, 8.kib)
 
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls, using the given read buffer size.
           *
@@ -372,7 +372,7 @@ object Path extends PathPlatformSpecific:
           * replacement, and a deletion of the name do to the stream. A truncation in place drops the pending partial line along with the
           * rest of the old content, so no line ever spans the rewind.
           */
-        def tail(pollDelay: Duration, bufferSize: Int)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
+        def tail(pollDelay: Duration, bufferSize: ByteSize)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
             // State carried between reads: leftover bytes from an incomplete UTF-8 sequence, plus the pending incomplete line text.
             // `follow` restores this initial state when the file is truncated, so neither survives a rewind.
             val emptyBytes = new Array[Byte](0)
@@ -439,7 +439,7 @@ object Path extends PathPlatformSpecific:
         def tailBytes(
             from: Origin = Origin.End,
             pollDelay: Duration = 100.millis,
-            bufferSize: Int = 8192
+            bufferSize: ByteSize = 8.kib
         )(using Frame): Stream[Byte, Async & Scope & Abort[FileReadException]] =
             follow[Byte, Unit](self, from, pollDelay, bufferSize, ()) { (_, buf, n) =>
                 // The loop reuses `buf`, so each emitted chunk gets its own copy
@@ -670,7 +670,7 @@ object Path extends PathPlatformSpecific:
         if !result.isEof then Poll.Data(result.bytesRead)
         else
             handle.size().foldError(
-                size => if size < pos then Poll.Rewound else Poll.Idle,
+                size => if size.toBytes < pos then Poll.Rewound else Poll.Idle,
                 error => Poll.Unreadable(error)
             )
         end if
@@ -698,11 +698,12 @@ object Path extends PathPlatformSpecific:
         self: Path,
         from: Origin,
         pollDelay: Duration,
-        bufferSize: Int,
+        bufferSize: ByteSize,
         initialState: St
     )(
         step: (St, Array[Byte], Int) => Step[V, St]
     )(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, Async & Scope & Abort[FileReadException]] =
+        val capacity = readBufferCapacity(bufferSize)
         Stream {
             Scope.acquireRelease(
                 Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
@@ -715,14 +716,14 @@ object Path extends PathPlatformSpecific:
                             case Origin.Start => Result.succeed(0L)
                             // The end of the file the handle holds, not the end of whatever the path names, so that
                             // the start position and the cursor it seeds belong to one file.
-                            case Origin.End => handle.size()
+                            case Origin.End => handle.size().map(_.toBytes)
                             // Clamped so a negative offset means the same thing everywhere: JVM and Native raise a raw
                             // IllegalArgumentException from the channel, while Node reads from the current position instead.
                             case Origin.Offset(bytes) => Result.succeed(math.max(0L, bytes))
                     Abort.get(startPos).map { start =>
                         Sync.Unsafe.defer {
                             handle.position(start)
-                            val buf = new Array[Byte](bufferSize)
+                            val buf = new Array[Byte](capacity)
                             Loop(start, initialState) { (pos, state) =>
                                 Sync.Unsafe.defer {
                                     poll(handle, buf, pos) match
@@ -751,6 +752,13 @@ object Path extends PathPlatformSpecific:
             }
         }
     end follow
+
+    private def readBufferCapacity(bufferSize: ByteSize): Int =
+        val bytes = bufferSize.toBytes
+        if bytes == 0L || bytes > Int.MaxValue then
+            throw new IllegalArgumentException(s"bufferSize must be between 1 and ${Int.MaxValue} bytes, got $bytes")
+        bytes.toInt
+    end readBufferCapacity
 
     /** Returns the number of trailing bytes that form an incomplete UTF-8 sequence. */
     private def incompleteUtf8Tail(bytes: Array[Byte], len: Int): Int =
@@ -938,7 +946,7 @@ object Path extends PathPlatformSpecific:
           * Returns a `Result` rather than raising, so a measurement failure stays in the typed `FileReadException` channel instead of
           * escaping the enclosing `Sync.Unsafe.defer` as a panic.
           */
-        def size()(using AllowUnsafe, Frame): Result[FileReadException, Long]
+        def size()(using AllowUnsafe, Frame): Result[FileReadException, ByteSize]
 
         /** Reads the current content into the handle's own retained buffer and parses the first ASCII-decimal
           * `Long` in place, with no intermediate `String` and no `Maybe` box. TOTAL: returns

@@ -940,8 +940,11 @@ import kyo.*
 def source: java.io.InputStream = ???
 
 val bytes: Stream[Byte, Sync & Scope] =
-    Stream.fromInputStream(source, bufferSize = 8192)
+    Stream.fromInputStream(source, bufferSize = 8.kib)
 ```
+
+Buffer capacities are `ByteSize` values. File resume offsets remain numeric byte positions, so `Path.Origin.Offset` continues to take a
+`Long`.
 
 ### `StreamCompression` (JVM only)
 

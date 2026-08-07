@@ -532,10 +532,10 @@ final private[kyo] class NodeReadHandle(fd: Int, path: Path) extends Path.ReadHa
     def position(offset: Long)(using AllowUnsafe): Unit =
         pos = offset
 
-    def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
+    def size()(using AllowUnsafe, Frame): Result[FileReadException, ByteSize] =
         // fstat on the descriptor, not stat on the path: it answers for the file this handle holds
         // even once the name has been renamed away or unlinked. Same translation catchRead applies.
-        try Result.succeed(NodeFs.fstatSync(fd).size.toLong)
+        try Result.succeed(NodeFs.fstatSync(fd).size.toLong.bytes)
         catch
             case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
             case e: Throwable              => Result.panic(e)
