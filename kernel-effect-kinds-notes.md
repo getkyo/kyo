@@ -192,3 +192,22 @@ Settled in discussion on top of the recovered record, in order:
    snapshot vs collect during the resume walk), constrained by the fork
    snapshot requirement toward an explicit drive environment view. Optional
    polish on Isolate: state the Transform laws, revisit capture's CPS shape.
+
+7. The handler formats are effect kinds. Each Handle* delimiter pairs a
+   clause signature with a dispatch behavior, which is exactly what
+   distinguishes ContextEffect from ArrowEffect; with delimiters, the kinds
+   form one uniform table (suspension format, delimiter format, dispatch
+   behavior) of which the current kernel has two rows. Direction under
+   discussion, leaning hybrid: the effect declares its control upper bound
+   (context, resume, stop, cont) and the delimiter class carries the actual
+   per-site mode under the subsumption resume and stop are restricted ctl.
+   What declared kinds make principled: Abort as a stop-kind effect loses
+   the impossible continuation (no output type at all); the Isolate
+   exclusion becomes expressible as a kind bound instead of a convention
+   (with judgment remaining, Emit has instances despite abortive stream
+   handling); resume-kind suspensions get a static one-shot tail-resumptive
+   guarantee. The cost case for strict declaration is Emit: resume-shaped
+   almost everywhere, abortively handled in Stream.take, so strict kinds
+   would force ctl everywhere or an Ack-style output protocol; the hybrid
+   keeps per-site fast paths off the delimiter class while restrictive
+   declarations add suspension-side guarantees.
