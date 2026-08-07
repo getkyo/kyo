@@ -48,8 +48,9 @@ val hermetic =
 
 Backends advertise the authority they actually provide. `FileSystem.Read[S]` can be passed only to
 `Path.runReadOnlyWith`; `FileSystem.Write[S]` supports both runners. `FileSystem.host(root)` provides
-a writable host backend confined to an existing root. This distinction prevents a caller from
-accidentally gaining mutation authority through a read-only service.
+a writable host backend confined to an existing root. `FileSystem.zipReadOnly(archive)` provides a
+read-only archive view. This distinction prevents a caller from accidentally gaining mutation
+authority through a read-only service.
 
 Portable matching uses a compiled `Glob`, never a platform-specific string matcher:
 
@@ -126,6 +127,31 @@ def confined(root: Path, input: Path)(using Frame) =
         Path.runReadOnlyWith(backend)((root / input).confinedTo(root))
     }
 ```
+
+### Archives and staged writes
+
+`FileSystem.zipReadOnly` exposes archive entries without mutation methods. `FileSystem.zip` returns
+a writable archive view plus `StagedChanges`, so entry edits accumulate in memory and committing
+rewrites the whole archive atomically:
+
+```scala
+import kyo.*
+
+val staged =
+    Scope.run {
+        FileSystem.host.tempDir("archive").map { handle =>
+            FileSystem.zip(handle.path / "draft.zip").map { archive =>
+                archive.write(Path("draft.txt"), "ready", Path.WriteOptions()).andThen(archive.commit)
+            }
+        }
+    }
+```
+
+`StagedChanges` is a one-shot contract: `commitWith` supplies a `FileSystem.Resolution` for each
+divergence a backend detects, and `discard` drops the staged work instead of applying it. `commit`
+carries `Abort[CommitConflict]` because the contract lets a backend validate the observations its
+staged work was built on against a live lower and refuse. Zip has no live lower, so its commit
+rewrites the whole archive unconditionally and never raises one.
 
 `Path.tempDir(prefix)` creates a directory through the active service, returns the `Path`, and registers recursive removal via the creating service when the enclosing `Scope` closes.
 

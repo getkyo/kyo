@@ -117,3 +117,30 @@ class HostPathLockTest extends FileSystemLockTestSuite:
         }
     }
 end HostPathLockTest
+
+/** The read-only zip backend carries its own lock implementation, with its own claim map and its
+  * own shared/exclusive merge, entirely separate from the host registry. It was registered for read
+  * conformance and never once run against the lock contract, so none of its sixteen cases had ever
+  * been asked of it.
+  */
+class ZipReadOnlyPathLockTest extends FileSystemLockTestSuite:
+    private given Frame = Frame.internal
+
+    protected def withFileSystem(
+        use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zipReadOnly.map((fileSystem, file, _) => use(fileSystem, file))
+end ZipReadOnlyPathLockTest
+
+/** The rewritable zip backend delegates locks to its in-memory upper, so a claim never reaches the
+  * archive and is visible only within one instance. Running the contract states that semantic
+  * rather than leaving it undeclared.
+  */
+class ZipRewritePathLockTest extends FileSystemLockTestSuite:
+    private given Frame = Frame.internal
+
+    protected def withFileSystem(
+        use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.zip.map((fileSystem, _, root) => use(fileSystem, root / "lock-target.bin"))
+end ZipRewritePathLockTest

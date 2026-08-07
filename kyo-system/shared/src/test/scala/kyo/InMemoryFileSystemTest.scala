@@ -314,8 +314,9 @@ class InMemoryFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
-    // mkdir -p semantics, matching Files.createDirectories: mkDir on an existing directory must
-    // never discard its children.
+    // mkdir -p semantics, matching Files.createDirectories. These matter beyond this service:
+    // it is the lower every overlay commit test replays onto, so a mkDir that empties a
+    // directory hides any replay defect whose symptom is a surviving child.
 
     "mkDir on an existing directory keeps its children" in {
         withInMem { svc =>
