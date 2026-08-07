@@ -7,7 +7,7 @@ import language.implicitConversions
 
 sealed trait Env   extends ContextEffect[Int]
 sealed trait Name  extends ContextEffect[String]
-sealed trait CtxOp extends ControlEffect[Const[Unit], Const[Int]]
+sealed trait CtxOp extends ArrowEffect[Const[Unit], Const[Int]]
 
 class ContextEffectTest extends Test[Any]:
 
@@ -18,7 +18,7 @@ class ContextEffectTest extends Test[Any]:
         ContextEffect.suspend[String, Name](Tag[Name])
 
     def op: Int < CtxOp =
-        ControlEffect.suspend[Any](Tag[CtxOp], ())
+        ArrowEffect.suspend[Any](Tag[CtxOp], ())
 
     "a read observes the handler's binding" in {
         val program = env.map(_ + 1)
@@ -93,7 +93,7 @@ class ContextEffectTest extends Test[Any]:
             op.map(a => env.map(b => a + b))
         val bound: Int < CtxOp = ContextEffect.handle(Tag[Env], 5)(program)
         var captured: Any      = null
-        val parked = ControlEffect.handlePartial(Tag[CtxOp], bound)(
+        val parked = ArrowEffect.handlePartial(Tag[CtxOp], bound)(
             [C] =>
                 (in, cont) =>
                     captured = cont
@@ -108,7 +108,7 @@ class ContextEffectTest extends Test[Any]:
             op.map(a => env.map(b => a + b))
         val bound: Int < CtxOp = ContextEffect.handle(Tag[Env], 5)(program)
         var captured: Any      = null
-        val handled = ControlEffect.handle(Tag[CtxOp], bound)(
+        val handled = ArrowEffect.handle(Tag[CtxOp], bound)(
             [C] =>
                 (in, cont) =>
                     captured = cont
@@ -122,7 +122,7 @@ class ContextEffectTest extends Test[Any]:
 
     "context reads inside arrow handler clauses resolve against the clause scope" in {
         val program = op.map(_ + 1)
-        val handled: Int < Env = ControlEffect.handleResume(Tag[CtxOp], program.asInstanceOf[Int < (CtxOp & Env)])(
+        val handled: Int < Env = ArrowEffect.handleResume(Tag[CtxOp], program.asInstanceOf[Int < (CtxOp & Env)])(
             [C] => (_) => env.map(_ * 2)
         )
         assert(ContextEffect.handle(Tag[Env], 3)(handled).eval == 7)

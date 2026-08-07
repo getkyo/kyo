@@ -6,12 +6,12 @@ import kyo.kernel2.*
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait LoopAsk extends ControlEffect[Const[Unit], Const[Int]]
+sealed trait LoopAsk extends ArrowEffect[Const[Unit], Const[Int]]
 
 class LoopTest extends Test[Any]:
 
     def ask: Int < LoopAsk =
-        ControlEffect.suspend[Any](Tag[LoopAsk], ())
+        ArrowEffect.suspend[Any](Tag[LoopAsk], ())
 
     "apply loops one state value to completion" in {
         val r = Loop(10) { i =>
@@ -50,7 +50,7 @@ class LoopTest extends Test[Any]:
             if i == 0 then Loop.done(acc)
             else ask.map(a => Loop.continue(acc + a, i - 1))
         }
-        val handled = ControlEffect.handleResume(Tag[LoopAsk], program)(
+        val handled = ArrowEffect.handleResume(Tag[LoopAsk], program)(
             [C] => (_) => 5
         )
         assert(handled.eval == 15)
@@ -61,7 +61,7 @@ class LoopTest extends Test[Any]:
             if i == 0 then Loop.done(acc)
             else ask.map(a => Loop.continue(acc + a, i - 1))
         }
-        val handled = ControlEffect.handleResume(Tag[LoopAsk], program)(
+        val handled = ArrowEffect.handleResume(Tag[LoopAsk], program)(
             [C] => (_) => 1
         )
         assert(handled.eval == 100000)
@@ -133,7 +133,7 @@ class LoopTest extends Test[Any]:
             }
         }
         var count = 0
-        val parked = ControlEffect.handlePartial(Tag[LoopAsk], program)(
+        val parked = ArrowEffect.handlePartial(Tag[LoopAsk], program)(
             [C] =>
                 (input, cont) =>
                     count += 1

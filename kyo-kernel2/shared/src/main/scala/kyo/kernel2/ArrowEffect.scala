@@ -7,7 +7,7 @@ import scala.annotation.nowarn
 
 /** An effect whose operations are functions awaiting implementation.
   *
-  * An `ControlEffect[I, O]` declares a family of operations indexed by a type `C`: each operation takes an input `I[C]` and produces an
+  * An `ArrowEffect[I, O]` declares a family of operations indexed by a type `C`: each operation takes an input `I[C]` and produces an
   * output `O[C]`. Suspending an operation describes it as data; a handler interprets it, choosing per handle site how much control it
   * needs: answer in place, stop the computation, or receive the continuation as a first-class [[Arrow]].
   *
@@ -19,9 +19,9 @@ import scala.annotation.nowarn
   * @tparam O
   *   The operation output constructor
   */
-abstract class ControlEffect[-I[_], +O[_]] extends Effect
+abstract class ArrowEffect[-I[_], +O[_]] extends Effect
 
-object ControlEffect:
+object ArrowEffect:
 
     /** Suspends an operation of the effect `E`.
       *
@@ -30,7 +30,7 @@ object ControlEffect:
     @nowarn("msg=anonymous")
     inline def suspend[A](
         using inline _frame: Frame
-    )[I[_], O[_], E <: ControlEffect[I, O]](
+    )[I[_], O[_], E <: ArrowEffect[I, O]](
         inline effectTag: Tag[E],
         inline operationInput: I[A]
     ): O[A] < E =
@@ -45,7 +45,7 @@ object ControlEffect:
     /** Suspends an operation and maps its output in one step. */
     inline def suspendWith[A](
         using inline _frame: Frame
-    )[I[_], O[_], E <: ControlEffect[I, O], B, S](
+    )[I[_], O[_], E <: ArrowEffect[I, O], B, S](
         inline effectTag: Tag[E],
         inline operationInput: I[A]
     )(
@@ -62,7 +62,7 @@ object ControlEffect:
       * Handling evaluates immediately: the region runs as far as it can, and the result is either its value or the computation parked on
       * an effect this handler does not cover, with the handler traveling in it.
       */
-    def handle[I[_], O[_], E <: ControlEffect[I, O], A, S, S2](
+    def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
@@ -75,7 +75,7 @@ object ControlEffect:
       * The clause produces the operation's output; the kernel resumes the continuation exactly once with it. No continuation is exposed or
       * captured. The handler is deep.
       */
-    def handleResume[I[_], O[_], E <: ControlEffect[I, O], A, S, S2](
+    def handleResume[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
@@ -88,7 +88,7 @@ object ControlEffect:
       * The clause produces the region's result directly; the continuation from the operation to this handler never runs. The handler is
       * deep: effects of `E` in the clause's result dispatch back to this handler.
       */
-    def handleStop[I[_], O[_], E <: ControlEffect[I, O], A, S, S2](
+    def handleStop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
@@ -102,7 +102,7 @@ object ControlEffect:
       * later operations of `E` (including through the invoked continuation) are not handled by it. `done` transforms the region's value
       * when no operation occurs before completion.
       */
-    def handleFirst[I[_], O[_], E <: ControlEffect[I, O], A, B, S, S2](
+    def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         effectTag: Tag[E],
         v: A < (E & S)
     )(
@@ -127,7 +127,7 @@ object ControlEffect:
       * and value. The handler is deep for computations passed through Continue; effects raised while the outcome itself is computed
       * dispatch to outer handlers.
       */
-    def handleLoop[I[_], O[_], E <: ControlEffect[I, O], State, A, B, S, S2](
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S, S2](
         effectTag: Tag[E],
         state: State,
         v: A < (E & S)
@@ -155,7 +155,7 @@ object ControlEffect:
       * scheduler integration point: a task drives its computation handling the runtime's own effect here, parks on `Absent`, and re-enters
       * with the same clause on the next slice. Preemption polls on the same cadence as the plain drive.
       */
-    def handlePartial[I[_], O[_], E <: ControlEffect[I, O], A, S](
+    def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
         effectTag: Tag[E],
         v: A < (E & S),
         preempt: () => Boolean = `<`.neverPreempt,
@@ -176,4 +176,4 @@ object ControlEffect:
     private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
         `<`.driveInstalled(h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any])).asInstanceOf[B < S2]
 
-end ControlEffect
+end ArrowEffect

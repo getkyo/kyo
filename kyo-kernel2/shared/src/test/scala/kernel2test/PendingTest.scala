@@ -7,17 +7,17 @@ import kyo.kernel2.*
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait Ask  extends ControlEffect[Const[Unit], Const[Int]]
-sealed trait Ask2 extends ControlEffect[Const[Unit], Const[Int]]
+sealed trait Ask  extends ArrowEffect[Const[Unit], Const[Int]]
+sealed trait Ask2 extends ArrowEffect[Const[Unit], Const[Int]]
 
 class PendingTest extends Test[Any]:
 
     def ask: Int < Ask =
-        ControlEffect.suspend[Any](Tag[Ask], ())
+        ArrowEffect.suspend[Any](Tag[Ask], ())
 
     def resolve(v: Int < Ask, answers: Int*): Int =
         var remaining = answers.toList
-        ControlEffect.handle(Tag[Ask], v)(
+        ArrowEffect.handle(Tag[Ask], v)(
             [C] =>
                 (input, cont) =>
                     remaining match
@@ -31,7 +31,7 @@ class PendingTest extends Test[Any]:
 
     def park(v: Int < Ask): Arrow[Int, Int, Ask] =
         var parked: Arrow[Int, Int, Ask] = null
-        val _ = ControlEffect.handlePartial(Tag[Ask], v)(
+        val _ = ArrowEffect.handlePartial(Tag[Ask], v)(
             [C] =>
                 (input, cont) =>
                     parked = cont
@@ -71,7 +71,7 @@ class PendingTest extends Test[Any]:
 
     "handling evaluates eagerly" in {
         var ran = false
-        val handled = ControlEffect.handle(Tag[Ask], ask.map(_ + 1))(
+        val handled = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
             [C] =>
                 (input, cont) =>
                     ran = true
@@ -129,7 +129,7 @@ class PendingTest extends Test[Any]:
         def program(i: Int): Int < Ask =
             if i == 0 then 0
             else ask.map(_ => program(i - 1))
-        val handled = ControlEffect.handle(Tag[Ask], program(100000))(
+        val handled = ArrowEffect.handle(Tag[Ask], program(100000))(
             [C] => (input, cont) => cont(0)
         )
         assert(handled.eval == 0)
@@ -209,13 +209,13 @@ class PendingTest extends Test[Any]:
 
     "handlers route by tag and nest" in {
         val ask2: Int < Ask2 =
-            ControlEffect.suspend[Any](Tag[Ask2], ())
+            ArrowEffect.suspend[Any](Tag[Ask2], ())
         val program: Int < (Ask & Ask2) =
             ask.map(a => ask2.map(b => a * 10 + b))
-        val inner = ControlEffect.handle(Tag[Ask], program)(
+        val inner = ArrowEffect.handle(Tag[Ask], program)(
             [C] => (input, cont) => cont(1)
         )
-        val outer = ControlEffect.handle(Tag[Ask2], inner)(
+        val outer = ArrowEffect.handle(Tag[Ask2], inner)(
             [C] => (input, cont) => cont(2)
         )
         assert(outer.eval == 12)
@@ -253,7 +253,7 @@ class PendingTest extends Test[Any]:
         }
         val ex =
             try
-                val _ = ControlEffect.handle(Tag[Ask], program)(
+                val _ = ArrowEffect.handle(Tag[Ask], program)(
                     [C] => (input, cont) => cont(1)
                 )
                 null
@@ -275,7 +275,7 @@ class PendingTest extends Test[Any]:
         val inner: Int < Any = (1: Int < Any).map(_ + 1)
         val program: (Int < Any) < Ask =
             ask.map(n => `<`.liftSlow(inner.map(_ + n)))
-        val handled = ControlEffect.handle(Tag[Ask], program)(
+        val handled = ArrowEffect.handle(Tag[Ask], program)(
             [C] => (input, cont) => cont(10)
         )
         val out = handled.eval
@@ -319,7 +319,7 @@ class PendingTest extends Test[Any]:
     "handler hosts phase 2 end to end" in {
         var remaining = List(7, 3)
         val program   = ask.map(a => ask.map(_ + a)).map(_ * 2)
-        val result = ControlEffect.handle(Tag[Ask], program)(
+        val result = ArrowEffect.handle(Tag[Ask], program)(
             [C] =>
                 (input, cont) =>
                     val a = remaining.head
@@ -359,7 +359,7 @@ class PendingTest extends Test[Any]:
             seen = a
             a
         }.unit
-        val result = ControlEffect.handle(Tag[Ask], v)(
+        val result = ArrowEffect.handle(Tag[Ask], v)(
             [C] => (input, cont) => cont(7)
         ).eval
         assert(result == ())

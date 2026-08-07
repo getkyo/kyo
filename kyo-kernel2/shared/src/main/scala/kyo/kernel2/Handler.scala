@@ -12,7 +12,7 @@ import kyo.Tag
   * prefix as a first-class [[Arrow]] continuation.
   *
   * Because delimiters are chain elements, the prepend machinery carries installed handlers across parks with no re-wrap: once installed, a
-  * handler travels with the computation. Handler clauses are stored erased; the typed public APIs in [[ControlEffect]] are the only
+  * handler travels with the computation. Handler clauses are stored erased; the typed public APIs in [[ArrowEffect]] are the only
   * constructors, and each cast in the drive is justified by the tag match that precedes it.
   */
 sealed abstract private[kyo] class Handler extends Arrow.Transform[Any, Any, Any]:

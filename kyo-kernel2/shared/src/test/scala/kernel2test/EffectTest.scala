@@ -6,20 +6,20 @@ import kyo.kernel2.*
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait EffAsk extends ControlEffect[Const[Unit], Const[Int]]
+sealed trait EffAsk extends ArrowEffect[Const[Unit], Const[Int]]
 
 class EffectTest extends Test[Any]:
 
     def ask: Int < EffAsk =
-        ControlEffect.suspend[Any](Tag[EffAsk], ())
+        ArrowEffect.suspend[Any](Tag[EffAsk], ())
 
     def park(v: Int < EffAsk): Int < EffAsk =
-        ControlEffect.handlePartial(Tag[EffAsk], v)(
+        ArrowEffect.handlePartial(Tag[EffAsk], v)(
             [C] => (input, cont) => Maybe.Absent
         )
 
     def resume(v: Int < EffAsk, answer: Int): Int =
-        ControlEffect.handle(Tag[EffAsk], v)(
+        ArrowEffect.handle(Tag[EffAsk], v)(
             [C] => (input, cont) => cont(answer)
         ).eval
 
@@ -220,7 +220,7 @@ class EffectTest extends Test[Any]:
             ask.map(a => ask.map(b => if b > a then throw new RuntimeException("desc") else a - b))
         val wrapped   = Effect.catching(program)(_ => -100)
         var remaining = List(5, 9)
-        val handled = ControlEffect.handle(Tag[EffAsk], wrapped)(
+        val handled = ArrowEffect.handle(Tag[EffAsk], wrapped)(
             [C] =>
                 (input, cont) =>
                     val a = remaining.head

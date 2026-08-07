@@ -5,7 +5,7 @@ import kyo.Tag
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait InternalAsk extends ControlEffect[Const[Unit], Const[Int]]
+sealed trait InternalAsk extends ArrowEffect[Const[Unit], Const[Int]]
 
 class PendingInternalTest extends Test[Any]:
 
@@ -14,7 +14,7 @@ class PendingInternalTest extends Test[Any]:
     }
 
     "evalNow is absent for a suspended computation" in {
-        val v = ControlEffect.suspend[Any](Tag[InternalAsk], ())
+        val v = ArrowEffect.suspend[Any](Tag[InternalAsk], ())
         assert(v.evalNow == Maybe.empty)
     }
 

@@ -7,8 +7,8 @@ import kyo.kernel2.*
 import language.implicitConversions
 import org.openjdk.jmh.annotations.*
 
-sealed trait BenchEcho    extends ControlEffect[Const[Int], Const[Int]]
-sealed trait BenchCounter extends ControlEffect[Const[Maybe[Int]], Const[Int]]
+sealed trait BenchEcho    extends ArrowEffect[Const[Int], Const[Int]]
+sealed trait BenchCounter extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
 
 /** Per-operation benchmarks for the kernel2 substrate and handler system.
   *
@@ -31,18 +31,18 @@ class KernelBench:
     val counterTag = Tag[BenchCounter]
 
     def echo(v: Int): Int < BenchEcho =
-        ControlEffect.suspend[Any](echoTag, v)
+        ArrowEffect.suspend[Any](echoTag, v)
 
     def counterOp(in: Maybe[Int]): Int < BenchCounter =
-        ControlEffect.suspend[Any](counterTag, in)
+        ArrowEffect.suspend[Any](counterTag, in)
 
     def runEcho(v: => Int < BenchEcho): Int =
-        ControlEffect.handle(echoTag, v)(
+        ArrowEffect.handle(echoTag, v)(
             [C] => (in, cont) => cont(in)
         ).eval
 
     def runEchoStep(v: => Int < BenchEcho): Int =
-        ControlEffect.handle(echoTag, v)(
+        ArrowEffect.handle(echoTag, v)(
             [C] =>
                 (in, cont) =>
                     cont.step match
@@ -52,7 +52,7 @@ class KernelBench:
 
     def runCounter(v: => Int < BenchCounter, n0: Int): Int =
         var state = n0
-        ControlEffect.handle(counterTag, v)(
+        ArrowEffect.handle(counterTag, v)(
             [C] =>
                 (in, cont) =>
                     in match
@@ -74,7 +74,7 @@ class KernelBench:
             k = k.map(_ + 1)
             i += 1
         var parked: Any = null
-        val _ = ControlEffect.handlePartial(echoTag, k)(
+        val _ = ArrowEffect.handlePartial(echoTag, k)(
             [C] =>
                 (input, cont) =>
                     parked = cont
