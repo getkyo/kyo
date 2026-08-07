@@ -47,6 +47,14 @@ object PendingAllocBench:
         measure("suspension", 500000):
             PendingBench.runEcho(PendingBench.echo(1).map(_ + 1).map(_ + 1).map(_ + 1))
 
+        measure("narrowIter", 200000):
+            def loop(i: Int): Int < BenchEcho =
+                if i < 10 then
+                    PendingBench.echo(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                        .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(loop)
+                else PendingBench.echo(i)
+            PendingBench.runEcho(PendingBench.echo(0).map(loop))
+
         locally {
             var k: Int < BenchEcho = PendingBench.echo(0)
             var i                  = 0
