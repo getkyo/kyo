@@ -71,12 +71,15 @@ object FileSystem:
           * yet still has a determined location: the links on the part of it that does exist fix
           * where it will land. A path with no existing ancestor resolves to itself.
           *
-          * This exists for callers that need the canonical location of a path they are about to
-          * create: raising on the common case of "the target does not exist yet" would make the
-          * method unusable for exactly the callers who need it, so absence is answered rather than
-          * raised.
+          * Staged-write layers use this to key a path they are about to create, which is why absence
+          * is not an error here. The absent case is the normal one for them, and it has to be
+          * answered without raising: a staging layer stacked on the [[Path]] capability reaches its
+          * lower through an effect suspension, and a failure raised on the far side of that
+          * suspension surfaces at the capability handler rather than inside the layer, where no
+          * local handler can intercept it.
           *
-          * The default resolves the deepest ancestor [[realPath]] accepts.
+          * The default resolves the deepest ancestor [[realPath]] accepts. Backends whose failures
+          * are not raised locally must override it.
           */
         def realPathPrefix(path: Path)(using
             Frame
@@ -429,7 +432,7 @@ object FileSystem:
 
     /** Default host backend: delegates every op to [[Path.Unsafe]], translating the concrete
       * `Result[File*Exception, A]` into `Abort[FileSystemException]`, so it preserves current
-      * `Path` behavior exactly.
+      * `Path` behavior exactly. Its commit strategy is `Auto`.
       */
     def host: FileSystem.Write[Sync] & FileSystem.Watch[Sync] = HostFileSystem()
 
@@ -445,8 +448,54 @@ object FileSystem:
 
     /** In-memory backend: an immutable node tree keyed by `Path.parts` behind one
       * `AtomicRef`, advanced by an optimistic CAS loop. `isSymbolicLink` always returns
-      * `false`.
+      * `false`. Its commit strategy is `Auto`.
       */
     def inMemory(using Frame): (FileSystem.Write[Sync] & FileSystem.Watch[Sync]) < Sync = InMemoryFileSystem.init
 
+    /** Read-only view over a zip/jar archive: entries are files and entry-path prefixes are
+      * directories. The returned value has no mutation, channel, or lock surface. Its commit
+      * strategy is `Auto`: there is nothing to stage, every read is served directly
+      * from the archive index built at construction. Backed by a uniform pure-Scala codec
+      * (`kyo.internal.ZipArchive`/`ZipInflate`), identical on every platform: no `java.util.zip`
+      * anywhere.
+      */
+    def zipReadOnly(archive: Path)(using
+        Frame
+    ): FileSystem.Read[Sync] < (Sync & Scope & Abort[FileReadException | FileStructureException]) =
+        ZipReadOnlyFileSystem.init(archive)
+
+    /** Writable zip rewrite: reads serve from `archive`'s entries as
+      * they stood when first observed (or from nothing, when `archive` does not yet exist),
+      * writes stage in an in-memory upper, and [[StagedChanges.commit]] rewrites the whole archive
+      * with the staged entries applied, atomically moved into place. There are no in-place
+      * random-access writes into a compressed entry: a [[StagedChanges.commit]] here never
+      * validates a read-set against a live lower and never raises `CommitConflict`; every commit
+      * method rewrites the whole archive unconditionally, uniformly STORED (uncompressed) on every
+      * platform via `kyo.internal.ZipArchive.write`.
+      */
+    def zip(archive: Path)(using
+        Frame
+    ): (StagedChanges[Sync & Abort[FileSystemException]] & Write[Sync]) < (Sync & Scope) =
+        ZipRewriteFileSystem.init(archive)
+
+    type Conflict = kyo.Conflict
+    val Conflict: kyo.Conflict.type = kyo.Conflict
+
+    type Resolution = kyo.Resolution
+    val Resolution: kyo.Resolution.type = kyo.Resolution
+
+    /** One-shot control over an isolated set of writes. */
+    trait StagedChanges[S]:
+        def commit(using Frame): Unit < (S & Abort[CommitConflict])
+        def commitWith(resolve: FileSystem.Conflict => FileSystem.Resolution)(using Frame): Unit < (S & Abort[CommitConflict])
+        def discard(using Frame): Unit < (S & Abort[FileSystem.StagedChanges.TerminalState])
+    end StagedChanges
+
+    object StagedChanges:
+        sealed abstract class TerminalState(message: String)(using Frame)
+            extends CommitConflict(Chunk.empty, message)
+
+        final case class AlreadyTerminated(action: String)(using Frame)
+            extends TerminalState(s"Staged changes already terminated before $action")
+    end StagedChanges
 end FileSystem

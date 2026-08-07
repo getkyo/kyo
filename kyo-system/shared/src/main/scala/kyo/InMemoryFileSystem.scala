@@ -321,7 +321,8 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     // An existing directory is left exactly as it stands, and an existing regular file is a conflict.
     // Routing through upsert unconditionally would replace the node instead, which discards a
     // populated directory's children and hands the directory a fresh identity. Files.createDirectories
-    // does neither, so a mkDir on an existing directory never drops its children.
+    // does neither, and this service is the staging upper FileSystem.zip writes into, so a mkDir that
+    // empties a directory would drop staged entries before the archive is written.
     def mkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
         now.map { t =>
             modify { s =>

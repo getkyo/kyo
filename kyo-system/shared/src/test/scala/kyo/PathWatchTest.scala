@@ -511,6 +511,20 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         }
     }
 
+    "zip backends do not claim the optional Watch tier" in {
+        val readOnlyErrors = typeCheckErrors("""
+            val archive = Path("archive.zip")
+            val watched: FileSystem.Watch[Sync] < (Sync & Scope & Abort[FileSystemException]) =
+                FileSystem.zipReadOnly(archive)
+        """)
+        val rewriteErrors = typeCheckErrors("""
+            val archive = Path("archive.zip")
+            val watched: FileSystem.Watch[Sync] < (Sync & Scope) = FileSystem.zip(archive)
+        """)
+        assert(readOnlyErrors.nonEmpty)
+        assert(rewriteErrors.nonEmpty)
+    }
+
     "PathWatch runner uses the Local-selected watch backend" in {
         FileSystem.inMemory.map { fileSystem =>
             val root = Path("local-watch-root")

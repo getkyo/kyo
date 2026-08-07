@@ -31,6 +31,8 @@ kyo-system/
     FileSystem.scala
     HostFileSystem.scala
     InMemoryFileSystem.scala
+    ZipReadOnlyFileSystem.scala
+    ZipRewriteFileSystem.scala
     FileSystemException.scala
     Command.scala
     Process.scala
@@ -52,6 +54,8 @@ The built-in factories are:
 | `FileSystem.host` | write and watch | Local host filesystem |
 | `FileSystem.host(root)` | write and watch | Canonically root-confined host access |
 | `FileSystem.inMemory` | write and watch | Hermetic shared implementation |
+| `FileSystem.zipReadOnly(path)` | read | Immutable archive view |
+| `FileSystem.zip(path)` | write and staged changes | Whole-archive rewrite |
 
 `FileSystem.let(backend)(program)` changes the backend used by the default Path runners for a
 dynamic scope. Selection uses `Local`, propagates to child fibers, and restores the previous backend
@@ -135,14 +139,32 @@ Locks are advisory, scope-managed values. `Path.LockMode` selects shared or excl
 Watchers use the independent `PathWatch` capability. Acquisition returns only after backend
 registration is active. Events are normalized as `PathChange`; overflow and root invalidation are
 stream values. Invalidation is terminal: emit it exactly once, close the stream, and release the
-registration.
+registration. Staged backends expose only changes visible in their staged view.
 
-## Confinement
+## Confinement and archives
 
 `FileSystem.host(root)` resolves the root canonically. Existing targets are checked by real path;
 missing write targets are checked through their nearest existing parent. Prefix-only string checks
 are security defects because symlinks can escape them. `Path.confinedTo(root)` provides the same
 canonical containment rule when the checked path is itself needed as a value.
+
+Archive behavior is shared across all platforms. `zipReadOnly` exposes no mutation surface.
+`zip` stages entry changes and materializes the complete archive on commit through durable
+replacement. Do not add platform archive libraries or in-place writes to compressed entries.
+
+## Staged changes
+
+`FileSystem.zip` is the backend that vends `FileSystem.StagedChanges`.
+
+The contract lets `StagedChanges.commit` validate observed lower entries before replay and abort
+with `CommitConflict`. Zip has no live lower to validate against, so its commit rewrites the whole
+archive unconditionally and never raises one. `commitWith` resolves each conflict a backend does
+detect using `FileSystem.Resolution`. `discard` terminates without touching the lower backend. Every
+terminal method is one-shot and a second terminal action must fail explicitly.
+
+Do not claim multi-file external atomicity. The staging API provides isolation before commit,
+conflict detection where a backend has a live lower to check, deterministic replay, and durable
+replacement for materialized archive files.
 
 ## Error contracts
 
@@ -165,7 +187,7 @@ throwables into expected filesystem failures.
 2. Add a focused shared test that proves behavior and its precise failure case.
 3. Add the safe Path surface and reified operation when it is a Path capability operation.
 4. Add the narrowest `FileSystem` tier method and precise effect row.
-5. Implement the shared in-memory backend where supported.
+5. Implement shared backends: in-memory and archive backends where supported.
 6. Implement both platform leaves for host behavior.
 7. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
 8. Extend the reusable conformance suite when the contract applies to multiple backends.
