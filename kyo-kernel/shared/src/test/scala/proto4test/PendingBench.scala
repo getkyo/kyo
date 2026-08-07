@@ -22,49 +22,49 @@ object PendingBench:
         ArrowEffect.suspend[Any](counterTag, in)
 
     def runEcho(v: => Int < BenchEcho): Int =
-        `<`.eval(echoTag, v)(
-            [X] => (in: Int, cont: Arrow[Int, Int, BenchEcho]) => cont(in)
-        )
+        ArrowEffect.handle(echoTag, v)(
+            [C] => (in, cont) => cont(in)
+        ).eval
 
     def runCounter(v: => Int < BenchCounter, n0: Int): Int =
         var state = n0
-        `<`.eval(counterTag, v)(
-            [X] =>
-                (in: Maybe[Int], cont: Arrow[Int, Int, BenchCounter]) =>
+        ArrowEffect.handle(counterTag, v)(
+            [C] =>
+                (in, cont) =>
                     in match
                         case Maybe.Present(x) =>
                             state = x
                             cont(x)
                         case _ =>
                             cont(state)
-        )
+        ).eval
     end runCounter
 
     // one resume handler per workload: the s.head.run site profiles receivers
     // per handler, so sharing one handler across workloads pools its profile
     def runEchoStepNarrow(v: => Int < BenchEcho): Int =
-        `<`.eval(echoTag, v)(
-            [X] =>
-                (in: Int, cont: Arrow[Int, Int, BenchEcho]) =>
+        ArrowEffect.handle(echoTag, v)(
+            [C] =>
+                (in, cont) =>
                     cont.step match
-                        case Maybe.Present(s) => s.head.run(in, s.next)
+                        case Maybe.Present(s) => s.head.run(in, s.next).asInstanceOf[Int < BenchEcho]
                         case Maybe.Absent     => in
-        )
+        ).eval
 
     def runEchoStepSuspension(v: => Int < BenchEcho): Int =
-        `<`.eval(echoTag, v)(
-            [X] =>
-                (in: Int, cont: Arrow[Int, Int, BenchEcho]) =>
+        ArrowEffect.handle(echoTag, v)(
+            [C] =>
+                (in, cont) =>
                     cont.step match
-                        case Maybe.Present(s) => s.head.run(in, s.next)
+                        case Maybe.Present(s) => s.head.run(in, s.next).asInstanceOf[Int < BenchEcho]
                         case Maybe.Absent     => in
-        )
+        ).eval
 
     def runCounterStep(v: => Int < BenchCounter, n0: Int): Int =
         var state = n0
-        `<`.eval(counterTag, v)(
-            [X] =>
-                (in: Maybe[Int], cont: Arrow[Int, Int, BenchCounter]) =>
+        ArrowEffect.handle(counterTag, v)(
+            [C] =>
+                (in, cont) =>
                     val x =
                         in match
                             case Maybe.Present(x) =>
@@ -73,9 +73,9 @@ object PendingBench:
                             case _ =>
                                 state
                     cont.step match
-                        case Maybe.Present(s) => s.head.run(x, s.next)
+                        case Maybe.Present(s) => s.head.run(x, s.next).asInstanceOf[Int < BenchCounter]
                         case Maybe.Absent     => x
-        )
+        ).eval
     end runCounterStep
 
     private var rowFilter: String = null

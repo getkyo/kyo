@@ -18,18 +18,28 @@ class PendingTest extends Test[Any]:
 
     def resolve(v: Int < Ask, answers: Int*): Int =
         var remaining = answers.toList
-        val result = `<`.evalPartial(Tag[Ask], v)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
+        ArrowEffect.handle(Tag[Ask], v)(
+            [C] =>
+                (input, cont) =>
                     remaining match
                         case a :: tail =>
                             remaining = tail
-                            Maybe(cont(a))
+                            cont(a)
                         case Nil =>
-                            Maybe.Absent
-        )
-        result.asInstanceOf[Int < Any].eval
+                            throw new IllegalStateException("out of answers")
+        ).eval
     end resolve
+
+    def park(v: Int < Ask): Arrow[Int, Int, Ask] =
+        var parked: Arrow[Int, Int, Ask] = null
+        val _ = ArrowEffect.handleFirst(Tag[Ask], v)(
+            [C] =>
+                (input, cont) =>
+                    parked = cont
+                    -1
+        )(a => a).eval
+        parked
+    end park
 
     "eager recursion through map is stack safe" in {
         def loop(i: Int): Int < Any =
@@ -60,20 +70,26 @@ class PendingTest extends Test[Any]:
         assert(resolve(ask.map(_ + 1), 41) == 42)
     }
 
+    "handling installs without executing" in {
+        var ran = false
+        val handled = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
+            [C] =>
+                (input, cont) =>
+                    ran = true
+                    cont(1)
+        )
+        assert(!ran)
+        assert(handled.eval == 2)
+        assert(ran)
+    }
+
     "handler parks and the continuation resumes" in {
         var k: Int < Ask = ask
         var i            = 0
         while i < 1000 do
             k = k.map(_ + 1)
             i += 1
-        var parked: Any = null
-        val r = `<`.evalPartial(Tag[Ask], k)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
-        val resumed = parked.asInstanceOf[Arrow[Int, Int, Ask]](7)
+        val resumed = park(k)(7)
         assert(resumed.asInstanceOf[Int < Any].eval == 1007)
     }
 
@@ -83,14 +99,7 @@ class PendingTest extends Test[Any]:
         while i < 10 do
             k = k.map(_ + 1)
             i += 1
-        var parked: Any = null
-        val r = `<`.evalPartial(Tag[Ask], k)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
-        val cont = parked.asInstanceOf[Arrow[Int, Int, Ask]]
+        val cont = park(k)
         assert(cont(0).asInstanceOf[Int < Any].eval == 10)
         assert(cont(100).asInstanceOf[Int < Any].eval == 110)
     }
@@ -101,14 +110,7 @@ class PendingTest extends Test[Any]:
         while i < 5 do
             k = k.map(_ + 1)
             i += 1
-        var parked: Any = null
-        val r = `<`.evalPartial(Tag[Ask], k)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
-        val cont     = parked.asInstanceOf[Arrow[Int, Int, Ask]]
+        val cont     = park(k)
         val extended = cont.map(transform(_ * 10))
         assert(cont(0).asInstanceOf[Int < Any].eval == 5)
         assert(extended(0).asInstanceOf[Int < Any].eval == 50)
@@ -130,21 +132,17 @@ class PendingTest extends Test[Any]:
             if i == 0 then 0
             else ask.map(_ => program(i - 1))
         var polls = 0
-        val r = `<`.evalPartial(
-            Tag[Ask],
-            program(10000),
+        val handled = ArrowEffect.handle(Tag[Ask], program(10000))(
+            [C] => (input, cont) => cont(0)
+        )
+        val r = handled.drive(
             () =>
                 polls += 1; polls == 2
             ,
             512
-        )(
-            [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(0))
         )
         assert(polls == 2)
-        val done = `<`.evalPartial(Tag[Ask], r)(
-            [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(0))
-        )
-        assert(done.asInstanceOf[Int < Any].eval == 0)
+        assert(r.eval == 0)
     }
 
     "preemption yields and the remainder resumes" in {
@@ -153,16 +151,9 @@ class PendingTest extends Test[Any]:
         while i < 10000 do
             k = k.map(_ + 1)
             i += 1
-        var parked: Any = null
-        val _ = `<`.evalPartial(Tag[Ask], k)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
-        val resumed = parked.asInstanceOf[Arrow[Int, Int, Ask]](0).asInstanceOf[Int < Any]
+        val resumed = park(k)(0).asInstanceOf[Int < Any]
         var polls   = 0
-        val suspended = resumed.eval(
+        val suspended = resumed.drive(
             () =>
                 polls += 1; polls == 2
             ,
@@ -179,17 +170,10 @@ class PendingTest extends Test[Any]:
             while i < 10000 do
                 k = k.map(_ + 1)
                 i += 1
-            var parked: Any = null
-            val _ = `<`.evalPartial(Tag[Ask], k)(
-                [X] =>
-                    (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                        parked = cont
-                        Maybe.Absent
-            )
-            parked.asInstanceOf[Arrow[Int, Int, Ask]](0).asInstanceOf[Int < Any]
+            park(k)(0).asInstanceOf[Int < Any]
         end parkAndResume
         var p512 = 0
-        assert(parkAndResume().eval(
+        assert(parkAndResume().drive(
             () =>
                 p512 += 1;
                 false
@@ -197,7 +181,7 @@ class PendingTest extends Test[Any]:
             512
         ).eval == 10000)
         var p4096 = 0
-        assert(parkAndResume().eval(
+        assert(parkAndResume().drive(
             () =>
                 p4096 += 1;
                 false
@@ -236,30 +220,24 @@ class PendingTest extends Test[Any]:
     "handlers route by tag and nest" in {
         val ask2: Int < Ask2 =
             ArrowEffect.suspend[Any](Tag[Ask2], ())
-        val program: Int < Ask =
-            ask.map(a => ask2.asInstanceOf[Int < Ask].map(b => a * 10 + b))
-        val inner = `<`.evalPartial(Tag[Ask], program)(
-            [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(1))
+        val program: Int < (Ask & Ask2) =
+            ask.map(a => ask2.map(b => a * 10 + b))
+        val inner = ArrowEffect.handle(Tag[Ask], program)(
+            [C] => (input, cont) => cont(1)
         )
-        val outer = `<`.eval(Tag[Ask2], inner.asInstanceOf[Int < Ask2])(
-            [X] => (input: Unit, cont: Arrow[Int, Int, Ask2]) => cont(2)
+        val outer = ArrowEffect.handle(Tag[Ask2], inner)(
+            [C] => (input, cont) => cont(2)
         )
-        assert(outer == 12)
+        assert(outer.eval == 12)
     }
 
     "observe reports steps and survives park and resume" in {
-        var seen        = List.empty[Int]
-        val k           = ask.map(_ + 1).map(_ * 2)
-        val observed    = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
-        var parked: Any = null
-        val r = `<`.evalPartial(Tag[Ask], observed)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
+        var seen     = List.empty[Int]
+        val k        = ask.map(_ + 1).map(_ * 2)
+        val observed = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
+        val cont     = park(observed)
         assert(seen == Nil)
-        val done = parked.asInstanceOf[Arrow[Int, Int, Ask]](10).asInstanceOf[Int < Any].eval
+        val done = cont(10).asInstanceOf[Int < Any].eval
         assert(done == 22)
         assert(seen == List(10, 11))
     }
@@ -271,16 +249,10 @@ class PendingTest extends Test[Any]:
         while i < 40 do
             k = k.map(_ + 1)
             i += 1
-        val observed    = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
-        var parked: Any = null
-        val r = `<`.evalPartial(Tag[Ask], observed)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
+        val observed = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
+        val cont     = park(observed)
         assert(seen == Nil)
-        val done = parked.asInstanceOf[Arrow[Int, Int, Ask]](0).asInstanceOf[Int < Any].eval
+        val done = cont(0).asInstanceOf[Int < Any].eval
         assert(done == 40)
         assert(seen == (0 until 40).toList)
     }
@@ -289,11 +261,12 @@ class PendingTest extends Test[Any]:
         val program: Int < Ask = ask.map { _ =>
             (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
         }
+        val handled = ArrowEffect.handle(Tag[Ask], program)(
+            [C] => (input, cont) => cont(1)
+        )
         val ex =
             try
-                val _ = `<`.evalPartial(Tag[Ask], program)(
-                    [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(1))
-                )
+                val _ = handled.eval
                 null
             catch case e: RuntimeException => e
         assert(ex.getMessage == "boom")
@@ -309,20 +282,20 @@ class PendingTest extends Test[Any]:
         assert(resolve(out.map(_ + 1), 41) == 42)
     }
 
+    "a computation as a value survives the chain" in {
+        val inner: Int < Any = (1: Int < Any).map(_ + 1)
+        val program: (Int < Any) < Ask =
+            ask.map(n => `<`.liftSlow(inner.map(_ + n)))
+        val handled = ArrowEffect.handle(Tag[Ask], program)(
+            [C] => (input, cont) => cont(10)
+        )
+        val out = handled.eval
+        assert(out.eval == 12)
+    }
+
     "identity arrow has no step" in {
         assert(Arrow[Int].step == Maybe.Absent)
     }
-
-    def park(v: Int < Ask): Arrow[Int, Int, Ask] =
-        var parked: Any = null
-        val _ = `<`.evalPartial(Tag[Ask], v)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
-        parked.asInstanceOf[Arrow[Int, Int, Ask]]
-    end park
 
     "step decomposes a continuation for caller-site execution" in {
         val cont = park(ask.map(_ + 1).map(_ * 10))
@@ -357,16 +330,16 @@ class PendingTest extends Test[Any]:
     "handler hosts phase 2 end to end" in {
         var remaining = List(7, 3)
         val program   = ask.map(a => ask.map(_ + a)).map(_ * 2)
-        val result = `<`.eval(Tag[Ask], program)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
+        val result = ArrowEffect.handle(Tag[Ask], program)(
+            [C] =>
+                (input, cont) =>
                     val a = remaining.head
                     remaining = remaining.tail
                     cont.step match
-                        case Maybe.Present(s) => s.head.run(a, s.next)
+                        case Maybe.Present(s) => s.head.run(a, s.next).asInstanceOf[Int < Ask]
                         case Maybe.Absent     => a
         )
-        assert(result == 20)
+        assert(result.eval == 20)
     }
 
 end PendingTest

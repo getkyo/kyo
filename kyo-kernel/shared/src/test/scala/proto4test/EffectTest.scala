@@ -14,16 +14,13 @@ class EffectTest extends Test[Any]:
     def ask: Int < EffAsk =
         ArrowEffect.suspend[Any](Tag[EffAsk], ())
 
-    def park(v: Int < EffAsk): Arrow[Int, Int, EffAsk] =
-        var parked: Any = null
-        val _ = `<`.evalPartial(Tag[EffAsk], v)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, EffAsk]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
-        parked.asInstanceOf[Arrow[Int, Int, EffAsk]]
-    end park
+    def park(v: Int < EffAsk): Int < EffAsk =
+        v.drive()
+
+    def resume(v: Int < EffAsk, answer: Int): Int =
+        ArrowEffect.handle(Tag[EffAsk], v)(
+            [C] => (input, cont) => cont(answer)
+        ).eval
 
     "defer does not run at construction" in {
         var ran = false
@@ -63,7 +60,7 @@ class EffectTest extends Test[Any]:
 
     "defer result can suspend" in {
         val v = Effect.defer(ask.map(_ + 1))
-        assert(park(v.asInstanceOf[Int < EffAsk])(41).asInstanceOf[Int < Any].eval == 42)
+        assert(resume(park(v), 41) == 42)
     }
 
     "deferred recursion is stack safe" in {
@@ -109,9 +106,9 @@ class EffectTest extends Test[Any]:
         } { r =>
             ask.map(a => a + r)
         }
-        val cont = park(v)
+        val parked = park(v)
         assert(log == List("acq"))
-        assert(cont(100).asInstanceOf[Int < Any].eval == 142)
+        assert(resume(parked, 100) == 142)
         assert(log == List("acq", "rel"))
     }
 
@@ -171,9 +168,9 @@ class EffectTest extends Test[Any]:
         } { r =>
             ask.map(a => a + r)
         }
-        val cont = park(v)
+        val parked = park(v)
         assert(log == List("acq"))
-        cont(0).asInstanceOf[Int < Any].discard
+        parked.discard
         assert(log == List("acq", "rel"))
     }
 

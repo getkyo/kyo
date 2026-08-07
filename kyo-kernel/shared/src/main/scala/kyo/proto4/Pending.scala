@@ -97,48 +97,32 @@ object `<`:
         end run
     end Observe
 
-    extension [A](self: A < Any)
+    extension [A, S](self: A < S)
 
-        inline def eval: A =
-            if self.isInstanceOf[Kyo[?, ?]] then
-                Kyo.unwrap(evalLoop(self.asInstanceOf[Any < Any], never, 1, unhandled)).asInstanceOf[A]
-            else Kyo.unwrap(self).asInstanceOf[A]
-
-        def eval(preempt: () => Boolean, period: Int): A < Any =
-            evalLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), unhandled).asInstanceOf[A < Any]
-
+        /** Drives the computation as far as it can go.
+          *
+          * Runs until a value is produced, an unhandled suspension is reached (the computation parks, waiting for a handler), or `preempt`
+          * returns true at a poll point. The result is the remaining computation: a plain value when done, or a pending computation to be
+          * handled or resumed later.
+          */
+        def drive(preempt: () => Boolean = never, period: Int = Arrow.Period): A < S =
+            driveLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period)).asInstanceOf[A < S]
     end extension
 
-    inline def evalPartial[I[_], O[_], E <: ArrowEffect[I, O], A](
-        tag: Tag[E],
-        v: A < E,
-        preempt: () => Boolean = never,
-        period: Int = Arrow.Period
-    )(
-        handle: [X] => (I[X], Arrow[O[X], A, E]) => Maybe[A < E]
-    ): A < E =
-        val handler: Kyo[Any, Any] => Maybe[Any < Any] =
-            case c: Kyo.Continue[I, O, E, Any, A, E] @unchecked if c.suspend.tag =:= tag =>
-                handle(c.suspend.input, c.cont.optimize).asInstanceOf[Maybe[Any < Any]]
-            case s: Kyo.Suspend[I, O, E, Any] @unchecked if s.tag =:= tag =>
-                handle(s.input, Arrow[A].asInstanceOf[Arrow[O[Any], A, E]]).asInstanceOf[Maybe[Any < Any]]
-            case _ =>
-                Maybe.Absent
-        end handler
-        evalLoop(v.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), handler).asInstanceOf[A < E]
-    end evalPartial
+    extension [A](self: A < Any)
 
-    inline def eval[I[_], O[_], E <: ArrowEffect[I, O], A](
-        tag: Tag[E],
-        v: A < E
-    )(
-        handle: [X] => (I[X], Arrow[O[X], A, E]) => A < E
-    ): A =
-        Kyo.unwrap(
-            evalPartial(tag, v)(
-                [X] => (input: I[X], cont: Arrow[O[X], A, E]) => Maybe(handle(input, cont))
-            )
-        ).asInstanceOf[A]
+        /** Evaluates the computation to its value.
+          *
+          * All effects must have handlers installed; reaching a suspension with no matching delimiter is a defect and throws.
+          */
+        def eval: A =
+            if self.isInstanceOf[Kyo[?, ?]] then
+                driveLoop(self.asInstanceOf[Any < Any], never, 1) match
+                    case kyo: Kyo[?, ?] => throw new IllegalStateException("unhandled suspension: " + kyo)
+                    case v              => Kyo.unwrap(v).asInstanceOf[A]
+            else Kyo.unwrap(self).asInstanceOf[A]
+
+    end extension
 
     private val never: () => Boolean = () => false
 
@@ -227,29 +211,25 @@ object `<`:
     private def preempted(v: Any < Any): Boolean =
         v.isInstanceOf[Kyo.Defer[?, ?, ?]]
 
-    // Inline so every eval site gets a private copy of the trampoline: the
-    // handle(kyo) dispatch and the suspension-shape tests then profile per
-    // handler instead of pooling across every eval in the program.
-    private inline def evalLoop(
+    private def driveLoop(
         v0: Any < Any,
         preempt: () => Boolean,
-        stride: Int,
-        handle: Kyo[Any, Any] => Maybe[Any < Any]
+        stride: Int
     ): Any < Any =
-        def drive(v: Any < Any, depth: Int): Any < Any =
+        def recur(v: Any < Any, depth: Int): Any < Any =
             @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
                 curr match
                     case bracket: Kyo.Bracket[Any, Any, Any] @unchecked =>
                         if depth >= BracketDepth then bracket
                         else
-                            drive(bracket.acquire, depth + 1) match
+                            recur(bracket.acquire, depth + 1) match
                                 case suspended: Kyo[Any, Any] @unchecked =>
                                     val wrapped = suspended.map(reacquire(bracket))
                                     if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
                                 case acquired =>
                                     val resource = Kyo.unwrap(acquired)
                                     val result =
-                                        try drive(bracket.cont(acquired), depth + 1)
+                                        try recur(bracket.cont(acquired), depth + 1)
                                         catch
                                             case t: Throwable =>
                                                 cleanup(bracket, resource, t)
@@ -259,7 +239,7 @@ object `<`:
                                             val wrapped = suspended.map(new Finalize[Any, Any, Any](bracket, resource))
                                             if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
                                         case _ =>
-                                            drive(bracket.release(resource), depth + 1) match
+                                            recur(bracket.release(resource), depth + 1) match
                                                 case suspended: Kyo[Any, Any] @unchecked =>
                                                     val wrapped = suspended.map(constant(result))
                                                     if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
@@ -271,26 +251,96 @@ object `<`:
                             if preempt() then curr
                             else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
                         else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
+                    case c: Kyo.Continue[?, ?, ?, ?, ?, ?] @unchecked if depth == 0 =>
+                        dispatch(c) match
+                            case Maybe.Present(next) =>
+                                if n == 0 then
+                                    if preempt() then next
+                                    else loop(next, stride - 1)
+                                else loop(next, n - 1)
+                            case _ => curr
                     case kyo: Kyo[Any, Any] @unchecked =>
-                        if depth == 0 then
-                            handle(kyo) match
-                                case Maybe.Present(next) =>
-                                    if n == 0 then
-                                        if preempt() then next
-                                        else loop(next, stride - 1)
-                                    else loop(next, n - 1)
-                                case _ => kyo
-                        else kyo
+                        curr
                     case _ =>
                         curr
             loop(v, 0)
-        end drive
-        try drive(v0, 0)
+        end recur
+        try recur(v0, 0)
         catch
             case ex: Throwable =>
                 KyoException.install(ex)
                 throw ex
         end try
-    end evalLoop
+    end driveLoop
+
+    /** Finds the innermost matching delimiter in the suspension's chain and applies its format.
+      *
+      * The walk flattens nested pre-linked chains with an explicit pending stack, collecting the prefix (the continuation up to the
+      * delimiter) only because the capturing formats need it. The casts below are justified by the tag match: a delimiter constructed for
+      * `E` matched a suspension of `E`, so the clause's erased input and continuation have the types the public API established.
+      */
+    private def dispatch(c: Kyo.Continue[?, ?, ?, ?, ?, ?]): Maybe[Any < Any] =
+        val suspend    = c.suspend
+        val suspendTag = suspend.tag.asInstanceOf[Tag[Any]]
+        val input      = suspend.input
+        val chain      = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
+
+        def compose(rest: Arrow[Any, Any, Any], pending: List[Arrow[Any, Any, Any]]): Arrow[Any, Any, Any] =
+            pending.foldLeft(rest)((acc, next) => Arrow.map(acc)(next))
+
+        def prefixArrow(prefixRev: List[Arrow.Transform[Any, Any, Any]]): Arrow[Any, Any, Any] =
+            prefixRev.foldLeft(Arrow[Any])((acc, t) => new Arrow.Offset[Any, Any, Any, Any](t, acc))
+
+        def act(
+            h: Handler,
+            rest: Arrow[Any, Any, Any],
+            pending: List[Arrow[Any, Any, Any]],
+            prefixRev: List[Arrow.Transform[Any, Any, Any]]
+        ): Maybe[Any < Any] =
+            val fullRest = compose(rest, pending)
+            h match
+                case h: Handler.Resume =>
+                    Maybe(chain(h.clause[Any](input)))
+                case h: Handler.Stop =>
+                    Maybe(new Arrow.Offset[Any, Any, Any, Any](h, fullRest)(h.clause[Any](input)))
+                case h: Handler.Cont =>
+                    val k = prefixArrow(prefixRev)
+                    Maybe(new Arrow.Offset[Any, Any, Any, Any](h, fullRest)(h.clause[Any](input, k)))
+                case h: Handler.First =>
+                    val k = prefixArrow(prefixRev)
+                    Maybe(fullRest(h.clause[Any](input, k)))
+            end match
+        end act
+
+        @tailrec def search(
+            cur: Arrow[Any, Any, Any],
+            pending: List[Arrow[Any, Any, Any]],
+            prefixRev: List[Arrow.Transform[Any, Any, Any]]
+        ): Maybe[Any < Any] =
+            cur match
+                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                    o.head match
+                        case h: Handler if h.effectTag <:< suspendTag =>
+                            act(h, o.next, pending, prefixRev)
+                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                            search(inner, o.next :: pending, prefixRev)
+                        case t =>
+                            search(o.next, pending, t :: prefixRev)
+                case at: Arrow.AndThen[?, ?, ?, ?] =>
+                    search(at.asInstanceOf[Arrow[Any, Any, Any]].optimize, pending, prefixRev)
+                case h: Handler if h.effectTag <:< suspendTag =>
+                    act(h, Arrow[Any], pending, prefixRev)
+                case t: Arrow.Transform[?, ?, ?] =>
+                    val prefixRev2 =
+                        if Arrow.isEmpty(t.asInstanceOf[Arrow[Any, Any, Any]]) then prefixRev
+                        else t.asInstanceOf[Arrow.Transform[Any, Any, Any]] :: prefixRev
+                    pending match
+                        case p :: ps => search(p, ps, prefixRev2)
+                        case Nil     => Maybe.Absent
+            end match
+        end search
+
+        search(chain, Nil, Nil)
+    end dispatch
 
 end `<`

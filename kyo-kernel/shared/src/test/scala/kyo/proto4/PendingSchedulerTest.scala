@@ -1,7 +1,6 @@
 package kyo.proto4
 
 import kyo.Const
-import kyo.Maybe
 import kyo.Tag
 import kyo.test.Test
 import language.implicitConversions
@@ -31,9 +30,7 @@ class PendingSchedulerTest extends Test[Any]:
                 }
             }
         }
-        val remainder = `<`.evalPartial(Tag[Ask], program)(
-            [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe.Absent
-        )
+        val remainder = program.drive()
         assert(log == List("acq-outer", "acq-inner"))
         remainder.discard
         assert(log == List("acq-outer", "acq-inner", "rel-inner", "rel-outer"))
@@ -50,15 +47,12 @@ class PendingSchedulerTest extends Test[Any]:
         } { v =>
             ask.map(a => a + v)
         }
-        var parked: Any = null
-        val remainder = `<`.evalPartial(Tag[Ask], program)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
+        val remainder = program.drive()
         assert(log == List("acq"))
-        assert(parked.asInstanceOf[Arrow[Int, Int, Ask]](100).asInstanceOf[Int < Any].eval == 142)
+        val resumed = ArrowEffect.handle(Tag[Ask], remainder)(
+            [C] => (input, cont) => cont(100)
+        )
+        assert(resumed.eval == 142)
         assert(log == List("acq", "rel"))
     }
 
@@ -78,15 +72,11 @@ class PendingSchedulerTest extends Test[Any]:
         while i < 40 do
             k = k.map(_ + 1)
             i += 1
-        var parked: Any = null
-        val r = `<`.evalPartial(Tag[Ask], k)(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
+        val parked = k.drive()
         assert(log == List("acq"))
-        val resumed = parked.asInstanceOf[Arrow[Int, Int, Ask]](10)
+        val resumed = ArrowEffect.handle(Tag[Ask], parked)(
+            [C] => (input, cont) => cont(10)
+        )
         assert(log == List("acq"))
         resumed.discard
         assert(log == List("acq", "rel"))

@@ -122,7 +122,9 @@ object Arrow:
     private val empty = new Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            cont(v.asInstanceOf[Any < Any])
+            // liftSlow, not a cast: a raw value that is itself a computation must
+            // re-enter the chain as data (Nested), not as a suspension to run
+            cont(`<`.liftSlow(v))
 
     // Spliced into long chains every Period elements by optimize: hops unwind here
     // via the returned Defer and evalLoop's trampoline drives the next segment, so
@@ -131,7 +133,7 @@ object Arrow:
     private val segmentBoundary = new Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            Kyo.Defer(v, cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
+            Kyo.Defer(`<`.liftSlow(v), cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
 
     def apply[A]: Arrow[A, A, Any] = empty.asInstanceOf[Arrow[A, A, Any]]
 
@@ -240,7 +242,7 @@ object Arrow:
     end stepSlow
 
     private def rescue[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
-        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+        Kyo.Defer(v, self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
 
     private def guardedRun[A, B, S, S2](t: Transform[A, B, S], v: A < S2): B < (S & S2) =
         val slot = Depth.slot()
@@ -263,7 +265,7 @@ object Arrow:
             case at: AndThen[?, ?, ?, ?] =>
                 self.optimize(v)
             case _ =>
-                Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+                Kyo.Defer(v, self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
     end applySlow
 
     /** The pre-linked chain node: simultaneously an Arrow (it can be stored, composed,

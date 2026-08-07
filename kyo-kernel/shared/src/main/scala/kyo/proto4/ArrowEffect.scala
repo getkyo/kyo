@@ -13,12 +13,15 @@ import scala.annotation.nowarn
   * Effects that never resume declare it in their output type: an effect with output `Const[Nothing]` cannot be resumed by any handler,
   * whatever format the handler uses.
   *
+  * The type parameters are invariant so that the operation constructors are inferred exactly from the effect's tag at suspend and handle
+  * sites; a variant declaration would infer them to their extremes.
+  *
   * @tparam I
   *   The operation input constructor
   * @tparam O
   *   The operation output constructor
   */
-abstract class ArrowEffect[-I[_], +O[_]] extends Effect
+abstract class ArrowEffect[I[_], O[_]] extends Effect
 
 object ArrowEffect:
 
@@ -51,5 +54,74 @@ object ArrowEffect:
         inline f: O[A] => B < S
     ): B < (E & S) =
         suspend[A](using _frame)[I, O, E](effectTag, operationInput).map(f)
+
+    /** Handles `E` with a first-class continuation (the ctl format).
+      *
+      * The clause receives each operation's input and the continuation from the operation to this handler as an [[Arrow]]. The clause
+      * decides everything: invoke the continuation once to resume, not at all to abort, or several times. The handler is deep: effects of
+      * `E` in the clause's result, including through resumed continuations, dispatch back to this handler.
+      *
+      * Handling installs the handler and returns immediately; execution happens when the computation is driven.
+      */
+    def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        clause: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S)
+    )(using frame: Frame): A < S =
+        install(v, new Handler.Cont(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.Clause], frame))
+
+    /** Handles `E` by answering each operation in place (the fun format).
+      *
+      * The clause produces the operation's output; the kernel resumes the continuation exactly once with it. No continuation is exposed or
+      * captured. The handler is deep.
+      */
+    def handleResume[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        clause: [C] => I[C] => O[C] < (E & S)
+    )(using frame: Frame): A < S =
+        install(v, new Handler.Resume(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.InputClause], frame))
+
+    /** Handles `E` by ending the region at each operation (the final ctl format).
+      *
+      * The clause produces the region's result directly; the continuation from the operation to this handler never runs. The handler is
+      * deep: effects of `E` in the clause's result dispatch back to this handler.
+      */
+    def handleStop[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        clause: [C] => I[C] => A < (E & S)
+    )(using frame: Frame): A < S =
+        install(v, new Handler.Stop(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.InputClause], frame))
+
+    /** Handles only the first operation of `E`, shallowly.
+      *
+      * The clause receives the first operation's input and continuation and produces the final result; the handler is not reinstalled, so
+      * later operations of `E` (including through the invoked continuation) are not handled by it. `done` transforms the region's value
+      * when no operation occurs before completion.
+      */
+    def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        clause: [C] => (I[C], Arrow[O[C], A, E & S]) => B < S
+    )(
+        done: A => B < S
+    )(using frame: Frame): B < S =
+        install(
+            v,
+            new Handler.First(
+                effectTag.asInstanceOf[Tag[Any]],
+                clause.asInstanceOf[Handler.Clause],
+                done.asInstanceOf[Any => Any < Any],
+                frame
+            )
+        )
+
+    private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
+        h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]).asInstanceOf[B < S2]
 
 end ArrowEffect
