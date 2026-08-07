@@ -33,16 +33,15 @@ Filesystem I/O is capability-tracked, not method-tracked. A program that only re
 
 `Path.run` and `Path.runReadOnly` use the backend selected by `FileSystem.let`. The default is the
 local host backend. Selection is dynamically scoped, inherited by child fibers, and restored when
-the block exits. Selecting `FileSystem.host(root)` validates every default-runner operation inside
-the block against that root, rejecting anything that resolves outside it rather than relocating it:
+the block exits:
 
 ```scala
 import kyo.*
 
-def sandboxed(root: Path)(using Frame) =
-    FileSystem.host(root).map { confined =>
-        FileSystem.let(confined) {
-            Path.run((root / "state" / "value.txt").write("42"))
+val hermetic =
+    FileSystem.inMemory.map { memory =>
+        FileSystem.let(memory) {
+            Path.run((Path("state") / "value.txt").write("42"))
         }
     }
 ```
@@ -73,9 +72,11 @@ policy explicit:
 import kyo.*
 
 val positioned =
-    Scope.run {
-        FileSystem.host.openReadWriteChannel(Path("index.bin"), FileSystem.WriteOpen.CreateNew).map { channel =>
-            channel.writeAt(0L, Span.from(Array[Byte](1, 2, 3))).andThen(channel.readAt(0L, 3))
+    FileSystem.inMemory.map { memory =>
+        Scope.run {
+            memory.openReadWriteChannel(Path("index.bin"), FileSystem.WriteOpen.CreateNew).map { channel =>
+                channel.writeAt(0L, Span.from(Array[Byte](1, 2, 3))).andThen(channel.readAt(0L, 3))
+            }
         }
     }
 ```

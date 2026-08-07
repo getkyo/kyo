@@ -9,6 +9,9 @@ abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
 
     private given Frame = Frame.internal
 
+    private[kyo] def awaitQueued(clock: Clock.TimeControl)(using Frame): Unit < Async =
+        clock.advance(10.millis).andThen(clock.awaitPendingSleepers(1))
+
     protected def withFileSystem(
         use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
@@ -30,9 +33,7 @@ abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
     private def takeQueued(clock: Clock.TimeControl, watcher: Path.Watcher, count: Int)(using
         Frame
     ): Chunk[PathChange] < (Async & Abort[FileWatchException]) =
-        clock.advance(10.millis).andThen {
-            clock.awaitPendingSleepers(1).andThen(Scope.run(watcher.events.take(count).run))
-        }
+        awaitQueued(clock).andThen(Scope.run(watcher.events.take(count).run))
 
     private def glob(value: String): Glob =
         Glob.parse(value) match
@@ -212,3 +213,24 @@ class HostPathWatchTest extends FileSystemWatchTestSuite:
         }
     end withFileSystem
 end HostPathWatchTest
+
+/** The in-memory backend has its own watcher, pushed to from each mutation into the channel every
+  * registered watcher holds, and entirely separate from the polling watcher the host backend uses.
+  * It advertises the Watch tier, so it owes the same contract; before this it had only its own
+  * ad-hoc cases and the two implementations were never held to the same assertions.
+  */
+class InMemoryPathWatchTest extends FileSystemWatchTestSuite:
+    private given Frame = Frame.internal
+
+    // Mutation completion is the publication barrier for pushed memory events.
+    override private[kyo] def awaitQueued(clock: Clock.TimeControl)(using Frame): Unit < Async = ()
+
+    protected def withFileSystem(
+        use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
+            (Async & Sync & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("in-memory-watch-root")
+            fileSystem.mkDir(root).andThen(use(fileSystem, root))
+        }
+end InMemoryPathWatchTest
