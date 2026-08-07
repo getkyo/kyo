@@ -52,7 +52,8 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         failOn: Maybe[String] = Absent,
         interruptAfterOpen: Maybe[Throwable] = Absent,
         interruptAfterTransfer: Maybe[Throwable] = Absent,
-        cleaned: Maybe[Latch] = Absent
+        cleaned: Maybe[Latch] = Absent,
+        failRootSyncAt: Maybe[Int] = Absent
     ) extends FileSystem.Write[Sync]:
         export base.{
             durableReplace as _,
@@ -159,8 +160,15 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             )
 
         override def syncDirectory(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.defer(recorded += Event.SyncDirectory(path)).andThen {
-                if fails("sync-directory") then Abort.fail(failure(path, FileSystemOperation.SyncDirectory))
+            Sync.defer {
+                recorded += Event.SyncDirectory(path)
+                recorded.count {
+                    case Event.SyncDirectory(recordedPath) => recordedPath == Path()
+                    case _                                 => false
+                }
+            }.map { rootSync =>
+                if fails("sync-directory") || (path == Path() && failRootSyncAt.contains(rootSync)) then
+                    Abort.fail(failure(path, FileSystemOperation.SyncDirectory))
                 else ()
             }
 
@@ -664,6 +672,41 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             (targetParent, temporaryParent, temporary, existedInside) = observed
             existsAfter <- fs.exists(temporary)
         yield assert(targetParent == temporaryParent && existedInside && !existsAfter)
+    }
+
+    "overlay sibling temporary cleanup cannot be resurrected by commit" in {
+        Scope.run {
+            for
+                lower   <- FileSystem.inMemory
+                overlay <- FileSystem.overlay(lower)
+                temporary <- Scope.run {
+                    Path.runWith(overlay)(Path("durability", "overlay-target.bin").siblingTemporary)
+                }
+                _      <- overlay.commitWith(_ => FileSystem.Resolution.KeepOurs)
+                exists <- lower.exists(temporary)
+            yield assert(!exists)
+        }
+    }
+
+    "overlay commit synchronizes the current directory after replacing a relative target" in {
+        Scope.run {
+            for
+                base <- FileSystem.inMemory
+                lower = new Recording(base, failRootSyncAt = Present(2))
+                overlay <- FileSystem.overlay(lower)
+                target = Path("overlay-relative-target.bin")
+                bytes  = Span.from(Array[Byte](4, 5, 6))
+                _      <- overlay.writeBytes(target, bytes, Path.WriteOptions())
+                result <- Abort.run[FileSystemException | CommitConflict](overlay.commitWith(_ => FileSystem.Resolution.KeepOurs))
+                actual <- base.readBytes(target)
+                rootSyncs = lower.events.collect { case Event.SyncDirectory(path) if path == Path() => path }
+            yield assert(
+                result.isFailure &&
+                    rootSyncs.size == 2 &&
+                    actual.toArrayUnsafe.sameElements(bytes.toArrayUnsafe),
+                s"result=$result rootSyncs=$rootSyncs events=${lower.events}"
+            )
+        }
     }
 
     "host durable replacement synchronizes the current directory for a relative target" in {

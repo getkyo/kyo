@@ -1,0 +1,634 @@
+package kyo
+
+import java.nio.charset.StandardCharsets
+
+/** Tests for the durable overlay commit machinery in [[OverlayFileSystem]].
+  *
+  * Covers conflict detection and abort, Move/Copy resolved-entry replay, all four commitWith
+  * resolution types, opaque-directory replay, and the WriteOpLog decode-failure split
+  * (torn/CRC-failed = silent discard; bad magic or wrong version = loud fail).
+  *
+  * Every commit arm runs against both lowers through [[withEachLower]]. The lower is mutated
+  * out-of-band to create conflict conditions. No `Thread.sleep` anywhere.
+  */
+class OverlayFileSystemCommitTest extends kyo.test.Test[Any]:
+
+    private type Staged = FileSystem.StagedChanges[Sync & Abort[FileSystemException]] & FileSystem.Write[Sync]
+
+    /** Registers `body` once per lower: the in-memory service, and a host service confined to a
+      * scoped temp directory.
+      *
+      * The two lowers disagree about atomic move, directory metadata, and what `mkDir` does to a
+      * directory that already exists, so a commit assertion that holds for one and not the other is
+      * a real difference rather than a platform detail. Running only the in-memory lower is what let
+      * a replay defect sit unnoticed: its symptom is a lower entry that should have been cleared,
+      * and that lower used to clear it for unrelated reasons.
+      *
+      * `base` is the directory every path in a case must be built under. It is empty for the
+      * in-memory lower and the temp directory for the host one, because the confined host service
+      * checks that a path lies under its root rather than resolving a relative path against it.
+      */
+    private def withEachLower(name: String)(
+        body: kyo.test.AssertScope ?=> (Staged, FileSystem.Write[Sync], Path) => Unit < (Async & Abort[Any] & Scope)
+    )(using Frame): Unit =
+        (name + " (in-memory lower)") in {
+            FileSystem.inMemory.map { lower =>
+                FileSystem.overlay(lower).map(ov => body(ov, lower, Path()))
+            }
+        }
+        (name + " (host lower)") in {
+            Scope.acquireRelease(FileSystem.host.tempDir("kyo-overlay-commit")) { handle =>
+                // Unsafe: service-vended recursive cleanup at Scope exit, mirroring Path.tempDir.
+                Sync.Unsafe.defer(handle.remove())
+            }.map { handle =>
+                // The host hands back a temp directory by a name that may traverse a link: on macOS
+                // /var is a link to /private/var. The overlay keys and reports canonical paths, so a
+                // case that builds a path from an unresolved base compares a reported path against a
+                // different spelling of the same file and fails on the link rather than on the
+                // behavior under test.
+                FileSystem.host.realPath(handle.path).map { root =>
+                    FileSystem.host(root).map { lower =>
+                        FileSystem.overlay(lower).map(ov => body(ov, lower, root))
+                    }
+                }
+            }
+        }
+    end withEachLower
+
+    withEachLower("commit aborts CommitConflict when lower diverges after observation") { (ov, lower, base) =>
+        val p = base / "p19.txt"
+        // Seed lower, read through overlay (stamps it), stage an overlay write,
+        // then diverge lower with different-size content to trigger a conflict.
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(ov)(p.write("overlay-value")).andThen {
+                    Path.runWith(lower)(p.write("lower-diverged-longer-content")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(cc) =>
+                                assert(cc.conflicts.size == 1)
+                                assert(cc.conflicts.head.path == p)
+                                // Lower must be unchanged by the failed commit.
+                                Path.runWith(lower)(p.read).map { lowerVal =>
+                                    assert(lowerVal == "lower-diverged-longer-content")
+                                }
+                            case other =>
+                                assert(false, s"expected CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commit aborts CommitConflict when lower file is deleted after observation") { (ov, lower, base) =>
+        val p = base / "p19-deleted.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(ov)(p.write("overlay-value")).andThen {
+                    Path.runWith(lower)(p.removeExisting).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(cc) =>
+                                // Exactly one: the staged write's parent directory is recorded too,
+                                // and recording that it exists rather than when it changed is what
+                                // keeps removing a file inside it from reporting the parent as a
+                                // second, unrelated conflict.
+                                assert(cc.conflicts.size == 1, s"conflicting paths: ${cc.conflicts.map(_.path)}")
+                                assert(cc.conflicts.head.path == p)
+                                // Lower must remain absent (commit did not apply).
+                                Path.runWith(lower)(p.exists).map { e =>
+                                    assert(!e)
+                                }
+                            case other =>
+                                assert(false, s"expected CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith replays Move using resolved entry when source is deleted before commit") { (ov, lower, base) =>
+        val src  = base / "src-p20.txt"
+        val dest = base / "dest-p20.txt"
+        // Seed source in lower, stage a move (captures resolved entry at stage time).
+        Path.runWith(lower)(src.write("source-content")).andThen {
+            Path.runWith(ov)(src.move(dest)).andThen {
+                // Delete source from lower before commit (simulates concurrent deletion).
+                Path.runWith(lower)(src.removeExisting).andThen {
+                    // KeepOurs replays via resolved entry, no re-read of source.
+                    ov.commitWith(_ => FileSystem.Resolution.KeepOurs).andThen {
+                        Path.runWith(lower)(dest.read).map { content =>
+                            assert(content == "source-content")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith replays Copy using resolved entry when source is deleted before commit") { (ov, lower, base) =>
+        val src  = base / "src-p20c.txt"
+        val dest = base / "dest-p20c.txt"
+        Path.runWith(lower)(src.write("copied-content")).andThen {
+            Path.runWith(ov)(src.copy(dest)).andThen {
+                Path.runWith(lower)(src.removeExisting).andThen {
+                    ov.commitWith(_ => FileSystem.Resolution.KeepOurs).andThen {
+                        Path.runWith(lower)(dest.read).map { content =>
+                            assert(content == "copied-content")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith KeepOurs succeeds despite lower divergence") { (ov, lower, base) =>
+        val p = base / "p21.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(lower)(p.write("lower-diverged-longer")).andThen {
+                    Path.runWith(ov)(p.write("overlay-wins")).andThen {
+                        ov.commitWith(_ => FileSystem.Resolution.KeepOurs).andThen {
+                            Path.runWith(lower)(p.read).map { content =>
+                                assert(content == "overlay-wins")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith KeepOurs with nothing staged leaves lower unchanged") { (ov, lower, base) =>
+        val p = base / "p21-empty.txt"
+        // Create the conflict condition but stage nothing, so the commit has no plan to apply.
+        Path.runWith(lower)(p.write("lower-value")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(lower)(p.write("lower-diverged-longer")).andThen {
+                    ov.commitWith(_ => FileSystem.Resolution.KeepOurs).andThen {
+                        Path.runWith(lower)(p.read).map { content =>
+                            assert(content == "lower-diverged-longer")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith applies all four resolution types in one staged set") { (ov, lower, base) =>
+        val pOurs   = base / "p40-ours.txt"
+        val pTheirs = base / "p40-theirs.txt"
+        val pWrite  = base / "p40-write.txt"
+        val pRemove = base / "p40-remove.txt"
+
+        val mergedBytes = Span.from("merged-value".getBytes(StandardCharsets.UTF_8))
+        val mergedEntry = Path.Entry.File(mergedBytes, Path.PathStat(0L, mergedBytes.size.toLong))
+
+        // Seed all four paths in lower.
+        Path.runWith(lower) {
+            pOurs.write("original")
+                .andThen(pTheirs.write("original"))
+                .andThen(pWrite.write("original"))
+                .andThen(pRemove.write("original"))
+        }.andThen {
+            // Read all through overlay to stamp them in the read-set.
+            Path.runWith(ov) {
+                pOurs.read.andThen(pTheirs.read).andThen(pWrite.read).andThen(pRemove.read)
+            }.andThen {
+                // Stage overlay writes for all four paths.
+                Path.runWith(ov) {
+                    pOurs.write("ours-version")
+                        .andThen(pTheirs.write("ours-version"))
+                        .andThen(pWrite.write("ours-version"))
+                        .andThen(pRemove.write("ours-version"))
+                }.andThen {
+                    // Diverge lower to create size-based conflicts on all four paths.
+                    Path.runWith(lower) {
+                        pOurs.write("lower-diverged-longer")
+                            .andThen(pTheirs.write("lower-diverged-longer"))
+                            .andThen(pWrite.write("lower-diverged-longer"))
+                            .andThen(pRemove.write("lower-diverged-longer"))
+                    }.andThen {
+                        // Resolve each conflicting path differently.
+                        ov.commitWith { conflict =>
+                            if conflict.path == pOurs then Resolution.KeepOurs
+                            else if conflict.path == pTheirs then Resolution.KeepTheirs
+                            else if conflict.path == pWrite then Resolution.Write(mergedEntry)
+                            else Resolution.Remove
+                        }.andThen {
+                            // KeepOurs: lower receives the overlay-staged value.
+                            Path.runWith(lower)(pOurs.read).map { c =>
+                                assert(c == "ours-version")
+                            }.andThen {
+                                // KeepTheirs: lower retains its current (diverged) content.
+                                Path.runWith(lower)(pTheirs.read).map { c =>
+                                    assert(c == "lower-diverged-longer")
+                                }.andThen {
+                                    // Write(entry): lower receives the caller-supplied merged entry.
+                                    Path.runWith(lower)(pWrite.read).map { c =>
+                                        assert(c == "merged-value")
+                                    }.andThen {
+                                        // Remove: the path is absent from lower.
+                                        Path.runWith(lower)(pRemove.exists).map { e =>
+                                            assert(!e)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith KeepOurs preserves staged write on single conflict") { (ov, lower, base) =>
+        val p = base / "p40-keep-ours.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(ov)(p.write("overlay")).andThen {
+                    Path.runWith(lower)(p.write("lower-diverged-longer")).andThen {
+                        ov.commitWith(_ => Resolution.KeepOurs).andThen {
+                            Path.runWith(lower)(p.read).map { c =>
+                                assert(c == "overlay")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith KeepTheirs drops the staged write; lower keeps its current content") { (ov, lower, base) =>
+        val p = base / "p40-keep-theirs.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(ov)(p.write("overlay")).andThen {
+                    Path.runWith(lower)(p.write("lower-diverged-longer")).andThen {
+                        ov.commitWith(_ => Resolution.KeepTheirs).andThen {
+                            Path.runWith(lower)(p.read).map { c =>
+                                assert(c == "lower-diverged-longer")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith Write substitutes the supplied entry for the conflicting path") { (ov, lower, base) =>
+        val p          = base / "p40-write-entry.txt"
+        val writeBytes = Span.from("written-by-resolution".getBytes(StandardCharsets.UTF_8))
+        val writeEntry = Path.Entry.File(writeBytes, Path.PathStat(0L, writeBytes.size.toLong))
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(ov)(p.write("overlay")).andThen {
+                    Path.runWith(lower)(p.write("lower-diverged-longer")).andThen {
+                        ov.commitWith(_ => Resolution.Write(writeEntry)).andThen {
+                            Path.runWith(lower)(p.read).map { c =>
+                                assert(c == "written-by-resolution")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("commitWith Remove deletes the conflicting path from lower") { (ov, lower, base) =>
+        val p = base / "p40-remove-only.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(ov)(p.write("overlay")).andThen {
+                    Path.runWith(lower)(p.write("lower-diverged-longer")).andThen {
+                        ov.commitWith(_ => Resolution.Remove).andThen {
+                            Path.runWith(lower)(p.exists).map { e =>
+                                assert(!e)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // An opaque directory is the overlay's whole answer for that path: reads through the overlay
+    // show only staged children. A commit that leaves the lower's earlier children in place hands
+    // back a directory that lists differently before and after the commit.
+
+    withEachLower("mkDir over a populated directory hides its children after commit") { (ov, lower, base) =>
+        val d = base / "opaque-dir"
+        Path.runWith(lower)((d / "old.txt").write("stale", Path.WriteOptions(createFolders = true))).andThen {
+            Path.runWith(ov) {
+                d.mkDir.andThen((d / "new.txt").write("fresh")).andThen(d.list)
+            }.map { stagedList =>
+                ov.commit.andThen {
+                    Path.runWith(lower)(d.list).map { liveList =>
+                        val staged = stagedList.map(_.name.getOrElse("")).sorted
+                        val live   = liveList.map(_.name.getOrElse("")).sorted
+                        assert(staged == Chunk("new.txt"), s"the overlay listed $staged")
+                        assert(live == staged, s"the lower listed $live but the overlay listed $staged")
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("copying a directory onto a populated target hides the target's old children") { (ov, lower, base) =>
+        val src = base / "copy-src"
+        val dst = base / "copy-dst"
+        Path.runWith(lower) {
+            (src / "a.txt").write("a", Path.WriteOptions(createFolders = true))
+                .andThen((dst / "stale.txt").write("stale", Path.WriteOptions(createFolders = true)))
+        }.andThen {
+            Path.runWith(ov) {
+                src.copy(dst, Path.CopyOptions(replace = Path.Replace.Existing)).andThen(dst.list)
+            }.map { stagedList =>
+                ov.commit.andThen {
+                    Path.runWith(lower)(dst.list).map { liveList =>
+                        val staged = stagedList.map(_.name.getOrElse("")).sorted
+                        val live   = liveList.map(_.name.getOrElse("")).sorted
+                        assert(staged == Chunk("a.txt"), s"the overlay listed $staged")
+                        assert(live == staged, s"the lower listed $live but the overlay listed $staged")
+                    }
+                }
+            }
+        }
+    }
+
+    // What the read-set records is what commit validates against. An observation is only as strong
+    // as the question it answered: a caller that asked whether a path exists is entitled to fail on
+    // a path that stopped existing, not on one whose contents changed underneath an answer that
+    // never depended on them.
+
+    withEachLower("a same-size edit under one timestamp is still a conflict") { (ov, lower, base) =>
+        // A read observed the bytes, so a divergence that leaves size and modification time
+        // untouched is still detectable. Setting the timestamp back explicitly is what makes the
+        // case independent of the host's timestamp granularity.
+        val p = base / "same-size.txt"
+        Path.runWith(lower)(p.write("aaaa").andThen(p.setLastModified(1_000_000L))).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(lower)(p.write("bbbb").andThen(p.setLastModified(1_000_000L))).andThen {
+                    Path.runWith(ov)((base / "same-size-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                assert(
+                                    conflicts.exists(_.path == p),
+                                    s"the edited path was not reported: ${conflicts.map(_.path)}"
+                                )
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("an existence check does not conflict on a content change") { (ov, lower, base) =>
+        // The staged work depended on the path existing, and it still exists. Recording content for
+        // a question that never consulted it turns an unrelated edit into a spurious conflict.
+        val p = base / "checked-only.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.exists).map { found =>
+                assert(found, "the seeded path was not visible through the overlay")
+                Path.runWith(lower)(p.write("edited-elsewhere")).andThen {
+                    Path.runWith(ov)((base / "checked-only-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Success(_) => succeed("no conflict")
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                fail(s"an existence check conflicted on a content change: ${conflicts.map(_.path)}")
+                            case other => fail(s"unexpected outcome: $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("an existence check still conflicts when the path stops existing") { (ov, lower, base) =>
+        // The other half of the same contract: an observation is weakened, not discarded. What the
+        // check actually depended on is still validated.
+        val p = base / "checked-then-deleted.txt"
+        Path.runWith(lower)(p.write("original")).andThen {
+            Path.runWith(ov)(p.exists).andThen {
+                Path.runWith(lower)(p.removeAll).andThen {
+                    Path.runWith(ov)((base / "checked-then-deleted-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                assert(
+                                    conflicts.exists(_.path == p),
+                                    s"the deleted path was not reported: ${conflicts.map(_.path)}"
+                                )
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("writing into a directory does not conflict on a sibling appearing") { (ov, lower, base) =>
+        // ensureWriteParent records the parent so the commit can tell that somewhere to write still
+        // exists. Comparing that directory's modification time instead makes any activity alongside
+        // the staged file a conflict, which is what a directory in active use looks like.
+        val d    = base / "busy-dir"
+        val ours = d / "ours.txt"
+        Path.runWith(lower)((d / "seed.txt").write("seed", Path.WriteOptions(createFolders = true))).andThen {
+            Path.runWith(ov)(ours.write("staged")).andThen {
+                Path.runWith(lower)((d / "sibling.txt").write("landed elsewhere")).andThen {
+                    Abort.run[CommitConflict](ov.commit).map {
+                        case Result.Success(_) => succeed("no conflict")
+                        case Result.Failure(CommitConflict(conflicts)) =>
+                            fail(s"a sibling appearing conflicted the parent: ${conflicts.map(_.path)}")
+                        case other => fail(s"unexpected outcome: $other")
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("listing a directory conflicts when a child appears") { (ov, lower, base) =>
+        // The other half: a caller that listed a directory does depend on what it holds, so the same
+        // sibling that must not conflict above must conflict here.
+        val d = base / "listed-dir"
+        Path.runWith(lower)((d / "seed.txt").write("seed", Path.WriteOptions(createFolders = true))).andThen {
+            Path.runWith(ov)(d.list).andThen {
+                Path.runWith(lower)((d / "appeared.txt").write("new")).andThen {
+                    Path.runWith(ov)((base / "listed-dir-unrelated.txt").write("staged")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(CommitConflict(conflicts)) =>
+                                assert(
+                                    conflicts.exists(_.path == d),
+                                    s"the listed directory was not reported: ${conflicts.map(_.path)}"
+                                )
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Lifecycle. Staged changes are one-shot: once a commit has taken the staged state or a discard
+    // has thrown it away, a further write has nowhere to land and has to say so rather than
+    // succeeding into state nothing will read.
+
+    withEachLower("a write after discard is rejected") { (ov, _, base) =>
+        val p = base / "after-discard.txt"
+        ov.discard.andThen {
+            Abort.run[FileSystemException](Path.runWith(ov)(p.write("leaked"))).map {
+                case Result.Failure(_: FileIOException) => succeed("rejected")
+                case Result.Success(_)                  => fail("a write after discard succeeded")
+                case other                              => fail(s"expected FileIOException, got $other")
+            }
+        }
+    }
+
+    withEachLower("a write after commit is rejected") { (ov, _, base) =>
+        val p = base / "after-commit.txt"
+        Path.runWith(ov)(p.write("first")).andThen {
+            ov.commit.andThen {
+                Abort.run[FileSystemException](Path.runWith(ov)(p.write("second"))).map {
+                    case Result.Failure(_: FileIOException) => succeed("rejected")
+                    case Result.Success(_)                  => fail("a write after commit succeeded")
+                    case other                              => fail(s"expected FileIOException, got $other")
+                }
+            }
+        }
+    }
+
+    withEachLower("a commit that conflicts leaves the overlay writable") { (ov, lower, base) =>
+        // A failed commit is not a terminal state: the caller's next move is commitWith, which needs
+        // the staged state intact and the overlay still accepting the writes a resolution implies.
+        val p = base / "conflicted.txt"
+        Path.runWith(lower)(p.write("v1")).andThen {
+            Path.runWith(ov)(p.read).andThen {
+                Path.runWith(lower)(p.write("v2-external-and-longer")).andThen {
+                    Path.runWith(ov)(p.write("ours")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(_: CommitConflict) =>
+                                Abort.run[FileSystemException](Path.runWith(ov)(p.write("after-conflict"))).map {
+                                    case Result.Success(_) => succeed("still writable")
+                                    case other             => fail(s"a failed commit terminated the overlay: $other")
+                                }
+                            case other => fail(s"expected a CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    withEachLower("a directory's setLastModified survives commit") { (ov, lower, base) =>
+        // Staged metadata on a directory rather than a file. The overlay reports the staged value
+        // before commit; the point is that the lower carries the same value afterwards, so a caller
+        // reads the same directory before and after.
+        val d = base / "mtime-dir"
+        Path.runWith(ov) {
+            d.mkDir.andThen(d.setLastModified(123456L)).andThen(d.stat)
+        }.map { staged =>
+            ov.commit.andThen {
+                Path.runWith(lower)(d.stat).map { live =>
+                    assert(staged.lastModifiedMs == 123456L, s"the overlay reported ${staged.lastModifiedMs} before commit")
+                    assert(
+                        live.lastModifiedMs == 123456L,
+                        s"the lower carries ${live.lastModifiedMs} but the overlay reported ${staged.lastModifiedMs}"
+                    )
+                }
+            }
+        }
+    }
+
+    withEachLower("a staged directory keeps its timestamp after its children are written") { (ov, lower, base) =>
+        // The case above has an empty directory, so the stamp the commit applies when it creates the
+        // directory is never disturbed and it passes without the second pass over the plan. Writing a
+        // file into the directory is what perturbs it: on a real filesystem the child's creation
+        // updates the parent's modification time, after the parent was already stamped.
+        val d = base / "restamp-dir"
+        val f = d / "child.txt"
+        Path.runWith(ov) {
+            d.mkDir.andThen(f.write("child-content")).andThen(d.setLastModified(987654L))
+        }.andThen {
+            ov.commit.andThen {
+                Path.runWith(lower)(d.stat).map { live =>
+                    assert(
+                        live.lastModifiedMs == 987654L,
+                        s"writing the child left the directory dated ${live.lastModifiedMs}"
+                    )
+                }
+            }
+        }
+    }
+
+    withEachLower("a plain write does not stamp epoch zero on its target") { (ov, lower, base) =>
+        // A staged write carries PathStat(0, size) as a placeholder, not as a modification time.
+        // Replaying it as a timestamp would date every committed file to 1970.
+        val p = base / "no-mtime.txt"
+        Path.runWith(ov)(p.write("payload")).andThen {
+            ov.commit.andThen {
+                Path.runWith(lower)(p.stat).map { live =>
+                    assert(live.lastModifiedMs > 0L, s"the committed file was dated ${live.lastModifiedMs}")
+                }
+            }
+        }
+    }
+
+    withEachLower("resolving a conflict on a moved file's source does not strand its target") { (ov, lower, base) =>
+        // Staging a write and then moving it produced two operations that a path-predicate filter
+        // could not tell apart: resolving the source dropped the move too, and the target was never
+        // created even though the staged view showed it.
+        val from = base / "resolve-from.txt"
+        val to   = base / "resolve-to.txt"
+        Path.runWith(lower)(from.write("v1")).andThen {
+            // The read is what puts the source in the read-set, so the out-of-band write below
+            // becomes a conflict the resolution has to answer for. Without it nothing diverges and
+            // the case proves nothing.
+            Path.runWith(ov)(from.read.andThen(from.write("ours")).andThen(from.move(to))).andThen {
+                Path.runWith(lower)(from.write("v2-external-and-longer")).andThen {
+                    ov.commitWith(_ => FileSystem.Resolution.KeepTheirs).andThen {
+                        Path.runWith(lower)(to.exists).map { found =>
+                            assert(found, "the move target was dropped when its source's conflict was resolved")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // WriteOpLog decode-failure split: bad magic or wrong version = loud fail through FileSystemException;
+    // torn/truncated log with valid magic = crash artifact, silent Success(Absent).
+
+    "WriteOpLog.decode raises FileIOException on bad magic bytes" in {
+        // Bytes that start with unrecognized magic: not our file.
+        val badMagic = Span.from(
+            Array[Byte]('X'.toByte, 'X'.toByte, 'X'.toByte, 'X'.toByte, 0x01.toByte, 0x00.toByte)
+        )
+        val logPath = Path("intent.kyo")
+        WriteOpLog.decode(logPath, badMagic) match
+            case Result.Failure(_: FileIOException) => assert(true)
+            case other                              => assert(false, s"expected Failure(FileIOException), got $other")
+    }
+
+    "WriteOpLog.decode raises FileIOException on unsupported version" in {
+        // Valid KYIL magic but version byte 0x99.
+        val wrongVersion = Span.from(
+            Array[Byte]('K'.toByte, 'Y'.toByte, 'I'.toByte, 'L'.toByte, 0x99.toByte, 0x00.toByte)
+        )
+        val logPath = Path("intent.kyo")
+        WriteOpLog.decode(logPath, wrongVersion) match
+            case Result.Failure(_: FileIOException) => assert(true)
+            case other                              => assert(false, s"expected Failure(FileIOException), got $other")
+    }
+
+    "WriteOpLog.decode returns Success(Absent) for torn log with valid magic but no terminator" in {
+        // Valid KYIL header + the current version byte, truncated before the terminator: crash artifact.
+        val torn = Span.from(
+            Array[Byte]('K'.toByte, 'Y'.toByte, 'I'.toByte, 'L'.toByte, 0x03.toByte)
+        )
+        val logPath = Path("intent.kyo")
+        WriteOpLog.decode(logPath, torn) match
+            case Result.Success(Absent) => assert(true)
+            case other                  => assert(false, s"expected Success(Absent), got $other")
+    }
+
+end OverlayFileSystemCommitTest

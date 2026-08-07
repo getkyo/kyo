@@ -3,13 +3,13 @@ package kyo
 /** What survives when a zip commit is cut short.
   *
   * [[ZipRewriteFileSystem.commit]] serializes the whole merged view into a temporary directory and
-  * then moves that archive over the original, so it needs neither an intent log nor a recovery
-  * pass: the move either happened or it did not. That makes the atomicity question simpler to
-  * state and more important to pin, because a commit cut part-way through is the case that decides
-  * whether the caller still has a readable archive.
+  * then moves that archive over the original, so unlike the overlay it needs neither an intent log
+  * nor a recovery pass: the move either happened or it did not. That makes the atomicity question
+  * simpler to state and more important to pin, because a commit cut part-way through is the case
+  * that decides whether the caller still has a readable archive.
   *
   * Cut points are injected through the hooks on [[ZipRewriteFileSystem]] rather than by timing, so
-  * each case names the step it interrupts.
+  * each case names the step it interrupts. Mirrors [[OverlayFileSystemRecoveryTest]].
   */
 class ZipRewriteFileSystemRecoveryTest extends kyo.test.Test[Any]:
 
