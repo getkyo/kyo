@@ -25,10 +25,10 @@ object Kyo:
             case n: Nested[?] => n.value
             case _            => v
 
-    @static final class Nested[+A](final val value: A):
-        final override def toString = "Nested"
+    final class Nested[+A](val value: A):
+        override def toString = "Nested"
 
-    @static abstract class Suspend[I[_], O[_], E <: Effect[I, O], A] extends Kyo[O[A], E]:
+    abstract class Suspend[I[_], O[_], E <: Effect[I, O], A] extends Kyo[O[A], E]:
 
         def input: I[A]
         def tag: Tag[E]
@@ -44,22 +44,22 @@ object Kyo:
 
     end Suspend
 
-    @static final class Continue[I[_], O[_], E <: Effect[I, O], A, +B, -S](
-        final val suspend: Suspend[I, O, E, A],
-        final val cont: Arrow[O[A], B, S]
+    final class Continue[I[_], O[_], E <: Effect[I, O], A, +B, -S](
+        val suspend: Suspend[I, O, E, A],
+        val cont: Arrow[O[A], B, S]
     ) extends Kyo[B, E & S]:
 
-        final def map[C, S2](f: Arrow[B, C, S2]): C < (E & S & S2) =
+        def map[C, S2](f: Arrow[B, C, S2]): C < (E & S & S2) =
             Continue(suspend, cont.map(f))
 
-        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < (E & S) =
+        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < (E & S) =
             Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[O[A], B, S]])
 
         override def toString = "Continue(" + suspend + ")"
 
     end Continue
 
-    @static abstract class Bracket[R, A, S] extends Kyo[A, S]:
+    abstract class Bracket[R, A, S] extends Kyo[A, S]:
 
         def acquire: R < S
         def release(r: R): Unit < S
@@ -93,18 +93,18 @@ object Kyo:
 
     end Bracket
 
-    @static final private[kyo] class Defer[A, +B, -S](
-        final val value: A,
-        final val cont: Arrow[A, B, S]
+    final private[kyo] class Defer[A, +B, -S](
+        val value: A,
+        val cont: Arrow[A, B, S]
     ) extends Kyo[B, S]:
 
-        final def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
+        def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Defer(value, cont.map(f))
 
-        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
+        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
             Defer(value, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[A, B, S]])
 
-        final override def toString = "Defer"
+        override def toString = "Defer"
 
     end Defer
 
@@ -158,7 +158,7 @@ object `<`:
                 v
     end observe
 
-    @static final class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
+    final class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             @tailrec def loop(es: Array[Arrow.Transform[?, ?, ?]], i: Int, cur: Any): Any =
@@ -276,7 +276,7 @@ object `<`:
                     cont(v.asInstanceOf[A < Any])
         )
 
-    @static final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
+    final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
         extends Arrow.Transform[A, A, S]:
         def frame = bracket.frame
         def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
@@ -518,7 +518,7 @@ object Arrow:
 
     end extension
 
-    @static final class Offset private[kyo] (
+    final class Offset private[kyo] (
         private[kyo] val elems: Array[Transform[?, ?, ?]],
         private[kyo] val from: Int
     ) extends Transform[Any, Any, Any]:
