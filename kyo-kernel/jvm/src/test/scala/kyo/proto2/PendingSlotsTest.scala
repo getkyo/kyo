@@ -18,7 +18,7 @@ class PendingSlotsTest extends Test[Any]:
         var fresh = false
         val probe = new Thread(() =>
             val _ = (1: Int < Any).map(_ + 1).eval
-            fresh = Arrow.ownsDepthSlot
+            fresh = Arrow.Depth.owned
         )
         probe.start()
         probe.join()

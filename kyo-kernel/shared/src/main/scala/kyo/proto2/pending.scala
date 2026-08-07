@@ -387,77 +387,74 @@ object Arrow:
     private[kyo] def probe(): Boolean =
         false
 
-    private inline def SlotCount = 256
-    private inline def SlotMask  = SlotCount - 1
-    private inline def MaxProbes = 8
-    private inline def SlotShift = 3
+    private[kyo] object Depth:
 
-    private inline def Transferring = -1L
+        inline def Limit = 512
 
-    private val slotOwners  = new java.util.concurrent.atomic.AtomicLongArray(SlotCount)
-    private val slotThreads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](SlotCount)
+        private inline def Slots        = 256
+        private inline def Mask         = Slots - 1
+        private inline def Probes       = 8
+        private inline def Shift        = 3
+        private inline def Transferring = -1L
 
-    // One depth cell per slot, strided a cache line apart, plus a trailing cell
-    // pinned at SafeDepth for threads that exhaust the probe budget: the guard
-    // always fires for them and they run fully trampolined. The fire path never
-    // writes, so sharing that cell is race free.
-    private val slotDepths =
-        val cells = new Array[Long]((SlotCount + 1) << SlotShift)
-        cells(SlotCount << SlotShift) = SafeDepth
-        cells
-    end slotDepths
+        private val owners  = new java.util.concurrent.atomic.AtomicLongArray(Slots)
+        private val threads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](Slots)
 
-    // A thread reserves a slot by installing its id with a CAS and finds it again by
-    // probing from its hash, so the steady state is one volatile read, one compare,
-    // and a plain long cell that only the owner ever touches: no atomics, no
-    // ThreadLocal, and exact depth since a cell has a single writer. A slot whose
-    // recorded thread has died is stolen on probe collision through the Transferring
-    // sentinel: the CAS to the sentinel elects one stealer, which publishes its
-    // Thread and resets the cell before exposing its id, so a concurrent prober
-    // can never judge the slot by a stale thread entry and double claim it.
-    private def currentDepth(): Int =
-        val tid = Thread.currentThread().threadId
-        val i   = tid.toInt & SlotMask
-        if slotOwners.get(i) == tid then i << SlotShift
-        else slowDepth(tid)
-    end currentDepth
+        // one cache line per cell; the last cell is pinned at Limit and never written
+        private val cells =
+            val a = new Array[Long]((Slots + 1) << Shift)
+            a(Slots << Shift) = Limit
+            a
+        end cells
 
-    private def slowDepth(tid: Long): Int =
-        val self = Thread.currentThread()
-        @tailrec def probe(i: Int, remaining: Int): Int =
-            if remaining == 0 then SlotCount << SlotShift
-            else
-                val owner = slotOwners.get(i)
-                if owner == tid then i << SlotShift
-                else if owner == 0L && slotOwners.compareAndSet(i, 0L, Transferring) then
-                    claim(i, self, tid)
-                else if owner != 0L && owner != Transferring then
-                    val t = slotThreads.get(i)
-                    if (t ne null) && !t.isAlive && slotOwners.compareAndSet(i, owner, Transferring) then
-                        claim(i, self, tid)
-                    else probe((i + 1) & SlotMask, remaining - 1)
-                else probe((i + 1) & SlotMask, remaining - 1)
-                end if
-        probe(tid.toInt & SlotMask, MaxProbes)
-    end slowDepth
+        def get(slot: Int): Long =
+            cells(slot)
 
-    private def claim(i: Int, self: Thread, tid: Long): Int =
-        slotThreads.set(i, self)
-        slotDepths(i << SlotShift) = 0L
-        slotOwners.set(i, tid)
-        i << SlotShift
-    end claim
+        def set(slot: Int, value: Long): Unit =
+            cells(slot) = value
 
-    private[kyo] def ownsDepthSlot: Boolean =
-        val tid = Thread.currentThread().threadId
-        @tailrec def scan(i: Int): Boolean =
-            if i == SlotCount then false
-            else if slotOwners.get(i) == tid then true
-            else scan(i + 1)
-        scan(0)
-    end ownsDepthSlot
+        def slot(): Int =
+            val tid = Thread.currentThread().threadId
+            val i   = tid.toInt & Mask
+            if owners.get(i) == tid then i << Shift
+            else slow(tid)
+        end slot
 
-    private inline def SafeDepth = 512
+        private def slow(tid: Long): Int =
+            val self = Thread.currentThread()
+            @tailrec def probe(i: Int, remaining: Int): Int =
+                if remaining == 0 then Slots << Shift
+                else
+                    val owner = owners.get(i)
+                    if owner == tid then i << Shift
+                    else if owner == 0L && owners.compareAndSet(i, 0L, Transferring) then claim(i, self, tid)
+                    else if owner > 0L && dead(i) && owners.compareAndSet(i, owner, Transferring) then claim(i, self, tid)
+                    else probe((i + 1) & Mask, remaining - 1)
+                    end if
+            probe(tid.toInt & Mask, Probes)
+        end slow
+
+        private def dead(i: Int): Boolean =
+            val t = threads.get(i)
+            (t ne null) && !t.isAlive
+
+        private def claim(i: Int, self: Thread, tid: Long): Int =
+            threads.set(i, self)
+            cells(i << Shift) = 0L
+            owners.set(i, tid)
+            i << Shift
+        end claim
+
+        private[kyo] def owned: Boolean =
+            val tid = Thread.currentThread().threadId
+            @tailrec def scan(i: Int): Boolean =
+                if i == Slots then false
+                else if owners.get(i) == tid then true
+                else scan(i + 1)
+            scan(0)
+        end owned
+
+    end Depth
 
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
         def frame: Frame
@@ -508,18 +505,18 @@ object Arrow:
                     case t: Transform[A, B, S] @unchecked =>
                         if probe() then applySlow(self, v)
                         else
-                            val slot  = currentDepth()
-                            val depth = slotDepths(slot)
-                            if depth >= SafeDepth then rescue(self, v)
+                            val slot  = Depth.slot()
+                            val depth = Depth.get(slot)
+                            if depth >= Depth.Limit then rescue(self, v)
                             else
-                                slotDepths(slot) = depth + 1
+                                Depth.set(slot, depth + 1)
                                 try
                                     val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                                    slotDepths(slot) = depth
+                                    Depth.set(slot, depth)
                                     r
                                 catch
                                     case ex: Throwable =>
-                                        slotDepths(slot) = depth
+                                        Depth.set(slot, depth)
                                         KyoException.attach(ex, "map", t.frame)
                                         throw ex
                                 end try
