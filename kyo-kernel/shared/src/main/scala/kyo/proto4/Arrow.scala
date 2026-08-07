@@ -27,82 +27,6 @@ object Arrow:
     private[kyo] inline def Period = 512
     private inline def SmallLimit  = 32
 
-    final private[kyo] class Depth private ()
-
-    private[kyo] object Depth:
-
-        inline def Limit = 512
-
-        private inline def Slots        = 256
-        private inline def Mask         = Slots - 1
-        private inline def Probes       = 8
-        private inline def Shift        = 3
-        private inline def Transferring = -1L
-
-        @static private val owners  = new java.util.concurrent.atomic.AtomicLongArray(Slots)
-        @static private val threads = new java.util.concurrent.atomic.AtomicReferenceArray[Thread](Slots)
-
-        // one cache line per cell; the last cell is pinned at Limit and never written
-        @static private val cells =
-            val a = new Array[Long]((Slots + 1) << Shift)
-            a(Slots << Shift) = Limit
-            a
-        end cells
-
-        // returns the previous depth; does not write at or past Limit, so the
-        // shared overflow cell is never mutated
-        @static def increase(slot: Int): Long =
-            val depth = cells(slot)
-            if depth < Limit then cells(slot) = depth + 1
-            depth
-        end increase
-
-        @static def decrease(slot: Int): Unit =
-            cells(slot) -= 1
-
-        @static def slot(): Int =
-            val tid = Thread.currentThread().threadId
-            val i   = tid.toInt & Mask
-            if owners.get(i) == tid then i << Shift
-            else slow(tid)
-        end slot
-
-        @static private def slow(tid: Long): Int =
-            val self = Thread.currentThread()
-            @tailrec def probe(i: Int, remaining: Int): Int =
-                if remaining == 0 then Slots << Shift
-                else
-                    val owner = owners.get(i)
-                    if owner == tid then i << Shift
-                    else if owner == 0L && owners.compareAndSet(i, 0L, Transferring) then claim(i, self, tid)
-                    else if owner > 0L && dead(i) && owners.compareAndSet(i, owner, Transferring) then claim(i, self, tid)
-                    else probe((i + 1) & Mask, remaining - 1)
-                    end if
-            probe(tid.toInt & Mask, Probes)
-        end slow
-
-        @static private def dead(i: Int): Boolean =
-            val t = threads.get(i)
-            (t ne null) && !t.isAlive
-
-        @static private def claim(i: Int, self: Thread, tid: Long): Int =
-            threads.set(i, self)
-            cells(i << Shift) = 0L
-            owners.set(i, tid)
-            i << Shift
-        end claim
-
-        @static private[kyo] def owned: Boolean =
-            val tid = Thread.currentThread().threadId
-            @tailrec def scan(i: Int): Boolean =
-                if i == Slots then false
-                else if owners.get(i) == tid then true
-                else scan(i + 1)
-            scan(0)
-        end owned
-
-    end Depth
-
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
         def frame: Frame
         // v is Any rather than A: a typed parameter makes subclasses with a concrete
@@ -245,16 +169,16 @@ object Arrow:
         Kyo.Defer(v, self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
 
     private def guardedRun[A, B, S, S2](t: Transform[A, B, S], v: A < S2): B < (S & S2) =
-        val slot = Depth.slot()
-        if Depth.increase(slot) >= Depth.Limit then rescue(t, v)
+        val slot = Safepoint.slot()
+        if Safepoint.increase(slot) >= Safepoint.Limit then rescue(t, v)
         else
             try
                 val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                Depth.decrease(slot)
+                Safepoint.decrease(slot)
                 r
             catch
                 case ex: Throwable =>
-                    Depth.decrease(slot)
+                    Safepoint.decrease(slot)
                     KyoException.attach(ex, "map", t.frame)
                     throw ex
         end if

@@ -3,7 +3,7 @@ package kyo.proto4
 import kyo.test.Test
 import language.implicitConversions
 
-class PendingSlotsTest extends Test[Any]:
+class SafepointTest extends Test[Any]:
 
     "depth slots are reclaimed from dead threads" in {
         var i = 0
@@ -18,10 +18,10 @@ class PendingSlotsTest extends Test[Any]:
         var fresh = false
         val probe = new Thread(() =>
             val _ = (1: Int < Any).map(_ + 1).eval
-            fresh = Arrow.Depth.owned
+            fresh = Safepoint.owned
         )
         probe.start()
         probe.join()
         assert(fresh)
     }
-end PendingSlotsTest
+end SafepointTest
