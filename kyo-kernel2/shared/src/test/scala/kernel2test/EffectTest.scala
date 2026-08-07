@@ -175,4 +175,59 @@ class EffectTest extends Test[Any]:
         assert(log == List("acq", "rel"))
     }
 
+    "catching intercepts an exception at construction" in {
+        val v = Effect.catching[Int, Any, Int, Any] {
+            throw new RuntimeException("boom")
+        }(_ => 42)
+        assert(v.eval == 42)
+    }
+
+    "catching passes through when nothing throws" in {
+        val v = Effect.catching((1: Int < Any).map(_ + 1))(_ => -1)
+        assert(v.eval == 2)
+    }
+
+    "catching intercepts a throw in a frame after resume" in {
+        val program: Int < EffAsk =
+            ask.map(x => if x > 0 then throw new RuntimeException("pos") else x)
+        val wrapped = Effect.catching(program)(_ => 99)
+        assert(resume(wrapped, 1) == 99)
+        assert(resume(wrapped, -1) == -1)
+    }
+
+    "catching intercepts a throw inside a deferred thunk" in {
+        val v = Effect.catching(Effect.defer[Int, Any] {
+            throw new RuntimeException("late")
+        })(_ => 7)
+        assert(v.eval == 7)
+    }
+
+    "catching hands the thrown exception to the handler" in {
+        val ex              = new RuntimeException("original")
+        var seen: Throwable = null
+        val v = Effect.catching[Int, Any, Int, Any] {
+            throw ex
+        } { t =>
+            seen = t
+            0
+        }
+        assert(v.eval == 0)
+        assert(seen eq ex)
+    }
+
+    "catching stays armed across multiple suspensions" in {
+        val program: Int < EffAsk =
+            ask.map(a => ask.map(b => if b > a then throw new RuntimeException("desc") else a - b))
+        val wrapped   = Effect.catching(program)(_ => -100)
+        var remaining = List(5, 9)
+        val handled = ControlEffect.handle(Tag[EffAsk], wrapped)(
+            [C] =>
+                (input, cont) =>
+                    val a = remaining.head
+                    remaining = remaining.tail
+                    cont(a)
+        )
+        assert(handled.eval == -100)
+    }
+
 end EffectTest

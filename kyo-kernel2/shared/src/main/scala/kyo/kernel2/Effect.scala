@@ -2,6 +2,7 @@ package kyo.kernel2
 
 import kyo.Frame
 import scala.annotation.nowarn
+import scala.util.control.NonFatal
 
 /** A type constructor that ignores its argument: the shape of operations whose input or output does not vary with the operation's
   * type index.
@@ -14,9 +15,53 @@ type Const[A] = [B] =>> A
   * operation. [[ContextEffect]] declares a value, provided by a handler for a scope. The kinds differ in boundary semantics: context state
   * is copyable across forks, control state lives in the handler's interpretation.
   */
-abstract class Effect
+abstract class Effect private[kernel2] ()
 
 object Effect:
+
+    /** Wraps a computation with error handling.
+      *
+      * The error handler `f` is called if a non-fatal exception is thrown during the initial evaluation or during any later step of the
+      * computation, including steps that run after the computation suspends and resumes: the interception travels with the parked
+      * continuation.
+      */
+    def catching[A, S, B >: A, S2](v: => A < S)(
+        f: Throwable => B < S2
+    )(using _frame: Frame): B < (S & S2) =
+        try
+            val w = v
+            (w: Any) match
+                case kyo: Kyo[?, ?] =>
+                    val handler = f.asInstanceOf[Throwable => Any < Any]
+                    kyo.prepend(Arrow.of(new Catching(handler, _frame)).asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+                case _ =>
+                    w.asInstanceOf[B < (S & S2)]
+            end match
+        catch
+            case ex if NonFatal(ex) =>
+                KyoException.attach(ex, "catching", _frame)
+                f(ex)
+        end try
+    end catching
+
+    final private[kyo] class Catching(handler: Throwable => Any < Any, _frame: Frame) extends Arrow.Transform[Any, Any, Any]:
+        def frame = _frame
+        def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            val w =
+                try cont(`<`.liftSlow(v))
+                catch
+                    case ex if NonFatal(ex) =>
+                        KyoException.attach(ex, "catching", _frame)
+                        return handler(ex).asInstanceOf[C < (Any & S2)]
+            (w: Any) match
+                case kyo: Kyo[?, ?] =>
+                    // re-arm across the park so later steps stay intercepted
+                    kyo.prepend(Arrow.of(this).asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
+                case _ =>
+                    w
+            end match
+        end run
+    end Catching
 
     /** Suspends a computation so it runs when driven, not when constructed.
       *
@@ -34,6 +79,10 @@ object Effect:
                         cont(f)
             )
         ).asInstanceOf[A < S]
+
+    /** Alias of `defer`, kept for source conformance with the current kernel's internal surface. */
+    private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
+        defer(f)
 
     /** Acquires a resource, uses it, and guarantees release.
       *
