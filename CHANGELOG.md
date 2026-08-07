@@ -29,3 +29,5 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-combinators] `.fork`: apply `Fiber.init` (formerly `.forkScoped`)
 - [kyo-prelude] The `Parse` effect has been moved to a new `kyo-parse` module
 - [kyo-core] `Log.live`: defaulting to `Unsafe.ConsoleLogger` for all platforms
+- [kyo-core] `Path`, `System`, `Process`, `Command`, `CommandException`, `FileException`, and the `Stream` `writeTo` and `writeLinesTo` sinks have moved to a new `kyo-system` module. Add `"io.getkyo" %% "kyo-system"` to keep using them. No import or signature changes are needed, since the package is still `kyo`.
+- [kyo-core] `Async.defaultConcurrency` now resolves through `StaticFlag`, which adds an environment-variable channel (`KYO_ASYNC_CONCURRENCY_DEFAULT`, checked after the `kyo.async.concurrency.default` system property) and changes the exception type thrown on a malformed value.

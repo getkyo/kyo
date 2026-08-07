@@ -335,7 +335,7 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 | --------------- | ---------------------- | ------------------------------------------------------------------------------ |
 | `Path`          | File system operations | Immutable, cross-platform; construct with `/`, effect-tracked read/write       |
 | `Command`       | OS process launch      | Builds and runs external processes; `spawn`, `text`, `waitFor`                 |
-| `Process`       | Running process handle | `stdout`, `stderr`, `stdin`, `waitFor`, `destroy`                              |
+| `Process`       | Running process handle | `stdout`, `stderr`, `waitFor`, `destroy`                                       |
 | `System`        | Environment/properties | Type-safe access with custom `Parser`s                                         |
 | `FileException` | File I/O errors        | Sealed hierarchy: `FileReadException`, `FileWriteException`, `FileFsException` |
 

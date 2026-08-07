@@ -203,7 +203,7 @@ val charges: Chunk[Txn] < (Async & Abort[ChargeError]) =
     }
 ```
 
-The default concurrency is `Async.defaultConcurrency`, which is `2 * Runtime.getRuntime.availableProcessors()`. Override globally with `-Dkyo.async.concurrency.default=N` or per call with the `concurrency` parameter.
+The default concurrency is `Async.defaultConcurrency`, which is `2 * Runtime.getRuntime.availableProcessors()`. Override globally with the `-Dkyo.async.concurrency.default=N` system property or the `KYO_ASYNC_CONCURRENCY_DEFAULT` environment variable (checked in that order, system property first), or override per call with the `concurrency` parameter. On Scala.js, Wasm, and Scala Native, the environment variable is the only one of the two global channels that takes effect.
 
 `Async.foreachDiscard` and `Async.collectAllDiscard` drop the results when you don't need them: a useful saving for large fan-out cases that produce `Unit`.
 
