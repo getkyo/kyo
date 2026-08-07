@@ -93,7 +93,8 @@ object Kyo:
 
     end Bracket
 
-    final private[kyo] class Defer[A, +B, -S](
+    // public because the inline trampoline's Defer arm expands at user sites
+    final class Defer[A, +B, -S](
         val value: A,
         val cont: Arrow[A, B, S]
     ) extends Kyo[B, S]:
@@ -210,7 +211,7 @@ object `<`:
 
     end extension
 
-    def evalPartial[I[_], O[_], E <: Effect[I, O], A](
+    inline def evalPartial[I[_], O[_], E <: Effect[I, O], A](
         tag: Tag[E],
         v: A < E,
         preempt: () => Boolean = never,
@@ -229,7 +230,7 @@ object `<`:
         evalLoop(v.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), handler).asInstanceOf[A < E]
     end evalPartial
 
-    def eval[I[_], O[_], E <: Effect[I, O], A](
+    inline def eval[I[_], O[_], E <: Effect[I, O], A](
         tag: Tag[E],
         v: A < E
     )(
@@ -287,7 +288,8 @@ object `<`:
                     cont(v.asInstanceOf[A < Any])
         )
 
-    final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
+    // public because the inline trampoline's bracket arm expands at user sites
+    final class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
         extends Arrow.Transform[A, A, S]:
         def frame = bracket.frame
         def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
@@ -327,7 +329,10 @@ object `<`:
     private def preempted(v: Any < Any): Boolean =
         v.isInstanceOf[Kyo.Defer[?, ?, ?]]
 
-    private def evalLoop(
+    // Inline so every eval site gets a private copy of the trampoline: the
+    // handle(kyo) dispatch and the suspension-shape tests then profile per
+    // handler instead of pooling across every eval in the program.
+    private inline def evalLoop(
         v0: Any < Any,
         preempt: () => Boolean,
         stride: Int,
