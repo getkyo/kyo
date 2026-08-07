@@ -405,42 +405,25 @@ object Arrow:
     extension [A, B, S](self: Arrow[A, B, S])
 
         def apply[S2](v: A < S2): B < (S & S2) =
-            (self: Any) match
-                case o: Offset =>
-                    if v.isInstanceOf[Kyo[?, ?]] then
-                        v.asInstanceOf[Kyo[A, S2]].map(self)
-                    else if probe() then
-                        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
-                    else
-                        o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
-                case t: Transform[A, B, S] @unchecked =>
-                    if v.isInstanceOf[Kyo[?, ?]] then
-                        v.asInstanceOf[Kyo[A, S2]].map(self)
-                    else if probe() then
-                        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
-                    else
-                        try t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                        catch
-                            case ex: Throwable =>
-                                KyoException.attach(ex, "map", t.frame)
-                                throw ex
-                case flat: Array[Transform[?, ?, ?]] @unchecked =>
-                    if flat.length == 0 then
-                        v.asInstanceOf[B < (S & S2)]
-                    else if v.isInstanceOf[Kyo[?, ?]] then
-                        v.asInstanceOf[Kyo[A, S2]].map(self)
-                    else if probe() then
-                        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
-                    else
-                        flat(0).asInstanceOf[Transform[Any, Any, Any]]
-                            .run(Kyo.unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]], 1)).asInstanceOf[B < (S & S2)]
-                case arr: Array[Any] @unchecked =>
-                    if arr.length == 0 then
-                        v.asInstanceOf[B < (S & S2)]
-                    else if v.isInstanceOf[Kyo[?, ?]] then
-                        v.asInstanceOf[Kyo[A, S2]].map(self)
-                    else
-                        self.optimize(v)
+            if self.asInstanceOf[AnyRef] eq empty then
+                v.asInstanceOf[B < (S & S2)]
+            else if v.isInstanceOf[Kyo[?, ?]] then
+                v.asInstanceOf[Kyo[A, S2]].map(self)
+            else
+                (self: Any) match
+                    case o: Offset =>
+                        if probe() then applySlow(self, v)
+                        else o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
+                    case t: Transform[A, B, S] @unchecked =>
+                        if probe() then applySlow(self, v)
+                        else
+                            try t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
+                            catch
+                                case ex: Throwable =>
+                                    KyoException.attach(ex, "map", t.frame)
+                                    throw ex
+                    case _ =>
+                        applySlow(self, v)
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
             if isEmpty(self) then f.asInstanceOf[Arrow[A, C, S & S2]]
@@ -524,6 +507,22 @@ object Arrow:
         end optimize
 
     end extension
+
+    private def applySlow[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
+        (self: Any) match
+            case flat: Array[Transform[?, ?, ?]] @unchecked =>
+                if flat.length == 0 then v.asInstanceOf[B < (S & S2)]
+                else if probe() then
+                    Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+                else
+                    flat(0).asInstanceOf[Transform[Any, Any, Any]]
+                        .run(Kyo.unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]], 1)).asInstanceOf[B < (S & S2)]
+            case arr: Array[Any] @unchecked =>
+                if arr.length == 0 then v.asInstanceOf[B < (S & S2)]
+                else self.optimize(v)
+            case _ =>
+                Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+    end applySlow
 
     final class Offset private[kyo] (
         private[kyo] val elems: Array[Transform[?, ?, ?]],
