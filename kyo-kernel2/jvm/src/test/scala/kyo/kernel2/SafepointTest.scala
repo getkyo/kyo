@@ -25,6 +25,28 @@ class SafepointTest extends Test[Any]:
         assert(fresh)
     }
 
+    "enter refuses at the depth budget and recovers on exit" in {
+        var budget    = 0
+        var refused   = false
+        var recovered = false
+        val t = new Thread(() =>
+            val safepoint = Safepoint.get
+            while safepoint.enter() do budget += 1
+            refused = true
+            var i = budget
+            while i > 0 do
+                safepoint.exit()
+                i -= 1
+            recovered = safepoint.enter()
+            safepoint.exit()
+        )
+        t.start()
+        t.join()
+        assert(budget == 512)
+        assert(refused)
+        assert(recovered)
+    }
+
     "preempt request lifecycle" in {
         var initiallyClear    = false
         var clearOnEmpty      = true
@@ -33,14 +55,14 @@ class SafepointTest extends Test[Any]:
         var clearAfterConsume = false
         var secondConsume     = true
         val t = new Thread(() =>
-            val slot = Safepoint.slot()
-            initiallyClear = !Safepoint.preempted(slot)
-            clearOnEmpty = Safepoint.clearPreempt(slot)
-            Safepoint.preempt(slot)
-            visibleAfterSet = Safepoint.preempted(slot)
-            consumed = Safepoint.clearPreempt(slot)
-            clearAfterConsume = !Safepoint.preempted(slot)
-            secondConsume = Safepoint.clearPreempt(slot)
+            val safepoint = Safepoint.get
+            initiallyClear = !safepoint.preempted
+            clearOnEmpty = safepoint.clearPreempt()
+            safepoint.preempt()
+            visibleAfterSet = safepoint.preempted
+            consumed = safepoint.clearPreempt()
+            clearAfterConsume = !safepoint.preempted
+            secondConsume = safepoint.clearPreempt()
         )
         t.start()
         t.join()
@@ -52,72 +74,75 @@ class SafepointTest extends Test[Any]:
         assert(!secondConsume)
     }
 
-    "pending request reads as depth at limit and suppresses the depth store" in {
-        var observed = List.empty[Long]
+    "a pending request refuses enter without consuming depth budget" in {
+        var first         = false
+        var whilePending1 = true
+        var whilePending2 = true
+        var consumed      = false
+        var budget        = 0
+        var reusable      = false
         val t = new Thread(() =>
-            val slot = Safepoint.slot()
-            observed = List(
-                Safepoint.increase(slot), {
-                    Safepoint.preempt(slot)
-                    Safepoint.increase(slot)
-                },
-                Safepoint.increase(slot), {
-                    val _ = Safepoint.clearPreempt(slot)
-                    Safepoint.increase(slot)
-                }, {
-                    Safepoint.decrease(slot)
-                    Safepoint.decrease(slot)
-                    Safepoint.increase(slot)
-                }
-            )
-            Safepoint.decrease(slot)
+            val safepoint = Safepoint.get
+            first = safepoint.enter()
+            safepoint.preempt()
+            whilePending1 = safepoint.enter()
+            whilePending2 = safepoint.enter()
+            consumed = safepoint.clearPreempt()
+            budget = 1
+            while safepoint.enter() do budget += 1
+            var i = budget
+            while i > 0 do
+                safepoint.exit()
+                i -= 1
+            reusable = safepoint.enter()
+            safepoint.exit()
         )
         t.start()
         t.join()
-        val expected = List(
-            0L,                   // clean claim, writes depth 1
-            Safepoint.Limit + 1L, // depth 1 with the flag folded in, no store
-            Safepoint.Limit + 1L, // still no store while pending
-            1L,                   // consumed: depth untouched by the flagged calls, writes 2
-            0L                    // both writes paired back down
-        )
-        assert(observed == expected)
+        assert(first)
+        assert(!whilePending1)
+        assert(!whilePending2)
+        assert(consumed)
+        assert(budget == 512)
+        assert(reusable)
     }
 
-    "a request from another thread reaches a running increase loop" in {
-        val slotRef  = new java.util.concurrent.atomic.AtomicInteger(-1)
-        val observed = new java.util.concurrent.atomic.AtomicLong(-1L)
+    "a request from another thread reaches a running enter loop" in {
+        @volatile var workerSafepoint: Safepoint = Safepoint.Overflow
+        @volatile var ready                      = false
+        var parked                               = false
         val t = new Thread(() =>
-            val slot = Safepoint.slot()
-            slotRef.set(slot)
-            var d          = Safepoint.increase(slot)
+            val safepoint = Safepoint.get
+            workerSafepoint = safepoint
+            ready = true
+            var proceeding = true
             var iterations = 0L
-            while d < Safepoint.Limit && iterations < 1_000_000_000L do
-                Safepoint.decrease(slot)
-                d = Safepoint.increase(slot)
+            while proceeding && iterations < 1_000_000_000L do
+                if safepoint.enter() then safepoint.exit()
+                else proceeding = false
                 iterations += 1
             end while
-            observed.set(d)
-            val _ = Safepoint.clearPreempt(slot)
+            parked = !proceeding
+            val _ = safepoint.clearPreempt()
         )
         t.start()
-        while slotRef.get() == -1 do ()
-        Safepoint.preempt(slotRef.get())
+        while !ready do ()
+        workerSafepoint.preempt()
         t.join()
-        assert(observed.get() >= Safepoint.Limit)
+        assert(parked)
     }
 
     "a pending request bounces eager evaluation to the trampoline" in {
         var bounced   = false
         var evaluated = 0
         val t = new Thread(() =>
-            val slot = Safepoint.slot()
-            Safepoint.preempt(slot)
+            val safepoint = Safepoint.get
+            safepoint.preempt()
             val v = (1: Int < Any).map(_ + 1)
             bounced = (v: Any) match
                 case _: Kyo[?, ?] => true
                 case _            => false
-            val _ = Safepoint.clearPreempt(slot)
+            val _ = safepoint.clearPreempt()
             evaluated = v.eval
         )
         t.start()
@@ -126,30 +151,31 @@ class SafepointTest extends Test[Any]:
         assert(evaluated == 2)
     }
 
-    "a request on the overflow slot is a no-op" in {
-        Safepoint.preempt(Safepoint.OverflowSlot)
-        assert(!Safepoint.preempted(Safepoint.OverflowSlot))
+    "a request on the overflow safepoint is a no-op" in {
+        Safepoint.Overflow.preempt()
+        assert(!Safepoint.Overflow.preempted)
+        assert(!Safepoint.Overflow.enter())
     }
 
     "claiming a slot wipes a stale request" in {
-        var staleSlot = -1
+        var staleSafepoint: Safepoint = Safepoint.Overflow
         val a = new Thread(() =>
             val _ = (1: Int < Any).map(_ + 1).eval
-            staleSlot = Safepoint.slot()
+            staleSafepoint = Safepoint.get
         )
         a.start()
         a.join()
-        Safepoint.preempt(staleSlot)
-        assert(Safepoint.preempted(staleSlot))
+        staleSafepoint.preempt()
+        assert(staleSafepoint.preempted)
         var i = 0
-        while Safepoint.preempted(staleSlot) && i < 4096 do
+        while staleSafepoint.preempted && i < 4096 do
             val t = new Thread(() =>
-                val _ = Safepoint.slot()
+                val _ = Safepoint.get
             )
             t.start()
             t.join()
             i += 1
         end while
-        assert(!Safepoint.preempted(staleSlot))
+        assert(!staleSafepoint.preempted)
     }
 end SafepointTest

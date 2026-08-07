@@ -5,33 +5,58 @@ import java.util.concurrent.atomic.AtomicReferenceArray
 import scala.annotation.static
 import scala.annotation.tailrec
 
-/** The kernel's runtime guard: per-thread depth accounting and preemption polling behind the stack-safety rescue.
+/** The kernel's runtime guard: a per-thread token gating eager execution behind depth accounting and preemption polling.
   *
-  * Each claimed slot spans one cache line holding two words. The depth word brackets every guarded transform execution with a
-  * single-writer increase and decrease; crossing the limit reroutes the execution through a rescue Defer so the trampoline unwinds the
-  * stack. The preempt word next to it is a 0-or-Limit flag written only by requesters (volatile store) and the consuming boundary drive
-  * (volatile exchange). `increase` folds it into the depth it returns, so a pending request reads as depth-at-limit: the caller's
-  * existing limit compare doubles as the preemption poll with no added branch, and the fold also suppresses the depth store, keeping the
-  * rescue path write-free.
+  * A Safepoint identifies the current thread's claimed slot. Guarded transform executions bracket each frame with `enter` and `exit`:
+  * `enter` refuses when the depth budget is exhausted or a preemption request is pending, and the refusing caller reroutes through a
+  * rescue Defer so the trampoline unwinds the stack or surfaces the park. A single check serves both concerns: the preempt word is
+  * folded into the depth read, so a pending request reads as depth-at-limit with no added branch.
   *
-  * Requesters publish their condition (promise state, preempt flag) before storing the flag, and boundary drives consume with
-  * `clearPreempt` before consulting that state; the volatile exchange orders the requester's writes before the check, so a consumed
-  * request's condition is always visible to the decision that follows. The flag cannot be lost: only `clearPreempt` writes 0, and the
-  * depth word is never written by another thread.
+  * The preemption protocol has three roles, one method each. Requesters (`preempt`) publish their condition (promise state, preempt
+  * flag) first, then store the request; the store cannot be lost since only the consumer writes it back to zero. Non-boundary drives
+  * observe without consuming (`preempted`) and cascade the park outward. Boundary drives consume with `clearPreempt` before consulting
+  * the authoritative state; the volatile exchange orders the requester's writes before that check, so a consumed request's condition is
+  * always visible to the decision that follows.
   *
-  * Slots are claimed per thread and reclaimed from dead threads, wiping both words; the shared overflow slot is pinned at the limit,
-  * never written, and exempt from preemption requests since it already rescues every frame. Statics are hosted on the companion class so
-  * hot callers reach the counters via invokestatic with no module load.
-  *
-  * This is the successor of the current kernel's Safepoint: the depth words replace its stack-depth accounting and the preempt word
+  * This is the successor of the current kernel's Safepoint: `enter` and `exit` replace its stack-depth accounting, and the preempt word
   * replaces its interceptor's preemption role.
   */
-final private[kyo] class Safepoint private ()
+private[kyo] opaque type Safepoint = Int
 
 private[kyo] object Safepoint:
 
-    inline def Limit = 512
+    /** The current thread's safepoint. */
+    inline def get: Safepoint = SafepointState.slot()
 
+    /** The shared overflow safepoint: depth pinned at the limit so `enter` always refuses, exempt from preemption requests. */
+    private[kyo] inline def Overflow: Safepoint = SafepointState.OverflowSlot
+
+    private[kyo] def owned: Boolean = SafepointState.owned
+
+    extension (self: Safepoint)
+        /** Enters a guarded frame: false when the depth budget is exhausted or a preemption request is pending. */
+        inline def enter(): Boolean = SafepointState.enter(self)
+
+        /** Exits a frame entered successfully. Never call after a refused `enter`. */
+        inline def exit(): Unit = SafepointState.exit(self)
+
+        /** Requests preemption of this safepoint's thread. Publish the condition before calling. */
+        inline def preempt(): Unit = SafepointState.preempt(self)
+
+        /** Whether a preemption request is pending. Observation only; the cascade check for non-boundary drives. */
+        inline def preempted: Boolean = SafepointState.preempted(self)
+
+        /** Consumes a pending request, true when one was pending. Boundary drives call this before the authoritative check. */
+        inline def clearPreempt(): Boolean = SafepointState.clearPreempt(self)
+    end extension
+
+end Safepoint
+
+final private[kyo] class SafepointState private ()
+
+private[kyo] object SafepointState:
+
+    private inline def Limit        = 512
     private inline def Slots        = 256
     private inline def Mask         = Slots - 1
     private inline def Probes       = 8
@@ -46,35 +71,39 @@ private[kyo] object Safepoint:
 
     // one cache line per claimed slot: the depth word at the slot index (single-writer plain), the
     // preempt word right after it (atomics only). The overflow depth word is pinned at Limit and
-    // never written.
+    // never written. Statics are hosted on the companion class so hot callers reach the counters
+    // via invokestatic with no module load.
     @static private val cells =
         val a = new AtomicLongArray((Slots + 1) << Shift)
         a.setPlain(Slots << Shift, Limit)
         a
     end cells
 
-    // returns the previous depth with the preempt word folded in: a pending request reads as
-    // >= Limit, routing the caller onto the rescue trampoline and suppressing the depth store
-    @static def increase(slot: Int): Long =
+    // the preempt word folds into the depth read: a pending request reads as >= Limit, refusing
+    // the frame with the same compare that guards the depth budget and skipping the store, so the
+    // refusal path stays write-free
+    @static def enter(slot: Int): Boolean =
         val depth = cells.getPlain(slot) | cells.getOpaque(slot + 1)
-        if depth < Limit then cells.setPlain(slot, depth + 1)
-        depth
-    end increase
+        if depth < Limit then
+            cells.setPlain(slot, depth + 1)
+            true
+        else false
+        end if
+    end enter
 
-    @static def decrease(slot: Int): Unit =
+    @static def exit(slot: Int): Unit =
         cells.setPlain(slot, cells.getPlain(slot) - 1)
 
-    // requesters publish their condition before calling; the store cannot be lost since only
-    // clearPreempt writes 0. No-op on the overflow slot, which already rescues every frame.
+    // the store cannot be lost since only clearPreempt writes 0. No-op on the overflow slot, which
+    // already refuses every frame.
     @static def preempt(slot: Int): Unit =
         if slot != OverflowSlot then cells.set(slot + 1, Flag)
 
-    // observe without consuming: the cascade check for non-boundary drives
     @static def preempted(slot: Int): Boolean =
         cells.getOpaque(slot + 1) != 0L
 
-    // boundary drives, consume-then-check: the exchange orders the requester's condition writes
-    // before the authoritative check that follows. Guarded so an idle stride costs one resident load.
+    // the exchange orders the requester's condition writes before the authoritative check that
+    // follows; guarded so an idle check costs one resident load
     @static def clearPreempt(slot: Int): Boolean =
         preempted(slot) && cells.getAndSet(slot + 1, 0L) != 0L
 
@@ -127,4 +156,4 @@ private[kyo] object Safepoint:
         scan(0)
     end owned
 
-end Safepoint
+end SafepointState

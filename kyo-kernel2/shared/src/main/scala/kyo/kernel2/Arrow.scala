@@ -174,16 +174,16 @@ object Arrow:
         Kyo.Defer(v, self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
 
     private def guardedRun[A, B, S, S2](t: Transform[A, B, S], v: A < S2): B < (S & S2) =
-        val slot = Safepoint.slot()
-        if Safepoint.increase(slot) >= Safepoint.Limit then rescue(t, v)
+        val safepoint = Safepoint.get
+        if !safepoint.enter() then rescue(t, v)
         else
             try
                 val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                Safepoint.decrease(slot)
+                safepoint.exit()
                 r
             catch
                 case ex: Throwable =>
-                    Safepoint.decrease(slot)
+                    safepoint.exit()
                     KyoException.attach(ex, "map", t.frame)
                     throw ex
         end if
