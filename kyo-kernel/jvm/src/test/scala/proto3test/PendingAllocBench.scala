@@ -16,7 +16,12 @@ object PendingAllocBench:
 
     private var sink: Any = null
 
+    // one row per JVM when a filter is given: in-process row ordering
+    // contaminates later rows' compiled units, same as the time bench
+    private var rowFilter: String = null
+
     def measure(name: String, iters: Int)(body: => Any): Unit =
+        if rowFilter != null && name != rowFilter then return
         var warm = 0
         while warm < iters * 2 do
             sink = body
@@ -37,6 +42,7 @@ object PendingAllocBench:
     end measure
 
     def main(args: Array[String]): Unit =
+        rowFilter = if args.isEmpty then null else args(0)
         measure("eager5", 1000000):
             ((1: Int < Any).map(_ + 1).map(_ * 2).map(_ - 3).map(_ + 5).map(_ - 4)).eval
 
