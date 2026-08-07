@@ -6,6 +6,7 @@ import kyo.Maybe
 import kyo.Tag
 import language.implicitConversions
 import scala.annotation.nowarn
+import scala.annotation.static
 import scala.annotation.tailrec
 
 trait Effect[I[_], O[_]]
@@ -15,6 +16,14 @@ sealed abstract class Kyo[+A, -S]:
     private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S
 
 object Kyo:
+
+    // Compiled as a JVM static of class Kyo: hot callers (minted arrow fragments,
+    // Arrow.apply, Offset.run) reach it via invokestatic with no module load and,
+    // in minted fragments, no captured reference to an enclosing object.
+    @static def unwrap(v: Any): Any =
+        v match
+            case n: Nested[?] => n.value
+            case _            => v
 
     case class Nested[+A](value: A):
         override def toString = "Nested"
@@ -111,11 +120,6 @@ object `<`:
 
     extension [A, S](self: A < S)
 
-        def unsafeGet: A =
-            self match
-                case Kyo.Nested(v) => v.asInstanceOf[A]
-                case _             => self.asInstanceOf[A]
-
         private[kyo] def discard: Unit =
             discardValue(self) match
                 case Nil => ()
@@ -131,7 +135,7 @@ object `<`:
                     val w = f(v.asInstanceOf[A])
                     (cont: Any) match
                         case o: Arrow.Offset if !w.isInstanceOf[Kyo[?, ?]] =>
-                            o.head.run(w.unsafeGet, o.next).asInstanceOf[C < (S2 & S3)]
+                            o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w)
                     end match
@@ -168,7 +172,7 @@ object `<`:
                                         Arrow.map(Arrow.of[Any, Any, Any](this))(Arrow.of(new Arrow.Offset(es, i + 1)))
                                     else Arrow.of[Any, Any, Any](this)
                                 w.asInstanceOf[Kyo[Any, Any]].map(rest)
-                            else loop(es, i + 1, w.asInstanceOf[Any < Any].unsafeGet)
+                            else loop(es, i + 1, Kyo.unwrap(w))
                             end if
             (cont: Any) match
                 case o: Arrow.Offset =>
@@ -183,8 +187,8 @@ object `<`:
 
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                evalLoop(self.asInstanceOf[Any < Any], never, 1, unhandled).unsafeGet.asInstanceOf[A]
-            else self.unsafeGet
+                Kyo.unwrap(evalLoop(self.asInstanceOf[Any < Any], never, 1, unhandled)).asInstanceOf[A]
+            else Kyo.unwrap(self).asInstanceOf[A]
 
         def eval(preempt: () => Boolean, period: Int): A < Any =
             evalLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), unhandled).asInstanceOf[A < Any]
@@ -323,7 +327,7 @@ object `<`:
                                     val wrapped = suspended.map(reacquire(bracket))
                                     if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
                                 case acquired =>
-                                    val resource = acquired.unsafeGet
+                                    val resource = Kyo.unwrap(acquired)
                                     val result =
                                         try drive(bracket.cont(acquired), depth + 1)
                                         catch
@@ -386,11 +390,6 @@ object Arrow:
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
 
-    private def unwrap(v: Any): Any =
-        v match
-            case n: Kyo.Nested[?] => n.value
-            case _                => v
-
     private val empty = new Array[Transform[?, ?, ?]](0)
 
     def apply[A]: Arrow[A, A, Any] = empty
@@ -405,9 +404,9 @@ object Arrow:
                     if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else if probe() then
-                        Kyo.Defer(unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+                        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
                     else
-                        try t.run(unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
+                        try t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
                         catch
                             case ex: Throwable =>
                                 KyoException.attach(ex, "map", t.frame)
@@ -418,10 +417,10 @@ object Arrow:
                     else if v.isInstanceOf[Kyo[?, ?]] then
                         v.asInstanceOf[Kyo[A, S2]].map(self)
                     else if probe() then
-                        Kyo.Defer(unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+                        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
                     else
                         flat(0).asInstanceOf[Transform[Any, Any, Any]]
-                            .run(unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]], 1)).asInstanceOf[B < (S & S2)]
+                            .run(Kyo.unwrap(v), tail(flat.asInstanceOf[Array[Transform[?, ?, ?]]], 1)).asInstanceOf[B < (S & S2)]
                 case arr: Array[Any] @unchecked =>
                     if arr.length == 0 then
                         v.asInstanceOf[B < (S & S2)]
@@ -543,7 +542,7 @@ object Arrow:
                                         throw ex
                             if w.isInstanceOf[Kyo[?, ?]] then
                                 tail(es, i + 1).map(cont)(w.asInstanceOf[Any < Any])
-                            else loop(es, i + 1, unwrap(w))
+                            else loop(es, i + 1, Kyo.unwrap(w))
             loop(elems, from, v).asInstanceOf[C < (Any & S2)]
         end run
 

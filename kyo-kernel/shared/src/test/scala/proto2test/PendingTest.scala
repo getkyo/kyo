@@ -34,7 +34,7 @@ class PendingTest extends Test[Any]:
                         case Nil =>
                             Maybe.Absent
         )
-        result.unsafeGet
+        Kyo.unwrap(result).asInstanceOf[Int]
     end resolve
 
     "eager chain evaluates during construction" in {
@@ -245,7 +245,7 @@ class PendingTest extends Test[Any]:
         val outer = `<`.eval(Tag[Ask2], inner.asInstanceOf[Int < Ask2])(
             [X] => (input: Unit, cont: Arrow[Int, Int, Ask2]) => Maybe(cont(2))
         )
-        assert(outer.unsafeGet == 12)
+        assert(Kyo.unwrap(outer).asInstanceOf[Int] == 12)
     }
 
     "observe reports steps and survives park and resume" in {
@@ -306,7 +306,7 @@ class PendingTest extends Test[Any]:
     "lift wraps nested computations" in {
         val inner: Int < Ask          = ask
         val nested: (Int < Ask) < Any = inner
-        val out                       = nested.unsafeGet
+        val out                       = Kyo.unwrap(nested).asInstanceOf[Int < Ask]
         assert(resolve(out.map(_ + 1), 41) == 42)
     }
 

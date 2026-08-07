@@ -32,13 +32,13 @@ object PendingBench:
     end counterOp
 
     def runEcho(v: => Int < BenchEcho): Int =
-        `<`.eval(echoTag, v)(
+        Kyo.unwrap(`<`.eval(echoTag, v)(
             [X] => (in: Int, cont: Arrow[Int, Int, BenchEcho]) => Maybe(cont(in))
-        ).unsafeGet
+        )).asInstanceOf[Int]
 
     def runCounter(v: => Int < BenchCounter, n0: Int): Int =
         var state = n0
-        `<`.eval(counterTag, v)(
+        Kyo.unwrap(`<`.eval(counterTag, v)(
             [X] =>
                 (in: Maybe[Int], cont: Arrow[Int, Int, BenchCounter]) =>
                     in match
@@ -47,7 +47,7 @@ object PendingBench:
                             Maybe(cont(x))
                         case _ =>
                             Maybe(cont(state))
-        ).unsafeGet
+        )).asInstanceOf[Int]
     end runCounter
 
     def time(name: String, reps: Int)(body: => Any): String =
