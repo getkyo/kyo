@@ -211,3 +211,21 @@ Settled in discussion on top of the recovered record, in order:
    would force ctl everywhere or an Ack-style output protocol; the hybrid
    keeps per-site fast paths off the delimiter class while restrictive
    declarations add suspension-side guarantees.
+
+8. The kind family for the new kernel: three declared kinds, defined by
+   what the handler provides. ContextEffect[V] provides a value once per
+   scope (reads, continuation untouched, copy at boundaries).
+   ResumeEffect[I, O] provides a function run per op (answered in place,
+   continuation never materialized, exactly-once by declaration, the
+   natural Isolate bound). ArrowEffect[I, O] provides a control operator
+   (continuation captured, zero to many resumes). Koka's val/fun/ctl triad
+   as declarations. Stop is not a fourth kind: StopEffect[I] =
+   ArrowEffect[I, Const[Nothing]] plus sugar, sound by typing (a ctl clause
+   for O = Nothing provably cannot resume), which fixes Abort's impossible
+   continuation. Loop/state is a handler format over Resume and Arrow, not
+   a kind. One-shot vs multi-shot within Arrow is linearity metadata
+   (Async: arrow one-shot because it must capture to park; Choice: arrow
+   multi-shot). Placements: Env and Local context; Var, Memo, Sync-style
+   defer resume; Abort stop corner; Choice arrow; Emit the declared
+   judgment case (arrow with per-site resume-format delimiters, or Ack
+   output to stay resume).
