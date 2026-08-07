@@ -37,6 +37,13 @@ class PendingTest extends Test[Any]:
         result.asInstanceOf[Int < Any].eval
     end resolve
 
+    "eager recursion through map is stack safe" in {
+        def loop(i: Int): Int < Any =
+            if i == 0 then 0
+            else (i: Int < Any).map(_ => loop(i - 1))
+        assert(loop(1000000).eval == 0)
+    }
+
     "eager chain evaluates during construction" in {
         assert(((1: Int < Any).map(_ + 1).map(_ * 2)).eval == 4)
     }

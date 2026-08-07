@@ -387,6 +387,14 @@ object Arrow:
     private[kyo] def probe(): Boolean =
         false
 
+    final private[kyo] class Depth:
+        var value: Int = 0
+
+    private val depthLocal = new ThreadLocal[Depth]:
+        override def initialValue = new Depth
+
+    private inline def SafeDepth = 512
+
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
         def frame: Frame
         // v is Any rather than A: a typed parameter makes subclasses with a concrete
@@ -427,11 +435,21 @@ object Arrow:
                     case t: Transform[A, B, S] @unchecked =>
                         if probe() then applySlow(self, v)
                         else
-                            try t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
-                            catch
-                                case ex: Throwable =>
-                                    KyoException.attach(ex, "map", t.frame)
-                                    throw ex
+                            val depth = depthLocal.get()
+                            if depth.value >= SafeDepth then rescue(self, v)
+                            else
+                                depth.value += 1
+                                try
+                                    val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
+                                    depth.value -= 1
+                                    r
+                                catch
+                                    case ex: Throwable =>
+                                        depth.value -= 1
+                                        KyoException.attach(ex, "map", t.frame)
+                                        throw ex
+                                end try
+                            end if
                     case _ =>
                         applySlow(self, v)
 
@@ -496,6 +514,9 @@ object Arrow:
         end optimize
 
     end extension
+
+    private def rescue[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
+        Kyo.Defer(Kyo.unwrap(v), self.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
 
     private def applySlow[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
         self match
