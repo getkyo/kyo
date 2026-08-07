@@ -72,6 +72,14 @@ object PendingBench:
         val warm = Frame.derive
         Predef.locally(warm)
         inline def N = 1000000
+        val _ = time("eager", 5):
+            var i   = 0
+            var acc = 0
+            while i < 1000000 do
+                acc += ((i: Int < Any).map(_ + 1).map(_ * 2).map(_ - 3).map(_ + 5).map(_ - 4)).eval
+                i += 1
+            end while
+            acc
         val _ = time("deepBind", 3):
             def loop(i: Int): Unit < Any =
                 ((): Unit < Any).map(_ => if i > N then () else loop(i + 1))
