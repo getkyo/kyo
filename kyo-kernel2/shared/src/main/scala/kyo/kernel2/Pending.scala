@@ -371,8 +371,8 @@ object `<`:
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
                 driveLoop(self.asInstanceOf[Any < Any], never, 1, boundary = true) match
-                    case kyo: Kyo[?, ?] => throw new IllegalStateException("unhandled suspension: " + kyo)
-                    case v              => Kyo.unwrap(v).asInstanceOf[A]
+                    case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
+                    case v                  => Kyo.unwrap(v).asInstanceOf[A]
             else Kyo.unwrap(self).asInstanceOf[A]
 
         /** Evaluates within a preemption budget, returning the remaining computation. */
@@ -796,3 +796,11 @@ object `<`:
     end outcomeStep
 
 end `<`
+
+extension (self: kyo.bug.type)
+    private[kyo] def failTag[A, B, S](
+        kyo: A < S,
+        expected: Tag[B]
+    ): Nothing =
+        self(s"Unexpected pending effect while handling ${expected.show}: " + kyo)
+end extension

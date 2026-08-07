@@ -10,6 +10,12 @@ import scala.util.control.NonFatal
   */
 type Const[A] = [B] =>> A
 
+/** Identity type constructor: returns its input type unchanged.
+  *
+  * Commonly used with [[ArrowEffect]] when an effect needs to preserve the exact type it operates on without modification.
+  */
+type Id[A] = A
+
 /** The common parent of the two effect kinds.
   *
   * An effect kind is a declaration of what a handler provides. [[ArrowEffect]] declares operations, interpreted by a handler clause per

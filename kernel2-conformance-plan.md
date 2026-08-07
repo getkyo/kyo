@@ -211,6 +211,29 @@ Recorded tier-1 divergences (each ruled by the user):
   toString renders shape, tag, and position rather than the current
   kernel's frame snippet until the trace round (KyoTest adaptation).
 
+## Remaining gaps by round (from the full-module audit)
+
+A member-level audit of every old-kernel source against kernel2 found
+three genuine gaps, now closed: `Id` (defined by the old kernel module
+at package kyo; kernel2's tests had been leaking the old kernel's
+through the test classpath), `bug.failTag` (unhandled-suspension error
+parity in eval), and `ArrowEffect.dispatchFirst` (the head-probe
+IOTask's interrupt cascade uses). Everything else missing is assigned
+to a round:
+
+- Swap round: the kyo-package export layer (`type <`, `val Loop`,
+  `export Isolate` from kernel.scala), IOTask/scheduler adaptation, the
+  finalizer registry replacing Safepoint.ensure (see
+  kernel2-preemption-analysis.md), the accept filter with the Abort
+  port.
+- Platform round: `maxStackDepth` from Platform (kernel2 hardcodes the
+  512 limit; Native and WASM need smaller budgets), the JS/Native
+  linking work.
+- Trace round: real Trace and TracePool (platform-split in the old
+  kernel), maxTraceFrames, frame-snippet rendering.
+- Perf round: per-collection combinator specializations, inline
+  revisits, proto3-ledger recovery.
+
 ## Structure ruling
 
 The package stays `kyo.kernel2`: an attempt to compile the module as

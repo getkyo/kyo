@@ -1,7 +1,6 @@
 package kyo.kernel2
 
 import kyo.Chunk
-import kyo.Id
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -1070,6 +1069,25 @@ class ArrowEffectTest extends Test[Any]:
             [C] => (in, cont) => Maybe(cont(in))
         )
         assert(rest.asInstanceOf[Int < Any].eval == 0)
+    }
+
+    "dispatchFirst probes the head suspension without running it" in {
+        var seen = -1
+        var ran  = false
+        val program = echo(7).map { a =>
+            ran = true
+            a
+        }
+        ArrowEffect.dispatchFirst(Tag[Echo], program)([C] => (input) => seen = input)
+        assert(seen == 7)
+        assert(!ran)
+    }
+
+    "dispatchFirst ignores non-matching heads and completed values" in {
+        var called = false
+        ArrowEffect.dispatchFirst(Tag[Echo], get.map(_ + 1).asInstanceOf[Int < (Echo & Get)])([C] => (input) => called = true)
+        ArrowEffect.dispatchFirst(Tag[Echo], (5: Int < Echo))([C] => (input) => called = true)
+        assert(!called)
     }
 
 end ArrowEffectTest

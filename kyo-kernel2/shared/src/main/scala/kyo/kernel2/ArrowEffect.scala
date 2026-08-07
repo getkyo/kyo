@@ -204,6 +204,27 @@ object ArrowEffect:
         )
     end handleLoop
 
+    /** Inspects the head of a computation without running it: if the first pending suspension is an operation of `E`, hands its input to
+      * `f`. Used by the runtime to walk interrupted remainders without draining any user code.
+      */
+    private[kyo] def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        f: [C] => I[C] => Unit
+    ): Unit =
+        def probe(suspension: Kyo.Suspension[?, ?]): Unit =
+            suspension match
+                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
+                    f(s.input.asInstanceOf[I[Any]])
+                case _ => ()
+        (v: Any) match
+            case c: Kyo.Continue[?, ?, ?] => probe(c.suspend)
+            case s: Kyo.Suspension[?, ?]  => probe(s)
+            case _                        => ()
+        end match
+    end dispatchFirst
+
     /** Handles `E` and intercepts non-fatal exceptions in one step.
       *
       * `recover` receives exceptions thrown at construction, in the handler clause, or in any later step of the computation, including
