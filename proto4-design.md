@@ -32,22 +32,22 @@ performance work follows in a later round against the proto3 ledger.
 
 ```scala
 abstract class Effect
-abstract class ArrowEffect[I[_], O[_]] extends Effect   // invariant: see deltas
+abstract class ControlEffect[I[_], O[_]] extends Effect   // invariant: see deltas
 abstract class ContextEffect[+V]        extends Effect
 ```
 
 Kinds are declarations of what the handler provides (operations vs a value);
-handler formats are per-site choices over ArrowEffect, per the ruling that
+handler formats are per-site choices over ControlEffect, per the ruling that
 cardinality is a property of the handling, not the effect. Stop-shaped
 effects use `Const[Nothing]` outputs; no separate kind.
 
 ## Suspension surface
 
 ```scala
-object ArrowEffect:
-    inline def suspend[A](using Frame)[I[_], O[_], E <: ArrowEffect[I, O]](
+object ControlEffect:
+    inline def suspend[A](using Frame)[I[_], O[_], E <: ControlEffect[I, O]](
         tag: Tag[E], input: I[A]): O[A] < E
-    inline def suspendWith[A](using Frame)[I[_], O[_], E <: ArrowEffect[I, O], B, S](
+    inline def suspendWith[A](using Frame)[I[_], O[_], E <: ControlEffect[I, O], B, S](
         tag: Tag[E], input: I[A])(f: O[A] => B < S): B < (E & S)
 
 object ContextEffect:
@@ -71,7 +71,7 @@ kinds share the chain machinery:
 
 ```scala
 sealed abstract class Suspension[+X, -E] extends Kyo[X, E]
-abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Suspension[O[A], E]
+abstract class Suspend[I[_], O[_], E <: ControlEffect[I, O], A] extends Suspension[O[A], E]
 abstract class ContextRead[V, E <: ContextEffect[V]] extends Suspension[V, E]   // tag, default: Maybe[() => V]
 final class Continue[X, +B, -S](suspend: Suspension[X, ?], cont: Arrow[X, B, S])
 ```
@@ -97,7 +97,7 @@ update allocates a replacement delimiter in the suffix.
 ## Handling surface
 
 ```scala
-object ArrowEffect:
+object ControlEffect:
     def handle      [I, O, E, A, S](tag, v: A < (E & S))(
         clause: [C] => (I[C], Arrow[O[C], A, E & S]) => A < (E & S)): A < S
     def handleResume[I, O, E, A, S](tag, v: A < (E & S))(
@@ -123,7 +123,7 @@ Consolidation: the loop-argument protocols `<`.eval(tag)(handler) and
 `<`.evalPartial are removed; their roles are covered by the formats
 (handleFirst covers capture-and-park) and by parking being automatic.
 `v.eval` (total, S = Any) and `v.eval(preempt, period)` (preemptible)
-remain, and ArrowEffect.handlePartial is the boundary drive for a last
+remain, and ControlEffect.handlePartial is the boundary drive for a last
 effect. No multi-effect overloads.
 
 ## Dispatch semantics
@@ -166,12 +166,12 @@ decompose with `step` like any chain.
 
 ## Phases
 
-1. Kinds and constructors: rename Effect to ArrowEffect, add Effect parent,
+1. Kinds and constructors: rename Effect to ControlEffect, add Effect parent,
    ContextEffect, suspend APIs, Effect.defer, Effect.bracket; port tests
    and benches off hand-rolled nodes; suite green.
 2. Delimiters, drive dispatch, handle, handleResume, handleStop,
    handleFirst; remove the loop-argument eval protocols; port tests and
-   benches; new ArrowEffectTest covering deep semantics, nesting,
+   benches; new ControlEffectTest covering deep semantics, nesting,
    cross-effect parking, multi-shot, abort by drop.
 3. handleLoop with Outcome and done.
 4. ContextEffect: ContextRead, Continue generalization, handle, resolution,
@@ -188,7 +188,7 @@ Decisions made or corrected during the build, now the source of truth:
    the delimiter and returns; one drive at the boundary (eval, or a
    handlePartial boundary) serves arbitrarily nested handlers, which is
    what makes preemption compose with handling. The runtime boundary is
-   ArrowEffect.handlePartial: it drives immediately, consulting its clause
+   ControlEffect.handlePartial: it drives immediately, consulting its clause
    as the handler of last resort for operations no delimiter matched, with
    the Maybe protocol (Present continues, Absent parks after the clause
    captured the continuation) and the preemption budget. eval(preempt,
@@ -197,7 +197,7 @@ Decisions made or corrected during the build, now the source of truth:
    moves entirely into the drive and is later performance work. NOTE: the
    installation-only semantics deviates from the earlier sync-path ruling
    (clause-now at the handle site) and is pending an explicit ruling.
-2. ArrowEffect's parameters are invariant. Variant parameters make inference
+2. ControlEffect's parameters are invariant. Variant parameters make inference
    solve the operation constructors to their extremes at tag-driven sites;
    subtype dispatch across effect families is future work that must bring
    its own inference design. Clause lambdas follow the current kernel's
@@ -232,7 +232,7 @@ performance round.
 
 - Port kyo's Loop into proto4 and revisit handleLoop's Outcome against
   Loop.Outcome2 (ruled: fix other issues first).
-- Variance restored on ArrowEffect with the kernel's S2 split across the
+- Variance restored on ControlEffect with the kernel's S2 split across the
   handle family; handleFirst and handleLoop take (handle, done) in one
   argument list, the current kernel's shape.
 - Installation-only handling: analysis delivered (no capability lost;
@@ -245,3 +245,12 @@ Performance of dispatch (chain search per suspension, context resolution
 per read, non-inline drive) is deliberately unoptimized; the proto3 ledger
 defines the recovery targets. The fork-time environment snapshot for
 Isolate arrives with the environment threading work in a later round.
+
+## Naming
+
+ControlEffect, renamed from ArrowEffect after Arrow became a first-class
+user-facing type: the kind's unifying property is that the handler receives
+control at each operation (resume once, never, or many times), which also
+covers the stop-shaped members that never continue. Pairs with
+ContextEffect: control effects provide operations, context effects provide
+a value.

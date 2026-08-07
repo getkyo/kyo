@@ -5,9 +5,9 @@ import scala.annotation.nowarn
 
 /** The common parent of the two effect kinds.
   *
-  * An effect kind is a declaration of what a handler provides. [[ArrowEffect]] declares operations, interpreted by a handler clause per
+  * An effect kind is a declaration of what a handler provides. [[ControlEffect]] declares operations, interpreted by a handler clause per
   * operation. [[ContextEffect]] declares a value, provided by a handler for a scope. The kinds differ in boundary semantics: context state
-  * is copyable across forks, arrow state lives in the handler's interpretation.
+  * is copyable across forks, control state lives in the handler's interpretation.
   */
 abstract class Effect
 

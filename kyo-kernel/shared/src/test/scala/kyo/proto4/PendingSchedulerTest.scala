@@ -6,12 +6,12 @@ import kyo.Tag
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+sealed trait Ask extends ControlEffect[Const[Unit], Const[Int]]
 
 class PendingSchedulerTest extends Test[Any]:
 
     def ask: Int < Ask =
-        ArrowEffect.suspend[Any](Tag[Ask], ())
+        ControlEffect.suspend[Any](Tag[Ask], ())
 
     "interrupting a parked fiber runs finalizers without resuming" in {
         var log = List.empty[String]
@@ -31,7 +31,7 @@ class PendingSchedulerTest extends Test[Any]:
                 }
             }
         }
-        val remainder = ArrowEffect.handlePartial(Tag[Ask], program)(
+        val remainder = ControlEffect.handlePartial(Tag[Ask], program)(
             [C] => (input, cont) => Maybe.Absent
         )
         assert(log == List("acq-outer", "acq-inner"))
@@ -51,7 +51,7 @@ class PendingSchedulerTest extends Test[Any]:
             ask.map(a => a + v)
         }
         var parked: Any = null
-        val remainder = ArrowEffect.handlePartial(Tag[Ask], program)(
+        val remainder = ControlEffect.handlePartial(Tag[Ask], program)(
             [C] =>
                 (input, cont) =>
                     parked = cont
@@ -80,7 +80,7 @@ class PendingSchedulerTest extends Test[Any]:
             k = k.map(_ + 1)
             i += 1
         var captured: Any = null
-        val r = ArrowEffect.handlePartial(Tag[Ask], k)(
+        val r = ControlEffect.handlePartial(Tag[Ask], k)(
             [C] =>
                 (input, cont) =>
                     captured = cont

@@ -7,8 +7,8 @@ import kyo.Tag
 import kyo.proto4.*
 import language.implicitConversions
 
-sealed trait BenchEcho    extends ArrowEffect[Const[Int], Const[Int]]
-sealed trait BenchCounter extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
+sealed trait BenchEcho    extends ControlEffect[Const[Int], Const[Int]]
+sealed trait BenchCounter extends ControlEffect[Const[Maybe[Int]], Const[Int]]
 
 object PendingBench:
 
@@ -16,19 +16,19 @@ object PendingBench:
     val counterTag = Tag[BenchCounter]
 
     def echo(v: Int): Int < BenchEcho =
-        ArrowEffect.suspend[Any](echoTag, v)
+        ControlEffect.suspend[Any](echoTag, v)
 
     def counterOp(in: Maybe[Int]): Int < BenchCounter =
-        ArrowEffect.suspend[Any](counterTag, in)
+        ControlEffect.suspend[Any](counterTag, in)
 
     def runEcho(v: => Int < BenchEcho): Int =
-        ArrowEffect.handle(echoTag, v)(
+        ControlEffect.handle(echoTag, v)(
             [C] => (in, cont) => cont(in)
         ).eval
 
     def runCounter(v: => Int < BenchCounter, n0: Int): Int =
         var state = n0
-        ArrowEffect.handle(counterTag, v)(
+        ControlEffect.handle(counterTag, v)(
             [C] =>
                 (in, cont) =>
                     in match
@@ -43,7 +43,7 @@ object PendingBench:
     // one resume handler per workload: the s.head.run site profiles receivers
     // per handler, so sharing one handler across workloads pools its profile
     def runEchoStepNarrow(v: => Int < BenchEcho): Int =
-        ArrowEffect.handle(echoTag, v)(
+        ControlEffect.handle(echoTag, v)(
             [C] =>
                 (in, cont) =>
                     cont.step match
@@ -52,7 +52,7 @@ object PendingBench:
         ).eval
 
     def runEchoStepSuspension(v: => Int < BenchEcho): Int =
-        ArrowEffect.handle(echoTag, v)(
+        ControlEffect.handle(echoTag, v)(
             [C] =>
                 (in, cont) =>
                     cont.step match
@@ -62,7 +62,7 @@ object PendingBench:
 
     def runCounterStep(v: => Int < BenchCounter, n0: Int): Int =
         var state = n0
-        ArrowEffect.handle(counterTag, v)(
+        ControlEffect.handle(counterTag, v)(
             [C] =>
                 (in, cont) =>
                     val x =

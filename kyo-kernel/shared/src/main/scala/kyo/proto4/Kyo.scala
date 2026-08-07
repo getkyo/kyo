@@ -41,7 +41,7 @@ object Kyo:
 
     end Suspension
 
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Suspension[O[A], E]:
+    abstract class Suspend[I[_], O[_], E <: ControlEffect[I, O], A] extends Suspension[O[A], E]:
 
         def input: I[A]
         def tag: Tag[E]

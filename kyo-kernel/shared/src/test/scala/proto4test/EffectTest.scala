@@ -7,20 +7,20 @@ import kyo.proto4.*
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait EffAsk extends ArrowEffect[Const[Unit], Const[Int]]
+sealed trait EffAsk extends ControlEffect[Const[Unit], Const[Int]]
 
 class EffectTest extends Test[Any]:
 
     def ask: Int < EffAsk =
-        ArrowEffect.suspend[Any](Tag[EffAsk], ())
+        ControlEffect.suspend[Any](Tag[EffAsk], ())
 
     def park(v: Int < EffAsk): Int < EffAsk =
-        ArrowEffect.handlePartial(Tag[EffAsk], v)(
+        ControlEffect.handlePartial(Tag[EffAsk], v)(
             [C] => (input, cont) => Maybe.Absent
         )
 
     def resume(v: Int < EffAsk, answer: Int): Int =
-        ArrowEffect.handle(Tag[EffAsk], v)(
+        ControlEffect.handle(Tag[EffAsk], v)(
             [C] => (input, cont) => cont(answer)
         ).eval
 

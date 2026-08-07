@@ -290,7 +290,7 @@ object `<`:
         val chain = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
         c.suspend match
             case s: Kyo.Suspend[?, ?, ?, ?] =>
-                dispatchArrow(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
+                dispatchControl(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
             case r: Kyo.ContextRead[?, ?] =>
                 resolveContext(r.tag.asInstanceOf[Tag[Any]], chain) match
                     case Maybe.Present(value) => Maybe(chain(liftSlow(value)))
@@ -301,7 +301,7 @@ object `<`:
         end match
     end dispatch
 
-    private def dispatchArrow(suspendTag: Tag[Any], input: Any, chain: Arrow[Any, Any, Any]): Maybe[Any < Any] =
+    private def dispatchControl(suspendTag: Tag[Any], input: Any, chain: Arrow[Any, Any, Any]): Maybe[Any < Any] =
 
         def compose(rest: Arrow[Any, Any, Any], pending: List[Arrow[Any, Any, Any]]): Arrow[Any, Any, Any] =
             pending.foldLeft(rest)((acc, next) => Arrow.map(acc)(next))
@@ -362,7 +362,7 @@ object `<`:
         end search
 
         search(chain, Nil, Nil)
-    end dispatchArrow
+    end dispatchControl
 
     /** Consults the drive-boundary clause for a suspension no delimiter matched.
       *
@@ -439,10 +439,10 @@ object `<`:
                 def frame = h.frame
                 def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
                     v match
-                        case ArrowEffect.Outcome.Continue(s2, next) =>
+                        case ControlEffect.Outcome.Continue(s2, next) =>
                             val h2 = new Handler.Loop(h.effectTag, s2, h.clause, h.done, h.frame)
                             cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next.asInstanceOf[Any < Any]))
-                        case ArrowEffect.Outcome.Done(b) =>
+                        case ControlEffect.Outcome.Done(b) =>
                             cont(`<`.liftSlow(b))
         )
     end outcomeStep

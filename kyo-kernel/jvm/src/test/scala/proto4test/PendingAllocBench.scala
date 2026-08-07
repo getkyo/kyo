@@ -81,7 +81,7 @@ object PendingAllocBench:
                 k = k.map(_ + 1)
                 i += 1
             var parked: Any = null
-            val _ = ArrowEffect.handlePartial(PendingBench.echoTag, k)(
+            val _ = ControlEffect.handlePartial(PendingBench.echoTag, k)(
                 [C] =>
                     (input, cont) =>
                         parked = cont
