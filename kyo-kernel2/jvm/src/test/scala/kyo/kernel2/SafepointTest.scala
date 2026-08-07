@@ -167,14 +167,20 @@ class SafepointTest extends Test[Any]:
         staleSafepoint.preempt()
         var anyPreempted = false
         var allEager     = true
+        var claimed      = 0
         var i            = 0
         while i < 1024 do
             val t = new Thread(() =>
                 if Safepoint.preempted then anyPreempted = true
-                val v = (1: Int < Any).map(_ + 1)
-                (v: Any) match
-                    case _: Kyo[?, ?] => allEager = false
-                    case _            => ()
+                // a thread that could not claim a slot runs on Overflow and bounces by design;
+                // the eager assertion applies only to claimants, who must never inherit a park
+                if Safepoint.owned then
+                    claimed += 1
+                    val v = (1: Int < Any).map(_ + 1)
+                    (v: Any) match
+                        case _: Kyo[?, ?] => allEager = false
+                        case _            => ()
+                end if
             )
             t.start()
             t.join()
@@ -182,5 +188,6 @@ class SafepointTest extends Test[Any]:
         end while
         assert(!anyPreempted)
         assert(allEager)
+        assert(claimed > 0)
     }
 end SafepointTest

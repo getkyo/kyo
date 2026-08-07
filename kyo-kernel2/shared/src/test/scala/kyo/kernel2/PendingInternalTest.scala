@@ -20,13 +20,13 @@ class PendingInternalTest extends Test[Any]:
 
     "evalNow unwraps a lifted computation value" in {
         val inner: Int < Any          = 1
-        val nested: (Int < Any) < Any = `<`.liftSlow(inner)
+        val nested: (Int < Any) < Any = Kyo.lift(inner)
         assert(nested.evalNow.map(_.eval) == Maybe(1))
     }
 
     "unsafeGet returns the completed value" in {
         assert((5: Int < Any).unsafeGet == 5)
-        val nested: (Int < Any) < Any = `<`.liftSlow(1: Int < Any)
+        val nested: (Int < Any) < Any = Kyo.lift(1: Int < Any)
         assert(nested.unsafeGet.eval == 1)
     }
 end PendingInternalTest

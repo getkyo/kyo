@@ -266,7 +266,7 @@ class PendingTest extends Test[Any]:
 
     "lift wraps nested computations" in {
         val inner: Int < Ask          = ask
-        val nested: (Int < Ask) < Any = inner
+        val nested: (Int < Ask) < Any = Kyo.lift(inner)
         val out                       = nested.eval
         assert(resolve(out.map(_ + 1), 41) == 42)
     }
@@ -386,7 +386,7 @@ class PendingTest extends Test[Any]:
 
     "flatten collapses a nested computation" in {
         val inner: Int < Ask          = ask
-        val nested: (Int < Ask) < Any = inner
+        val nested: (Int < Ask) < Any = Kyo.lift(inner)
         assert(resolve(nested.flatten, 9) == 9)
     }
 

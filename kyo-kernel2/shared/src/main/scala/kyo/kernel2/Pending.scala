@@ -3,26 +3,85 @@ package kyo.kernel2
 import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
+import kyo.Render
 import kyo.Tag
+import kyo.kernel2.internal.CanLift
+import kyo.kernel2.internal.LiftMacro
 import language.implicitConversions
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
+import scala.quoted.*
 
 opaque type <[+A, -S] = A | Kyo[A, S] | Kyo.Nested[A]
 
 object `<`:
 
-    // Inline with compile-time elision: a value type is provably not a computation
-    // (Kyo, Nested, and the opaque < all erase to references bounded by Any), so
-    // those sites lift by identity with no call and no tests. Everything else
-    // keeps the runtime check in liftSlow.
-    implicit inline def lift[A](v: A): A < Any =
-        scala.compiletime.summonFrom {
-            case _: (A <:< AnyVal) => v.asInstanceOf[A < Any]
-            case _: (A <:< String) => v.asInstanceOf[A < Any]
-            case _                 => liftSlow(v)
-        }
+    /** Implicitly lifts a value into the effect context.
+      *
+      * The CanLift evidence rejects statically-pending values at compile time: accidental nesting must go through an explicit `Kyo.lift`
+      * or `flatten`. The macro elides the runtime check when the type is provably not a computation.
+      */
+    implicit inline def lift[A: CanLift, S](v: A): A < S = ${ LiftMacro.liftMacro[A, S]('v) }
+
+    implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
+
+    implicit inline def liftUnit[S](inline v: Unit): Unit < S = v.asInstanceOf[Unit < S]
+
+    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ abortCastUnitImpl[S1, S2]('v) }
+
+    private def abortCastUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
+        import quotes.reflect.*
+        val source = TypeRepr.of[S1].show
+        report.errorAndAbort(
+            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
+               |This may be due to an effect type mismatch.
+               |Consider removing or adjusting the type constraint on the left-hand side.
+               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
+        )
+    end abortCastUnitImpl
+
+    /** Converts a pure single-argument function to an effectful computation. */
+    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
+        using inline flat: CanLift[B]
+    ): A1 => B < Any =
+        a1 => lift(f(a1))
+
+    /** Converts a pure two-argument function to an effectful computation. */
+    implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
+        using inline flat: CanLift[B]
+    ): (A1, A2) => B < Any =
+        (a1, a2) => lift(f(a1, a2))
+
+    /** Converts a pure three-argument function to an effectful computation. */
+    implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
+        using inline flat: CanLift[B]
+    ): (A1, A2, A3) => B < Any =
+        (a1, a2, a3) => lift(f(a1, a2, a3))
+
+    /** Converts a pure four-argument function to an effectful computation. */
+    implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
+        using inline flat: CanLift[B]
+    ): (A1, A2, A3, A4) => B < Any =
+        (a1, a2, a3, a4) => lift(f(a1, a2, a3, a4))
+
+    /** Converts a pure five-argument function to an effectful computation. */
+    implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B](inline f: (A1, A2, A3, A4, A5) => B)(
+        using inline flat: CanLift[B]
+    ): (A1, A2, A3, A4, A5) => B < Any =
+        (a1, a2, a3, a4, a5) => lift(f(a1, a2, a3, a4, a5))
+
+    /** Converts a pure six-argument function to an effectful computation. */
+    implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B](inline f: (A1, A2, A3, A4, A5, A6) => B)(
+        using inline flat: CanLift[B]
+    ): (A1, A2, A3, A4, A5, A6) => B < Any =
+        (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
+
+    given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
+        def asString(value: APendingS): String = value match
+            case sus: Kyo[?, ?] => sus.toString
+            case _              => s"Kyo(${ra.asString(Kyo.unwrap(value).asInstanceOf[A])})"
+    end given
 
     def liftSlow[A](v: A): A < Any =
         v match
@@ -63,16 +122,54 @@ object `<`:
           * This method exists to support for-comprehension syntax in Scala. It is identical to `map` and `map` should be preferred when not
           * using for-comprehensions.
           */
+        @nowarn
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            map(f)
+            val arrow = new Arrow.Transform[A, B, S2]:
+                def frame = _frame
+                def run[C, S3](v: Any, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                    val w = f(v.asInstanceOf[A])
+                    (cont: Any) match
+                        case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
+                            o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
+                        case _ =>
+                            cont(w)
+                    end match
+                end run
+            arrow(self)
+        end flatMap
 
         /** Executes this computation, discards its result, and then executes another computation. */
+        @nowarn
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            map(_ => f)
+            val arrow = new Arrow.Transform[A, B, S2]:
+                def frame = _frame
+                def run[C, S3](v: Any, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                    val w = f
+                    (cont: Any) match
+                        case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
+                            o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
+                        case _ =>
+                            cont(w)
+                    end match
+                end run
+            arrow(self)
+        end andThen
 
         /** Executes this computation and discards its result. */
+        @nowarn
         inline def unit(using inline _frame: Frame): Unit < S =
-            map(_ => ())
+            val arrow = new Arrow.Transform[A, Unit, Any]:
+                def frame = _frame
+                def run[C, S3](v: Any, cont: Arrow[Unit, C, S3]): C < (Any & S3) =
+                    (cont: Any) match
+                        case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                            o.head.run((), o.next).asInstanceOf[C < (Any & S3)]
+                        case _ =>
+                            cont(())
+                    end match
+                end run
+            arrow(self)
+        end unit
 
         /** Applies a transformation to this computation.
           *
