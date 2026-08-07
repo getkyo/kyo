@@ -331,7 +331,6 @@ lazy val kyoJVM: Project = project
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-kernel2`.jvm,
-        `kyo-kernel2-bench`,
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
@@ -739,23 +738,10 @@ lazy val `kyo-kernel2` =
             `kyo-settings`
         )
         .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.enablePlugins(JmhPlugin))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
-
-// JMH benchmarks for the kyo-kernel2 prototype line. Not part of routine CI runs;
-// compile is covered by the aggregate, execution is manual (kyo-kernel2-bench/Jmh/run).
-lazy val `kyo-kernel2-bench` =
-    project
-        .in(file("kyo-kernel2/bench"))
-        .enablePlugins(JmhPlugin)
-        .dependsOn(`kyo-kernel2`.jvm)
-        .disablePlugins(MimaPlugin)
-        .settings(
-            `kyo-settings`,
-            publish / skip := true,
-            run / fork     := true
-        )
 
 lazy val `kyo-prelude` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)

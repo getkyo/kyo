@@ -16,7 +16,7 @@ sealed trait BenchCounter extends ControlEffect[Const[Maybe[Int]], Const[Int]]
   * baseline table. Run manually, for example:
   *
   * {{{
-  * sbt 'kyo-kernel2-bench/Jmh/run -prof gc .*KernelBench.*'
+  * sbt 'kyo-kernel2JVM/Jmh/run -prof gc .*KernelBench.*'
   * }}}
   */
 @State(Scope.Benchmark)
