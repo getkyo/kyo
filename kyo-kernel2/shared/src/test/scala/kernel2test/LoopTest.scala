@@ -1,6 +1,5 @@
 package kernel2test
 
-import kyo.Const
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.*

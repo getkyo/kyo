@@ -3,6 +3,11 @@ package kyo.kernel2
 import kyo.Frame
 import scala.annotation.nowarn
 
+/** A type constructor that ignores its argument: the shape of operations whose input or output does not vary with the operation's
+  * type index.
+  */
+type Const[A] = [B] =>> A
+
 /** The common parent of the two effect kinds.
   *
   * An effect kind is a declaration of what a handler provides. [[ControlEffect]] declares operations, interpreted by a handler clause per
