@@ -1,0 +1,3 @@
+*.txt|alpha.txt=true|nested/alpha.txt=false
+**/*.txt|alpha.txt=true|nested/alpha.txt=true
+*.TXT|alpha.txt=false|ALPHA.TXT=true

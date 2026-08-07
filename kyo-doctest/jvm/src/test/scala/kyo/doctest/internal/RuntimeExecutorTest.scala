@@ -39,8 +39,8 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"runtime-executor-test-$id"
-            _      <- Abort.run[FileFsException](dir.mkDir).unit
-            result <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
+            _      <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
+            result <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap(f)
         yield result
 
     "times out and terminates a non-cooperative block process" in {

@@ -131,8 +131,12 @@ object I18n:
 
     /** Builds a handle by reading `<locale>.ftl` from `dir`, starting at `start`. The filesystem counterpart to
       * the loader overload, for the JVM, Scala Native, and Node; a browser build simply never links it.
+      *
+      * The reads carry `PathRead`, so the caller picks the filesystem the bundles come from: `Path.run` or
+      * `Path.runReadOnly` for the host, `Path.runReadOnlyWith(FileSystem.inMemory)` for a hermetic test. The
+      * read failure surfaces at that runner rather than here.
       */
-    def init(locales: Seq[Locale], start: Locale)(dir: Path)(using Frame): I18n < (Sync & Abort[FileReadException]) =
+    def init(locales: Seq[Locale], start: Locale)(dir: Path)(using Frame): I18n < (PathRead & Sync) =
         Kyo.foreach(locales)(loc => (dir / s"${loc.code}.ftl").read.map(ftl => Bundle.parse(ftl).map(loc -> _)))
             .map(parsed => handle(parsed, start))
 

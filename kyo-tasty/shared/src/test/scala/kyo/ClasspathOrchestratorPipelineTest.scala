@@ -98,16 +98,18 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
 
     "strict mode raises Abort[TastyError] for corrupted tasty file without hanging" in {
         // FailFast mode requires real filesystem roots. Use a temp dir with a corrupt file.
-        Path.tempDir("kyo-pipe-failfast").map { dir =>
-            (dir / "Corrupt.tasty").writeBytes(Span.from(Array[Byte](0, 1, 2, 3, 4, 5))).map { _ =>
-                Scope.run {
-                    Abort.run[TastyError](ClasspathOrchestrator.init(Seq(dir.toString), Tasty.ErrorMode.FailFast, 1)).map {
-                        case Result.Failure(_: TastyError) =>
-                            succeed
-                        case Result.Success(_) =>
-                            fail("Expected Abort[TastyError] for corrupted tasty in strict mode, but got success")
-                        case Result.Panic(t) =>
-                            throw t
+        Scope.run {
+            Path.run(Path.tempDir("kyo-pipe-failfast")).map { dir =>
+                Path.run((dir / "Corrupt.tasty").writeBytes(Span.from(Array[Byte](0, 1, 2, 3, 4, 5)))).map { _ =>
+                    Scope.run {
+                        Abort.run[TastyError](ClasspathOrchestrator.init(Seq(dir.toString), Tasty.ErrorMode.FailFast, 1)).map {
+                            case Result.Failure(_: TastyError) =>
+                                succeed
+                            case Result.Success(_) =>
+                                fail("Expected Abort[TastyError] for corrupted tasty in strict mode, but got success")
+                            case Result.Panic(t) =>
+                                throw t
+                        }
                     }
                 }
             }

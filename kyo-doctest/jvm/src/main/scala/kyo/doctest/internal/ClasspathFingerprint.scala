@@ -42,16 +42,24 @@ private[kyo] object ClasspathFingerprint:
 
     // Produce a raw-bytes hash for a single classpath entry.
     private def hashEntry(entry: kyo.Path)(using Frame): Array[Byte] < (Sync & Async & Abort[Doctest.Error]) =
-        entry.exists.flatMap { exists =>
+        // Per-operation runner: each Abort.recover here carries a distinct IoError op label; one runner
+        // per op is required to keep the label accurate to the failing operation.
+        Abort.recover[FileSystemException](e => Abort.fail(Doctest.Error.IoError(entry, "exists", e))) {
+            Path.runReadOnly(entry.exists)
+        }.flatMap { exists =>
             if !exists then
                 // Missing entry: hash the path string itself so presence vs absence is detectable.
                 sha256Bytes(entry.toString.getBytes("UTF-8"))
             else
-                entry.isDirectory.flatMap { isDir =>
+                // Per-operation runner: the IoError message must carry the "isDirectory" op label.
+                Abort.recover[FileSystemException](e => Abort.fail(Doctest.Error.IoError(entry, "isDirectory", e))) {
+                    Path.runReadOnly(entry.isDirectory)
+                }.flatMap { isDir =>
                     if isDir then hashDirectory(entry)
                     else
-                        Abort.recover[FileReadException](e => Abort.fail(Doctest.Error.IoError(entry, "read", e))) {
-                            entry.readBytes.map(span => sha256Bytes(span.toArray))
+                        // Per-operation runner: the IoError message must carry the "read" op label.
+                        Abort.recover[FileSystemException](e => Abort.fail(Doctest.Error.IoError(entry, "read", e))) {
+                            Path.runReadOnly(entry.readBytes).map(span => sha256Bytes(span.toArray))
                         }
                 }
         }
@@ -61,16 +69,18 @@ private[kyo] object ClasspathFingerprint:
     // Walk requires Scope; we run that scope locally (Scope.run introduces Async in the row).
     private def hashDirectory(dir: kyo.Path)(using Frame): Array[Byte] < (Sync & Async & Abort[Doctest.Error]) =
         Scope.run {
-            Abort.recover[FileFsException](e => Abort.fail(Doctest.Error.IoError(dir, "walk", e))) {
-                dir.walk.run
+            // Per-operation runner: the IoError message must carry the "walk" op label.
+            Abort.recover[FileSystemException](e => Abort.fail(Doctest.Error.IoError(dir, "walk", e))) {
+                Path.runReadOnly(dir.walk.run)
             }
         }.flatMap { allPaths =>
             val classFiles = allPaths.filter(_.toString.endsWith(".class"))
             // Sort by path string for stable hashing.
             val sortedFiles = classFiles.toSeq.sortBy(_.toString)
             Kyo.foreach(sortedFiles) { f =>
-                Abort.recover[FileReadException](e => Abort.fail(Doctest.Error.IoError(f, "read", e))) {
-                    f.readBytes.map(span => (f.toString, span.toArray))
+                // Per-operation runner: the IoError message must carry the "read" op label.
+                Abort.recover[FileSystemException](e => Abort.fail(Doctest.Error.IoError(f, "read", e))) {
+                    Path.runReadOnly(f.readBytes).map(span => (f.toString, span.toArray))
                 }
             }.map { entries =>
                 val digest = MessageDigest.getInstance("SHA-256")

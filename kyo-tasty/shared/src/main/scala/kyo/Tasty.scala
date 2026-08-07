@@ -129,13 +129,13 @@ object Tasty:
       */
     def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
         val maxAgeMs = maxAge.toMillis
-        // List all *.krfl files; wrap FileFsException so the caller sees TastyError.SnapshotIoError.
-        Abort.recover[FileFsException](e => Abort.fail(TastyError.SnapshotIoError(s"list $cacheDir: ${e.getMessage}")))(
-            Path(cacheDir).list("*.krfl")
+        // List all *.krfl files; wrap FileStructureException so the caller sees TastyError.SnapshotIoError.
+        Abort.recover[FileSystemException](e => Abort.fail(TastyError.SnapshotIoError(s"list $cacheDir: ${e.getMessage}")))(
+            Path.runReadOnly(Path(cacheDir).list(glob"*.krfl"))
         ).map { files =>
             // Collect (path, mtime) for each file; skip files whose stat call fails (concurrent-writer race).
             Kyo.collect(files) { p =>
-                Abort.run[FileReadException](p.stat).map {
+                Abort.run[FileSystemException](Path.runReadOnly(p.stat)).map {
                     case Result.Success(st) => Maybe((p, st.lastModifiedMs))
                     case _                  => Maybe.Absent
                 }
@@ -147,7 +147,7 @@ object Tasty:
                     Kyo.foreachDiscard(sorted.takeWhile { case (_, mtimeMs) => nowMs - mtimeMs > maxAgeMs }) {
                         case (p, _) =>
                             // Absorb errors: a missing file means a concurrent writer already replaced it.
-                            Abort.run[FileFsException](p.remove).map(_ => Kyo.unit)
+                            Abort.run[FileSystemException](Path.run(p.remove)).map(_ => Kyo.unit)
                     }
                 }
             }
@@ -4980,7 +4980,7 @@ object Tasty:
                 case Result.Success(digest) =>
                     val hexDigest    = SnapshotDigest.toHexString(digest)
                     val snapshotPath = s"$cacheDir/$hexDigest.krfl"
-                    Path(snapshotPath).exists.map { exists =>
+                    Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(snapshotPath).exists)).map { exists =>
                         if exists then
                             // Try to load from snapshot using mmap on JVM/Native, heap on JS.
                             Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath)).map {

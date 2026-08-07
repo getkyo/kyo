@@ -184,34 +184,36 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
         // maxAge is 60 seconds; the stale file is set to 2001-09-08 UTC (far in the past).
         val maxAge  = 60.seconds
         val staleMs = 1_000_000_000_000L // 2001-09-08 UTC
-        Path.tempDir("inv009-evict").map { dir =>
-            val staleFile = dir / "stale.krfl"
-            val freshFile = dir / "fresh.krfl"
-            staleFile.writeBytes(Span.from(Array[Byte](0x01))).map { _ =>
-                staleFile.setLastModified(staleMs).map { _ =>
-                    freshFile.writeBytes(Span.from(Array[Byte](0x02))).map { _ =>
-                        Abort.run[TastyError](
-                            Tasty.evictOlderThan(dir.toString, maxAge)
-                        ).map { result =>
-                            result match
-                                case Result.Panic(t) => throw t
-                                case Result.Failure(e) =>
-                                    fail(s"evictOlderThan must not abort; got $e")
-                                case Result.Success(_) =>
-                                    staleFile.exists.map { staleExists =>
-                                        freshFile.exists.map { freshExists =>
-                                            assert(
-                                                !staleExists,
-                                                s"stale.krfl must have been deleted by evictOlderThan"
-                                            )
-                                            assert(
-                                                freshExists,
-                                                s"fresh.krfl must NOT have been deleted by evictOlderThan"
-                                            )
-                                            succeed
+        Scope.run {
+            Path.run(Path.tempDir("inv009-evict")).map { dir =>
+                val staleFile = dir / "stale.krfl"
+                val freshFile = dir / "fresh.krfl"
+                Path.run(staleFile.writeBytes(Span.from(Array[Byte](0x01)))).map { _ =>
+                    Path.run(staleFile.setLastModified(staleMs)).map { _ =>
+                        Path.run(freshFile.writeBytes(Span.from(Array[Byte](0x02)))).map { _ =>
+                            Abort.run[TastyError](
+                                Tasty.evictOlderThan(dir.toString, maxAge)
+                            ).map { result =>
+                                result match
+                                    case Result.Panic(t) => throw t
+                                    case Result.Failure(e) =>
+                                        fail(s"evictOlderThan must not abort; got $e")
+                                    case Result.Success(_) =>
+                                        Path.runReadOnly(staleFile.exists).map { staleExists =>
+                                            Path.runReadOnly(freshFile.exists).map { freshExists =>
+                                                assert(
+                                                    !staleExists,
+                                                    s"stale.krfl must have been deleted by evictOlderThan"
+                                                )
+                                                assert(
+                                                    freshExists,
+                                                    s"fresh.krfl must NOT have been deleted by evictOlderThan"
+                                                )
+                                                succeed
+                                            }
                                         }
-                                    }
-                            end match
+                                end match
+                            }
                         }
                     }
                 }
@@ -220,21 +222,23 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     }
 
     "withClasspath(roots) cold-load reads from the filesystem" in {
-        Path.tempDir("inv009-cold").map { tmpDir =>
-            val tastyFile = tmpDir / "PlainClass.tasty"
-            tastyFile.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty)).map { _ =>
-                Abort.run[TastyError](
-                    Tasty.withClasspath(Seq(tmpDir.toString)) {
-                        Tasty.classpath.map(_.symbols.size)
+        Scope.run {
+            Path.run(Path.tempDir("inv009-cold")).map { tmpDir =>
+                val tastyFile = tmpDir / "PlainClass.tasty"
+                Path.run(tastyFile.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty))).map { _ =>
+                    Abort.run[TastyError](
+                        Tasty.withClasspath(Seq(tmpDir.toString)) {
+                            Tasty.classpath.map(_.symbols.size)
+                        }
+                    ).map {
+                        case Result.Success(n) =>
+                            assert(n > 0, s"cold-load from filesystem must produce a non-empty classpath; got $n symbols")
+                            succeed
+                        case Result.Failure(e) =>
+                            fail(s"withClasspath cold-load must not abort; got $e")
+                        case Result.Panic(t) =>
+                            throw t
                     }
-                ).map {
-                    case Result.Success(n) =>
-                        assert(n > 0, s"cold-load from filesystem must produce a non-empty classpath; got $n symbols")
-                        succeed
-                    case Result.Failure(e) =>
-                        fail(s"withClasspath cold-load must not abort; got $e")
-                    case Result.Panic(t) =>
-                        throw t
                 }
             }
         }
