@@ -119,15 +119,10 @@ object ControlEffect:
             )
         )
 
-    /** The decision a stateful loop clause returns for each operation. */
-    enum Outcome[+State, +Next, +B]:
-        case Continue(state: State, next: Next) extends Outcome[State, Next, Nothing]
-        case Done(result: B)                    extends Outcome[Nothing, Nothing, B]
-
     /** Handles `E` with handler state threaded through the operations.
       *
-      * The clause receives the current state, the operation's input, and the continuation, and decides: `Outcome.Continue(nextState,
-      * next)` keeps handling `next` (typically the resumed continuation) with the new state, `Outcome.Done(result)` leaves the region with
+      * The clause receives the current state, the operation's input, and the continuation, and decides: `Loop.continue(nextState,
+      * next)` keeps handling `next` (typically the resumed continuation) with the new state, `Loop.done(result)` leaves the region with
       * a final result, discarding the continuation. `done` produces the result when the region completes normally, from the final state
       * and value. The handler is deep for computations passed through Continue; effects raised while the outcome itself is computed
       * dispatch to outer handlers.
@@ -137,7 +132,7 @@ object ControlEffect:
         state: State,
         v: A < (E & S)
     )(
-        handle: [C] => (State, I[C], Arrow[O[C], A, E & S]) => Outcome[State, A < (E & S), B] < (E & S & S2),
+        handle: [C] => (State, I[C], Arrow[O[C], A, E & S]) => Loop.Outcome2[State, A < (E & S), B] < (E & S & S2),
         done: (State, A) => B < S2
     )(using frame: Frame): B < (S & S2) =
         install(

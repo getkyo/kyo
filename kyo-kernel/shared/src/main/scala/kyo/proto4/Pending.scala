@@ -453,11 +453,11 @@ object `<`:
                 def frame = h.frame
                 def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
                     v match
-                        case ControlEffect.Outcome.Continue(s2, next) =>
-                            val h2 = new Handler.Loop(h.effectTag, s2, h.clause, h.done, h.frame)
-                            cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next.asInstanceOf[Any < Any]))
-                        case ControlEffect.Outcome.Done(b) =>
-                            cont(`<`.liftSlow(b))
+                        case next: Loop.Continue2[?, ?] @unchecked =>
+                            val h2 = new Handler.Loop(h.effectTag, next._1, h.clause, h.done, h.frame)
+                            cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next._2.asInstanceOf[Any < Any]))
+                        case b =>
+                            cont(liftSlow(b))
         )
     end outcomeStep
 

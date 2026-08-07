@@ -247,8 +247,8 @@ class ControlEffectTest extends Test[Any]:
 
     "handleLoop threads state and applies done with the final state" in {
         val program = echo(1).map(a => echo(2).map(b => echo(3).map(c => a + b + c)))
-        val handled = ControlEffect.handleLoop(Tag[Echo], 0, program)(
-            [C] => (state, in, cont) => ControlEffect.Outcome.Continue(state + in, cont(in)),
+        val handled: (Int, Int) < Any = ControlEffect.handleLoop(Tag[Echo], 0, program)(
+            [C] => (state, in, cont) => Loop.continue(state + in, cont(in)),
             (state, a) => (state, a)
         )
         assert(handled.eval == (6, 6))
@@ -265,8 +265,8 @@ class ControlEffectTest extends Test[Any]:
         val handled = ControlEffect.handleLoop(Tag[Echo], 0, program)(
             [C] =>
                 (state, in, cont) =>
-                    if in >= 100 then ControlEffect.Outcome.Done(-1)
-                    else ControlEffect.Outcome.Continue(state + in, cont(in)),
+                    if in >= 100 then Loop.done(-1)
+                    else Loop.continue(state + in, cont(in)),
             (state, a) => a
         )
         assert(handled.eval == -1)
@@ -278,7 +278,7 @@ class ControlEffectTest extends Test[Any]:
         val handled: Int < Get = ControlEffect.handleLoop(Tag[Echo], 0, program.asInstanceOf[Int < (Echo & Get)])(
             [C] =>
                 (state, in, cont) =>
-                    get.map(g => ControlEffect.Outcome.Continue(state + g, cont(in + g))),
+                    get.map(g => Loop.continue(state + g, cont(in + g))),
             (state, a) => state * 1000 + a
         )
         val result = ControlEffect.handleResume(Tag[Get], handled)(
@@ -291,7 +291,7 @@ class ControlEffectTest extends Test[Any]:
         val program: Int < (Echo & Get) =
             echo(1).map(a => get.map(b => echo(2).map(c => a + b + c)))
         val handled: Int < Get = ControlEffect.handleLoop(Tag[Echo], 0, program)(
-            [C] => (state, in, cont) => ControlEffect.Outcome.Continue(state + in, cont(in)),
+            [C] => (state, in, cont) => Loop.continue(state + in, cont(in)),
             (state, a) => state * 1000 + a
         )
         val parked = ControlEffect.handlePartial(Tag[Get], handled)(
