@@ -272,6 +272,15 @@ rows carry the expected unoptimized dispatch cost (roughly 350-400 B and
 80-115 ns per suspension including the handler search); those are the
 rows the performance round measures against the proto3 ledger.
 
+After the Safepoint preemption work (instance-based Safepoint with the
+slot wrapper swap, see kernel2-preemption-analysis.md), the suite was
+re-run: every row holds at this baseline within noise except eagerMap5
+at 5.78 ns/op (was 3.71), the measured price of the instance layout and
+identity check on the purest eager chain; allocations are unchanged
+everywhere, with eagerMap5 and resumeFused still allocation-free. The
+per-variant measurement matrix behind that trade is recorded in the
+preemption analysis.
+
 ## Ruled follow-ups
 
 - Port kyo's Loop into kernel2 and revisit handleLoop's Outcome against
