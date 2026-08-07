@@ -70,7 +70,7 @@ class PendingTest extends Test[Any]:
         assert(resolve(ask.map(_ + 1), 41) == 42)
     }
 
-    "handling installs without executing" in {
+    "handling evaluates eagerly" in {
         var ran = false
         val handled = ControlEffect.handle(Tag[Ask], ask.map(_ + 1))(
             [C] =>
@@ -78,9 +78,8 @@ class PendingTest extends Test[Any]:
                     ran = true
                     cont(1)
         )
-        assert(!ran)
-        assert(handled.eval == 2)
         assert(ran)
+        assert(handled.eval == 2)
     }
 
     "handler parks and the continuation resumes" in {
@@ -127,22 +126,14 @@ class PendingTest extends Test[Any]:
         assert(resolve(program, 1, 2, 3) == 123)
     }
 
-    "preemption polls across handler dispatches" in {
+    "handling drives deep programs at the handle site" in {
         def program(i: Int): Int < Ask =
             if i == 0 then 0
             else ask.map(_ => program(i - 1))
-        var polls = 0
-        val handled = ControlEffect.handle(Tag[Ask], program(10000))(
+        val handled = ControlEffect.handle(Tag[Ask], program(100000))(
             [C] => (input, cont) => cont(0)
         )
-        val r = handled.eval(
-            () =>
-                polls += 1; polls == 2
-            ,
-            512
-        )
-        assert(polls == 2)
-        assert(r.eval == 0)
+        assert(handled.eval == 0)
     }
 
     "preemption yields and the remainder resumes" in {
@@ -261,12 +252,11 @@ class PendingTest extends Test[Any]:
         val program: Int < Ask = ask.map { _ =>
             (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
         }
-        val handled = ControlEffect.handle(Tag[Ask], program)(
-            [C] => (input, cont) => cont(1)
-        )
         val ex =
             try
-                val _ = handled.eval
+                val _ = ControlEffect.handle(Tag[Ask], program)(
+                    [C] => (input, cont) => cont(1)
+                )
                 null
             catch case e: RuntimeException => e
         assert(ex.getMessage == "boom")

@@ -105,14 +105,14 @@ object `<`:
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                driveLoop(self.asInstanceOf[Any < Any], never, 1) match
+                driveLoop(self.asInstanceOf[Any < Any], never, 1, boundary = true) match
                     case kyo: Kyo[?, ?] => throw new IllegalStateException("unhandled suspension: " + kyo)
                     case v              => Kyo.unwrap(v).asInstanceOf[A]
             else Kyo.unwrap(self).asInstanceOf[A]
 
         /** Evaluates within a preemption budget, returning the remaining computation. */
         def eval(preempt: () => Boolean, period: Int): A < Any =
-            driveLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period)).asInstanceOf[A < Any]
+            driveLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), boundary = true).asInstanceOf[A < Any]
 
     end extension
 
@@ -209,18 +209,25 @@ object `<`:
         val clause: [C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]
     )
 
+    /** Drives a freshly installed handler's region immediately: handling evaluates as far as it can, like every other strict
+      * position in the kernel. Preemption for these drives is a later iteration.
+      */
+    private[kyo] def driveInstalled(v: Any < Any): Any < Any =
+        driveLoop(v, never, 1, boundary = false)
+
     private[kyo] def drivePartial(
         v0: Any < Any,
         preempt: () => Boolean,
         period: Int,
         last: LastResort
     ): Any < Any =
-        driveLoop(v0, preempt, Integer.max(1, period / Arrow.Period), last)
+        driveLoop(v0, preempt, Integer.max(1, period / Arrow.Period), boundary = true, last)
 
     private def driveLoop(
         v0: Any < Any,
         preempt: () => Boolean,
         stride: Int,
+        boundary: Boolean,
         last: LastResort | Null = null
     ): Any < Any =
         def recur(v: Any < Any, depth: Int): Any < Any =
@@ -259,7 +266,7 @@ object `<`:
                             else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
                         else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
                     case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
-                        dispatch(c).orElse(dispatchLast(c, last)) match
+                        dispatch(c, boundary).orElse(dispatchLast(c, last)) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -286,18 +293,23 @@ object `<`:
       * delimiter) only because the capturing formats need it. The casts below are justified by the tag match: a delimiter constructed for
       * `E` matched a suspension of `E`, so the clause's erased input and continuation have the types the public API established.
       */
-    private def dispatch(c: Kyo.Continue[?, ?, ?]): Maybe[Any < Any] =
+    /** Context reads and their defaults resolve only at boundary drives (eval, handlePartial): an intermediate handle drive parks
+      * them, so bindings installed later still compose, matching the current kernel's late resolution.
+      */
+    private def dispatch(c: Kyo.Continue[?, ?, ?], boundary: Boolean): Maybe[Any < Any] =
         val chain = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
         c.suspend match
             case s: Kyo.Suspend[?, ?, ?, ?] =>
                 dispatchControl(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
-            case r: Kyo.ContextRead[?, ?] =>
+            case r: Kyo.ContextRead[?, ?] if boundary =>
                 resolveContext(r.tag.asInstanceOf[Tag[Any]], chain) match
                     case Maybe.Present(value) => Maybe(chain(liftSlow(value)))
                     case Maybe.Absent =>
                         r.default match
                             case Maybe.Present(d) => Maybe(chain(liftSlow(d())))
                             case Maybe.Absent     => Maybe.Absent
+            case _ =>
+                Maybe.Absent
         end match
     end dispatch
 

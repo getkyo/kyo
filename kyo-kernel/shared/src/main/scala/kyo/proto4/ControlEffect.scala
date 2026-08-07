@@ -59,7 +59,8 @@ object ControlEffect:
       * decides everything: invoke the continuation once to resume, not at all to abort, or several times. The handler is deep: effects of
       * `E` in the clause's result, including through resumed continuations, dispatch back to this handler.
       *
-      * Handling installs the handler and returns immediately; execution happens when the computation is driven.
+      * Handling evaluates immediately: the region runs as far as it can, and the result is either its value or the computation parked on
+      * an effect this handler does not cover, with the handler traveling in it.
       */
     def handle[I[_], O[_], E <: ControlEffect[I, O], A, S, S2](
         effectTag: Tag[E],
@@ -178,6 +179,6 @@ object ControlEffect:
         ).asInstanceOf[A < (E & S)]
 
     private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
-        h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]).asInstanceOf[B < S2]
+        `<`.driveInstalled(h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any])).asInstanceOf[B < S2]
 
 end ControlEffect

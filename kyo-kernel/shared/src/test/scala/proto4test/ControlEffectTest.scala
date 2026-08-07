@@ -217,7 +217,7 @@ class ControlEffectTest extends Test[Any]:
         assert(resumed.eval == 32)
     }
 
-    "a handled computation is a reusable value" in {
+    "a fully handled region evaluates at the handle site" in {
         var runs = 0
         val handled = ControlEffect.handleResume(Tag[Echo], echo(1).map(_ + 1))(
             [C] =>
@@ -225,12 +225,13 @@ class ControlEffectTest extends Test[Any]:
                     runs += 1
                 in
         )
+        assert(runs == 1)
         assert(handled.eval == 2)
         assert(handled.eval == 2)
-        assert(runs == 2)
+        assert(runs == 1)
     }
 
-    "defer inside a handled region stays lazy and dispatches" in {
+    "defer inside a handled region executes at the handle site" in {
         var log = List.empty[String]
         val program = Effect.defer {
             log :+= "defer"
@@ -239,7 +240,7 @@ class ControlEffectTest extends Test[Any]:
         val handled = ControlEffect.handleResume(Tag[Echo], program.asInstanceOf[Int < Echo])(
             [C] => (in) => in + 10
         )
-        assert(log == Nil)
+        assert(log == List("defer"))
         assert(handled.eval == 12)
         assert(log == List("defer"))
     }

@@ -184,19 +184,21 @@ decompose with `step` like any chain.
 
 Decisions made or corrected during the build, now the source of truth:
 
-1. Handling is installation only for the delimiter formats. handle appends
-   the delimiter and returns; one drive at the boundary (eval, or a
-   handlePartial boundary) serves arbitrarily nested handlers, which is
-   what makes preemption compose with handling. The runtime boundary is
-   ControlEffect.handlePartial: it drives immediately, consulting its clause
-   as the handler of last resort for operations no delimiter matched, with
-   the Maybe protocol (Present continues, Absent parks after the clause
-   captured the continuation) and the preemption budget. eval(preempt,
-   period) stays as the plain preemptible evaluation on a fully handled
-   row; there is no separate public drive. The sync-path fusion opportunity
-   moves entirely into the drive and is later performance work. NOTE: the
-   installation-only semantics deviates from the earlier sync-path ruling
-   (clause-now at the handle site) and is pending an explicit ruling.
+1. Handling evaluates eagerly (ruled): control handles drive their region
+   at the handle site, like the current kernel and like every other strict
+   position (map on values). The result of handle is the region's value or
+   the computation parked on an effect the handler does not cover, with the
+   handler traveling in it; work before a park runs once and is shared by
+   later evaluations. Context handles install without driving, and context
+   reads and defaults resolve only at boundary drives (eval, eval(preempt,
+   period), handlePartial), parking in intermediate handle drives: this is
+   what keeps late-installed bindings composing (ifDefined sees the outer
+   binding), matching the current kernel's late context resolution.
+   Preemption of handle-site drives is deliberately out of scope for now;
+   the preemption mechanism will be iterated separately. handlePartial is
+   the runtime boundary: it drives with the Maybe protocol (Present
+   continues, Absent parks after the clause captured the continuation) and
+   the preemption budget.
 2. ControlEffect's parameters are invariant. Variant parameters make inference
    solve the operation constructors to their extremes at tag-driven sites;
    subtype dispatch across effect families is future work that must bring
@@ -252,9 +254,8 @@ on delimiter-free chains, restoring linear parking.
 - Variance restored on ControlEffect with the kernel's S2 split across the
   handle family; handleFirst and handleLoop take (handle, done) in one
   argument list, the current kernel's shape.
-- Installation-only handling: analysis delivered (no capability lost;
-  timing, retention, preemption composition, referential transparency
-  differ); awaiting the final ruling.
+- Handling semantics ruled: eager at the handle site for control handlers,
+  install-only for context handlers, boundary-gated context resolution.
 
 ## Known deferred concerns
 
