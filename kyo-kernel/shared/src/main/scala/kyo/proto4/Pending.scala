@@ -33,7 +33,7 @@ object `<`:
 
     extension [A, S](self: A < S)
 
-        private[kyo] def discard: Unit =
+        def discard: Unit =
             discardValue(self) match
                 case Nil => ()
                 case t :: rest =>
@@ -109,7 +109,7 @@ object `<`:
 
     end extension
 
-    inline def evalPartial[I[_], O[_], E <: Effect[I, O], A](
+    inline def evalPartial[I[_], O[_], E <: ArrowEffect[I, O], A](
         tag: Tag[E],
         v: A < E,
         preempt: () => Boolean = never,
@@ -128,7 +128,7 @@ object `<`:
         evalLoop(v.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), handler).asInstanceOf[A < E]
     end evalPartial
 
-    inline def eval[I[_], O[_], E <: Effect[I, O], A](
+    inline def eval[I[_], O[_], E <: ArrowEffect[I, O], A](
         tag: Tag[E],
         v: A < E
     )(

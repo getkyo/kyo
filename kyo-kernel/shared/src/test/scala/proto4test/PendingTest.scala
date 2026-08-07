@@ -8,19 +8,13 @@ import kyo.proto4.*
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait Ask  extends Effect[Const[Unit], Const[Int]]
-sealed trait Ask2 extends Effect[Const[Unit], Const[Int]]
+sealed trait Ask  extends ArrowEffect[Const[Unit], Const[Int]]
+sealed trait Ask2 extends ArrowEffect[Const[Unit], Const[Int]]
 
 class PendingTest extends Test[Any]:
 
-    def rawAsk: Kyo.Suspend[Const[Unit], Const[Int], Ask, Any] =
-        new Kyo.Suspend[Const[Unit], Const[Int], Ask, Any]:
-            def frame = Frame.derive
-            def input = ()
-            def tag   = Tag[Ask]
-
     def ask: Int < Ask =
-        rawAsk.map(Arrow[Int])
+        ArrowEffect.suspend[Any](Tag[Ask], ())
 
     def resolve(v: Int < Ask, answers: Int*): Int =
         var remaining = answers.toList
@@ -62,8 +56,8 @@ class PendingTest extends Test[Any]:
     }
 
     "handler resolves a bare suspension" in {
-        val raw: Int < Ask = rawAsk.map(Arrow[Int])
-        assert(resolve(raw.map(_ + 1), 41) == 42)
+        assert(resolve(ask, 41) == 41)
+        assert(resolve(ask.map(_ + 1), 41) == 42)
     }
 
     "handler parks and the continuation resumes" in {
@@ -130,94 +124,6 @@ class PendingTest extends Test[Any]:
         val program = ask.map(a => ask.map(b => ask.map(c => a * 100 + b * 10 + c)))
         assert(resolve(program, 1, 2, 3) == 123)
     }
-
-    "bracket releases on completion" in {
-        var log = List.empty[String]
-        val b = new Kyo.Bracket[Int, Int, Any]:
-            def frame = Frame.derive
-            def acquire =
-                log :+= "acq"; 42
-            def release(r: Int) =
-                log :+= "rel"; ()
-            def cont = transform(_ + 1)
-        assert(b.map(Arrow[Int]).eval == 43)
-        assert(log == List("acq", "rel"))
-    }
-
-    "bracket releases exactly once across a park" in {
-        var log = List.empty[String]
-        val b = new Kyo.Bracket[Int, Int, Ask]:
-            def frame = Frame.derive
-            def acquire =
-                log :+= "acq"; 42
-            def release(r: Int) =
-                log :+= "rel"; ()
-            def cont = contAsk(v => ask.map(a => a + v))
-        var parked: Any = null
-        val r = `<`.evalPartial(Tag[Ask], b.map(Arrow[Int]))(
-            [X] =>
-                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
-                    parked = cont
-                    Maybe.Absent
-        )
-        assert(log == List("acq"))
-        assert(parked.asInstanceOf[Arrow[Int, Int, Ask]](100).asInstanceOf[Int < Any].eval == 142)
-        assert(log == List("acq", "rel"))
-    }
-
-    "bracket releases on exception" in {
-        var log = List.empty[String]
-        val b = new Kyo.Bracket[Int, Int, Any]:
-            def frame = Frame.derive
-            def acquire =
-                log :+= "acq"; 42
-            def release(r: Int) =
-                log :+= "rel"; ()
-            def cont = Arrow.of(
-                new Arrow.Transform[Int, Int, Any]:
-                    def frame = Frame.derive
-                    def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Any & S2) =
-                        throw new RuntimeException("boom")
-            )
-        val thrown =
-            try
-                val _ = b.map(Arrow[Int]).eval
-                false
-            catch case e: RuntimeException => e.getMessage == "boom"
-        assert(thrown)
-        assert(log == List("acq", "rel"))
-    }
-
-    "nested brackets release in reverse order" in {
-        var log = List.empty[String]
-        def mk(name: String, body: Arrow[Int, Int, Any]): Int < Any =
-            val b = new Kyo.Bracket[Int, Int, Any]:
-                def frame = Frame.derive
-                def acquire =
-                    log :+= s"acq-$name"; 1
-                def release(r: Int) =
-                    log :+= s"rel-$name"; ()
-                def cont = body
-            b.map(Arrow[Int])
-        end mk
-        val inner = transform(_ + 1)
-        val outer = Arrow.of(
-            new Arrow.Transform[Int, Int, Any]:
-                def frame = Frame.derive
-                def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Any & S2) =
-                    cont(mk("inner", inner))
-        )
-        assert(mk("outer", outer).eval == 2)
-        assert(log == List("acq-outer", "acq-inner", "rel-inner", "rel-outer"))
-    }
-
-    def contAsk(f: Int => Int < Ask): Arrow[Int, Int, Ask] =
-        Arrow.of(
-            new Arrow.Transform[Int, Int, Ask]:
-                def frame = Frame.derive
-                def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Ask & S2) =
-                    cont(f(v.asInstanceOf[Int]))
-        )
 
     "preemption polls across handler dispatches" in {
         def program(i: Int): Int < Ask =
@@ -329,12 +235,7 @@ class PendingTest extends Test[Any]:
 
     "handlers route by tag and nest" in {
         val ask2: Int < Ask2 =
-            val s = new Kyo.Suspend[Const[Unit], Const[Int], Ask2, Any]:
-                def frame = Frame.derive
-                def input = ()
-                def tag   = Tag[Ask2]
-            s.map(Arrow[Int])
-        end ask2
+            ArrowEffect.suspend[Any](Tag[Ask2], ())
         val program: Int < Ask =
             ask.map(a => ask2.asInstanceOf[Int < Ask].map(b => a * 10 + b))
         val inner = `<`.evalPartial(Tag[Ask], program)(

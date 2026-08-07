@@ -7,8 +7,8 @@ import kyo.Tag
 import kyo.proto4.*
 import language.implicitConversions
 
-sealed trait BenchEcho    extends Effect[Const[Int], Const[Int]]
-sealed trait BenchCounter extends Effect[Const[Maybe[Int]], Const[Int]]
+sealed trait BenchEcho    extends ArrowEffect[Const[Int], Const[Int]]
+sealed trait BenchCounter extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
 
 object PendingBench:
 
@@ -16,20 +16,10 @@ object PendingBench:
     val counterTag = Tag[BenchCounter]
 
     def echo(v: Int): Int < BenchEcho =
-        val s = new Kyo.Suspend[Const[Int], Const[Int], BenchEcho, Any]:
-            def input = v
-            def tag   = echoTag
-            def frame = Frame.derive
-        s.map(Arrow[Int])
-    end echo
+        ArrowEffect.suspend[Any](echoTag, v)
 
     def counterOp(in: Maybe[Int]): Int < BenchCounter =
-        val s = new Kyo.Suspend[Const[Maybe[Int]], Const[Int], BenchCounter, Any]:
-            def input = in
-            def tag   = counterTag
-            def frame = Frame.derive
-        s.map(Arrow[Int])
-    end counterOp
+        ArrowEffect.suspend[Any](counterTag, in)
 
     def runEcho(v: => Int < BenchEcho): Int =
         `<`.eval(echoTag, v)(

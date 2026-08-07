@@ -26,7 +26,7 @@ object Kyo:
     final class Nested[+A](val value: A):
         override def toString = "Nested"
 
-    abstract class Suspend[I[_], O[_], E <: Effect[I, O], A] extends Kyo[O[A], E]:
+    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Kyo[O[A], E]:
 
         def input: I[A]
         def tag: Tag[E]
@@ -42,7 +42,7 @@ object Kyo:
 
     end Suspend
 
-    final class Continue[I[_], O[_], E <: Effect[I, O], A, +B, -S](
+    final class Continue[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
         val suspend: Suspend[I, O, E, A],
         val cont: Arrow[O[A], B, S]
     ) extends Kyo[B, E & S]:
