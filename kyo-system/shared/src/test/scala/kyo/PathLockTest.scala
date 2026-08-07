@@ -21,6 +21,31 @@ class PathLockTest extends FileSystemLockTestSuite:
             }
         }
     }
+
+    "Path lock operations forward through staged-write overlays" in {
+        // Previously this ran the three staged-write shapes and asserted `true`, which held for any
+        // implementation that did not throw, including one that granted nothing or leaked every
+        // claim. Each arm now asserts the mode it was granted and that the claim is gone once the
+        // scope closes, which is what "forwards correctly" has to mean.
+        FileSystem.inMemory.map { fileSystem =>
+            Path.runWith(fileSystem) {
+                val staged    = Path("staged-lock.bin")
+                val discarded = Path("discarded-lock.bin")
+                val committed = Path("committed-lock.bin")
+                def acquire(path: Path) =
+                    path.lock(Path.LockMode.Exclusive, Path.LockWait.Immediate).map(lock => assert(lock.mode == Path.LockMode.Exclusive))
+                def reacquirable(path: Path) =
+                    Scope.run(path.tryLock(Path.LockMode.Exclusive)).map { again =>
+                        assert(again.isDefined, s"the claim on $path outlived the scope that took it")
+                    }
+                Scope.run(Path.stageWrites(acquire(staged)).unit).andThen(reacquirable(staged)).andThen {
+                    Scope.run(Path.discardWrites(acquire(discarded))).andThen(reacquirable(discarded))
+                }.andThen {
+                    Scope.run(Path.commitWritesOnSuccess(acquire(committed))).andThen(reacquirable(committed))
+                }
+            }
+        }
+    }
 end PathLockTest
 
 class HostPathLockTest extends FileSystemLockTestSuite:

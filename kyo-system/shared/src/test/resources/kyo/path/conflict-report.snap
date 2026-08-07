@@ -1,0 +1,4 @@
+path=root/value.txt
+ancestor=base
+ours=ours
+theirs=theirs
