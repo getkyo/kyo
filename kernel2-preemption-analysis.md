@@ -243,11 +243,60 @@ the signal's location.
 
 The concurrency argument collapses to two sentences. The depth word is
 single-writer plain, untouched by this design. The preempt word is only
-ever written by volatile stores of 1 (requesters) and one volatile
-exchange to 0 (consumer), and read by the opaque poll, so no interleaving
-loses a request or corrupts a value, and consume-then-check ordering
-guarantees every consumed request's condition is visible to the decision
-that follows.
+ever written by volatile stores of the flag value (requesters) and one
+volatile exchange to 0 (consumer), and read by the opaque poll, so no
+interleaving loses a request or corrupts a value, and consume-then-check
+ordering guarantees every consumed request's condition is visible to the
+decision that follows.
+
+### Encapsulation: the whole mechanism lives in Safepoint
+
+Every access to both words stays inside Safepoint; no other file touches
+the array or the VarHandle. The key enabler: the flag word stores `Limit`
+rather than 1, and `increase` folds it into the depth it returns, so a
+pending request reads as depth-at-limit and the caller's existing compare
+is the poll. `Arrow.guardedRun` does not change at all.
+
+    private[kyo] object Safepoint:
+        inline def Limit = 512
+        private inline def Flag = Limit   // flag word holds 0 or Limit
+
+        // hot: previous depth with the preempt flag folded in; a pending
+        // request reads as >= Limit, and the fold also suppresses the
+        // depth store, so the rescue path stays write-free
+        @static def increase(slot: Int): Long =
+            val depth = cells(slot) | getOpaque(slot + 1)
+            if depth < Limit then cells(slot) = depth + 1
+            depth
+
+        @static def decrease(slot: Int): Unit   // unchanged
+        @static def slot(): Int                 // unchanged
+
+        // requester: publish the condition first, then signal; no-op on
+        // the shared overflow slot (it already rescues every frame)
+        @static def preempt(slot: Int): Unit =
+            if slot != OverflowSlot then setVolatile(slot + 1, Flag)
+
+        // cascade check for non-boundary drives
+        @static def preempted(slot: Int): Boolean =
+            getOpaque(slot + 1) != 0L
+
+        // boundary drives, consume-then-check; RMW only when set
+        @static def clearPreempt(slot: Int): Boolean =
+            preempted(slot) && getAndSet(slot + 1, 0L) != 0L
+
+Call sites: `Arrow.guardedRun` unchanged; non-boundary drives call
+`preempted` at their Defer-processing points and return the remainder;
+boundary drives call `clearPreempt` at the stride check before consulting
+the authoritative state; IOTask stashes `Safepoint.slot()` at slice entry
+(and clears the stash at exit, with a defensive `clearPreempt` at slice
+start); `onComplete`, the BlockingMonitor scan, and `Worker.checkStalling`
+call `preempt(stashedSlot)`. The versus-two-compares accounting: folding
+into `increase` costs one load and one OR on the resident line with no
+added branch, strictly cheaper than a separate `preempt != 0` check, and
+it keeps the poll invisible to the kernel's hot path. Safepoint's scaladoc
+already names this as the intended trajectory (the successor of the
+current kernel's Safepoint, carrying the runtime guard).
 
 What this costs relative to the poison bit: the poll is no longer
 literally free, it is one extra load, compare, and predicted branch per
