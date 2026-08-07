@@ -131,3 +131,57 @@ chain-delimiter model, `restore`'s tunneling already has a structural home
 (the restore suspension is just part of the shipped chain), and `Keep` is
 simply the effect row the fork's drive serves. The genuinely new obligation
 is only item 1, the snapshotable environment at fork points.
+
+## The stages, structurally
+
+Strip the names: `capture` is state acquisition from the ambient handlers
+(CPS shaped), `isolate` is reification (run under a local interpretation
+seeded with the snapshot, return the result inside the carrier functor
+`Transform`), `restore` is reflection (eliminate the carrier by
+re-suspending against the handlers surrounding the join). Reify and reflect
+around a boundary, with a seed: Filinski's reification/reflection pair, the
+same carrier-functor threading Haskell's higher-order effect machinery calls
+weaving.
+
+The three-stage factoring is forced by space, not taste: capture runs on the
+forking side, isolate inside the shipped task, restore on the joining side
+against the joiner's handlers. Two boundary crossings demand two value-level
+envelopes (`State` outward, `Transform[A]` back). Add effect-row soundness
+(the fork sees only `Keep`) and composability, and the rest is determined:
+composition pairs states and composes the functors
+(`Transform1[Transform2[A]]`), `Identity` is the unit, isolates form a
+monoid, and the derivation macro is the fold of that monoid over an
+intersection. The suspicious genericity is the signature of a minimal
+construction.
+
+## Comparison with other effect systems
+
+- Koka, Eff, Effekt, Frank, OCaml 5: nothing comparable. Koka's
+  `initially`/`finally` address re-entry per resumption, not forks; named
+  and scoped handlers prevent escape rather than manage transfer; OCaml 5
+  has one-shot untyped handlers and no story for handler state crossing
+  domains; Effekt and Unison require handling before crossing.
+- ZIO `FiberRef` is the closest runtime-level relative: real fork (copy) and
+  join (merge function) semantics, but one hardwired primitive, policy fixed
+  at creation rather than per fork site, untracked in types. Cats Effect
+  `IOLocal` has the copy half only.
+- fused-effects/polysemy weaving and effectful's unlifting strategies are
+  the theory cousins (same carrier threading) but serve scoped operations,
+  not physical fork/join, and are the expert-only corner of those libraries.
+
+Unique in combination: arbitrary user effects, per-fork-site policy choice,
+`Remove` and `Restore` as different rows, restore residue tunneling through
+the fiber result to the joiner's handlers, monoidal derivation over
+intersections with the context kind exempted, and `nest` making the reflect
+stage first-class.
+
+Honest warts: `Transform` is lawless (identity and composition coherence are
+trusted, not enforced); `andThen` is non-commutative and ordering hazards
+are excluded by convention (`Abort`, `Choice`), not by construction;
+`capture`'s CPS shape is pragmatism. The genericity stops exactly at
+effects whose handlers do not commute with the boundary.
+
+For the redesign: the stages map onto the ratified primitives with nothing
+left over. Capture is a state or environment read, isolate is HandleLoop
+with done (Transform is what done returns), restore is suspension in a
+shipped chain.
