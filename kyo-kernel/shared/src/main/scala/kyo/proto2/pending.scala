@@ -360,8 +360,12 @@ object `<`:
                     case kyo: Kyo[Any, Any] @unchecked =>
                         if depth == 0 then
                             handle(kyo) match
-                                case Maybe.Present(next) => loop(next, n)
-                                case _                   => kyo
+                                case Maybe.Present(next) =>
+                                    if n == 0 then
+                                        if preempt() then next
+                                        else loop(next, stride - 1)
+                                    else loop(next, n - 1)
+                                case _ => kyo
                         else kyo
                     case _ =>
                         curr

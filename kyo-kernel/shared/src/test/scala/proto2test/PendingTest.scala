@@ -219,6 +219,88 @@ class PendingTest extends Test[Any]:
                     cont(f(v.asInstanceOf[Int]))
         )
 
+    "preemption polls across handler dispatches" in {
+        def program(i: Int): Int < Ask =
+            if i == 0 then 0
+            else ask.map(_ => program(i - 1))
+        var polls = 0
+        val r = `<`.evalPartial(
+            Tag[Ask],
+            program(10000),
+            () =>
+                polls += 1; polls == 2
+            ,
+            512
+        )(
+            [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(0))
+        )
+        assert(polls == 2)
+        val done = `<`.evalPartial(Tag[Ask], r)(
+            [X] => (input: Unit, cont: Arrow[Int, Int, Ask]) => Maybe(cont(0))
+        )
+        assert(done.asInstanceOf[Int < Any].eval == 0)
+    }
+
+    "preemption yields and the remainder resumes" in {
+        var k: Int < Ask = ask
+        var i            = 0
+        while i < 10000 do
+            k = k.map(_ + 1)
+            i += 1
+        var parked: Any = null
+        val _ = `<`.evalPartial(Tag[Ask], k)(
+            [X] =>
+                (input: Unit, cont: Arrow[Int, Int, Ask]) =>
+                    parked = cont
+                    Maybe.Absent
+        )
+        val resumed = parked.asInstanceOf[Arrow[Int, Int, Ask]](0).asInstanceOf[Int < Any]
+        var polls   = 0
+        val suspended = resumed.eval(
+            () =>
+                polls += 1; polls == 2
+            ,
+            512
+        )
+        assert(polls == 2)
+        assert(suspended.eval == 10000)
+    }
+
+    "period controls poll cadence" in {
+        def parkAndResume(): Int < Any =
+            var k: Int < Ask = ask
+            var i            = 0
+            while i < 10000 do
+                k = k.map(_ + 1)
+                i += 1
+            var parked: Any = null
+            val _ = `<`.evalPartial(Tag[Ask], k)(
+                [X] =>
+                    (input: Unit, cont: Arrow[Int, Int, Ask]) =>
+                        parked = cont
+                        Maybe.Absent
+            )
+            parked.asInstanceOf[Arrow[Int, Int, Ask]](0).asInstanceOf[Int < Any]
+        end parkAndResume
+        var p512 = 0
+        assert(parkAndResume().eval(
+            () =>
+                p512 += 1;
+                false
+            ,
+            512
+        ).eval == 10000)
+        var p4096 = 0
+        assert(parkAndResume().eval(
+            () =>
+                p4096 += 1;
+                false
+            ,
+            4096
+        ).eval == 10000)
+        assert(p512 > p4096)
+    }
+
     "deep resumed continuation is stack safe" in {
         var k: Int < Ask = ask
         var i            = 0
