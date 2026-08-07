@@ -68,4 +68,39 @@ class PathConfinementJvmTest extends kyo.test.Test[Any]:
             }
         }
 
+    "confinedTo rejects a symlink escape identically with and without a staged-write overlay" in {
+        Scope.run {
+            withEscapeLink("conf-overlay") { (root, throughLink) =>
+                // Control: no overlay installed. The host backend resolves the link and rejects.
+                Abort.run[FileSystemException](Path.runReadOnly(throughLink.confinedTo(root))).map { control =>
+                    assert(
+                        control.failure.exists(_.isInstanceOf[FileAccessDeniedException]),
+                        s"control (no overlay) should reject the escape, got: $control"
+                    )
+                    // Same check inside a staged-write overlay must reach the same verdict.
+                    Abort.run[FileSystemException](Path.run(Path.discardWrites(throughLink.confinedTo(root)))).map { staged =>
+                        staged.failure match
+                            case Present(_: FileAccessDeniedException) => assert(true)
+                            case other =>
+                                fail(s"overlay accepted a symlink escape that the host rejected: $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "isSymbolicLink reports a lower symlink identically with and without a staged-write overlay" in {
+        Scope.run {
+            withEscapeLink("symlink-overlay") { (root, _) =>
+                val link = root / "escape-link"
+                Path.runReadOnly(link.isSymbolicLink).map { control =>
+                    assert(control, "control (no overlay) should report the path as a symlink")
+                    Path.run(Path.discardWrites(link.isSymbolicLink)).map { staged =>
+                        assert(staged, "overlay reported false for a path the host reports as a symlink")
+                    }
+                }
+            }
+        }
+    }
+
 end PathConfinementJvmTest

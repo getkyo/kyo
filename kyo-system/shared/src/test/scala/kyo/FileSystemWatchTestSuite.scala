@@ -209,9 +209,46 @@ class HostPathWatchTest extends FileSystemWatchTestSuite:
     end withFileSystem
 end HostPathWatchTest
 
+class OverlayPathWatchTest extends FileSystemWatchTestSuite:
+    private given Frame = Frame.internal
+
+    protected def withFileSystem(
+        use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) => Unit <
+            (Async & Sync & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
+        FileSystem.inMemory.map { lower =>
+            val root = Path("overlay-watch-root")
+            lower.mkDir(root).andThen {
+                FileSystem.overlay(lower).map(overlay => use(overlay, root))
+            }
+        }
+
+    "overlay watching observes lower-backend changes in its effective view" in {
+        Clock.withTimeControl { clock =>
+            FileSystem.inMemory.map { lower =>
+                val root = Path("overlay-lower-watch-root")
+                val file = root / "lower-created.txt"
+                lower.mkDir(root).andThen {
+                    FileSystem.overlay(lower).map { overlay =>
+                        overlay.openWatcher(root, WatchOptions()).map { watcher =>
+                            lower.write(file, "lower", Path.WriteOptions()).andThen {
+                                clock.advance(Duration.Zero, 10.millis).andThen(clock.advance(10.millis, 10.millis)).andThen {
+                                    Scope.run(watcher.events.take(1).run).map { events =>
+                                        assert(events == Chunk(PathChange.Created(file)))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+end OverlayPathWatchTest
+
 /** The in-memory backend has its own watcher, pushed to from each mutation into the channel every
-  * registered watcher holds, and entirely separate from the polling watcher the host backend uses.
-  * It advertises the Watch tier, so it owes the same contract; before this it had only its own
+  * registered watcher holds, and entirely separate from the polling watcher the host and overlay
+  * use. It advertises the Watch tier, so it owes the same contract; before this it had only its own
   * ad-hoc cases and the two implementations were never held to the same assertions.
   */
 class InMemoryPathWatchTest extends FileSystemWatchTestSuite:
@@ -226,3 +263,52 @@ class InMemoryPathWatchTest extends FileSystemWatchTestSuite:
             fileSystem.mkDir(root).andThen(use(fileSystem, root))
         }
 end InMemoryPathWatchTest
+
+/** An overlay over the host, which is the only configuration where the overlay's `stableIdentity`
+  * delegation is reachable.
+  *
+  * The existing overlay registration uses an in-memory lower, and that backend inherits the absent
+  * default for `stableIdentity`, so the delegation branch never returns an identity and the move
+  * correlation it feeds is never exercised. A host lower reports a real one.
+  */
+class OverlayOverHostPathWatchTest extends FileSystemWatchTestSuite:
+    private given Frame = Frame.internal
+
+    protected def withFileSystem(
+        use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) => Unit <
+            (Async & Sync & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-overlay-host-watch").map { (lower, root) =>
+            FileSystem.overlay(lower).map(overlay => use(overlay, root))
+        }
+
+    "overlay watching correlates a rename performed in the lower" in {
+        // This is the case that reaches the overlay's stableIdentity delegation. A rename made
+        // *through* the overlay is answered from its recorded provenance, which carries the move,
+        // so the delegation is never consulted; only a rename made in the lower falls through.
+        // Correlating a rename into a single Moved requires a stable identity from both snapshots,
+        // so a delegation that returned nothing would degrade this into Removed plus Created.
+        Clock.withTimeControl { clock =>
+            FileSystemConformanceFixtures.host("kyo-overlay-host-rename").map { (lower, root) =>
+                val before = root / "before.txt"
+                val after  = root / "after.txt"
+                lower.write(before, "payload", Path.WriteOptions()).andThen {
+                    FileSystem.overlay(lower).map { overlay =>
+                        overlay.openWatcher(root, WatchOptions()).map { watcher =>
+                            lower.move(before, after, Path.MoveOptions()).andThen {
+                                clock.advance(Duration.Zero, 10.millis).andThen(clock.advance(10.millis, 10.millis)).andThen {
+                                    Scope.run(watcher.events.take(1).run).map { events =>
+                                        assert(
+                                            events == Chunk(PathChange.Moved(before, after)),
+                                            s"expected one Moved correlated by file identity, got $events"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+end OverlayOverHostPathWatchTest

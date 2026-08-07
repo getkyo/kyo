@@ -29,6 +29,31 @@ private object FileSystemConformanceFixtures:
             fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
         }
 
+    def overlay(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystem.inMemory.map { lower =>
+            FileSystem.overlay(lower).map { overlay =>
+                val root = Path("overlay-conformance")
+                overlay.mkDir(root).map(_ => (overlay, overlay, root))
+            }
+        }
+
+    def overlayOverHost(prefix: String)(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        host(prefix).map { (lower, root) =>
+            FileSystem.overlay(lower).map(overlay => (overlay, overlay, root))
+        }
+
     def zip(using
         Frame
     ): (
@@ -116,6 +141,97 @@ class HostFileSystemDurabilityConformanceTest extends FileSystemDurabilityTestSu
     ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
         FileSystemConformanceFixtures.host("kyo-host-durability-suite")
 end HostFileSystemDurabilityConformanceTest
+
+class OverlayFileSystemReadConformanceTest extends FileSystemReadTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map { (fileSystem, _, root) =>
+            val file = root / "read.txt"
+            fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
+        }
+end OverlayFileSystemReadConformanceTest
+
+class OverlayFileSystemWriteConformanceTest extends FileSystemWriteTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map((fileSystem, _, root) => (fileSystem, root))
+end OverlayFileSystemWriteConformanceTest
+
+class OverlayFileSystemChannelConformanceTest extends FileSystemChannelTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map((fileSystem, _, root) => (fileSystem, root))
+end OverlayFileSystemChannelConformanceTest
+
+class OverlayFileSystemDurabilityConformanceTest extends FileSystemDurabilityTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay.map((fileSystem, _, root) => (fileSystem, root))
+end OverlayFileSystemDurabilityConformanceTest
+
+class OverlayFileSystemStagedChangesConformanceTest extends FileSystemStagedChangesTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlay
+end OverlayFileSystemStagedChangesConformanceTest
+
+class OverlayOverHostFileSystemReadConformanceTest extends FileSystemReadTestSuite:
+    override protected def realPathRequiresExistence: Boolean = true
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-read-suite").map { (fileSystem, _, root) =>
+            val file = root / "read.txt"
+            fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
+        }
+end OverlayOverHostFileSystemReadConformanceTest
+
+class OverlayOverHostFileSystemWriteConformanceTest extends FileSystemWriteTestSuite:
+    // The overlay reports the host volume's case policy but keys its staged entries by exact
+    // segments, so on a case-insensitive volume a pending write is not found under an equivalent
+    // name. Declared here rather than left to fail silently; closing it is D24.
+    override protected def caseSensitivityCoversPendingWrites: Boolean = false
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-write-suite").map((fileSystem, _, root) => (fileSystem, root))
+end OverlayOverHostFileSystemWriteConformanceTest
+
+class OverlayOverHostFileSystemChannelConformanceTest extends FileSystemChannelTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-channel-suite").map((fileSystem, _, root) => (fileSystem, root))
+end OverlayOverHostFileSystemChannelConformanceTest
+
+class OverlayOverHostFileSystemDurabilityConformanceTest extends FileSystemDurabilityTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-durability-suite").map((fileSystem, _, root) =>
+            (fileSystem, root)
+        )
+end OverlayOverHostFileSystemDurabilityConformanceTest
+
+class OverlayOverHostFileSystemStagedChangesConformanceTest extends FileSystemStagedChangesTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (
+        FileSystem.Write[Sync],
+        FileSystem.StagedChanges[Sync & Abort[FileSystemException]],
+        Path
+    ) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.overlayOverHost("kyo-overlay-host-staged-suite")
+end OverlayOverHostFileSystemStagedChangesConformanceTest
 
 class ZipReadOnlyFileSystemReadConformanceTest extends FileSystemReadTestSuite:
     protected def createFileSystem(using

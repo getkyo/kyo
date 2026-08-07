@@ -592,11 +592,12 @@ private[kyo] object HostFileSystem:
             confined(path, FileSystemOperation.Remove).andThen(host.removeExisting(path))
         def removeAll(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
             confined(path, FileSystemOperation.Remove).andThen(host.removeAll(path))
-        // tempDir creates inside rootReal, not in the OS temp dir. Every op this service mediates is
-        // checked against rootReal, so a directory handed back from the OS temp dir would fail its own
-        // confinement check on the next use, including the recursive removal the caller's Scope
-        // registers. Uniqueness: nanoTime XOR identityHash provides negligible collision probability
-        // for the expected number of concurrent temp dirs.
+        // tempDir creates inside rootReal, not in the OS temp dir. Creating within root keeps
+        // staged paths confined: the overlay's commit protocol calls lower.move(stagingDir/eN.dat,
+        // target) through this service; if stagingDir were in OS temp the confinement check on
+        // the source path would fail. Creating in root also lets recoverFromDisk(root) scan for
+        // kyo-commit-* dirs without cross-filesystem access. Uniqueness: nanoTime XOR identityHash
+        // provides negligible collision probability for the expected number of concurrent commits.
         def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
             val uniqueSuffix =
                 java.lang.Long.toHexString(java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong)

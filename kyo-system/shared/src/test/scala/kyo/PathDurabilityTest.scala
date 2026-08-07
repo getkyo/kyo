@@ -398,6 +398,41 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         yield assert(targetParent == temporaryParent && existedInside && !existsAfter)
     }
 
+    "overlay sibling temporary cleanup cannot be resurrected by commit" in {
+        Scope.run {
+            for
+                lower   <- FileSystem.inMemory
+                overlay <- FileSystem.overlay(lower)
+                temporary <- Scope.run {
+                    Path.runWith(overlay)(Path("durability", "overlay-target.bin").siblingTemporary)
+                }
+                _      <- overlay.commitWith(_ => FileSystem.Resolution.KeepOurs)
+                exists <- lower.exists(temporary)
+            yield assert(!exists)
+        }
+    }
+
+    "overlay commit synchronizes the current directory after replacing a relative target" in {
+        Scope.run {
+            for
+                base <- FileSystem.inMemory
+                lower = new Recording(base, failRootSyncAt = Present(2))
+                overlay <- FileSystem.overlay(lower)
+                target = Path("overlay-relative-target.bin")
+                bytes  = Span.from(Array[Byte](4, 5, 6))
+                _      <- overlay.writeBytes(target, bytes, Path.WriteOptions())
+                result <- Abort.run[FileSystemException | CommitConflict](overlay.commitWith(_ => FileSystem.Resolution.KeepOurs))
+                actual <- base.readBytes(target)
+                rootSyncs = lower.events.collect { case Event.SyncDirectory(path) if path == Path() => path }
+            yield assert(
+                result.isFailure &&
+                    rootSyncs.size == 2 &&
+                    actual.toArrayUnsafe.sameElements(bytes.toArrayUnsafe),
+                s"result=$result rootSyncs=$rootSyncs events=${lower.events}"
+            )
+        }
+    }
+
     "host durable replacement synchronizes the current directory for a relative target" in {
         Sync.defer(java.lang.System.nanoTime()).map { id =>
             val target = Path(s".kyo-durable-relative-$id.bin")
