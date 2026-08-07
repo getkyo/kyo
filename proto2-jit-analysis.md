@@ -393,3 +393,27 @@ Reduction levers this census exposes, none executed or measured yet:
 - The per-eval closures could be hoisted or the handler shape changed so they
   do not cross the recursive drive call; 32 B per eval, only visible on tiny
   evals.
+
+### The bracket split
+
+First lever executed from the census: bracket driving moved out of the inline
+trampoline into driveBracket (no handler: nested depths never handle), making
+the expanded eval loop non-recursive. The lifted trampoline loop shrinks from
+542 to 304 bytes. Isolated per-row interleaved A/B, 4 cycles:
+
+| row | A (recursive loop) | B (split) | verdict |
+|---|---|---|---|
+| suspension alloc | 152 | 120 | closures scalar-replace, every run |
+| suspensionStep alloc | 152 | 120 | same |
+| stateCont10 / stateStep10 / narrowIter alloc | 904 / 904 / 4664 | unchanged | handler units too large to inline the loop; barrier moved from recursion to unit size |
+| suspension, suspensionStep time | 13 to 19 ms | 10 to 11 ms | consistent win, 4 of 4 cycles |
+| narrowBindMapStep time | 107 to 124 | 108 to 127 | neutral, overlapping |
+| narrowBindMap (cont) time | 123 to 129 | 134 to 142 | consistent regression, 4 of 4 cycles |
+
+PrintInlining on the narrow row: identical fused handler-body trees in both
+arms; the handler dispatch devirtualizes monomorphically inside the drive root
+in both. The one structural difference is the drive root itself: the 542-byte
+arm exhausts its budget and fails to inline the defer-arm Arrow.apply (86
+bytes, callee is too large), the 304-byte arm pulls it in. The cont-narrow
+delta is drive-root code layout on the pooled legacy path, the same bucket the
+narrow residual ledger already names, not a semantic cost of the split.
