@@ -1,0 +1,219 @@
+# proto2 JIT Compilation Analysis
+
+A complete account of how the proto2 kernel prototype compiles and executes on
+HotSpot C2, alongside proto1 as the reference, built from direct measurement at
+every observable layer: inlining decisions, speculation, deoptimization
+dynamics, allocation, and disassembled machine code.
+
+Environment: Temurin 25.0.3, arm64 macOS, `-XX:+UseCompactObjectHeaders` as the
+canonical harness flag (matching the repo's test JVM options). Tools:
+`PrintInlining`, `LogCompilation` XML, `hsdis` + `PrintAssembly`
+(`CompileCommand=print`), `ThreadMXBean.getThreadAllocatedBytes` for
+deterministic bytes per operation, and interleaved A/B runs (checkout per arm,
+two cycles, marker-verified) for every code change.
+
+## 1. Compilation model by execution regime
+
+proto2 has four execution regimes, each with its own compilation story.
+
+### Eager (sync) fusion
+
+`<.map` is an inline method that mints a per-call-site `Transform` subclass and
+applies it immediately. Every mint site therefore owns private bytecode, and
+C2 inlines the chain apply -> run -> f -> next apply from the caller's root.
+Escape analysis then scalar-replaces both the minted arrow objects and the
+boxing across the whole fused region. Proof, measured as best of five batches:
+
+| row | B/op |
+|---|---|
+| eager5 (5 fused maps) | 0.0 |
+| eager10 | 0.0 |
+
+The 5-map chain executes in ~5ns total. Two prerequisites were established
+empirically: the erased `run(v: Any, ...)` signature (a typed parameter mints
+an erasure bridge per subclass, costing an inline level per step), and the
+receiver-profile pooling law: profiles attach to the declaring method's
+bytecode, so fusion requires the successor dispatch to live in per-site minted
+code, never in a shared helper.
+
+### Resumed (suspension) fusion
+
+A parked continuation is optimized into a pre-linked cons chain
+(`Offset(head, next)`). The resume enters through `Arrow.apply`'s Offset arm
+and each fragment hops with `o.head.run(Kyo.unwrap(w), o.next)`: two field
+reads, zero allocation. The hop call site is minted per position, so its
+receiver profile is monomorphic and C2 devirtualizes and inlines transitively
+(`callee changed to anon$N::run`, TypeProfile counts like 779066/779066).
+
+| row | B/op |
+|---|---|
+| resumeFused10 (10-step parked cont, re-driven 1M times) | 0.0 |
+| suspension (full park + handle + resume round trip) | 176.0 |
+
+The 176 bytes are the capture itself (`Continue`, `AndThen`, respine cells),
+inherent to materializing a continuation.
+
+### The drive loop and trails
+
+`Offset.run` drives chains with a tailrec loop and a generational jump for
+trailing Offsets, so stateMap trails run on a flat stack: 1M generations in
+~60ms with the correct result, where proto1 overflows intermittently at 10k.
+
+### Rescue and preemption
+
+Stack safety uses two mechanisms chosen for their compilation behavior:
+
+- Eager recursion: a depth guard in `apply`. The counter-fired alternative was
+  measured and rejected: a probe firing 1/512 makes the rescue branch
+  profile-reachable at every fused site and escape analysis dies (eager rows
+  went 0.0 to 81.2 and 164.7 B/op). The depth guard's fire branch is never
+  taken in shallow code, compiles as an uncommon trap, and the eager rows hold
+  0.0 with the guard live. Depth lives in reserved per-thread slots
+  (CAS-registered, single-writer plain long cells, cache-line strided, a
+  pinned overflow cell past the probe budget), all JVM statics.
+- Resumed chains: a segment boundary node spliced every 512 elements at
+  optimize time. The boundary's `run` returns `Defer(v, cont)`, unwinding the
+  segment and bouncing through the trampoline. Sampling lives in the chain
+  structure, not in hot code, so there is no branch to poison.
+
+Preemption polls at all trampoline entries: the Defer arm (depth fires and
+segment boundaries) and the handler-dispatch arm (suspension-heavy flows),
+giving every regime a poll within Period units of work.
+
+## 2. Code geometry
+
+The two prototypes compile into differently shaped units:
+
+| metric | proto2 | proto1 |
+|---|---|---|
+| speculative hop devirtualizations (narrow run) | 63 | 1 |
+| max inline nesting of run frames | ~40 | ~59 |
+| inline entries at depth >= 10 | 409 | 593 |
+| binding inline limiter | callee size | depth budget (76 too-deep) |
+| C2 unit sizes, narrow drive | 0.8 to 1.9 KB | 1.6 to 6.0 KB |
+| minted fragment bytecode | 72 B | 128 B plus bridge |
+| `apply` bytecode | 184 B | 281 B |
+
+proto1 consolidates the drive into a few large compilation units cut by
+MaxInlineLevel; proto2 compiles many small per-fragment units linked by
+per-site speculation. Attempts to modulate this were all measured neutral:
+shrinking `apply` (hot/slow split), removing its catch (also removed the
+"many throws" penalty), and `-XX:InlineSmallCode=8000`.
+
+## 3. Compilation dynamics
+
+From `LogCompilation` over full bench runs:
+
+| metric | proto2 | proto1 |
+|---|---|---|
+| uncommon trap firings | 64 | 701,777 |
+| dominant reason | class_check / maybe_recompile | unreached / reinterpret |
+| made_not_entrant | 233 | 244 |
+
+proto1's 700k firings are a genuine pathology: its unguarded deepBind stack
+overflows saturate the trap counters in four units (its loop, its fragments,
+and `Arrow.apply`), HotSpot stops recompiling them, and the whole rest of the
+run pays ~40k interpreter round-trips per second through those units. proto2's
+depth guard prevents the overflow and with it the saturation: its entire run
+fires 64 traps. Recompilation churn is otherwise equal.
+
+## 4. Machine code
+
+With hsdis installed, `CompileCommand=print` on the hot methods:
+
+| unit | instrs | loads | stores | cmp | branches | calls |
+|---|---|---|---|---|---|---|
+| p2 anon$7::run (76 B bc) | 242 | 28 | 28 | 14 | 26 | 14 |
+| p2 anon$8::run (95 B bc) | 394 | 41 | 43 | 17 | 44 | 20 |
+| p1 anon$6 unit (consolidated) | 781 | 54 | 120 | 34 | 72 | 58 |
+
+Instruction mix and call density are equivalent (~17 instructions between
+calls for proto2, ~13.5 for proto1); per-step code quality is the same. The
+difference is granularity: proto1 amortizes one 781-instruction region where
+proto2 crosses unit boundaries every ~250 instructions.
+
+The compiled hop guard, from p2 anon$8's unit (annotated):
+
+```
+cmp   w12, w13          ; klass == Arrow$Offset?      (hop guard)
+b.eq  0x...960          ; taken: fused hop continues
+cmp   x11, x12          ; klass == expected Transform (speculation check)
+b.ne  0x...9a4          ; miss: uncommon trap
+ldr   w29, [x14, #8]    ; owners array length         (Depth.slot)
+ldar  x11, [x11]        ; volatile owners read
+lsl   w16, w17, #3      ; cache-line stride shift     (Depth cells)
+```
+
+The depth machinery compiles to the intended shape: one volatile read, one
+compare, strided plain cells, statics reached without module loads.
+
+## 5. The narrow residual: hypothesis ledger
+
+narrowBindMap remains proto2's one deficit: ~125ms vs proto1's ~75ms,
+~45ns per iteration (11 appends, one suspend, resolve, 12-step fused drive).
+Every hypothesis tested, each by direct measurement:
+
+| hypothesis | verdict |
+|---|---|
+| compact-headers type-check pricing | dead: flag-invariant (119/120 vs 71/77) |
+| fragment bytecode size | dead: proto1's fragment is larger and wins |
+| `apply` size and catch penalty | dead: proto1's is larger; no-catch A/B neutral |
+| erasure bridges | dead: proto1 has them and wins |
+| per-hop allocation | fixed by pre-linking (was real: 25% of narrow) |
+| resume flatten passes | fixed by respine (~6ms) |
+| pair representation | fixed by typed AndThen (was real: 16%) |
+| tag guard `=:=` | dead: fastPathEqual, state near parity |
+| speculation quality | dead: proto2's is far better (63 vs 1) |
+| inline depth budget | dead: proto1 exhausts it and wins |
+| already-compiled rejection | dead: InlineSmallCode=8000 neutral |
+| allocation volume | dead: 5552 vs 5376 B/op (3%) |
+| deopt or trap dynamics | dead: proto2 is pristine, proto1 pathological |
+| instruction-level code quality | dead: equivalent mix and density |
+
+What remains is the only unfalsified attribution: distributed costs of the
+more fragmented code layout (call/return traffic between units, i-cache
+footprint, lost cross-step optimization), not any single fixable site.
+Confirming or refuting that requires hardware-counter attribution
+(cycle/instruction/i-cache sampling), which is beyond hsdis and would need
+async-profiler or Instruments on this platform.
+
+Two rows contextualize the deficit: suspension's gap is purely a
+compact-headers artifact (13 vs 12 with the flag off), and proto1's overall
+numbers coexist with the trap-saturation pathology above.
+
+## 6. Current reference numbers
+
+Same box, canonical harness, all safety features live in proto2:
+
+| row | proto1 | proto2 | kernel |
+|---|---|---|---|
+| eager (1M x 5 maps) | n/a | 5ms | n/a |
+| deepBind | SO | 6ms, completes | 6ms |
+| narrowBindMap | ~75 | ~125 | 99 |
+| suspension | 12 | 14 (13 headers-off) | 27 |
+| state | 20 | ~30 | 38 |
+| stateMap 100k / 1M | SO | 9 / 62ms | quadratic |
+| eager alloc | 0.0 (no guard) | 0.0 (guard live) | 0.0 |
+| resumed fused alloc | n/a | 0.0 | n/a |
+
+## 7. Validated design rules
+
+Distilled from the measured record, for the production kernel:
+
+1. Fusion requires per-site minted bytecode; shared dispatch helpers pool
+   receiver profiles and kill it.
+2. Rescue triggers must be profile-never-taken (depth or structure), never
+   sampled counters; a 1/512 branch in hot code destroys escape analysis.
+3. Sampling can live in data: segment boundary nodes give cadence with zero
+   hot-path cost.
+4. The inline seam is byte-sensitive: three separate regressions (16, 32 B/op)
+   came from a few dozen bytes in `apply` or its callees; fast/slow splits
+   restore it. Gate every change with the allocation bench.
+5. Erase minted `run` signatures; erasure bridges halve fusable depth.
+6. JVM statics (via companion-class hosting) remove module loads and captured
+   outer references; `@static` on classes is a no-op.
+7. Depth carriers: reserved single-writer slots beat ThreadLocal beat atomic
+   striping; unreserved plain sharing is incorrect (lost updates can mask the
+   rescue).
+8. Measure under the canonical flags: UseCompactObjectHeaders moves rows by
+   15 to 40%, and JIT basins make single runs untrustworthy; interleave arms.
