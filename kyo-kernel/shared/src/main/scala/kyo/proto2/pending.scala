@@ -6,7 +6,6 @@ import kyo.Maybe
 import kyo.Tag
 import language.implicitConversions
 import scala.annotation.nowarn
-import scala.annotation.static
 import scala.annotation.tailrec
 
 trait Effect[I[_], O[_]]
@@ -20,7 +19,7 @@ object Kyo:
     // Compiled as a JVM static of class Kyo: hot callers (minted arrow fragments,
     // Arrow.apply, Offset.run) reach it via invokestatic with no module load and,
     // in minted fragments, no captured reference to an enclosing object.
-    @static def unwrap(v: Any): Any =
+    def unwrap(v: Any): Any =
         v match
             case n: Nested[?] => n.value
             case _            => v
