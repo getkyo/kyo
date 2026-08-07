@@ -130,9 +130,9 @@ object `<`:
 
     private def discardValue[A, S](v: A < S): List[Throwable] =
         v match
-            case kyo: Kyo.Continue[?, ?, ?, ?, ?, ?] => discardArrow(kyo.cont)
-            case kyo: Kyo.Defer[?, ?, ?]             => discardArrow(kyo.cont)
-            case _                                   => Nil
+            case kyo: Kyo.Continue[?, ?, ?] => discardArrow(kyo.cont)
+            case kyo: Kyo.Defer[?, ?, ?]    => discardArrow(kyo.cont)
+            case _                          => Nil
 
     private def discardArrow(arrow: Any): List[Throwable] =
         arrow match
@@ -250,7 +250,7 @@ object `<`:
                             if preempt() then curr
                             else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
                         else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
-                    case c: Kyo.Continue[?, ?, ?, ?, ?, ?] @unchecked if depth == 0 =>
+                    case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
                         dispatch(c) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
@@ -278,11 +278,22 @@ object `<`:
       * delimiter) only because the capturing formats need it. The casts below are justified by the tag match: a delimiter constructed for
       * `E` matched a suspension of `E`, so the clause's erased input and continuation have the types the public API established.
       */
-    private def dispatch(c: Kyo.Continue[?, ?, ?, ?, ?, ?]): Maybe[Any < Any] =
-        val suspend    = c.suspend
-        val suspendTag = suspend.tag.asInstanceOf[Tag[Any]]
-        val input      = suspend.input
-        val chain      = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
+    private def dispatch(c: Kyo.Continue[?, ?, ?]): Maybe[Any < Any] =
+        val chain = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
+        c.suspend match
+            case s: Kyo.Suspend[?, ?, ?, ?] =>
+                dispatchArrow(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
+            case r: Kyo.ContextRead[?, ?] =>
+                resolveContext(r.tag.asInstanceOf[Tag[Any]], chain) match
+                    case Maybe.Present(value) => Maybe(chain(liftSlow(value)))
+                    case Maybe.Absent =>
+                        r.default match
+                            case Maybe.Present(d) => Maybe(chain(liftSlow(d())))
+                            case Maybe.Absent     => Maybe.Absent
+        end match
+    end dispatch
+
+    private def dispatchArrow(suspendTag: Tag[Any], input: Any, chain: Arrow[Any, Any, Any]): Maybe[Any < Any] =
 
         def compose(rest: Arrow[Any, Any, Any], pending: List[Arrow[Any, Any, Any]]): Arrow[Any, Any, Any] =
             pending.foldLeft(rest)((acc, next) => Arrow.map(acc)(next))
@@ -291,7 +302,7 @@ object `<`:
             prefixRev.foldLeft(Arrow[Any])((acc, t) => new Arrow.Offset[Any, Any, Any, Any](t, acc))
 
         def act(
-            h: Handler,
+            h: Handler.Operation,
             rest: Arrow[Any, Any, Any],
             pending: List[Arrow[Any, Any, Any]],
             prefixRev: List[Arrow.Transform[Any, Any, Any]]
@@ -322,7 +333,7 @@ object `<`:
             cur match
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                     o.head match
-                        case h: Handler if h.effectTag <:< suspendTag =>
+                        case h: Handler.Operation if h.effectTag <:< suspendTag =>
                             act(h, o.next, pending, prefixRev)
                         case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                             search(inner, o.next :: pending, prefixRev)
@@ -330,7 +341,7 @@ object `<`:
                             search(o.next, pending, t :: prefixRev)
                 case at: Arrow.AndThen[?, ?, ?, ?] =>
                     search(at.asInstanceOf[Arrow[Any, Any, Any]].optimize, pending, prefixRev)
-                case h: Handler if h.effectTag <:< suspendTag =>
+                case h: Handler.Operation if h.effectTag <:< suspendTag =>
                     act(h, Arrow[Any], pending, prefixRev)
                 case t: Arrow.Transform[?, ?, ?] =>
                     val prefixRev2 =
@@ -343,7 +354,51 @@ object `<`:
         end search
 
         search(chain, Nil, Nil)
-    end dispatch
+    end dispatchArrow
+
+    /** Resolves a context read against the chain's binding delimiters.
+      *
+      * Matching delimiters are collected innermost to outermost; each transform receives the resolution of the delimiters outside it, so
+      * the innermost result is the read's value. Absent when no delimiter matches.
+      */
+    private def resolveContext(readTag: Tag[Any], chain: Arrow[Any, Any, Any]): Maybe[Any] =
+        @tailrec def collect(
+            cur: Arrow[Any, Any, Any],
+            pending: List[Arrow[Any, Any, Any]],
+            acc: List[Maybe[Any] => Any]
+        ): List[Maybe[Any] => Any] =
+            cur match
+                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                    o.head match
+                        case h: Handler.Context if h.effectTag <:< readTag =>
+                            collect(o.next, pending, h.transform :: acc)
+                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                            collect(inner, o.next :: pending, acc)
+                        case _ =>
+                            collect(o.next, pending, acc)
+                case at: Arrow.AndThen[?, ?, ?, ?] =>
+                    collect(at.asInstanceOf[Arrow[Any, Any, Any]].optimize, pending, acc)
+                case t: Arrow.Transform[?, ?, ?] =>
+                    val acc2 =
+                        t match
+                            case h: Handler.Context if h.effectTag <:< readTag => h.transform :: acc
+                            case _                                             => acc
+                    pending match
+                        case p :: ps => collect(p, ps, acc2)
+                        case Nil     => acc2
+            end match
+        end collect
+        collect(chain, Nil, Nil) match
+            case Nil => Maybe.Absent
+            case outermostFirst =>
+                var m: Maybe[Any]                 = Maybe.Absent
+                var rest: List[Maybe[Any] => Any] = outermostFirst
+                while rest.nonEmpty do
+                    m = Maybe(rest.head(m))
+                    rest = rest.tail
+                m
+        end match
+    end resolveContext
 
     /** Interprets a loop clause's Outcome once it materializes.
       *

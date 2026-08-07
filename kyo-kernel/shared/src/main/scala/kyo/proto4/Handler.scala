@@ -1,6 +1,7 @@
 package kyo.proto4
 
 import kyo.Frame
+import kyo.Maybe
 import kyo.Tag
 
 /** The park-time reification of an effect handler: a delimiter in the continuation chain.
@@ -19,6 +20,9 @@ sealed abstract private[kyo] class Handler extends Arrow.Transform[Any, Any, Any
 
 private[kyo] object Handler:
 
+    /** Delimiters that interpret arrow operations; context bindings are the sibling kind. */
+    sealed abstract class Operation extends Handler
+
     /** Erased shape of a continuation-taking clause. */
     type Clause = [C] => (Any, Arrow[Any, Any, Any]) => Any < Any
 
@@ -26,17 +30,17 @@ private[kyo] object Handler:
     type InputClause = [C] => Any => Any < Any
 
     /** Deep handler with a first-class continuation (ctl format). */
-    final class Cont(val effectTag: Tag[Any], val clause: Clause, val frame: Frame) extends Handler:
+    final class Cont(val effectTag: Tag[Any], val clause: Clause, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(`<`.liftSlow(v))
 
     /** Deep handler that answers each operation in place (fun format). */
-    final class Resume(val effectTag: Tag[Any], val clause: InputClause, val frame: Frame) extends Handler:
+    final class Resume(val effectTag: Tag[Any], val clause: InputClause, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(`<`.liftSlow(v))
 
     /** Deep handler that ends the region at each operation (final ctl format). */
-    final class Stop(val effectTag: Tag[Any], val clause: InputClause, val frame: Frame) extends Handler:
+    final class Stop(val effectTag: Tag[Any], val clause: InputClause, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(`<`.liftSlow(v))
 
@@ -53,13 +57,22 @@ private[kyo] object Handler:
         val clause: LoopClause,
         val done: (Any, Any) => Any < Any,
         val frame: Frame
-    ) extends Handler:
+    ) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(done(state, v))
     end Loop
 
+    /** Scoped binding for a context effect: the delimiter is the binding.
+      *
+      * A read resolves against the innermost matching delimiter; the transform receives the outer binding (the resolution of matching
+      * delimiters further out) and produces the value for this scope.
+      */
+    final class Context(val effectTag: Tag[Any], val transform: Maybe[Any] => Any, val frame: Frame) extends Handler:
+        def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            cont(`<`.liftSlow(v))
+
     /** Shallow handler: handles only the first operation, then leaves the region. */
-    final class First(val effectTag: Tag[Any], val clause: Clause, val done: Any => Any < Any, val frame: Frame) extends Handler:
+    final class First(val effectTag: Tag[Any], val clause: Clause, val done: Any => Any < Any, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(done(v))
 

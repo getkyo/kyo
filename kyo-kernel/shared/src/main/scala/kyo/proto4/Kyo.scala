@@ -26,32 +26,51 @@ object Kyo:
     final class Nested[+A](val value: A):
         override def toString = "Nested"
 
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Kyo[O[A], E]:
+    /** A bare suspension: an effect request with no continuation attached yet.
+      *
+      * The two suspension kinds share the chain machinery through [[Continue]]: an arrow operation awaiting a handler clause, or a context
+      * read awaiting the innermost binding.
+      */
+    sealed abstract class Suspension[X, -E] extends Kyo[X, E]:
+
+        final def map[B, S](f: Arrow[X, B, S]): B < (E & S) =
+            Continue[X, B, E & S](this, f.asInstanceOf[Arrow[X, B, E & S]])
+
+        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): X < E =
+            map(f.asInstanceOf[Arrow[X, X, Any]])
+
+    end Suspension
+
+    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Suspension[O[A], E]:
 
         def input: I[A]
         def tag: Tag[E]
         def frame: Frame
 
-        final def map[B, S](f: Arrow[O[A], B, S]): B < (E & S) =
-            Continue[I, O, E, A, B, S](this, f)
-
-        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): O[A] < E =
-            map(f.asInstanceOf[Arrow[O[A], O[A], Any]])
-
         final override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
 
     end Suspend
 
-    final class Continue[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
-        val suspend: Suspend[I, O, E, A],
-        val cont: Arrow[O[A], B, S]
-    ) extends Kyo[B, E & S]:
+    abstract class ContextRead[V, E <: ContextEffect[V]] extends Suspension[V, E]:
 
-        def map[C, S2](f: Arrow[B, C, S2]): C < (E & S & S2) =
+        def tag: Tag[E]
+        def default: Maybe[() => V]
+        def frame: Frame
+
+        final override def toString = "ContextRead(" + tag.show + ", " + frame.position.show + ")"
+
+    end ContextRead
+
+    final class Continue[X, +B, -S](
+        val suspend: Suspension[X, ?],
+        val cont: Arrow[X, B, S]
+    ) extends Kyo[B, S]:
+
+        def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Continue(suspend, cont.map(f))
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < (E & S) =
-            Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[O[A], B, S]])
+        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
+            Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[X, B, S]])
 
         override def toString = "Continue(" + suspend + ")"
 
