@@ -2,11 +2,6 @@ package kyo
 
 class PathDurabilityTest extends kyo.test.Test[Any]:
 
-    private def hostFileSystem(prefix: String)(using Frame): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
-        Scope.acquireRelease(FileSystem.host.tempDir(prefix))(h => Sync.Unsafe.defer(h.remove())).map(handle =>
-            (FileSystem.host, handle.path)
-        )
-
     private enum Event derives CanEqual:
         case Temporary(path: Path)
         case Open(path: Path, mode: FileSystem.WriteOpen)
@@ -233,8 +228,8 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
 
     "durable replacement writes and persists bytes" in {
         for
-            (fs, root) <- hostFileSystem("kyo-durable-persist")
-            target = root / "durability" / "target.bin"
+            fs <- FileSystem.inMemory
+            target = Path("durability", "target.bin")
             bytes  = Span.from(Array[Byte](1, 2, 3, 4))
             _      <- fs.durableReplace(target, bytes)
             actual <- fs.readBytes(target)
@@ -243,9 +238,9 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
 
     "durable replacement performs the persistence protocol in order" in {
         for
-            (base, root) <- hostFileSystem("kyo-durable-ordered")
+            base <- FileSystem.inMemory
             fs     = new Recording(base)
-            target = root / "durability" / "ordered.bin"
+            target = Path("durability", "ordered.bin")
             bytes  = Span.from(Array[Byte](5, 6, 7))
             _ <- fs.durableReplace(target, bytes)
             events = fs.events
@@ -266,7 +261,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                         createFolders = false
                     )
                 ),
-                Event.SyncDirectory(root / "durability")
+                Event.SyncDirectory(Path("durability"))
             )
         )
     }
@@ -274,9 +269,9 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
     List("write", "sync-file", "move").foreach { failedStep =>
         s"failure at $failedStep stops later steps and removes the temporary" in {
             for
-                (base, root) <- hostFileSystem(s"kyo-durable-fail-$failedStep")
+                base <- FileSystem.inMemory
                 fs     = new Recording(base, Present(failedStep))
-                target = root / "durability" / s"$failedStep.bin"
+                target = Path("durability", s"$failedStep.bin")
                 _ <- base.writeBytes(target, Span.from(Array[Byte](9)), Path.WriteOptions())
                 result <- Abort.run[FileReadException | FileWriteException | FileStructureException](
                     fs.durableReplace(target, Span.from(Array[Byte](1, 2)))
@@ -299,9 +294,9 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
 
     "directory synchronization failure reports failure after replacement" in {
         for
-            (base, root) <- hostFileSystem("kyo-durable-sync-dir-fail")
+            base <- FileSystem.inMemory
             fs     = new Recording(base, Present("sync-directory"))
-            target = root / "durability" / "uncertain.bin"
+            target = Path("durability", "uncertain.bin")
             _ <- base.writeBytes(target, Span.from(Array[Byte](9)), Path.WriteOptions())
             result <- Abort.run[FileReadException | FileWriteException | FileStructureException](
                 fs.durableReplace(target, Span.from(Array[Byte](1, 2)))
@@ -312,16 +307,16 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
 
     "interruption closes the channel and removes the temporary exactly once" in {
         for
-            (base, root) <- hostFileSystem("kyo-durable-interrupt")
-            ready        <- Latch.init(1)
-            hold         <- Latch.init(1)
-            temporary    <- AtomicRef.init[Maybe[Path]](Absent)
-            closes       <- AtomicInt.init(0)
-            removals     <- AtomicInt.init(0)
+            base      <- FileSystem.inMemory
+            ready     <- Latch.init(1)
+            hold      <- Latch.init(1)
+            temporary <- AtomicRef.init[Maybe[Path]](Absent)
+            closes    <- AtomicInt.init(0)
+            removals  <- AtomicInt.init(0)
             // Safe effect widening for the test double; FileSystem is invariant because its channels consume S.
             asyncBase = base.asInstanceOf[FileSystem.Write[Async]]
             fs        = new Interrupting(asyncBase, ready, hold, temporary, closes, removals)
-            target    = root / "durability" / "interrupted.bin"
+            target    = Path("durability", "interrupted.bin")
             fiber <- Fiber.initUnscoped {
                 fs.durableReplace(target, Span.from(Array[Byte](1, 2, 3)))
             }
@@ -338,15 +333,15 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
 
     "interruption while closing a sibling temporary still removes it exactly once" in {
         for
-            (base, root) <- hostFileSystem("kyo-durable-release-interrupt")
-            ready        <- Latch.init(1)
-            hold         <- Latch.init(1)
-            temporary    <- AtomicRef.init[Maybe[Path]](Absent)
-            removals     <- AtomicInt.init(0)
+            base      <- FileSystem.inMemory
+            ready     <- Latch.init(1)
+            hold      <- Latch.init(1)
+            temporary <- AtomicRef.init[Maybe[Path]](Absent)
+            removals  <- AtomicInt.init(0)
             asyncBase = base.asInstanceOf[FileSystem.Write[Async]]
             fs        = new ReleaseInterrupting(asyncBase, ready, hold, temporary, removals)
             fiber <- Fiber.initUnscoped {
-                Scope.run(Path.runWith(fs)((root / "durability" / "release-interrupted.bin").siblingTemporary))
+                Scope.run(Path.runWith(fs)(Path("durability", "release-interrupted.bin").siblingTemporary))
             }
             _           <- ready.await
             interrupted <- fiber.interrupt
@@ -359,18 +354,18 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
 
     "a close panic still removes the durable temporary and preserves the interruption panic" in {
         for
-            (base, root) <- hostFileSystem("kyo-durable-close-panic")
-            ready        <- Latch.init(1)
-            hold         <- Latch.init(1)
-            temporary    <- AtomicRef.init[Maybe[Path]](Absent)
-            closes       <- AtomicInt.init(0)
-            removals     <- AtomicInt.init(0)
+            base      <- FileSystem.inMemory
+            ready     <- Latch.init(1)
+            hold      <- Latch.init(1)
+            temporary <- AtomicRef.init[Maybe[Path]](Absent)
+            closes    <- AtomicInt.init(0)
+            removals  <- AtomicInt.init(0)
             primary    = new RuntimeException("primary interruption")
             closeError = new RuntimeException("close failure")
             asyncBase  = base.asInstanceOf[FileSystem.Write[Async]]
             fs         = new ClosePanicking(asyncBase, ready, hold, temporary, closes, removals, closeError)
             fiber <- Fiber.initUnscoped {
-                fs.durableReplace(root / "durability" / "close-panic.bin", Span.from(Array[Byte](1)))
+                fs.durableReplace(Path("durability", "close-panic.bin"), Span.from(Array[Byte](1)))
             }
             _           <- ready.await
             interrupted <- fiber.interrupt(Result.Panic(primary))
@@ -389,10 +384,10 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
 
     "sibling temporary is created beside the target and removed at scope exit" in {
         for
-            (fs, root) <- hostFileSystem("kyo-durable-sibling-scoped")
+            fs <- FileSystem.inMemory
             observed <- Scope.run {
                 Path.runWith(fs) {
-                    val target = root / "durability" / "scoped.bin"
+                    val target = Path("durability", "scoped.bin")
                     target.siblingTemporary.map { temporary =>
                         temporary.exists.map(exists => (target.parent, temporary.parent, temporary, exists))
                     }

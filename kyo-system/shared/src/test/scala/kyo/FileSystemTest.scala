@@ -1,6 +1,5 @@
 package kyo
 
-import java.nio.charset.Charset
 import scala.compiletime.testing.typeCheckErrors
 
 /** Tests for the top-level [[FileSystem]] surface: installation through [[Path.runWith]] and the
@@ -9,27 +8,6 @@ import scala.compiletime.testing.typeCheckErrors
 class FileSystemTest extends kyo.test.Test[Any]:
 
     private val selectedPath = Path("selected.txt")
-
-    /** Rebases `write` and `read`, the only two ops this suite exercises, under `root`. Two
-      * instances backed by the real host filesystem then behave as independent stores addressable
-      * through the same literal `Path` value, which is what these `FileSystem.let` selection tests
-      * need: the store a read reaches must depend only on which service is ambient.
-      */
-    final private class IsolatedFileSystem(root: Path) extends FileSystem.Write[Sync]:
-        private val delegate = FileSystem.host
-        export delegate.{read as _, write as _, *}
-        def write(path: Path, value: String, options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            delegate.write(root / path, value, options)
-        def read(path: Path)(using Frame): String < (Sync & Abort[FileReadException]) =
-            delegate.read(root / path)
-        def read(path: Path, charset: Charset)(using Frame): String < (Sync & Abort[FileReadException]) =
-            delegate.read(root / path, charset)
-    end IsolatedFileSystem
-
-    private def isolatedFileSystem(prefix: String)(using Frame): FileSystem.Write[Sync] < (Sync & Scope & Abort[FileSystemException]) =
-        Scope.acquireRelease(FileSystem.host.tempDir(prefix))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
-            IsolatedFileSystem(handle.path)
-        }
 
     "Read exposes no write member" in {
         typeCheckFailure(
@@ -64,16 +42,16 @@ class FileSystemTest extends kyo.test.Test[Any]:
         )
     }
 
-    private def services: (FileSystem.Write[Sync], FileSystem.Write[Sync]) < (Sync & Scope & Abort[FileSystemException]) =
+    private def services: (FileSystem.Write[Sync], FileSystem.Write[Sync]) < (Sync & Abort[FileSystemException]) =
         for
-            outer <- isolatedFileSystem("kyo-fs-let-outer")
-            inner <- isolatedFileSystem("kyo-fs-let-inner")
+            outer <- FileSystem.inMemory
+            inner <- FileSystem.inMemory
             _     <- Path.runWith(outer)(selectedPath.write("outer"))
             _     <- Path.runWith(inner)(selectedPath.write("inner"))
         yield (outer, inner)
 
     "top-level FileSystem installs through runWith" in {
-        isolatedFileSystem("kyo-fs-top-level").map { service =>
+        FileSystem.inMemory.map { service =>
             val p = Path("a")
             val program: Unit < (Sync & Abort[FileSystemException]) =
                 Path.runWith(service)(p.write("x"))

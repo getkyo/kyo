@@ -442,4 +442,10 @@ object FileSystem:
     ): (FileSystem.Write[Sync] & FileSystem.Watch[Sync]) < (Sync & Abort[FileSystemException]) =
         HostFileSystem.rootConfined(root)
 
+    /** In-memory backend: an immutable node tree keyed by `Path.parts` behind one
+      * `AtomicRef`, advanced by an optimistic CAS loop. `isSymbolicLink` always returns
+      * `false`.
+      */
+    def inMemory(using Frame): (FileSystem.Write[Sync] & FileSystem.Watch[Sync]) < Sync = InMemoryFileSystem.init
+
 end FileSystem
