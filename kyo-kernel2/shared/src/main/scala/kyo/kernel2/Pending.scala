@@ -6,7 +6,6 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
-import kyo.kernel2.internal.Handler
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
@@ -296,6 +295,9 @@ object `<` extends Implicits:
                     case t: Throwable =>
                         EffectTrace.attach(t, "release", finalize.bracket.frame)
                         Chunk(t)
+            case r: ArrowEffect.Rotate =>
+                // a rotate step contains its handler's remaining chain: finalizers in there run too
+                finalizeArrow(r.inner)
             case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                 finalizeChain(o)
             case at: Arrow.AndThen[?, ?, ?, ?] =>
@@ -414,18 +416,9 @@ object `<` extends Implicits:
                                     end match
                     case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
                         loop(defer.cont(defer.value, context, handlers))
-                    case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
-                        val chain = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
-                        evalOperation(c.suspend.erasedTag, c.suspend.input, chain, context, handlers) match
-                            case Maybe.Present(next) => loop(next)
-                            case _                   => curr
-                    case s: Kyo.Suspend[?, ?, ?, ?] @unchecked if depth == 0 =>
-                        // a bare operation has no chain yet: dispatch it with the empty arrow
-                        evalOperation(s.erasedTag, s.input, Arrow[Any], context, handlers) match
-                            case Maybe.Present(next) => loop(next)
-                            case _                   => curr
-                        end match
                     case kyo: Kyo[Any, Any] @unchecked =>
+                        // a suspension that reached the drive crossed every installed handler:
+                        // the remainder parks (handlePartial's boundary), or eval reports it
                         curr
                     case _ =>
                         curr
@@ -453,135 +446,6 @@ object `<` extends Implicits:
             safepoint.closeDrive(saved)
         end try
     end evalLoop
-
-    /** Finds the innermost matching delimiter in the suspension's chain and applies its format.
-      *
-      * The walk flattens nested pre-linked chains with an explicit pending stack, collecting the prefix (the continuation up to the
-      * delimiter) only because the capturing formats need it. The casts below are justified by the tag match: a delimiter constructed for
-      * `E` matched a suspension of `E`, so the clause's erased input and continuation have the types the public API established.
-      */
-    private def evalOperation(
-        suspendTag: Tag[Any],
-        input: Any,
-        chain: Arrow[Any, Any, Any],
-        context: Context,
-        handlers: Handlers
-    ): Maybe[Any < Any] =
-
-        def compose(rest: Arrow[Any, Any, Any], pending: List[Arrow[Any, Any, Any]]): Arrow[Any, Any, Any] =
-            pending.foldLeft(rest)((acc, next) => Arrow.map(acc)(next))
-
-        def prefixArrow(prefixRev: List[Arrow.Transform[Any, Any, Any]]): Arrow[Any, Any, Any] =
-            prefixRev.foldLeft(Arrow[Any])((acc, t) => new Arrow.Offset[Any, Any, Any, Any](t, acc))
-
-        // The casts below are the erased boundary the typed handler surface funnels into. Each is justified by the tag match that
-        // selected the delimiter: the suspension's operation is of the delimiter's effect, so its input has the clause's input type,
-        // the captured prefix is the continuation from the operation's output to the delimiter's region type, and the results re-enter
-        // the drive's erased currency.
-        def act(
-            h: Handler.ArrowHandler[?, ?, ?, ?, ?, ?],
-            rest: Arrow[Any, Any, Any],
-            pending: List[Arrow[Any, Any, Any]],
-            prefixRev: List[Arrow.Transform[Any, Any, Any]]
-        ): Maybe[Any < Any] =
-            val fullRest = compose(rest, pending)
-            // A clause that throws is a failed step of the computation: the exception unwinds to the innermost Catching
-            // interceptor enclosing the operation (the prefix element nearest the delimiter), matching how a throw inside an
-            // evaluated step is intercepted. With no interceptor in scope it propagates to the drive.
-            def guarded(compute: => Any < Any): Maybe[Any < Any] =
-                try Maybe(compute)
-                catch
-                    case ex if NonFatal(ex) =>
-                        EffectTrace.attach(ex, "handle", h.frame)
-                        @tailrec def unwind(rev: List[Arrow.Transform[Any, Any, Any]]): Maybe[Any < Any] =
-                            rev match
-                                case (c: Effect.Catching) :: _ => Maybe(c.handler(ex))
-                                case _ :: tail                 => unwind(tail)
-                                case Nil                       => throw ex
-                        unwind(prefixRev)
-            end guarded
-            h match
-                case h: Handler.Resume[i, o, e, a, s, s2] =>
-                    guarded(chain(h.clause[Any](input.asInstanceOf[i[Any]]), context, handlers).asInstanceOf[Any < Any])
-                case h: Handler.Stop[i, o, e, a, s, s2] =>
-                    val reinstalled = new Arrow.Offset[Any, Any, Any, Any](h.asInstanceOf[Arrow.Transform[Any, Any, Any]], fullRest)
-                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]]).asInstanceOf[Any < Any], context, handlers))
-                case h: Handler.Cont[i, o, e, a, s, s2] =>
-                    val k           = prefixArrow(prefixRev)
-                    val resume      = (x: o[Any]) => k(Kyo.lift(x), context, handlers).asInstanceOf[a < (e & s & s2)]
-                    val reinstalled = new Arrow.Offset[Any, Any, Any, Any](h.asInstanceOf[Arrow.Transform[Any, Any, Any]], fullRest)
-                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any], context, handlers))
-                case h: Handler.First[i, o, e, a, b, s, s2] =>
-                    val k      = prefixArrow(prefixRev)
-                    val resume = (x: o[Any]) => k(Kyo.lift(x), context, handlers).asInstanceOf[a < (e & s)]
-                    guarded(fullRest(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any], context, handlers))
-                case h: Handler.Loop[i, o, e, a, b, s, s2, st] =>
-                    val k      = prefixArrow(prefixRev)
-                    val resume = (x: o[Any]) => k(Kyo.lift(x), context, handlers).asInstanceOf[a < (e & s)]
-                    guarded(Arrow.map(outcomeStep(h))(fullRest)(
-                        h.clause[Any](
-                            input.asInstanceOf[i[Any]],
-                            h.state,
-                            resume
-                        ).asInstanceOf[Any < Any],
-                        context,
-                        handlers
-                    ))
-            end match
-        end act
-
-        @tailrec def search(
-            cur: Arrow[Any, Any, Any],
-            pending: List[Arrow[Any, Any, Any]],
-            prefixRev: List[Arrow.Transform[Any, Any, Any]]
-        ): Maybe[Any < Any] =
-            cur match
-                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
-                    o.head match
-                        case h: Handler.ArrowHandler[?, ?, ?, ?, ?, ?] if h.erasedTag <:< suspendTag =>
-                            act(h, o.next, pending, prefixRev)
-                        case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked if inner.hasHandler =>
-                            search(inner, o.next :: pending, prefixRev)
-                        case t =>
-                            search(o.next, pending, t :: prefixRev)
-                case at: Arrow.AndThen[?, ?, ?, ?] =>
-                    search(at.asInstanceOf[Arrow[Any, Any, Any]].optimize, pending, prefixRev)
-                case h: Handler.ArrowHandler[?, ?, ?, ?, ?, ?] if h.erasedTag <:< suspendTag =>
-                    act(h, Arrow[Any], pending, prefixRev)
-                case t: Arrow.Transform[?, ?, ?] =>
-                    val prefixRev2 =
-                        if Arrow.isEmpty(t.asInstanceOf[Arrow[Any, Any, Any]]) then prefixRev
-                        else t.asInstanceOf[Arrow.Transform[Any, Any, Any]] :: prefixRev
-                    pending match
-                        case p :: ps => search(p, ps, prefixRev2)
-                        case Nil     => Maybe.Absent
-            end match
-        end search
-
-        if !chain.hasHandler then Maybe.Absent
-        else search(chain, Nil, Nil)
-    end evalOperation
-
-    /** Interprets a loop clause's Outcome once it materializes.
-      *
-      * This transform sits in the chain before the suffix past the delimiter, so effects raised while the outcome itself is computed
-      * dispatch to outer handlers, never to this loop. Continue re-applies a replacement delimiter carrying the next state to the next
-      * computation: if it suspends, the delimiter travels in its chain (deep with fresh state); if it is already a value, the delimiter's
-      * run applies done with that state. Done leaves the region: the result flows to the suffix and done is not applied, the clause
-      * already produced the final value.
-      */
-    private def outcomeStep(h: Handler.Loop[?, ?, ?, ?, ?, ?, ?, ?]): Arrow[Any, Any, Any] =
-        new Arrow.Transform[Any, Any, Any]:
-            def frame = h.frame
-            def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                v match
-                    case next: Loop.Continue2[?, ?] @unchecked =>
-                        // re-install the delimiter carrying the clause's next state around the next computation
-                        val h2 = h.replaceState(next._1).asInstanceOf[Arrow[Any, Any, Any]]
-                        cont(h2(next._2.asInstanceOf[Any < Any], context, handlers), context, handlers)
-                    case b =>
-                        cont(Kyo.lift(b), context, handlers)
-    end outcomeStep
 
 end `<`
 

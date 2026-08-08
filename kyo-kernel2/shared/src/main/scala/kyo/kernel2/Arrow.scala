@@ -14,11 +14,7 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 
-sealed abstract class Arrow[-A, +B, -S]:
-    /** Whether any delimiter lives in this arrow: lets dispatch skip handler-free subtrees. */
-    // TODO can we avoid?
-    private[kyo] def hasHandler: Boolean
-end Arrow
+sealed abstract class Arrow[-A, +B, -S]
 
 object Arrow:
 
@@ -36,7 +32,6 @@ object Arrow:
     private inline def SmallLimit = 32
 
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
-        private[kyo] def hasHandler: Boolean = false
         def frame: Frame
         // v is Any rather than A: a typed parameter makes subclasses with a concrete
         // A carry an erasure bridge, and the extra call level halves how many fused
@@ -65,8 +60,7 @@ object Arrow:
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:
-        override private[kyo] val hasHandler = a.hasHandler || b.hasHandler
-        override def toString                = render(this, RenderDepth)
+        override def toString = render(this, RenderDepth)
     end AndThen
 
     // Rendering is diagnostics-facing (test failure output, hang dumps) and must stay
@@ -129,7 +123,15 @@ object Arrow:
             if self.asInstanceOf[AnyRef] eq empty then
                 v.asInstanceOf[B < (S & S2)]
             else if v.isInstanceOf[Kyo[?, ?]] then
-                v.asInstanceOf[Kyo[A, S2]].map(self)
+                // the one place suspensions bubble: a fun-format operation in scope is
+                // answered here, locally, before the suspension travels any further
+                val kyo = v.asInstanceOf[Kyo[Any, Any]]
+                if handlers.isEmpty then kyo.asInstanceOf[Kyo[A, S2]].map(self)
+                else
+                    val answered = ArrowEffect.answerNow(kyo, context, handlers)
+                    if answered.asInstanceOf[AnyRef] eq null then kyo.asInstanceOf[Kyo[A, S2]].map(self)
+                    else self(answered.asInstanceOf[A < S2], context, handlers)
+                end if
             else
                 self match
                     case o: Offset[Any, Any, Any, Any] @unchecked =>
@@ -260,7 +262,6 @@ object Arrow:
         val head: Transform[A, B, S],
         val next: Arrow[B, C, S]
     ) extends Transform[A, C, S], Step[A, C, S]:
-        override private[kyo] val hasHandler = head.hasHandler || next.hasHandler
         type Mid = B
         def frame = Frame.internal
 
