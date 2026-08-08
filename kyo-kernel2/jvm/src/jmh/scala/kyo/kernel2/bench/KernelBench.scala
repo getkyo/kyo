@@ -142,4 +142,17 @@ class KernelBench:
     def resumeFused: Int =
         fusedCont(7).asInstanceOf[Int < Any].eval
 
+    @Benchmark
+    def loopPure10k: Int =
+        Loop(0)(i => if i < 10000 then Loop.continue(i + 1) else Loop.done(i)).eval
+
+    @Benchmark
+    def loopSuspend1k: Int =
+        val v = Loop(0) { i =>
+            if i < 1000 then echo(i).map(_ => Loop.continue(i + 1))
+            else Loop.done(i)
+        }
+        runEcho(v)
+    end loopSuspend1k
+
 end KernelBench
