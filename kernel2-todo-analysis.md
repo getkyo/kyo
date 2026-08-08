@@ -8,11 +8,15 @@ Working rules (your rulings):
   time, full kernel2 suite green and a commit per issue.
 - The tracker carries only what needs your attention; done items drop off.
 - Every issue is its own numbered item, always expanded, never bundled.
+- ALL changes are confined to kyo-kernel2. Nothing outside the module (kyo-data,
+  kyo-kernel, kyo-core, build) is touched without your explicit instruction. Trace is
+  deleted; no design or API resurrects it.
 
 Done or closed so far: #2 forwarding methods (`564dc4cc9f`), #5 type parameter naming
 and variance (`9b47ace3af`), #6 eval verb consolidation (`04adb36022`),
-#13 fork-boundary API (your ruling: keep the old kernel's callback shape, minus the
-Trace parameter that #12 deletes; the track C doc stays as reference),
+#13 fork-boundary API (your rulings, tracker and in-doc: the track C doc is rejected
+and set aside; the boundary follows the old kernel's context-param threading, which is
+exactly #18's design, confined to kyo-kernel2, with no Trace anywhere),
 #22 Maybe-based Safepoint slots (your ruling: drop, keep the null-based array),
 #24 clearPreempt sufficiency (you accepted the analysis; its one finding, the
 consumption-ownership rule, is folded into #15's implementation notes).
@@ -205,7 +209,9 @@ implements with the queue (it slots naturally before #16, which reworks
 ## 10. `discard` to `finalizeBracket`: queued.
 ## 1. Fix `Kyo.lift` body, `Implicits` superclass, `unwrap` to `unnest`: queued.
    (Includes the bench's `liftSlow` call site.)
-## 20. `Step`/`step`/`stepSlow` to `private[kyo]`: queued.
+## 20. `Step`/`step`/`stepSlow` to `private[kyo]`: queued. Also `handlePartial` (and
+   the evalPartial the preemption round introduces) become `private[kyo]`: the current
+   kernel exposes no public scheduler-drive API, so kernel2 conforms.
 ## 11. `Observe.scala` extraction + effectful observer: queued, after #1.
 ## 12. `EffectTrace` rename, `Trace` stub deletion: queued.
 ## 14. `LastResort` removal (design above): queued.
@@ -216,4 +222,5 @@ implements with the queue (it slots naturally before #16, which reworks
    `kernel2-preemption-design.md`, reconcile with the #24 consumption rule (only
    handlePartial's drive consumes; plain eval never polls, which closes the nested
    boundary gap by construction), fold in #21/#23 once you confirm, implement, JMH.
+   Your in-doc comment adopted: the design's `Home` holder trait is named `Current`.
 ## 17. Loop drivers: JMH rows old vs new first, then the tailrec driver port.
