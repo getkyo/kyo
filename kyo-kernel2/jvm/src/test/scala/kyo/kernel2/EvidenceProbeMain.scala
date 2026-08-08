@@ -40,6 +40,49 @@ object EvidenceProbeMain:
             case Maybe.Present(clause) => clause[Any](i)
             case Maybe.Absent          => throw new IllegalStateException("unhandled")
 
+    /** E2b: one concrete class regardless of size, linear scan, reference-first tag comparison with the structural fallback off the
+      * fast path. The recovery cast is the same single boundary as the map variant.
+      */
+    final class ArrayEvidence private (tags: Array[AnyRef], entries: Array[AnyRef]):
+        def set[I[_], O[_], E <: ArrowEffect[I, O]](tag: Tag[E], clause: [C] => I[C] => O[C]): ArrayEvidence =
+            val n  = tags.length
+            val t2 = java.util.Arrays.copyOf(tags, n + 1)
+            val e2 = java.util.Arrays.copyOf(entries, n + 1)
+            t2(n) = tag.erased.asInstanceOf[AnyRef]
+            e2(n) = clause.asInstanceOf[AnyRef]
+            new ArrayEvidence(t2, e2)
+        end set
+        def resolve[I[_], O[_], E <: ArrowEffect[I, O]](tag: Tag[E]): Maybe[[C] => I[C] => O[C]] =
+            val key = tag.erased.asInstanceOf[AnyRef]
+            val n   = tags.length
+            var i   = n - 1 // innermost wins
+            while i >= 0 do
+                val t = tags(i)
+                if (t eq key) || t.equals(key) then
+                    // the tag-keyed recovery, as in the map variant
+                    return Maybe(entries(i).asInstanceOf[[C] => I[C] => O[C]])
+                i -= 1
+            end while
+            Maybe.Absent
+        end resolve
+    end ArrayEvidence
+    object ArrayEvidence:
+        val empty = new ArrayEvidence(Array.empty, Array.empty)
+
+    def opC(ev: ArrayEvidence, i: Int): Int =
+        ev.resolve(echoTag) match
+            case Maybe.Present(clause) => clause[Any](i)
+            case Maybe.Absent          => throw new IllegalStateException("unhandled")
+
+    def programC(ev: ArrayEvidence): Int < Any =
+        (0: Int < Any)
+            .map(_ => opC(ev, 1)).map(_ => 2).map(_ => opC(ev, 3)).map(_ => 4)
+            .map(_ => opC(ev, 5)).map(_ => 6).map(_ => opC(ev, 7)).map(_ => 8)
+            .map(_ => opC(ev, 9)).map(_ => 10)
+
+    def runC(ev: ArrayEvidence): Int =
+        programC(ev).eval
+
     // identical chain shapes: 10 operations interleaved with plain maps
     def programA: Int < Echo =
         echo(0)
@@ -103,18 +146,37 @@ object EvidenceProbeMain:
             .set(Tag[Pad3], [C] => (i: Int) => i)
             .set(echoTag, [C] => (i: Int) => i)
         val missTag = Tag[Miss]
-        val n       = 300000
-        var round   = 0
+        val ac      = ArrayEvidence.empty.set(echoTag, [C] => (i: Int) => i)
+        val ac4 = ArrayEvidence.empty
+            .set(Tag[Pad1], [C] => (i: Int) => i)
+            .set(Tag[Pad2], [C] => (i: Int) => i)
+            .set(Tag[Pad3], [C] => (i: Int) => i)
+            .set(echoTag, [C] => (i: Int) => i)
+        val n     = 300000
+        var round = 0
         while round < 3 do // interleaved rounds so JIT drift hits both sides
             measure("baseline", n)(runZ())
             measure("resumeA", n)(runA())
             measure("evidenceB", n)(runB(ev))
             measure("depth4", n)(runB(ev4))
+            measure("arrayC", n)(runC(ac))
+            measure("arrayC4", n)(runC(ac4))
             measure("missPath", n) {
                 var i = 0
                 var s = 0
                 while i < 10 do
                     s += (ev4.resolve(missTag) match
+                        case Maybe.Present(_) => 1
+                        case Maybe.Absent     => 0)
+                    i += 1
+                end while
+                s
+            }
+            measure("missArr", n) {
+                var i = 0
+                var s = 0
+                while i < 10 do
+                    s += (ac4.resolve(missTag) match
                         case Maybe.Present(_) => 1
                         case Maybe.Absent     => 0)
                     i += 1

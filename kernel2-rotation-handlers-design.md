@@ -158,9 +158,34 @@ into the design:
    reference-keyed index), with the structural fallback off the fast path.
 3. The miss path is the boundary-fallback path (fiber-context reads, runtime
    handlers), so it must be as cheap as the hit path.
-4. E2b (next): an array-backed evidence prototype with reference-first tag
-   comparison, measured at depths 1-4 and on the miss path, against the map
-   variants.
+4. E2b (measured): an array-backed evidence prototype with reference-first tag
+   comparison, in the SAME process as the map variants (both facing the same JIT
+   conditions):
+
+| variant | ns/op | B/op | per operation |
+|---------|-------|------|---------------|
+| chain baseline | 13.5 | 0 | |
+| today's handleResume dispatch | 307-366 | 1,360 | ~30 ns, 136 B |
+| Map evidence, depth 1 | 71.8 | 88 | ~5.8 ns |
+| Map evidence, depth 4 | 152.7 | 88 | ~14 ns |
+| ARRAY evidence, depth 1 | 32.9 | 8 | ~1.9 ns, ~1 B |
+| ARRAY evidence, depth 4 | 34.7 | 8 | ~2.1 ns |
+| miss, both variants | ~20 ns per miss | 0 | structural Tag equality dominates |
+
+Conclusions, now settled empirically:
+
+1. **The evidence structure is one final array-backed class**: innermost-last
+   linear scan, `eq`-first tag comparison with the structural fallback off the
+   fast path. Depth-insensitive at realistic handler depths, allocation-free on
+   the hot path, and immune to the polymorphism pollution that degrades the map
+   variants running beside it.
+2. **Misses are made cold by construction**: the runtime installs its own
+   boundary evidence (the handlePartial handlers as entries), so every reachable
+   operation resolves; a true miss is the unhandled-effect defect path only, and
+   its ~20 ns structural comparison cost is irrelevant there.
+3. The in-place ceiling stands with the array: ~15x time and two orders of
+   magnitude allocation against today's park-and-dispatch for Resume-format
+   operations, lookup paid per call.
 
 # 5. Open questions going into the experiments
 
