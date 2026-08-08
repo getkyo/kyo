@@ -646,6 +646,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             kyo.Path.PathStat(math.round(s.mtimeMs), s.size.toLong)
         }
 
+    private[kyo] def stableIdentity()(using AllowUnsafe, Frame): Result[FileReadException, Maybe[String]] =
+        catchRead {
+            val s = NodeFs.statSync(pathStr)
+            Present(s"${s.dev.toString}:${s.ino.toString}")
+        }
+
     // --- Write ---
 
     def write(value: String, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =

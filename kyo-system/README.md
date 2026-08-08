@@ -67,10 +67,11 @@ val positioned =
     }
 ```
 
-### Locks
+### Locks and watchers
 
 Advisory locks are scope-managed. Choose shared or exclusive compatibility and an explicit waiting
-policy:
+policy. Watchers have their own `PathWatch` capability and are registered before acquisition
+returns:
 
 ```scala
 import kyo.*
@@ -78,6 +79,12 @@ import kyo.*
 val guarded = Scope.run {
     Path.runReadOnly {
         Path("state.bin").lock(Path.LockMode.Exclusive, Path.LockWait.Immediate).map(_.check)
+    }
+}
+
+val changes = Scope.run {
+    Path.runWatch {
+        Path("src").openWatcher().map(_.events.take(1).run)
     }
 }
 ```
@@ -214,7 +221,7 @@ val processed: Unit < (Sync & Scope & Abort[FileSystemException]) =
 
 `readStream(charset, bufferSize)` and `readBytesStream(bufferSize)` expose the buffer-size parameter for tuning. `walk` is a Scope-managed stream of directory entries (covered under Directory operations).
 
-`tail` polls for new content appended to a file. It seeks to EOF, then sleeps for the configured `pollDelay` (default 100ms) and reads any new bytes. When the file size decreases it resets to position 0, handling log rotation and truncation. The stream carries `Async` because of the poll sleep. `tail` is a poll loop; it does not use a kernel file-event API (inotify or kqueue):
+`tail` polls for new content appended to a file. It seeks to EOF, then sleeps for the configured `pollDelay` (default 100ms) and reads any new bytes. When the file size decreases it resets to position 0, handling log rotation and truncation. The stream carries `Async` because of the poll sleep. `tail` is a poll loop, not a kernel watch API (inotify or kqueue):
 
 ```scala
 import kyo.*
@@ -330,6 +337,7 @@ val deleted: Boolean < (Sync & Abort[FileSystemException]) =
 | `FileWriteException` | Content mutation and synchronization |
 | `FileStructureException` | Creation, removal, copying, and movement |
 | `FileLockException` | Advisory lock acquisition and ownership |
+| `FileWatchException` | Watch registration and delivery |
 
 Each concrete exception implements only the marker traits that apply to it. After `Path.runReadOnly`, the runner folds the markers into `Abort[FileSystemException]`:
 
