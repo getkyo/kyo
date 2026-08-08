@@ -50,8 +50,24 @@ object Arrow:
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:
         override private[kyo] val hasHandler = a.hasHandler || b.hasHandler
-        override def toString                = "AndThen(" + a + ", " + b + ")"
+        override def toString                = render(this, RenderDepth)
     end AndThen
+
+    // Rendering is diagnostics-facing (test failure output, hang dumps) and must stay
+    // cheap on arbitrarily long chains: the walk is depth-bounded, never O(chain), so
+    // a renderer invoked on a hundred-thousand-node chain terminates immediately.
+    private inline def RenderDepth = 8
+
+    private def render(a: Arrow[?, ?, ?], depth: Int): String =
+        if depth <= 0 then "..."
+        else
+            a match
+                case o: Offset[?, ?, ?, ?] =>
+                    "Offset(" + render(o.head, depth - 1) + ", " + render(o.next, depth - 1) + ")"
+                case at: AndThen[?, ?, ?, ?] =>
+                    "AndThen(" + render(at.a, depth - 1) + ", " + render(at.b, depth - 1) + ")"
+                case t =>
+                    t.toString
 
     private val empty = new Transform[Any, Any, Any]:
         def frame = Frame.internal
@@ -235,7 +251,7 @@ object Arrow:
             loop(this.asInstanceOf[Offset[Any, Any, Any, Any]], v).asInstanceOf[C2 < (S & S2)]
         end run
 
-        override def toString = "Offset"
+        override def toString = render(this, RenderDepth)
     end Offset
 
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:

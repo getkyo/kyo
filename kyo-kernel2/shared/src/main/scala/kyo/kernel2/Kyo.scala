@@ -33,8 +33,7 @@ object Kyo:
             case _            => v
 
     // a case class so re-wrapping at pass-through positions preserves value equality
-    final private[kyo] case class Nested[+A](value: A):
-        override def toString = "Nested" // TODO please provide proper toString impls
+    final private[kyo] case class Nested[+A](value: A)
 
     /** A bare suspension: an effect request with no continuation attached yet.
       *
@@ -88,7 +87,7 @@ object Kyo:
         private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
             Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[A, B, S]])
 
-        override def toString = "Continue(" + suspend + ")"
+        override def toString = "Continue(" + suspend + ", " + cont + ")"
 
     end Continue
 
@@ -138,7 +137,7 @@ object Kyo:
         private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
             Defer(value, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[A, B, S]])
 
-        override def toString = "Defer"
+        override def toString = "Defer(" + cont + ")"
 
     end Defer
 
