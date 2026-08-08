@@ -74,8 +74,7 @@ private[kyo] def apply[S2](v: A < S2, context: Context): B < (S & S2)
 // The user-facing application defers: the arrow runs when a drive pops the
 // node, under the ambient context of the site where the result is embedded
 def apply[S2](v: A < S2): B < (S & S2) =
-    val d: Kyo.Defer[A, B, S & S2] = Kyo.Defer(v, self)
-    d   // fromKyo conversion, the ArrowEffect.suspend pattern; zero casts
+    Kyo.Defer[A, B, S & S2](v, self)   // fromKyo conversion; zero casts
 ```
 
 This is cast-free because `Defer`'s value field becomes a pending value:
