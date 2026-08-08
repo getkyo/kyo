@@ -342,6 +342,25 @@ class CommandTest extends kyo.test.Test[Any]:
         ()
     }
 
+    "text drains output larger than the pipe buffer" in {
+        assumeUnix("sh -c");
+        {
+            // An OS pipe buffers roughly 64KB. Past that the child blocks on write until the parent
+            // reads, so an implementation that waits for exit before reading deadlocks: the child
+            // cannot exit, so the wait never completes, so the read that would release it never
+            // starts. Nothing smaller than the buffer can detect that, and every other case in this
+            // file stays well under it.
+            //
+            // seq 1 100000 emits roughly 580KB, comfortably past the boundary on any platform.
+            Command("sh", "-c", "seq 1 100000").text.map { out =>
+                val lines = out.trim.linesIterator.toIndexedSeq
+                assert(lines.length == 100000, s"expected 100000 lines, got ${lines.length}")
+                assert(lines.head == "1")
+                assert(lines.last == "100000")
+            }
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // textWithExitCode
     // ---------------------------------------------------------------------------

@@ -68,6 +68,37 @@ class ProcessTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a signalled process reports the signal, not a generic failure" in {
+        unixOnly
+        // Reachable on JVM through the exit status and on JS through the 'exit' event's second
+        // argument. The JS listener took one argument and discarded that second one, so a signal
+        // death arrived as a null code and was reported as Failure(1). Nothing caught it: every
+        // other assertion here checks only that the code is not Success, which a wrong but nonzero
+        // code satisfies.
+        Scope.run {
+            for
+                proc   <- Command("sleep", "60").spawn
+                _      <- proc.destroyForcibly
+                result <- proc.waitFor(10.seconds)
+            yield result match
+                case Present(ExitCode.Signaled(n)) => assert(n == 9, s"expected SIGKILL, got signal $n")
+                case other                         => assert(false, s"expected a signalled exit, got $other")
+        }
+    }
+
+    "waitFor with an infinite timeout waits for the process" in {
+        unixOnly
+        // An infinite timeout must not arm a timer. Node clamps any delay past the signed 32-bit
+        // range down to 1ms, so arming one turned an unbounded wait into an immediate expiry: the
+        // inverse of the request, reported as Absent, which reads as "still running".
+        Scope.run {
+            for
+                proc   <- Command("true").spawn
+                result <- proc.waitFor(Duration.Infinity)
+            yield assert(result == Present(ExitCode.Success), s"expected a completed wait, got $result")
+        }
+    }
+
     "isAlive is true before exit and false after" in {
         unixOnly
         Scope.run {
@@ -340,8 +371,12 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
+                // Started after spawn, so the window measures only what the assertion names. On
+                // JS, spawn is synchronous (a PATH scan, then uv_spawn), so including it charges
+                // that work to the deadline and a failure reports a number that is not about
+                // waitFor at all.
                 proc      <- Command("sleep", "60").spawn
+                stopwatch <- Clock.stopwatch
                 result    <- proc.waitFor(200.millis)
                 elapsed   <- stopwatch.elapsed
                 _         <- proc.destroyForcibly
@@ -357,8 +392,9 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
+                // Started after spawn: the assertion is about draining, not about process start.
                 proc      <- Command("echo", "fast").spawn
+                stopwatch <- Clock.stopwatch
                 out       <- proc.stdout.run
                 elapsed   <- stopwatch.elapsed
                 _         <- proc.waitFor
@@ -403,8 +439,12 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
+                // Started after spawn, so the window measures only what the assertion names. On
+                // JS, spawn is synchronous (a PATH scan, then uv_spawn), so including it charges
+                // that work to the deadline and a failure reports a number that is not about
+                // waitFor at all.
                 proc      <- Command("sleep", "60").spawn
+                stopwatch <- Clock.stopwatch
                 result    <- proc.waitFor(200.millis)
                 elapsed   <- stopwatch.elapsed
                 _         <- proc.destroyForcibly
@@ -420,8 +460,9 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         Scope.run {
             for
-                stopwatch <- Clock.stopwatch
+                // Started after spawn: the assertion is about draining, not about process start.
                 proc      <- Command("echo", "fast").spawn
+                stopwatch <- Clock.stopwatch
                 out       <- proc.stdout.run
                 elapsed   <- stopwatch.elapsed
                 _         <- proc.waitFor
