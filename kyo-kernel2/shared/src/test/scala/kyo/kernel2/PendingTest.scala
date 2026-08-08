@@ -725,12 +725,10 @@ class PendingTest extends Test[Any]:
     }
 
     def transform(f: Int => Int): Arrow[Int, Int, Any] =
-        Arrow.of(
-            new Arrow.Transform[Int, Int, Any]:
-                def frame = Frame.derive
-                def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Any & S2) =
-                    cont(f(v.asInstanceOf[Int]))
-        )
+        new Arrow.Transform[Int, Int, Any]:
+            def frame = Frame.derive
+            def run[C, S2](v: Any, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                cont(f(v.asInstanceOf[Int]))
 
     "handlers route by tag and nest" in {
         val ask2: Int < Ask2 =

@@ -73,7 +73,7 @@ object Kyo:
     end ContextRead
 
     /** A whole-environment read: resolves at boundary drives to the visible context bindings, the fork-time snapshot carrier. */
-    // TODO how about a single 
+    // TODO how about a single
     final private[kyo] class ContextSnapshot(val frame: Frame) extends Suspension[kyo.kernel2.internal.Context, Any]:
         override def toString = "ContextSnapshot(" + frame.position.show + ")"
 

@@ -40,7 +40,7 @@ object Effect:
             (w: Any) match
                 case kyo: Kyo[?, ?] =>
                     val handler = f.asInstanceOf[Throwable => Any < Any]
-                    kyo.prepend(Arrow.of(new Catching(handler, _frame)).asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[B < (S & S2)]
+                    kyo.prepend(new Catching(handler, _frame)).asInstanceOf[B < (S & S2)]
                 case _ =>
                     w.asInstanceOf[B < (S & S2)]
             end match
@@ -63,7 +63,7 @@ object Effect:
             (w: Any) match
                 case kyo: Kyo[?, ?] =>
                     // re-arm across the park so later steps stay intercepted
-                    kyo.prepend(Arrow.of(this).asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
+                    kyo.prepend(this).asInstanceOf[C < (Any & S2)]
                 case _ =>
                     w
             end match
@@ -78,19 +78,12 @@ object Effect:
     @nowarn("msg=anonymous")
     private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         // TODO can't we have defer with just an Arrow or even just an abstract method like the existing old kernel?
-        Kyo.Defer(
-            (),
-            Arrow.of(
-                new Arrow.Transform[Unit, A, S]:
-                    def frame = _frame
-                    def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
-                        cont(f)
-            )
-        ).asInstanceOf[A < S]
-
-    /** Alias of `defer`, kept for source conformance with the current kernel's internal surface. */
-    private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
-        defer(f)
+        val thunk = new Arrow.Transform[Unit, A, S]:
+            def frame = _frame
+            def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
+                cont(f)
+        Kyo.Defer((), thunk).asInstanceOf[A < S]
+    end defer
 
     /** Acquires a resource, uses it, and guarantees release.
       *
@@ -108,12 +101,10 @@ object Effect:
     )(using inline _frame: Frame): A < S =
         new Kyo.Bracket[R, A, S]:
             val useArrow: Arrow[R, A, S] =
-                Arrow.of(
-                    new Arrow.Transform[R, A, S]:
-                        def frame = _frame
-                        def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
-                            cont(useF(v.asInstanceOf[R]))
-                )
+                new Arrow.Transform[R, A, S]:
+                    def frame = _frame
+                    def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
+                        cont(useF(v.asInstanceOf[R]))
             def acquire       = acquireF
             def release(r: R) = releaseF(r)
             def cont          = useArrow

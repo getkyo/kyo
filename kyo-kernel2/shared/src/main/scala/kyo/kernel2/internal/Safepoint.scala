@@ -100,6 +100,7 @@ private[kyo] object Safepoint:
             depth = saved
     end Active
 
+    // TODO isn't a bette rname for this Preempt? it's odd to think a safepoint would be parked
     final private[kernel2] class Parked private[Safepoint] (
         private[Safepoint] val resume: Maybe[Active],
         thread: Maybe[Thread]
@@ -112,9 +113,10 @@ private[kyo] object Safepoint:
         private[kyo] def closeDrive(saved: Long): Unit = ()
     end Parked
 
-    @static private val slots = new AtomicReferenceArray[Safepoint](Slots)
+    @static private val slots = new AtomicReferenceArray[Safepoint](Slots) // TODO let's use Maybe[Safepoint] if no perf overhead
 
     /** The shared overflow safepoint: permanently parked, every frame refuses and trampolines, preemption requests are no-ops. */
+    // TODO this seems quite drastic? is it better to simply fail? It's better to let a task run without preemption/interruption/stack safety than make it never make progress
     @static private[kyo] val Overflow: Safepoint = new Parked(Absent, Absent)
 
     /** The current thread's safepoint state. */
@@ -139,6 +141,7 @@ private[kyo] object Safepoint:
     /** Consumes the current thread's pending request, true when one was pending. Boundary drives call this before the authoritative
       * check; the exchange orders the requester's condition writes before that check.
       */
+    // TODO do we have cases where preempted clearing wouldn't be enough?
     @static def clearPreempt(): Boolean =
         get match
             case parked: Parked =>

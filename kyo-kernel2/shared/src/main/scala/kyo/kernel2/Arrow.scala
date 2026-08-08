@@ -71,8 +71,6 @@ object Arrow:
 
     def apply[A]: Arrow[A, A, Any] = empty.asInstanceOf[Arrow[A, A, Any]]
 
-    def of[A, B, S](t: Transform[A, B, S]): Arrow[A, B, S] = t
-
     extension [A, B, S](self: Arrow[A, B, S])
 
         def apply[S2](v: A < S2): B < (S & S2) =

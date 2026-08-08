@@ -318,12 +318,6 @@ object `<`:
 
     end extension
 
-    extension [A, S](self: A < S)
-        // TODO do not keep forwarding methods like this
-        private[kyo] def unsafeGet: A =
-            Kyo.unwrap(self).asInstanceOf[A]
-    end extension
-
     extension [A, S, S2](self: A < S < S2)
         /** Flattens a nested pending computation into a single computation. */
         def flatten(using Frame): A < (S & S2) =
@@ -334,7 +328,7 @@ object `<`:
     private[kyo] def observe[A, S](observer: (Frame, Any) => Unit)(v: A < S): A < S =
         v match
             case kyo: Kyo[A, S] @unchecked =>
-                kyo.prepend(Arrow.of(new Observe(observer)).asInstanceOf[Arrow[Any, Any, Any]])
+                kyo.prepend(new Observe(observer))
             case _ =>
                 v
     end observe
@@ -350,9 +344,9 @@ object `<`:
                         observer(t.frame, cur)
                         val w = t.run(cur, Arrow[Any])
                         if w.isInstanceOf[Kyo[?, ?]] then
-                            val rest =
-                                if Arrow.isEmpty(o.next) then Arrow.of[Any, Any, Any](this)
-                                else Arrow.map(Arrow.of[Any, Any, Any](this))(o.next)
+                            val rest: Arrow[Any, Any, Any] =
+                                if Arrow.isEmpty(o.next) then this
+                                else Arrow.map(this)(o.next)
                             w.asInstanceOf[Kyo[Any, Any]].map(rest)
                         else
                             (o.next: Any) match
@@ -376,7 +370,7 @@ object `<`:
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                driveLoop(self.asInstanceOf[Any < Any], never, 1, boundary = true) match
+                driveLoop(self.asInstanceOf[Any < Any], neverPreempt, 1, boundary = true) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
                     case v                  => Kyo.unwrap(v).asInstanceOf[A]
             else Kyo.unwrap(self).asInstanceOf[A]
@@ -388,11 +382,7 @@ object `<`:
 
     end extension
 
-    private val never: () => Boolean = () => false
-
-
-    // TODO no forwarding methods!
-    private[kyo] def neverPreempt: () => Boolean = never
+    private[kyo] val neverPreempt: () => Boolean = () => false
 
     private inline def BracketDepth = 512
 
@@ -429,12 +419,11 @@ object `<`:
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
         val lifted = liftSlow(v)
-        Arrow.of(
-            new Arrow.Transform[Unit, A, Any]:
-                def frame = Frame.internal
-                def run[C, S2](x: Any, cont: Arrow[A, C, S2]): C < (Any & S2) =
-                    cont(lifted.asInstanceOf[A < Any])
-        )
+        new Arrow.Transform[Unit, A, Any]:
+            def frame = Frame.internal
+            def run[C, S2](x: Any, cont: Arrow[A, C, S2]): C < (Any & S2) =
+                cont(lifted.asInstanceOf[A < Any])
+        end new
     end yieldValue
 
     final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
@@ -445,26 +434,22 @@ object `<`:
     end Finalize
 
     private def constant(v: Any < Any): Arrow[Any, Any, Any] =
-        Arrow.of(
-            new Arrow.Transform[Any, Any, Any]:
-                def frame = Frame.internal
-                def run[C, S2](x: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                    cont(v)
-        )
+        new Arrow.Transform[Any, Any, Any]:
+            def frame = Frame.internal
+            def run[C, S2](x: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                cont(v)
 
     private def reacquire(bracket: Kyo.Bracket[Any, Any, Any]): Arrow[Any, Any, Any] =
-        Arrow.of(
-            new Arrow.Transform[Any, Any, Any]:
-                def frame = Frame.internal
-                def run[C, S2](r: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                    cont(
-                        new Kyo.Bracket[Any, Any, Any]:
-                            def acquire         = r
-                            def release(x: Any) = bracket.release(x)
-                            def cont            = bracket.cont
-                            def frame           = bracket.frame
-                    )
-        )
+        new Arrow.Transform[Any, Any, Any]:
+            def frame = Frame.internal
+            def run[C, S2](r: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                cont(
+                    new Kyo.Bracket[Any, Any, Any]:
+                        def acquire         = r
+                        def release(x: Any) = bracket.release(x)
+                        def cont            = bracket.cont
+                        def frame           = bracket.frame
+                )
 
     private def cleanup(bracket: Kyo.Bracket[Any, Any, Any], resource: Any, t: Throwable): Unit =
         try
@@ -485,21 +470,7 @@ object `<`:
     )
     // TODO you're using multiple names for the same kind of things: drive, dispatch, eval. Please consolidate to eval
 
-    /** Drives a freshly installed handler's region immediately: handling evaluates as far as it can, like every other strict
-      * position in the kernel. Preemption for these drives is a later iteration.
-      */
-    private[kyo] def driveInstalled(v: Any < Any): Any < Any =
-        driveLoop(v, never, 1, boundary = false) // TODO no forwarding methods like this
-
-    private[kyo] def drivePartial(
-        v0: Any < Any,
-        preempt: () => Boolean,
-        period: Int,
-        last: LastResort
-    ): Any < Any =
-        driveLoop(v0, preempt, Integer.max(1, period / Arrow.Period), boundary = true, last)
-
-    private def driveLoop(
+    private[kyo] def driveLoop(
         v0: Any < Any,
         preempt: () => Boolean,
         stride: Int, // TODO unused?
@@ -794,17 +765,15 @@ object `<`:
       * already produced the final value.
       */
     private def outcomeStep(h: Handler.Loop): Arrow[Any, Any, Any] =
-        Arrow.of( // TODO why is this necessary?
-            new Arrow.Transform[Any, Any, Any]:
-                def frame = h.frame
-                def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                    v match
-                        case next: Loop.Continue2[?, ?] @unchecked =>
-                            val h2 = new Handler.Loop(h.effectTag, next._1, h.clause, h.done, h.frame)
-                            cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next._2.asInstanceOf[Any < Any]))
-                        case b =>
-                            cont(liftSlow(b))
-        )
+        new Arrow.Transform[Any, Any, Any]:
+            def frame = h.frame
+            def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                v match
+                    case next: Loop.Continue2[?, ?] @unchecked =>
+                        val h2 = new Handler.Loop(h.effectTag, next._1, h.clause, h.done, h.frame)
+                        cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next._2.asInstanceOf[Any < Any]))
+                    case b =>
+                        cont(liftSlow(b))
     end outcomeStep
 
 end `<`

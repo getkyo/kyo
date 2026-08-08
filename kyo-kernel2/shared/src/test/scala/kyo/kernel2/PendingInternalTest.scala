@@ -24,9 +24,9 @@ class PendingInternalTest extends Test[Any]:
         assert(nested.evalNow.map(_.eval) == Maybe(1))
     }
 
-    "unsafeGet returns the completed value" in {
-        assert((5: Int < Any).unsafeGet == 5)
+    "eval returns the completed value" in {
+        assert((5: Int < Any).eval == 5)
         val nested: (Int < Any) < Any = Kyo.lift(1: Int < Any)
-        assert(nested.unsafeGet.eval == 1)
+        assert(nested.eval.eval == 1)
     }
 end PendingInternalTest

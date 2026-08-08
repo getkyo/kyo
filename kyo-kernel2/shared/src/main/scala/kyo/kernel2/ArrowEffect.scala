@@ -258,17 +258,26 @@ object ArrowEffect:
     )(
         clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
     )(using frame: Frame): A < (E & S) =
-        `<`.drivePartial(
+        `<`.driveLoop(
             v.asInstanceOf[Any < Any],
             preempt,
-            period,
+            Integer.max(1, period / Arrow.Period),
+            boundary = true,
             new `<`.LastResort(
                 effectTag.asInstanceOf[Tag[Any]],
                 clause.asInstanceOf[[C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]]
             )
         ).asInstanceOf[A < (E & S)]
 
+    /** Drives a freshly installed handler's region immediately: handling evaluates as far as it can, like every other strict position in
+      * the kernel. Preemption for these drives is a later iteration.
+      */
     private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
-        `<`.driveInstalled(h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any])).asInstanceOf[B < S2]
+        `<`.driveLoop(
+            h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]),
+            `<`.neverPreempt,
+            1,
+            boundary = false
+        ).asInstanceOf[B < S2]
 
 end ArrowEffect
