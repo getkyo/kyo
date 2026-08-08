@@ -34,6 +34,13 @@ class HostFileSystemWriteConformanceTest extends FileSystemWriteTestSuite:
         FileSystemConformanceFixtures.host("kyo-host-write-suite")
 end HostFileSystemWriteConformanceTest
 
+class HostFileSystemChannelConformanceTest extends FileSystemChannelTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-host-channel-suite")
+end HostFileSystemChannelConformanceTest
+
 /** Minimal user-defined backend fixture that deliberately exposes only the read tier. */
 final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) extends FileSystem.Read[Sync]:
     export delegate.*
