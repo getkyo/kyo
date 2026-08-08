@@ -53,6 +53,7 @@ Authorized queue, mine to execute (details at the end of the doc):
 # Needs your attention
 
 ## 14. The `LastResort` boundary carrier
+gosh man I don't think we need LastResort?
 - Files: `Pending.scala`, `ArrowEffect.scala`
 - Status: OPEN DISCUSSION. You are not convinced; the use is shown below with the
   real code. No implementation until you rule. Track A's design also validates or
@@ -128,6 +129,7 @@ If you rule the mechanism stays, the shape fix applies (typed node, threaded as
 reshapes track A's scheduler integration and I hold this until then.
 
 ## 19. `Context` should be a user-facing type: heads-up on the landed design
+yeah
 - Files: `internal/Context.scala`, kyo-data `TypeMap`
 - Status: `kernel2-context-typemap-design.md` landed (track D, briefed with your
   rulings: performance is the challenge; TypeMap may be improved or a new
@@ -142,6 +144,7 @@ read the full design critically, and bring you a summary with a concrete
 recommendation; the decision is yours then.
 
 ## 24. Is clearing the preempt flag enough?
+ok
 - Files: `internal/Safepoint.scala`
 - Status: answered directly below (no agent needed for this one); to be reconciled
   with track A's landed design when I summarize it for you.
@@ -189,6 +192,7 @@ then CASes the victim's slot from `Active` to `Parked`; the owner polls through 
 # Designs in flight
 
 ## 15. Preemption not wired into the drives
+fix
 - Files: `Pending.scala`, `Arrow.scala`, `ArrowEffect.scala`, `internal/Safepoint.scala`
 - Status: `kernel2-preemption-design.md` landed (track A); my critical read and
   summary for you pending. Issues 21 to 23 below are inputs to it.
@@ -208,6 +212,7 @@ overridable through any API; drives poll `Safepoint.preempted` and consume with
 fiber's registered thread.
 
 ## 18. Context reads walk the continuation chain
+make sure you have a high-quality doc and ask me to review if yes
 - Files: `Pending.scala` (`resolveContext`, `snapshotContext`), `Kyo.scala`
   (`ContextRead`, `ContextSnapshot`), `internal/Handler.scala`, `Arrow.scala`
   (`hasHandler`)
@@ -220,6 +225,7 @@ fiber's registered thread.
   bindings survive park/resume; `ContextSnapshot` must not exist per your ruling.
 
 ## 13. Fork-boundary API shape
+ok keep as the old kernel then
 - Files: `Isolate.scala` (`internal.runDetached`), future consumers kyo-core/IOTask
 - Status: `kernel2-boundary-api-design.md` landed (track C); my critical read and
   summary for you pending.
@@ -236,6 +242,7 @@ Boundary consumers (Fiber, Async, IOTask) and proposes exact signatures with
 before/after call sites, assuming #18's outcome as an interface.
 
 ## 16. `defer` allocates twice
+yeah, and we have the issue of both Defer and Transofr being classes. I'm still not sure why we can't see why Defer can't simpy have an abtract run method
 - Files: `Effect.scala`, `Kyo.scala`
 - Status: YOUR COUNTER-PROPOSAL adopted as the design direction. I will present the
   worked-out design for your approval before implementing (you flagged my earlier
@@ -256,6 +263,7 @@ receiving the context parameter). Precedent for the double role in kernel2:
 `Arrow.Offset` already extends both `Transform` and `Step`.
 
 ## 21. `Parked` is the wrong name for a preempt-requested safepoint
+more info on the proposal please
 - Files: `internal/Safepoint.scala`
 - Status: input to track A's design (your TODO: "isn't a better name for this
   Preempt? it's odd to think a safepoint would be parked").
@@ -265,6 +273,7 @@ the two other uses of the class: the shared Overflow instance and the `resume` f
 that carries the previous Active state.
 
 ## 22. Null-based Safepoint slot array
+ok drop
 - Files: `internal/Safepoint.scala`
 - Status: input to track A's design (your TODO: use `Maybe[Safepoint]` if no perf
   overhead).
@@ -275,6 +284,7 @@ requires pre-filling the array with `Absent` and confirming `get` cost is unchan
 the design states what the benchmark must show.
 
 ## 23. The Overflow safepoint can livelock a task
+Give me more context again
 - Files: `internal/Safepoint.scala`, `Arrow.scala`, `Pending.scala`
 - Status: input to track A's design. Your ruling: it is better to let a task run
   without preemption/interruption/stack-depth services than to make it never progress.
@@ -286,6 +296,7 @@ identically, forever. Candidate fix: hand overflow threads an unregistered `Acti
 design weighs alternatives.
 
 ## 9. Unexplained cast in `prepend`
+where's the design?
 - Files: `Kyo.scala` (`Suspension.prepend` and siblings), `Effect.scala`, `Pending.scala`
 - Status: your ok on the plan: I present an elaborated design for your approval, then
   implement.
