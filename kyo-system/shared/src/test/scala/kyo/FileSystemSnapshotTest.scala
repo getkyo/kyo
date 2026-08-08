@@ -13,6 +13,13 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
             case Result.Success(value) => value
             case other                 => throw AssertionError(s"invalid fixture glob: $other")
 
+    private def take(clock: Clock.TimeControl, watcher: Path.Watcher)(using
+        Frame
+    ): Chunk[PathChange] < (Async & Abort[FileWatchException]) =
+        Fiber.initUnscoped(Scope.run(watcher.events.take(1).run)).map { fiber =>
+            clock.advance(10.millis).andThen(clock.advance(10.millis)).andThen(fiber.get)
+        }
+
     "glob matrix snapshot represents matcher behavior" in {
         val rows = Chunk(
             s"*.txt|alpha.txt=${glob("*.txt").matches("alpha.txt", Glob.CaseSensitivity.Sensitive)}|nested/alpha.txt=${glob("*.txt").matches("nested/alpha.txt", Glob.CaseSensitivity.Sensitive)}",
@@ -43,6 +50,30 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
         }
     }
 
+    "watch trace snapshot represents ordered changes" in {
+        Clock.withTimeControl { clock =>
+            hostTempDir("kyo-snapshot-watch").map { dir =>
+                val fileSystem = FileSystem.host
+                val root       = dir / "root"
+                val file       = root / "a.txt"
+                fileSystem.mkDir(root).andThen {
+                    fileSystem.openWatcher(root, WatchOptions()).map { watcher =>
+                        fileSystem.write(file, "a", Path.WriteOptions()).andThen(take(clock, watcher)).map { created =>
+                            fileSystem.write(file, "changed", Path.WriteOptions()).andThen(take(clock, watcher)).map { modified =>
+                                fileSystem.removeExisting(file).andThen(take(clock, watcher)).map { removed =>
+                                    val trace = created ++ modified ++ removed
+                                    assert(trace == Chunk(PathChange.Created(file), PathChange.Modified(file), PathChange.Removed(file)))
+                                    val normalized = trace.map(_.toString.replace(s"${dir.toString}/", ""))
+                                    assert(normalized.mkString("\n") == FileSystemSnapshotValues.watchTrace)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "normalized error snapshot represents typed failures" in {
         val rows = Chunk(
             "Read|root/missing.txt|FileNotFoundException",
@@ -60,6 +91,7 @@ private[kyo] object FileSystemSnapshotValues:
     val globMatrix: String =
         "*.txt|alpha.txt=true|nested/alpha.txt=false\n**/*.txt|alpha.txt=true|nested/alpha.txt=true\n*.TXT|alpha.txt=false|ALPHA.TXT=true"
     val normalizedTree: String = "root/\nroot/a.txt=a\nroot/nested/\nroot/nested/b.txt=b"
+    val watchTrace: String     = "Created(root/a.txt)\nModified(root/a.txt)\nRemoved(root/a.txt)"
     val normalizedErrors: String =
         "Read|root/missing.txt|FileNotFoundException\nWrite|root/missing/value.txt|FileNotFoundException\nCreate|root/a.txt|FileAlreadyExistsException"
 end FileSystemSnapshotValues
