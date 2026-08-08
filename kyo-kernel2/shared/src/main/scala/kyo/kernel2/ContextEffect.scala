@@ -88,6 +88,15 @@ object ContextEffect:
         )
     end suspend
 
+    /** Reads the value of `E` if a binding is in scope, or the default otherwise, and maps it in one step. */
+    inline def suspendWith[V, E <: ContextEffect[V], B, S](
+        inline effectTag: Tag[E],
+        inline default: => V
+    )(
+        inline f: V => B < S
+    )(using inline _frame: Frame): B < S =
+        suspend[V, E](effectTag, default).map(f)
+
     /** Provides a constant binding for `E` within the computation's scope. */
     def handle[V, E <: ContextEffect[V], A, S](
         effectTag: Tag[E],

@@ -220,6 +220,13 @@ class ContextEffectTest extends Test[Any]:
         assert(handled.map(_ + 1).eval == 11)
     }
 
+    "a defaulted read maps in one step" in {
+        val v = ContextEffect.suspendWith[Int, Env, Int, Any](Tag[Env], 5)(_ * 2)
+        assert(v.eval == 10)
+        val handled = ContextEffect.handle(Tag[Env], 10)(v.asInstanceOf[Int < Env])
+        assert(handled.eval == 20)
+    }
+
     "distinct context effects resolve independently" in {
         val program: String < (Env & Name) =
             env.map(n => readName.map(s => s + n))
