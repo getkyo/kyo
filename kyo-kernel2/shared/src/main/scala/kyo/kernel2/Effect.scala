@@ -42,7 +42,7 @@ object Effect:
         def loop(w: B < (S & S2), context: Context, handlers: Handlers): B < (S & S2) =
             w match
                 case k: Kyo[B, S & S2] @unchecked =>
-                    ArrowEffect.rewrap(
+                    ArrowEffect.rotate(
                         k,
                         [X] => (chain: Arrow[X, B, S & S2]) => ArrowEffect.Rotate.guard(chain, f, loop, _frame),
                         loop,

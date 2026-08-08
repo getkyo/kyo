@@ -182,18 +182,30 @@ object Arrow:
         // TODO Context and Handlers should not leak outside of the kernel. Arrow is meant to be user facing
         def apply[S2](v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
             // a separate method so the cold branch does not weigh down apply's inlined body
-            def answered(kyo: Kyo[Any, Any]): B < (S & S2) =
-                ArrowEffect.answerNow(kyo, context, handlers) match
-                    case Maybe.Present(a) => self(a.asInstanceOf[A < S2], context, handlers)
-                    case Maybe.Absent     => kyo.asInstanceOf[Kyo[A, S2]].map(self)
+            def dispatchLocal(s: Kyo.Suspend[?, ?, ?, ?, ?, ?]): B < (S & S2) =
+                handlers.resolve(s.erasedTag) match
+                    case Maybe.Present(r: Handlers.Entry.Resume) =>
+                        // answer in place and keep going forward
+                        self(ArrowEffect.answerNow(s, r, context, handlers).asInstanceOf[A < S2], context, handlers)
+                    case Maybe.Present(_: Handlers.Entry.Stop) =>
+                        // the skip: every frame from here to the handler is dead, the innermost
+                        // matching loop's matched arm answers on arrival
+                        s.asInstanceOf[B < (S & S2)]
+                    case _ =>
+                        // Absent, or a shadow entry: structural travel
+                        s.asInstanceOf[Kyo[A, S2]].map(self)
             if isEmpty(self) then
                 v.asInstanceOf[B < (S & S2)]
             else if v.isInstanceOf[Kyo[?, ?]] then
-                // the one place suspensions bubble: a fun-format operation in scope is
-                // answered here, locally, before the suspension travels any further
-                val kyo = v.asInstanceOf[Kyo[Any, Any]]
-                if handlers.isEmpty then kyo.asInstanceOf[Kyo[A, S2]].map(self)
-                else answered(kyo)
+                // the one place suspensions bubble: execution consults the threaded handlers
+                // here, so the operation dispatches at the point it surfaced
+                v.asInstanceOf[Kyo[Any, Any]] match
+                    case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                        if s.origin.isInstanceOf[Kyo.NeverResumed[?, ?, ?, ?, ?, ?]] then s.asInstanceOf[B < (S & S2)]
+                        else if handlers.isEmpty then s.asInstanceOf[Kyo[A, S2]].map(self)
+                        else dispatchLocal(s)
+                    case kyo =>
+                        kyo.asInstanceOf[Kyo[A, S2]].map(self)
             else
                 self match
                     case o: Step[Any, Any, Any, Any] @unchecked =>

@@ -127,7 +127,7 @@ object ContextEffect:
         def loop(w: A < (E & S), context: Context, handlers: Handlers): A < S =
             w match
                 case k: Kyo[A, E & S] @unchecked =>
-                    ArrowEffect.rewrap(
+                    ArrowEffect.rotate(
                         k,
                         [X] => (chain: Arrow[X, A, E & S]) => ArrowEffect.Rotate.binding(chain, bind, loop, frame),
                         loop,

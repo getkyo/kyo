@@ -56,6 +56,14 @@ object Kyo:
 
     end Suspend
 
+    /** A suspension of an operation no handler can resume: the effect's output is Nothing, so nothing after the operation can
+      * ever run. The bubble point and the handle loops' traversal pass it through untouched: no continuation is stacked and no
+      * rotation installed, so a deep failure travels as the one node its suspension already is. The marker is checked through
+      * `origin`, which every Continue preserves; the drive's finalizer attachment maps onto these suspensions like any other, so
+      * releases still run when a boundary discards the remainder.
+      */
+    abstract class NeverResumed[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S] extends Suspend[I, O, E, A, B, S]
+
     final private[kyo] class Continue[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
         override val origin: Suspend[I, O, E, A, O[A], E],
         val cont: Arrow[O[A], B, S]

@@ -23,11 +23,13 @@ import scala.util.control.NonFatal
   *
   * Handling is a structural loop over the computation, the rotation law as execution: an operation of the handled effect is handled
   * where it surfaces, and a suspension of any other effect crosses the handler outward while the handler rotates into its continuation
-  * (a [[ArrowEffect.Rotate]] step), staying wrapped around the rest of its computation. Fun-format handlers additionally register in
-  * the threaded [[Handlers]] parameter, so their operations are answered locally at the point they surface, with no continuation built.
+  * (a [[ArrowEffect.Rotate]] step), staying wrapped around the rest of its computation. Every handler additionally registers in the
+  * threaded [[Handlers]] parameter, so execution at a suspension point knows the operation's handler: a resume entry answers in place
+  * with no continuation captured, a stop entry makes the suspension pass through bare, with nothing stacked on the way to its loop,
+  * and a shadow entry masks outer entries for the formats whose operations must travel structurally.
   *
-  * Effects that never resume declare it in their output type: an effect with output `Const[Nothing]` cannot be resumed by any handler,
-  * whatever format the handler uses.
+  * Effects that never resume declare it in their output type: an operation of an effect with output `Const[Nothing]` cannot be
+  * resumed by any handler, so its suspension travels untouched by construction, regardless of registration.
   *
   * @tparam I
   *   The operation input constructor
@@ -40,7 +42,8 @@ object ArrowEffect:
 
     /** Suspends an operation of the effect `E`.
       *
-      * Returns the operation as a pending computation. The operation runs when a handler for `E` interprets it.
+      * Returns the operation as a pending computation. The operation runs when a handler for `E` interprets it. An operation whose
+      * output type is `Nothing` is minted never-resuming, so nothing is ever stacked onto it.
       */
     @nowarn("msg=anonymous")
     inline def suspend[A](
@@ -50,14 +53,26 @@ object ArrowEffect:
         inline operationInput: I[A]
     ): O[A] < E =
         val in = operationInput
-        val op: Kyo.Suspend[I, O, E, A, O[A], E] =
-            new Kyo.Suspend[I, O, E, A, O[A], E]:
-                def input               = in
-                def tag                 = effectTag
-                def frame               = _frame
-                def cont                = Arrow[O[A]]
-                private[kyo] def origin = this
-        op
+        inline scala.compiletime.erasedValue[O[A]] match
+            case _: Nothing =>
+                val op: Kyo.Suspend[I, O, E, A, O[A], E] =
+                    new Kyo.NeverResumed[I, O, E, A, O[A], E]:
+                        def input               = in
+                        def tag                 = effectTag
+                        def frame               = _frame
+                        def cont                = Arrow[O[A]]
+                        private[kyo] def origin = this
+                op
+            case _ =>
+                val op: Kyo.Suspend[I, O, E, A, O[A], E] =
+                    new Kyo.Suspend[I, O, E, A, O[A], E]:
+                        def input               = in
+                        def tag                 = effectTag
+                        def frame               = _frame
+                        def cont                = Arrow[O[A]]
+                        private[kyo] def origin = this
+                op
+        end match
     end suspend
 
     /** Suspends an operation and maps its output in one step. */
@@ -76,7 +91,8 @@ object ArrowEffect:
       * A suspension of a foreign effect crosses the handler outward and the handler rotates into the suspension's continuation, staying
       * wrapped around the rest of its computation: this step is that wrap. Running it applies the contained chain and folds the result
       * through the handle loop again, so the handler re-enters on every resumption, however the continuation is invoked. Each variant
-      * closes over exactly the state its scope needs; the factories below build them.
+      * closes over exactly the state its scope needs and re-establishes its format's registration around the contained application;
+      * the factories below build them.
       *
       * `A` is the contained chain's input (the foreign operation's output type at the wrap site) and `B` the handle loop's result.
       * The `inner` chain is kept at its element types for the finalization walk, which is structural.
@@ -85,7 +101,7 @@ object ArrowEffect:
 
     private[kyo] object Rotate:
 
-        /** Re-entry for a handle loop that changes no parameters (the ctl, final ctl, shallow, and stateful formats). */
+        /** Re-entry for a handle loop that registers nothing. */
         def plain[X, M, S, A, S2](
             chain: Arrow[X, M, S],
             loop: (M < S, Context, Handlers) => A < S2,
@@ -97,19 +113,49 @@ object ArrowEffect:
                     cont(loop(chain(defaultLift(v), context, handlers), context, handlers), context, handlers)
 
         /** Re-entry for a fun-format handle loop: the handler registers around the contained application, so its operations are
-          * answered where they surface.
+          * answered where they surface, and the loop receives the extension so the matched arm's resumptions run under it too.
           */
         def handler[X, M, S, A, S2](
             chain: Arrow[X, M, S],
             h: ResumeHandler[?, ?, ?, ?],
+            loop: (M < S, Context, Handlers, Handlers) => A < S2,
+            _frame: Frame
+        ): Rotate[X, A, S2] =
+            new Rotate[X, A, S2](chain):
+                def frame = _frame
+                def run[C, S3](v: X, context: Context, handlers: Handlers, cont: Arrow[A, C, S3]): C < (S2 & S3) =
+                    val extended = handlers.add(new Handlers.Entry.Resume(h, context, handlers))
+                    cont(loop(chain(defaultLift(v), context, extended), context, handlers, extended), context, handlers)
+
+        /** Re-entry for a stop-format handle loop: the shared per-call entry registers around the contained application, so an
+          * operation of the handled effect passes through bare to the loop, with nothing stacked on the way.
+          */
+        def stop[X, M, S, A, S2](
+            chain: Arrow[X, M, S],
+            entry: Handlers.Entry.Stop,
             loop: (M < S, Context, Handlers) => A < S2,
             _frame: Frame
         ): Rotate[X, A, S2] =
             new Rotate[X, A, S2](chain):
                 def frame = _frame
                 def run[C, S3](v: X, context: Context, handlers: Handlers, cont: Arrow[A, C, S3]): C < (S2 & S3) =
-                    val extended = handlers.add(new Handlers.Entry(h, context, handlers))
-                    cont(loop(chain(defaultLift(v), context, extended), context, handlers), context, handlers)
+                    cont(loop(chain(defaultLift(v), context, handlers.add(entry)), context, handlers), context, handlers)
+
+        /** Re-entry for a format whose operations travel structurally (ctl, first, loop): when an outer entry of the same tag is
+          * visible, the shared shadow entry masks it for the contained application, so innermost-wins holds across formats. The
+          * loop receives the masked parameter for the resumptions its region includes.
+          */
+        def masked[X, M, S, A, S2](
+            chain: Arrow[X, M, S],
+            shadow: Handlers.Entry.Shadow,
+            loop: (M < S, Context, Handlers, Handlers) => A < S2,
+            _frame: Frame
+        ): Rotate[X, A, S2] =
+            new Rotate[X, A, S2](chain):
+                def frame = _frame
+                def run[C, S3](v: X, context: Context, handlers: Handlers, cont: Arrow[A, C, S3]): C < (S2 & S3) =
+                    val masked = if handlers.resolve(shadow.tag).isEmpty then handlers else handlers.add(shadow)
+                    cont(loop(chain(defaultLift(v), context, masked), context, handlers, masked), context, handlers)
 
         /** Re-entry for a binding: this scope's context is derived from the incoming one around the contained application. */
         def binding[X, M, S, A, S2](
@@ -147,7 +193,7 @@ object ArrowEffect:
         /** The answer bracket: the contained chain runs at the entry's parameters, the scope a handle function runs at, and keeps
           * doing so across resumptions.
           */
-        def at[X, M, S, S2](chain: Arrow[X, M, S], entry: Handlers.Entry): Rotate[X, M, S2] =
+        def at[X, M, S, S2](chain: Arrow[X, M, S], entry: Handlers.Entry.Resume): Rotate[X, M, S2] =
             new Rotate[X, M, S2](chain):
                 def frame = entry.handler.frame
                 def run[C, S3](v: X, context: Context, handlers: Handlers, cont: Arrow[M, C, S3]): C < (S2 & S3) =
@@ -156,11 +202,12 @@ object ArrowEffect:
     end Rotate
 
     /** The traversal every handle loop shares once its own effect's operations are handled and the value is still pending: a foreign
-      * suspension rotates the handler into its continuation, a Defer and a Bracket carry the rotate step into theirs. Settled values
-      * never reach here; each loop's own settled arm completes them.
+      * suspension rotates the handler into its continuation, a Defer and a Bracket carry the rotate step into theirs. A suspension
+      * that can never resume, or whose tag resolves to a stop entry in the loop's ambient, passes through untouched: its rotation
+      * would be discarded unrun by the stop loop's matched arm. Settled values never reach here; each loop's own settled arm
+      * completes them.
       */
-    // TODO can we have a name indicating rotation? rotateRight? Please use cosnistent and regular terminology in the module
-    private[kernel2] def rewrap[A, B, S, S2](
+    private[kernel2] def rotate[A, B, S, S2](
         v: Kyo[A, S],
         rotated: [X] => Arrow[X, A, S] => Arrow[X, B, S2],
         loop: (A < S, Context, Handlers) => B < S2,
@@ -169,7 +216,14 @@ object ArrowEffect:
     ): B < S2 =
         v match
             case s: Kyo.Suspend[?, ?, ?, ?, A, S] @unchecked =>
-                s.continue(rotated(s.cont))
+                if s.origin.isInstanceOf[Kyo.NeverResumed[?, ?, ?, ?, ?, ?]] then
+                    v.asInstanceOf[B < S2]
+                else if handlers.isEmpty then
+                    s.continue(rotated(s.cont))
+                else
+                    handlers.resolve(s.erasedTag) match
+                        case Maybe.Present(_: Handlers.Entry.Stop) => v.asInstanceOf[B < S2]
+                        case _                                     => s.continue(rotated(s.cont))
             case d: Kyo.Defer[a, A, S] @unchecked =>
                 // the deferred value's residual row after this handler is the loop's output row: the fold's premise, not provable
                 Kyo.Defer(d.value.asInstanceOf[a < S2], rotated(d.cont))
@@ -211,7 +265,7 @@ object ArrowEffect:
                                 cont(loop(rebuild(b.acquire, context, handlers), context, handlers), context, handlers)
                     )
         end match
-    end rewrap
+    end rotate
 
     // handling is eager, so a throw while acting surfaces at the handle call itself: the
     // effect frames collected on the way out are installed here, the same decoration the
@@ -224,37 +278,33 @@ object ArrowEffect:
                 EffectTrace.install(ex)
                 throw ex
 
-    /** Answers a fun-format operation at the point it surfaced, consulting the threaded handlers parameter. Called from the one place
-      * suspensions bubble ([[Arrow]]'s application on a pending computation) at the drive's currency; Absent when the suspension is
-      * not an operation of a registered fun-format handler, and the caller takes the structural path.
+    /** Answers a fun-format operation at the point it surfaced, at the drive's currency, given the entry its tag resolved to. The
+      * caller applies the suspension's continuation result forward; an effectful answer runs at the handler's scope.
       */
-    private[kyo] def answerNow(kyo: Kyo[Any, Any], context: Context, handlers: Handlers): Maybe[Any < Any] =
-        kyo match
-            case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                val entry = handlers.resolve(s.erasedTag)
-                if entry eq null then Maybe.Absent
-                else
-                    val w = entry.handler.answer(s.input)
-                    val k = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                    if w.isInstanceOf[Kyo[?, ?]] then
-                        // an effectful answer runs at the handler's scope, rotating across suspensions
-                        Maybe(k(scoped(entry)(w), context, handlers))
-                    else
-                        Maybe(k(defaultLift(w), context, handlers))
-                    end if
-                end if
-            case _ =>
-                Maybe.Absent
+    private[kyo] def answerNow(
+        s: Kyo.Suspend[?, ?, ?, ?, ?, ?],
+        entry: Handlers.Entry.Resume,
+        context: Context,
+        handlers: Handlers
+    ): Any < Any =
+        val w = entry.handler.answer(s.input)
+        val k = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
+        if w.isInstanceOf[Kyo[?, ?]] then
+            // an effectful answer runs at the handler's scope, rotating across suspensions
+            k(scoped(entry)(w), context, handlers)
+        else
+            k(defaultLift(w), context, handlers)
+        end if
     end answerNow
 
     /** Keeps an effectful fun-format answer executing at its handler's scope: the parameters captured at installation, not the
       * operation site's. Structure the answer already materialized bubbles outward untouched; remainders are wrapped in an `at` rotate
       * step, so parts that run after a resumption still execute at the handler's scope.
       */
-    private def scoped[A, S, S2](entry: Handlers.Entry)(w: A < S): A < S2 =
+    private def scoped[A, S, S2](entry: Handlers.Entry.Resume)(w: A < S): A < S2 =
         w match
             case k: Kyo[A, S] @unchecked =>
-                rewrap(
+                rotate(
                     k,
                     [X] => (chain: Arrow[X, A, S]) => Rotate.at[X, A, S, S2](chain, entry),
                     (v, _, _) => scoped[A, S, S2](entry)(v),
@@ -277,30 +327,37 @@ object ArrowEffect:
     )(
         handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
-        def loop(v: A < (E & S & S2), context: Context, handlers: Handlers): A < (S & S2) =
+        val shadow = new Handlers.Entry.Shadow(effectTag.erased)
+        def loop(v: A < (E & S & S2), context: Context, handlers: Handlers, masked: Handlers): A < (S & S2) =
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S & S2] @unchecked if effectTag.erased <:< s.erasedTag =>
                     val k      = s.cont
-                    val resume = (o: O[x]) => k(defaultLift(o), context, handlers)
+                    val resume = (o: O[x]) => k(defaultLift(o), context, masked)
                     // the recursive call stays in the arm as a direct self-call: that is what
                     // keeps deep eager handling stack safe
-                    loop(handle[x](s.input, resume), context, handlers)
+                    loop(handle[x](s.input, resume), context, handlers, masked)
                 case k: Kyo[A, E & S & S2] @unchecked =>
-                    rewrap(k, [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.plain(chain, loop, frame), loop, context, handlers)
+                    rotate(
+                        k,
+                        [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.masked(chain, shadow, loop, frame),
+                        (w, c, hs) => loop(w, c, hs, if hs.resolve(shadow.tag).isEmpty then hs else hs.add(shadow)),
+                        context,
+                        handlers
+                    )
                 case v =>
                     // settled: the handled effect is discharged, the value untouched
                     v.asInstanceOf[A < (S & S2)]
             end match
         end loop
-        traced(frame)(loop(v, Context.empty, Handlers.empty))
+        traced(frame)(loop(v, Context.empty, Handlers.empty, Handlers.empty))
     end handle
 
     /** Handles `E` by answering each operation in place (the fun format).
       *
       * The handle function produces the operation's output; the kernel resumes the continuation exactly once with it. No continuation
-      * is exposed or captured: the handler registers in the threaded handlers parameter and its operations are answered locally at the
-      * point they surface. The handler is deep, and the handle function runs at the handler's scope: reads inside it resolve against
-      * the bindings outside the handler.
+      * is exposed or captured: the handler registers in the threaded handlers parameter, so its operations are answered locally at the
+      * point they surface, including during the loop's own resumptions. The handler is deep, and the handle function runs at the
+      * handler's scope: reads inside it resolve against the bindings outside the handler.
       */
     def handleResume[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
@@ -309,27 +366,35 @@ object ArrowEffect:
         handle: [C] => I[C] => O[C] < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
         val h = new ResumeHandler[I, O, E, S & S2](effectTag, handle, frame)
-        def loop(v: A < (E & S & S2), context: Context, handlers: Handlers): A < (S & S2) =
+        // extended is the loop invocation's registration: the ambient plus the entry capturing this invocation's scope pair. The
+        // matched arm resumes under it, so operations of E surfacing during the resumption are answered where they surface instead
+        // of stacking nodes back to the loop, and an outer same-tag entry cannot capture them.
+        def loop(v: A < (E & S & S2), context: Context, handlers: Handlers, extended: Handlers): A < (S & S2) =
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S & S2] @unchecked if effectTag.erased <:< s.erasedTag =>
-                    loop(
-                        s.cont(h.handle[x](s.input), context, handlers),
+                    loop(s.cont(h.handle[x](s.input), context, extended), context, handlers, extended)
+                case k: Kyo[A, E & S & S2] @unchecked =>
+                    rotate(
+                        k,
+                        [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.handler(chain, h, loop, frame),
+                        (w, c, hs) => loop(w, c, hs, hs.add(new Handlers.Entry.Resume(h, c, hs))),
                         context,
                         handlers
-                    ) // TODO I still don't understand why we aren't adding a handler to handlers here. Are you sure these new handlers are optimized as I meant?
-                case k: Kyo[A, E & S & S2] @unchecked =>
-                    rewrap(k, [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.handler(chain, h, loop, frame), loop, context, handlers)
+                    )
                 case v =>
                     v.asInstanceOf[A < (S & S2)]
             end match
         end loop
-        traced(frame)(loop(v, Context.empty, Handlers.empty))
+        traced(frame)(
+            loop(v, Context.empty, Handlers.empty, Handlers.empty.add(new Handlers.Entry.Resume(h, Context.empty, Handlers.empty)))
+        )
     end handleResume
 
     /** Handles `E` by ending the computation at each operation (the final ctl format).
       *
-      * The handle function produces the result directly; the continuation from the operation to this handler never runs. The handler
-      * is deep: effects of `E` in the result dispatch back to this handler.
+      * The handle function produces the result directly; the continuation from the operation to this handler never runs, and with
+      * the handler registered it is never built either: an operation surfacing anywhere in the region passes through bare to this
+      * loop. The handler is deep: effects of `E` in the result dispatch back to this handler.
       */
     def handleStop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
@@ -337,13 +402,20 @@ object ArrowEffect:
     )(
         handle: [C] => I[C] => A < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
+        val entry = new Handlers.Entry.Stop(effectTag.erased)
         def loop(v: A < (E & S & S2), context: Context, handlers: Handlers): A < (S & S2) =
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S & S2] @unchecked if effectTag.erased <:< s.erasedTag =>
                     // the continuation to this handler never runs: the operation input is all the handle function needs
                     loop(handle[x](s.input), context, handlers)
                 case k: Kyo[A, E & S & S2] @unchecked =>
-                    rewrap(k, [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.plain(chain, loop, frame), loop, context, handlers)
+                    rotate(
+                        k,
+                        [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.stop(chain, entry, loop, frame),
+                        loop,
+                        context,
+                        handlers
+                    )
                 case v =>
                     v.asInstanceOf[A < (S & S2)]
             end match
@@ -364,20 +436,28 @@ object ArrowEffect:
         handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
         done: A => B < S2
     )(using frame: Frame): B < (S & S2) =
-        def loop(v: A < (E & S), context: Context, handlers: Handlers): B < (S & S2) =
+        val shadow = new Handlers.Entry.Shadow(effectTag.erased)
+        def loop(v: A < (E & S), context: Context, handlers: Handlers, masked: Handlers): B < (S & S2) =
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S] @unchecked if effectTag.erased <:< s.erasedTag =>
-                    val k      = s.cont
+                    val k = s.cont
+                    // shallow: the resume closure deliberately uses the plain ambient, not the masked one. Once the handler
+                    // leaves, the resumed region's operations of E belong to outer handlers, as the result type says.
                     val resume = (o: O[x]) => k(defaultLift(o), context, handlers)
-                    // shallow: the handler leaves, so the result is not looped
                     handle[x](s.input, resume)
                 case k: Kyo[A, E & S] @unchecked =>
-                    rewrap(k, [X] => (chain: Arrow[X, A, E & S]) => Rotate.plain(chain, loop, frame), loop, context, handlers)
+                    rotate(
+                        k,
+                        [X] => (chain: Arrow[X, A, E & S]) => Rotate.masked(chain, shadow, loop, frame),
+                        (w, c, hs) => loop(w, c, hs, if hs.resolve(shadow.tag).isEmpty then hs else hs.add(shadow)),
+                        context,
+                        handlers
+                    )
                 case v =>
                     done(Kyo.unnest(v).asInstanceOf[A])
             end match
         end loop
-        traced(frame)(loop(v, Context.empty, Handlers.empty))
+        traced(frame)(loop(v, Context.empty, Handlers.empty, Handlers.empty))
     end handleFirst
 
     /** Handles `E` without handler state.
@@ -429,9 +509,12 @@ object ArrowEffect:
         handle: [C] => (I[C], State, O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), B] < S2,
         done: (State, A) => B < (S & S2)
     )(using frame: Frame): B < (S & S2) =
-        def loop(state: State, v: A < (E & S), context: Context, handlers: Handlers): B < (S & S2) =
-            val stateLoop: (A < (E & S), Context, Handlers) => B < (S & S2) = (w, ctx, hs) => loop(state, w, ctx, hs)
-            // interprets the outcome once it materializes; effects raised while it is computed pass through to outer handlers
+        val shadow = new Handlers.Entry.Shadow(effectTag.erased)
+        def loop(state: State, v: A < (E & S), context: Context, handlers: Handlers, masked: Handlers): B < (S & S2) =
+            val stateLoop: (A < (E & S), Context, Handlers, Handlers) => B < (S & S2) =
+                (w, ctx, hs, m) => loop(state, w, ctx, hs, m)
+            // interprets the outcome once it materializes; effects raised while it is computed pass through to outer handlers,
+            // unshadowed by design
             def outcome(w: Loop.Outcome2[State, A < (E & S), B] < (S & S2), context: Context, handlers: Handlers): B < (S & S2) =
                 w match
                     case kyo: Kyo[Loop.Outcome2[State, A < (E & S), B], S & S2] @unchecked =>
@@ -449,7 +532,7 @@ object ArrowEffect:
                     case out =>
                         Kyo.unnest(out) match
                             case next: Loop.Continue2[State, A < (E & S)] @unchecked =>
-                                loop(next._1, next._2, context, handlers)
+                                loop(next._1, next._2, context, handlers, masked)
                             case b =>
                                 // the outcome union's completion side: a raw B at the opaque boundary
                                 defaultLift(b.asInstanceOf[B])
@@ -457,15 +540,21 @@ object ArrowEffect:
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S] @unchecked if effectTag.erased <:< s.erasedTag =>
                     val k      = s.cont
-                    val resume = (o: O[x]) => k(defaultLift(o), context, handlers)
+                    val resume = (o: O[x]) => k(defaultLift(o), context, masked)
                     outcome(handle[x](s.input, state, resume), context, handlers)
                 case k: Kyo[A, E & S] @unchecked =>
-                    rewrap(k, [X] => (chain: Arrow[X, A, E & S]) => Rotate.plain(chain, stateLoop, frame), stateLoop, context, handlers)
+                    rotate(
+                        k,
+                        [X] => (chain: Arrow[X, A, E & S]) => Rotate.masked(chain, shadow, stateLoop, frame),
+                        (w, c, hs) => loop(state, w, c, hs, if hs.resolve(shadow.tag).isEmpty then hs else hs.add(shadow)),
+                        context,
+                        handlers
+                    )
                 case v =>
                     done(state, Kyo.unnest(v).asInstanceOf[A])
             end match
         end loop
-        traced(frame)(loop(state, v, Context.empty, Handlers.empty))
+        traced(frame)(loop(state, v, Context.empty, Handlers.empty, Handlers.empty))
     end handleLoop
 
     // handleLoop's outcome transform is minted per interpretation; one internal frame identifies them all
