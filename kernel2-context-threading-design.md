@@ -1,5 +1,11 @@
 # kernel2: context as a threaded parameter (design track B)
 
+Revision note: updated against the landed review queue (typed handlers, ArrowHandler
+and ContextBinding naming, pure installation with no install-time drives, Interceptor
+prepend, LastResort removal, EffectTrace rename with Trace deleted, runDetached moved
+to ContextEffect, items 16 and 19 dropped by ruling). Code excerpts reflect that tree;
+sections 3.4, 3.6, and the open questions were revised accordingly.
+
 Scope: replace kernel2's chain-walking context machinery (`Kyo.ContextRead`,
 `Kyo.ContextSnapshot`, `resolveContext`, `snapshotContext`) with a design where the
 context is a value handed to a continuation as a parameter, as the current kernel does.
@@ -153,16 +159,16 @@ abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
     private[kyo] def hasHandler: Boolean = false
     private[kyo] def context: Context    = Context.empty      // a def: no field, no per-instance cost
 
-final private[kyo] class ContextBinding(bindings: Context, val frame: Frame) extends Arrow.Transform[Any, Any, Any]:
+final private[kyo] class ContextBinding[A](bindings: Context, val frame: Frame) extends Arrow.Transform[A, A, Any]:
     override private[kyo] def context: Context = bindings
-    def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) = cont(Kyo.lift(v))
+    def run[C2, S3](v: Any, cont: Arrow[A, C2, S3]): C2 < (Any & S3) = cont(Kyo.lift(v).asInstanceOf[A < Any])
 
 final private[kyo] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
     override private[kyo] val hasHandler = a.hasHandler || b.hasHandler
     override private[kyo] val context    = Context.concat(a.context, b.context)   // a is inner, a wins
 
-final class Offset[-A, X0, +B, -S] private[kyo] (val head: Transform[A, X0, S], val next: Arrow[X0, B, S])
-    extends Transform[A, B, S], Step[A, B, S]:
+final class Offset[-A, B, +C, -S] private[kyo] (val head: Transform[A, B, S], val next: Arrow[B, C, S])
+    extends Transform[A, C, S], Step[A, C, S]:
     override private[kyo] val hasHandler = head.hasHandler || next.hasHandler
     override private[kyo] val context    = Context.concat(head.context, next.context)
 ```
@@ -302,11 +308,9 @@ the context param threaded + Defer, not specific suspensions") is met literally 
 node boundary, and the eager path keeps its property of having no context parameter at
 all.
 
-If item #16 (single-allocation defer) lands, both forms become one anonymous class mint
-with an abstract `resume` rather than a node plus a transform, and `Read`'s signature
-`resume(context: Context): A < S` is then character for character the current kernel's
-`KyoDefer.apply(v, context)`. The two items want the same node change, so #16 should be
-sequenced with this one.
+Item #16 (single-allocation defer) was dropped by ruling, so both forms stay a node
+plus a transform, exactly like today's `Defer`; no abstract resumption method is
+introduced.
 
 ### 3.4 Where the drive answers, and the boundary rule
 
@@ -326,15 +330,14 @@ Three properties of this arm:
 
 - **The answer is one field load.** `read.cont` is the remaining continuation, and
   `read.cont.context` is the summary maintained in section 3.1. No walk, no allocation.
-- **The boundary rule is preserved exactly.** A non-boundary drive (`install`, that is
-  `ArrowEffect.handle` evaluating a freshly installed region) parks the read, because
-  the chain it holds is the region's chain and an enclosing `ContextEffect.handle` may
-  still be applied to the whole thing afterwards. This is today's `if boundary` guard,
-  unchanged in meaning, and the tests that depend on late installation
-  (`"a binding installed after composition completes the read"`,
-  `"bindings travel with parked computations"`,
-  `"context reads inside arrow handler clauses resolve against the clause scope"`) keep
-  passing for the same reason they pass today.
+- **The boundary rule became structural.** Handler installation is now pure (nothing
+  drives at install time), so every drive is a boundary drive and the `boundary` flag
+  no longer exists. A read is resolved whenever a drive reaches it, and late
+  installation still composes because nothing evaluates before the outermost drive:
+  the tests that depend on it (`"a binding installed after composition completes the
+  read"`, `"bindings travel with parked computations"`, `"context reads inside arrow
+  handler clauses resolve against the clause scope"`) keep passing for exactly that
+  reason. The `if boundary` gate in the arm sketch above disappears.
 - **The `depth == 0` guard is preserved.** A read reached inside a nested trampoline (a
   bracket acquire or release) parks out to the drive's top level first, where the chain
   is complete. Section 3.7 makes that chain carry the right frames.
@@ -412,19 +415,22 @@ site could see it. With `readContext` there is no reason for a callback: the bou
 state is an ordinary value.
 
 ```scala
-/** The ambient state a forked computation inherits: the creator's trace and its resolved context. */
-final private[kyo] class Detached private[kernel2] (val trace: Trace, private[kyo] val context: Context):
+/** The ambient state a forked computation inherits: its creator's resolved context. The trace round
+  * adds the diagnostics trace here without touching any signature. */
+final private[kyo] class Detached private[kernel2] (private[kyo] val context: Context):
 
     /** Installs the inherited bindings on a detached computation. Outermost, so the child's own
       * handlers shadow them. */
     private[kyo] def attach[A, S](v: A < S): A < S =
         if context.isEmpty then v
-        else new ContextBinding(context, Frame.internal).asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]).asInstanceOf[A < S]
+        else new ContextBinding[A](context, Frame.internal).install[Any, S](v)
 
-// Isolate.internal
+// ContextEffect (runDetached's home since item 28)
 private[kyo] def detach(using Frame): Detached < Any =
-    Kyo.readContext(ctx => new Detached(Trace.empty, ctx.resolve.inherit))
+    Kyo.readContext(ctx => new Detached(ctx.resolve.inherit))
 ```
+
+`Trace` is deleted by ruling; nothing here resurrects it.
 
 The fork site maps over one value, and every child gets the bindings by construction:
 
@@ -779,18 +785,14 @@ the swap round.
   `ContextBinding` for the chain node (C4 asked for this name, and the node is no longer
   a handler), `Detached` / `detach` / `attach` for the fork boundary. All are proposals;
   the mechanism does not depend on them.
-- **O-2 (`Context` representation and item #19).** This design makes `Context` a frame
-  list, which makes the approved-in-direction `TypeMap` migration moot as written. Ruling
-  needed: re-scope #19 to the resolved fork snapshot, or keep `Context` a keyed map and
-  introduce a second in-flight type (section 3.2, fallback).
+- **O-2: resolved.** Item #19 (the `TypeMap` migration) was dropped by ruling, so the
+  frame-list representation stands on its own with no second type and no re-scope.
 - **O-3 (tag matching).** Bindings are matched by exact tag, as the current kernel and
   `Context` already do, dropping `resolveContext`'s subtype-tolerant match and the
   pre-fork versus post-fork inconsistency it creates. Confirm that no downstream effect
   intends to bind a subtype and read a supertype.
-- **O-4 (sequencing with #16).** Both items want `Defer` to carry an abstract resumption
-  method. Landing #16 first makes this item's node change a one-line signature addition;
-  landing this first means #16 revisits two classes instead of one. Recommend #16 first,
-  which needs its pending ruling.
+- **O-4: resolved.** Item #16 was dropped by ruling; the node change stays a node plus
+  a transform and no sequencing constraint remains.
 - **O-5 (the bracket defect).** It is a pre-existing kernel2 bug found while designing
   this item, and the fix belongs here because the fix is "read the bracket's own scope",
   which only exists after this change. Confirm it lands with this item rather than as a
