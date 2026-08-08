@@ -173,14 +173,33 @@ object ArrowEffect:
                 // the deferred value's residual row after this handler is the loop's output row: the fold's premise, not provable
                 new Kyo.Defer[a, B, S2](d.value.asInstanceOf[a < S2], rotated(d.cont))
             case b: Kyo.Bracket[r, A, S] @unchecked =>
-                new Kyo.Bracket[r, B, S2]:
-                    // the loop folds acquire and release at the bracket's own value types: the handler's currency stands in for
-                    // them. A handler that completes without resuming while acquire is in flight is the open pressure point this
-                    // round pins; the casts mark exactly that seam.
-                    def acquire       = loop(b.acquire.asInstanceOf[A < S], context, handlers).asInstanceOf[r < S2]
-                    def release(x: r) = loop(b.release(x).asInstanceOf[A < S], context, handlers).asInstanceOf[Unit < S2]
-                    def cont          = rotated(b.cont)
-                    def frame         = b.frame
+                if b.acquire.isInstanceOf[Kyo[?, ?]] then
+                    // acquire is sequenced before the bracket: fold it as the head of the computation and rebuild the bracket
+                    // around the settled resource. The continuation an operation inside acquire presents therefore spans the
+                    // rest of acquire, the bracket, and its use: a handler that ends the computation there discards the bracket
+                    // (nothing acquired, release never runs), and a transform after resume applies to the bracket's result, the
+                    // old kernel's semantics for effects inside acquisition. The rebuilt bracket re-enters this traversal with a
+                    // settled acquire.
+                    val rebuild = new Arrow.Transform[r, A, S]:
+                        def frame = b.frame
+                        def run[C, S3](v: r, context: Context, handlers: Handlers, cont: Arrow[A, C, S3]): C < (S & S3) =
+                            val rebuilt = new Kyo.Bracket[r, A, S]:
+                                def acquire       = defaultLift(v)
+                                def release(x: r) = b.release(x)
+                                def cont          = b.cont
+                                def frame         = b.frame
+                            cont(rebuilt, context, handlers)
+                        end run
+                    loop(rebuild(b.acquire, context, handlers), context, handlers)
+                else
+                    new Kyo.Bracket[r, B, S2]:
+                        // acquire is settled, so only release and the use continuation carry the handler. The release fold runs
+                        // at the bracket's value types: its completion value is discarded by the drive, so the loop's currency
+                        // standing in for it stays contained; the casts mark that seam.
+                        def acquire       = b.acquire.asInstanceOf[r < S2]
+                        def release(x: r) = loop(b.release(x).asInstanceOf[A < S], context, handlers).asInstanceOf[Unit < S2]
+                        def cont          = rotated(b.cont)
+                        def frame         = b.frame
         end match
     end rewrap
 

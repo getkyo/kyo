@@ -294,6 +294,56 @@ class EffectTest extends Test[Any]:
         assert(log == List("acq-outer", "acq-inner", "rel-inner", "rel-outer"))
     }
 
+    "a stop while acquire is in flight discards the bracket" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            ask.map { a =>
+                log :+= s"acq-$a"
+                a
+            }
+        } { r =>
+            log :+= s"rel-$r"
+            ()
+        } { r =>
+            log :+= "use"
+            r + 1
+        }
+        val handled = ArrowEffect.handleStop(Tag[EffAsk], v)([C] => _ => -7)
+        assert(handled.eval == -7)
+        assert(log == List.empty)
+    }
+
+    "an operation answered during acquire completes the bracket normally" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            ask.map { a =>
+                log :+= s"acq-$a"
+                a
+            }
+        } { r =>
+            log :+= s"rel-$r"
+            ()
+        } { r =>
+            r + 1
+        }
+        val handled = ArrowEffect.handle(Tag[EffAsk], v)([C] => (_, cont) => cont(42))
+        assert(handled.eval == 43)
+        assert(log == List("acq-42", "rel-42"))
+    }
+
+    "a ctl transform after resume inside acquire applies to the final result" in {
+        var log = List.empty[String]
+        val v = Effect.bracket(ask) { r =>
+            log :+= s"rel-$r"
+            ()
+        } { r =>
+            r + 1
+        }
+        val handled = ArrowEffect.handle(Tag[EffAsk], v)([C] => (_, cont) => cont(10).map(x => x * 100))
+        assert(handled.eval == 1100)
+        assert(log == List("rel-10"))
+    }
+
     "bracket acquire runs per drive" in {
         var acquisitions = 0
         val v = Effect.bracket {
