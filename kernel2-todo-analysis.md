@@ -27,22 +27,21 @@ Needs your attention:
 
 | # | Issue | What I need from you |
 |---|-------|----------------------|
-| 21 | `Parked` rename | Proposal below: fix #23 first, then `Parked` becomes `Preempted` with a non-Maybe `resume: Active`. Confirm the name. |
-| 23 | Overflow livelock | Full context below plus the proposed fix (ThreadLocal fallback Active). Confirm the direction. |
 | 18 | Context threading design | I do the critical read and quality pass on `kernel2-context-threading-design.md`, then ask you to review, per your instruction. |
-| 19 | Context datastructure | Verified summary of `kernel2-context-typemap-design.md` coming; decision then. |
+| 16 | defer's `()` at the call site | Dropped per your ruling; my answer to your "def input = () in the class" question is below. Correct me if I read it wrong. |
 
-Designs answered in place, now implementing (from your comments):
-
-| # | Issue | Resolution |
-|---|-------|-----------|
-| 14 | `LastResort` | You are right: not needed. handlePartial becomes an outer slice loop around the plain drive; `LastResort`, `evalBoundary`, and the null threading are deleted. Design below. |
-| 16 | Single-allocation defer | Class diamond confirmed (Kyo and Transform are both classes), so back to your original question: yes, `Defer` can simply have an abstract `run()`, and it is safe. Design below. |
-| 9 | `prepend` Interceptor | Design below, as you asked ("where's the design?"). One documented cast in one place. |
-| 15 | Preemption integration | Your "fix" recorded: authorized. I read track A's landed design critically first, then implement; the #24 consumption rule is a hard requirement on it. |
+Track A design verdict (my critical read, done): sound, adopted with amendments:
+the in-drive boundary clause is replaced by #14's outer slice loop; #22 stays
+dropped per your ruling (no Maybe slots); the holder trait is named `Current` per
+your in-doc comment; eval runs Masked (it must poll: a non-polling eval would
+livelock on a pending request the same way Overflow does), and a Preemptible drive
+nested in a slice is unsupported and documented, which is the #24 consumption rule.
 
 Authorized queue, in execution order, no stops: #7 (suite running) -> #8 -> #10 ->
-#1 -> #20 -> #11 -> #12 -> #14 -> #16 -> #3+#4 -> #15 -> #17 (benchmarks first).
+#1 -> #20 -> #11 -> #12 -> #14 (your fix) -> #3+#4 -> #15 (with #21 rename and #23
+detached-cell fix inside) -> #17 (benchmarks first).
+Closed this pass: #16 (dropped, nicety noted below), #19 (dropped entirely, your
+"just drop this").
 
 # Needs your attention
 
@@ -110,17 +109,11 @@ You asked me to make sure `kernel2-context-threading-design.md` is a high-qualit
 and then ask you to review it. That is my next non-queue work item: critical read,
 verify its claims against the code, tighten it, then hand it to you.
 
-## 19. Context datastructure: verified summary coming
-just drop this
-The track D doc recommends against `Context = TypeMap` on typing grounds (effect-keyed
-vs value-keyed; `Local`'s two internal state effects share a value type). You
-acknowledged the heads-up; my verified summary with a concrete recommendation is
-queued behind #18's review pass.
 
 # Designs answered in place
 
-## 14. `LastResort` removed: handlePartial as an outer slice loop
-fix
+## 14. `LastResort` removed: handlePartial as an outer slice loop  [AUTHORIZED: your fix]
+
 You are right that it is not needed. The drive already returns the remainder whenever
 it hits a suspension no installed delimiter matches. So handlePartial does not need to
 push its clause INTO the drive at all; it can loop AROUND it:
@@ -149,9 +142,22 @@ answered operation, on the scheduler-operation path, which is cold relative to t
 operation itself. Implementing in this pass; PendingSchedulerTest and the oracle
 suite validate.
 
-## 16. Single-allocation defer: abstract `run()`, and why it is safe
-hmm but this will hgenerate complexity and more bytecode in other places. Drop but you can put the def input = () in the class at least?
-Your diamond observation is confirmed: `Kyo` and `Arrow.Transform` are both abstract
+## 16. Single-allocation defer: DROPPED (your ruling), one nicety kept
+
+Your ruling: the abstract-run reshape generates complexity and more bytecode
+elsewhere; dropped. `Defer` keeps its (value, cont) shape and `Effect.defer` keeps
+its two allocations.
+
+Your follow-up question, "can you put the `def input = ()` in the class at least?":
+the literal old-kernel move (a fixed unit member in the class) requires `value` to be
+an abstract member instead of a constructor parameter, which is the reshape just
+dropped. The zero-cost equivalent I am applying instead: an `inline` unit-fixed
+constructor on the companion, so the one unit-valued producer reads
+`Kyo.Defer(thunk)` with no `()` at the call site and no extra bytecode (inline
+expands to `new Defer((), thunk)`). If you meant something else, say the word and I
+adjust.
+
+For reference, the dropped analysis: your diamond observation is confirmed: `Kyo` and `Arrow.Transform` are both abstract
 classes, so `Defer` cannot extend both (that blocked the extends-Suspension-and-Arrow
 shape; making `Transform` a trait would put interface dispatch on the hottest path).
 And your question stands: `Defer` CAN simply have an abstract `run()`:
