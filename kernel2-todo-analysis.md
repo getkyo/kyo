@@ -48,6 +48,34 @@ Closed this pass: #16 (dropped, nicety noted below), #19 (dropped entirely, your
 
 # Needs your attention
 
+## 26. The `Kyo` node hierarchy is meant as internal (your new TODO)
+- Files: `Kyo.scala` (class `Kyo`, `Suspension`, `Suspend`, `ContextRead`,
+  `ContextSnapshot`, `Continue`, `Bracket`, `Defer`)
+- Status: analyzed; proposal below needs your confirmation because it is a structural
+  move touching every file.
+
+The old kernel's answer is location, not visibility: `KyoSuspend` and friends are
+PUBLIC classes living in `kyo.kernel.internal`, public because inline suspension
+paths expand at user call sites (kernel2 has the same constraint: `ArrowEffect.suspend`
+mints `new Kyo.Suspend` inline, and the trampoline's Defer arm names `Kyo.Defer` at
+user sites). Proposal: move `sealed abstract class Kyo` and the node classes to
+`kyo.kernel2.internal`, keeping them public, old-kernel style. The complication is
+that the nodes currently live INSIDE `object Kyo`, which also carries the user-facing
+combinator surface (#27): the move splits them, nodes to internal, utilities staying.
+Say the word and I execute the split.
+
+## 27. `object Kyo`'s utility surface belongs in package kyo (your new TODO)
+- Files: `Kyo.scala` (companion utilities: `lift`, `unit`, `when`, `zip`, `foreach`
+  family)
+- Status: blocked by the known classpath collision until the swap round.
+
+Agreed on the target: the old kernel's `Kyo` object lives at `kyo.Kyo`. But kernel2
+cannot define `kyo.Kyo` today: the kyo-test runner's classpath carries the old kernel,
+and an FQCN collision is exactly why the package stayed `kyo.kernel2` when we tried
+`kyo.kernel` earlier. Recorded as a swap-round move (when the old kernel leaves the
+classpath, the object relocates mechanically). If you want it sooner under a
+different arrangement, rule and I execute.
+
 ## 18. Context threading design: next step per your instruction
 
 You asked me to make sure `kernel2-context-threading-design.md` is a high-quality doc
