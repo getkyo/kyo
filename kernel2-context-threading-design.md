@@ -160,8 +160,13 @@ transform consumes the threaded context:
 Kyo.Defer((), new Arrow.Transform[Unit, V, E]:
     def frame = _frame
     def run[C, S2](v: Any, context: Context, cont: Arrow[V, C, S2]) =
-        cont(Kyo.lift(context.getOrElse(effectTag, bugMissing(effectTag))), context))
+        cont(context.getOrElse(effectTag, bugMissing(effectTag)), context))
 ```
+
+The read value goes through the implicit lift conversion (the position is typed at
+`V`, and for a generic `V` the macro emits the nesting check itself). Explicit
+`Kyo.lift` appears nowhere in typed positions: it is reserved for where the
+conversion cannot apply.
 
 The with-default variant substitutes the fallback for the bug. The drive's Defer arm
 becomes `defer.cont(defer.value, context)`: reads resolve in one map lookup wherever
@@ -169,7 +174,8 @@ they execute, in `eval`, inside `handlePartial` (with the caller-passed context,
 old kernel's `k((), context)` arm), or inside a resumed continuation.
 
 `ContextEffect.runDetached` becomes a Defer reading the whole context:
-`cont(Kyo.lift(context.inherit), context)`, then `map(f)`. The fork boundary sees
+`cont(context.inherit, context)` (the conversion applies: `Context` is a concrete
+opaque type, provably not a computation), then `map(f)`. The fork boundary sees
 the context threaded to it at fork execution time; `ContextSnapshot` and the
 `snapshotContext` chain walk are deleted, satisfying the Isolate TODO.
 
