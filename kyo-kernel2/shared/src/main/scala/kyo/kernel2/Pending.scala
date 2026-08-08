@@ -370,7 +370,7 @@ object `<`:
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                driveLoop(self.asInstanceOf[Any < Any], neverPreempt, 1, boundary = true) match
+                evalLoop(self.asInstanceOf[Any < Any], neverPreempt, 1, boundary = true) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
                     case v                  => Kyo.unwrap(v).asInstanceOf[A]
             else Kyo.unwrap(self).asInstanceOf[A]
@@ -378,7 +378,7 @@ object `<`:
         /** Evaluates within a preemption budget, returning the remaining computation. */
         // TODO I don't think the period is used anymore?
         def eval(preempt: () => Boolean, period: Int): A < Any =
-            driveLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), boundary = true).asInstanceOf[A < Any]
+            evalLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), boundary = true).asInstanceOf[A < Any]
 
     end extension
 
@@ -468,9 +468,7 @@ object `<`:
         val effectTag: Tag[Any],
         val clause: [C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]
     )
-    // TODO you're using multiple names for the same kind of things: drive, dispatch, eval. Please consolidate to eval
-
-    private[kyo] def driveLoop(
+    private[kyo] def evalLoop(
         v0: Any < Any,
         preempt: () => Boolean,
         stride: Int, // TODO unused?
@@ -513,7 +511,7 @@ object `<`:
                             else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
                         else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
                     case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
-                        dispatch(c, boundary).orElse(dispatchLast(c, last)) match
+                        evalSuspension(c, boundary).orElse(evalBoundary(c, last)) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -524,7 +522,7 @@ object `<`:
                         // a bare suspension has no chain yet: dispatch it as a continue with the
                         // empty arrow so boundary clauses and context defaults still apply
                         val c = new Kyo.Continue(s.asInstanceOf[Kyo.Suspension[Any, Any]], Arrow[Any])
-                        dispatch(c, boundary).orElse(dispatchLast(c, last)) match
+                        evalSuspension(c, boundary).orElse(evalBoundary(c, last)) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -549,7 +547,7 @@ object `<`:
                 throw ex
         finally safepoint.closeDrive(saved)
         end try
-    end driveLoop
+    end evalLoop
 
     /** Finds the innermost matching delimiter in the suspension's chain and applies its format.
       *
@@ -560,11 +558,11 @@ object `<`:
     /** Context reads and their defaults resolve only at boundary drives (eval, handlePartial): an intermediate handle drive parks
       * them, so bindings installed later still compose, matching the current kernel's late resolution.
       */
-    private def dispatch(c: Kyo.Continue[?, ?, ?], boundary: Boolean): Maybe[Any < Any] =
+    private def evalSuspension(c: Kyo.Continue[?, ?, ?], boundary: Boolean): Maybe[Any < Any] =
         val chain = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
         c.suspend match
             case s: Kyo.Suspend[?, ?, ?, ?] =>
-                dispatchControl(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
+                evalOperation(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
             case r: Kyo.ContextRead[?, ?] if boundary =>
                 resolveContext(r.tag.asInstanceOf[Tag[Any]], chain) match
                     case Maybe.Present(value) => Maybe(chain(liftSlow(value)))
@@ -577,7 +575,7 @@ object `<`:
             case _ =>
                 Maybe.Absent
         end match
-    end dispatch
+    end evalSuspension
 
     /** Materializes every visible context binding from the chain into a Context, the fork-time snapshot.
       *
@@ -629,7 +627,7 @@ object `<`:
         end if
     end snapshotContext
 
-    private def dispatchControl(suspendTag: Tag[Any], input: Any, chain: Arrow[Any, Any, Any]): Maybe[Any < Any] =
+    private def evalOperation(suspendTag: Tag[Any], input: Any, chain: Arrow[Any, Any, Any]): Maybe[Any < Any] =
 
         def compose(rest: Arrow[Any, Any, Any], pending: List[Arrow[Any, Any, Any]]): Arrow[Any, Any, Any] =
             pending.foldLeft(rest)((acc, next) => Arrow.map(acc)(next))
@@ -691,7 +689,7 @@ object `<`:
 
         if !chain.hasHandler then Maybe.Absent
         else search(chain, Nil, Nil)
-    end dispatchControl
+    end evalOperation
 
     /** Consults the drive-boundary clause for a suspension no delimiter matched.
       *
@@ -699,7 +697,7 @@ object `<`:
       * resumption re-installs every traveling handler by construction. Present continues the drive; Absent parks it with the suspension
       * still pending, typically after the clause captured the continuation for an out-of-band resume.
       */
-    private def dispatchLast(c: Kyo.Continue[?, ?, ?], last: LastResort | Null): Maybe[Any < Any] =
+    private def evalBoundary(c: Kyo.Continue[?, ?, ?], last: LastResort | Null): Maybe[Any < Any] =
         last match
             case null => Maybe.Absent
             case last: LastResort =>
@@ -708,7 +706,7 @@ object `<`:
                         last.clause[Any](s.input, c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize)
                     case _ =>
                         Maybe.Absent
-    end dispatchLast
+    end evalBoundary
 
     /** Resolves a context read against the chain's binding delimiters.
       *

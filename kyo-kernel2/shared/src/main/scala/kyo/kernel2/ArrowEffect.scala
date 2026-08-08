@@ -258,7 +258,7 @@ object ArrowEffect:
     )(
         clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
     )(using frame: Frame): A < (E & S) =
-        `<`.driveLoop(
+        `<`.evalLoop(
             v.asInstanceOf[Any < Any],
             preempt,
             Integer.max(1, period / Arrow.Period),
@@ -273,7 +273,7 @@ object ArrowEffect:
       * the kernel. Preemption for these drives is a later iteration.
       */
     private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
-        `<`.driveLoop(
+        `<`.evalLoop(
             h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]),
             `<`.neverPreempt,
             1,
