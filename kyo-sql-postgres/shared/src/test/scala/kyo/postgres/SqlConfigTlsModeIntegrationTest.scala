@@ -297,8 +297,8 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
         withTlsContainer { ctx =>
             // Write a malformed PEM file to a temp path using kyo.Path (cross-platform).
             Path.tempUnscoped(prefix = "kyo-sql-bad-cert-", suffix = ".pem").flatMap { tempPath =>
-                tempPath.writeBytes(Span.from("NOT A VALID PEM CERTIFICATE".getBytes(StandardCharsets.UTF_8))).flatMap { _ =>
-                    Scope.ensure(Abort.run[FileSystemException](tempPath.remove).unit).andThen {
+                Path.run(tempPath.writeBytes(Span.from("NOT A VALID PEM CERTIFICATE".getBytes(StandardCharsets.UTF_8)))).flatMap { _ =>
+                    Scope.ensure(Abort.run[FileSystemException](Path.run(tempPath.remove)).unit).andThen {
                         val badPath = tempPath.toString
                         val url =
                             s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca&sslrootcert=$badPath"

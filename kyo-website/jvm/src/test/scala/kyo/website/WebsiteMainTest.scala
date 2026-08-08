@@ -39,14 +39,14 @@ class WebsiteMainTest extends WebsiteTest:
         )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
 
     private def readFile(path: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileReadException](path.read).map {
+        Abort.run[FileSystemException](Path.runReadOnly(path.read)).map {
             case Result.Success(s) => s
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
             case p: Result.Panic   => Abort.error(p)
         }
 
     private def fileExists(path: Path)(using Frame): Boolean < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileReadException](path.exists).map {
+        Abort.run[FileSystemException](Path.runReadOnly(path.exists)).map {
             case Result.Success(b) => b
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
             case p: Result.Panic   => Abort.error(p)

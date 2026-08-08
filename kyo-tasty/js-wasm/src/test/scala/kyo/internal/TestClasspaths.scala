@@ -18,11 +18,11 @@ private[kyo] object TestClasspaths:
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Scope.run {
             Abort.recover[FileSystemException] { e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)) } {
-                Path.tempDir("kyo-test-fixtures").map { dir =>
+                Path.run(Path.tempDir("kyo-test-fixtures")).map { dir =>
                     val tastyDir     = dir / "root"
                     val javaClassDir = dir / "kyo" / "fixtures"
 
-                    def write(name: String, bytes: Array[Byte]): Unit < (Sync & Abort[FileWriteException]) =
+                    def write(name: String, bytes: Array[Byte]): Unit < PathWrite =
                         (tastyDir / name).writeBytes(Span.from(bytes))
 
                     val tastyFixtures: Chunk[(String, Array[Byte])] = Chunk(
@@ -112,26 +112,28 @@ private[kyo] object TestClasspaths:
                         "PortedBugFixture$package.tasty"    -> kyo.fixtures.Embedded.portedBugFixturePackageTasty
                     )
 
-                    tastyDir.mkDir.map { _ =>
-                        javaClassDir.mkDir.map { _ =>
-                            Kyo.foreach(tastyFixtures) { case (name, bytes) =>
-                                write(name, bytes)
-                            }.map { _ =>
-                                val bug71Dir = tastyDir / "portedBug71Outer" / "portedBug71Inner"
-                                bug71Dir.mkDir.map { _ =>
-                                    (bug71Dir / "Marker.tasty").writeBytes(
-                                        Span.from(kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
-                                    ).map { _ =>
-                                        // Java fixture: registered as a standalone root so the classpath walker's
-                                        // ".class" branch discovers it.
-                                        // Path "kyo/fixtures/JavaSimpleFixture.class" yields fully-qualified name
-                                        // "kyo.fixtures.JavaSimpleFixture" via classfilePathToFullName.
-                                        (javaClassDir / "JavaSimpleFixture.class").writeBytes(
-                                            Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+                    Path.run {
+                        tastyDir.mkDir.map { _ =>
+                            javaClassDir.mkDir.map { _ =>
+                                Kyo.foreach(tastyFixtures) { case (name, bytes) =>
+                                    write(name, bytes)
+                                }.map { _ =>
+                                    val bug71Dir = tastyDir / "portedBug71Outer" / "portedBug71Inner"
+                                    bug71Dir.mkDir.map { _ =>
+                                        (bug71Dir / "Marker.tasty").writeBytes(
+                                            Span.from(kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
                                         ).map { _ =>
-                                            Tasty.withClasspath(
-                                                Seq(tastyDir.toString, (javaClassDir / "JavaSimpleFixture.class").toString)
-                                            )(f)
+                                            // Java fixture: registered as a standalone root so the classpath walker's
+                                            // ".class" branch discovers it.
+                                            // Path "kyo/fixtures/JavaSimpleFixture.class" yields fully-qualified name
+                                            // "kyo.fixtures.JavaSimpleFixture" via classfilePathToFullName.
+                                            (javaClassDir / "JavaSimpleFixture.class").writeBytes(
+                                                Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+                                            ).map { _ =>
+                                                Tasty.withClasspath(
+                                                    Seq(tastyDir.toString, (javaClassDir / "JavaSimpleFixture.class").toString)
+                                                )(f)
+                                            }
                                         }
                                     }
                                 }

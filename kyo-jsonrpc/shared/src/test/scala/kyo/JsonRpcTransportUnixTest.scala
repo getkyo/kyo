@@ -26,7 +26,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
 
     "unixDomain binds and accepts a connection" in {
         assumeUnixSockets()
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map { _ =>
@@ -41,12 +41,12 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     }
                 }
             }
-        }
+        })
     }
 
     "unixDomain round-trips one envelope" in {
         assumeUnixSockets()
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map { t =>
@@ -60,24 +60,24 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     }
                 }
             }
-        }
+        })
     }
 
     "unixDomain Scope cleanup deletes socket file" in {
         assumeUnixSockets()
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map(_ => ())
             }.andThen {
                 sock.exists.map(exists => assert(!exists))
             }
-        }
+        })
     }
 
     "unixDomain framer override changes wire shape" in {
         assumeUnixSockets()
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock, framer = JsonRpcFramer.contentLength).map { t =>
@@ -92,7 +92,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
                     }
                 }
             }
-        }
+        })
     }
 
 end JsonRpcTransportUnixTest

@@ -116,7 +116,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             // reads the SAME machine.cgroup.cpu.quota/cpu.period paths off a genuine live cgroup v2 hierarchy
             // (present on a real Linux CI runner). A uniquely-scoped MachineHandles keeps this fixture's
             // write and poll contained to a path no real reader ever touches.
-            Scope.run {
+            Scope.run(Path.run {
                 for
                     dir <- Path.tempDir("kyo-stats-machine-linux-cpumax")
                     handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-cpumax-decode"), 8L)
@@ -144,7 +144,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
                     assert(quota == 50000000.0)
                     assert(period == 100000000.0)
                 end for
-            }
+            })
         }
     }
 
@@ -162,7 +162,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             // this module). A uniquely-scoped MachineHandles keeps the fixture write contained; the
             // decode's own parsing is verified directly against the same scan primitive and scale
             // LinuxDecoders.meminfo uses, decoupled from the gauge either way.
-            Scope.run {
+            Scope.run(Path.run {
                 for
                     dir <- Path.tempDir("kyo-stats-machine-linux-meminfo")
                     handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-decode"), 8L)
@@ -188,7 +188,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
                     assert(histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum - memFreeSumBefore == 4194304.0)
                     assert(histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum - swapFreeSumBefore == 1048576.0)
                 end for
-            }
+            })
         }
 
         "a meminfo line missing MemAvailable and missing the swap lines routes those cells to Absent, never a fabricated 0" in {
@@ -197,7 +197,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             // See the meminfo-decode leaf above: a uniquely-scoped MachineHandles keeps this fixture's
             // gauge writes from poisoning the shared "machine" scope's memTotal/swapTotal for a sibling
             // suite's later poll.
-            Scope.run {
+            Scope.run(Path.run {
                 for
                     dir <- Path.tempDir("kyo-stats-machine-linux-meminfo-missing")
                     handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-missing"), 8L)
@@ -233,7 +233,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
                         "total"
                     ) == swapTotalRegisteredBefore) // no new registration
                 end for
-            }
+            })
         }
     }
 
