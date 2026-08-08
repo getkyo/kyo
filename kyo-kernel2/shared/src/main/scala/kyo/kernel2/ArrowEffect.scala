@@ -231,9 +231,6 @@ object ArrowEffect:
     )(using frame: Frame): A < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case s: Kyo.Suspend[?, ?, ?, ?] =>
-                    // a bare operation is the operation with the empty continuation
-                    loop(new Kyo.Continue[Any, Any, Any](s, Arrow[Any]), context, handlers)
                 case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
                     val k      = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S & S2)]
@@ -241,6 +238,15 @@ object ArrowEffect:
                     // keeps deep eager handling stack safe
                     loop(
                         handle[Any](kyo.suspend.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S & S2)])
+                            .asInstanceOf[Any < Any],
+                        context,
+                        handlers
+                    )
+                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    // a bare operation: the continuation to this handler is the identity
+                    val resume = (x: Any) => Kyo.lift(x).asInstanceOf[A < (E & S & S2)]
+                    loop(
+                        handle[Any](s.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S & S2)])
                             .asInstanceOf[Any < Any],
                         context,
                         handlers
@@ -268,11 +274,10 @@ object ArrowEffect:
         val h = new ResumeHandler[I, O, E, S & S2](effectTag, handle, frame)
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case s: Kyo.Suspend[?, ?, ?, ?] =>
-                    // a bare operation is the operation with the empty continuation
-                    loop(new Kyo.Continue[Any, Any, Any](s, Arrow[Any]), context, handlers)
                 case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
                     loop(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]](h.answer(kyo.suspend.input), context, handlers), context, handlers)
+                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    loop(h.answer(s.input), context, handlers)
                 case v =>
                     rewrap(v, Rotate.handler(_, h, loop, frame), loop, context, handlers)
             end match
@@ -293,11 +298,10 @@ object ArrowEffect:
     )(using frame: Frame): A < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case s: Kyo.Suspend[?, ?, ?, ?] =>
-                    // a bare operation is the operation with the empty continuation
-                    loop(new Kyo.Continue[Any, Any, Any](s, Arrow[Any]), context, handlers)
                 case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
                     loop(handle[Any](kyo.suspend.input.asInstanceOf[I[Any]]).asInstanceOf[Any < Any], context, handlers)
+                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    loop(handle[Any](s.input.asInstanceOf[I[Any]]).asInstanceOf[Any < Any], context, handlers)
                 case v =>
                     rewrap(v, Rotate.plain(_, loop, frame), loop, context, handlers)
             end match
@@ -320,14 +324,15 @@ object ArrowEffect:
     )(using frame: Frame): B < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case s: Kyo.Suspend[?, ?, ?, ?] =>
-                    // a bare operation is the operation with the empty continuation
-                    loop(new Kyo.Continue[Any, Any, Any](s, Arrow[Any]), context, handlers)
                 case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
                     val k      = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S)]
                     // shallow: the handler leaves, so the result is not looped
                     handle[Any](kyo.suspend.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S)]).asInstanceOf[Any < Any]
+                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    // a bare operation: the continuation to this handler is the identity
+                    val resume = (x: Any) => Kyo.lift(x).asInstanceOf[A < (E & S)]
+                    handle[Any](s.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S)]).asInstanceOf[Any < Any]
                 case v if v.isInstanceOf[Kyo[?, ?]] =>
                     rewrap(v, Rotate.plain(_, loop, frame), loop, context, handlers)
                 case v =>
@@ -406,14 +411,20 @@ object ArrowEffect:
                                 Kyo.lift(b)
             end outcome
             v match
-                case s: Kyo.Suspend[?, ?, ?, ?] =>
-                    // a bare operation is the operation with the empty continuation
-                    loop(state, new Kyo.Continue[Any, Any, Any](s, Arrow[Any]), context, handlers)
                 case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
                     val k      = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S)]
                     outcome(
                         handle[Any](kyo.suspend.input.asInstanceOf[I[Any]], state, resume.asInstanceOf[O[Any] => A < (E & S)])
+                            .asInstanceOf[Any < Any],
+                        context,
+                        handlers
+                    )
+                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    // a bare operation: the continuation to this handler is the identity
+                    val resume = (x: Any) => Kyo.lift(x).asInstanceOf[A < (E & S)]
+                    outcome(
+                        handle[Any](s.input.asInstanceOf[I[Any]], state, resume.asInstanceOf[O[Any] => A < (E & S)])
                             .asInstanceOf[Any < Any],
                         context,
                         handlers
