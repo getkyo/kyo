@@ -109,6 +109,11 @@ object Arrow:
           */
         // TODO Context and Handlers should not leak outside of the kernel. Arrow is meant to be user facing
         def apply[S2](v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
+            // a separate method so the cold branch does not weigh down apply's inlined body
+            def answered(kyo: Kyo[Any, Any]): B < (S & S2) =
+                ArrowEffect.answerNow(kyo, context, handlers) match
+                    case Maybe.Present(a) => self(a.asInstanceOf[A < S2], context, handlers)
+                    case Maybe.Absent     => kyo.asInstanceOf[Kyo[A, S2]].map(self)
             if isEmpty(self) then
                 v.asInstanceOf[B < (S & S2)]
             else if v.isInstanceOf[Kyo[?, ?]] then
@@ -116,12 +121,7 @@ object Arrow:
                 // answered here, locally, before the suspension travels any further
                 val kyo = v.asInstanceOf[Kyo[Any, Any]]
                 if handlers.isEmpty then kyo.asInstanceOf[Kyo[A, S2]].map(self)
-                else
-                    val answered = ArrowEffect.answerNow(kyo, context, handlers)
-                    if answered.asInstanceOf[AnyRef] eq null then
-                        kyo.asInstanceOf[Kyo[A, S2]].map(self) // TODO I know null is likely for performance but let's use Maybe and keep a flag for me if there's a regression. Use Maybe
-                    else self(answered.asInstanceOf[A < S2], context, handlers)
-                end if
+                else answered(kyo)
             else
                 self match
                     case o: Offset[Any, Any, Any, Any] @unchecked =>
@@ -130,6 +130,8 @@ object Arrow:
                         guardedRun(t, v, context, handlers)
                     case _ =>
                         applySlow(self, v, context, handlers)
+            end if
+        end apply
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
             if isEmpty(self) then f.asInstanceOf[Arrow[A, C, S & S2]]
@@ -219,6 +221,7 @@ object Arrow:
                 else Maybe(new Offset(t.asInstanceOf[Transform[Any, Any, Any]], empty).asInstanceOf[Step[A, B, S]])
     end stepSlow
 
+    // Is this just a forwarding method? can we remove
     private def rescue[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
         Kyo.Defer(v, self)
 
@@ -250,6 +253,7 @@ object Arrow:
       * driven) and the Step handle for its own position, so phase 1 decomposes it for
       * free by identity.
       */
+    // TODO why have a separate Step class? Can't this be Step?
     final class Offset[-A, B, +C, -S] private[kyo] (
         val head: Transform[A, B, S],
         val next: Arrow[B, C, S]

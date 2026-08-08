@@ -216,26 +216,26 @@ object ArrowEffect:
                 throw ex
 
     /** Answers a fun-format operation at the point it surfaced, consulting the threaded handlers parameter. Called from the one place
-      * suspensions bubble ([[Arrow]]'s application on a pending computation) at the drive's currency; returns null when the suspension
-      * is not an operation of a registered fun-format handler, and the caller takes the structural path.
+      * suspensions bubble ([[Arrow]]'s application on a pending computation) at the drive's currency; Absent when the suspension is
+      * not an operation of a registered fun-format handler, and the caller takes the structural path.
       */
-    private[kyo] def answerNow(kyo: Kyo[Any, Any], context: Context, handlers: Handlers): Any < Any =
+    private[kyo] def answerNow(kyo: Kyo[Any, Any], context: Context, handlers: Handlers): Maybe[Any < Any] =
         kyo match
             case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
                 val entry = handlers.resolve(s.erasedTag)
-                if entry eq null then null.asInstanceOf[Any < Any]
+                if entry eq null then Maybe.Absent
                 else
                     val w = entry.handler.answer(s.input)
                     val k = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     if w.isInstanceOf[Kyo[?, ?]] then
                         // an effectful answer runs at the handler's scope, rotating across suspensions
-                        k(scoped(entry)(w), context, handlers)
+                        Maybe(k(scoped(entry)(w), context, handlers))
                     else
-                        k(defaultLift(w), context, handlers)
+                        Maybe(k(defaultLift(w), context, handlers))
                     end if
                 end if
             case _ =>
-                null.asInstanceOf[Any < Any]
+                Maybe.Absent
     end answerNow
 
     /** Keeps an effectful fun-format answer executing at its handler's scope: the parameters captured at installation, not the
