@@ -8,6 +8,34 @@ private[kyo] object HostFileSystem:
 
     def apply(): FileSystem.Write[Sync] = new HostFileSystem
 
+    // Fires inside the claim node in tryLock, once the OS lock is held and recorded and before
+    // tryLock returns. Default no-op; private[kyo] so tests in this package can reach it, and
+    // single-writer, meaning one test sets and clears it at a time.
+    //
+    // The position is the whole point. An interrupt requested here is delivered at the next
+    // safepoint, which is after the acquisition has produced the lock, and that is the only
+    // instant at which registering the finalizer before the claim differs observably from
+    // registering it afterwards. Without an injection point here a test can only interrupt from
+    // outside, where the interrupt lands before the claim is ever made and every ordering looks
+    // alike.
+    private[kyo] var afterClaimHook: () => Unit = () => ()
+
+    // The claim/finalizer handshake for tryLock. Empty means nothing claimed yet; Claimed carries
+    // the lock the finalizer must release; Drained means the finalizer has already run and no claim
+    // can ever be recorded again. The tombstone is what makes a claim arriving after the drain
+    // observable inside the claim node itself, where it can still release what it just took.
+    private enum LockHolder derives CanEqual:
+        case Empty
+        case Claimed(lock: Path.Lock)
+        case Drained
+    end LockHolder
+
+    // The window a pending reservation waits on is one channel open plus one platform lock call, so
+    // it clears in well under a millisecond. The budget is generous against that rather than tuned:
+    // its job is to terminate at all when an entry is never going to resolve, not to time the window.
+    private val pendingLockRetries: Int         = 100
+    private val pendingLockRetryDelay: Duration = 1.milli
+
     /** Determines case sensitivity by asking the volume rather than the operating system.
       *
       * The two are not the same question. macOS default volumes are case-insensitive while the
@@ -270,5 +298,127 @@ private[kyo] object HostFileSystem:
             Sync.Unsafe.defer(Abort.get(path.unsafe.openReadWriteChannelRaw(open))).map(raw =>
                 (readWriteChannelFrom(path, raw), () => Sync.Unsafe.defer(raw.close()))
             )
+
+        private[kyo] def lockFrom(path: Path, raw: Path.RawLock, grantedMode: Path.LockMode, state: AtomicInt): Path.Lock =
+            val owner = Path.LockOwnership.fresh()
+            new Path.Lock:
+                def mode: Path.LockMode           = grantedMode
+                def ownership: Path.LockOwnership = owner
+
+                def check(using Frame): Unit < (Sync & Abort[FileLockException]) =
+                    state.get.map {
+                        case 0 => Sync.Unsafe.defer(Abort.get(raw.check()))
+                        case _ => Abort.fail(FileLockOwnershipLostException(path))
+                    }
+
+                def release(candidate: Path.LockOwnership)(using Frame): Unit < (Sync & Abort[FileLockException]) =
+                    if !Path.LockOwnership.same(owner, candidate) then Abort.fail(FileLockOwnershipLostException(path))
+                    else
+                        // Unsafe: claiming the release and performing it happen in one node, so no
+                        // interrupt can land between them.
+                        //
+                        // The previous form moved through an intermediate "releasing" state across
+                        // several suspensions. An interrupt in that window left the state there
+                        // permanently: the lock was neither released nor releasable, and a concurrent
+                        // releaser looped on it with no yield and no exit, so a Scope finalizer
+                        // waiting on that release never returned. Claiming straight to "released"
+                        // removes the state that could be stranded and the loop that spun on it.
+                        //
+                        // Release stays single-shot and idempotent: whoever wins the compare-and-set
+                        // performs it, and a later or concurrent caller finds it already claimed and
+                        // returns. A failed release restores the held state so it can be retried.
+                        Sync.Unsafe.defer {
+                            if state.unsafe.compareAndSet(0, 2) then
+                                val outcome = raw.release()
+                                if !outcome.isSuccess then state.unsafe.set(0)
+                                outcome
+                            else Result.succeed(())
+                        }.map(Abort.get(_))
+            end new
+        end lockFrom
+
+        def tryLock(path: Path, mode: Path.LockMode)(using
+            Frame
+        ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileLockException]) =
+            // Deliberately not Scope.acquireRelease. That runs acquire, then registers the finalizer
+            // in a continuation, and an interrupt landing between the two leaves the OS lock held and
+            // the registry entry installed with nothing in existence able to release either: the path
+            // is unacquirable for the life of the process and a descriptor leaks.
+            //
+            // Registering first inverts the problem. The finalizer exists before anything is claimed
+            // and releases whatever it finds recorded, so an interrupt before the claim finds nothing
+            // to do, and one after it finds a lock the finalizer already owns. The claim and its
+            // recording sit in a single unsafe node with no safepoint between them, which is the only
+            // interval that would otherwise be exposed.
+            //
+            // The general form of this belongs in Scope.acquireRelease, which has the same window for
+            // every caller in kyo. Widening that signature to carry Async.mask is a kyo-core change
+            // with a far wider blast radius than this defect, so it is left for its own work.
+            val acquire =
+                Sync.Unsafe.defer(AtomicRef.Unsafe.init[LockHolder](LockHolder.Empty)).map { holder =>
+                    Scope.ensure {
+                        // Drained is permanent: after this getAndSet no claim can be recorded, so a
+                        // slice that outruns the interrupt and still reaches the claim node observes
+                        // the tombstone and releases in place rather than stranding the lock.
+                        Sync.Unsafe.defer(holder.getAndSet(LockHolder.Drained)).map {
+                            case LockHolder.Claimed(lock) => lock.release(lock.ownership)
+                            case _                        => ()
+                        }
+                    }.andThen {
+                        // A shared claim can arrive while another shared claim is between reserving
+                        // its registry entry and installing the platform lock behind it. The two are
+                        // compatible, so refusing there denies a lock the contract grants; the entry
+                        // simply has nothing to share yet. The backend reports that as pending and
+                        // this retries, since it clears without anyone releasing anything.
+                        //
+                        // Bounded on purpose. An acquisition interrupted after it reserves but before
+                        // it can withdraw leaves an entry nothing else clears, and an unbounded retry
+                        // would turn a permanent denial into a permanent hang. Exhausting the budget
+                        // reports the claim unavailable, which is what this returned before.
+                        //
+                        // The attempt returns a Result rather than branching after the node: the
+                        // claim and its recording have to stay in one node with no safepoint between
+                        // them, so the decision to retry has to leave the node as a value.
+                        def attempt(remaining: Int): Path.Lock < (Sync & Async & Abort[FileLockException]) =
+                            // Unsafe: the raw claim and the record of it are plain statements in one
+                            // node, so no interrupt can observe a claim the finalizer cannot see.
+                            Sync.Unsafe.defer {
+                                path.unsafe.lockAttempt(mode) match
+                                    case Path.LockAttempt.Acquired(raw) =>
+                                        val lock = lockFrom(path, raw, mode, AtomicInt.Unsafe.init(0).safe)
+                                        if holder.compareAndSet(LockHolder.Empty, LockHolder.Claimed(lock)) then
+                                            afterClaimHook()
+                                            Result.succeed(Present(lock))
+                                        else
+                                            // The finalizer has already drained: this slice outran the
+                                            // interrupt, and nothing downstream of this node will run
+                                            // again. Release here, in the same node as the claim, and
+                                            // report the attempt unavailable; the recover below folds
+                                            // that to Absent, which is true, since no lock was granted.
+                                            raw.release() match
+                                                case Result.Success(_)     => Result.fail(FileLockUnavailableException(path))
+                                                case Result.Failure(error) => Result.fail(error)
+                                                case panic: Result.Panic   => panic
+                                            end match
+                                        end if
+                                    case Path.LockAttempt.Pending       => Result.succeed(Absent)
+                                    case Path.LockAttempt.Failed(error) => error
+                            }.map {
+                                case Result.Success(Present(lock)) => lock
+                                case Result.Success(Absent) =>
+                                    if remaining <= 0 then Abort.fail(FileLockUnavailableException(path))
+                                    else Async.sleep(pendingLockRetryDelay).andThen(attempt(remaining - 1))
+                                case failed => Abort.get(failed.map(_ => null.asInstanceOf[Path.Lock]))
+                            }
+                        attempt(pendingLockRetries)
+                    }
+                }.map(Maybe(_))
+            Abort.recover[FileLockUnavailableException](_ => Absent)(acquire)
+        end tryLock
+
+        def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait)(using
+            Frame
+        ): Path.Lock < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
+            FileSystem.awaitLock(path, wait)(tryLock(path, mode))
     end HostFileSystem
 end HostFileSystem

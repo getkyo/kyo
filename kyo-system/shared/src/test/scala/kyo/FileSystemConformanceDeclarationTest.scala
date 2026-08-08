@@ -9,9 +9,10 @@ class FileSystemConformanceDeclarationTest extends kyo.test.Test[Any]:
         val suites = Chunk(
             classOf[FileSystemReadTestSuite],
             classOf[FileSystemWriteTestSuite],
-            classOf[FileSystemChannelTestSuite]
+            classOf[FileSystemChannelTestSuite],
+            classOf[FileSystemLockTestSuite]
         )
-        assert(suites.size == 3)
+        assert(suites.size == 4)
     }
 
     "a read-only fixture cannot select write members" in {
