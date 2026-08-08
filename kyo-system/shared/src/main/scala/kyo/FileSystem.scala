@@ -374,6 +374,8 @@ object FileSystem:
         FileSystem.host.asInstanceOf[FileSystem.Watch[Any]]
     )
 
+    private val stagedWatchLocal = Local.init[Maybe[FileSystem.Watch[Any]]](Absent)
+
     /** Runs `value` with `fileSystem` selected as the backend used by [[Path.run]] and
       * [[Path.runReadOnly]]. The selection is inherited by child fibers and restored when the
       * dynamic scope exits.
@@ -404,6 +406,12 @@ object FileSystem:
 
     private[kyo] def useWatchErased[A, S](f: FileSystem.Watch[Any] => A < S)(using Frame): A < S =
         watchLocal.use(f)
+
+    private[kyo] def useStagedWatchErased[A, S](f: Maybe[FileSystem.Watch[Any]] => A < S)(using Frame): A < S =
+        stagedWatchLocal.use(f)
+
+    private[kyo] def letStagedWatchErased[A, S, FS](fileSystem: FileSystem.Watch[FS])(value: A < S)(using Frame): A < S =
+        stagedWatchLocal.let(Present(fileSystem.asInstanceOf[FileSystem.Watch[Any]]))(value)
 
     private[kyo] def letErased[A, S, FS](fileSystem: FileSystem.Write[FS])(value: A < S)(using Frame): A < S =
         local.let(fileSystem.asInstanceOf[FileSystem.Write[Any]])(
@@ -451,6 +459,38 @@ object FileSystem:
       */
     def inMemory(using Frame): (FileSystem.Write[Sync] & FileSystem.Watch[Sync]) < Sync = InMemoryFileSystem.init
 
+    /** Copy-on-write overlay over `lower`: reads fall through, writes stage in an upper
+      * layer, and an explicit commit replays that staged layer onto `lower`.
+      *
+      * Does not scan `lower` for a commit a previous process left half-applied. A scan is a
+      * directory walk, and this constructor has no root to walk: the staged-write scopes in
+      * [[Path]] build an overlay over a forwarding service that has no root at all. Use
+      * [[overlayRecovering]] when the lower is a real filesystem whose staging directories can
+      * outlive the process that made them.
+      */
+    def overlay[S, S2](lower: FileSystem.Write[S])(using
+        Frame,
+        Isolate[S, Sync, S2]
+    ): (StagedChanges[S & Sync & Abort[FileSystemException]] & Write[S & Sync] & Watch[S & Sync]) < (Sync & Scope) =
+        OverlayFileSystem.init(lower)
+
+    /** Copy-on-write overlay over `lower` that first replays any commit a previous process left
+      * half-applied under `root`.
+      *
+      * The durable commit protocol writes each staged file into a staging directory, records the
+      * plan in an intent log, applies it, and only then writes a marker declaring the commit
+      * complete. A process that dies partway through leaves that staging directory behind, and
+      * nothing in the next process's memory refers to it. This constructor is how the next process
+      * finds it: the scan runs before the overlay is returned, so a caller never stages work on top
+      * of a lower that still holds a half-applied commit.
+      */
+    def overlayRecovering[S, S2](lower: FileSystem.Write[S], root: Path)(using
+        Frame,
+        Isolate[S, Sync, S2]
+    ): (StagedChanges[S & Sync & Abort[FileSystemException]] & Write[S & Sync] & Watch[S & Sync]) <
+        (S & Sync & Scope & Abort[FileSystemException]) =
+        OverlayFileSystem.initRecovering(lower, root)
+
     /** Read-only view over a zip/jar archive: entries are files and entry-path prefixes are
       * directories. The returned value has no mutation, channel, or lock surface. Its commit
       * strategy is `Auto`: there is nothing to stage, every read is served directly
@@ -467,10 +507,10 @@ object FileSystem:
       * they stood when first observed (or from nothing, when `archive` does not yet exist),
       * writes stage in an in-memory upper, and [[StagedChanges.commit]] rewrites the whole archive
       * with the staged entries applied, atomically moved into place. There are no in-place
-      * random-access writes into a compressed entry: a [[StagedChanges.commit]] here never
-      * validates a read-set against a live lower and never raises `CommitConflict`; every commit
-      * method rewrites the whole archive unconditionally, uniformly STORED (uncompressed) on every
-      * platform via `kyo.internal.ZipArchive.write`.
+      * random-access writes into a compressed entry: unlike [[overlay]], a [[StagedChanges.commit]]
+      * here never validates a read-set against a live lower and never raises `CommitConflict`;
+      * every commit method rewrites the whole archive unconditionally, uniformly STORED
+      * (uncompressed) on every platform via `kyo.internal.ZipArchive.write`.
       */
     def zip(archive: Path)(using
         Frame

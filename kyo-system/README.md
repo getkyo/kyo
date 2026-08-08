@@ -131,27 +131,37 @@ def confined(root: Path, input: Path)(using Frame) =
 ### Archives and staged writes
 
 `FileSystem.zipReadOnly` exposes archive entries without mutation methods. `FileSystem.zip` returns
-a writable archive view plus `StagedChanges`, so entry edits accumulate in memory and committing
-rewrites the whole archive atomically:
+a writable archive view plus `StagedChanges`; committing rewrites the archive atomically. General
+filesystem staging uses explicit one-shot lifecycle values:
 
 ```scala
 import kyo.*
 
 val staged =
     Scope.run {
-        FileSystem.host.tempDir("archive").map { handle =>
-            FileSystem.zip(handle.path / "draft.zip").map { archive =>
-                archive.write(Path("draft.txt"), "ready", Path.WriteOptions()).andThen(archive.commit)
+        FileSystem.inMemory.map { memory =>
+            Path.runWith(memory) {
+                Path.stageWrites(Path("draft.txt").write("ready")).map { case (_, changes) =>
+                    changes.commit
+                }
             }
         }
     }
 ```
 
-`StagedChanges` is a one-shot contract: `commitWith` supplies a `FileSystem.Resolution` for each
-divergence a backend detects, and `discard` drops the staged work instead of applying it. `commit`
-carries `Abort[CommitConflict]` because the contract lets a backend validate the observations its
-staged work was built on against a live lower and refuse. Zip has no live lower, so its commit
-rewrites the whole archive unconditionally and never raises one.
+`Path.commitWritesOnSuccess(program)` commits after a successful program,
+`Path.discardWrites(program)` always discards, and `Path.stageWrites(program)` returns the explicit
+`FileSystem.StagedChanges` handle. `commit` re-checks each observation the staged work was built on
+against the live lower, and aborts with `CommitConflict` if one no longer holds; an observation is
+only as strong as the read that made it, so asking whether a path exists does not conflict on a
+change to its contents. `commitWith` resolves each conflict with `FileSystem.Resolution.KeepOurs`,
+`KeepTheirs`, `Write`, or `Remove`.
+
+`FileSystem.overlay(lower)` builds the same staging layer over any service directly. A commit is
+durable across a crash: it stages content, records its plan in an intent log, applies it, and only
+then writes a marker declaring the commit complete. A process that dies partway leaves a staging
+directory behind, so use `FileSystem.overlayRecovering(lower, root)` when the lower is a real
+filesystem: it replays any such leftover under `root` before handing the overlay back.
 
 `Path.tempDir(prefix)` creates a directory through the active service, returns the `Path`, and registers recursive removal via the creating service when the enclosing `Scope` closes.
 
@@ -735,3 +745,9 @@ val adapted: String < Sync =
         cpus <- System.availableProcessors
     yield s"$os / $arch, $cpus processors"
 ```
+
+## Demos
+
+Runnable demos live under `shared/src/test/scala/demo/`. Run with `sbt 'kyo-systemJVM/Test/runMain demo.<Name>'`.
+
+- [`ConfigWorkspaceDemo.scala`](shared/src/test/scala/demo/ConfigWorkspaceDemo.scala): config deploy workspace with explicit staged-write commit and discard flows

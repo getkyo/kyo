@@ -26,6 +26,16 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     val lockRow: Path.Lock < (PathRead & Async & Scope) =
         somePath.lock(Path.LockMode.Exclusive, Path.LockWait.UntilAvailable)
 
+    // --- Staged-write combinator effect rows: Sync must not be required in the residual. ---
+    // S = Abort[String] does not subsume Sync; a widened Sync & PathWrite & S return would fail to ascribe.
+    val discardRow: Unit < (PathWrite & Scope & Abort[String]) =
+        Path.discardWrites[Unit, Abort[String]](write)
+    val commitRow: Unit < (PathWrite & Scope & Abort[CommitConflict] & Abort[String]) =
+        Path.commitWritesOnSuccess[Unit, Abort[String]](write)
+    val stagedRow: (Unit, FileSystem.StagedChanges[Sync]) < (PathWrite & Scope & Abort[String]) =
+        Path.stageWrites[Unit, Abort[String]](write)
+    val discardRowNoSync: Unit < (PathWrite & Scope) = Path.discardWrites(write)
+
     "the read-only runner leaves a write undischarged so its residual does not type-check" in {
         val errors = typeCheckErrors(
             """

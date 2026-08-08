@@ -29,3 +29,30 @@ class HostFileSystemSymlinkNativeTest extends FileSystemReadTestSuite:
         FileSystemConformanceFixtures.hostRead
 
 end HostFileSystemSymlinkNativeTest
+
+/** The same contract with a staged-write overlay installed over the host, on Native. */
+class OverlayFileSystemSymlinkNativeTest extends FileSystemReadTestSuite:
+
+    override protected def realPathRequiresExistence: Boolean = true
+    override protected def supportsSymbolicLinks: Boolean     = true
+
+    override protected def createSymbolicLink(link: Path, target: Path)(using Frame): Unit < (Sync & Abort[FileSystemException]) =
+        // Unsafe: the link is created in the lower, beneath the overlay under test
+        Sync.Unsafe.defer {
+            discard(JFiles.createSymbolicLink(
+                JPaths.get(link.parts.mkString("/")),
+                JPaths.get(target.parts.mkString("/"))
+            ))
+        }
+
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-overlay-symlink-read-native").map { (lower, root) =>
+            val file = root / "read.txt"
+            lower.write(file, "read-value", Path.WriteOptions()).andThen {
+                FileSystem.overlay(lower).map(overlay => (overlay, file, "read-value"))
+            }
+        }
+
+end OverlayFileSystemSymlinkNativeTest
