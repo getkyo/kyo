@@ -262,6 +262,9 @@ object Path extends PathPlatformSpecific:
         case Remove(path: Path)                                                     extends Op[Boolean]
         case RemoveExisting(path: Path)                                             extends Op[Unit]
         case RemoveAll(path: Path)                                                  extends Op[Unit]
+        case SyncDirectory(path: Path)                                              extends Op[Unit]
+        case SiblingTemporary(path: Path)                                           extends Op[Path.TempFileHandle]
+        case DurableReplace(path: Path, bytes: Span[Byte])                          extends Op[Unit]
         case OpenWrite(path: Path, append: Boolean, options: WriteOptions)          extends Op[Path.WriteHandle]
         case TempDir(prefix: String)                                                extends Op[Path.TempDirHandle]
         case WriteChunk(handle: Path.WriteHandle, chunk: Chunk[Byte])               extends Op[Unit]
@@ -466,6 +469,9 @@ object Path extends PathPlatformSpecific:
             case Op.Remove(p)                 => service.remove(p)
             case Op.RemoveExisting(p)         => service.removeExisting(p)
             case Op.RemoveAll(p)              => service.removeAll(p)
+            case Op.SyncDirectory(p)          => service.syncDirectory(p)
+            case Op.SiblingTemporary(p)       => service.siblingTemporary(p)
+            case Op.DurableReplace(p, bytes)  => service.durableReplace(p, bytes)
             case Op.OpenWrite(p, a, cf)       => service.openWrite(p, a, cf)
             case Op.TempDir(prefix)           => service.tempDir(prefix)
             case Op.WriteChunk(h, ch)         => service.writeChunk(h, ch)
@@ -540,6 +546,17 @@ object Path extends PathPlatformSpecific:
         def path: Path
         def remove()(using AllowUnsafe): Unit
     end TempDirHandle
+
+    /** Service-owned sibling temporary cleanup handle. Internal. */
+    abstract private[kyo] class TempFileHandle:
+        def path: Path
+        def remove()(using AllowUnsafe): Unit
+    end TempFileHandle
+
+    /** Service-owned idempotent close handle used by cancellation finalizers. Internal. */
+    abstract private[kyo] class ChannelCloseHandle:
+        def close()(using AllowUnsafe): Unit
+    end ChannelCloseHandle
 
     /** A Scope-managed positioned read capability into an open file.
       *
@@ -1128,6 +1145,20 @@ object Path extends PathPlatformSpecific:
         inline def removeAll(using inline frame: Frame): Unit < PathWrite =
             ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveAll(self))
 
+        /** Synchronizes this directory's entry state. */
+        inline def syncDirectory(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.SyncDirectory(self))
+
+        /** Reserves a create-new temporary file beside this target. */
+        def siblingTemporary(using Frame): Path < (PathWrite & Scope & Sync) =
+            Scope.acquireRelease(ArrowEffect.suspend(Tag[PathWrite], Path.Op.SiblingTemporary(self)))(handle =>
+                Sync.Unsafe.defer(handle.remove())
+            ).map(_.path)
+
+        /** Durably replaces this path with `bytes`. */
+        inline def durableReplace(bytes: Span[Byte])(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.DurableReplace(self, bytes))
+
         /** Acquires a watcher after its backend registration is active. */
         def openWatcher(options: WatchOptions = WatchOptions())(using Frame): Watcher < PathWatch =
             ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
@@ -1410,6 +1441,12 @@ object Path extends PathPlatformSpecific:
 
         /** Returns `true` if this path is absolute (begins at a filesystem root). */
         def isAbsolute: Boolean
+
+        /** Synchronizes the directory itself so newly-created or renamed children have their
+          * directory entries flushed to stable storage. Unsupported platforms return a precise
+          * write failure rather than claiming durability.
+          */
+        private[kyo] def syncDirectory()(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
 
         /** Returns the human-readable representation; delegates to `show` so Path values display correctly. */
         override def toString: String = show
