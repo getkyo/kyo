@@ -76,6 +76,12 @@ object Kyo:
         def cont: Arrow[R, A, S]
         def frame: Frame
 
+        /** Whether acquire is a settled value that needs no folding. Handle loops rebuild a bracket around the settled resource
+          * once its acquisition folds, and mark the rebuilt node so the traversal terminates without evaluating acquire, which is
+          * a by-name thunk on user brackets and must run exactly once per drive.
+          */
+        private[kyo] def settled: Boolean = false
+
         final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
             val outer = this
             new Bracket[R, B, S & S2]:

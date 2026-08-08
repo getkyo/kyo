@@ -870,6 +870,78 @@ class ArrowEffectTest extends Test[Any]:
         assert(result.eval == 12)
     }
 
+    "a nested first handler of the same tag wins over an outer resume handler across a park" in {
+        val program: Int < (Echo & Get) =
+            get.map(a => echo(a)).map(b => b + 1)
+        val inner: Int < (Echo & Get) = ArrowEffect.handleFirst(Tag[Echo], program)(
+            [C] => (in, cont) => cont(in + 10).asInstanceOf[Int < (Echo & Get)],
+            a => a
+        )
+        val outer: Int < Get = ArrowEffect.handleResume(Tag[Echo], inner.asInstanceOf[Int < (Echo & Get)])(
+            [C] => (in) => in + 100
+        )
+        val parked = ArrowEffect.handlePartial(Tag[Get], outer, Context.empty)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
+        val result = ArrowEffect.handleResume(Tag[Get], parked)(
+            [C] => (_) => 1
+        )
+        assert(result.eval == 12)
+    }
+
+    "a nested loop handler of the same tag wins over an outer resume handler across a park" in {
+        val program: Int < (Echo & Get) =
+            get.map(a => echo(a)).map(b => b + 1)
+        val inner: Int < (Echo & Get) = ArrowEffect.handleLoop(Tag[Echo], program)(
+            [C] => (in, cont) => Loop.continue(cont(in + 10))
+        )
+        val outer: Int < Get = ArrowEffect.handleResume(Tag[Echo], inner.asInstanceOf[Int < (Echo & Get)])(
+            [C] => (in) => in + 100
+        )
+        val parked = ArrowEffect.handlePartial(Tag[Get], outer, Context.empty)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
+        val result = ArrowEffect.handleResume(Tag[Get], parked)(
+            [C] => (_) => 1
+        )
+        assert(result.eval == 12)
+    }
+
+    "a first handler inside a stop region replays the frames between the operation and its loop" in {
+        // guards the skip: a stop entry visible outside must not swallow the live frames of
+        // the inner first region between the operation and its handler
+        val program: Int < (Echo & Get) =
+            get.map(a => echo(a)).map(b => b + 1)
+        val inner: Int < (Echo & Get) = ArrowEffect.handleFirst(Tag[Echo], program)(
+            [C] => (in, cont) => cont(in + 10).asInstanceOf[Int < (Echo & Get)],
+            a => a
+        )
+        val outer: Int < Get = ArrowEffect.handleStop(Tag[Echo], inner.asInstanceOf[Int < (Echo & Get)])(
+            [C] => (in) => -1
+        )
+        val parked = ArrowEffect.handlePartial(Tag[Get], outer, Context.empty)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
+        val result = ArrowEffect.handleResume(Tag[Get], parked)(
+            [C] => (_) => 1
+        )
+        assert(result.eval == 12)
+    }
+
+    "an operation raised by an answer during a matched arm resumption is answered by the same handler" in {
+        val program: Int < Echo = echo(1).map(a => a + 1)
+        val handled = ArrowEffect.handleResume(Tag[Echo], program)(
+            [C] => (in) => if in == 0 then 100 else echo(0).map(z => in + z)
+        )
+        assert(handled.eval == 102)
+    }
+
+    "a never resuming operation keeps the identity continuation through construction" in {
+        val v: Int < Fail = fail("boom").map[Int, Any]((n: Nothing) => n)
+        v.asInstanceOf[kyo.kernel2.internal.Kyo.Suspend[?, ?, ?, ?, ?, ?]] match
+            case s => assert(Arrow.isEmpty(s.cont))
+    }
+
     "an unhandled effect parks and a later handler completes it" in {
         val program: Int < (Echo & Get) =
             echo(1).map(a => get.map(b => a + b))

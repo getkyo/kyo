@@ -344,6 +344,29 @@ class EffectTest extends Test[Any]:
         assert(log == List("rel-10"))
     }
 
+    "a stop after a park while a resource is held still releases" in {
+        // the Finalize step sits outside the handler's rotate in the resumed chain, so a
+        // stop answered inside the rotate still flows through the release
+        var log = List.empty[String]
+        val v: Int < (TestEffect1 & EffAsk) =
+            Effect.bracket {
+                log :+= "acq"
+                42
+            } { r =>
+                log :+= s"rel-$r"
+                ()
+            } { r =>
+                ask.map(a => testEffect1(a + r).map(_ => 0))
+            }
+        val stopped: Int < EffAsk = ArrowEffect.handleStop(Tag[TestEffect1], v)(
+            [C] => (in) => in
+        )
+        val parked = park(stopped)
+        assert(log == List("acq"))
+        assert(resume(parked, 1) == 43)
+        assert(log == List("acq", "rel-42"))
+    }
+
     "bracket acquire runs per drive" in {
         var acquisitions = 0
         val v = Effect.bracket {
