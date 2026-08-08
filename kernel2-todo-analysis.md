@@ -114,7 +114,22 @@ Removed-for-now optimizations to revisit at the end of the work, each only with
 a measured win and a compile-stability check:
 
 1. Erased `v: Any` Transform.run parameter (megamorphic call-site erasure).
-2. `@static` on hot object members (unnest, Safepoint accessors).
+
+Probed and settled (not on the re-add list):
+
+- `@static` on Safepoint accessors: restored under a clean build and measured;
+  no effect on any dispatch row (suspension, state10, loopSuspend1k, narrowIter
+  identical with and without). Stays removed.
+- `@static` on unnest: fails compilation even on a clean build once the defining
+  file is named KyoInternal.scala (companion class and object in a file whose
+  name differs from the class). Permanently dead.
+- `defaultLift` must be `inline`: as a plain method it broke escape analysis in
+  the resume path and cost stateMap10k +48 B per iteration (3.59 MB vs 3.11 MB
+  per op) and +39% time at JIT steady state. Short-warmup runs hide this: the
+  first probe reached a different compiled state at baseline numbers, so board
+  probes must use full-length warmup.
+- `unnest` inline probe: in flight for the remaining ns-only delta on
+  loopSuspend1k (+9%) and narrowIter (+7%), both alloc-identical to baseline.
 
 Next round: unsafe-code cleanup. Type the rotate machinery (`Rotate` with real
 type parameters instead of `Arrow.Transform[Any, Any, Any]`), the handle loops'

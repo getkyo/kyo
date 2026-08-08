@@ -461,3 +461,41 @@ region-entry benchmark row); parks stop paying per-park prepend re-installs.
 `EvidenceProbeMain` (E1/E2b harness, real kernel2 machinery) remains the one
 temporary probe; it is deleted when the implementation round lands and the
 reference programs become suite tests.
+
+# Typed cleanup round (planned)
+
+Goal per ruling: remove the Any-erased machinery without perf regressions. No new
+vocabulary; the pieces keep their names (Rotate, handle loop, chain, rewrap).
+
+1. Rotate gets real type parameters:
+   `abstract class Rotate[A, B, S](val inner: Arrow[A, ?, ?]) extends Arrow.Transform[A, B, S]`
+   where A is the contained chain's input (the foreign operation's output type at
+   the wrap site) and B the handle loop's result. Factories fully typed; each
+   anonymous subclass already closes over its typed state.
+2. rewrap takes a Kyo value and returns the rotated node, typed:
+   `rewrap[A, B, S1, S2](v: Kyo[A, S1], rotated: [X] => Arrow[X, A, S1] => Arrow[X, B, S2], loop: (A < S1, Context, Handlers) => B < S2, ...)`.
+   The Suspend arm constructs `Kyo.Continue(s.origin, rotated(s.cont))` directly,
+   typed, instead of the erased `continue`. The settled arm moves out of rewrap:
+   every handle loop gets its own settled arm, the old kernel's shape
+   (`case v => v.asInstanceOf[A < S]`, the row-narrowing cast at the opaque
+   boundary, or `done(Kyo.unnest(v).asInstanceOf[A])` where a done exists).
+3. Handle loop currencies typed per form, old-kernel style:
+   `def loop(v: A < (E & S & S2), context: Context, handlers: Handlers): A < (S & S2)`
+   with the matched arm capturing existentials under the tag guard:
+   `case s: Kyo.Suspend[I, O, E, x, A, E & S & S2] @unchecked if effectTag.erased <:< s.erasedTag`.
+   The resume closure types as `(o: O[x]) => s.cont(o, context, handlers)` with
+   the raw input going through the central implicit lift (abstract type, so the
+   macro emits defaultLift). No casts in the arm.
+4. handleResume's matched arm calls `h.handle[x](s.input)` directly at its public
+   types; the erased `answer` bridge remains only for answerNow (drive currency).
+5. Stays erased with documentation: evalLoop, answerNow/scoped, handlePartial,
+   Offset's fused interior, Handlers.resolve. These are the drive and tag-keyed
+   boundaries.
+6. Known semantic pressure point, to pin before fixing: the Bracket arm wraps the
+   handle loop around acquire (an R-typed computation folded by an A-typed loop).
+   A handler that ends the computation (stop format) while acquire is in flight
+   currently completes the acquire with the handler's value, which would corrupt
+   the resource. Write the reproducing pin (handleStop over a bracket whose
+   acquire raises the stopped operation), compare with the old kernel's behavior
+   for aborts inside resource acquisition (abort propagates, nothing acquired,
+   release not run), then fix so a stop inside acquire discards the bracket.

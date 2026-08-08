@@ -14,7 +14,7 @@ sealed abstract class Kyo[+A, -S]:
 
 object Kyo:
 
-    def unnest(v: Any): Any =
+    inline def unnest(v: Any): Any =
         v match
             case n: Nested[?] => n.value
             case _            => v

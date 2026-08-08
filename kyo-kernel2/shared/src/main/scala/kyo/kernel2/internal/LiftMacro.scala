@@ -37,7 +37,7 @@ object LiftMacro:
       * lifting funnels through here; the macro emits it when the type does not settle the case statically, and the kernel's raw
       * re-entry sites call it directly on their erased currency.
       */
-    final def defaultLift[A, S](v: A): A < S =
+    inline def defaultLift[A, S](inline v: A): A < S =
         v match
             case v: Kyo[?, ?]     => Kyo.Nested(v).asInstanceOf[A < S]
             case v: Kyo.Nested[?] => Kyo.Nested(v).asInstanceOf[A < S]
