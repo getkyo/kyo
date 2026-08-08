@@ -53,6 +53,7 @@ Authorized queue, mine to execute (details at the end of the doc):
 # Needs your attention
 
 ## 14. The `LastResort` boundary carrier
+Didn't we redesign handlePartial to return the computation? there should be no need for the var?
 - Files: `Pending.scala`, `ArrowEffect.scala`
 - Status: OPEN DISCUSSION. You are not convinced; the use is shown below with the
   real code. No implementation until you rule. Track A's design also validates or
@@ -135,6 +136,7 @@ read the full design critically, and bring you a summary with a concrete
 recommendation; the decision is yours then.
 
 ## 24. Is clearing the preempt flag enough?
+is an alternative making it a number instead of a flag?
 - Files: `internal/Safepoint.scala`
 - Status: answered directly below (no agent needed for this one); to be reconciled
   with track A's landed design when I summarize it for you.
