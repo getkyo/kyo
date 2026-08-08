@@ -32,9 +32,9 @@ private[kyo] object HostFileSystem:
       * platform is not Windows, so inferring from the operating system reports the wrong policy on
       * every such machine, and the value feeds `list(path, glob)` and every watcher's glob.
       *
-      * Probed against the filesystem's own temporary directory, so a host instance answers for its
-      * own volume rather than for the process temp volume. The result is cached per instance: it is
-      * a property of the volume, not of the call.
+      * Probed against the filesystem's own temporary directory, so a root-confined instance answers
+      * for its own volume rather than for the process temp volume. The result is cached per
+      * instance: it is a property of the volume, not of the call.
       *
       * A probe that cannot run falls back to the platform inference, which is right for Windows and
       * the best available guess elsewhere.
@@ -58,6 +58,12 @@ private[kyo] object HostFileSystem:
             case _                           => inferred
         }
     end probeCaseSensitivity
+
+    def rootConfined(root: Path)(using
+        Frame
+    ): (FileSystem.Write[Sync] & FileSystem.Watch[Sync]) < (Sync & Abort[FileSystemException]) =
+        // Unsafe: resolves the confinement root's real path once at construction
+        Sync.Unsafe.defer(Abort.get(root.unsafe.realPath())).map(rootReal => new RootConfinedHostFileSystem(rootReal))
 
     final class HostFileSystem extends FileSystem.Write[Sync], FileSystem.Watch[Sync]:
 
@@ -101,7 +107,7 @@ private[kyo] object HostFileSystem:
         def realPath(path: Path)(using
             Frame
         ): Path < (Sync & Abort[
-            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+            FileOutsideRootException | FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
         ]) =
             // Unsafe: bridges Path.Unsafe.realPath; the Result maps to Abort[FileSystemException]
             Sync.Unsafe.defer(Abort.get(path.unsafe.realPath()))
@@ -431,4 +437,251 @@ private[kyo] object HostFileSystem:
         ): Path.Watcher < (Sync & Async & Scope & Abort[FileWatchException]) =
             PathWatch.polling(this, path, options)
     end HostFileSystem
+
+    final class RootConfinedHostFileSystem(rootReal: Path) extends FileSystem.Write[Sync], FileSystem.Watch[Sync]:
+
+        private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle =
+            host.tempFileHandle(temporary)
+        private val host = new HostFileSystem
+        // Memo cell for the one-off volume probe below. A plain atomic rather than Kyo's: the cell
+        // has to exist at construction, outside any Sync context, and it carries no effect of its
+        // own. A racing pair of first calls both probe and agree, since they are asking the volume
+        // the same question.
+        private val caseSensitivity = new java.util.concurrent.atomic.AtomicReference[Glob.CaseSensitivity]()
+
+        def defaultCaseSensitivity(using Frame): Glob.CaseSensitivity < Sync =
+            Sync.defer(caseSensitivity.get()).map { cached =>
+                if cached ne null then cached
+                else
+                    probeCaseSensitivity(this).map { probed =>
+                        Sync.defer {
+                            caseSensitivity.compareAndSet(null, probed)
+                            caseSensitivity.get()
+                        }
+                    }
+            }
+
+        private def confined(path: Path, operation: FileSystemOperation)(using
+            Frame
+        ): Path < (Sync & Abort[
+            FileOutsideRootException | FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+        ]) =
+            // Unsafe: probes target existence to choose between realpath and nearest-parent checks
+            Sync.Unsafe.defer(Abort.get(path.unsafe.exists())).map {
+                case true  => Sync.Unsafe.defer(Abort.get(path.unsafe.realPath())).map(real => check(path, real, operation))
+                case false => nearestExistingParent(path).map(real => check(path, real, operation)).andThen(path)
+            }
+        private def check(path: Path, real: Path, operation: FileSystemOperation)(using Frame): Path < Abort[FileOutsideRootException] =
+            if real.parts.take(rootReal.parts.size) == rootReal.parts then real
+            else Abort.fail(FileOutsideRootException(rootReal, path, operation))
+        private def nearestExistingParent(path: Path)(using
+            Frame
+        ): Path < (Sync & Abort[FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException]) =
+            path.parent match
+                case Absent     => Abort.fail(FileNotFoundException(path))
+                case Present(p) =>
+                    // Unsafe: probes parent existence to walk to the nearest real ancestor
+                    Sync.Unsafe.defer(Abort.get(p.unsafe.exists())).map {
+                        case true  => Sync.Unsafe.defer(Abort.get(p.unsafe.realPath()))
+                        case false => nearestExistingParent(p)
+                    }
+
+        private def confinedEntry(path: Path, operation: FileSystemOperation)(using
+            Frame
+        ): Path < (Sync & Abort[
+            FileOutsideRootException | FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+        ]) =
+            path.parent match
+                case Absent => check(path, path, operation)
+                case Present(parent) =>
+                    Sync.Unsafe.defer(Abort.get(parent.unsafe.realPath())).map(real => check(path, real, operation)).andThen(path)
+
+        def exists(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Exists).andThen(host.exists(path))
+        def exists(path: Path, followLinks: Boolean)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Exists).andThen(host.exists(path, followLinks))
+        def isDirectory(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Inspect).andThen(host.isDirectory(path))
+        def isRegularFile(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Inspect).andThen(host.isRegularFile(path))
+        def isSymbolicLink(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            confinedEntry(path, FileSystemOperation.Inspect).andThen(host.isSymbolicLink(path))
+        def realPath(path: Path)(using
+            Frame
+        ): Path < (Sync & Abort[
+            FileOutsideRootException | FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+        ]) =
+            confined(path, FileSystemOperation.RealPath).andThen(host.realPath(path))
+        def read(path: Path)(using Frame): String < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Read).andThen(host.read(path))
+        def read(path: Path, charset: Charset)(using Frame): String < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Read).andThen(host.read(path, charset))
+        def readBytes(path: Path)(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Read).andThen(host.readBytes(path))
+        def readLines(path: Path)(using Frame): Chunk[String] < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Read).andThen(host.readLines(path))
+        def readLines(path: Path, charset: Charset)(using Frame): Chunk[String] < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Read).andThen(host.readLines(path, charset))
+        def size(path: Path)(using Frame): Long < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Inspect).andThen(host.size(path))
+        def stat(path: Path)(using Frame): Path.PathStat < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Inspect).andThen(host.stat(path))
+        // Delegated like every other read. Left to the trait's absent default, a confined host
+        // reported no identity at all, so a watcher over one could not tell a rename from a removal
+        // followed by an unrelated creation.
+        override private[kyo] def stableIdentity(path: Path)(using Frame): Maybe[String] < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Inspect).andThen(host.stableIdentity(path))
+        def openRead(path: Path)(using Frame): Path.ReadHandle < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Read).andThen(host.openRead(path))
+        def openReadLines(path: Path, charset: Charset)(using Frame): Path.LineReadHandle < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Read).andThen(host.openReadLines(path, charset))
+        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean)(using
+            Frame
+        ): Path.WalkHandle < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.Walk).andThen(host.openWalk(path, maxDepth, followLinks))
+        def write(path: Path, value: String, options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.write(path, value, options))
+        def writeBytes(path: Path, value: Span[Byte], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.writeBytes(path, value, options))
+        def writeLines(path: Path, value: Chunk[String], options: Path.WriteOptions)(using
+            Frame
+        ): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.writeLines(path, value, options))
+        def append(path: Path, value: String, options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.append(path, value, options))
+        def appendBytes(path: Path, value: Span[Byte], options: Path.WriteOptions)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.appendBytes(path, value, options))
+        def appendLines(path: Path, value: Chunk[String], options: Path.WriteOptions)(using
+            Frame
+        ): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.appendLines(path, value, options))
+        def truncate(path: Path, size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.truncate(path, size))
+        def setLastModified(path: Path, epochMs: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.setLastModified(path, epochMs))
+        def openWrite(path: Path, append: Boolean, options: Path.WriteOptions)(using
+            Frame
+        ): Path.WriteHandle < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.Write).andThen(host.openWrite(path, append, options))
+        // writeChunk/writeString carry only a handle (no path), so confinement is not applicable; forward directly.
+        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte])(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            host.writeChunk(handle, chunk)
+        def writeString(handle: Path.WriteHandle, value: String, charset: Charset)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            host.writeString(handle, value, charset)
+        def mkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.Create).andThen(host.mkDir(path))
+        def mkFile(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.Create).andThen(host.mkFile(path))
+        def list(path: Path)(using Frame): Chunk[Path] < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.List).andThen(host.list(path))
+        def list(path: Path, glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using
+            Frame
+        ): Chunk[Path] < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.List).andThen(host.list(path, glob, caseSensitivity))
+        def move(
+            from: Path,
+            to: Path,
+            options: Path.MoveOptions
+        )(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            confined(from, FileSystemOperation.Move)
+                .andThen(confined(to, FileSystemOperation.Move))
+                .andThen(host.move(from, to, options))
+        def copy(
+            from: Path,
+            to: Path,
+            options: Path.CopyOptions
+        )(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            confined(from, FileSystemOperation.Copy)
+                .andThen(confined(to, FileSystemOperation.Copy))
+                .andThen(host.copy(from, to, options))
+        def remove(path: Path)(using Frame): Boolean < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.Remove).andThen(host.remove(path))
+        def removeExisting(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.Remove).andThen(host.removeExisting(path))
+        def removeAll(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.Remove).andThen(host.removeAll(path))
+        // tempDir creates inside rootReal, not in the OS temp dir. Every op this service mediates is
+        // checked against rootReal, so a directory handed back from the OS temp dir would fail its own
+        // confinement check on the next use, including the recursive removal the caller's Scope
+        // registers. Uniqueness: nanoTime XOR identityHash provides negligible collision probability
+        // for the expected number of concurrent temp dirs.
+        def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
+            val uniqueSuffix =
+                java.lang.Long.toHexString(java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong)
+            val dir = rootReal / s"$prefix-$uniqueSuffix"
+            host.mkDir(dir).map { _ =>
+                new Path.TempDirHandle:
+                    def path: Path = dir
+                    // Unsafe: recursive host delete of the temp dir created within rootReal
+                    def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
+            }
+        end tempDir
+        // temp creates inside rootReal for the same reason tempDir does: a file handed back from the OS
+        // temp dir would fail its own confinement check on the next use, including the removal the
+        // caller's Scope registers.
+        def temp(prefix: String, suffix: String)(using Frame): Path.TempFileHandle < (Sync & Abort[FileStructureException]) =
+            val uniqueSuffix =
+                java.lang.Long.toHexString(java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong)
+            val file = rootReal / s"$prefix-$uniqueSuffix$suffix"
+            host.mkFile(file).map { _ =>
+                new Path.TempFileHandle:
+                    def path: Path = file
+                    // Unsafe: host delete of the temp file created within rootReal
+                    def remove()(using AllowUnsafe): Unit = discard(file.unsafe.remove())
+            }
+        end temp
+        def openReadChannel(path: Path)(using Frame): Path.ReadChannel[Sync] < (Sync & Scope & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Channel).andThen(host.openReadChannel(path))
+        def openWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): Path.WriteChannel[Sync] < (Sync & Scope & Abort[FileWriteException | FileStructureException]) =
+            confined(path, FileSystemOperation.Channel).andThen(host.openWriteChannel(path, open))
+        def openReadWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): Path.ReadWriteChannel[Sync] < (Sync & Scope & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            confined(path, FileSystemOperation.Channel).andThen(host.openReadWriteChannel(path, open))
+        private[kyo] def openReadChannelUnscoped(path: Path)(using
+            Frame
+        ): (Path.ReadChannel[Sync], () => Unit < Sync) < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Channel).andThen(host.openReadChannelUnscoped(path))
+        private[kyo] def openWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): (Path.WriteChannel[Sync], () => Unit < Sync, Path.ChannelCloseHandle) <
+            (Sync & Abort[FileWriteException | FileStructureException]) =
+            confined(path, FileSystemOperation.Channel).andThen(host.openWriteChannelUnscoped(path, open))
+        private[kyo] def openReadWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): (
+            Path.ReadWriteChannel[Sync],
+            () => Unit < Sync
+        ) < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            confined(path, FileSystemOperation.Channel).andThen(host.openReadWriteChannelUnscoped(path, open))
+        def syncDirectory(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            confined(path, FileSystemOperation.SyncDirectory).andThen(host.syncDirectory(path))
+        def siblingTemporary(target: Path)(using
+            Frame
+        ): Path.TempFileHandle < (Sync & Abort[FileWriteException | FileStructureException]) =
+            FileSystem.siblingTemporary[Any](this, target)
+        def durableReplace(target: Path, bytes: Span[Byte])(using
+            Frame
+        ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            FileSystem.durableReplace[Any](this, target, bytes)
+        def tryLock(path: Path, mode: Path.LockMode)(using
+            Frame
+        ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
+            confined(path, FileSystemOperation.Lock).andThen(host.tryLock(path, mode))
+        def lock(path: Path, mode: Path.LockMode, wait: Path.LockWait)(using
+            Frame
+        ): Path.Lock < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
+            confined(path, FileSystemOperation.Lock).andThen(host.lock(path, mode, wait))
+        def openWatcher(path: Path, options: WatchOptions)(using
+            Frame
+        ): Path.Watcher < (Sync & Async & Scope & Abort[FileWatchException]) =
+            Abort.run[FileSystemException](confined(path, FileSystemOperation.Watch)).map {
+                case Result.Success(_)                         => PathWatch.polling(this, path, options)
+                case Result.Failure(error: FileWatchException) => Abort.fail(error)
+                case Result.Failure(error)                     => Abort.fail(FileIOException(path, FileSystemOperation.Watch, error))
+                case Result.Panic(error)                       => Abort.panic(error)
+            }
+    end RootConfinedHostFileSystem
 end HostFileSystem
