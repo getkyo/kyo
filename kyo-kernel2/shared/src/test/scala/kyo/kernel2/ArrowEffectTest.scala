@@ -902,9 +902,10 @@ class ArrowEffectTest extends Test[Any]:
         assert(resumed.eval == 32)
     }
 
-    // handler installation is pure: the region evaluates per drive, and a computation
-    // is a reusable description, so each eval re-executes it
-    "a fully handled region evaluates when driven" in {
+    // handling is eager, the old kernel's shape: an operation that has already
+    // surfaced is answered once, at the handle call, and the handled result is a
+    // settled value that evaluates to itself
+    "a fully handled computation is answered at the handle call" in {
         var runs = 0
         val handled = ArrowEffect.handleResume(Tag[Echo], echo(1).map(_ + 1))(
             [C] =>
@@ -912,11 +913,11 @@ class ArrowEffectTest extends Test[Any]:
                     runs += 1
                 in
         )
-        assert(runs == 0)
+        assert(runs == 1)
         assert(handled.eval == 2)
         assert(runs == 1)
         assert(handled.eval == 2)
-        assert(runs == 2)
+        assert(runs == 1)
     }
 
     // handler installation is pure: the deferred thunk runs when the drive reaches it

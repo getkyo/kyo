@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Context
+import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Handler
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
@@ -99,6 +100,17 @@ object ArrowEffect:
       *
       * The casts are the erased boundary the typed handler surface funnels into, justified by the tag match that selected the entry.
       */
+    // handling is eager, so a throw while acting surfaces at the handle call itself: the
+    // effect frames collected on the way out are installed here, the same decoration the
+    // drive applies to throws it surfaces
+    private def traced[A](frame: Frame)(body: => A): A =
+        try body
+        catch
+            case ex: Throwable =>
+                EffectTrace.attach(ex, "handle", frame)
+                EffectTrace.install(ex)
+                throw ex
+
     private[kyo] def answerNow(kyo: Kyo[Any, Any], context: Context, handlers: Handlers): Any < Any =
         kyo match
             case c: Kyo.Continue[?, ?, ?] =>
@@ -201,7 +213,7 @@ object ArrowEffect:
                 case w => w
             end match
         end loop
-        loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[A < (S & S2)]
+        traced(frame)(loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty)).asInstanceOf[A < (S & S2)]
     end handle
 
     /** Handles `E` by answering each operation in place (the fun format).
@@ -246,7 +258,7 @@ object ArrowEffect:
                 case w => w
             end match
         end loop
-        loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[A < (S & S2)]
+        traced(frame)(loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty)).asInstanceOf[A < (S & S2)]
     end handleResume
 
     /** Handles `E` by ending the computation at each operation (the final ctl format).
@@ -287,7 +299,7 @@ object ArrowEffect:
                 case w => w
             end match
         end loop
-        loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[A < (S & S2)]
+        traced(frame)(loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty)).asInstanceOf[A < (S & S2)]
     end handleStop
 
     /** Handles only the first operation of `E`, shallowly.
@@ -334,7 +346,7 @@ object ArrowEffect:
                     done(Kyo.unnest(w).asInstanceOf[A]).asInstanceOf[Any < Any]
             end match
         end loop
-        loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[B < (S & S2)]
+        traced(frame)(loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty)).asInstanceOf[B < (S & S2)]
     end handleFirst
 
     /** Handles `E` without handler state.
@@ -450,7 +462,7 @@ object ArrowEffect:
                     done(state, Kyo.unnest(w).asInstanceOf[A]).asInstanceOf[Any < Any]
             end match
         end loop
-        loop(state, v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[B < (S & S2)]
+        traced(frame)(loop(state, v.asInstanceOf[Any < Any], Context.empty, Handlers.empty)).asInstanceOf[B < (S & S2)]
     end handleLoop
 
     // handleLoop's outcome transform is minted per interpretation; one internal frame identifies them all

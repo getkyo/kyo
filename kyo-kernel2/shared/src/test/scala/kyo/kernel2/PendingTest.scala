@@ -594,8 +594,9 @@ class PendingTest extends Test[Any]:
         assert(resolve(ask.map(_ + 1), 41) == 42)
     }
 
-    // handler installation is pure: nothing evaluates until a drive reaches the region
-    "handling installs without evaluating" in {
+    // handling is eager, the old kernel's shape: an operation that has already
+    // surfaced is acted on at the handle call itself
+    "handling acts on a surfaced operation at the handle call" in {
         var ran = false
         val handled = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
             [C] =>
@@ -603,9 +604,8 @@ class PendingTest extends Test[Any]:
                     ran = true
                     cont(1)
         )
-        assert(!ran)
-        assert(handled.eval == 2)
         assert(ran)
+        assert(handled.eval == 2)
     }
 
     "handler parks and the continuation resumes" in {
@@ -736,7 +736,7 @@ class PendingTest extends Test[Any]:
         val program: Int < Ask = ask.map { _ =>
             (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
         }
-        // installation is pure, so the throw happens when the drive evaluates the region
+        // handling is eager, so the throw happens at the handle call itself
         val ex =
             try
                 val _ = ArrowEffect.handle(Tag[Ask], program)(
