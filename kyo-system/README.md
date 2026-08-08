@@ -18,7 +18,7 @@ val deploy =
 
 ## Filesystem failures in the type system
 
-Each `Path` method carries the failure category it can actually raise:
+Each `Path` method carries the failure category it can actually raise. There is no umbrella row to discharge and no runner to install:
 
 | Operation group | Methods | Effect row |
 |---|---|---|
@@ -27,6 +27,23 @@ Each `Path` method carries the failure category it can actually raise:
 | Structure changes | `mkDir`, `mkFile`, `list`, `walk`, `move`, `copy`, `remove`, `removeAll`, `tempDir` | `Sync & Abort[FileStructureException]` |
 
 `isDirectory`, `isRegularFile`, and `isSymbolicLink` answer `false` for an inaccessible path and carry only `Sync`.
+
+### The `FileSystem` service
+
+`FileSystem.Read[S]` describes inspection and content reads; `FileSystem.Write[S]` extends it with mutation and structure changes. `FileSystem.host` implements the write tier over the platform backends this module already uses, so a host service answers exactly what the matching `Path` method answers.
+
+A caller holds a backend as a value and calls its methods directly:
+
+```scala
+import kyo.*
+
+val backend: FileSystem.Write[Sync] = FileSystem.host
+
+val listed: Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
+    backend.list(Path("var", "uploads"))
+```
+
+`Path` does not route through a backend: its methods go straight to the platform implementation. The service exists so a caller who needs a swappable filesystem has one contract to implement against, and so its behavior is pinned by the conformance suites before anything depends on it.
 
 Portable matching uses a compiled `Glob`, never a platform-specific string matcher:
 

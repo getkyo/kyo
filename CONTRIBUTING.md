@@ -389,6 +389,7 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 | Kyo primitive         | Purpose                | Notes                                                                                   |
 | --------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
 | `Path`                | File system operations | Immutable, cross-platform; construct with `/`, effect-tracked read/write                  |
+| `FileSystem`          | Pluggable backend      | Filesystem service, with a host implementation over the platform backends                 |
 | `Command`             | OS process launch      | Builds and runs external processes; `spawn`, `text`, `waitFor`                            |
 | `Process`             | Running process handle | `stdout`, `stderr`, `waitFor`, `destroy`                                                  |
 | `System`              | Environment/properties | Type-safe access with custom `Parser`s                                                    |

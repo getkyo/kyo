@@ -12,13 +12,14 @@ The module owns these boundaries:
 
 | Surface | Safe API | Effect row |
 |---|---|---|
-| Filesystem reads | `Path` | `Sync`, `Abort[FileReadException]` |
-| Filesystem writes | `Path` | `Sync`, `Abort[FileWriteException]`, `Abort[FileStructureException]` |
+| Filesystem reads | `Path`, `FileSystem.Read` | `Sync`, `Abort[FileReadException]` |
+| Filesystem writes | `Path`, `FileSystem.Write` | `Sync`, `Abort[FileWriteException]`, `Abort[FileStructureException]` |
 | Commands and processes | `Command`, `Process` | `Sync`, `Async`, `Scope` |
 | Environment | `System` | `Sync` |
 
-A method carries the failure category it can actually raise, never a wider one. Keep the category
-visible in return types and compile-time tests.
+`FileSystem.Write[S] <: FileSystem.Read[S]`: write authority includes read authority, and a
+read-only backend intentionally cannot be passed where a write backend is required. Keep this
+negative authority law visible in return types and compile-time tests.
 
 ### Source layout
 
@@ -26,6 +27,8 @@ visible in return types and compile-time tests.
 kyo-system/
   shared/src/main/scala/kyo/
     Path.scala
+    FileSystem.scala
+    HostFileSystem.scala
     FileSystemException.scala
     Command.scala
     Process.scala
@@ -34,11 +37,32 @@ kyo-system/
   js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala
 ```
 
+## Filesystem authority and selection
+
+`FileSystem.Read[S]` contains only inspection and read operations. `FileSystem.Write[S]` extends it
+with mutation and structure changes.
+
+The built-in factories are:
+
+| Factory | Authority | Purpose |
+|---|---|---|
+| `FileSystem.host` | write | Local host filesystem |
+
+A caller holds a backend as an ordinary value and calls its methods directly. Nothing routes
+`Path` through a backend yet: `Path`'s own methods go straight to `Path.Unsafe`, and `FileSystem`
+exists so a caller who wants a swappable filesystem has one contract to implement against. The
+conformance suites are the only consumers of the service in this module.
+
+Never widen a read-only factory to `FileSystem.Write`. Authority is part of the public contract.
+
 ## Path operation flow
 
 1. A safe `Path` extension bridges the matching `Path.Unsafe` operation through `Sync.Unsafe.defer`.
 2. The unsafe tier returns a `Result` carrying a precise filesystem failure marker.
 3. `Abort.get` lifts that `Result` into the method's declared `Abort` row.
+
+`FileSystem.host` follows the same three steps for every service method, so a host backend answers
+exactly what the matching `Path` method answers.
 
 Safe methods carry `Sync` plus a precise `Abort` row. Do not expose platform exceptions or widen an
 `Abort` row past what the unsafe tier can return.
@@ -97,9 +121,11 @@ throwables into expected filesystem failures.
 1. Decide whether the operation needs read or write authority.
 2. Add a focused shared test that proves behavior and its precise failure case.
 3. Add the safe `Path` surface bridging the unsafe tier, when the operation belongs on `Path`.
-4. Implement both platform leaves for host behavior.
-5. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
-6. Compile and test JVM, JavaScript, Native, and Wasm.
+4. Add the narrowest `FileSystem` tier method and precise effect row.
+5. Implement both platform leaves for host behavior.
+6. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
+7. Extend the reusable conformance suite when the contract applies to multiple backends.
+8. Compile and test JVM, JavaScript, Native, and Wasm.
 
 Do not add an operation to the unsafe tier without completing every layer above it.
 
@@ -107,6 +133,11 @@ Do not add an operation to the unsafe tier without completing every layer above 
 
 Shared behavior belongs in `shared/src/test`. A test file must share a prefix with its production
 source. Platform tests are reserved for genuine host integration differences.
+
+Use the reusable suites for backend laws:
+
+- `FileSystemReadTestSuite`
+- `FileSystemWriteTestSuite`
 
 Test effect rows and backend authority with `typeCheck` and `typeCheckErrors`. Never use sleeps or blocking primitives
 to make scheduling tests pass.
