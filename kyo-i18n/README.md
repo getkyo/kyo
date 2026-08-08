@@ -116,7 +116,7 @@ Path.run {
 // reads resources/i18n/en.ftl and resources/i18n/de.ftl
 ```
 
-That overload's reads carry `PathRead`, so the caller chooses the filesystem they run against and where the failure surfaces: `Path.run` reads the host, `Path.runReadOnlyWith` reads a custom backend supplied in a test. A browser build never links it, since nothing there calls it.
+That overload's reads carry `PathRead`, so the caller chooses the filesystem they run against and where the failure surfaces: `Path.run` reads the host, `Path.runReadOnlyWith(FileSystem.host(root))` reads a root-confined fixture in a test. A browser build never links it, since nothing there calls it.
 
 `let` provides the handle as the ambient source for its body. A `t` leaf built anywhere resolves against whichever handle is ambient when it is sampled; a leaf sampled outside any `let` renders miss markers.
 

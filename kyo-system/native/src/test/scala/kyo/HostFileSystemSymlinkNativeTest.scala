@@ -6,8 +6,8 @@ import java.nio.file.Paths as JPaths
 /** Runs the shared read contract against the host with symbolic links enabled, on Native.
   *
   * Native shares the jvm-native path implementation but not its test coverage: before this, no
-  * Native test created a symbolic link, so the symlink-escape fix was asserted on one platform
-  * and assumed on this one.
+  * Native test created a symbolic link or exercised confinement, so the symlink-escape fix was
+  * asserted on one platform and assumed on this one.
   */
 class HostFileSystemSymlinkNativeTest extends FileSystemReadTestSuite:
 
