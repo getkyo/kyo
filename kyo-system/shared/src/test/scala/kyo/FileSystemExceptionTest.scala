@@ -15,6 +15,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             FileIsADirectoryException(p),
             FileDirectoryNotEmptyException(p),
             FileInvalidPathException("nul", FileSystemOperation.Read),
+            FileOutsideRootException(p, target, FileSystemOperation.Read),
             FileIOException(p, FileSystemOperation.Read, cause),
             FileAtomicMoveUnsupportedException(p, target),
             FileLockUnavailableException(p),
@@ -22,12 +23,14 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             FileLockOwnershipLostException(p),
             FileWatchInvalidatedException(p)
         )
-        assert(values.size == 12)
+        assert(values.size == 13)
         assert(values(5).asInstanceOf[FileInvalidPathException].input == "nul")
-        assert(values(6).asInstanceOf[FileIOException].operation == FileSystemOperation.Read)
-        assert(values(6).getCause eq cause)
-        assert(values(7).asInstanceOf[FileAtomicMoveUnsupportedException].source == p)
-        assert(values(7).asInstanceOf[FileAtomicMoveUnsupportedException].target == target)
+        assert(values(6).asInstanceOf[FileOutsideRootException].root == p)
+        assert(values(6).asInstanceOf[FileOutsideRootException].path == target)
+        assert(values(7).asInstanceOf[FileIOException].operation == FileSystemOperation.Read)
+        assert(values(7).getCause eq cause)
+        assert(values(8).asInstanceOf[FileAtomicMoveUnsupportedException].source == p)
+        assert(values(8).asInstanceOf[FileAtomicMoveUnsupportedException].target == target)
     }
 
     "leaves belong only to applicable operation categories" in {
@@ -64,6 +67,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileAccessDeniedException => "FileAccessDeniedException"
             case _: FileIsADirectoryException => "FileIsADirectoryException"
             case _: FileInvalidPathException  => "FileInvalidPathException"
+            case _: FileOutsideRootException  => "FileOutsideRootException"
             case _: FileIOException           => "FileIOException"
         assert(result == "FileNotFoundException")
     }
@@ -113,6 +117,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileAlreadyExistsException         => "FileAlreadyExistsException"
             case _: FileDirectoryNotEmptyException     => "FileDirectoryNotEmptyException"
             case _: FileInvalidPathException           => "FileInvalidPathException"
+            case _: FileOutsideRootException           => "FileOutsideRootException"
             case _: FileIOException                    => "FileIOException"
             case _: FileAtomicMoveUnsupportedException => "FileAtomicMoveUnsupportedException"
         assert(result == "FileNotFoundException")
@@ -128,6 +133,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileAccessDeniedException => "FileAccessDeniedException"
             case _: FileIsADirectoryException => "FileIsADirectoryException"
             case _: FileInvalidPathException  => "FileInvalidPathException"
+            case _: FileOutsideRootException  => "FileOutsideRootException"
             case _: FileIOException           => "FileIOException"
         assert(result == "FileNotFoundException")
     }

@@ -49,6 +49,7 @@ The built-in factories are:
 | Factory | Authority | Purpose |
 |---|---|---|
 | `FileSystem.host` | write and watch | Local host filesystem |
+| `FileSystem.host(root)` | write and watch | Canonically root-confined host access |
 
 `FileSystem.let(backend)(program)` changes the backend used by the default Path runners for a
 dynamic scope. Selection uses `Local`, propagates to child fibers, and restores the previous backend
@@ -131,6 +132,13 @@ Watchers use the independent `PathWatch` capability. Acquisition returns only af
 registration is active. Events are normalized as `PathChange`; overflow and root invalidation are
 stream values. Invalidation is terminal: emit it exactly once, close the stream, and release the
 registration.
+
+## Confinement
+
+`FileSystem.host(root)` resolves the root canonically. Existing targets are checked by real path;
+missing write targets are checked through their nearest existing parent. Prefix-only string checks
+are security defects because symlinks can escape them. `Path.confinedTo(root)` provides the same
+canonical containment rule when the checked path is itself needed as a value.
 
 ## Error contracts
 
