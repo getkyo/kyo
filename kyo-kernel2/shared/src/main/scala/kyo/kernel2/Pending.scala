@@ -5,8 +5,8 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Context
+import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Handler
-import kyo.kernel2.internal.KyoException
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
@@ -286,7 +286,7 @@ object `<` extends Implicits:
                     Chunk.empty
                 catch
                     case t: Throwable =>
-                        KyoException.attach(t, "release", finalize.bracket.frame)
+                        EffectTrace.attach(t, "release", finalize.bracket.frame)
                         Chunk(t)
             case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                 finalizeChain(o)
@@ -342,7 +342,7 @@ object `<` extends Implicits:
             val _ = bracket.release(resource).eval
         catch
             case t2: Throwable =>
-                KyoException.attach(t2, "release", bracket.frame)
+                EffectTrace.attach(t2, "release", bracket.frame)
                 t.addSuppressed(t2)
 
     private def preempted(v: Any < Any): Boolean =
@@ -429,7 +429,7 @@ object `<` extends Implicits:
         try recur(v0, 0)
         catch
             case ex: Throwable =>
-                KyoException.install(ex)
+                EffectTrace.install(ex)
                 throw ex
         finally safepoint.closeDrive(saved)
         end try

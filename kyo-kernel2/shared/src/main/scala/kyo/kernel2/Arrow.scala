@@ -4,7 +4,7 @@ import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
-import kyo.kernel2.internal.KyoException
+import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
@@ -202,7 +202,7 @@ object Arrow:
             catch
                 case ex: Throwable =>
                     safepoint.exit()
-                    KyoException.attach(ex, "map", t.frame)
+                    EffectTrace.attach(ex, "map", t.frame)
                     throw ex
         end if
     end guardedRun
@@ -238,7 +238,7 @@ object Arrow:
                             try t.run(cur, empty)
                             catch
                                 case ex: Throwable =>
-                                    KyoException.attach(ex, "map", t.frame)
+                                    EffectTrace.attach(ex, "map", t.frame)
                                     throw ex
                         if w.isInstanceOf[Kyo[?, ?]] then
                             o.next.map(k)(w.asInstanceOf[Any < Any])

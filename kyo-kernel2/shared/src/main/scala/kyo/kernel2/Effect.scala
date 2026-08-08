@@ -1,7 +1,7 @@
 package kyo.kernel2
 
 import kyo.Frame
-import kyo.kernel2.internal.KyoException
+import kyo.kernel2.internal.EffectTrace
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
@@ -46,7 +46,7 @@ object Effect:
             end match
         catch
             case ex if NonFatal(ex) =>
-                KyoException.attach(ex, "catching", _frame)
+                EffectTrace.attach(ex, "catching", _frame)
                 f(ex)
         end try
     end catching
@@ -58,7 +58,7 @@ object Effect:
                 try cont(Kyo.lift(v))
                 catch
                     case ex if NonFatal(ex) =>
-                        KyoException.attach(ex, "catching", _frame)
+                        EffectTrace.attach(ex, "catching", _frame)
                         return handler(ex).asInstanceOf[C < (Any & S2)]
             w match
                 case kyo: Kyo[?, ?] =>
