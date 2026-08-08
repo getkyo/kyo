@@ -39,6 +39,13 @@ private[kyo] trait NodeChildProcessInstance extends js.Object:
     def stderr: NodeReadableStream                                                        = js.native
     def kill(signal: String): Boolean                                                     = js.native
     def on(event: String, listener: js.Function1[js.Any, Unit]): NodeChildProcessInstance = js.native
+    // Node's 'exit' event is (code, signal). The arity-1 overload above discards the second
+    // argument, and with it the only indication that a child was terminated by a signal: Node sets
+    // code to null in exactly that case.
+    def on(event: String, listener: js.Function2[js.Any, js.Any, Unit]): NodeChildProcessInstance = js.native
+    // Set when the child was terminated by a signal, and the companion to exitCode: a child that
+    // has been sent a signal but has not yet died has both still null.
+    def signalCode: js.Any = js.native
 end NodeChildProcessInstance
 
 @js.native
@@ -189,13 +196,12 @@ final private[kyo] class NodeProcessUnsafe(
         if !resolved then
             discard(child.on(
                 "exit",
-                { (codeOrNull: js.Any) =>
+                { (codeOrNull: js.Any, signalOrNull: js.Any) =>
                     if !resolved then
                         resolved = true
-                        val code = if codeOrNull == null then 1 else codeOrNull.asInstanceOf[Int]
-                        p.completeDiscard(Result.succeed(Process.ExitCode(code)))
+                        p.completeDiscard(Result.succeed(exitCodeFrom(codeOrNull, signalOrNull)))
                     end if
-                }
+                }: js.Function2[js.Any, js.Any, Unit]
             ))
             // Handle spawn errors (e.g. ENOENT) which fire asynchronously on Node.js.
             // Treat them as a process exit with code 1 so callers don't wait forever.
@@ -221,37 +227,77 @@ final private[kyo] class NodeProcessUnsafe(
             p.completeDiscard(Result.succeed(Present(Process.ExitCode(ec.asInstanceOf[Int]))))
         end if
         if !resolved then
+            // Held so every resolution path can clear it. An uncleared timer keeps the Node event
+            // loop alive for the whole timeout after the child has already exited.
+            var timer: js.Any = null
+            def clearTimer(): Unit =
+                if timer != null then
+                    discard(js.Dynamic.global.clearTimeout(timer.asInstanceOf[js.Dynamic]))
+                    timer = null
             discard(child.on(
                 "exit",
-                { (codeOrNull: js.Any) =>
+                { (codeOrNull: js.Any, signalOrNull: js.Any) =>
                     if !resolved then
                         resolved = true
-                        val code = if codeOrNull == null then 1 else codeOrNull.asInstanceOf[Int]
-                        p.completeDiscard(Result.succeed(Present(Process.ExitCode(code))))
+                        clearTimer()
+                        p.completeDiscard(Result.succeed(Present(exitCodeFrom(codeOrNull, signalOrNull))))
                     end if
-                }
+                }: js.Function2[js.Any, js.Any, Unit]
             ))
             discard(child.on(
                 "error",
                 { (_: js.Any) =>
                     if !resolved then
                         resolved = true
-                        p.completeDiscard(Result.succeed(Absent))
+                        clearTimer()
+                        // Present, matching the untimed overload. Absent is the timeout signal, and
+                        // reporting a spawn failure with it tells the caller the process is still
+                        // running when it never started.
+                        p.completeDiscard(Result.succeed(Present(Process.ExitCode(1))))
                     end if
                 }
             ))
-            discard(js.Dynamic.global.setTimeout(
-                { () =>
-                    if !resolved then
-                        resolved = true
-                        p.completeDiscard(Result.succeed(Absent))
-                    end if
-                }: js.Function0[Unit],
-                timeout.toMillis.toDouble
-            ))
+            // An infinite timeout means "no timer". Node clamps any delay above the signed 32-bit
+            // range down to 1ms, so arming one would turn an unbounded wait into an immediate
+            // expiry, which is the exact inverse of what was asked for.
+            if timeout.isFinite then
+                val millis = math.min(timeout.toMillis, Int.MaxValue.toLong).toDouble
+                timer = js.Dynamic.global.setTimeout(
+                    { () =>
+                        if !resolved then
+                            resolved = true
+                            timer = null
+                            p.completeDiscard(Result.succeed(Absent))
+                        end if
+                    }: js.Function0[Unit],
+                    millis
+                )
+            end if
         end if
         p
     end waitFor
+
+    // Node reports a signal death as code == null with signal set to its name, so a null code alone
+    // is not "exited with 1". Mapped onto the POSIX 128 + signal convention that Process.ExitCode
+    // already uses, which is what makes ExitCode.Signaled reachable on this platform at all.
+    private def exitCodeFrom(codeOrNull: js.Any, signalOrNull: js.Any): Process.ExitCode =
+        val signalNumber =
+            if signalOrNull == null || js.isUndefined(signalOrNull) then Absent
+            else
+                signalOrNull.asInstanceOf[String] match
+                    case "SIGHUP"  => Present(1)
+                    case "SIGINT"  => Present(2)
+                    case "SIGQUIT" => Present(3)
+                    case "SIGKILL" => Present(9)
+                    case "SIGSEGV" => Present(11)
+                    case "SIGPIPE" => Present(13)
+                    case "SIGTERM" => Present(15)
+                    case _         => Absent
+        signalNumber.fold {
+            if codeOrNull == null || js.isUndefined(codeOrNull) then Process.ExitCode(1)
+            else Process.ExitCode(codeOrNull.asInstanceOf[Int])
+        }(n => Process.ExitCode(128 + n))
+    end exitCodeFrom
 
     def exitCode()(using AllowUnsafe): Maybe[Process.ExitCode] =
         val ec = child.exitCode
@@ -262,8 +308,12 @@ final private[kyo] class NodeProcessUnsafe(
     def destroy()(using AllowUnsafe): Unit         = discard(child.kill("SIGTERM"))
     def destroyForcibly()(using AllowUnsafe): Unit = discard(child.kill("SIGKILL"))
 
+    // child.killed reports that a signal was *delivered*, not that the child died. Consulting it
+    // makes a process that has been sent SIGTERM but has not yet exited look dead, so Command's
+    // scope release skips the force-kill and leaves it running.
     def isAlive()(using AllowUnsafe): Boolean =
-        !child.killed && (child.exitCode == null || js.isUndefined(child.exitCode))
+        (child.exitCode == null || js.isUndefined(child.exitCode)) &&
+            (child.signalCode == null || js.isUndefined(child.signalCode))
 
     def pid()(using AllowUnsafe): Long = child.pid.toLong
 
