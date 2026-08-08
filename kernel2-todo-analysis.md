@@ -1,42 +1,49 @@
 # kernel2 review issues: tracker
 
-One section per issue from your review pass (30 code TODOs, the Handler margin note,
-your inline rulings on the previous version of this doc, and the 4 follow-up Safepoint
-TODOs). Every section is self-contained: files, problem, planned change, and current
-status. Work proceeds one issue at a time, validated with you between issues.
+One section per open issue from your review passes. Every section is self-contained:
+files, problem, planned change, current status. Issues that are done drop off the
+tracker; they only resurface when they carry a decision or information you need.
+
+Working rules for this tracker (your rulings):
+- When you write "fix" on an issue, it is authorized: I implement it without asking
+  again, one issue at a time, full kernel2 suite green and a commit per issue.
+- The tracker carries only what needs your attention.
+- Every issue is its own numbered item, always expanded, never bundled.
+
+Off the list as done: #2 forwarding methods (commit `564dc4cc9f`).
 
 ## Status summary
 
 | # | Issue | Status |
 |---|-------|--------|
-| 1 | `Kyo.lift` is a bare cast (nesting bug) | APPROVED (your revision), not started |
-| 2 | Forwarding methods | DONE, committed `564dc4cc9f` |
-| 3 | Erased handler machinery | APPROVED, not started |
-| 4 | Handler kind naming | APPROVED, lands with #3 |
-| 5 | Inconsistent type parameter names | APPROVED, next up |
-| 6 | drive/dispatch/eval verb mix | APPROVED, not started |
-| 7 | Uninformative toString | APPROVED, not started |
-| 8 | `(x: Any) match` widenings | APPROVED, not started |
-| 9 | Unexplained cast in `prepend` | DESIGN TO BE PRESENTED first |
-| 10 | `discard` misleading name | DECIDED: `finalizeBracket` |
-| 11 | `observe` placement + effectful observer | APPROVED, not started |
-| 12 | `KyoException` name clash, `Trace` stub | APPROVED, not started |
-| 13 | Fork-boundary API shape | IN DESIGN (track B agent) |
-| 14 | `LastResort \| Null` carrier | APPROVED, lands with #3 |
-| 15 | Preemption not wired into drives | IN DESIGN (track A agent) |
-| 16 | `defer` allocates twice | AWAITING YOUR RULING |
-| 17 | Loop drivers slower than old kernel | APPROVED, benchmark first |
-| 18 | Context reads walk the chain | IN DESIGN (track B agent) |
-| 19 | `Context` to `TypeMap` | APPROVED as direction, perf-gated |
-| 20 | Overly public Arrow surface | AWAITING YOUR RULING |
-| 21 | Safepoint follow-up TODOs (S1-S4) | IN DESIGN (track A agent) |
+| 1 | `Kyo.lift` is a bare cast (nesting bug) | AUTHORIZED (fix) |
+| 3 | Erased handler machinery | AUTHORIZED (fix) |
+| 4 | Handler kind naming | AUTHORIZED (fix), lands with #3 |
+| 5 | Inconsistent type parameter names | AUTHORIZED (fix), next up |
+| 6 | drive/dispatch/eval verb mix | AUTHORIZED (fix) |
+| 7 | Uninformative toString | AUTHORIZED (fix) |
+| 8 | `(x: Any) match` widenings | AUTHORIZED (fix) |
+| 9 | Unexplained cast in `prepend` | design first, then implement (your ok) |
+| 10 | `discard` renamed `finalizeBracket` | AUTHORIZED (fix) |
+| 11 | `observe` placement + effectful observer | AUTHORIZED (fix) |
+| 12 | `KyoException` name clash, `Trace` stub | AUTHORIZED (your ok) |
+| 13 | Fork-boundary API shape | IN DESIGN: dedicated opus agent (track C) |
+| 14 | `LastResort` boundary carrier | OPEN DISCUSSION: context below for your read |
+| 15 | Preemption not wired into drives | IN DESIGN: opus agent (track A) |
+| 16 | `defer` allocates twice | YOUR COUNTER-PROPOSAL adopted for design; to present |
+| 17 | Loop drivers slower than old kernel | AUTHORIZED, benchmark first |
+| 18 | Context reads walk the chain | CONFIRMED feasible; IN DESIGN (track B) |
+| 19 | `Context` to a user-facing type | IN DESIGN: dedicated opus agent (track D) |
+| 20 | Overly public Arrow surface | AUTHORIZED (fix) |
+| 21 | `Parked` naming in Safepoint | input to track A design |
+| 22 | Null-based Safepoint slots | input to track A design |
+| 23 | Overflow safepoint can livelock | input to track A design |
+| 24 | clearPreempt sufficiency | input to track A design |
 
 ## 1. `Kyo.lift` is a bare cast, so explicit nesting is broken
-when I say "fix" just go ahead and fix
-fix :)
+
 - Files: `kyo-kernel2/shared/src/main/scala/kyo/kernel2/Kyo.scala`, `Pending.scala`
-- Status: APPROVED with your revision (keep the method, fix the body; superclass named
-  `Implicits`). Not started.
+- Status: AUTHORIZED (fix).
 
 Problem. `Kyo.lift` is the user-facing explicit lift, needed when the implicit
 conversions confuse inference. Its current body does nothing:
@@ -59,31 +66,18 @@ def liftSlow[A](v: A): A < Any =
 
 Change.
 - `Kyo.lift` keeps its name and place; its body becomes the `Nested`-boxing match
-  above. `liftSlow` is removed; all 20 internal call sites use the canonical method.
+  above. `liftSlow` is removed; all internal call sites use the canonical method.
 - The implicit conversion family (`lift` macro, `liftAnyVal`, `liftUnit`,
   `abortCastUnit`, `liftPureFunction1-6`, the `Render` given) moves out of the `<`
-  companion body into a superclass it extends, per your naming: `Implicits`
+  companion body into a superclass it extends, named `Implicits` per your ruling
   (implicits inherited from a companion's superclass stay in implicit scope).
 - `Kyo.unwrap` renamed `Kyo.unnest` (stays `@static` for the bytecode reasons noted at
   its definition), pairing with the nesting vocabulary.
 
-## 2. Forwarding methods
-no need to report done stuff. This is about what needs my attention. This sould still surface if there's a relevant decision/info to me
-- Files: `Pending.scala`, `Effect.scala`, `Arrow.scala`, `ArrowEffect.scala`
-- Status: DONE. Full kyo-kernel2 JVM suite green. Commit `564dc4cc9f`.
-
-What was removed:
-- `unsafeGet` (a proto1 leftover; its only test now asserts through `eval`).
-- `driveInstalled` and `drivePartial` (ArrowEffect calls `driveLoop` directly).
-- `Effect.deferInline` (only `defer` remains; old-kernel call sites migrate at swap,
-  source-compatible since the parameter is by-name).
-- `Arrow.of`, a pure upcast; all 12 sites construct the `Arrow.Transform` in place.
-- `neverPreempt` is now the single val instead of a def forwarding a private val.
-
 ## 3. Erased handler machinery
-fix
+
 - Files: `internal/Handler.scala`, `ArrowEffect.scala`, `Pending.scala`
-- Status: APPROVED. Not started. Scheduled after the naming sweeps (#5, #6).
+- Status: AUTHORIZED (fix). Scheduled after the naming sweeps (#5, #6).
 
 Problem. Handler clauses are stored through erased aliases, discarding the types the
 public API established:
@@ -115,9 +109,9 @@ The unavoidable erased boundary concentrates at the dispatch tag match in
 measure with JMH: removes a per-handle closure allocation.
 
 ## 4. Handler kind naming
-fix
+
 - Files: `internal/Handler.scala`
-- Status: APPROVED. Lands together with #3.
+- Status: AUTHORIZED (fix). Lands together with #3.
 
 Problem. `Handler.Operation` does not say which effect kind it interprets (your margin
 note: "Is this ArrowHandler?"), and `Handler.Context` collides with `internal.Context`.
@@ -125,9 +119,9 @@ note: "Is this ArrowHandler?"), and `Handler.Context` collides with `internal.Co
 Change. `Operation` becomes `ArrowHandler`; `Handler.Context` becomes `ContextBinding`.
 
 ## 5. Inconsistent type parameter names and missing variance
-fix
+
 - Files: `Kyo.scala`, `Arrow.scala`
-- Status: APPROVED. Next up.
+- Status: AUTHORIZED (fix). Next up.
 
 Problem. Ad-hoc parameter names against the convention (values `A, B, C...`, effects
 `S, S2, S3...`), and `Suspension` is invariant where it can be covariant:
@@ -150,9 +144,9 @@ private[kyo] def isEmpty[A, B, S](f: Arrow[A, B, S]): Boolean
 renamed too; proposal `Mid`.
 
 ## 6. drive / dispatch / eval verb mix
-fix
+
 - Files: `Pending.scala`
-- Status: APPROVED. Not started.
+- Status: AUTHORIZED (fix).
 
 Problem. One kind of thing carries three verbs. Change, consolidating to eval:
 
@@ -164,12 +158,12 @@ Problem. One kind of thing carries three verbs. Change, consolidating to eval:
 | `dispatchLast` | `evalBoundary` |
 
 `resolveContext`/`snapshotContext` keep the resolve prefix (they compute values, they
-do not evaluate computations); both disappear anyway if #18's design lands.
+do not evaluate computations); both disappear anyway when #18's design lands.
 
 ## 7. Uninformative toString
-fix
+
 - Files: `Kyo.scala`
-- Status: APPROVED. Not started.
+- Status: AUTHORIZED (fix).
 
 Problem. Several nodes render as bare constants (`"Nested"`, `"Defer"`, `"Offset"`),
 useless in test failures and debugging. Change: render shape plus content, matching the
@@ -177,10 +171,10 @@ existing style of `Suspend`/`ContextRead`/`Transform`, e.g. `Nested(<value>)`,
 `Offset(<head>, <next>)`, `Continue` including its chain.
 
 ## 8. `(x: Any) match` widenings
-fix
+
 - Files: `Pending.scala` (map/flatMap/andThen/unit, Observe), `Effect.scala`
   (catching), `Loop.scala` (drivers), `Arrow.scala` (run sites)
-- Status: APPROVED. Not started.
+- Status: AUTHORIZED (fix).
 
 Problem and change:
 
@@ -197,10 +191,10 @@ crept in); direct matching against class patterns still compiles since the opaqu
 erases, with `@unchecked` carrying the justification. Each site verified individually.
 
 ## 9. Unexplained cast in `prepend`
-ok
+
 - Files: `Kyo.scala` (`Suspension.prepend` and siblings), `Effect.scala`, `Pending.scala`
-- Status: You asked for an elaborated design for approval before implementation. I will
-  present it when we reach this item (after #12 in the order).
+- Status: your ok on the plan: I present an elaborated design for your approval, then
+  implement.
 
 Problem. `prepend(f: Arrow[Any, Any, Any])` is only ever called with pass-through
 interceptors (`Catching`, `Observe`), which is why the cast in
@@ -218,9 +212,9 @@ composition. The design will cover which classes implement it (`Catching`, `Obse
 `Defer`).
 
 ## 10. `discard` misleading name
-fix
+
 - Files: `Pending.scala`
-- Status: DECIDED by you: `finalizeBracket`. Not started.
+- Status: AUTHORIZED (fix). Name you chose: `finalizeBracket`.
 
 Problem. `discard` runs bracket finalizers when the scheduler drops a parked
 computation; the name reads like harmless value-dropping (`kyo.discard`, `.unit`), and
@@ -228,14 +222,14 @@ someone could call it thinking that. Plain `finalize` is unusable: an extension 
 named `finalize` is permanently shadowed by `java.lang.Object#finalize`.
 
 ## 11. `observe` placement, then an effectful observer
-fix
+
 - Files: `Pending.scala` -> new `Observe.scala` (+ `ObserveTest.scala`)
-- Status: APPROVED, including the effectful follow-up. Not started.
+- Status: AUTHORIZED (fix), including the effectful follow-up.
 
 Change, step 1: move `observe` and the `Observe` transform class to their own file,
-entry point `Observe.apply`. Step 2 (your follow-up question, answered yes): make the
-observer effectful. The observed loop already runs step-by-step (each transform
-executes against the empty continuation so every intermediate value is visible), so:
+entry point `Observe.apply`. Step 2: make the observer effectful. The observed loop
+already runs step-by-step (each transform executes against the empty continuation so
+every intermediate value is visible), so:
 
 ```scala
 def apply[A, S, S2](observer: (Frame, Any) => Any < S2)(v: A < S): A < (S & S2)
@@ -247,9 +241,9 @@ computation must sit outside the re-armed observed region so observation does no
 observe itself.
 
 ## 12. `KyoException` name clash and the `Trace` stub
-ok
+
 - Files: `internal/KyoException.scala`, `internal/Trace.scala`, `Isolate.scala`
-- Status: APPROVED. Not started.
+- Status: AUTHORIZED (your ok).
 
 Problem. kernel2's internal trace carrier (a suppressed exception accumulating effect
 frames for stack enrichment) reuses the name of kyo-data's public `KyoException`, a
@@ -261,10 +255,10 @@ round (your ruling): the mechanism must then also work with kyo-data's `KyoExcep
 enriching those exceptions the same way.
 
 ## 13. Fork-boundary API shape
-launch an opus agent to explore
+
 - Files: `Isolate.scala` (`internal.runDetached`), future consumers kyo-core/IOTask
-- Status: IN DESIGN. Merged into track B (see #18) per your instruction to explore
-  with an opus agent.
+- Status: IN DESIGN. Dedicated opus agent launched per your instruction (track C).
+  Deliverable: `kernel2-boundary-api-design.md`, summarized for you when it lands.
 
 Problem. The fork boundary hands the scheduler `(Trace, Context)` through a callback:
 
@@ -273,42 +267,83 @@ private[kyo] def runDetached[A, S](f: (Trace, Context) => A < S)(using Frame): A
 ```
 
 You asked for something more elegant, informed by how kyo-core and IOTask actually
-consume it. Leading candidate: a direct snapshot value the caller maps over. Since #18
-eliminates `ContextSnapshot`, where the snapshot comes from is part of that design, so
-one agent designs both.
+consume the boundary. The agent extracts the jobs-to-be-done from the old kernel's
+Boundary consumers (Fiber, Async, IOTask), proposes exact signatures, and shows
+before/after call sites. It is briefed to assume #18's outcome (context threaded by the
+drive, no ContextSnapshot) as an interface, not to design it.
 
-## 14. The `LastResort | Null` boundary carrier
-I'm not convinced of LastResort and you did not provide proper context.
+## 14. The `LastResort` boundary carrier
+
 - Files: `Pending.scala`, `ArrowEffect.scala`
-- Status: APPROVED (after the why-it-exists explanation). Lands with #3.
+- Status: OPEN DISCUSSION. You are not convinced; full context below for your read.
+  No implementation until you rule. Track A's design also validates or replaces this
+  mechanism against the real IOTask consumer.
 
-Why a carrier must exist at all: `handlePartial`'s clause cannot be an installed chain
-delimiter, because (a) it must not travel with a parked continuation: each scheduler
-slice re-enters the drive with its own clause, so an installed one would stack
-duplicates per slice, and (b) it needs the full continuation, delimiters included, so
-an out-of-band resume re-installs every traveling handler; a delimiter would capture
-only its own prefix. What is wrong is the shape:
+Context, from the top. A fiber's computation contains suspensions of the scheduler's
+own runtime effect (in today's kyo-core: the operations Async/IOTask interpret, like
+joining a promise). No user code installs a handler for them. In the OLD kernel, IOTask
+itself interprets them: its eval loop runs the computation, and when it stops on a
+suspension, IOTask inspects it and decides: answer it and keep running this slice, or
+park the fiber and register a callback to resume later. That interpreter lives outside
+the computation, in the scheduler's loop.
+
+kernel2 packages that exact pattern as the API `ArrowEffect.handlePartial`:
+
+```scala
+def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    effectTag: Tag[E],
+    v: A < (E & S), ...
+)(
+    clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
+): A < (E & S)
+```
+
+It drives `v` immediately. When a suspension of `E` reaches the boundary and NO
+installed delimiter matched it, the clause receives the operation input and the full
+continuation. `Present(next)`: keep running this slice with `next`. `Absent`: park,
+typically after stashing the continuation so the completion callback can resume it.
+This is the scheduler integration point; PendingSchedulerTest exercises it.
+
+`LastResort` is nothing more than the internal pair (tag, clause) that handlePartial
+hands to the drive loop:
 
 ```scala
 final private[kyo] class LastResort(
     val effectTag: Tag[Any],
     val clause: [C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]
 )
-// threaded as: last: LastResort | Null = null
+// threaded through the drive as: last: LastResort | Null = null
 ```
 
-Change: a typed node in the handler hierarchy (with #3's typing), threaded as
-`Maybe[...]`, no `null` anywhere.
+Why the clause is a drive parameter and not an installed chain delimiter:
+1. Delimiters travel with the continuation. A fiber parks, the promise completes on
+   another thread, and a LATER slice re-enters handlePartial with its own clause. If
+   the clause were installed in the chain, the resumed continuation would already
+   contain the previous slice's copy, and each slice would add another.
+2. Parking must return control to the scheduler, not stay inside the program. With the
+   boundary clause, `Absent` makes the drive return with the suspension still pending,
+   and the scheduler (the caller) decides what to do. An installed handler is part of
+   the computation; it can only produce another computation.
+3. The clause needs the FULL continuation, delimiters included, so an out-of-band
+   resume re-installs every traveling handler. A chain delimiter captures only the
+   prefix up to itself.
+
+What I got wrong in the earlier writeup: I marked this APPROVED from your "fix" on the
+null shape while you were actually questioning the mechanism itself. The shape fix
+(typed node, threaded as `Maybe`, no null) is separate from the mechanism question.
+If, after this context, you still want handlePartial's interpreter modeled differently,
+that ruling reshapes track A's scheduler integration and I will hold #14 until then.
 
 ## 15. Preemption not wired into the drives
-do you have a design for this yet? if needed launch an opus agent to work on it
+
 - Files: `Pending.scala`, `Arrow.scala`, `ArrowEffect.scala`, `internal/Safepoint.scala`
-- Status: IN DESIGN, track A opus agent running. Deliverable:
-  `kernel2-preemption-design.md`, to be summarized for your review.
+- Status: IN DESIGN. Your question "do you have a design for this yet?": not yet; the
+  opus agent you asked for (track A) is running now. Deliverable:
+  `kernel2-preemption-design.md`, summarized for you when it lands.
 
 Problem. The Safepoint machinery (per-thread slots, CAS preemption delivery, depth
 budget) is built and tested, but no drive consults it. The interim plumbing leaks into
-the API you are unhappy with:
+the API:
 
 ```scala
 def eval(preempt: () => Boolean, period: Int): A < Any                 // goes away
@@ -321,36 +356,30 @@ overridable through any API; drives poll `Safepoint.preempted` and consume with
 fiber's registered thread.
 
 ## 16. `defer` allocates twice
-I don't think this is safe. How about Defer extends from suspension and arrow?
+
 - Files: `Effect.scala`, `Kyo.scala`
-- Status: AWAITING YOUR RULING.
+- Status: YOUR COUNTER-PROPOSAL adopted as the design direction. I will present the
+  worked-out design for your approval before implementing (you flagged my earlier
+  abstract-run() shape as possibly unsafe).
 
-Problem. `Effect.defer` allocates a `Kyo.Defer` plus a separate `Arrow.Transform`:
+Problem. `Effect.defer` allocates a `Kyo.Defer` node plus a separate `Arrow.Transform`
+holding the thunk, where the old kernel's `KyoDefer` was one anonymous class.
 
-```scala
-val thunk = new Arrow.Transform[Unit, A, S]:
-    def frame = _frame
-    def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) = cont(f)
-Kyo.Defer((), thunk)
-```
-
-where the old kernel mints one anonymous class:
-
-```scala
-new KyoDefer[A, S]:
-    def frame = _frame
-    def apply(v: Unit, context: Context)(using Safepoint) = f
-```
-
-Proposed change: give `Defer` an abstract `run(): A < S`; `defer` mints one anonymous
-`Defer`; the current `(value, cont)` form becomes a concrete subclass used by the
-rescue and segment-boundary paths; composition (`map`/`prepend`) goes through a
-`Chained` subclass. JMH after (deepBind and suspension rows are Defer-sensitive).
+Your proposal: `Defer` extends from Suspension and Arrow. Initial analysis, to be
+worked out fully: if `Defer` is a `Suspension`, chaining comes free through the
+existing `Continue` machinery (`Suspension.map` already builds the chain), and if it is
+also an `Arrow.Transform`, the deferred computation IS the node: `Effect.defer` mints
+exactly one object, and the drive's Defer arm runs the node's own transform against the
+chain. The rescue and segment-boundary producers become small concrete subclasses. This
+also dovetails with #18: context reads become Defer-shaped suspensions the drive
+answers from the threaded context, which is exactly the old kernel's pattern (KyoDefer
+receiving the context parameter). Precedent for the double role in kernel2:
+`Arrow.Offset` already extends both `Transform` and `Step`.
 
 ## 17. Loop drivers slower than the old kernel
-ok
+
 - Files: `Loop.scala`
-- Status: APPROVED, benchmark first (your instruction). Not started.
+- Status: AUTHORIZED, benchmark first (your instruction).
 
 Problem. kernel2's drivers allocate a transform per iteration even for immediate
 outcomes, via `map`:
@@ -374,66 +403,88 @@ Change: add loop JMH rows measuring old kernel vs kernel2 first, then port the o
 driver shape to every arity (apply 1-4, indexed 1-4, and the rest of the surface).
 
 ## 18. Context reads walk the continuation chain
-Confirm first: can we wire the context as a parameter instead of having these suspensions? see how the old kernel uses defer for this
+
 - Files: `Pending.scala` (`resolveContext`, `snapshotContext`), `Kyo.scala`
   (`ContextRead`, `ContextSnapshot`), `internal/Handler.scala`, `Arrow.scala`
   (`hasHandler`)
-- Status: IN DESIGN, track B opus agent running. Deliverable:
-  `kernel2-context-threading-design.md`, to be summarized for your review.
+- Status: your question "can we wire the context as a parameter instead of having
+  these suspensions?": CONFIRMED, yes. The old kernel does exactly that: every
+  continuation frame receives the context (`KyoSuspend.apply(v, context)`), and its
+  defer (`KyoDefer`) is an ordinary suspension the eval loop answers while threading
+  the context through. kernel2 can adopt the same shape at the drive level: the drive
+  threads a Context register, reads become Defer-shaped nodes answered from it (no
+  chain walk, no ContextRead/ContextSnapshot suspensions), bindings update the register
+  when handlers install. The engineering question is only where the register lives so
+  the eager fused path pays nothing (eagerMap5 at 5.67 ns/op must not regress). The
+  track B opus agent is producing that concrete design with benchmarks. Deliverable:
+  `kernel2-context-threading-design.md`, summarized for you when it lands.
 
-Problem. Every context read walks the whole chain collecting matching delimiters, with
-list allocations, and `ContextSnapshot` exists as a second walking suspension only for
-fork boundaries. Your rulings: this is expensive (benchmarks required), the context
-should be passed as a parameter like the old kernel, and `ContextSnapshot` should not
-exist at all.
+## 19. `Context` should be a user-facing type, likely `TypeMap`
 
-Design scope: where the context parameter lives without taxing the eager path
-(eagerMap5 at 5.67 ns/op must not regress; kernel2 frames deliberately have no context
-parameter, unlike old-kernel `KyoSuspend.apply(v, context)`), how bindings survive
-park/resume, what `ContextEffect.handle` does, whether `hasHandler` still pays for
-itself, and the fork-boundary snapshot (#13).
-
-## 19. `Context` to `TypeMap`
-launch an opus agent to explore the performance aspect. Assume we can make imporvements to TypeMap if justified or even create a new datastructure. Ideally, the conext should be of a type that is user-facing like TypeMap
 - Files: `internal/Context.scala`, kyo-data `TypeMap`
-- Status: APPROVED as direction; perf-gated (your ruling: the challenge is
-  performance, not code change). Sequenced after #18 settles what Context must support.
-
-Change: migrate the hand-rolled `Map[Tag[Any], AnyRef]` to kyo-data's `TypeMap`, adding
-the `private[kyo]` operations it lacks (`inherit`-style filtering, flag-maintaining
-`set`). Adoption gated on benchmarks of the context-heavy rows.
+- Status: IN DESIGN. Dedicated opus agent launched per your instruction (track D),
+  briefed with your rulings: the challenge is performance; TypeMap may be improved if
+  justified, or a new datastructure created; ideally the context IS a user-facing type
+  like TypeMap. Deliverable: `kernel2-context-typemap-design.md`, summarized for you
+  when it lands.
 
 ## 20. Overly public Arrow surface
-fix
+
 - Files: `Arrow.scala`
-- Status: AWAITING YOUR RULING.
+- Status: AUTHORIZED (fix).
 
-Problem. `Arrow.Step` is public without need; same audit question for `step`,
-`stepSlow`, `optimize`, `isEmpty`. Proposal: all `private[kyo]`. `Arrow` itself stays
-public: it is the continuation type in the public handler model (`handleFirst`,
-`handlePartial` signatures).
+Problem. `Arrow.Step` is public without need; same audit for `step`, `stepSlow`,
+`optimize`, `isEmpty`: all become `private[kyo]`. `Arrow` itself stays public: it is
+the continuation type in the public handler model (`handleFirst`, `handlePartial`).
 
-## 21. Safepoint follow-up TODOs (S1-S4)
-you must always expand properly as their own items
+## 21. `Parked` is the wrong name for a preempt-requested safepoint
+
 - Files: `internal/Safepoint.scala`
-- Status: IN DESIGN, folded into track A (#15).
+- Status: input to track A's design (your TODO: "isn't a better name for this
+  Preempt? it's odd to think a safepoint would be parked").
 
-- S1: rename `Parked` ("it's odd to think a safepoint would be parked"); the design
-  proposes Preempt-flavored naming and checks it reads correctly for Overflow and the
-  resume field.
-- S2: use `AtomicReferenceArray[Maybe[Safepoint]]` instead of null-empty slots if it
-  costs nothing (needs pre-filling with `Absent`; benchmark `get`).
-- S3: Overflow is too drastic. Confirmed real: with `enter()` always false, a lone
-  transform rescues into a Defer whose re-execution rescues identically, a permanent
-  livelock. Your ruling: a task must keep running without preemption/interruption
-  rather than never progress; candidate fix is handing out an unregistered `Active`
-  (keeps the depth guard and progress, loses only cross-thread preemption delivery).
-- S4: analyze whether clearPreempt's consume-then-check is sufficient in all cases
-  (re-preemption mid-slice, multiple requesters, the future interruption use).
+The design proposes Preempt-flavored naming and checks it still reads correctly for
+the two other uses of the class: the shared Overflow instance and the `resume` field
+that carries the previous Active state.
+
+## 22. Null-based Safepoint slot array
+
+- Files: `internal/Safepoint.scala`
+- Status: input to track A's design (your TODO: use `Maybe[Safepoint]` if no perf
+  overhead).
+
+`slots` is an `AtomicReferenceArray[Safepoint]` with null empty slots. The change
+requires pre-filling the array with `Absent` and confirming `get` cost is unchanged
+(Maybe's Present is unboxed for references, so the comparison stays an identity check);
+the design states what the benchmark must show.
+
+## 23. The Overflow safepoint can livelock a task
+
+- Files: `internal/Safepoint.scala`, `Arrow.scala`, `Pending.scala`
+- Status: input to track A's design. Your ruling: it is better to let a task run
+  without preemption/interruption/stack-depth services than to make it never progress.
+
+Confirmed real, not just drastic: Overflow is permanently parked, so `enter()` is
+always false; a lone transform then rescues into a Defer whose re-execution rescues
+identically, forever. Candidate fix: hand overflow threads an unregistered `Active`
+(keeps the depth guard and progress, loses only cross-thread preemption delivery); the
+design weighs alternatives.
+
+## 24. Is clearing the preempt flag enough?
+
+- Files: `internal/Safepoint.scala`
+- Status: input to track A's design (your TODO: "do we have cases where preempted
+  clearing wouldn't be enough?").
+
+The design analyzes the consume-then-check protocol against: a second preempt request
+arriving mid-slice, multiple concurrent requesters, a request landing between
+`clearPreempt` and the drive returning, and the future interruption use that
+piggybacks on the same delivery.
 
 ## Execution order
 
-#5 (next) -> #6 -> #7 -> #8 -> #10 -> #1 -> #11 -> #12 -> #3 + #4 + #14 -> #9 (design
-first) -> #17 (benchmark first) -> #16, #20 (once ruled) -> track A landing -> track B
-landing -> #19 (perf-gated). Full kernel2 suite green after each item; JMH after the
-perf-relevant ones (#3, #15, #16, #17, #18).
+Authorized queue, one issue per green-suite commit: #5 -> #6 -> #7 -> #8 -> #10 ->
+#1 -> #20 -> #11 -> #12 -> #3 + #4. Design-gated: #9 (present design), #16 (present
+design), #14 (your ruling after the context above), #17 (benchmarks first), then
+tracks A/B/C/D as they land, then #19 adoption (perf-gated). Full kernel2 suite green
+after each item; JMH after the perf-relevant ones (#3, #15, #16, #17, #18).
