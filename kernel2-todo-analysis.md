@@ -10,19 +10,21 @@ item; all changes confined to kyo-kernel2; every command logged and watched.
 
 # Needs your attention
 
-## 18c. The rotation/handlers design awaits your validation
-- The single design you directed (rotation + real handler formats + the evidence
-  environment) is complete in `kernel2-rotation-handlers-design.md`, with the
-  experiment series E1 (in-place Resume ceiling: ~15x time, ~100x allocation),
-  E2/E2b (the evidence representation: one final array class), and E3 (an
-  executable model of the whole synthesis matching the OLD kernel on 11
-  reference programs, including the clause-scope red test, the Catching
-  over-guard, and typed multi-shot replay).
-- It subsumes the earlier 18b ruling: region nodes ARE the nesting-preserving
-  encoding, so the binding-scope question is closed by the same design.
-- Ruling points are the doc's section 7: approve the synthesis, and pick the
-  environment shape (recommendation: one environment; Context is its
-  inheritable subset).
+## 18c. Rotation implemented: review the landed round
+- On your "proceed", rotation landed in the real kernel end to end: handle
+  loops with Rotate steps replace the chain search; the Handlers parameter (a
+  Chunk of fun-format handlers, maintained like the context) answers their
+  operations locally; bindings, catching, and observation share the one
+  mechanism; prepend, Interceptor, ContextBinding, evalOperation, prefixArrow,
+  and hasHandler are deleted.
+- Suite 623 of 623, including the former context-scope red and five new pins
+  carrying the old-kernel-validated values. Board: pure-path rows identical;
+  dispatch rows 2.8x to 4.4x faster with allocation halved or better; one noted
+  regression, contextRead100 at +11% time and +8 B per read (rotate node per
+  read bounce), routed to the optimization round.
+- Semantics resolution to be aware of: handling is eager again (old-kernel
+  construction-time acting); two tests that pinned lazy installation were
+  re-pinned accordingly.
 
 ## 27. `object Kyo`'s utility surface belongs at `kyo.Kyo`
 - Blocked by design until the swap round: the kyo-test runner classpath carries the

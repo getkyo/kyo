@@ -258,7 +258,7 @@ object `<` extends Implicits:
           *
           * The drive runs Masked: eval must return `A`, so it cannot hand back a remainder, and a non-polling drive would spin on a
           * pending request; it absorbs requests and re-issues them at exit so an enclosing slice still sees them. All effects must
-          * have handlers installed; reaching a suspension with no matching delimiter is a defect and throws.
+          * have handlers installed; reaching a suspension no handler matched is a defect and throws.
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
@@ -269,7 +269,7 @@ object `<` extends Implicits:
 
         /** Evaluates until the computation completes or a preemption request is consumed, returning the remainder.
           *
-          * The clause-free Preemptible drive: the caller re-schedules the remainder and drives it again. The request is consumed once
+          * The plain Preemptible evaluation: the caller re-schedules the remainder and drives it again. The request is consumed once
           * at exit, so the caller's authoritative check after this returns observes every condition published before the request.
           */
         private[kyo] def evalPartial: A < Any =

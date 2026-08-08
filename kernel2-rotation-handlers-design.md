@@ -5,16 +5,35 @@ formats, per your direction: "reflect on the new Handler impls... they'd allow
 cheaper handling not even producing a continuation in some cases... I think we
 might add a Handlers param like Context. Or Context can contain Handlers."
 
-Status: exploration and experiments COMPLETE (E1, E2, E2b, E3). Nothing gets
-implemented until you approve it.
+Status: IMPLEMENTED in the real kernel, on your "proceed" ruling. The suite is
+623 of 623 green, including the context-scope red this design existed to fix
+and new tests pinning the corrected scoping with the old-kernel-validated
+reference values. The board comparison after the change:
 
-The prototype was removed at your direction (it survives only in git history at
-`f243819967`); it validated the semantics but misrepresented the execution
-model, and nothing of its shape carries forward. The reference for the
-mechanism is your minified kernel's rotation law, and the plan for carrying it
-into the REAL implementation, seam by seam, is section 6. The 11 reference
-programs and their old-kernel-validated results (section 4a) are independent of
-any prototype and stand as the acceptance suite.
+| row | before | after | delta |
+|-----|--------|-------|-------|
+| eagerMap5 | 4.62 ns / 0 B | 4.61 ns / 0 B | identical: pure chains untouched |
+| deepBind10k | 68.8 us / 160,336 B | 68.9 us / 160,336 B | identical |
+| loopPure10k | 19.0 us / 160,008 B | 19.2 us / 160,008 B | noise |
+| resumeFused | 28.4 ns / 16 B | 29.8 ns / 16 B | noise |
+| suspension | 489 ns / 2,120 B | 111 ns / 616 B | 4.4x faster, 3.4x leaner |
+| state10 | 838 ns / 4,560 B | 256 ns / 1,040 B | 3.3x faster, 4.4x leaner |
+| loopSuspend1k | 70.4 us / 379,938 B | 23.7 us / 179,904 B | 3.0x faster, half the allocation |
+| narrowIter | 2,627 ns / 12,024 B | 949 ns / 4,704 B | 2.8x faster, 2.6x leaner |
+| stateMap10k | 2.39 ms / 8.79 MB | 0.56 ms / 3.11 MB | 4.3x faster, 2.8x leaner |
+| contextRead100 | 56 ns, 208 B per read | 62 ns, 216 B per read | one rotate node per read bounce; optimization round |
+
+Resolutions of what section 7 left open: handling is eager, the old kernel's
+shape (two tests that pinned the superseded lazy installation now pin
+construction-time acting); the handlers parameter carries fun-format handlers
+only, as a Chunk maintained like the context, per your direction; the deleted
+machinery list in section 6 landed in full (search, prefixArrow, hasHandler,
+prepend, Interceptor, ContextBinding, the Catching interceptor).
+
+The prototype was removed at your direction (git history `f243819967`). The
+reference for the mechanism is your minified kernel's rotation law; the 11
+reference programs and their old-kernel-validated results (section 4a) are the
+acceptance values, now carried by suite tests.
 
 # 1. What the handler formats promise, and what today delivers
 

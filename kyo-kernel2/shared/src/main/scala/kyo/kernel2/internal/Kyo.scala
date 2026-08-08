@@ -41,7 +41,7 @@ object Kyo:
     // a case class so re-wrapping at pass-through positions preserves value equality
     final private[kyo] case class Nested[+A](value: A)
 
-    /** A bare suspension: an arrow-effect operation awaiting a handler clause, with no continuation attached yet.
+    /** A bare suspension: an arrow-effect operation awaiting a handler, with no continuation attached yet.
       *
       * The one suspension kind: context reads are plain [[Defer]]s consuming the threaded context, so no read node exists.
       */
