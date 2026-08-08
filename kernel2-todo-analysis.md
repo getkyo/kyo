@@ -148,3 +148,27 @@ exposed and fixed the bracket acquire corruption under non-resuming handlers
 (commit e7fa57585b, three pins, old-kernel semantics). Suite 626/626, board
 clean, loopSuspend1k's +2.1 ns/iteration from typed Loop inputs remains the
 only known cost, recoverable via the erased-input re-add item.
+
+# Cleaning round: measured findings
+
+- Maybe replaces the null answer protocol at zero cost once the Maybe match
+  lives in its own method instead of apply's inlined body (first attempt paid
+  the escape-analysis breakage again: stateMap10k +48 B/iteration and
+  contextRead100 +16 B/read, both from body-size inflation alone since the
+  branch never executes on those rows).
+- The minted transforms' inlined Offset fast path is load-bearing: routing
+  them through apply instead regressed narrowIter +30% and stateMap10k +16
+  B/iteration. Reverted. The bytecode-size answer is a shared non-inlined
+  helper with the same shape, name pending.
+- Loop drivers: the five non-indexed step transforms hoist to one lazy val
+  per loop entry; loopSuspend1k -16 B/iteration (163,960 B/op, below the
+  pre-typed baseline). The indexed family captures the index and keeps the
+  arm-local mint. The residual gap to the old kernel is the two-node fusion
+  currency per suspension, owned by the handler encodings design.
+- The encodings design's live defect is confirmed and pinned: same-tag
+  innermost-wins breaks across a park when the operation surfaces mid chain
+  (the outer resume entry steals it at the bubble point, obtained 102 for an
+  expected 12), while tail surfacing behaves because the empty-continuation
+  fast path returns before handlers are consulted. Known red pin in
+  ArrowEffectTest until the encodings implementation lands the entry
+  discipline.
