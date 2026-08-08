@@ -298,6 +298,46 @@ distinction. Candidate fixes:
    inside-installed bindings into clause scope, a documented divergence from the
    old kernel in exactly the case the encodings cannot distinguish.
 
+### 2.3b Candidate 1 in concrete terms (for the ruling)
+
+The node makes the old kernel's wrapper nesting first-class:
+
+```scala
+final private[kyo] class Bound[V, E <: ContextEffect[V], A, +B, -S](
+    val inner: A < (E & S),                  // the delimited region
+    val binding: ContextBinding[V, E],       // derives this scope's value per entry
+    val cont: Arrow[A, B, S]                 // the continuation OUTSIDE the binding
+) extends Kyo[B, S]
+```
+
+1. **Installation stays pure and now encodes scope**: `ContextEffect.handle(v)`
+   wraps the node (`Bound(v, binding, Arrow[A])`) instead of prepending into the
+   chain. `map` appends to `cont` (outside the region), so
+   `handle(...)(x).map(f)` and `handle(...)(x.map(f))` produce DIFFERENT nodes,
+   which is exactly the distinction the flat chain lost.
+2. **The drive enters the region under the derived context**: evalLoop's Bound arm
+   computes `updated = binding.derive(context)` and drives `inner` with `updated`
+   (the nested-drive recursion carries its own context, the way `recur` already
+   carries `depth`). A completed region's value flows into `cont` under the OUTER
+   context.
+3. **Parks re-wrap the node**: when `inner` parks, the remainder is
+   `Bound(parkedInner, binding, cont)`, so every later resumption re-derives from
+   the resume-time context, the old kernel's per-resumption re-wrap.
+4. **Dispatch passes through**: an operation parking inside `inner` whose delimiter
+   lives in `cont` (or further out) dispatches with the captured continuation
+   re-entering THROUGH the node
+   (`k = x => Bound(innerPrefix(x), binding, Arrow[A]).map(restOfCont)`), and the
+   clause runs under the context OUTSIDE the binding: exact old-kernel clause
+   scope, for both installation orders.
+5. **Value-flow reads are unchanged**: inside the region they consume the threaded
+   parameter the drive derived at entry; the interceptor-prepend machinery for
+   Catching and Observe is untouched (those are value-flow interceptors with no
+   scope question).
+
+The cost profile matches the old kernel: one node per binding region, one re-wrap
+per park crossing, and dispatch grows one transparent case. The interceptor-based
+`ContextBinding.run` re-arm from 2.3 becomes internal to the node's entry step.
+
 ## 2.4 Drives: who supplies the parameter
 
 1. `evalLoop(v0, mode, context)`: the Defer arm passes it, dispatch closes it into
