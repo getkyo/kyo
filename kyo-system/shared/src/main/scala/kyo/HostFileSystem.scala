@@ -1,5 +1,6 @@
 package kyo
 
+import java.io.IOException
 import java.nio.charset.Charset
 import kyo.internal.Platform
 
@@ -204,5 +205,70 @@ private[kyo] object HostFileSystem:
                     // Unsafe: host delete of the created temp file at Scope exit
                     def remove()(using AllowUnsafe): Unit = discard(file.unsafe.remove())
             }
+
+        private def invalid(path: Path, operation: FileSystemOperation, detail: String)(using Frame): FileIOException =
+            FileIOException(path, operation, new IOException(detail))
+
+        private def readChannelFrom(path: Path, raw: Path.RawChannel): Path.ReadChannel[Sync] =
+            new Path.ReadChannel[Sync]:
+                def readAt(position: Long, length: Int)(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
+                    if position < 0L || length < 0 then Abort.fail(invalid(path, FileSystemOperation.Read, "negative channel read bounds"))
+                    else Sync.Unsafe.defer(Abort.get(raw.readAt(position, length))).map(Span.from)
+                def size(using Frame): Long < (Sync & Abort[FileReadException]) =
+                    Sync.Unsafe.defer(Abort.get(raw.size()))
+
+        private def writeChannelFrom(path: Path, raw: Path.RawChannel): Path.WriteChannel[Sync] =
+            new Path.WriteChannel[Sync]:
+                def writeAt(position: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+                    if position < 0L then Abort.fail(invalid(path, FileSystemOperation.Write, "negative channel write position"))
+                    else Sync.Unsafe.defer(Abort.get(raw.writeAt(position, bytes.toArray)))
+                def sync(metadata: Boolean)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+                    Sync.Unsafe.defer(Abort.get(raw.sync(metadata)))
+                def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+                    if size < 0L then Abort.fail(invalid(path, FileSystemOperation.Write, "negative channel truncate size"))
+                    else Sync.Unsafe.defer(Abort.get(raw.truncate(size)))
+
+        private def readWriteChannelFrom(path: Path, raw: Path.RawChannel): Path.ReadWriteChannel[Sync] =
+            new Path.ReadWriteChannel[Sync]:
+                private val read  = readChannelFrom(path, raw)
+                private val write = writeChannelFrom(path, raw)
+                def readAt(position: Long, length: Int)(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
+                    read.readAt(position, length)
+                def size(using Frame): Long < (Sync & Abort[FileReadException]) = read.size
+                def writeAt(position: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+                    write.writeAt(position, bytes)
+                def sync(metadata: Boolean)(using Frame): Unit < (Sync & Abort[FileWriteException]) = write.sync(metadata)
+                def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException])    = write.truncate(size)
+
+        def openReadChannel(path: Path)(using Frame): Path.ReadChannel[Sync] < (Sync & Scope & Abort[FileReadException]) =
+            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(path.unsafe.openReadChannelRaw())))(raw => Sync.Unsafe.defer(raw.close()))
+                .map(readChannelFrom(path, _))
+        def openWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): Path.WriteChannel[Sync] < (Sync & Scope & Abort[FileWriteException | FileStructureException]) =
+            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(path.unsafe.openWriteChannelRaw(open))))(raw => Sync.Unsafe.defer(raw.close()))
+                .map(writeChannelFrom(path, _))
+        def openReadWriteChannel(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): Path.ReadWriteChannel[Sync] < (Sync & Scope & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(path.unsafe.openReadWriteChannelRaw(open))))(raw =>
+                Sync.Unsafe.defer(raw.close())
+            )
+                .map(readWriteChannelFrom(path, _))
+        private[kyo] def openReadChannelUnscoped(path: Path)(using
+            Frame
+        ): (Path.ReadChannel[Sync], () => Unit < Sync) < (Sync & Abort[FileReadException]) =
+            Sync.Unsafe.defer(Abort.get(path.unsafe.openReadChannelRaw())).map(raw =>
+                (readChannelFrom(path, raw), () => Sync.Unsafe.defer(raw.close()))
+            )
+        private[kyo] def openReadWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
+            Frame
+        ): (
+            Path.ReadWriteChannel[Sync],
+            () => Unit < Sync
+        ) < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            Sync.Unsafe.defer(Abort.get(path.unsafe.openReadWriteChannelRaw(open))).map(raw =>
+                (readWriteChannelFrom(path, raw), () => Sync.Unsafe.defer(raw.close()))
+            )
     end HostFileSystem
 end HostFileSystem

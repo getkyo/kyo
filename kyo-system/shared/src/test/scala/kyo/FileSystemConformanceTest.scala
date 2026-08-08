@@ -34,6 +34,13 @@ class HostFileSystemWriteConformanceTest extends FileSystemWriteTestSuite:
         FileSystemConformanceFixtures.host("kyo-host-write-suite")
 end HostFileSystemWriteConformanceTest
 
+class HostFileSystemChannelConformanceTest extends FileSystemChannelTestSuite:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-host-channel-suite")
+end HostFileSystemChannelConformanceTest
+
 /** Minimal user-defined backend fixture that deliberately exposes only the read tier. */
 final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) extends FileSystem.Read[Sync]:
     // Delegated by name, not `export delegate.*`. A wildcard emits one forwarder per member in an
@@ -47,6 +54,8 @@ final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) exten
     export delegate.isSymbolicLink
     export delegate.list
     export delegate.openRead
+    export delegate.openReadChannel
+    export delegate.openReadChannelUnscoped
     export delegate.openReadLines
     export delegate.openWalk
     export delegate.read
