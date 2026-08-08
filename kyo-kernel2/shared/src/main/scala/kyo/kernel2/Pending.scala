@@ -248,44 +248,6 @@ object `<` extends Implicits:
             self.map(v => v)
     end extension
 
-    // TODO let's move this to Observe.scala and tihs method becomes Observe.apply
-    private[kyo] def observe[A, S](observer: (Frame, Any) => Unit)(v: A < S): A < S =
-        v match
-            case kyo: Kyo[A, S] @unchecked =>
-                kyo.prepend(new Observe(observer))
-            case _ =>
-                v
-    end observe
-
-    final private[kyo] class Observe(observer: (Frame, Any) => Unit) extends Arrow.Transform[Any, Any, Any]:
-        def frame = Frame.internal
-        def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            @tailrec def loop(o: Arrow.Offset[Any, Any, Any, Any], cur: Any): Any =
-                o.head match
-                    case jump: Arrow.Offset[Any, Any, Any, Any] @unchecked if Arrow.isEmpty(o.next) =>
-                        loop(jump, cur)
-                    case t =>
-                        observer(t.frame, cur)
-                        val w = t.run(cur, Arrow[Any])
-                        if w.isInstanceOf[Kyo[?, ?]] then
-                            val rest: Arrow[Any, Any, Any] =
-                                if Arrow.isEmpty(o.next) then this
-                                else Arrow.map(this)(o.next)
-                            w.asInstanceOf[Kyo[Any, Any]].map(rest)
-                        else
-                            o.next match
-                                case n: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unnest(w))
-                                case _                                              => Kyo.unnest(w)
-                        end if
-            cont match
-                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
-                    loop(o, v).asInstanceOf[C < (Any & S2)]
-                case _ =>
-                    cont(v.asInstanceOf[Any < Any])
-            end match
-        end run
-    end Observe
-
     extension [A](self: A < Any)
 
         /** Evaluates the computation to its value.

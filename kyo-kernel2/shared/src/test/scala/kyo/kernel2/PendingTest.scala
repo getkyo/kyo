@@ -744,32 +744,6 @@ class PendingTest extends Test[Any]:
         assert(outer.eval == 12)
     }
 
-    "observe reports steps and survives park and resume" in {
-        var seen     = List.empty[Int]
-        val k        = ask.map(_ + 1).map(_ * 2)
-        val observed = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
-        val cont     = park(observed)
-        assert(seen == Nil)
-        val done = cont(10).asInstanceOf[Int < Any].eval
-        assert(done == 22)
-        assert(seen == List(10, 11))
-    }
-
-    "observe reports steps across a long continuation" in {
-        var seen         = List.empty[Int]
-        var k: Int < Ask = ask
-        var i            = 0
-        while i < 40 do
-            k = k.map(_ + 1)
-            i += 1
-        val observed = `<`.observe((f, v) => seen :+= v.asInstanceOf[Int])(k)
-        val cont     = park(observed)
-        assert(seen == Nil)
-        val done = cont(0).asInstanceOf[Int < Any].eval
-        assert(done == 40)
-        assert(seen == (0 until 40).toList)
-    }
-
     "exceptions carry effect frames in the stack trace" in {
         val program: Int < Ask = ask.map { _ =>
             (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
