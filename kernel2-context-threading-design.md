@@ -70,7 +70,22 @@ def run[C, S2](v: Any, context: Context, cont: Arrow[B, C, S2]): C < (S & S2)
 // Arrow application: one canonical internal form; the caller always supplies
 // the context it is executing under
 private[kyo] def apply[S2](v: A < S2, context: Context): B < (S & S2)
+
+// The user-facing application defers: the arrow runs when a drive pops the
+// node, under the ambient context of the site where the result is embedded
+def apply[S2](v: A < S2): B < (S & S2) =
+    Kyo.Defer(v, self).asInstanceOf[B < (S & S2)]   // rescue's exact shape
 ```
+
+The public form is the answer to "what context does `arrow(value)` run under": none
+at application time, because application constructs a `Defer` and execution happens
+where the result is embedded. If the caller embeds it inside a binding region, the
+region's interceptors re-prepend themselves onto the node as it parks outward
+(2.3), so the drive pops it with the bindings re-derived in front of the arrow: the
+application sees exactly the ambient of its execution site. At a true root (a test
+applying a captured continuation cold) the drive is `eval` and the ambient is
+empty, which is the root's ambient. This is the old kernel's resume-time-context
+semantics without ever asking the caller for a context.
 
 `Offset.run`'s fused loop, `guardedRun`, `applySlow`, `empty`, and `segmentBoundary`
 thread it mechanically. Minted transforms (map fragments, `defer` thunks, loop
@@ -104,16 +119,18 @@ The old kernel's fact 5 becomes the binding rule for every kernel2 site:
    old kernel's exact signature), and the future IOTask passes the fiber's context
    per slice. A caller with no ambient context passes `Context.empty` because empty
    IS its ambient, the same way the bare `eval` root does.
-5. **Construction-time (eager) application consumes no context.** The eager value
-   fast path (a `map` on a pure value) can only execute plain transforms: reads and
-   bindings are Kyo nodes or arrive via `prepend` on Kyo nodes, so they park rather
-   than run eagerly. The eager entry therefore passes the inert empty context under
-   the same structural justification as the old kernel's eager handle loops
-   (construction happens bottom-up before any outer binding can exist; anything
-   that needs one parks and resolves under a drive). Raw application of a captured
-   continuation arrow is `private[kyo]` surface with the caller-supplies-context
-   contract; there is no public context-free application that executes under a
-   drive.
+5. **Eager execution applies only kernel-minted, context-pure transforms.** The
+   eager value fast path (the function overload of `map` on a pure value, the
+   eagerMap5 path) executes only the transform it just minted, which threads the
+   parameter blindly; its context argument is inert by construction, under the same
+   structural justification as the old kernel's eager handle loops (construction is
+   bottom-up, no outer binding can exist yet, and anything needing one parks).
+   Application of an ARBITRARY arrow to a value is never eager: the public
+   `arrow(v)` defers (2.1), and the Arrow overload of `map` on a pure value defers
+   the same way, because an arbitrary arrow may contain binding interceptors from a
+   captured continuation, and running those eagerly would fabricate an empty
+   ambient at a site that has a real one. Deferring is what hands them the real
+   one.
 
 ## 2.2 Reads: plain Defers consuming the parameter
 
@@ -273,6 +290,7 @@ before the suite adaptations are finished.
 | binding install | 1 delimiter node | 1 interceptor node | 1 wrapper node |
 | park crossing a binding | 0 | +1 prepend node per binding | +1 KyoContinue per handle level |
 | fork snapshot | O(chain) walk | field-free: reads the parameter | reads the parameter |
+| public `arrow(v)` on a value | eager, 0 nodes | +1 Defer, +1 trampoline pop (resumeFused shows it) | no public form: `kyo(v, context)` demands a context |
 
 The new row exercises a read-heavy region (`contextRead` style: N reads under one
 binding) so the walk-versus-lookup change is visible, not inferred. The guard rows
