@@ -338,6 +338,52 @@ The cost profile matches the old kernel: one node per binding region, one re-wra
 per park crossing, and dispatch grows one transparent case. The interceptor-based
 `ContextBinding.run` re-arm from 2.3 becomes internal to the node's entry step.
 
+### 2.3c Candidate 4, from your gist: rotation as the arrow step
+
+Your mini-kernel (gist 8c8b2b02) states the mechanism as a law:
+
+```
+Handler Rotation
+handle(tag1, suspend(tag2, input, cont), f) ≡ suspend(tag2, input, x => handle(tag1, cont(x), f))   where tag1 ≠ tag2
+```
+
+An unmatched suspension crosses the handler outward, and the handler ROTATES into
+the suspension's continuation, staying wrapped around the region's remainder. This
+is the old kernel's unmatched-arm KyoContinue re-wrap as algebra, and it dissolves
+the contradiction section 2.1a met head-on: a binding must be recorded at its
+scope boundary (exit position, so installation order encodes scope) yet act at
+every entry (so reads and resumptions see it). Rotation stores at the boundary and
+re-wraps to the front on every crossing: scope-true at rest, entry-true in motion.
+
+Two readings of "we need a rotate arrow step", both restoring bindings to
+dispatch-visible delimiters at their APPENDED (scope-encoding) position, which
+directly fixes the clause-scope red (outside-installed and inside-installed
+bindings encode differently again):
+
+1. **R1, rotation for scope with the threading kept at boundaries**: context reads
+   go back to dispatching (an operation resolving against the innermost matching
+   binding delimiter in its continuation, the rotated normal form the flat chain
+   already is for value flow), and FALL BACK to the threaded context when no
+   delimiter matches, which is how a fiber's inherited bindings reach reads across
+   the boundary (`handlePartial`'s context parameter stays exactly for this). The
+   clause context for dispatch is the fold of binding delimiters OUTSIDE the
+   matched handler, now correct because position encodes scope. The threading
+   parameter survives as the boundary carrier and root ambient; the per-read cost
+   returns from O(1) to dispatch distance.
+2. **R2, the gist's full position**: no ContextEffect kind at all: `Env`-style
+   effects are ArrowEffects handled with `cont(value)` (your gist's Env), scope
+   and multi-shot correctness fall out of dispatch structure plus the rotation
+   law, and `Context` exists only as the materialized carrier at fork boundaries.
+   The biggest unification; it subsumes candidate 1 (the Bound node is rotation
+   frozen into a node) and deletes the ContextEffect/ArrowEffect split from the
+   kernel.
+
+Open for your ruling alongside the R1/R2 choice: whether the read-cost profile
+(dispatch distance instead of the threaded O(1) lookup) is acceptable, since that
+was the original motivation for threading the parameter; under R1 the hot path for
+fiber-context reads (no local binding) is one failed chain search plus the map
+lookup.
+
 ## 2.4 Drives: who supplies the parameter
 
 1. `evalLoop(v0, mode, context)`: the Defer arm passes it, dispatch closes it into
