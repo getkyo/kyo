@@ -1,19 +1,15 @@
 package kyo.kernel2
 
-import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Context
-import kyo.kernel2.internal.EffectTrace
+import kyo.kernel2.internal.Eval
+import kyo.kernel2.internal.Finalize
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
-import kyo.kernel2.internal.LiftMacro
-import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
-import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 opaque type <[+A, -S] = A | Kyo[A, S] | Kyo.Nested[A]
 
@@ -27,7 +23,7 @@ object `<` extends Implicits:
         // brackets carry. The scheduler calls it when dropping a continuation that will
         // never be resumed.
         private[kyo] def finalizeBracket: Unit =
-            val errors = finalizeValue(self)
+            val errors = Finalize.finalizeValue(self)
             errors.headMaybe match
                 case Maybe.Present(t) =>
                     errors.dropLeft(1).foreach(t.addSuppressed)
@@ -262,7 +258,7 @@ object `<` extends Implicits:
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                evalLoop(self.asInstanceOf[Any < Any], EvalMasked, Context.empty, Handlers.empty) match
+                Eval.evalLoop(self.asInstanceOf[Any < Any], Eval.Masked, Context.empty, Handlers.empty) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
                     case v                  => Kyo.unnest(v).asInstanceOf[A]
             else Kyo.unnest(self).asInstanceOf[A]
@@ -273,179 +269,9 @@ object `<` extends Implicits:
           * at exit, so the caller's authoritative check after this returns observes every condition published before the request.
           */
         private[kyo] def evalPartial: A < Any =
-            evalLoop(self.asInstanceOf[Any < Any], EvalPreemptible, Context.empty, Handlers.empty).asInstanceOf[A < Any]
+            Eval.evalLoop(self.asInstanceOf[Any < Any], Eval.Preemptible, Context.empty, Handlers.empty).asInstanceOf[A < Any]
 
     end extension
-
-    private inline def BracketDepth = 512
-
-    private def finalizeValue[A, S](v: A < S): Chunk[Throwable] =
-        v match
-            case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] => finalizeArrow(kyo.cont)
-            case kyo: Kyo.Defer[?, ?, ?]            => finalizeArrow(kyo.cont)
-            case _                                  => Chunk.empty
-
-    private def finalizeArrow(arrow: Any): Chunk[Throwable] =
-        arrow match
-            case finalize: Finalize[?, ?, ?] =>
-                try
-                    val _ = finalize.bracket.release(finalize.value).asInstanceOf[Unit < Any].eval
-                    Chunk.empty
-                catch
-                    case t: Throwable =>
-                        EffectTrace.attach(t, "release", finalize.bracket.frame)
-                        Chunk(t)
-            case r: ArrowEffect.Rotate =>
-                // a rotate step contains its handler's remaining chain: finalizers in there run too
-                finalizeArrow(r.inner)
-            case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
-                finalizeChain(o)
-            case at: Arrow.AndThen[?, ?, ?, ?] =>
-                finalizeArrow(at.a).concat(finalizeArrow(at.b))
-            case _ =>
-                Chunk.empty
-
-    private def finalizeChain(o: Arrow.Offset[Any, Any, Any, Any]): Chunk[Throwable] =
-        @tailrec def loop(cur: Any, errors: Chunk[Throwable]): Chunk[Throwable] =
-            cur match
-                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(o.next, errors.concat(finalizeArrow(o.head)))
-                case _                                              => errors
-        loop(o, Chunk.empty)
-    end finalizeChain
-
-    private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
-        val lifted = LiftMacro.defaultLift(v)
-        new Arrow.Transform[Unit, A, Any]:
-            def frame = Frame.internal
-            def run[C, S2](x: Unit, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (Any & S2) =
-                cont(lifted.asInstanceOf[A < Any], context, handlers)
-        end new
-    end yieldValue
-
-    final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
-        extends Arrow.Transform[A, A, S]:
-        def frame = bracket.frame
-        def run[C, S2](v: A, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
-            cont(yieldValue(v)(bracket.release(value), context, handlers), context, handlers)
-    end Finalize
-
-    private def constant(v: Any < Any): Arrow[Any, Any, Any] =
-        new Arrow.Transform[Any, Any, Any]:
-            def frame = Frame.internal
-            def run[C, S2](x: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                cont(v, context, handlers)
-
-    private def reacquire(bracket: Kyo.Bracket[Any, Any, Any]): Arrow[Any, Any, Any] =
-        new Arrow.Transform[Any, Any, Any]:
-            def frame = Frame.internal
-            def run[C, S2](r: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                cont(
-                    new Kyo.Bracket[Any, Any, Any]:
-                        def acquire         = r
-                        def release(x: Any) = bracket.release(x)
-                        def cont            = bracket.cont
-                        def frame =
-                            bracket.frame
-                    ,
-                    context,
-                    handlers
-                )
-
-    private def cleanup(bracket: Kyo.Bracket[Any, Any, Any], resource: Any, t: Throwable): Unit =
-        try
-            val _ = bracket.release(resource).eval
-        catch
-            case t2: Throwable =>
-                EffectTrace.attach(t2, "release", bracket.frame)
-                t.addSuppressed(t2)
-
-    /** The three drive modes. Preemptible is the slice boundary: it stops on a request and its caller consumes it once at exit.
-      * Masked cannot hand back a remainder, so it absorbs requests at each poll and re-issues them at exit. Cascade is an inner drive
-      * that neither consumes nor re-issues: it returns the remainder so the request reaches the enclosing slice.
-      */
-    private[kyo] inline def EvalPreemptible = 0
-    private[kyo] inline def EvalMasked      = 1
-    private[kyo] inline def EvalCascade     = 2
-
-    // context and handlers are constants of the drive: parked remainders carry their
-    // rotate steps, so plain re-application from the entry parameters reconstructs
-    // the in-scope bindings and handlers on every bounce
-    private[kyo] def evalLoop(v0: Any < Any, mode: Int, context: Context, handlers: Handlers): Any < Any =
-        def recur(v: Any < Any, depth: Int): Any < Any =
-            @tailrec def loop(curr: Any < Any): Any < Any =
-                // the poll sits at the top of the loop: it covers Defer pops, suspension dispatches, and the bare arm with one
-                // site, and every mode must poll, because a drive that ignores a pending request cannot make progress through a
-                // lone-transform Defer (every enter refuses and the identical rescue comes back)
-                if Safepoint.pollPreempt() then
-                    if mode == EvalMasked then Safepoint.maskPreempt()
-                    else return curr
-                curr match
-                    case bracket: Kyo.Bracket[Any, Any, Any] @unchecked =>
-                        if depth >= BracketDepth then bracket
-                        else
-                            recur(bracket.acquire, depth + 1) match
-                                case suspended: Kyo[Any, Any] @unchecked =>
-                                    val wrapped = suspended.map(reacquire(bracket))
-                                    if depth == 0 then loop(wrapped) else wrapped
-                                case acquired =>
-                                    val resource = Kyo.unnest(acquired)
-                                    val result =
-                                        try recur(bracket.cont(acquired, context, handlers), depth + 1)
-                                        catch
-                                            case t: Throwable =>
-                                                cleanup(bracket, resource, t)
-                                                throw t
-                                    result match
-                                        case suspended: Kyo[Any, Any] @unchecked =>
-                                            val wrapped = suspended.map(new Finalize[Any, Any, Any](bracket, resource))
-                                            if depth == 0 then loop(wrapped) else wrapped
-                                        case _ =>
-                                            // release runs masked, mirroring the current kernel: neither a time slice nor an
-                                            // interrupt cuts a finalizer that is already running
-                                            Safepoint.maskPreempt()
-                                            val released =
-                                                try recur(bracket.release(resource), depth + 1)
-                                                finally Safepoint.unmaskPreempt()
-                                            released match
-                                                case suspended: Kyo[Any, Any] @unchecked =>
-                                                    val wrapped = suspended.map(constant(result))
-                                                    if depth == 0 then loop(wrapped) else wrapped
-                                                case _ =>
-                                                    result
-                                            end match
-                                    end match
-                    case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
-                        loop(defer.cont(defer.value, context, handlers))
-                    case kyo: Kyo[Any, Any] @unchecked =>
-                        // a suspension that reached the drive crossed every installed handler:
-                        // the remainder parks (handlePartial's boundary), or eval reports it
-                        curr
-                    case _ =>
-                        curr
-                end match
-            end loop
-            loop(v)
-        end recur
-        // the drive is a fresh trampoline: it runs with its own depth budget so frames the caller
-        // already committed cannot starve it into re-rescuing the same step forever
-        val safepoint = Safepoint.get
-        val saved     = safepoint.openDrive()
-        try
-            val result = recur(v0, 0)
-            // the Preemptible boundary consumes exactly once, at exit: consuming at the poll site would break the bracket
-            // cascade, which decides whether to keep driving by observing that the request is still pending
-            if mode == EvalPreemptible then
-                val _ = Safepoint.clearPreempt()
-            result
-        catch
-            case ex: Throwable =>
-                EffectTrace.install(ex)
-                throw ex
-        finally
-            if mode == EvalMasked then Safepoint.unmaskPreempt()
-            safepoint.closeDrive(saved)
-        end try
-    end evalLoop
 
 end `<`
 

@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
+import kyo.kernel2.internal.Eval
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.LiftMacro.defaultLift
@@ -471,7 +472,7 @@ object ArrowEffect:
                     val _ = Safepoint.clearPreempt()
                     next
                 else slice(next)
-            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], `<`.EvalCascade, context, Handlers.empty).asInstanceOf[A < (E & S)]
+            val r = Eval.evalLoop(cur.asInstanceOf[Any < Any], Eval.Cascade, context, Handlers.empty).asInstanceOf[A < (E & S)]
             r match
                 case s: Kyo.Suspend[?, ?, ?, c, ?, ?] @unchecked if effectTag.erased <:< s.erasedTag =>
                     // the tag match justifies reading the operation at this handler's types; the
