@@ -45,8 +45,10 @@ Progress ledger (overnight run), all committed with the full suite green: #7
 #20 `3fa2cad56f`, #11 `32f78f8e3b`, #12 `43d5c021a7`, #9+#28 `8440e2e013`, #14
 `25bb4f1f07`, #3+#4+#29 `daf66e9585` (typed handlers, pure installation, guarded
 dispatch), cast sweep `c0229dfe1c`, #26 `9118d5a4b4` (nodes to internal), #15+#21+#23
-`863a0b87f0` (Safepoint integration, Preempted, detached fallback). #17 in flight
-(benchmark-first A/B running). #18 doc quality pass committed; review request pending.
+`863a0b87f0` (Safepoint integration, Preempted, detached fallback). #17 done
+`ef7d29c956` (benchmark-first: loopPure10k 76,883 to 18,912 ns/op, allocation halved;
+loopSuspend1k 63,922 to 71,439 ns/op recorded honestly). #18 doc quality pass
+committed; the review request is in the morning summary.
 Closed by ruling: #16 dropped (nicety kept), #19 dropped, #13 keep-old-kernel via
 #18, #22 dropped, #24 answered.
 
