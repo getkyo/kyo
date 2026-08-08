@@ -74,8 +74,26 @@ private[kyo] def apply[S2](v: A < S2, context: Context): B < (S & S2)
 // The user-facing application defers: the arrow runs when a drive pops the
 // node, under the ambient context of the site where the result is embedded
 def apply[S2](v: A < S2): B < (S & S2) =
-    Kyo.Defer(v, self).asInstanceOf[B < (S & S2)]   // rescue's exact shape
+    val d: Kyo.Defer[A, B, S & S2] = Kyo.Defer(v, self)
+    d   // fromKyo conversion, the ArrowEffect.suspend pattern; zero casts
 ```
+
+This is cast-free because `Defer`'s value field becomes a pending value:
+
+```scala
+final class Defer[A, +B, -S](
+    val value: A < S,
+    val cont: Arrow[A, B, S]
+) extends Kyo[B, S]
+```
+
+Variance carries the whole proof: `A < S2 <: A < (S & S2)` and
+`Arrow[A, B, S] <: Arrow[A, B, S & S2]` by contravariance in `S`, and the ascribed
+`Kyo.Defer[A, B, S & S2]` reaches `B < (S & S2)` through the `fromKyo` conversion,
+the same zero-cast route `ArrowEffect.suspend` already uses. Typing the field also
+deletes an existing cast: the drive's Defer arm applies
+`defer.cont(defer.value, context)` directly, where today it needs
+`defer.value.asInstanceOf[Any < Any]`.
 
 The public form is the answer to "what context does `arrow(value)` run under": none
 at application time, because application constructs a `Defer` and execution happens
