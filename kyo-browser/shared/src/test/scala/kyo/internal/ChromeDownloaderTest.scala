@@ -377,6 +377,47 @@ class ChromeDownloaderTest extends BaseBrowserTest:
         }
     }
 
+    "ensureWith preserves cache inspection failures without invoking the downloader" in {
+        Scope.run {
+            for
+                tmp <- hostTempDir("kyo-cd-inspect-")
+                root  = tmp / "allowed"
+                cache = tmp / "cache"
+                _          <- Path.run(root.mkDir)
+                fileSystem <- FileSystem.host(root)
+                calls      <- AtomicRef.init(0)
+                version = "1.2.3.4"
+                build   = Browser.ChromeForTestingBuild.HeadlessShell
+                exec    = ChromeDownloader.executablePath(cache / s"chrome-headless-shell-$version-linux64", "linux64", build)
+                sys     = systemWithCache(cache)(OS.Linux, Arch.X86_64)
+                download: ((Browser.ChromeForTestingBuild, String, String, Path) => Unit < (Async & Abort[BrowserSetupException])) =
+                    (_, _, _, _) => calls.updateAndGet(_ + 1).unit
+                result <- FileSystem.let(fileSystem) {
+                    System.let(sys) {
+                        Abort.run[BrowserSetupException](ChromeDownloader.ensureWith(
+                            Present(version),
+                            Browser.LaunchConfig.default.chromeDownloaderConfig,
+                            build,
+                            download
+                        ))
+                    }
+                }
+                downloaded <- calls.get
+            yield
+                assert(downloaded == 0, s"cache inspection failed but the downloader ran $downloaded times")
+                result match
+                    case Result.Failure(ex: BrowserSetupFailedException) =>
+                        ex.getCause match
+                            case cause: FileOutsideRootException =>
+                                assert(cause.path == exec)
+                                assert(cause.operation == FileSystemOperation.Exists)
+                            case other => fail(s"expected the original filesystem failure as cause, got $other")
+                    case other => fail(s"expected BrowserSetupFailedException, got $other")
+                end match
+            end for
+        }
+    }
+
     // ---- cache-reuse proof; second ensure does not invoke the downloader ----
 
     "ensure() reuses the cached binary on the second call (downloader counter does not advance)" in {

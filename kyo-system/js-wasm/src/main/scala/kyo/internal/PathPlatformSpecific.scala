@@ -1135,29 +1135,31 @@ final private[kyo] class NodeWalkHandle(root: String, maxDepth: Int, followLinks
         stack += ((root, 0))
     end init
 
-    def next()(using AllowUnsafe): Maybe[Path] =
-        if !started then init()
-        if stack.isEmpty then Absent
-        else
-            val (pathStr, depth) = stack.remove(stack.length - 1)
-            // Expand directory contents if within maxDepth
-            val statFn: String => NodeStats =
-                if followLinks then NodeFs.statSync else NodeFs.lstatSync
-            val isDir =
-                try statFn(pathStr).isDirectory()
-                catch case _: js.JavaScriptException => false
-            if isDir && depth < maxDepth then
-                val children =
-                    try NodeFs.readdirSync(pathStr).toSeq
-                    catch case _: js.JavaScriptException => Seq.empty
-                val sep = NodePath.sep
-                // Add children in reverse order so first child is popped first
-                children.reverseIterator.foreach { name =>
-                    stack += ((pathStr + sep + name, depth + 1))
-                }
+    def next()(using AllowUnsafe, Frame): Result[FileReadException | FileStructureException, Maybe[Path]] =
+        Result.succeed {
+            if !started then init()
+            if stack.isEmpty then Absent
+            else
+                val (pathStr, depth) = stack.remove(stack.length - 1)
+                // Expand directory contents if within maxDepth
+                val statFn: String => NodeStats =
+                    if followLinks then NodeFs.statSync else NodeFs.lstatSync
+                val isDir =
+                    try statFn(pathStr).isDirectory()
+                    catch case _: js.JavaScriptException => false
+                if isDir && depth < maxDepth then
+                    val children =
+                        try NodeFs.readdirSync(pathStr).toSeq
+                        catch case _: js.JavaScriptException => Seq.empty
+                    val sep = NodePath.sep
+                    // Add children in reverse order so first child is popped first
+                    children.reverseIterator.foreach { name =>
+                        stack += ((pathStr + sep + name, depth + 1))
+                    }
+                end if
+                Present(new NodePathUnsafe(pathStr).safe)
             end if
-            Present(new NodePathUnsafe(pathStr).safe)
-        end if
+        }
     end next
 
     def close()(using AllowUnsafe): Unit = stack.clear()
@@ -1395,6 +1397,47 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                 catch
                     case e: js.JavaScriptException =>
                         Result.fail(FileIOException(make(Chunk(prefix)), FileSystemOperation.Create, e))
+            }
+        }
+
+    private[kyo] def tempUnscoped(parent: Path, prefix: String, suffix: String)(using
+        Frame
+    ): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: reserves a fresh file exclusively; collisions never replace another owner's file.
+        Sync.Unsafe.defer {
+            @scala.annotation.tailrec
+            def create(): Result[FileStructureException, Path] =
+                val path = NodePath.join(parent.unsafe.show, prefix + randomId() + suffix)
+                val attempt: Result[FileStructureException, Path] =
+                    try
+                        val fd = NodeFs.openSync(path, "wx")
+                        try NodeFs.closeSync(fd)
+                        catch
+                            case error: Throwable =>
+                                // Acquisition owns the new file until its handle is returned.
+                                // Preserve the close failure even if removing that file also fails.
+                                try NodeFs.unlinkSync(path)
+                                catch case _: Throwable => ()
+                                throw error
+                        end try
+                        Result.succeed(new NodePathUnsafe(path).safe)
+                    catch
+                        case e: js.JavaScriptException =>
+                            Result.fail(NodeError.translateFs(new NodePathUnsafe(path).safe, FileSystemOperation.Create, e))
+                attempt match
+                    case Result.Failure(_: FileAlreadyExistsException) => create()
+                    case other                                         => other
+            end create
+            Abort.get(create())
+        }
+
+    private[kyo] def tempDirUnscoped(parent: Path, prefix: String)(using Frame): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: mkdtemp atomically creates a fresh directory within the validated parent.
+        Sync.Unsafe.defer {
+            Abort.get {
+                try Result.succeed(new NodePathUnsafe(NodeFs.mkdtempSync(parent.unsafe.show + NodePath.sep + prefix)).safe)
+                catch
+                    case e: js.JavaScriptException => Result.fail(NodeError.translateFs(parent, FileSystemOperation.Create, e))
             }
         }
 

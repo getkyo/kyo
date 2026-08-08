@@ -8,6 +8,126 @@ import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
   */
 class DigestComputerTest extends kyo.test.Test[Any]:
 
+    final private class ScriptedWalk(results: Chunk[Result[FileReadException | FileStructureException, Maybe[Path]]])
+        extends Path.WalkHandle:
+        val advances = new java.util.concurrent.atomic.AtomicInteger(0)
+        val closes   = new java.util.concurrent.atomic.AtomicInteger(0)
+
+        def next()(using AllowUnsafe, Frame): Result[FileReadException | FileStructureException, Maybe[Path]] =
+            val index = advances.getAndIncrement()
+            if index < results.size then results(index)
+            else Result.panic(new IllegalStateException("walk advanced after termination"))
+        end next
+
+        def close()(using AllowUnsafe): Unit = discard(closes.incrementAndGet())
+    end ScriptedWalk
+
+    final private class WalkingFileSystem(
+        inner: FileSystem.Write[Sync],
+        handle: Path.WalkHandle,
+        openingFailure: Maybe[FileReadException | FileStructureException] = Absent,
+        existence: Result[FileReadException, Boolean] = Result.succeed(true)
+    ) extends FileSystem.Write[Sync]:
+        export inner.{exists as _, openWalk as _, *}
+
+        def exists(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) = exists(path, true)
+
+        def exists(path: Path, followLinks: Boolean)(using Frame): Boolean < (Sync & Abort[FileReadException]) = Abort.get(existence)
+
+        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean)(using
+            Frame
+        ): Path.WalkHandle < (Sync & Abort[FileReadException | FileStructureException]) =
+            openingFailure match
+                case Present(error) => Abort.fail(error)
+                case Absent         => handle
+    end WalkingFileSystem
+
+    for paranoid <- Seq(false, true) do
+        def compute(root: Path)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
+            if paranoid then DigestComputer.computeParanoid(Seq(root.toString))
+            else DigestComputer.compute(Seq(root.toString))
+
+        s"missing directory roots produce an empty digest without opening a walk, paranoid: $paranoid" in {
+            val root   = Path("digest-walk-root")
+            val handle = new ScriptedWalk(Chunk.empty)
+            FileSystem.let(new WalkingFileSystem(FileSystem.host, handle, existence = Result.succeed(false))) {
+                compute(root).map { digest =>
+                    assert(digest.sameElements(Array.fill[Byte](8)(0)))
+                    assert(handle.advances.get() == 0)
+                    assert(handle.closes.get() == 0)
+                }
+            }
+        }
+
+        s"directory digest closes its selected backend walk at EOF, paranoid: $paranoid" in {
+            val root   = Path("digest-walk-root")
+            val handle = new ScriptedWalk(Chunk(Result.succeed(Present(root / "ignored.class")), Result.succeed(Absent)))
+            FileSystem.let(new WalkingFileSystem(FileSystem.host, handle)) {
+                compute(root).map { digest =>
+                    assert(digest.sameElements(Array.fill[Byte](8)(0)))
+                    assert(handle.advances.get() == 2)
+                    assert(handle.closes.get() == 1)
+                }
+            }
+        }
+
+        for structural <- Seq(false, true) do
+            s"directory digest reports walk failures and closes once, paranoid: $paranoid, structural: $structural" in {
+                val root = Path("digest-walk-root")
+                val failure: FileReadException | FileStructureException =
+                    if structural then FileNotADirectoryException(root)
+                    else FileAccessDeniedException(root)
+                val handle = new ScriptedWalk(Chunk(Result.succeed(Present(root / "partial.tasty")), Result.fail(failure)))
+                FileSystem.let(new WalkingFileSystem(FileSystem.host, handle)) {
+                    Abort.run[TastyError](compute(root)).map { result =>
+                        assert(result.map(_ => ()) == Result.fail(TastyError.SnapshotIoError(s"walk $root: ${failure.getMessage}")))
+                        assert(handle.advances.get() == 2)
+                        assert(handle.closes.get() == 1)
+                    }
+                }
+            }
+        end for
+
+        s"directory digest retains walk panics and closes once, paranoid: $paranoid" in {
+            val root   = Path("digest-walk-root")
+            val panic  = new IllegalStateException("walk failed unexpectedly")
+            val handle = new ScriptedWalk(Chunk(Result.succeed(Present(root / "partial.tasty")), Result.panic(panic)))
+            FileSystem.let(new WalkingFileSystem(FileSystem.host, handle)) {
+                Abort.run[TastyError](compute(root)).map { result =>
+                    assert(result.map(_ => ()) == Result.panic(panic))
+                    assert(handle.advances.get() == 2)
+                    assert(handle.closes.get() == 1)
+                }
+            }
+        }
+
+        s"directory digest reports existence-check failures instead of an empty digest, paranoid: $paranoid" in {
+            val root    = Path("digest-walk-root")
+            val failure = FileAccessDeniedException(root)
+            val handle  = new ScriptedWalk(Chunk.empty)
+            FileSystem.let(new WalkingFileSystem(FileSystem.host, handle, existence = Result.fail(failure))) {
+                Abort.run[TastyError](compute(root)).map { result =>
+                    assert(result.map(_ => ()) == Result.fail(TastyError.SnapshotIoError(s"walk $root: ${failure.getMessage}")))
+                    assert(handle.advances.get() == 0)
+                    assert(handle.closes.get() == 0)
+                }
+            }
+        }
+
+        s"directory digest reports acquisition failure without advancing a handle, paranoid: $paranoid" in {
+            val root    = Path("digest-walk-root")
+            val failure = FileAccessDeniedException(root)
+            val handle  = new ScriptedWalk(Chunk.empty)
+            FileSystem.let(new WalkingFileSystem(FileSystem.host, handle, Present(failure))) {
+                Abort.run[TastyError](compute(root)).map { result =>
+                    assert(result.map(_ => ()) == Result.fail(TastyError.SnapshotIoError(s"walk $root: ${failure.getMessage}")))
+                    assert(handle.advances.get() == 0)
+                    assert(handle.closes.get() == 0)
+                }
+            }
+        }
+    end for
+
     // digestForJar is stable for identical entries in any insertion order.
     "digestForJar is stable for same-name same-crc entries in any order" in {
         val e1 = JarDigestEntry("META-INF/INDEX.LIST", 0xdeadbeefL)
