@@ -46,9 +46,13 @@ Authorized queue, in execution order, no stops: #7 (suite running) -> #8 -> #10 
 
 # Needs your attention
 
-## 21. `Parked` rename: the proposal in full
+## 21. `Parked` rename: AUTHORIZED (your fix)
 
-Current shape: `Parked(resume: Maybe[Active])` covers two situations. A real
+`Parked` becomes `Preempted` after #23 lands; the field becomes `restore: Active`
+(the design's name: it is a state to put back, not an action), no `Maybe`. Lands
+inside #15's implementation.
+
+Original proposal for reference. Current shape: `Parked(resume: Maybe[Active])` covers two situations. A real
 preemption request carries `Present(active)`, the state to restore. The shared
 `Overflow` token is `Parked(Absent, Absent)`: permanently refusing, nothing to
 restore, no request behind it. That second use is why any Preempt-flavored name reads
@@ -86,16 +90,19 @@ overflowed. (Fused chains still run, because `Offset.run`'s inner loop does not
 consult the safepoint; it is the lone-transform step that loops.)
 
 Your ruling: better to run without preemption/interruption/stack services than to
-never progress. The proposal, refined: a `ThreadLocal` fallback holding an
-unregistered `Active` (not stored in the slot array). This keeps MORE than the ruling
-asks: the depth guard still works (it is per-instance state, and the ThreadLocal
-returns the same instance to the same thread every time), so stack safety is kept;
-progress is restored; the only thing lost is cross-thread preemption delivery, since
-no slot exists for a requester to CAS. The ThreadLocal read costs ~6ns (measured in
-the Safepoint design round) and only overflow threads ever pay it. A plain fresh
-`Active` per `get` call was rejected: it would reset the depth count every frame and
-quietly lose stack safety. Confirm the direction and I fold it into #15's
-implementation.
+never progress. The adopted fix goes one better than the ruling requires, from track
+A's design: the fallback `Active` is backed by its own `AtomicReference` cell (the
+holder trait the design calls Home and you renamed `Current`), cached in a
+`ThreadLocal` so the thread gets the same instance for life. That keeps progress AND
+the depth guard AND preemption/interruption delivery (a requester CASes the cell
+exactly like a slot; the memory-ordering argument transfers unchanged). Cost: only
+detached threads pay the ThreadLocal plus cell read, roughly 4 to 6ns per frame; the
+hot slotted path is untouched. A bare unregistered `Active` (my earlier, weaker
+proposal) was rejected in the design because it silently makes detached fibers
+uninterruptible; a fresh `Active` per `get` was rejected because it defeats the depth
+guard. Overflow is deleted outright, which also makes `Safepoint.thread` and the
+`Preempted` restore field total (no `Maybe`), removing one type test from the hot
+`get` path. Lands inside #15's implementation (your #21 fix presupposes it).
 
 ## 18. Context threading design: next step per your instruction
 
@@ -104,7 +111,7 @@ and then ask you to review it. That is my next non-queue work item: critical rea
 verify its claims against the code, tighten it, then hand it to you.
 
 ## 19. Context datastructure: verified summary coming
-
+just drop this
 The track D doc recommends against `Context = TypeMap` on typing grounds (effect-keyed
 vs value-keyed; `Local`'s two internal state effects share a value type). You
 acknowledged the heads-up; my verified summary with a concrete recommendation is
@@ -113,7 +120,7 @@ queued behind #18's review pass.
 # Designs answered in place
 
 ## 14. `LastResort` removed: handlePartial as an outer slice loop
-
+fix
 You are right that it is not needed. The drive already returns the remainder whenever
 it hits a suspension no installed delimiter matches. So handlePartial does not need to
 push its clause INTO the drive at all; it can loop AROUND it:
@@ -143,7 +150,7 @@ operation itself. Implementing in this pass; PendingSchedulerTest and the oracle
 suite validate.
 
 ## 16. Single-allocation defer: abstract `run()`, and why it is safe
-
+hmm but this will hgenerate complexity and more bytecode in other places. Drop but you can put the def input = () in the class at least?
 Your diamond observation is confirmed: `Kyo` and `Arrow.Transform` are both abstract
 classes, so `Defer` cannot extend both (that blocked the extends-Suspension-and-Arrow
 shape; making `Transform` a trait would put interface dispatch on the hottest path).
@@ -169,7 +176,7 @@ interceptor; that allocation sits on the cold prepend path, not on defer creatio
 Implementing in this pass; the defer/catching EffectTest block validates.
 
 ## 9. `prepend` Interceptor design, as requested
-
+prepend sounds odd? install(interceptor)?
 The contract: an interceptor is a transform that forwards the value it receives into
 its continuation unchanged; it may wrap the EVALUATION (catch exceptions, observe,
 schedule a release) but never alters or consumes the value. Exactly three classes
