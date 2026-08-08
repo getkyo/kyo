@@ -45,64 +45,6 @@ Closed this pass: #16 (dropped, nicety noted below), #19 (dropped entirely, your
 
 # Needs your attention
 
-## 21. `Parked` rename: AUTHORIZED (your fix)
-
-`Parked` becomes `Preempted` after #23 lands; the field becomes `restore: Active`
-(the design's name: it is a state to put back, not an action), no `Maybe`. Lands
-inside #15's implementation.
-
-Original proposal for reference. Current shape: `Parked(resume: Maybe[Active])` covers two situations. A real
-preemption request carries `Present(active)`, the state to restore. The shared
-`Overflow` token is `Parked(Absent, Absent)`: permanently refusing, nothing to
-restore, no request behind it. That second use is why any Preempt-flavored name reads
-oddly today: Overflow was never preempted by anyone.
-
-Proposal: fix #23 first. Its fix removes `Overflow` as a `Parked` instance entirely
-(overflow threads get a fallback `Active` instead). After that, the class has exactly
-one meaning, a preemption request in flight, and the rename lands clean:
-
-```scala
-final private[kernel2] class Preempted private[Safepoint] (
-    private[Safepoint] val resume: Active,      // no Maybe: always present now
-    thread: Maybe[Thread]
-) extends Safepoint(thread)
-```
-
-`preempted`/`clearPreempt` match on `Preempted`, and `clearPreempt`'s restore CAS uses
-`resume` directly. Confirm `Preempted` (alternatives considered: `PreemptRequested`,
-verbose; `Yielding`, wrong actor).
-
-## 23. The Overflow livelock: context again, from the top
-
-How a thread gets its safepoint: `Safepoint.get` hashes the thread id into a 256-slot
-array and linear-probes up to 8 slots, claiming a free or dead slot with a fresh
-`Active`. If all 8 probed slots are held by other LIVE threads, `get` returns the
-shared `Overflow` token instead. That can happen with several hundred threads running
-kernel computations concurrently (virtual threads make it realistic).
-
-What Overflow does today: it is permanently parked, so `enter()` is always false. The
-livelock: a lone transform runs through `guardedRun`, which asks `enter()`; refused, it
-reroutes through the rescue path, wrapping the step in a `Defer`; the drive pops the
-`Defer` and re-runs the same transform; `enter()` refuses again; an identical `Defer`
-is minted; forever. The thread spins making zero progress for as long as it stays
-overflowed. (Fused chains still run, because `Offset.run`'s inner loop does not
-consult the safepoint; it is the lone-transform step that loops.)
-
-Your ruling: better to run without preemption/interruption/stack services than to
-never progress. The adopted fix goes one better than the ruling requires, from track
-A's design: the fallback `Active` is backed by its own `AtomicReference` cell (the
-holder trait the design calls Home and you renamed `Current`), cached in a
-`ThreadLocal` so the thread gets the same instance for life. That keeps progress AND
-the depth guard AND preemption/interruption delivery (a requester CASes the cell
-exactly like a slot; the memory-ordering argument transfers unchanged). Cost: only
-detached threads pay the ThreadLocal plus cell read, roughly 4 to 6ns per frame; the
-hot slotted path is untouched. A bare unregistered `Active` (my earlier, weaker
-proposal) was rejected in the design because it silently makes detached fibers
-uninterruptible; a fresh `Active` per `get` was rejected because it defeats the depth
-guard. Overflow is deleted outright, which also makes `Safepoint.thread` and the
-`Preempted` restore field total (no `Maybe`), removing one type test from the hot
-`get` path. Lands inside #15's implementation (your #21 fix presupposes it).
-
 ## 18. Context threading design: next step per your instruction
 
 You asked me to make sure `kernel2-context-threading-design.md` is a high-quality doc
@@ -231,9 +173,15 @@ implements with the queue (it slots naturally before #16, which reworks
 ## 16. Abstract-run `Defer` (design above): queued.
 ## 3+4. Typed handler hierarchy + `ArrowHandler`/`ContextBinding` naming: queued.
    (Simpler now: no boundary carrier to type.)
-## 15. Preemption integration: authorized by your "fix". Sequence: critical read of
-   `kernel2-preemption-design.md`, reconcile with the #24 consumption rule (only
-   handlePartial's drive consumes; plain eval never polls, which closes the nested
-   boundary gap by construction), fold in #21/#23 once you confirm, implement, JMH.
-   Your in-doc comment adopted: the design's `Home` holder trait is named `Current`.
+## 15. Preemption integration: authorized (your fix), design read done, ready to
+   implement after #3+#4. Includes, all authorized by your fixes: #23 (Overflow
+   deleted; detached threads get a cell-backed fallback `Active` cached in a
+   ThreadLocal, keeping progress, depth guard, and preemption/interruption delivery;
+   only detached threads pay the ~4-6ns) and #21 (`Parked` becomes `Preempted`,
+   field `restore: Active`, no `Maybe`; `Safepoint.thread` also becomes total).
+   Amendments from my critical read: the in-drive boundary clause is superseded by
+   #14's outer loop; eval runs Masked (a non-polling eval would livelock on a pending
+   request); nested preemptible drives unsupported and documented (#24 rule); holder
+   trait named `Current` per your in-doc comment; no Maybe slots (#22 dropped). JMH
+   after.
 ## 17. Loop drivers: JMH rows old vs new first, then the tailrec driver port.
