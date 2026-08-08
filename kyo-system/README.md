@@ -67,6 +67,21 @@ val positioned =
     }
 ```
 
+### Locks
+
+Advisory locks are scope-managed. Choose shared or exclusive compatibility and an explicit waiting
+policy:
+
+```scala
+import kyo.*
+
+val guarded = Scope.run {
+    Path.runReadOnly {
+        Path("state.bin").lock(Path.LockMode.Exclusive, Path.LockWait.Immediate).map(_.check)
+    }
+}
+```
+
 ## File paths
 
 Before reading or writing, you need a path value that identifies the target without touching the disk. `Path` is an immutable value built with the `/` operator or the `apply` factory; pure accessors like `parts` and `parent` require no capability.
@@ -312,6 +327,7 @@ val deleted: Boolean < (Sync & Abort[FileSystemException]) =
 | `FileReadException` | Inspection and content reads |
 | `FileWriteException` | Content mutation and synchronization |
 | `FileStructureException` | Creation, removal, copying, and movement |
+| `FileLockException` | Advisory lock acquisition and ownership |
 
 Each concrete exception implements only the marker traits that apply to it. After `Path.runReadOnly`, the runner folds the markers into `Abort[FileSystemException]`:
 
