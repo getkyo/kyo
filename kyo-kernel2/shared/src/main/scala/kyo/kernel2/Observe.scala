@@ -20,10 +20,8 @@ private[kyo] object Observe:
         val obs = observer.asInstanceOf[(Frame, Any) => Any < Any]
         def wrap(w: Any < Any): Any < Any =
             w match
-                case c: Kyo.Continue[?, ?, ?] =>
-                    new Kyo.Continue[Any, Any, Any](c.suspend, new Step(obs, c.cont.asInstanceOf[Arrow[Any, Any, Any]]))
-                case s: Kyo.Suspend[?, ?, ?, ?] =>
-                    new Kyo.Continue[Any, Any, Any](s, new Step(obs, Arrow[Any]))
+                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                    s.continue(new Step(obs, s.cont.asInstanceOf[Arrow[Any, Any, Any]]))
                 case d: Kyo.Defer[?, ?, ?] =>
                     new Kyo.Defer[Any, Any, Any](d.value.asInstanceOf[Any < Any], new Step(obs, d.cont.asInstanceOf[Arrow[Any, Any, Any]]))
                 case b: Kyo.Bracket[Any, Any, Any] @unchecked =>

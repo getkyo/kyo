@@ -281,9 +281,9 @@ object `<` extends Implicits:
 
     private def finalizeValue[A, S](v: A < S): Chunk[Throwable] =
         v match
-            case kyo: Kyo.Continue[?, ?, ?] => finalizeArrow(kyo.cont)
-            case kyo: Kyo.Defer[?, ?, ?]    => finalizeArrow(kyo.cont)
-            case _                          => Chunk.empty
+            case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] => finalizeArrow(kyo.cont)
+            case kyo: Kyo.Defer[?, ?, ?]            => finalizeArrow(kyo.cont)
+            case _                                  => Chunk.empty
 
     private def finalizeArrow(arrow: Any): Chunk[Throwable] =
         arrow match

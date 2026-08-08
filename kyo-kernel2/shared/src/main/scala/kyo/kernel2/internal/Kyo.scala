@@ -41,34 +41,49 @@ object Kyo:
     // a case class so re-wrapping at pass-through positions preserves value equality
     final private[kyo] case class Nested[+A](value: A)
 
-    /** A bare suspension: an arrow-effect operation awaiting a handler, with no continuation attached yet.
+    /** A suspension: an arrow-effect operation with the fused continuation from its output.
       *
-      * The one suspension kind: context reads are plain [[Defer]]s consuming the threaded context, so no read node exists.
+      * The one suspension shape: a bare operation's continuation is the identity arrow (the shared empty, so it costs nothing), and
+      * mapping extends the continuation on a fresh node that still points at the bare operation. Every dispatch site matches this class
+      * alone. Context reads are plain [[Defer]]s consuming the threaded context, so no read node exists.
       */
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Kyo[O[A], E]:
+    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S] extends Kyo[B, S]:
 
         def input: I[A]
         def tag: Tag[E]
         def frame: Frame
 
+        /** The fused continuation from the operation's output; the identity arrow for a bare operation. */
+        def cont: Arrow[O[A], B, S]
+
+        /** The bare operation this suspension extends; itself for a bare one. */
+        private[kyo] def origin: Suspend[I, O, E, A, O[A], E]
+
         final private[kyo] def erasedTag: Tag[Any] = tag.erased
 
-        final private[kyo] def map[B, S2](f: Arrow[O[A], B, S2]): B < (E & S2) =
-            Continue[O[A], B, E & S2](this, f)
+        final private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
+            Continue(origin, cont.map(f))
 
-        final override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
+        /** This suspension with a different continuation, at the drive's currency: the cast is the trampoline currency, and the
+          * result stays anchored at the operation's own types through `origin`.
+          */
+        final private[kyo] def continue(cont2: Arrow[Any, Any, Any]): Kyo[Any, Any] =
+            Continue(origin, cont2.asInstanceOf[Arrow[O[A], Any, Any]])
+
+        override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
 
     end Suspend
 
-    final private[kyo] class Continue[A, +B, -S](
-        val suspend: Suspend[?, ?, ?, ?],
-        val cont: Arrow[A, B, S]
-    ) extends Kyo[B, S]:
+    final private[kyo] class Continue[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
+        override val origin: Suspend[I, O, E, A, O[A], E],
+        val cont: Arrow[O[A], B, S]
+    ) extends Suspend[I, O, E, A, B, S]:
 
-        private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
-            Continue(suspend, cont.map(f))
+        def input = origin.input
+        def tag   = origin.tag
+        def frame = origin.frame
 
-        override def toString = "Continue(" + suspend + ", " + cont + ")"
+        override def toString = "Continue(" + origin + ", " + cont + ")"
 
     end Continue
 

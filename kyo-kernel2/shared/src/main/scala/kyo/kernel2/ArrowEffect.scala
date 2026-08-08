@@ -48,11 +48,13 @@ object ArrowEffect:
         inline operationInput: I[A]
     ): O[A] < E =
         val in = operationInput
-        val op: Kyo.Suspend[I, O, E, A] =
-            new Kyo.Suspend[I, O, E, A]:
-                def input = in
-                def tag   = effectTag
-                def frame = _frame
+        val op: Kyo.Suspend[I, O, E, A, O[A], E] =
+            new Kyo.Suspend[I, O, E, A, O[A], E]:
+                def input               = in
+                def tag                 = effectTag
+                def frame               = _frame
+                def cont                = Arrow[O[A]]
+                private[kyo] def origin = this
         op
     end suspend
 
@@ -156,10 +158,8 @@ object ArrowEffect:
         handlers: Handlers
     ): Any < Any =
         v match
-            case kyo: Kyo.Continue[?, ?, ?] =>
-                new Kyo.Continue[Any, Any, Any](kyo.suspend, rotated(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]))
-            case s: Kyo.Suspend[?, ?, ?, ?] =>
-                new Kyo.Continue[Any, Any, Any](s, rotated(Arrow[Any]))
+            case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                s.continue(rotated(s.cont.asInstanceOf[Arrow[Any, Any, Any]]))
             case d: Kyo.Defer[?, ?, ?] =>
                 new Kyo.Defer[Any, Any, Any](d.value.asInstanceOf[Any < Any], rotated(d.cont.asInstanceOf[Arrow[Any, Any, Any]]))
             case b: Kyo.Bracket[Any, Any, Any] @unchecked =>
@@ -189,26 +189,22 @@ object ArrowEffect:
       */
     private[kyo] def answerNow(kyo: Kyo[Any, Any], context: Context, handlers: Handlers): Any < Any =
         kyo match
-            case c: Kyo.Continue[?, ?, ?] =>
-                answerOp(c.suspend, c.cont.asInstanceOf[Arrow[Any, Any, Any]], context, handlers)
-            case s: Kyo.Suspend[?, ?, ?, ?] =>
-                answerOp(s, Arrow[Any], context, handlers)
+            case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                val entry = handlers.resolve(s.erasedTag)
+                if entry eq null then null.asInstanceOf[Any < Any]
+                else
+                    val w = entry.handler.answer(s.input)
+                    val k = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
+                    if w.isInstanceOf[Kyo[?, ?]] then
+                        // an effectful answer runs at the handler's scope, rotating across suspensions
+                        k(scoped(entry)(w), context, handlers)
+                    else
+                        k(Kyo.lift(w), context, handlers)
+                    end if
+                end if
             case _ =>
                 null.asInstanceOf[Any < Any]
-
-    private def answerOp(s: Kyo.Suspend[?, ?, ?, ?], k: Arrow[Any, Any, Any], context: Context, handlers: Handlers): Any < Any =
-        val entry = handlers.resolve(s.erasedTag)
-        if entry eq null then null.asInstanceOf[Any < Any]
-        else
-            val w = entry.handler.answer(s.input)
-            if w.isInstanceOf[Kyo[?, ?]] then
-                // an effectful answer runs at the handler's scope, rotating across suspensions
-                k(scoped(entry)(w), context, handlers)
-            else
-                k(Kyo.lift(w), context, handlers)
-            end if
-        end if
-    end answerOp
+    end answerNow
 
     /** Keeps an effectful fun-format answer executing at its handler's scope: the parameters captured at installation, not the
       * operation site's. Structure the answer already materialized bubbles outward untouched; remainders are wrapped in an `at` rotate
@@ -231,20 +227,11 @@ object ArrowEffect:
     )(using frame: Frame): A < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
-                    val k      = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
+                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    val k      = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S & S2)]
                     // the recursive call stays in the arm as a direct self-call: that is what
                     // keeps deep eager handling stack safe
-                    loop(
-                        handle[Any](kyo.suspend.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S & S2)])
-                            .asInstanceOf[Any < Any],
-                        context,
-                        handlers
-                    )
-                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
-                    // a bare operation: the continuation to this handler is the identity
-                    val resume = (x: Any) => Kyo.lift(x).asInstanceOf[A < (E & S & S2)]
                     loop(
                         handle[Any](s.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S & S2)])
                             .asInstanceOf[Any < Any],
@@ -274,10 +261,8 @@ object ArrowEffect:
         val h = new ResumeHandler[I, O, E, S & S2](effectTag, handle, frame)
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
-                    loop(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]](h.answer(kyo.suspend.input), context, handlers), context, handlers)
-                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
-                    loop(h.answer(s.input), context, handlers)
+                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    loop(s.cont.asInstanceOf[Arrow[Any, Any, Any]](h.answer(s.input), context, handlers), context, handlers)
                 case v =>
                     rewrap(v, Rotate.handler(_, h, loop, frame), loop, context, handlers)
             end match
@@ -298,9 +283,8 @@ object ArrowEffect:
     )(using frame: Frame): A < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
-                    loop(handle[Any](kyo.suspend.input.asInstanceOf[I[Any]]).asInstanceOf[Any < Any], context, handlers)
-                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    // the continuation to this handler never runs: the operation input is all the handle function needs
                     loop(handle[Any](s.input.asInstanceOf[I[Any]]).asInstanceOf[Any < Any], context, handlers)
                 case v =>
                     rewrap(v, Rotate.plain(_, loop, frame), loop, context, handlers)
@@ -324,14 +308,10 @@ object ArrowEffect:
     )(using frame: Frame): B < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             v match
-                case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
-                    val k      = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
+                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    val k      = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S)]
                     // shallow: the handler leaves, so the result is not looped
-                    handle[Any](kyo.suspend.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S)]).asInstanceOf[Any < Any]
-                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
-                    // a bare operation: the continuation to this handler is the identity
-                    val resume = (x: Any) => Kyo.lift(x).asInstanceOf[A < (E & S)]
                     handle[Any](s.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S)]).asInstanceOf[Any < Any]
                 case v if v.isInstanceOf[Kyo[?, ?]] =>
                     rewrap(v, Rotate.plain(_, loop, frame), loop, context, handlers)
@@ -411,18 +391,9 @@ object ArrowEffect:
                                 Kyo.lift(b)
             end outcome
             v match
-                case kyo: Kyo.Continue[?, ?, ?] if effectTag.erased <:< kyo.suspend.erasedTag =>
-                    val k      = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
+                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
+                    val k      = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S)]
-                    outcome(
-                        handle[Any](kyo.suspend.input.asInstanceOf[I[Any]], state, resume.asInstanceOf[O[Any] => A < (E & S)])
-                            .asInstanceOf[Any < Any],
-                        context,
-                        handlers
-                    )
-                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
-                    // a bare operation: the continuation to this handler is the identity
-                    val resume = (x: Any) => Kyo.lift(x).asInstanceOf[A < (E & S)]
                     outcome(
                         handle[Any](s.input.asInstanceOf[I[Any]], state, resume.asInstanceOf[O[Any] => A < (E & S)])
                             .asInstanceOf[Any < Any],
@@ -450,12 +421,10 @@ object ArrowEffect:
     )(
         f: [C] => I[C] => Unit
     ): Unit =
-        def probe(s: Kyo.Suspend[?, ?, ?, ?]): Unit =
-            if effectTag.erased <:< s.erasedTag then f(s.input.asInstanceOf[I[Any]])
         v match
-            case c: Kyo.Continue[?, ?, ?]   => probe(c.suspend)
-            case s: Kyo.Suspend[?, ?, ?, ?] => probe(s)
-            case _                          => ()
+            case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                if effectTag.erased <:< s.erasedTag then f(s.input.asInstanceOf[I[Any]])
+            case _ => ()
         end match
     end dispatchFirst
 
@@ -503,21 +472,13 @@ object ArrowEffect:
                 else slice(next)
             val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], `<`.EvalCascade, context, Handlers.empty).asInstanceOf[A < (E & S)]
             r match
-                case k: Kyo.Continue[?, ?, ?] @unchecked =>
-                    k.suspend match
-                        case s: Kyo.Suspend[?, ?, ?, c] if effectTag.erased <:< s.erasedTag =>
-                            // the tag match justifies reading the operation at this handler's types
-                            handle[c](
-                                s.input.asInstanceOf[I[c]],
-                                k.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize.asInstanceOf[Arrow[O[c], A, E & S]]
-                            ) match
-                                case Maybe.Present(next) => continue(next)
-                                case Maybe.Absent        => r
-                        case _ => r
-                case s: Kyo.Suspend[?, ?, ?, c] @unchecked if effectTag.erased <:< s.erasedTag =>
-                    // a bare operation is the whole remaining computation, so the identity
-                    // continuation is its continuation to this boundary
-                    handle[c](s.input.asInstanceOf[I[c]], Arrow[O[c]].asInstanceOf[Arrow[O[c], A, E & S]]) match
+                case s: Kyo.Suspend[?, ?, ?, c, ?, ?] @unchecked if effectTag.erased <:< s.erasedTag =>
+                    // the tag match justifies reading the operation at this handler's types; the
+                    // suspension's own fused continuation is its continuation to this boundary
+                    handle[c](
+                        s.input.asInstanceOf[I[c]],
+                        s.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize.asInstanceOf[Arrow[O[c], A, E & S]]
+                    ) match
                         case Maybe.Present(next) => continue(next)
                         case Maybe.Absent        => r
                 case _ =>
