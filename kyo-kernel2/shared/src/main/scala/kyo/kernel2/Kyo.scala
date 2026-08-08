@@ -41,13 +41,13 @@ object Kyo:
       * The two suspension kinds share the chain machinery through [[Continue]]: an arrow operation awaiting a handler clause, or a context
       * read awaiting the innermost binding.
       */
-    sealed abstract class Suspension[X, -E] extends Kyo[X, E]: // TODO this should be [+A, -S]? Please consistent naming
+    sealed abstract class Suspension[+A, -S] extends Kyo[A, S]:
 
-        final private[kyo] def map[B, S](f: Arrow[X, B, S]): B < (E & S) =
-            Continue[X, B, E & S](this, f.asInstanceOf[Arrow[X, B, E & S]])
+        final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
+            Continue[A, B, S & S2](this, f.asInstanceOf[Arrow[A, B, S & S2]])
 
-        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): X < E =
-            map(f.asInstanceOf[Arrow[X, X, Any]]) // TODO this doesn't seem to make sense?
+        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S =
+            map(f.asInstanceOf[Arrow[A, A, Any]]) // TODO this doesn't seem to make sense?
 
     end Suspension
 
@@ -77,16 +77,16 @@ object Kyo:
     final private[kyo] class ContextSnapshot(val frame: Frame) extends Suspension[kyo.kernel2.internal.Context, Any]:
         override def toString = "ContextSnapshot(" + frame.position.show + ")"
 
-    final private[kyo] class Continue[X, +B, -S](
-        val suspend: Suspension[X, ?],
-        val cont: Arrow[X, B, S]
+    final private[kyo] class Continue[A, +B, -S](
+        val suspend: Suspension[A, ?],
+        val cont: Arrow[A, B, S]
     ) extends Kyo[B, S]:
 
         private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Continue(suspend, cont.map(f))
 
         private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
-            Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[X, B, S]])
+            Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[A, B, S]])
 
         override def toString = "Continue(" + suspend + ")"
 

@@ -22,13 +22,13 @@ object Arrow:
     /** A decomposed arrow: one executable transform and the rest of the chain. Phase 1
       * of dispatch obtains it via [[step]]; phase 2 is `head.run(v, next)` written in
       * the caller's own bytecode, where the receiver profile is private to that site.
-      * X is the intermediate type between head and next; callers never name it.
+      * Mid is the intermediate type between head and next; callers never name it.
       */
     // TODO why isn't this private[kyo]
     sealed trait Step[-A, +B, -S]:
-        type X
-        def head: Transform[A, X, S]
-        def next: Arrow[X, B, S]
+        type Mid
+        def head: Transform[A, Mid, S]
+        def next: Arrow[Mid, B, S]
     end Step
 
     // TODO this is a Safepoint concern
@@ -204,16 +204,15 @@ object Arrow:
       * driven) and the Step handle for its own position, so phase 1 decomposes it for
       * free by identity.
       */
-    // TODO do not use type params like X0, use A, B, C, .. for values and S, S2, S3, .. for effects
-    final class Offset[-A, X0, +B, -S] private[kyo] (
-        val head: Transform[A, X0, S],
-        val next: Arrow[X0, B, S]
-    ) extends Transform[A, B, S], Step[A, B, S]:
+    final class Offset[-A, B, +C, -S] private[kyo] (
+        val head: Transform[A, B, S],
+        val next: Arrow[B, C, S]
+    ) extends Transform[A, C, S], Step[A, C, S]:
         override private[kyo] val hasHandler = head.hasHandler || next.hasHandler
-        type X = X0
+        type Mid = B
         def frame = Frame.internal
 
-        def run[C, S2](v: Any, cont: Arrow[B, C, S2]): C < (S & S2) =
+        def run[C2, S2](v: Any, cont: Arrow[C, C2, S2]): C2 < (S & S2) =
             val k = cont.asInstanceOf[Arrow[Any, Any, Any]]
             @tailrec def loop(o: Offset[Any, Any, Any, Any], cur: Any): Any =
                 o.head match
@@ -233,7 +232,7 @@ object Arrow:
                                 case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unwrap(w))
                                 case _                                        => k(Kyo.unwrap(w).asInstanceOf[Any < Any])
                         end if
-            loop(this.asInstanceOf[Offset[Any, Any, Any, Any]], v).asInstanceOf[C < (S & S2)]
+            loop(this.asInstanceOf[Offset[Any, Any, Any, Any]], v).asInstanceOf[C2 < (S & S2)]
         end run
 
         override def toString = "Offset"
@@ -242,7 +241,7 @@ object Arrow:
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
 
-    private[kyo] def isEmpty[X, Y, Z](f: Arrow[X, Y, Z]): Boolean =
+    private[kyo] def isEmpty[A, B, S](f: Arrow[A, B, S]): Boolean =
         f.asInstanceOf[AnyRef] eq empty
 
 end Arrow
