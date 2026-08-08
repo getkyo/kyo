@@ -7,6 +7,7 @@ import kyo.Tag
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Handler
+import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
@@ -42,18 +43,18 @@ object `<` extends Implicits:
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f(v.asInstanceOf[A])
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
-                            o.head.run(Kyo.unnest(w), context, o.next).asInstanceOf[C < (S2 & S3)]
+                            o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
-                            cont(w, context)
+                            cont(w, context, handlers)
                     end match
                 end run
             // construction-time eager entry: the just-minted transform cannot consume
             // a context, so the empty argument is inert
-            arrow(self, Context.empty)
+            arrow(self, Context.empty, Handlers.empty)
         end map
 
         /** Maps the value produced by this computation to a new computation and flattens the result.
@@ -65,16 +66,16 @@ object `<` extends Implicits:
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f(v.asInstanceOf[A])
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
-                            o.head.run(Kyo.unnest(w), context, o.next).asInstanceOf[C < (S2 & S3)]
+                            o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
-                            cont(w, context)
+                            cont(w, context, handlers)
                     end match
                 end run
-            arrow(self, Context.empty)
+            arrow(self, Context.empty, Handlers.empty)
         end flatMap
 
         /** Executes this computation, discards its result, and then executes another computation. */
@@ -82,16 +83,16 @@ object `<` extends Implicits:
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
-                            o.head.run(Kyo.unnest(w), context, o.next).asInstanceOf[C < (S2 & S3)]
+                            o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
-                            cont(w, context)
+                            cont(w, context, handlers)
                     end match
                 end run
-            arrow(self, Context.empty)
+            arrow(self, Context.empty, Handlers.empty)
         end andThen
 
         /** Executes this computation and discards its result. */
@@ -99,15 +100,15 @@ object `<` extends Implicits:
         inline def unit(using inline _frame: Frame): Unit < S =
             val arrow = new Arrow.Transform[A, Unit, Any]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, cont: Arrow[Unit, C, S3]): C < (Any & S3) =
+                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[Unit, C, S3]): C < (Any & S3) =
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
-                            o.head.run((), context, o.next).asInstanceOf[C < (Any & S3)]
+                            o.head.run((), context, handlers, o.next).asInstanceOf[C < (Any & S3)]
                         case _ =>
-                            cont((), context)
+                            cont((), context, handlers)
                     end match
                 end run
-            arrow(self, Context.empty)
+            arrow(self, Context.empty, Handlers.empty)
         end unit
 
         /** Applies a transformation to this computation.
@@ -262,7 +263,7 @@ object `<` extends Implicits:
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                evalLoop(self.asInstanceOf[Any < Any], EvalMasked, Context.empty) match
+                evalLoop(self.asInstanceOf[Any < Any], EvalMasked, Context.empty, Handlers.empty) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
                     case v                  => Kyo.unnest(v).asInstanceOf[A]
             else Kyo.unnest(self).asInstanceOf[A]
@@ -273,7 +274,7 @@ object `<` extends Implicits:
           * at exit, so the caller's authoritative check after this returns observes every condition published before the request.
           */
         private[kyo] def evalPartial: A < Any =
-            evalLoop(self.asInstanceOf[Any < Any], EvalPreemptible, Context.empty).asInstanceOf[A < Any]
+            evalLoop(self.asInstanceOf[Any < Any], EvalPreemptible, Context.empty, Handlers.empty).asInstanceOf[A < Any]
 
     end extension
 
@@ -314,28 +315,28 @@ object `<` extends Implicits:
         val lifted = Kyo.lift(v)
         new Arrow.Transform[Unit, A, Any]:
             def frame = Frame.internal
-            def run[C, S2](x: Any, context: Context, cont: Arrow[A, C, S2]): C < (Any & S2) =
-                cont(lifted.asInstanceOf[A < Any], context)
+            def run[C, S2](x: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (Any & S2) =
+                cont(lifted.asInstanceOf[A < Any], context, handlers)
         end new
     end yieldValue
 
     final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
         extends Arrow.Transform[A, A, S]:
         def frame = bracket.frame
-        def run[C, S2](v: Any, context: Context, cont: Arrow[A, C, S2]): C < (S & S2) =
-            cont(yieldValue(v.asInstanceOf[A])(bracket.release(value), context), context)
+        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+            cont(yieldValue(v.asInstanceOf[A])(bracket.release(value), context, handlers), context, handlers)
     end Finalize
 
     private def constant(v: Any < Any): Arrow[Any, Any, Any] =
         new Arrow.Transform[Any, Any, Any]:
             def frame = Frame.internal
-            def run[C, S2](x: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                cont(v, context)
+            def run[C, S2](x: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                cont(v, context, handlers)
 
     private def reacquire(bracket: Kyo.Bracket[Any, Any, Any]): Arrow[Any, Any, Any] =
         new Arrow.Transform[Any, Any, Any]:
             def frame = Frame.internal
-            def run[C, S2](r: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            def run[C, S2](r: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
                 cont(
                     new Kyo.Bracket[Any, Any, Any]:
                         def acquire         = r
@@ -344,7 +345,8 @@ object `<` extends Implicits:
                         def frame =
                             bracket.frame
                     ,
-                    context
+                    context,
+                    handlers
                 )
 
     private def cleanup(bracket: Kyo.Bracket[Any, Any, Any], resource: Any, t: Throwable): Unit =
@@ -366,7 +368,7 @@ object `<` extends Implicits:
     // context is a constant of the drive: parked remainders carry their re-armed
     // interceptors, so plain re-application from the entry context reconstructs
     // the in-scope bindings on every bounce
-    private[kyo] def evalLoop(v0: Any < Any, mode: Int, context: Context): Any < Any =
+    private[kyo] def evalLoop(v0: Any < Any, mode: Int, context: Context, handlers: Handlers): Any < Any =
         def recur(v: Any < Any, depth: Int): Any < Any =
             @tailrec def loop(curr: Any < Any): Any < Any =
                 // the poll sits at the top of the loop: it covers Defer pops, suspension dispatches, and the bare arm with one
@@ -386,7 +388,7 @@ object `<` extends Implicits:
                                 case acquired =>
                                     val resource = Kyo.unnest(acquired)
                                     val result =
-                                        try recur(bracket.cont(acquired, context), depth + 1)
+                                        try recur(bracket.cont(acquired, context, handlers), depth + 1)
                                         catch
                                             case t: Throwable =>
                                                 cleanup(bracket, resource, t)
@@ -411,15 +413,15 @@ object `<` extends Implicits:
                                             end match
                                     end match
                     case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
-                        loop(defer.cont(defer.value, context))
+                        loop(defer.cont(defer.value, context, handlers))
                     case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
                         val chain = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
-                        evalOperation(c.suspend.erasedTag, c.suspend.input, chain, context) match
+                        evalOperation(c.suspend.erasedTag, c.suspend.input, chain, context, handlers) match
                             case Maybe.Present(next) => loop(next)
                             case _                   => curr
                     case s: Kyo.Suspend[?, ?, ?, ?] @unchecked if depth == 0 =>
                         // a bare operation has no chain yet: dispatch it with the empty arrow
-                        evalOperation(s.erasedTag, s.input, Arrow[Any], context) match
+                        evalOperation(s.erasedTag, s.input, Arrow[Any], context, handlers) match
                             case Maybe.Present(next) => loop(next)
                             case _                   => curr
                         end match
@@ -458,7 +460,13 @@ object `<` extends Implicits:
       * delimiter) only because the capturing formats need it. The casts below are justified by the tag match: a delimiter constructed for
       * `E` matched a suspension of `E`, so the clause's erased input and continuation have the types the public API established.
       */
-    private def evalOperation(suspendTag: Tag[Any], input: Any, chain: Arrow[Any, Any, Any], context: Context): Maybe[Any < Any] =
+    private def evalOperation(
+        suspendTag: Tag[Any],
+        input: Any,
+        chain: Arrow[Any, Any, Any],
+        context: Context,
+        handlers: Handlers
+    ): Maybe[Any < Any] =
 
         def compose(rest: Arrow[Any, Any, Any], pending: List[Arrow[Any, Any, Any]]): Arrow[Any, Any, Any] =
             pending.foldLeft(rest)((acc, next) => Arrow.map(acc)(next))
@@ -494,29 +502,30 @@ object `<` extends Implicits:
             end guarded
             h match
                 case h: Handler.Resume[i, o, e, a, s, s2] =>
-                    guarded(chain(h.clause[Any](input.asInstanceOf[i[Any]]), context).asInstanceOf[Any < Any])
+                    guarded(chain(h.clause[Any](input.asInstanceOf[i[Any]]), context, handlers).asInstanceOf[Any < Any])
                 case h: Handler.Stop[i, o, e, a, s, s2] =>
                     val reinstalled = new Arrow.Offset[Any, Any, Any, Any](h.asInstanceOf[Arrow.Transform[Any, Any, Any]], fullRest)
-                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]]).asInstanceOf[Any < Any], context))
+                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]]).asInstanceOf[Any < Any], context, handlers))
                 case h: Handler.Cont[i, o, e, a, s, s2] =>
                     val k           = prefixArrow(prefixRev)
-                    val resume      = (x: o[Any]) => k(Kyo.lift(x), context).asInstanceOf[a < (e & s & s2)]
+                    val resume      = (x: o[Any]) => k(Kyo.lift(x), context, handlers).asInstanceOf[a < (e & s & s2)]
                     val reinstalled = new Arrow.Offset[Any, Any, Any, Any](h.asInstanceOf[Arrow.Transform[Any, Any, Any]], fullRest)
-                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any], context))
+                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any], context, handlers))
                 case h: Handler.First[i, o, e, a, b, s, s2] =>
                     val k      = prefixArrow(prefixRev)
-                    val resume = (x: o[Any]) => k(Kyo.lift(x), context).asInstanceOf[a < (e & s)]
-                    guarded(fullRest(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any], context))
+                    val resume = (x: o[Any]) => k(Kyo.lift(x), context, handlers).asInstanceOf[a < (e & s)]
+                    guarded(fullRest(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any], context, handlers))
                 case h: Handler.Loop[i, o, e, a, b, s, s2, st] =>
                     val k      = prefixArrow(prefixRev)
-                    val resume = (x: o[Any]) => k(Kyo.lift(x), context).asInstanceOf[a < (e & s)]
+                    val resume = (x: o[Any]) => k(Kyo.lift(x), context, handlers).asInstanceOf[a < (e & s)]
                     guarded(Arrow.map(outcomeStep(h))(fullRest)(
                         h.clause[Any](
                             input.asInstanceOf[i[Any]],
                             h.state,
                             resume
                         ).asInstanceOf[Any < Any],
-                        context
+                        context,
+                        handlers
                     ))
             end match
         end act
@@ -564,14 +573,14 @@ object `<` extends Implicits:
     private def outcomeStep(h: Handler.Loop[?, ?, ?, ?, ?, ?, ?, ?]): Arrow[Any, Any, Any] =
         new Arrow.Transform[Any, Any, Any]:
             def frame = h.frame
-            def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
                 v match
                     case next: Loop.Continue2[?, ?] @unchecked =>
                         // re-install the delimiter carrying the clause's next state around the next computation
                         val h2 = h.replaceState(next._1).asInstanceOf[Arrow[Any, Any, Any]]
-                        cont(h2(next._2.asInstanceOf[Any < Any], context), context)
+                        cont(h2(next._2.asInstanceOf[Any < Any], context, handlers), context, handlers)
                     case b =>
-                        cont(Kyo.lift(b), context)
+                        cont(Kyo.lift(b), context, handlers)
     end outcomeStep
 
 end `<`

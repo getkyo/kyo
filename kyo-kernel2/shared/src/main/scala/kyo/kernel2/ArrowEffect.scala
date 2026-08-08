@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Handler
+import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
 import scala.annotation.nowarn
@@ -230,7 +231,7 @@ object ArrowEffect:
                     val _ = Safepoint.clearPreempt()
                     next
                 else slice(next)
-            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], `<`.EvalCascade, context).asInstanceOf[A < (E & S)]
+            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], `<`.EvalCascade, context, Handlers.empty).asInstanceOf[A < (E & S)]
             r match
                 case k: Kyo.Continue[?, ?, ?] @unchecked =>
                     k.suspend match

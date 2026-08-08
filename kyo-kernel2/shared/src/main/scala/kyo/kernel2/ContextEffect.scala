@@ -3,6 +3,7 @@ package kyo.kernel2
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel2.internal.Context
+import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import scala.annotation.nowarn
 
@@ -30,8 +31,8 @@ object ContextEffect:
             (),
             new Arrow.Transform[Unit, A, S]:
                 def frame = _frame
-                def run[C, S2](v: Any, context: Context, cont: Arrow[A, C, S2]): C < (S & S2) =
-                    cont(f(context.inherit), context)
+                def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+                    cont(f(context.inherit), context, handlers)
         )
 
     /** A marker trait for context effects that do not persist across asynchronous boundaries.
@@ -55,8 +56,8 @@ object ContextEffect:
             (),
             new Arrow.Transform[Unit, V, E]:
                 def frame = _frame
-                def run[C, S2](v: Any, context: Context, cont: Arrow[V, C, S2]): C < (E & S2) =
-                    cont(context.get[V, E](effectTag), context)
+                def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[V, C, S2]): C < (E & S2) =
+                    cont(context.get[V, E](effectTag), context, handlers)
         )
     end suspend
 
@@ -82,8 +83,8 @@ object ContextEffect:
             (),
             new Arrow.Transform[Unit, V, Any]:
                 def frame = _frame
-                def run[C, S2](v: Any, context: Context, cont: Arrow[V, C, S2]): C < (Any & S2) =
-                    cont(context.getOrElse[V, E, V](effectTag, fallback()), context)
+                def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[V, C, S2]): C < (Any & S2) =
+                    cont(context.getOrElse[V, E, V](effectTag, fallback()), context, handlers)
         )
     end suspend
 
@@ -126,11 +127,11 @@ object ContextEffect:
         _frame: Frame
     ) extends Arrow.Interceptor:
         def frame = _frame
-        def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             val value =
                 if context.contains(effectTag) then ifDefined(context.get[V, E](effectTag))
                 else ifUndefined()
-            cont(Kyo.lift(v), context.set(effectTag, value)) match
+            cont(Kyo.lift(v), context.set(effectTag, value), handlers) match
                 case kyo: Kyo[?, ?] =>
                     // re-arm across the park so later entries re-derive the binding
                     kyo.prepend(this).asInstanceOf[C < (Any & S2)]

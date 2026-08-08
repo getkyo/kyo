@@ -5,6 +5,7 @@ import kyo.Tag
 import kyo.kernel2.<
 import kyo.kernel2.Arrow
 import kyo.kernel2.ArrowEffect
+import kyo.kernel2.internal.Handlers
 
 /** The park-time reification of an effect handler: a delimiter in the continuation chain.
   *
@@ -32,7 +33,7 @@ sealed abstract private[kyo] class Handler[-A, +B, -S] extends Arrow.Transform[A
       * the construction-time empty context is inert, and the value must not detour through a Defer.
       */
     final private[kyo] def install[E, S2](v: A < (E & S2)): B < (S2 & S) =
-        this(v, Context.empty).asInstanceOf[B < (S2 & S)]
+        this(v, Context.empty, Handlers.empty).asInstanceOf[B < (S2 & S)]
 end Handler
 
 private[kyo] object Handler:
@@ -48,8 +49,8 @@ private[kyo] object Handler:
         val clause: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, A, S & S2]:
-        def run[C2, S3](v: Any, context: Context, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
-            cont(Kyo.lift(v).asInstanceOf[A < Any], context)
+        def run[C2, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
+            cont(Kyo.lift(v).asInstanceOf[A < Any], context, handlers)
     end Cont
 
     /** Deep handler that answers each operation in place (fun format). */
@@ -58,8 +59,8 @@ private[kyo] object Handler:
         val clause: [C] => I[C] => O[C] < (E & S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, A, S & S2]:
-        def run[C2, S3](v: Any, context: Context, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
-            cont(Kyo.lift(v).asInstanceOf[A < Any], context)
+        def run[C2, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
+            cont(Kyo.lift(v).asInstanceOf[A < Any], context, handlers)
     end Resume
 
     /** Deep handler that ends the region at each operation (final ctl format). */
@@ -68,8 +69,8 @@ private[kyo] object Handler:
         val clause: [C] => I[C] => A < (E & S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, A, S & S2]:
-        def run[C2, S3](v: Any, context: Context, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
-            cont(Kyo.lift(v).asInstanceOf[A < Any], context)
+        def run[C2, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
+            cont(Kyo.lift(v).asInstanceOf[A < Any], context, handlers)
     end Stop
 
     /** Shallow handler: handles only the first operation, then leaves the region. */
@@ -79,8 +80,8 @@ private[kyo] object Handler:
         val done: A => B < S2,
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, B, S2]:
-        def run[C2, S3](v: Any, context: Context, cont: Arrow[B, C2, S3]): C2 < (S2 & S3) =
-            cont(done(v.asInstanceOf[A]), context)
+        def run[C2, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C2, S3]): C2 < (S2 & S3) =
+            cont(done(v.asInstanceOf[A]), context, handlers)
     end First
 
     /** Deep stateful handler: state threads through the operations, done runs on completion.
@@ -94,8 +95,8 @@ private[kyo] object Handler:
         val done: (State, A) => B < (S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, B, S & S2]:
-        def run[C2, S3](v: Any, context: Context, cont: Arrow[B, C2, S3]): C2 < (S & S2 & S3) =
-            cont(done(state, v.asInstanceOf[A]), context)
+        def run[C2, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C2, S3]): C2 < (S & S2 & S3) =
+            cont(done(state, v.asInstanceOf[A]), context, handlers)
 
         /** The replacement delimiter for the next iteration. The cast is the dispatch's state round trip: the value came out of this
           * handler's own clause outcome, which produced it at type State.

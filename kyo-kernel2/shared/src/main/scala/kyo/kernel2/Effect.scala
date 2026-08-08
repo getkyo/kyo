@@ -3,6 +3,7 @@ package kyo.kernel2
 import kyo.Frame
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
+import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
@@ -55,9 +56,9 @@ object Effect:
 
     final private[kyo] class Catching(private[kyo] val handler: Throwable => Any < Any, _frame: Frame) extends Arrow.Interceptor:
         def frame = _frame
-        def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             val w =
-                try cont(Kyo.lift(v), context)
+                try cont(Kyo.lift(v), context, handlers)
                 catch
                     case ex if NonFatal(ex) =>
                         EffectTrace.attach(ex, "catching", _frame)
@@ -81,8 +82,8 @@ object Effect:
     private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         val thunk = new Arrow.Transform[Unit, A, S]:
             def frame = _frame
-            def run[C, S2](v: Any, context: Context, cont: Arrow[A, C, S2]): C < (S & S2) =
-                cont(f, context)
+            def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+                cont(f, context, handlers)
         Kyo.Defer[Unit, A, S]((), thunk)
     end defer
 
@@ -104,8 +105,8 @@ object Effect:
             val useArrow: Arrow[R, A, S] =
                 new Arrow.Transform[R, A, S]:
                     def frame = _frame
-                    def run[C, S2](v: Any, context: Context, cont: Arrow[A, C, S2]): C < (S & S2) =
-                        cont(useF(v.asInstanceOf[R]), context)
+                    def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+                        cont(useF(v.asInstanceOf[R]), context, handlers)
             def acquire       = acquireF
             def release(r: R) = releaseF(r)
             def cont          = useArrow

@@ -10,6 +10,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel2.*
 import kyo.kernel2.internal.Context
+import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
 import kyo.render
@@ -714,8 +715,8 @@ class PendingTest extends Test[Any]:
     def transform(f: Int => Int): Arrow[Int, Int, Any] =
         new Arrow.Transform[Int, Int, Any]:
             def frame = Frame.derive
-            def run[C, S2](v: Any, context: Context, cont: Arrow[Int, C, S2]): C < (Any & S2) =
-                cont(f(v.asInstanceOf[Int]), context)
+            def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                cont(f(v.asInstanceOf[Int]), context, handlers)
 
     "handlers route by tag and nest" in {
         val ask2: Int < Ask2 =
@@ -776,7 +777,7 @@ class PendingTest extends Test[Any]:
         cont.step match
             case Maybe.Present(s) =>
                 assert(s.asInstanceOf[AnyRef] eq cont.asInstanceOf[AnyRef])
-                assert(s.head.run(3, Context.empty, s.next).asInstanceOf[Int < Any].eval == 40)
+                assert(s.head.run(3, Context.empty, Handlers.empty, s.next).asInstanceOf[Int < Any].eval == 40)
             case Maybe.Absent =>
                 fail("expected a step")
         end match
@@ -786,7 +787,7 @@ class PendingTest extends Test[Any]:
         val cont = park(ask.map(_ + 5))
         cont.step match
             case Maybe.Present(s) =>
-                assert(s.head.run(2, Context.empty, s.next).asInstanceOf[Int < Any].eval == 7)
+                assert(s.head.run(2, Context.empty, Handlers.empty, s.next).asInstanceOf[Int < Any].eval == 7)
             case Maybe.Absent =>
                 fail("expected a step")
         end match
@@ -796,7 +797,7 @@ class PendingTest extends Test[Any]:
         val cont = park(ask.map(x => ask.map(_ + x)).map(_ * 2))
         val resumed =
             cont.step match
-                case Maybe.Present(s) => s.head.run(10, Context.empty, s.next)
+                case Maybe.Present(s) => s.head.run(10, Context.empty, Handlers.empty, s.next)
                 case Maybe.Absent     => fail("expected a step")
         assert(resolve(resumed.asInstanceOf[Int < Ask], 5) == 30)
     }
@@ -810,7 +811,7 @@ class PendingTest extends Test[Any]:
                     val a = remaining.head
                     remaining = remaining.tail
                     cont.step match
-                        case Maybe.Present(s) => Maybe(s.head.run(a, Context.empty, s.next).asInstanceOf[Int < Ask])
+                        case Maybe.Present(s) => Maybe(s.head.run(a, Context.empty, Handlers.empty, s.next).asInstanceOf[Int < Ask])
                         case Maybe.Absent     => Maybe(a: Int < Ask)
         )
         assert(result.asInstanceOf[Int < Any].eval == 20)

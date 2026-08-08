@@ -6,6 +6,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
+import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
@@ -40,10 +41,12 @@ object Arrow:
         // v is Any rather than A: a typed parameter makes subclasses with a concrete
         // A carry an erasure bridge, and the extra call level halves how many fused
         // steps the JIT can inline per compilation.
-        // context is the execution ambient, threaded from the caller: plain transforms
-        // pass it through untouched, bindings pass an updated one downstream, reads
-        // consume it. It is never stored; it exists only in flight.
-        def run[C, S2](v: Any, context: Context, cont: Arrow[B, C, S2]): C < (S & S2)
+        // context and handlers are the execution ambient, threaded from the caller:
+        // plain transforms pass them through untouched, bindings pass an updated
+        // context downstream, handled scopes pass extended handlers downstream, reads
+        // and local operation dispatch consume them. Neither is ever stored; they
+        // exist only in flight.
+        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S2]): C < (S & S2)
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
 
@@ -84,10 +87,10 @@ object Arrow:
 
     private val empty = new Transform[Any, Any, Any]:
         def frame = Frame.internal
-        def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             // Kyo.lift, not a cast: a raw value that is itself a computation must
             // re-enter the chain as data (Nested), not as a suspension to run
-            cont(Kyo.lift(v), context)
+            cont(Kyo.lift(v), context, handlers)
 
     // Spliced into long chains every Period elements by optimize: hops unwind here
     // via the returned Defer and evalLoop's trampoline drives the next segment, so
@@ -95,7 +98,7 @@ object Arrow:
     // hops carry no check; the cadence lives in the chain structure itself.
     private val segmentBoundary = new Transform[Any, Any, Any]:
         def frame = Frame.internal
-        def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             Kyo.Defer(Kyo.lift(v), cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
 
     def apply[A]: Arrow[A, A, Any] = empty.asInstanceOf[Arrow[A, A, Any]]
@@ -116,13 +119,13 @@ object Arrow:
             else
                 Kyo.Defer[A, B, S & S2](v, self)
 
-        /** The execution form: applies this arrow now, under the context the caller is executing with.
+        /** The execution form: applies this arrow now, under the context and handlers the caller is executing with.
           *
-          * Every internal execution site (drives, dispatch, fused chains) uses this form and passes the context it received.
-          * `Context.empty` is fabricated only at the true roots (eval, evalPartial) and at construction-time eager runs of
-          * kernel-minted transforms, which cannot consume it.
+          * Every internal execution site (drives, dispatch, fused chains) uses this form and passes the parameters it received.
+          * `Context.empty` and `Handlers.empty` are fabricated only at the true roots (eval, evalPartial) and at construction-time
+          * eager runs of kernel-minted transforms, which cannot consume them.
           */
-        def apply[S2](v: A < S2, context: Context): B < (S & S2) =
+        def apply[S2](v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
             if self.asInstanceOf[AnyRef] eq empty then
                 v.asInstanceOf[B < (S & S2)]
             else if v.isInstanceOf[Kyo[?, ?]] then
@@ -130,11 +133,11 @@ object Arrow:
             else
                 self match
                     case o: Offset[Any, Any, Any, Any] @unchecked =>
-                        o.head.run(Kyo.unnest(v), context, o.next).asInstanceOf[B < (S & S2)]
+                        o.head.run(Kyo.unnest(v), context, handlers, o.next).asInstanceOf[B < (S & S2)]
                     case t: Transform[A, B, S] @unchecked =>
-                        guardedRun(t, v, context)
+                        guardedRun(t, v, context, handlers)
                     case _ =>
-                        applySlow(self, v, context)
+                        applySlow(self, v, context, handlers)
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
             if self.asInstanceOf[AnyRef] eq empty then f.asInstanceOf[Arrow[A, C, S & S2]]
@@ -225,12 +228,12 @@ object Arrow:
     private def rescue[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
         Kyo.Defer[A, B, S & S2](v, self)
 
-    private def guardedRun[A, B, S, S2](t: Transform[A, B, S], v: A < S2, context: Context): B < (S & S2) =
+    private def guardedRun[A, B, S, S2](t: Transform[A, B, S], v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
         val safepoint = Safepoint.get
         if !safepoint.enter() then rescue(t, v)
         else
             try
-                val r = t.run(Kyo.unnest(v), context, Arrow[B]).asInstanceOf[B < (S & S2)]
+                val r = t.run(Kyo.unnest(v), context, handlers, Arrow[B]).asInstanceOf[B < (S & S2)]
                 safepoint.exit()
                 r
             catch
@@ -241,10 +244,10 @@ object Arrow:
         end if
     end guardedRun
 
-    private def applySlow[A, B, S, S2](self: Arrow[A, B, S], v: A < S2, context: Context): B < (S & S2) =
+    private def applySlow[A, B, S, S2](self: Arrow[A, B, S], v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
         self match
             case at: AndThen[?, ?, ?, ?] =>
-                self.optimize(v, context)
+                self.optimize(v, context, handlers)
             case _ =>
                 Kyo.Defer[A, B, S & S2](v, self)
     end applySlow
@@ -261,7 +264,7 @@ object Arrow:
         type Mid = B
         def frame = Frame.internal
 
-        def run[C2, S2](v: Any, context: Context, cont: Arrow[C, C2, S2]): C2 < (S & S2) =
+        def run[C2, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[C, C2, S2]): C2 < (S & S2) =
             val k = cont.asInstanceOf[Arrow[Any, Any, Any]]
             @tailrec def loop(o: Offset[Any, Any, Any, Any], cur: Any): Any =
                 o.head match
@@ -269,17 +272,17 @@ object Arrow:
                         loop(jump, cur)
                     case t =>
                         val w =
-                            try t.run(cur, context, empty)
+                            try t.run(cur, context, handlers, empty)
                             catch
                                 case ex: Throwable =>
                                     EffectTrace.attach(ex, "map", t.frame)
                                     throw ex
                         if w.isInstanceOf[Kyo[?, ?]] then
-                            o.next.map(k)(w.asInstanceOf[Any < Any], context)
+                            o.next.map(k)(w.asInstanceOf[Any < Any], context, handlers)
                         else
                             o.next match
                                 case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unnest(w))
-                                case _                                        => k(Kyo.unnest(w).asInstanceOf[Any < Any], context)
+                                case _                                        => k(Kyo.unnest(w).asInstanceOf[Any < Any], context, handlers)
                         end if
             loop(this.asInstanceOf[Offset[Any, Any, Any, Any]], v).asInstanceOf[C2 < (S & S2)]
         end run
