@@ -273,39 +273,47 @@ before/after call sites. It is briefed to assume #18's outcome (context threaded
 drive, no ContextSnapshot) as an interface, not to design it.
 
 ## 14. The `LastResort` boundary carrier
-explain the use of LastResort
 - Files: `Pending.scala`, `ArrowEffect.scala`
-- Status: OPEN DISCUSSION. You are not convinced; full context below for your read.
-  No implementation until you rule. Track A's design also validates or replaces this
-  mechanism against the real IOTask consumer.
+- Status: OPEN DISCUSSION. You are not convinced; the use is shown below with the
+  real code. No implementation until you rule. Track A's design also validates or
+  replaces this mechanism against the real IOTask consumer.
 
-Context, from the top. A fiber's computation contains suspensions of the scheduler's
-own runtime effect (in today's kyo-core: the operations Async/IOTask interpret, like
-joining a promise). No user code installs a handler for them. In the OLD kernel, IOTask
-itself interprets them: its eval loop runs the computation, and when it stops on a
-suspension, IOTask inspects it and decides: answer it and keep running this slice, or
-park the fiber and register a callback to resume later. That interpreter lives outside
-the computation, in the scheduler's loop.
-
-kernel2 packages that exact pattern as the API `ArrowEffect.handlePartial`:
+The use, concretely. `LastResort`'s only producer is `ArrowEffect.handlePartial`, and
+`handlePartial`'s only real user is the scheduler: it is how a task drives one slice
+of a fiber. The fiber's computation contains suspensions of the scheduler's own
+runtime effect (the kernel2 stand-in for what IOTask interprets in kyo-core today,
+like joining a promise). PendingSchedulerTest is the working example. Parking a fiber
+and resuming it out of band:
 
 ```scala
-def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-    effectTag: Tag[E],
-    v: A < (E & S), ...
-)(
-    clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
-): A < (E & S)
+var parked: Any = null
+val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
+    [C] =>
+        (input, cont) =>
+            parked = cont          // stash the continuation for the completion callback
+            Maybe.Absent           // park: this slice is over, the drive returns
+)
+// later, out of band (promise completed on another thread):
+val resumed = parked.asInstanceOf[Arrow[Int, Int, SchedulerAsk]](100)
+assert(resumed.asInstanceOf[Int < Any].eval == 142)   // bracket released in-band
 ```
 
-It drives `v` immediately. When a suspension of `E` reaches the boundary and NO
-installed delimiter matched it, the clause receives the operation input and the full
-continuation. `Present(next)`: keep running this slice with `next`. `Absent`: park,
-typically after stashing the continuation so the completion callback can resume it.
-This is the scheduler integration point; PendingSchedulerTest exercises it.
+Interrupting instead of resuming (finalizers still run):
 
-`LastResort` is nothing more than the internal pair (tag, clause) that handlePartial
-hands to the drive loop:
+```scala
+val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
+    [C] => (input, cont) => Maybe.Absent
+)
+remainder.discard    // runs rel-inner, rel-outer: the brackets the park was holding
+```
+
+At the swap round, IOTask's slice loop is this pattern: drive the fiber's computation
+with `handlePartial`, answer scheduler operations in-slice via `Present(next)`, park on
+`Absent` after stashing the continuation, re-enter next slice with the same clause.
+
+What `LastResort` itself is: the internal envelope carrying handlePartial's
+(tag, clause) into `evalLoop`, consulted only for a suspension that NO installed
+delimiter matched (hence the name, the handler of last resort):
 
 ```scala
 final private[kyo] class LastResort(
@@ -471,15 +479,37 @@ identically, forever. Candidate fix: hand overflow threads an unregistered `Acti
 design weighs alternatives.
 
 ## 24. Is clearing the preempt flag enough?
-do you need to launch opus for this?
 - Files: `internal/Safepoint.scala`
-- Status: input to track A's design (your TODO: "do we have cases where preempted
-  clearing wouldn't be enough?").
+- Status: answered directly below (no agent needed for this one); to be reconciled
+  with track A's landed design when I summarize it for you.
 
-The design analyzes the consume-then-check protocol against: a second preempt request
-arriving mid-slice, multiple concurrent requesters, a request landing between
-`clearPreempt` and the drive returning, and the future interruption use that
-piggybacks on the same delivery.
+Your question: do we have cases where preempted clearing wouldn't be enough? My
+analysis, case by case against the actual protocol (requester publishes its condition,
+then CASes the victim's slot from `Active` to `Parked`; the owner polls through `get`;
+`clearPreempt` CASes the `Active` back and returns true):
+
+1. A second request arriving after `clearPreempt` restored the `Active`: a new
+   `Parked` lands via CAS; the very next poll observes it. Nothing lost.
+2. Multiple requesters while already parked: `Parked.preempt()` is a no-op, so
+   requests coalesce into one park. Correct, because parking is idempotent and each
+   requester published its condition before calling `preempt()`; the boundary's
+   authoritative check after `clearPreempt` therefore sees every condition behind any
+   coalesced request (the CAS exchange orders the writes).
+3. A request landing between `clearPreempt` and the drive returning: not lost. The
+   slot is `Parked` again, so the next `enter()` refuses and the next poll observes
+   it; the request is served one frame later.
+4. Dead-thread reclamation dropping a pending `Parked`: benign. The request's
+   condition lives outside the slot (promise state, interrupt flag), and a fiber that
+   migrated off a dead thread gets re-preempted through the thread the scheduler
+   currently has registered for it.
+5. The one real gap: NESTED boundary drives. `clearPreempt` consumes for whoever
+   calls it first, so a boundary drive nested inside the scheduler's slice (for
+   example an `eval` performed synchronously inside a fiber) would swallow a request
+   aimed at the outer slice, and the park would never reach the scheduler. Clearing
+   is enough only with a rule about who consumes: exactly one boundary per thread
+   (the scheduler's) consumes; anything nested must observe-and-cascade, or consume
+   and re-arm before returning. This is the concrete requirement I will check track
+   A's landed design against.
 
 ## Execution order
 
