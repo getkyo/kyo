@@ -15,7 +15,7 @@ import scala.collection.IterableOps
 // TODO this is meant as internal
 sealed abstract class Kyo[+A, -S]:
     private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
-    private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S
+    private[kyo] def prepend(f: Arrow.Interceptor): A < S
 
 // TODO this should be in the kyo package
 object Kyo:
@@ -51,8 +51,8 @@ object Kyo:
         final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
             Continue[A, B, S & S2](this, f.asInstanceOf[Arrow[A, B, S & S2]])
 
-        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S =
-            map(f.asInstanceOf[Arrow[A, A, Any]]) // TODO this doesn't seem to make sense?
+        final private[kyo] def prepend(f: Arrow.Interceptor): A < S =
+            map(f.as[A, Any])
 
     end Suspension
 
@@ -90,8 +90,8 @@ object Kyo:
         private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Continue(suspend, cont.map(f))
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
-            Continue(suspend, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[A, B, S]])
+        private[kyo] def prepend(f: Arrow.Interceptor): B < S =
+            Continue(suspend, f.as[A, S].map(cont))
 
         override def toString = "Continue(" + suspend + ", " + cont + ")"
 
@@ -114,7 +114,7 @@ object Kyo:
             end new
         end map
 
-        final private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S =
+        final private[kyo] def prepend(f: Arrow.Interceptor): A < S =
             val outer = this
             new Bracket[R, A, S]:
                 def acquire =
@@ -122,7 +122,7 @@ object Kyo:
                         case kyo: Kyo[R, S] @unchecked => kyo.prepend(f)
                         case v                         => v
                 def release(r: R) = outer.release(r)
-                def cont          = f.map(outer.cont.asInstanceOf[Arrow[Any, A, S]]).asInstanceOf[Arrow[R, A, S]]
+                def cont          = f.as[R, S].map(outer.cont)
                 def frame         = outer.frame
             end new
         end prepend
@@ -140,8 +140,8 @@ object Kyo:
         private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Defer(value, cont.map(f))
 
-        private[kyo] def prepend(f: Arrow[Any, Any, Any]): B < S =
-            Defer(value, f.map(cont.asInstanceOf[Arrow[Any, B, S]]).asInstanceOf[Arrow[A, B, S]])
+        private[kyo] def prepend(f: Arrow.Interceptor): B < S =
+            Defer(value, f.as[A, S].map(cont))
 
         override def toString = "Defer(" + cont + ")"
 

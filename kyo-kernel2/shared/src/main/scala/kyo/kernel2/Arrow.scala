@@ -44,6 +44,17 @@ object Arrow:
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
 
+    /** A pass-through transform: run forwards the value it receives into its continuation unchanged. It may wrap the evaluation
+      * (intercept exceptions, observe steps) but never alters or consumes the value. The only arrows prepend accepts, and the
+      * contract justifying the single cast in [[as]].
+      */
+    abstract private[kyo] class Interceptor extends Transform[Any, Any, Any]:
+        // Cast justified by the pass-through contract: on values the arrow is
+        // identity-typed, so Arrow[A, A, S] is its true shape at any A.
+        final private[kyo] def as[A, S]: Arrow[A, A, S] =
+            this.asInstanceOf[Arrow[A, A, S]]
+    end Interceptor
+
     final private[kyo] class AndThen[-A, B, +C, -S](
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]

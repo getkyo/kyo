@@ -19,6 +19,17 @@ abstract class ContextEffect[+V] extends Effect
 
 object ContextEffect:
 
+    /** Detaches a computation at a fork boundary, handing it the inherited context snapshot.
+      *
+      * The snapshot materializes at a boundary drive, the same late resolution a context read gets: bindings installed between
+      * construction and the boundary are visible. Noninheritable bindings are filtered before the fork sees them. The ContextSnapshot
+      * suspension it rides on is interim: the context threading redesign replaces it with the context handed as a parameter, like the
+      * current kernel.
+      */
+    private[kyo] def runDetached[A, S](f: kyo.kernel2.internal.Context => A < S)(using Frame): A < S =
+        val snapshot = new Kyo.ContextSnapshot(summon[Frame]).asInstanceOf[kyo.kernel2.internal.Context < Any]
+        snapshot.map(context => f(context.inherit))
+
     /** A marker trait for context effects that do not persist across asynchronous boundaries.
       *
       * When a context effect extends this trait, its values will not be inherited by child fibers after an asynchronous operation.

@@ -51,7 +51,7 @@ object Effect:
         end try
     end catching
 
-    final private[kyo] class Catching(handler: Throwable => Any < Any, _frame: Frame) extends Arrow.Transform[Any, Any, Any]:
+    final private[kyo] class Catching(handler: Throwable => Any < Any, _frame: Frame) extends Arrow.Interceptor:
         def frame = _frame
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             val w =

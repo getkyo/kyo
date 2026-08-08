@@ -18,7 +18,7 @@ private[kyo] object Observe:
             case _ =>
                 v.asInstanceOf[A < (S & S2)]
 
-    final private class Step(observer: (Frame, Any) => Any < Any) extends Arrow.Transform[Any, Any, Any]:
+    final private class Step(observer: (Frame, Any) => Any < Any) extends Arrow.Interceptor:
         def frame = Frame.internal
 
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =

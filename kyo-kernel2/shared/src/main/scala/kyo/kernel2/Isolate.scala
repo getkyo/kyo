@@ -98,15 +98,6 @@ object Isolate:
 
     private[kyo] object internal:
 
-        /** Detaches a computation at a fork boundary, handing it the diagnostics trace and the inherited context snapshot.
-          *
-          * The snapshot materializes at a boundary drive, the same late resolution a context read gets: bindings installed between
-          * construction and the boundary are visible. Noninheritable bindings are filtered before the fork sees them.
-          */
-        private[kyo] def runDetached[A, S](f: Context => A < S)(using Frame): A < S =
-            val snapshot = new Kyo.ContextSnapshot(summon[Frame]).asInstanceOf[Context < Any]
-            snapshot.map(context => f(context.inherit))
-
         /** No-op isolate that performs no state management.
           *
           * Used as a base case for isolate composition and when no isolation is needed.
