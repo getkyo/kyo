@@ -5,23 +5,16 @@ formats, per your direction: "reflect on the new Handler impls... they'd allow
 cheaper handling not even producing a continuation in some cases... I think we
 might add a Handlers param like Context. Or Context can contain Handlers."
 
-Status: exploration and experiments COMPLETE (E1, E2, E2b, E3). The design below
-is ready for your validation. Nothing gets implemented until you approve it.
+Status: exploration and experiments COMPLETE (E1, E2, E2b, E3). Nothing gets
+implemented until you approve it.
 
-THE REFERENCE ARTIFACT is the prototype at
-`kyo-kernel2/shared/src/main/scala/kyo/kernel2/proto` (reading order: Pending,
-Context, Handler, ArrowEffect, ContextEffect, Effect, Eval), validated against
-the OLD kernel on all 11 reference programs by
-`kyo-kernel2/jvm/src/test/scala/kyo/kernel2/proto/RotationProbeMain.scala`, both
-implementations in one process. The prototype carries the execution model's
-structure: the strict sync path (transformations on settled values run
-immediately, never entering the drive), continuations fused INTO nodes (a chain
-of transformations is one node; the drive bounces only at suspensions and
-region boundaries), the one threaded environment, and the three walks. What it
-deliberately does not carry, per its header: the inline + Arrow/Offset chain
-encoding (its fusion is function composition, the structure not the bytes),
-safepoints, and automatic lifting. Those live only in kernel2 proper and are
-untouched by this design.
+The prototype was removed at your direction (it survives only in git history at
+`f243819967`); it validated the semantics but misrepresented the execution
+model, and nothing of its shape carries forward. The reference for the
+mechanism is your minified kernel's rotation law, and the plan for carrying it
+into the REAL implementation, seam by seam, is section 6. The 11 reference
+programs and their old-kernel-validated results (section 4a) are independent of
+any prototype and stand as the acceptance suite.
 
 # 1. What the handler formats promise, and what today delivers
 
@@ -296,10 +289,11 @@ Conclusions, now settled empirically:
 
 ## E3: the executable model agrees with the old kernel on all 11 programs
 
-`RotationProbeMain.scala` implements the complete synthesis as a small
-interpreter (typed nodes, threaded array evidence, the three walks, all five
-formats) and runs each reference program against the OLD kernel in the same
-process. Every value below is a real execution result from both sides:
+The E3 harness (since deleted with the prototype; git history `f243819967`)
+implemented the synthesis as a small semantic model and ran each reference
+program against the OLD kernel in the same process. Every value below is a real
+execution result from both sides, and the programs themselves are old-kernel
+facts, independent of any model:
 
 | program | model | old kernel | what it pins |
 |---------|-------|------------|--------------|
@@ -334,65 +328,115 @@ Two things the model's construction itself established:
       KyoContinue); wrapping the applied value is not enough, and a post-resume
       throw would otherwise bypass its guard (p5 catches this).
 
-# 5. The environment structure: one environment, and Context lives in it
+# 5. The execution parameters: handlers threaded like the context, per your direction
 
-Your question was "a Handlers param like Context, or Context can contain
-Handlers". The model answers it: there is ONE threaded environment, and what we
-call Context today is the subset of its entries that may cross a fork boundary.
+Your direction, stated twice: propagate a collection of handlers the way the
+context is propagated, as an execution parameter, so that reaching a Resume
+suspension applies the clause locally. That is the plan:
 
-The model's `envRun` IS `ContextEffect.handle`: a binding is the degenerate
-Resume-format handler that answers with a constant (your gist's derivation of
-`Env` from `ArrowEffect`). Nothing else in the model distinguishes context from
-handling, and all 11 programs, including every context-scoping case, hold with
-that single mechanism. Concretely for kernel2:
+1. **A `Handlers` parameter rides beside `context`** through the drive and the
+   `run`/apply signatures, the same move the threading round made for the
+   context. Its representation is E2b's: one final array-backed class,
+   innermost-last scan, reference-first tag comparison (~2ns, depth-insensitive,
+   allocation-free lookups).
+2. **Region entry pushes, region exit restores.** An entry carries the handler
+   plus the (context, handlers) pair captured at entry, which is what a clause
+   runs under (the clause-scope rule, 2.5: a clause executes OUTSIDE its own
+   region, deep via the entry's self-extension).
+3. **A Resume suspension is applied locally**: resolve the tag in the handlers
+   parameter at the suspension's own dispatch site, run the clause under the
+   entry scope, feed its value to the suspension's untouched fused continuation.
+   No park, no capture, no search: the format's designed cost (E1: ~2ns and
+   ~1B per operation against today's ~30ns and 136B).
+4. **Rotation is what keeps the parameter derivable.** The parameter is a
+   drive-local running value; the durable encoding is the chain's region
+   structure (section 6). Parks cross region boundaries, and every re-entry
+   re-extends the parameter, exactly as the context re-arms today, so
+   multi-shot and out-of-band resumption stay sound with no re-search.
+5. **The fork boundary stays trivially correct**: the context parameter crosses
+   (minus Noninheritable), the handlers parameter never does; `handlePartial`
+   supplies the runtime's boundary handlers as the parameter's initial value,
+   its tag parameters disappearing into entries, the preempt slice loop
+   unchanged.
 
-1. **One entry type with two shapes**: `Binding(value)` for context effects and
-   `HandlerEntry(handler, entryEnv)` for arrow handlers (the entry-env knot from
-   2.5). One final array class per E2b, one monomorphic lookup site.
-2. **The fork boundary is a filter, not a second structure**: `inherit` keeps
-   bindings minus Noninheritable, and never a handler entry, by construction.
-   This generalizes today's Noninheritable machinery to "interpreters never
-   cross the boundary".
-3. **`handlePartial` receives the fiber's environment**: inherited bindings plus
-   the runtime's own handlers installed as boundary evidence. That makes an
-   evidence miss the unhandled-effect defect path only (E2b conclusion 2), and
-   answers old open question 4: the tag parameters disappear into entries. The
-   preempt slice loop at the boundary stays exactly as it is.
-4. **The public ContextEffect surface stays.** `handle(tag, value)`, `suspend`,
-   `runDetached` keep their signatures; their kernel implementation becomes a
-   region node installing a `Binding`. A read is one evidence lookup at the
-   execution site (~2ns by E2b, against the current Defer + map read measured at
-   contextRead100). The ContextBinding re-arming interceptor from the threading
-   round is subsumed and deleted.
+Folding the two parameters into one environment remains possible later (a
+binding is the degenerate constant handler, the gist's Env derivation); the
+separate parameter is your stated direction and keeps "values inherit,
+interpreters never do" structural.
 
-The alternative, a separate `Handlers` parameter next to `context`, was the
-listed option 1. The model surfaced no correctness need for the separation, and
-it costs a second parameter through every run signature and resume closure, two
-boundary structures, and the kernel-internal ContextEffect/ArrowEffect split.
-Listed for completeness; recommendation is the single environment.
+# 6. Incorporation into the real implementation, seam by seam
 
-# 6. What this deletes and what it leaves alone in kernel2
+The two known defects of the current implementation are both symptoms of the
+missing rotation representation, and the incorporation targets exactly their
+seams:
 
-1. Deleted: the prepend/Interceptor machinery and its pass-through cast, the
-   `evalOperation` erased search-and-act, `prefixArrow`, `hasHandler` (old open
-   question 3), the ContextBinding interceptor, and the `asInstanceOf` resumes
-   in dispatch.
-2. Reshaped: handlers become region nodes with the 2.4 dispatch; `Catching` and
-   `Observe` become nodes (which turns the clause-scope red test green and fixes
-   the Catching and Observe scope defects by construction); `handlePartial`
-   takes boundary evidence instead of tags.
-3. Left alone: `Offset` fused chains (old open question 2: they carry only plain
-   transforms once handlers are nodes); the preempt slice loop; the eval root.
-   A pure chain crosses no node and consults no evidence, so eagerMap5 and the
-   plain dispatch rows have no new cost on their path.
+- **prepend**: handlers install as searchable delimiters at the FRONT of the
+  chain (`Handler` extends `Arrow.Transform`, `install`, Handler.scala:20,34)
+  and re-install by prepending interceptors (`prepend` at Kyo.scala:60, 75, 99,
+  132). Front position cannot encode nesting, which is the confirmed scope
+  defect class (clause-scope red, Catching over-guard, Observe).
+- **context propagation**: `ContextBinding` interceptors sit mid-chain and never
+  execute for parked operations; scope information is gone by dispatch time.
+
+Four moves, in the real machinery:
+
+1. **Handlers stop being chain delimiters.** `Handler` leaves `Arrow.Transform`;
+   deleted outright: `hasHandler` (Arrow.scala:19), the chain search and its
+   prefix collection (`evalOperation`, `search`, `prefixArrow`,
+   Pending.scala:461-553), the erased `act` dispatch with its
+   `[C]`-instantiation casts, and `act`'s `guarded` prefix scan (the over-guard,
+   Pending.scala:483).
+2. **Installation appends a ROTATE step at the region's end**: the gist law as
+   data. `handle(t1, Continue(susp: t2, cont), f)` becomes
+   `Continue(susp, cont.andThen(Rotate(handler)))` when `t1 != t2`. `Rotate` is
+   one new `Arrow.Transform` kind, an ordinary chain element (Offset packing and
+   `optimize` untouched); applying it re-enters the region: it re-extends the
+   handlers parameter (the context, for bindings), drives the remainder, and
+   rotates again on the next foreign suspension. `ContextEffect.handle` and
+   `Effect.catching` install the same way, one mechanism for all three. Scope
+   is the step's position in the chain: outside-installed and inside-installed
+   now produce DIFFERENT chains, dissolving the byte-identical-chains defect at
+   the root.
+3. **Dispatch happens at the suspension site against the threaded handlers.**
+   `evalLoop`'s `Continue`/`Suspend` arms (Pending.scala:415-425) stop calling
+   `evalOperation`; they resolve the tag in the handlers parameter:
+   - Resume: the clause applies locally (section 5.3), the suspension's `cont`
+     untouched as the remainder;
+   - Stop: unwind to the owning rotate step, discarding without capture;
+   - Cont/First/Loop: capture: the delimited continuation is the chain segment
+     up to the owning rotate step, sliced from Arrows that already exist rather
+     than re-folded through `prefixArrow`; crossed rotate steps re-enter their
+     regions on resumption;
+   - miss: the boundary park to `handlePartial`, poll loop unchanged.
+4. **`prepend` and `Arrow.Interceptor` are deleted everywhere** (Suspend,
+   Continue, Bracket, Defer, ContextBinding). Re-establishment on resume is the
+   rotate steps already sitting in the chain: paid once at installation instead
+   of per park.
+
+Untouched, by construction: the `<` union and implicit lift, inline
+`map`/`flatMap`, Arrow/Transform/Offset/AndThen and `optimize`, `Suspend` as a
+bare leaf, `Continue`'s fused cont, `Bracket`/`Defer` semantics, Safepoint and
+the preempt slices, the eager settled path. A pure chain crosses no rotate step
+and consults no parameter: eagerMap5 and the plain dispatch rows keep their
+exact code path.
+
+The cost ledger, honestly: Resume operations drop from park-and-search to one
+lookup plus the clause (measured, E1/E2b); Cont-family capture remains
+O(prefix), as capture inherently is, but reuses existing chain segments;
+region entry pays one appended step and one parameter push (the new
+region-entry benchmark row); parks stop paying per-park prepend re-installs.
 
 # 7. Needs your ruling
 
-1. The synthesis itself: region nodes + one threaded environment + rotation on
-   park, per sections 2 and 5, with E1/E2b/E3 as evidence. Approving this opens
-   the implementation round.
-2. The environment recommendation in section 5 (one environment; Context as the
-   inheritable subset) versus the separate Handlers parameter.
-3. Both probe mains (`EvidenceProbeMain`, `RotationProbeMain`) are temporary and
-   get deleted when the implementation round lands; the E3 reference programs
-   become real suite tests at that point.
+1. This incorporation plan (sections 5 and 6). Approving it opens the
+   implementation round on the real kernel, with the 11 reference programs
+   (section 4a, old-kernel-validated) as the acceptance suite and the benchmark
+   board plus a region-entry row as the performance gate.
+2. Two small open choices inside it: the rotate step's name, and whether
+   `handle*` applies Resume/Stop clauses eagerly at installation when the
+   computation is already suspended on the matching tag (the old kernel's
+   handleLoop eagerness) or defers uniformly to the drive.
+
+`EvidenceProbeMain` (E1/E2b harness, real kernel2 machinery) remains the one
+temporary probe; it is deleted when the implementation round lands and the
+reference programs become suite tests.
