@@ -829,6 +829,47 @@ class ArrowEffectTest extends Test[Any]:
         assert(outer.eval == 12)
     }
 
+    "a nested ctl handler of the same tag wins over an outer resume handler across a park" in {
+        // innermost wins across resumptions: the ctl handler installed inside must answer
+        // the operation that surfaces after the foreign resumption, not the resume handler
+        // registered outside it
+        val program: Int < (Echo & Get) =
+            get.map(a => echo(a).map(b => b + 1))
+        val inner: Int < (Echo & Get) = ArrowEffect.handle(Tag[Echo], program)(
+            [C] => (in, cont) => cont(in + 10)
+        )
+        val outer: Int < Get = ArrowEffect.handleResume(Tag[Echo], inner.asInstanceOf[Int < (Echo & Get)])(
+            [C] => (in) => in + 100
+        )
+        val parked = ArrowEffect.handlePartial(Tag[Get], outer, Context.empty)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
+        val result = ArrowEffect.handleResume(Tag[Get], parked)(
+            [C] => (_) => 1
+        )
+        assert(result.eval == 12)
+    }
+
+    "a nested ctl handler of the same tag wins when the operation surfaces mid chain across a park" in {
+        // same discipline when the operation surfaces in the middle of a fused chain, where
+        // the remaining chain is applied to the pending suspension at the bubble point
+        val program: Int < (Echo & Get) =
+            get.map(a => echo(a)).map(b => b + 1)
+        val inner: Int < (Echo & Get) = ArrowEffect.handle(Tag[Echo], program)(
+            [C] => (in, cont) => cont(in + 10)
+        )
+        val outer: Int < Get = ArrowEffect.handleResume(Tag[Echo], inner.asInstanceOf[Int < (Echo & Get)])(
+            [C] => (in) => in + 100
+        )
+        val parked = ArrowEffect.handlePartial(Tag[Get], outer, Context.empty)(
+            [C] => (in, cont) => kyo.Maybe.Absent
+        )
+        val result = ArrowEffect.handleResume(Tag[Get], parked)(
+            [C] => (_) => 1
+        )
+        assert(result.eval == 12)
+    }
+
     "an unhandled effect parks and a later handler completes it" in {
         val program: Int < (Echo & Get) =
             echo(1).map(a => get.map(b => a + b))
