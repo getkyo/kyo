@@ -27,6 +27,7 @@ private[kyo] object NodeFs extends js.Object:
     def mkdirSync(path: String, options: js.Dynamic): Unit                                     = js.native
     def readdirSync(path: String): js.Array[String]                                            = js.native
     def renameSync(oldPath: String, newPath: String): Unit                                     = js.native
+    def linkSync(existingPath: String, newPath: String): Unit                                  = js.native
     def copyFileSync(src: String, dest: String, flags: Int): Unit                              = js.native
     def unlinkSync(path: String): Unit                                                         = js.native
     def rmSync(path: String, options: js.Dynamic): Unit                                        = js.native
@@ -83,6 +84,7 @@ private[kyo] object NodePath extends js.Object:
     def resolve(paths: String*): String   = js.native
     def isAbsolute(path: String): Boolean = js.native
     def join(paths: String*): String      = js.native
+    def basename(path: String): String    = js.native
     def dirname(path: String): String     = js.native
     def sep: String                       = js.native
     def delimiter: String                 = js.native
@@ -93,6 +95,7 @@ end NodePath
 private[kyo] object NodeOs extends js.Object:
     def tmpdir(): String   = js.native
     def homedir(): String  = js.native
+    def hostname(): String = js.native
     def platform(): String = js.native
 end NodeOs
 
@@ -166,7 +169,331 @@ private[kyo] object NodeError:
             case "EINVAL"           => FileInvalidPathException(path.toString, operation)
             case _                  => FileIOException(path, operation, e)
 
+    /** Distinguishes the O_EXCL lockfile contention code (`EEXIST`) from every other filesystem
+      * error `Path.Unsafe.lock` can raise.
+      */
+    def translateLock(path: Path, e: js.JavaScriptException)(using Frame): FileLockException =
+        codeOf(e) match
+            case "EEXIST" => FileLockUnavailableException(path)
+            case "EINVAL" => FileInvalidPathException(path.toString, FileSystemOperation.Lock)
+            case _        => FileIOException(path, FileSystemOperation.Lock, e)
+
 end NodeError
+
+// --- Node advisory lock protocol ---
+
+private[kyo] object NodePathLock:
+
+    final private[kyo] case class Owner(host: String, pid: Int, token: String) derives CanEqual:
+        def render: String = s"$host\n$pid\n$token"
+
+    private object Owner:
+        def parse(value: String): Maybe[Owner] =
+            value.split("\n", -1).toSeq match
+                case Seq(host, pid, token) if host.nonEmpty && token.nonEmpty =>
+                    pid.toIntOption.fold[Maybe[Owner]](Absent)(value => Present(Owner(host, value, token)))
+                case _ => Absent
+    end Owner
+
+    private def currentOwner(): Owner =
+        val bytes = NodeCrypto.randomBytes(16)
+        val token = bytes.applyDynamic("toString")("hex").asInstanceOf[String]
+        Owner(
+            NodeOs.hostname(),
+            js.Dynamic.global.process.selectDynamic("pid").asInstanceOf[Int],
+            token
+        )
+    end currentOwner
+
+    private def exists(path: String): Boolean = NodeFs.existsSync(path)
+
+    private def ownerAt(path: String): Maybe[Owner] =
+        try Owner.parse(NodeFs.readFileSync(path, "utf8"))
+        catch case _: js.JavaScriptException => Absent
+
+    private def processIsDead(owner: Owner): Boolean =
+        if owner.host != NodeOs.hostname() then false
+        else
+            try
+                discard(js.Dynamic.global.process.applyDynamic("kill")(owner.pid, 0))
+                false
+            catch
+                case e: js.JavaScriptException => NodeError.codeOf(e) == "ESRCH"
+
+    private def encodeHost(host: String): String =
+        host.toCharArray.iterator.map { char =>
+            val hex = Integer.toHexString(char.toInt)
+            "0" * (4 - hex.length) + hex
+        }.mkString
+
+    private def decodeHost(encoded: String): Maybe[String] =
+        if encoded.isEmpty || encoded.length % 4 != 0 then Absent
+        else
+            try Present(encoded.grouped(4).map(value => Integer.parseInt(value, 16).toChar).mkString)
+            catch case _: NumberFormatException => Absent
+
+    private[kyo] def publicationPath(path: String, host: String, pid: Int, token: String): String =
+        path + ".publish." + encodeHost(host) + "." + pid + "." + token
+
+    private def publicationPath(path: String, owner: Owner): String =
+        publicationPath(path, owner.host, owner.pid, owner.token)
+
+    private def publicationOwner(path: String): Maybe[Owner] =
+        val marker = ".publish."
+        val index  = path.lastIndexOf(marker)
+        if index < 0 then Absent
+        else
+            path.substring(index + marker.length).split("\\.", -1).toSeq match
+                case Seq(host, pid, token) if token.nonEmpty =>
+                    decodeHost(host).flatMap(decoded =>
+                        pid.toIntOption.filter(_ > 0).fold[Maybe[Owner]](Absent)(value => Present(Owner(decoded, value, token)))
+                    )
+                case _ => Absent
+        end if
+    end publicationOwner
+
+    private[kyo] def reclaimIfProvenDead(path: String, beforeMove: () => Unit = () => ()): Boolean =
+        ownerAt(path) match
+            case Present(expected) if processIsDead(expected) =>
+                val quarantine = path + ".reclaim." + currentOwner().token
+                try
+                    beforeMove()
+                    NodeFs.renameSync(path, quarantine)
+                    ownerAt(quarantine) match
+                        case Present(actual) if actual == expected && processIsDead(actual) =>
+                            NodeFs.unlinkSync(quarantine)
+                            true
+                        case _ => false
+                    end match
+                catch case _: js.JavaScriptException => false
+                end try
+            case _ => false
+
+    private def withCleanup[A](
+        target: Path,
+        primary: Result[FileLockException, A],
+        cleanup: Result[FileLockException, Unit]
+    )(using Frame): Result[FileLockException, A] =
+        cleanup match
+            case Result.Success(_) => primary
+            case Result.Failure(cleanup) =>
+                primary match
+                    case Result.Success(_)       => Result.fail(cleanup)
+                    case Result.Failure(primary) => Result.fail(FileLockCleanupException(target, primary, cleanup))
+                    case Result.Panic(primary) =>
+                        primary.addSuppressed(cleanup)
+                        Result.panic(primary)
+            case Result.Panic(cleanup) =>
+                primary match
+                    case Result.Success(_) => Result.panic(cleanup)
+                    case Result.Failure(primary) =>
+                        cleanup.addSuppressed(primary)
+                        Result.panic(cleanup)
+                    case Result.Panic(primary) =>
+                        primary.addSuppressed(cleanup)
+                        Result.panic(primary)
+    end withCleanup
+
+    private def publications(path: String): Seq[String] =
+        val parent = NodePath.dirname(path)
+        val prefix = NodePath.basename(path) + ".publish."
+        NodeFs.readdirSync(parent).toSeq
+            .filter(_.startsWith(prefix))
+            .map(NodePath.join(parent, _))
+    end publications
+
+    private def reclaimPublicationIfProvenDead(path: String): Boolean =
+        publicationOwner(path) match
+            case Present(owner) if processIsDead(owner) =>
+                try
+                    NodeFs.unlinkSync(path)
+                    true
+                catch case _: js.JavaScriptException => false
+            case _ => false
+
+    private def publicationBlocked(path: String): Boolean =
+        publications(path).foreach(reclaimPublicationIfProvenDead)
+        publications(path).exists(exists)
+
+    private def claimPublications(base: String): Seq[String] =
+        val parent = NodePath.dirname(base)
+        val prefix = NodePath.basename(base) + "."
+        NodeFs.readdirSync(parent).toSeq
+            .filter(name => name.startsWith(prefix) && name.contains(".publish."))
+            .map(NodePath.join(parent, _))
+    end claimPublications
+
+    private def create(
+        target: Path,
+        path: String,
+        owner: Owner,
+        beforeCleanup: String => Unit
+    )(using Frame): Result[FileLockException, Boolean] =
+        val temporary      = publicationPath(path, owner)
+        var temporaryOwned = false
+        val published: Result[FileLockException, Boolean] =
+            try
+                if publicationBlocked(path) then Result.succeed(false)
+                else
+                    NodeFs.writeFileSync(temporary, owner.render, js.Dynamic.literal(flag = "wx"))
+                    temporaryOwned = true
+                    NodeFs.linkSync(temporary, path)
+                    Result.succeed(true)
+            catch
+                case e: js.JavaScriptException if NodeError.codeOf(e) == "EEXIST" => Result.succeed(false)
+                case e: js.JavaScriptException                                    => Result.fail(NodeError.translateLock(target, e))
+                case e: Throwable                                                 => Result.panic(e)
+        val cleanup =
+            if !temporaryOwned then Result.unit
+            else
+                try
+                    beforeCleanup(temporary)
+                    NodeFs.unlinkSync(temporary)
+                    Result.unit
+                catch
+                    case e: js.JavaScriptException if NodeError.codeOf(e) == "ENOENT" => Result.unit
+                    case e: js.JavaScriptException                                    => Result.fail(NodeError.translateLock(target, e))
+                    case e: Throwable                                                 => Result.panic(e)
+        cleanup match
+            case Result.Success(_) => published
+            case cleanupFailure =>
+                published match
+                    case Result.Success(true) =>
+                        withCleanup(target, cleanupFailure, releaseOwned(target, path, owner)) match
+                            case Result.Success(_)     => Result.fail(FileLockOwnershipLostException(target))
+                            case Result.Failure(error) => Result.fail(error)
+                            case Result.Panic(error)   => Result.panic(error)
+                    case _ => withCleanup(target, published, cleanup)
+        end match
+    end create
+
+    private def acquireGate(target: Path, gate: String, owner: Owner, beforeCleanup: String => Unit)(using
+        Frame
+    ): Result[FileLockException, Boolean] =
+        try
+            val parent = NodePath.dirname(gate)
+            val name   = NodePath.basename(gate)
+            def gates = NodeFs.readdirSync(parent).toSeq
+                .filter(value => value == name || value.startsWith(name + ".reclaim."))
+                .map(NodePath.join(parent, _))
+            gates.foreach(reclaimIfProvenDead(_))
+            if gates.exists(exists) then Result.succeed(false) else create(target, gate, owner, beforeCleanup)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateLock(target, e))
+            case e: Throwable              => Result.panic(e)
+    end acquireGate
+
+    private def releaseOwned(target: Path, path: String, owner: Owner)(using Frame): Result[FileLockException, Unit] =
+        try
+            Owner.parse(NodeFs.readFileSync(path, "utf8")) match
+                case Present(found) if found == owner =>
+                    NodeFs.unlinkSync(path)
+                    Result.unit
+                case _ => Result.fail(FileLockOwnershipLostException(target))
+        catch
+            case e: js.JavaScriptException if NodeError.codeOf(e) == "ENOENT" =>
+                Result.fail(FileLockOwnershipLostException(target))
+            case e: js.JavaScriptException => Result.fail(NodeError.translateLock(target, e))
+            case e: Throwable              => Result.panic(e)
+        end try
+    end releaseOwned
+
+    private def conflictingClaims(base: String, mode: Path.LockMode): Seq[String] =
+        val parent          = NodePath.dirname(base)
+        val name            = NodePath.basename(base)
+        val exclusiveName   = name + ".exclusive"
+        val sharedNameStart = name + ".shared."
+        val names           = NodeFs.readdirSync(parent).toSeq
+        val exclusiveClaims = names.filter(value =>
+            value == exclusiveName ||
+                value.startsWith(exclusiveName + ".reclaim.") ||
+                value.startsWith(exclusiveName + ".publish.")
+        )
+            .map(NodePath.join(parent, _))
+        val shared =
+            if mode == Path.LockMode.Shared then Seq.empty
+            else
+                names.filter(value => value.startsWith(sharedNameStart))
+                    .map(NodePath.join(parent, _))
+        exclusiveClaims ++ shared
+    end conflictingClaims
+
+    def acquire(
+        target: Path,
+        pathStr: String,
+        mode: Path.LockMode,
+        beforeGateRelease: (String, String) => Unit = (_, _) => (),
+        beforePublishCleanup: String => Unit = _ => ()
+    )(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
+        val base                                 = pathStr + ".kyo-lock"
+        val gate                                 = base + ".gate"
+        val gateOwner                            = currentOwner()
+        var gateAcquired                         = false
+        var createdClaim: Maybe[(String, Owner)] = Absent
+        val acquired: Result[FileLockException, Path.RawLock] =
+            try
+                acquireGate(target, gate, gateOwner, beforePublishCleanup) match
+                    case Result.Failure(error) => Result.fail(error)
+                    case Result.Panic(error)   => Result.panic(error)
+                    case Result.Success(false) => Result.fail(FileLockUnavailableException(target))
+                    case Result.Success(true) =>
+                        gateAcquired = true
+                        claimPublications(base).foreach(reclaimPublicationIfProvenDead)
+                        val result =
+                            if claimPublications(base).exists(exists) then
+                                Result.fail(FileLockUnavailableException(target))
+                            else
+                                val conflicts = conflictingClaims(base, mode).filter(exists)
+                                conflicts.foreach(reclaimIfProvenDead(_))
+                                if conflictingClaims(base, mode).exists(exists) then
+                                    Result.fail(FileLockUnavailableException(target))
+                                else
+                                    val owner = currentOwner()
+                                    val claim = mode match
+                                        case Path.LockMode.Exclusive => base + ".exclusive"
+                                        case Path.LockMode.Shared    => base + ".shared." + owner.token
+                                    create(target, claim, owner, beforePublishCleanup) match
+                                        case Result.Success(true) =>
+                                            createdClaim = Present((claim, owner))
+                                            Result.succeed(new NodeRawLock(target, claim, owner, mode))
+                                        case Result.Success(false) => Result.fail(FileLockUnavailableException(target))
+                                        case Result.Failure(error) => Result.fail(error)
+                                        case Result.Panic(error)   => Result.panic(error)
+                                    end match
+                                end if
+                        end result
+                        beforeGateRelease(gate, createdClaim.fold("")(_._1))
+                        result
+                end match
+            catch
+                case e: js.JavaScriptException => Result.fail(NodeError.translateLock(target, e))
+                case e: Throwable              => Result.panic(e)
+            end try
+        end acquired
+        if !gateAcquired then acquired
+        else
+            releaseOwned(target, gate, gateOwner) match
+                case Result.Success(_) => acquired
+                case Result.Failure(error) =>
+                    val gateFailure: Result[FileLockException, Path.RawLock] = Result.fail(error)
+                    createdClaim match
+                        case Present((claim, owner)) => withCleanup(target, gateFailure, releaseOwned(target, claim, owner))
+                        case Absent                  => gateFailure
+                case Result.Panic(error) =>
+                    val gateFailure: Result[FileLockException, Path.RawLock] = Result.panic(error)
+                    createdClaim match
+                        case Present((claim, owner)) => withCleanup(target, gateFailure, releaseOwned(target, claim, owner))
+                        case Absent                  => gateFailure
+            end match
+        end if
+    end acquire
+
+    private[kyo] def owns(claim: String, owner: Owner): Boolean = ownerAt(claim).exists(_ == owner)
+
+    private[kyo] def release(target: Path, claim: String, owner: Owner)(using Frame): Result[FileLockException, Unit] =
+        releaseOwned(target, claim, owner)
+
+end NodePathLock
 
 // --- NodePathUnsafe ---
 
@@ -567,6 +894,14 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel] =
         catchChannelWrite(openRawChannel(Path.RawChannelAccess.ReadWrite(open)))
 
+    // --- Advisory lock ---
+
+    // Node has no OS advisory lock primitive. NodePathLock uses owner-tagged O_EXCL control files
+    // for portable shared and exclusive claims, and only reclaims claims proven to belong to a dead
+    // process on the local host.
+    def lock(mode: Path.LockMode)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
+        NodePathLock.acquire(safe, pathStr, mode)
+
     // --- Private helpers ---
 
     /** Splits content by newlines, dropping a single trailing empty element if the content ends with '\n'. This matches the behaviour of
@@ -886,6 +1221,29 @@ final private[kyo] class NodeRawChannel(fd: Int, path: Path) extends Path.RawCha
         if closed.compareAndSet(false, true) then NodeFs.closeSync(fd)
 
 end NodeRawChannel
+
+// --- NodeRawLock ---
+
+/** Concrete advisory lock backed by an owner-tagged O_EXCL control file. Shared handles use
+  * independent claims, while exclusive handles use the path's single exclusive claim.
+  */
+final private[kyo] class NodeRawLock(
+    path: Path,
+    claim: String,
+    owner: NodePathLock.Owner,
+    mode: Path.LockMode
+) extends Path.RawLock:
+    def isExclusive: Boolean = mode == Path.LockMode.Exclusive
+
+    def check()(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
+        if NodePathLock.owns(claim, owner) then Result.unit
+        else Result.fail(FileLockOwnershipLostException(path))
+
+    // Unsafe: removes only this handle's owner-tagged claim. Missing and mismatched claims report
+    // ownership loss; filesystem failures retain their typed lock error.
+    def release()(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
+        NodePathLock.release(path, claim, owner)
+end NodeRawLock
 
 // --- Byte / Uint8Array conversion helpers ---
 
