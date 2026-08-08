@@ -62,6 +62,8 @@ object Kyo:
         def tag: Tag[E]
         def frame: Frame
 
+        final private[kyo] def erasedTag: Tag[Any] = tag.erased
+
         final override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
 
     end Suspend
@@ -72,6 +74,8 @@ object Kyo:
         def tag: Tag[E]
         def default: Maybe[() => V]
         def frame: Frame
+
+        final private[kyo] def erasedTag: Tag[Any] = tag.erased
 
         final override def toString = "ContextRead(" + tag.show + ", " + frame.position.show + ")"
 

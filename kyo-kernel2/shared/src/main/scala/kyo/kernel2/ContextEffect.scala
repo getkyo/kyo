@@ -94,8 +94,7 @@ object ContextEffect:
         val transform: Maybe[Any] => Any =
             case Maybe.Present(outer) => ifDefined(outer.asInstanceOf[V])
             case Maybe.Absent         => ifUndefined
-        val h = new Handler.Context(effectTag.asInstanceOf[Tag[Any]], transform, frame)
-        h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]).asInstanceOf[A < S]
+        new Handler.ContextBinding[A](effectTag.erased, transform, frame).install[E, S](v)
     end handle
 
 end ContextEffect

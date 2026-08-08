@@ -165,16 +165,12 @@ class PendingTest extends Test[Any]:
             assert(x.evalNow == Maybe.empty)
         }
 
-        // Safepoint.eval keeps the enclosing fiber's preemption interceptor from
-        // deferring TestEffect.run's inline handling, which would make evalNow
-        // observe Absent.
+        // handler installation is pure, so the handled inner computation is still
+        // suspended until evaluated; the nested lift itself is a completed outer value
         "accepts nested computations" in {
             Kyo.lift(TestEffect(1)).evalNow match
-                case Absent => fail()
-                case Present(v) =>
-                    TestEffect.run(v).evalNow match
-                        case Absent     => fail()
-                        case Present(v) => assert(v == 2)
+                case Absent     => fail()
+                case Present(v) => assert(TestEffect.run(v).eval == 2)
             end match
         }
     }
@@ -594,7 +590,8 @@ class PendingTest extends Test[Any]:
         assert(resolve(ask.map(_ + 1), 41) == 42)
     }
 
-    "handling evaluates eagerly" in {
+    // handler installation is pure: nothing evaluates until a drive reaches the region
+    "handling installs without evaluating" in {
         var ran = false
         val handled = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
             [C] =>
@@ -602,8 +599,9 @@ class PendingTest extends Test[Any]:
                     ran = true
                     cont(1)
         )
-        assert(ran)
+        assert(!ran)
         assert(handled.eval == 2)
+        assert(ran)
     }
 
     "handler parks and the continuation resumes" in {
@@ -748,11 +746,12 @@ class PendingTest extends Test[Any]:
         val program: Int < Ask = ask.map { _ =>
             (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
         }
+        // installation is pure, so the throw happens when the drive evaluates the region
         val ex =
             try
                 val _ = ArrowEffect.handle(Tag[Ask], program)(
                     [C] => (input, cont) => cont(1)
-                )
+                ).eval
                 null
             catch case e: RuntimeException => e
         assert(ex.getMessage == "boom")

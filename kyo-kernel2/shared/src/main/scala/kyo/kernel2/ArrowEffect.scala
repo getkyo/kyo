@@ -61,8 +61,8 @@ object ArrowEffect:
       * invoke the continuation once to resume, not at all to abort, or several times. The handler is deep: effects of `E` in the clause's
       * result, including through resumed continuations, dispatch back to this handler.
       *
-      * Handling evaluates immediately: the region runs as far as it can, and the result is either its value or the computation parked on
-      * an effect this handler does not cover, with the handler traveling in it.
+      * Handling is pure installation: the delimiter is appended to the computation and nothing evaluates until a drive (eval,
+      * handlePartial) reaches the region, where the handler travels with the computation across parks.
       */
     def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         effectTag: Tag[E],
@@ -70,14 +70,7 @@ object ArrowEffect:
     )(
         handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
-        val clause: Handler.Clause =
-            [C] =>
-                (input, cont) =>
-                    handle(
-                        input.asInstanceOf[I[C]],
-                        o => cont(Kyo.lift(o)).asInstanceOf[A < (E & S & S2)]
-                    ).asInstanceOf[Any < Any]
-        install(v, new Handler.Cont(effectTag.asInstanceOf[Tag[Any]], clause, frame))
+        new Handler.Cont[I, O, E, A, S, S2](effectTag, handle, frame).install[E, S](v)
     end handle
 
     /** Handles `E` by answering each operation in place (the fun format).
@@ -91,7 +84,7 @@ object ArrowEffect:
     )(
         clause: [C] => I[C] => O[C] < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
-        install(v, new Handler.Resume(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.InputClause], frame))
+        new Handler.Resume[I, O, E, A, S, S2](effectTag, clause, frame).install[E, S](v)
 
     /** Handles `E` by ending the region at each operation (the final ctl format).
       *
@@ -104,7 +97,7 @@ object ArrowEffect:
     )(
         clause: [C] => I[C] => A < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
-        install(v, new Handler.Stop(effectTag.asInstanceOf[Tag[Any]], clause.asInstanceOf[Handler.InputClause], frame))
+        new Handler.Stop[I, O, E, A, S, S2](effectTag, clause, frame).install[E, S](v)
 
     /** Handles only the first operation of `E`, shallowly.
       *
@@ -119,22 +112,7 @@ object ArrowEffect:
         handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
         done: A => B < S2
     )(using frame: Frame): B < (S & S2) =
-        val clause: Handler.Clause =
-            [C] =>
-                (input, cont) =>
-                    handle(
-                        input.asInstanceOf[I[C]],
-                        o => cont(Kyo.lift(o)).asInstanceOf[A < (E & S)]
-                    ).asInstanceOf[Any < Any]
-        install(
-            v,
-            new Handler.First(
-                effectTag.asInstanceOf[Tag[Any]],
-                clause,
-                done.asInstanceOf[Any => Any < Any],
-                frame
-            )
-        )
+        new Handler.First[I, O, E, A, B, S, S2](effectTag, handle, done, frame).install[E, S](v)
     end handleFirst
 
     /** Handles `E` without handler state.
@@ -185,24 +163,7 @@ object ArrowEffect:
         handle: [C] => (I[C], State, O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), B] < S2,
         done: (State, A) => B < (S & S2)
     )(using frame: Frame): B < (S & S2) =
-        val clause: Handler.LoopClause =
-            [C] =>
-                (state, input, cont) =>
-                    handle(
-                        input.asInstanceOf[I[C]],
-                        state.asInstanceOf[State],
-                        o => cont(Kyo.lift(o)).asInstanceOf[A < (E & S)]
-                    ).asInstanceOf[Any < Any]
-        install(
-            v,
-            new Handler.Loop(
-                effectTag.asInstanceOf[Tag[Any]],
-                state,
-                clause,
-                done.asInstanceOf[(Any, Any) => Any < Any],
-                frame
-            )
-        )
+        new Handler.Loop[I, O, E, A, B, S, S2, State](effectTag, state, handle, done, frame).install[E, S](v)
     end handleLoop
 
     /** Inspects the head of a computation without running it: if the first pending suspension is an operation of `E`, hands its input to
@@ -268,11 +229,11 @@ object ArrowEffect:
                 if n == 0 then
                     if preempt() then next else slice(next, stride - 1)
                 else slice(next, n - 1)
-            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], preempt, stride, boundary = true).asInstanceOf[A < (E & S)]
+            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], preempt, stride).asInstanceOf[A < (E & S)]
             r match
                 case k: Kyo.Continue[?, ?, ?] @unchecked =>
                     k.suspend match
-                        case s: Kyo.Suspend[?, ?, ?, c] if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
+                        case s: Kyo.Suspend[?, ?, ?, c] if effectTag.erased <:< s.erasedTag =>
                             // the tag match justifies reading the operation at this handler's types
                             clause[c](
                                 s.input.asInstanceOf[I[c]],
@@ -281,7 +242,7 @@ object ArrowEffect:
                                 case Maybe.Present(next) => continue(next)
                                 case Maybe.Absent        => r
                         case _ => r
-                case s: Kyo.Suspend[?, ?, ?, c] @unchecked if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
+                case s: Kyo.Suspend[?, ?, ?, c] @unchecked if effectTag.erased <:< s.erasedTag =>
                     // a bare operation is the whole remaining computation, so the identity
                     // continuation is its continuation to this boundary
                     clause[c](s.input.asInstanceOf[I[c]], Arrow[O[c]].asInstanceOf[Arrow[O[c], A, E & S]]) match
@@ -292,17 +253,5 @@ object ArrowEffect:
         end slice
         slice(v, 0)
     end handlePartial
-
-    /** Drives a freshly installed handler's region immediately: handling evaluates as far as it can, like every other strict position in
-      * the kernel. Preemption for these drives is a later iteration.
-      */
-    // TODO WHAT THE FLYING FUCK IS THIS!?!?!? the kernel must not have evals like that. Remove this, it's unnaceptable
-    private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
-        `<`.evalLoop(
-            h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]),
-            `<`.neverPreempt,
-            1,
-            boundary = false
-        ).asInstanceOf[B < S2]
 
 end ArrowEffect

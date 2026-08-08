@@ -12,6 +12,7 @@ import language.implicitConversions
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
+import scala.util.control.NonFatal
 
 opaque type <[+A, -S] = A | Kyo[A, S] | Kyo.Nested[A]
 
@@ -256,7 +257,7 @@ object `<` extends Implicits:
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                evalLoop(self.asInstanceOf[Any < Any], neverPreempt, 1, boundary = true) match
+                evalLoop(self.asInstanceOf[Any < Any], neverPreempt, 1) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
                     case v                  => Kyo.unnest(v).asInstanceOf[A]
             else Kyo.unnest(self).asInstanceOf[A]
@@ -264,7 +265,7 @@ object `<` extends Implicits:
         /** Evaluates within a preemption budget, returning the remaining computation. */
         // TODO I don't think the period is used anymore?
         def eval(preempt: () => Boolean, period: Int): A < Any =
-            evalLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), boundary = true).asInstanceOf[A < Any]
+            evalLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period)).asInstanceOf[A < Any]
 
     end extension
 
@@ -351,8 +352,7 @@ object `<` extends Implicits:
     private[kyo] def evalLoop(
         v0: Any < Any,
         preempt: () => Boolean,
-        stride: Int, // TODO unused?
-        boundary: Boolean
+        stride: Int
     ): Any < Any =
         def recur(v: Any < Any, depth: Int): Any < Any =
             @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
@@ -390,7 +390,7 @@ object `<` extends Implicits:
                             else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
                         else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
                     case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
-                        evalSuspension(c, boundary) match
+                        evalSuspension(c) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -399,9 +399,9 @@ object `<` extends Implicits:
                             case _ => curr
                     case s: Kyo.Suspension[?, ?] @unchecked if depth == 0 =>
                         // a bare suspension has no chain yet: dispatch it as a continue with the
-                        // empty arrow so boundary clauses and context defaults still apply
+                        // empty arrow so context defaults still apply
                         val c = new Kyo.Continue(s.asInstanceOf[Kyo.Suspension[Any, Any]], Arrow[Any])
-                        evalSuspension(c, boundary) match
+                        evalSuspension(c) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -434,25 +434,24 @@ object `<` extends Implicits:
       * delimiter) only because the capturing formats need it. The casts below are justified by the tag match: a delimiter constructed for
       * `E` matched a suspension of `E`, so the clause's erased input and continuation have the types the public API established.
       */
-    /** Context reads and their defaults resolve only at boundary drives (eval, handlePartial): an intermediate handle drive parks
-      * them, so bindings installed later still compose, matching the current kernel's late resolution.
+    /** Context reads and their defaults resolve at the drives (eval, handlePartial). Installation never drives, so a computation
+      * only reaches a drive as a whole: bindings installed after composition are in the chain by then, preserving the current
+      * kernel's late resolution.
       */
-    private def evalSuspension(c: Kyo.Continue[?, ?, ?], boundary: Boolean): Maybe[Any < Any] =
+    private def evalSuspension(c: Kyo.Continue[?, ?, ?]): Maybe[Any < Any] =
         val chain = c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize
         c.suspend match
             case s: Kyo.Suspend[?, ?, ?, ?] =>
-                evalOperation(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
-            case r: Kyo.ContextRead[?, ?] if boundary =>
-                resolveContext(r.tag.asInstanceOf[Tag[Any]], chain) match
+                evalOperation(s.erasedTag, s.input, chain)
+            case r: Kyo.ContextRead[?, ?] =>
+                resolveContext(r.erasedTag, chain) match
                     case Maybe.Present(value) => Maybe(chain(Kyo.lift(value)))
                     case Maybe.Absent =>
                         r.default match
                             case Maybe.Present(d) => Maybe(chain(Kyo.lift(d())))
                             case Maybe.Absent     => Maybe.Absent
-            case s: Kyo.ContextSnapshot if boundary =>
+            case s: Kyo.ContextSnapshot =>
                 Maybe(chain(Kyo.lift(snapshotContext(chain))))
-            case _ =>
-                Maybe.Absent
         end match
     end evalSuspension
 
@@ -465,12 +464,12 @@ object `<` extends Implicits:
         @tailrec def collect(
             cur: Arrow[Any, Any, Any],
             pending: List[Arrow[Any, Any, Any]],
-            acc: List[Handler.Context]
-        ): List[Handler.Context] =
+            acc: List[Handler.ContextBinding[?]]
+        ): List[Handler.ContextBinding[?]] =
             cur match
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                     o.head match
-                        case h: Handler.Context =>
+                        case h: Handler.ContextBinding[?] =>
                             collect(o.next, pending, h :: acc)
                         case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked if inner.hasHandler =>
                             collect(inner, o.next :: pending, acc)
@@ -481,8 +480,8 @@ object `<` extends Implicits:
                 case t: Arrow.Transform[?, ?, ?] =>
                     val acc2 =
                         t match
-                            case h: Handler.Context => h :: acc
-                            case _                  => acc
+                            case h: Handler.ContextBinding[?] => h :: acc
+                            case _                            => acc
                     pending match
                         case p :: ps => collect(p, ps, acc2)
                         case Nil     => acc2
@@ -514,27 +513,55 @@ object `<` extends Implicits:
         def prefixArrow(prefixRev: List[Arrow.Transform[Any, Any, Any]]): Arrow[Any, Any, Any] =
             prefixRev.foldLeft(Arrow[Any])((acc, t) => new Arrow.Offset[Any, Any, Any, Any](t, acc))
 
+        // The casts below are the erased boundary the typed handler surface funnels into. Each is justified by the tag match that
+        // selected the delimiter: the suspension's operation is of the delimiter's effect, so its input has the clause's input type,
+        // the captured prefix is the continuation from the operation's output to the delimiter's region type, and the results re-enter
+        // the drive's erased currency.
         def act(
-            h: Handler.Operation,
+            h: Handler.ArrowHandler[?, ?, ?, ?, ?, ?],
             rest: Arrow[Any, Any, Any],
             pending: List[Arrow[Any, Any, Any]],
             prefixRev: List[Arrow.Transform[Any, Any, Any]]
         ): Maybe[Any < Any] =
             val fullRest = compose(rest, pending)
+            // A clause that throws is a failed step of the computation: the exception unwinds to the innermost Catching
+            // interceptor enclosing the operation (the prefix element nearest the delimiter), matching how a throw inside an
+            // evaluated step is intercepted. With no interceptor in scope it propagates to the drive.
+            def guarded(compute: => Any < Any): Maybe[Any < Any] =
+                try Maybe(compute)
+                catch
+                    case ex if NonFatal(ex) =>
+                        EffectTrace.attach(ex, "handle", h.frame)
+                        @tailrec def unwind(rev: List[Arrow.Transform[Any, Any, Any]]): Maybe[Any < Any] =
+                            rev match
+                                case (c: Effect.Catching) :: _ => Maybe(c.handler(ex))
+                                case _ :: tail                 => unwind(tail)
+                                case Nil                       => throw ex
+                        unwind(prefixRev)
+            end guarded
             h match
-                case h: Handler.Resume =>
-                    Maybe(chain(h.clause[Any](input)))
-                case h: Handler.Stop =>
-                    Maybe(new Arrow.Offset[Any, Any, Any, Any](h, fullRest)(h.clause[Any](input)))
-                case h: Handler.Cont =>
-                    val k = prefixArrow(prefixRev)
-                    Maybe(new Arrow.Offset[Any, Any, Any, Any](h, fullRest)(h.clause[Any](input, k)))
-                case h: Handler.First =>
-                    val k = prefixArrow(prefixRev)
-                    Maybe(fullRest(h.clause[Any](input, k)))
-                case h: Handler.Loop =>
-                    val k = prefixArrow(prefixRev)
-                    Maybe(Arrow.map(outcomeStep(h))(fullRest)(h.clause[Any](h.state, input, k)))
+                case h: Handler.Resume[i, o, e, a, s, s2] =>
+                    guarded(chain(h.clause[Any](input.asInstanceOf[i[Any]])).asInstanceOf[Any < Any])
+                case h: Handler.Stop[i, o, e, a, s, s2] =>
+                    val reinstalled = new Arrow.Offset[Any, Any, Any, Any](h.asInstanceOf[Arrow.Transform[Any, Any, Any]], fullRest)
+                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]]).asInstanceOf[Any < Any]))
+                case h: Handler.Cont[i, o, e, a, s, s2] =>
+                    val k           = prefixArrow(prefixRev)
+                    val resume      = (x: o[Any]) => k(Kyo.lift(x)).asInstanceOf[a < (e & s & s2)]
+                    val reinstalled = new Arrow.Offset[Any, Any, Any, Any](h.asInstanceOf[Arrow.Transform[Any, Any, Any]], fullRest)
+                    guarded(reinstalled(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any]))
+                case h: Handler.First[i, o, e, a, b, s, s2] =>
+                    val k      = prefixArrow(prefixRev)
+                    val resume = (x: o[Any]) => k(Kyo.lift(x)).asInstanceOf[a < (e & s)]
+                    guarded(fullRest(h.clause[Any](input.asInstanceOf[i[Any]], resume).asInstanceOf[Any < Any]))
+                case h: Handler.Loop[i, o, e, a, b, s, s2, st] =>
+                    val k      = prefixArrow(prefixRev)
+                    val resume = (x: o[Any]) => k(Kyo.lift(x)).asInstanceOf[a < (e & s)]
+                    guarded(Arrow.map(outcomeStep(h))(fullRest)(h.clause[Any](
+                        input.asInstanceOf[i[Any]],
+                        h.state,
+                        resume
+                    ).asInstanceOf[Any < Any]))
             end match
         end act
 
@@ -546,7 +573,7 @@ object `<` extends Implicits:
             cur match
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                     o.head match
-                        case h: Handler.Operation if h.effectTag <:< suspendTag =>
+                        case h: Handler.ArrowHandler[?, ?, ?, ?, ?, ?] if h.erasedTag <:< suspendTag =>
                             act(h, o.next, pending, prefixRev)
                         case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked if inner.hasHandler =>
                             search(inner, o.next :: pending, prefixRev)
@@ -554,7 +581,7 @@ object `<` extends Implicits:
                             search(o.next, pending, t :: prefixRev)
                 case at: Arrow.AndThen[?, ?, ?, ?] =>
                     search(at.asInstanceOf[Arrow[Any, Any, Any]].optimize, pending, prefixRev)
-                case h: Handler.Operation if h.effectTag <:< suspendTag =>
+                case h: Handler.ArrowHandler[?, ?, ?, ?, ?, ?] if h.erasedTag <:< suspendTag =>
                     act(h, Arrow[Any], pending, prefixRev)
                 case t: Arrow.Transform[?, ?, ?] =>
                     val prefixRev2 =
@@ -585,7 +612,7 @@ object `<` extends Implicits:
             cur match
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                     o.head match
-                        case h: Handler.Context if h.effectTag <:< readTag =>
+                        case h: Handler.ContextBinding[?] if h.effectTag <:< readTag =>
                             collect(o.next, pending, h.transform :: acc)
                         case inner: Arrow.Offset[Any, Any, Any, Any] @unchecked if inner.hasHandler =>
                             collect(inner, o.next :: pending, acc)
@@ -596,8 +623,8 @@ object `<` extends Implicits:
                 case t: Arrow.Transform[?, ?, ?] =>
                     val acc2 =
                         t match
-                            case h: Handler.Context if h.effectTag <:< readTag => h.transform :: acc
-                            case _                                             => acc
+                            case h: Handler.ContextBinding[?] if h.effectTag <:< readTag => h.transform :: acc
+                            case _                                                       => acc
                     pending match
                         case p :: ps => collect(p, ps, acc2)
                         case Nil     => acc2
@@ -624,14 +651,15 @@ object `<` extends Implicits:
       * run applies done with that state. Done leaves the region: the result flows to the suffix and done is not applied, the clause
       * already produced the final value.
       */
-    private def outcomeStep(h: Handler.Loop): Arrow[Any, Any, Any] =
+    private def outcomeStep(h: Handler.Loop[?, ?, ?, ?, ?, ?, ?, ?]): Arrow[Any, Any, Any] =
         new Arrow.Transform[Any, Any, Any]:
             def frame = h.frame
             def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
                 v match
                     case next: Loop.Continue2[?, ?] @unchecked =>
-                        val h2 = new Handler.Loop(h.effectTag, next._1, h.clause, h.done, h.frame)
-                        cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next._2.asInstanceOf[Any < Any]))
+                        // re-install the delimiter carrying the clause's next state around the next computation
+                        val h2 = h.replaceState(next._1).asInstanceOf[Arrow[Any, Any, Any]]
+                        cont(h2(next._2.asInstanceOf[Any < Any]))
                     case b =>
                         cont(Kyo.lift(b))
     end outcomeStep

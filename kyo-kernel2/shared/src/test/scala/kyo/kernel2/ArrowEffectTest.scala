@@ -385,7 +385,8 @@ class ArrowEffectTest extends Test[Any]:
 
                 val flattened                           = flattenNested(result)
                 val finalResult: Int < NestedTestEffect = handle(flattened)
-                assert(finalResult.evalNow == Maybe(50))
+                // installation is pure: the handled region resolves when driven
+                assert(finalResult.asInstanceOf[Int < Any].eval == 50)
             }
         }
 
@@ -898,7 +899,9 @@ class ArrowEffectTest extends Test[Any]:
         assert(resumed.eval == 32)
     }
 
-    "a fully handled region evaluates at the handle site" in {
+    // handler installation is pure: the region evaluates per drive, and a computation
+    // is a reusable description, so each eval re-executes it
+    "a fully handled region evaluates when driven" in {
         var runs = 0
         val handled = ArrowEffect.handleResume(Tag[Echo], echo(1).map(_ + 1))(
             [C] =>
@@ -906,13 +909,15 @@ class ArrowEffectTest extends Test[Any]:
                     runs += 1
                 in
         )
+        assert(runs == 0)
+        assert(handled.eval == 2)
         assert(runs == 1)
         assert(handled.eval == 2)
-        assert(handled.eval == 2)
-        assert(runs == 1)
+        assert(runs == 2)
     }
 
-    "defer inside a handled region executes at the handle site" in {
+    // handler installation is pure: the deferred thunk runs when the drive reaches it
+    "defer inside a handled region executes when driven" in {
         var log = List.empty[String]
         val program = Effect.defer {
             log :+= "defer"
@@ -921,7 +926,7 @@ class ArrowEffectTest extends Test[Any]:
         val handled = ArrowEffect.handleResume(Tag[Echo], program.asInstanceOf[Int < Echo])(
             [C] => (in) => in + 10
         )
-        assert(log == List("defer"))
+        assert(log == Nil)
         assert(handled.eval == 12)
         assert(log == List("defer"))
     }
