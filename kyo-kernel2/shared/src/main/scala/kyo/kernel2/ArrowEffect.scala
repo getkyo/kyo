@@ -3,6 +3,7 @@ package kyo.kernel2
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Handler
 import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
@@ -178,15 +179,12 @@ object ArrowEffect:
     )(
         f: [C] => I[C] => Unit
     ): Unit =
-        def probe(suspension: Kyo.Suspension[?, ?]): Unit =
-            suspension match
-                case s: Kyo.Suspend[?, ?, ?, ?] @unchecked if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
-                    f(s.input.asInstanceOf[I[Any]])
-                case _ => ()
+        def probe(s: Kyo.Suspend[?, ?, ?, ?]): Unit =
+            if effectTag.erased <:< s.erasedTag then f(s.input.asInstanceOf[I[Any]])
         v match
-            case c: Kyo.Continue[?, ?, ?] => probe(c.suspend)
-            case s: Kyo.Suspension[?, ?]  => probe(s)
-            case _                        => ()
+            case c: Kyo.Continue[?, ?, ?]   => probe(c.suspend)
+            case s: Kyo.Suspend[?, ?, ?, ?] => probe(s)
+            case _                          => ()
         end match
     end dispatchFirst
 
@@ -218,19 +216,21 @@ object ArrowEffect:
       */
     private[kyo] def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
         effectTag: Tag[E],
-        v: A < (E & S)
+        v: A < (E & S),
+        context: Context
     )(
         clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
     )(using frame: Frame): A < (E & S) =
         // this loop is the slice's Preemptible boundary: the inner drives cascade parks without consuming, and the request is
-        // consumed exactly once here, when the slice decides to return the remainder
+        // consumed exactly once here, when the slice decides to return the remainder. The context comes from the caller, the
+        // current kernel's signature: a fiber passes its inherited context per slice
         @tailrec def slice(cur: A < (E & S)): A < (E & S) =
             inline def continue(next: A < (E & S)): A < (E & S) =
                 if Safepoint.pollPreempt() then
                     val _ = Safepoint.clearPreempt()
                     next
                 else slice(next)
-            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], `<`.EvalCascade).asInstanceOf[A < (E & S)]
+            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], `<`.EvalCascade, context).asInstanceOf[A < (E & S)]
             r match
                 case k: Kyo.Continue[?, ?, ?] @unchecked =>
                     k.suspend match

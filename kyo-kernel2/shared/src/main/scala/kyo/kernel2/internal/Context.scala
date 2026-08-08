@@ -7,14 +7,15 @@ import kyo.kernel2.*
 
 /** Storage for effect values used by ContextEffect.
   *
-  * Context maintains a type-safe mapping between effect tags and their values. In kernel2 it is the snapshot carrier for fork
-  * boundaries: bindings live as chain delimiters during execution, and a boundary materializes them into a Context to hand to a
-  * detached computation. It also handles isolation behavior for effects that extend ContextEffect.Noninheritable.
+  * Context maintains a type-safe mapping between effect tags and their values. It is threaded as a parameter through every execution
+  * application: bindings update it as they execute, reads consume it in one lookup, and drives supply it, starting from `empty` at the
+  * roots. It is never stored in a node; it exists only in flight. It also handles isolation behavior for effects that extend
+  * ContextEffect.Noninheritable. The type is public because it appears in [[Arrow.Transform]]'s run signature; its operations stay
+  * internal.
   */
-private[kyo] opaque type Context = Map[Tag[Any], AnyRef]
+opaque type Context = Map[Tag[Any], AnyRef]
 
-// TODO this was very old code in the last kernel. Could we migrate this to TypeMap?
-private[kyo] object Context:
+object Context:
 
     val empty: Context = Map.empty
 

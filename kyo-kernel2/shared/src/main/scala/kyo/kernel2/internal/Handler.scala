@@ -1,7 +1,6 @@
 package kyo.kernel2.internal
 
 import kyo.Frame
-import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.<
 import kyo.kernel2.Arrow
@@ -35,7 +34,7 @@ end Handler
 
 private[kyo] object Handler:
 
-    /** Delimiters that interpret arrow-effect operations; context bindings are the sibling kind. */
+    /** Delimiters that interpret arrow-effect operations. */
     sealed abstract class ArrowHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handler[A, B, S]:
         def effectTag: Tag[E]
         final private[kyo] def erasedTag: Tag[Any] = effectTag.erased
@@ -46,8 +45,8 @@ private[kyo] object Handler:
         val clause: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, A, S & S2]:
-        def run[C2, S3](v: Any, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
-            cont(Kyo.lift(v).asInstanceOf[A < Any])
+        def run[C2, S3](v: Any, context: Context, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
+            cont(Kyo.lift(v).asInstanceOf[A < Any], context)
     end Cont
 
     /** Deep handler that answers each operation in place (fun format). */
@@ -56,8 +55,8 @@ private[kyo] object Handler:
         val clause: [C] => I[C] => O[C] < (E & S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, A, S & S2]:
-        def run[C2, S3](v: Any, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
-            cont(Kyo.lift(v).asInstanceOf[A < Any])
+        def run[C2, S3](v: Any, context: Context, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
+            cont(Kyo.lift(v).asInstanceOf[A < Any], context)
     end Resume
 
     /** Deep handler that ends the region at each operation (final ctl format). */
@@ -66,8 +65,8 @@ private[kyo] object Handler:
         val clause: [C] => I[C] => A < (E & S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, A, S & S2]:
-        def run[C2, S3](v: Any, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
-            cont(Kyo.lift(v).asInstanceOf[A < Any])
+        def run[C2, S3](v: Any, context: Context, cont: Arrow[A, C2, S3]): C2 < (S & S2 & S3) =
+            cont(Kyo.lift(v).asInstanceOf[A < Any], context)
     end Stop
 
     /** Shallow handler: handles only the first operation, then leaves the region. */
@@ -77,8 +76,8 @@ private[kyo] object Handler:
         val done: A => B < S2,
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, B, S2]:
-        def run[C2, S3](v: Any, cont: Arrow[B, C2, S3]): C2 < (S2 & S3) =
-            cont(done(v.asInstanceOf[A]))
+        def run[C2, S3](v: Any, context: Context, cont: Arrow[B, C2, S3]): C2 < (S2 & S3) =
+            cont(done(v.asInstanceOf[A]), context)
     end First
 
     /** Deep stateful handler: state threads through the operations, done runs on completion.
@@ -92,8 +91,8 @@ private[kyo] object Handler:
         val done: (State, A) => B < (S & S2),
         val frame: Frame
     ) extends ArrowHandler[I, O, E, A, B, S & S2]:
-        def run[C2, S3](v: Any, cont: Arrow[B, C2, S3]): C2 < (S & S2 & S3) =
-            cont(done(state, v.asInstanceOf[A]))
+        def run[C2, S3](v: Any, context: Context, cont: Arrow[B, C2, S3]): C2 < (S & S2 & S3) =
+            cont(done(state, v.asInstanceOf[A]), context)
 
         /** The replacement delimiter for the next iteration. The cast is the dispatch's state round trip: the value came out of this
           * handler's own clause outcome, which produced it at type State.
@@ -101,16 +100,5 @@ private[kyo] object Handler:
         private[kyo] def replaceState(nextState: Any): Loop[I, O, E, A, B, S, S2, State] =
             new Loop(effectTag, nextState.asInstanceOf[State], clause, done, frame)
     end Loop
-
-    /** Scoped binding for a context effect: the delimiter is the binding.
-      *
-      * A read resolves against the innermost matching delimiter; the transform receives the outer binding (the resolution of matching
-      * delimiters further out) and produces the value for this scope.
-      */
-    final class ContextBinding[A](val effectTag: Tag[Any], val transform: Maybe[Any] => Any, val frame: Frame) extends Handler[A, A, Any]:
-        private[kyo] def erasedTag: Tag[Any] = effectTag
-        def run[C2, S3](v: Any, cont: Arrow[A, C2, S3]): C2 < (Any & S3) =
-            cont(Kyo.lift(v).asInstanceOf[A < Any])
-    end ContextBinding
 
 end Handler

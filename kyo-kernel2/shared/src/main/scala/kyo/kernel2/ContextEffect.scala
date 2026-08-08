@@ -1,9 +1,8 @@
 package kyo.kernel2
 
 import kyo.Frame
-import kyo.Maybe
 import kyo.Tag
-import kyo.kernel2.internal.Handler
+import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Kyo
 import scala.annotation.nowarn
 
@@ -20,16 +19,20 @@ abstract class ContextEffect[+V] extends Effect
 
 object ContextEffect:
 
-    /** Detaches a computation at a fork boundary, handing it the inherited context snapshot.
+    /** Detaches a computation at a fork boundary, handing it the inherited context.
       *
-      * The snapshot materializes at a boundary drive, the same late resolution a context read gets: bindings installed between
-      * construction and the boundary are visible. Noninheritable bindings are filtered before the fork sees them. The ContextSnapshot
-      * suspension it rides on is interim: the context threading redesign replaces it with the context handed as a parameter, like the
-      * current kernel.
+      * The read is a Defer consuming the threaded context at its execution site, so bindings in scope where the fork executes are
+      * visible. Noninheritable bindings are filtered before the fork sees them.
       */
-    private[kyo] def runDetached[A, S](f: kyo.kernel2.internal.Context => A < S)(using Frame): A < S =
-        val snapshot: kyo.kernel2.internal.Context < Any = new Kyo.ContextSnapshot(summon[Frame])
-        snapshot.map(context => f(context.inherit))
+    @nowarn("msg=anonymous")
+    private[kyo] def runDetached[A, S](f: Context => A < S)(using _frame: Frame): A < S =
+        Kyo.Defer[Unit, A, S](
+            (),
+            new Arrow.Transform[Unit, A, S]:
+                def frame = _frame
+                def run[C, S2](v: Any, context: Context, cont: Arrow[A, C, S2]): C < (S & S2) =
+                    cont(f(context.inherit), context)
+        )
 
     /** A marker trait for context effects that do not persist across asynchronous boundaries.
       *
@@ -39,17 +42,22 @@ object ContextEffect:
     trait Noninheritable:
         self: ContextEffect[?] =>
 
-    /** Reads the value of `E` from the innermost binding in scope. */
+    /** Reads the value of `E` from the innermost binding in scope.
+      *
+      * The read is a plain Defer consuming the threaded context in one lookup at its execution site. A read reaching a drive with no
+      * binding in scope is a defect: the effect row guarantees a handler for well-typed programs.
+      */
     @nowarn("msg=anonymous")
     inline def suspend[V, E <: ContextEffect[V]](
         inline effectTag: Tag[E]
     )(using inline _frame: Frame): V < E =
-        val read: Kyo.ContextRead[V, E] =
-            new Kyo.ContextRead[V, E]:
-                def tag     = effectTag
-                def default = Maybe.Absent
-                def frame   = _frame
-        read
+        Kyo.Defer[Unit, V, E](
+            (),
+            new Arrow.Transform[Unit, V, E]:
+                def frame = _frame
+                def run[C, S2](v: Any, context: Context, cont: Arrow[V, C, S2]): C < (E & S2) =
+                    cont(context.get[V, E](effectTag), context)
+        )
     end suspend
 
     /** Reads the value of `E` and maps it in one step. */
@@ -70,13 +78,13 @@ object ContextEffect:
         inline default: => V
     )(using inline _frame: Frame): V < Any =
         val fallback: () => V = () => default
-        val read: Kyo.ContextRead[V, E] =
-            new Kyo.ContextRead[V, E]:
-                def tag     = effectTag
-                def default = Maybe(fallback)
-                def frame   = _frame
-        // the default makes the read total, so it carries no effect requirement
-        read.asInstanceOf[V < Any]
+        Kyo.Defer[Unit, V, Any](
+            (),
+            new Arrow.Transform[Unit, V, Any]:
+                def frame = _frame
+                def run[C, S2](v: Any, context: Context, cont: Arrow[V, C, S2]): C < (Any & S2) =
+                    cont(context.getOrElse[V, E, V](effectTag, fallback()), context)
+        )
     end suspend
 
     /** Provides a constant binding for `E` within the computation's scope. */
@@ -88,18 +96,48 @@ object ContextEffect:
 
     /** Provides a binding for `E`, transforming any outer binding.
       *
-      * `ifUndefined` supplies the value when no outer binding exists; `ifDefined` derives this scope's value from the outer one. Nested
-      * handlers compose: reads observe the innermost binding, and each binding's transform sees the resolution of the bindings outside it.
+      * `ifUndefined` supplies the value when no outer binding exists; `ifDefined` derives this scope's value from the outer one, read
+      * from the incoming context at each entry into the region, so nested handlers compose: reads observe the innermost binding, and
+      * each binding sees the resolution of the bindings outside it at execution time. Installation is pure: one interceptor node at
+      * the region's entry, nothing evaluates here.
       */
     def handle[V, E <: ContextEffect[V], A, S](
         effectTag: Tag[E],
         ifUndefined: => V,
         ifDefined: V => V
     )(v: A < (E & S))(using frame: Frame): A < S =
-        val transform: Maybe[Any] => Any =
-            case Maybe.Present(outer) => ifDefined(outer.asInstanceOf[V])
-            case Maybe.Absent         => ifUndefined
-        new Handler.ContextBinding[A](effectTag.erased, transform, frame).install[E, S](v)
-    end handle
+        v match
+            case kyo: Kyo[A, E & S] @unchecked =>
+                // the cast discharges E from the row: every read of E inside the
+                // region resolves against this binding through the threaded context
+                kyo.prepend(new ContextBinding[V, E](effectTag, () => ifUndefined, ifDefined, frame)).asInstanceOf[A < S]
+            case v =>
+                // a settled value contains no reads; E is vacuous
+                v.asInstanceOf[A < S]
+
+    /** A scoped binding, threaded through execution: on each entry into the region it derives this scope's value from the incoming
+      * context and passes the updated context inward. Parked remainders get the binding re-prepended, so every resumption re-derives
+      * it from the resume-time context, and multi-shot continuations re-run it per invocation.
+      */
+    final private[kyo] class ContextBinding[V, E <: ContextEffect[V]](
+        effectTag: Tag[E],
+        ifUndefined: () => V,
+        ifDefined: V => V,
+        _frame: Frame
+    ) extends Arrow.Interceptor:
+        def frame = _frame
+        def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            val value =
+                if context.contains(effectTag) then ifDefined(context.get[V, E](effectTag))
+                else ifUndefined()
+            cont(Kyo.lift(v), context.set(effectTag, value)) match
+                case kyo: Kyo[?, ?] =>
+                    // re-arm across the park so later entries re-derive the binding
+                    kyo.prepend(this).asInstanceOf[C < (Any & S2)]
+                case w =>
+                    w
+            end match
+        end run
+    end ContextBinding
 
 end ContextEffect

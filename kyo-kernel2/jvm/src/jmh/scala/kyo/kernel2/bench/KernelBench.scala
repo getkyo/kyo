@@ -6,11 +6,13 @@ import java.util.concurrent.TimeUnit
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.*
+import kyo.kernel2.internal.Context
 import language.implicitConversions
 import org.openjdk.jmh.annotations.*
 
 sealed trait BenchEcho    extends ArrowEffect[Const[Int], Const[Int]]
 sealed trait BenchCounter extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
+sealed trait BenchEnv     extends ContextEffect[Int]
 
 /** Per-operation benchmarks for the kernel2 substrate and handler system.
   *
@@ -44,11 +46,11 @@ class KernelBench:
         ).eval
 
     def runEchoStep(v: => Int < BenchEcho): Int =
-        ArrowEffect.handlePartial(echoTag, v)(
+        ArrowEffect.handlePartial(echoTag, v, Context.empty)(
             [C] =>
                 (in, cont) =>
                     cont.step match
-                        case Maybe.Present(s) => Maybe(s.head.run(in, s.next).asInstanceOf[Int < BenchEcho])
+                        case Maybe.Present(s) => Maybe(s.head.run(in, Context.empty, s.next).asInstanceOf[Int < BenchEcho])
                         case Maybe.Absent     => Maybe(in: Int < BenchEcho)
         ).asInstanceOf[Int < Any].eval
 
@@ -76,7 +78,7 @@ class KernelBench:
             k = k.map(_ + 1)
             i += 1
         var parked: Any = null
-        val _ = ArrowEffect.handlePartial(echoTag, k)(
+        val _ = ArrowEffect.handlePartial(echoTag, k, Context.empty)(
             [C] =>
                 (input, cont) =>
                     parked = cont
@@ -141,6 +143,16 @@ class KernelBench:
     @Benchmark
     def resumeFused: Int =
         fusedCont(7).asInstanceOf[Int < Any].eval
+
+    val envTag = Tag[BenchEnv]
+
+    @Benchmark
+    def contextRead100: Int =
+        def loop(i: Int, acc: Int): Int < BenchEnv =
+            if i == 100 then acc
+            else ContextEffect.suspend(envTag).map(v => loop(i + 1, acc + v))
+        ContextEffect.handle(envTag, 1)(loop(0, 0)).eval
+    end contextRead100
 
     @Benchmark
     def loopPure10k: Int =

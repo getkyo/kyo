@@ -42,22 +42,11 @@ object Kyo:
     // a case class so re-wrapping at pass-through positions preserves value equality
     final private[kyo] case class Nested[+A](value: A)
 
-    /** A bare suspension: an effect request with no continuation attached yet.
+    /** A bare suspension: an arrow-effect operation awaiting a handler clause, with no continuation attached yet.
       *
-      * The two suspension kinds share the chain machinery through [[Continue]]: an arrow operation awaiting a handler clause, or a context
-      * read awaiting the innermost binding.
+      * The one suspension kind: context reads are plain [[Defer]]s consuming the threaded context, so no read node exists.
       */
-    sealed abstract class Suspension[+A, -S] extends Kyo[A, S]:
-
-        final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
-            Continue[A, B, S & S2](this, f)
-
-        final private[kyo] def prepend(f: Arrow.Interceptor): A < S =
-            map(f.as[A, Any])
-
-    end Suspension
-
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Suspension[O[A], E]:
+    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A] extends Kyo[O[A], E]:
 
         def input: I[A]
         def tag: Tag[E]
@@ -65,30 +54,18 @@ object Kyo:
 
         final private[kyo] def erasedTag: Tag[Any] = tag.erased
 
+        final private[kyo] def map[B, S2](f: Arrow[O[A], B, S2]): B < (E & S2) =
+            Continue[O[A], B, E & S2](this, f)
+
+        final private[kyo] def prepend(f: Arrow.Interceptor): O[A] < E =
+            map(f.as[O[A], Any])
+
         final override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
 
     end Suspend
 
-    // TODO these should be handled with the context param threaded + Defer not specific suspensions. See the old kernel
-    abstract class ContextRead[V, E <: ContextEffect[V]] extends Suspension[V, E]:
-
-        def tag: Tag[E]
-        def default: Maybe[() => V]
-        def frame: Frame
-
-        final private[kyo] def erasedTag: Tag[Any] = tag.erased
-
-        final override def toString = "ContextRead(" + tag.show + ", " + frame.position.show + ")"
-
-    end ContextRead
-
-    /** A whole-environment read: resolves at boundary drives to the visible context bindings, the fork-time snapshot carrier. */
-    // TODO how about a single
-    final private[kyo] class ContextSnapshot(val frame: Frame) extends Suspension[kyo.kernel2.internal.Context, Any]:
-        override def toString = "ContextSnapshot(" + frame.position.show + ")"
-
     final private[kyo] class Continue[A, +B, -S](
-        val suspend: Suspension[A, ?],
+        val suspend: Suspend[?, ?, ?, ?],
         val cont: Arrow[A, B, S]
     ) extends Kyo[B, S]:
 
@@ -126,9 +103,14 @@ object Kyo:
                     outer.acquire match
                         case kyo: Kyo[R, S] @unchecked => kyo.prepend(f)
                         case v                         => v
-                def release(r: R) = outer.release(r)
-                def cont          = f.as[R, S].map(outer.cont)
-                def frame         = outer.frame
+                // release is wrapped too: a finalizer runs under the interceptors in
+                // scope at the bracket, bindings included
+                def release(r: R) =
+                    outer.release(r) match
+                        case kyo: Kyo[Unit, S] @unchecked => kyo.prepend(f)
+                        case v                            => v
+                def cont  = f.as[R, S].map(outer.cont)
+                def frame = outer.frame
             end new
         end prepend
 
@@ -136,9 +118,11 @@ object Kyo:
 
     end Bracket
 
-    // public because the inline trampoline's Defer arm expands at user sites
+    // public because the inline trampoline's Defer arm expands at user sites.
+    // value is a pending value, not a bare A: variance then types the public
+    // deferring application and the drive's pop without casts
     final class Defer[A, +B, -S](
-        val value: A,
+        val value: A < S,
         val cont: Arrow[A, B, S]
     ) extends Kyo[B, S]:
 

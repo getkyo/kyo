@@ -1,6 +1,7 @@
 package kyo.kernel2
 
 import kyo.Frame
+import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Kyo
 import scala.annotation.nowarn
@@ -54,9 +55,9 @@ object Effect:
 
     final private[kyo] class Catching(private[kyo] val handler: Throwable => Any < Any, _frame: Frame) extends Arrow.Interceptor:
         def frame = _frame
-        def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+        def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             val w =
-                try cont(Kyo.lift(v))
+                try cont(Kyo.lift(v), context)
                 catch
                     case ex if NonFatal(ex) =>
                         EffectTrace.attach(ex, "catching", _frame)
@@ -78,12 +79,11 @@ object Effect:
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
-        // TODO can't we have defer with just an Arrow or even just an abstract method like the existing old kernel?
         val thunk = new Arrow.Transform[Unit, A, S]:
             def frame = _frame
-            def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
-                cont(f)
-        Kyo.Defer((), thunk).asInstanceOf[A < S]
+            def run[C, S2](v: Any, context: Context, cont: Arrow[A, C, S2]): C < (S & S2) =
+                cont(f, context)
+        Kyo.Defer[Unit, A, S]((), thunk)
     end defer
 
     /** Acquires a resource, uses it, and guarantees release.
@@ -104,8 +104,8 @@ object Effect:
             val useArrow: Arrow[R, A, S] =
                 new Arrow.Transform[R, A, S]:
                     def frame = _frame
-                    def run[C, S2](v: Any, cont: Arrow[A, C, S2]): C < (S & S2) =
-                        cont(useF(v.asInstanceOf[R]))
+                    def run[C, S2](v: Any, context: Context, cont: Arrow[A, C, S2]): C < (S & S2) =
+                        cont(useF(v.asInstanceOf[R]), context)
             def acquire       = acquireF
             def release(r: R) = releaseF(r)
             def cont          = useArrow
