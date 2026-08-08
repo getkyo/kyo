@@ -197,5 +197,12 @@ private[kyo] object HostFileSystem:
                     // Unsafe: recursive host delete of the created temp dir at Scope exit
                     def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
             }
+        def temp(prefix: String, suffix: String)(using Frame): Path.TempFileHandle < (Sync & Abort[FileStructureException]) =
+            Path.tempUnscoped(prefix, suffix).map { file =>
+                new Path.TempFileHandle:
+                    def path: Path = file
+                    // Unsafe: host delete of the created temp file at Scope exit
+                    def remove()(using AllowUnsafe): Unit = discard(file.unsafe.remove())
+            }
     end HostFileSystem
 end HostFileSystem

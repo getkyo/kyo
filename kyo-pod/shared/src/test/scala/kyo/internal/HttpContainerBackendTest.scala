@@ -17,24 +17,24 @@ class HttpContainerBackendTest extends BasePodTest:
             Sync.defer(value)
     end FixedUUIDGenerator
 
-    private def claimLegacyFixture(using Frame): (UUID, Path, Path) < (Sync & Scope & Abort[FileReadException | FileStructureException]) =
+    private def claimLegacyFixture(using Frame): (UUID, Path, Path) < (Sync & Scope & Abort[FileSystemException]) =
         val uuid = UUID.v5(
             UUID.nil,
             Span.fromUnsafe(uniqueName("copyto-legacy-fixture").getBytes("UTF-8"))
         )
-        Path.tempDir("kyo-copyto-claim-").map { claimed =>
+        Path.run(Path.tempDir("kyo-copyto-claim-").map { claimed =>
             val parent        = claimed.parent.getOrElse(throw new IllegalStateException("temporary directory must have a parent"))
             val exact         = parent / s"kyo-copyto-${uuid.show}"
             val missingSource = parent / s"kyo-copyto-missing-${uuid.show}"
-            Abort.run[FileStructureException](
-                claimed.move(
+            Abort.run[FileSystemException](
+                Path.run(claimed.move(
                     exact,
                     Path.MoveOptions(
                         replace = Path.Replace.Never,
                         atomicity = Path.Atomicity.Required,
                         createFolders = false
                     )
-                )
+                ))
             ).map {
                 case Result.Success(_) =>
                     missingSource.exists.map { sourceExists =>
@@ -48,7 +48,7 @@ class HttpContainerBackendTest extends BasePodTest:
                 case Result.Panic(error) =>
                     claimed.removeAll.andThen(throw error)
             }
-        }
+        })
     end claimLegacyFixture
 
     "create payload" - {
@@ -93,9 +93,9 @@ class HttpContainerBackendTest extends BasePodTest:
 
     "copyTo" - {
         "scoped UUID temp directories do not overwrite or delete the exact legacy staging path" in {
-            claimLegacyFixture.map { (uuid, foreignPath, missingSource) =>
+            Path.run(claimLegacyFixture.map { (uuid, foreignPath, missingSource) =>
                 val sentinel = foreignPath / "sentinel"
-                Sync.ensure(Abort.run[FileStructureException](foreignPath.removeAll).unit) {
+                Sync.ensure(Abort.run[FileSystemException](Path.run(foreignPath.removeAll)).unit) {
                     sentinel.write("foreign fixture").andThen {
                         val generator = new FixedUUIDGenerator(uuid)
                         val backend   = new HttpContainerBackend("/unused.sock")
@@ -121,7 +121,7 @@ class HttpContainerBackendTest extends BasePodTest:
                         }
                     }
                 }
-            }
+            })
         }
     }
 end HttpContainerBackendTest

@@ -18,11 +18,11 @@ private[kyo] object TestClasspaths:
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Scope.run {
             Abort.recover[FileSystemException] { e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)) } {
-                Path.tempDir("kyo-test-fixtures").map { dir =>
+                Path.run(Path.tempDir("kyo-test-fixtures")).map { dir =>
                     val tastyDir     = dir / "root"
                     val javaClassDir = dir / "kyo" / "fixtures"
 
-                    def write(name: String, bytes: Array[Byte]): Unit < (Sync & Abort[FileWriteException]) =
+                    def write(name: String, bytes: Array[Byte]): Unit < PathWrite =
                         (tastyDir / name).writeBytes(Span.from(bytes))
 
                     val tastyFixtures: Chunk[(String, Array[Byte])] = Chunk(
@@ -112,50 +112,52 @@ private[kyo] object TestClasspaths:
                         "PortedBugFixture$package.tasty"    -> kyo.fixtures.Embedded.portedBugFixturePackageTasty
                     )
 
-                    tastyDir.mkDir.map { _ =>
-                        javaClassDir.mkDir.map { _ =>
-                            Kyo.foreach(tastyFixtures) { case (name, bytes) =>
-                                write(name, bytes)
-                            }.map { _ =>
-                                val bug71Dir = tastyDir / "portedBug71Outer" / "portedBug71Inner"
-                                bug71Dir.mkDir.map { _ =>
-                                    (bug71Dir / "Marker.tasty").writeBytes(
-                                        Span.from(kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
-                                    ).map { _ =>
-                                        // Java fixture: registered as a standalone root so the classpath walker's
-                                        // ".class" branch discovers it.
-                                        // Path "kyo/fixtures/JavaSimpleFixture.class" yields fully-qualified name
-                                        // "kyo.fixtures.JavaSimpleFixture" via classfilePathToFullName.
-                                        (javaClassDir / "JavaSimpleFixture.class").writeBytes(
-                                            Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+                    Path.run {
+                        tastyDir.mkDir.map { _ =>
+                            javaClassDir.mkDir.map { _ =>
+                                Kyo.foreach(tastyFixtures) { case (name, bytes) =>
+                                    write(name, bytes)
+                                }.map { _ =>
+                                    val bug71Dir = tastyDir / "portedBug71Outer" / "portedBug71Inner"
+                                    bug71Dir.mkDir.map { _ =>
+                                        (bug71Dir / "Marker.tasty").writeBytes(
+                                            Span.from(kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
                                         ).map { _ =>
-                                            // Directory-enumeration barrier on Native: list every just-written
-                                            // directory before launching the classpath walker so each directory's
-                                            // inode is refreshed and all entries are visible to the subsequent
-                                            // Path.walk inside Tasty.withClasspath. Without this barrier, the
-                                            // POSIX readdir cache in the Scala Native NIO compat sometimes misses
-                                            // the last few writes when the same fiber writes then walks the same
-                                            // directory within microseconds.
-                                            //
-                                            // Two levels, matching the two-level write pattern: writes land inside
-                                            // tastyDir (root/) and inside javaClassDir (kyo/fixtures/), both under
-                                            // the parent temp dir. Flushing tastyDir, javaClassDir, and dir ensures
-                                            // root and kyo/ are both settled in the parent's readdir snapshot before
-                                            // the walk begins.
-                                            Abort.recover[FileStructureException](_ => ()) {
-                                                tastyDir.list.map(_ => ())
-                                            }.flatMap { _ =>
-                                                Abort.recover[FileStructureException](_ => ()) {
-                                                    javaClassDir.list.map(_ => ())
+                                            // Java fixture: registered as a standalone root so the classpath walker's
+                                            // ".class" branch discovers it.
+                                            // Path "kyo/fixtures/JavaSimpleFixture.class" yields fully-qualified name
+                                            // "kyo.fixtures.JavaSimpleFixture" via classfilePathToFullName.
+                                            (javaClassDir / "JavaSimpleFixture.class").writeBytes(
+                                                Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+                                            ).map { _ =>
+                                                // Directory-enumeration barrier on Native: list every just-written
+                                                // directory before launching the classpath walker so each directory's
+                                                // inode is refreshed and all entries are visible to the subsequent
+                                                // Path.walk inside Tasty.withClasspath. Without this barrier, the
+                                                // POSIX readdir cache in the Scala Native NIO compat sometimes misses
+                                                // the last few writes when the same fiber writes then walks the same
+                                                // directory within microseconds.
+                                                //
+                                                // Two levels, matching the two-level write pattern: writes land inside
+                                                // tastyDir (root/) and inside javaClassDir (kyo/fixtures/), both under
+                                                // the parent temp dir. Flushing tastyDir, javaClassDir, and dir ensures
+                                                // root and kyo/ are both settled in the parent's readdir snapshot before
+                                                // the walk begins.
+                                                Abort.recover[FileSystemException](_ => ()) {
+                                                    Path.runReadOnly(tastyDir.list.map(_ => ()))
+                                                }.flatMap { _ =>
+                                                    Abort.recover[FileSystemException](_ => ()) {
+                                                        Path.runReadOnly(javaClassDir.list.map(_ => ()))
+                                                    }
+                                                }.flatMap { _ =>
+                                                    Abort.recover[FileSystemException](_ => ()) {
+                                                        Path.runReadOnly(dir.list.map(_ => ()))
+                                                    }
+                                                }.map { _ =>
+                                                    Tasty.withClasspath(
+                                                        Seq(tastyDir.toString, (javaClassDir / "JavaSimpleFixture.class").toString)
+                                                    )(f)
                                                 }
-                                            }.flatMap { _ =>
-                                                Abort.recover[FileStructureException](_ => ()) {
-                                                    dir.list.map(_ => ())
-                                                }
-                                            }.map { _ =>
-                                                Tasty.withClasspath(
-                                                    Seq(tastyDir.toString, (javaClassDir / "JavaSimpleFixture.class").toString)
-                                                )(f)
                                             }
                                         }
                                     }

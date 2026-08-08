@@ -613,19 +613,6 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
             )
         )
 
-    /** Creates a temporary file and registers it for deletion when the enclosing Scope closes.
-      *
-      * @param prefix
-      *   prefix for the temp file name (default `"kyo"`)
-      * @param suffix
-      *   suffix for the temp file name (default `".tmp"`)
-      */
-    override def temp(
-        prefix: String = "kyo",
-        suffix: String = ".tmp"
-    )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
-        super.temp(prefix, suffix)
-
     private[kyo] def make(parts: Chunk[String]): Path =
         val isAbsolute = parts.headOption.contains("")
         val nonEmpty   = parts.filter(_.nonEmpty)

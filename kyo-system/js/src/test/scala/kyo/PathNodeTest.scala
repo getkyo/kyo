@@ -5,7 +5,7 @@ import kyo.internal.NodeFs
 class PathNodeTest extends kyo.test.Test[Any]:
 
     "Node copy honors followLinks for symbolic links" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-node-copy-links")
                 source   = dir / "source.txt"
@@ -23,7 +23,7 @@ class PathNodeTest extends kyo.test.Test[Any]:
                 assert(noFollowIsLink)
                 assert(!followIsLink)
                 assert(followedValue == "content")
-        }
+        })
     }
 
     "Node setLastModified round-trips a millisecond exactly" in {
@@ -32,7 +32,7 @@ class PathNodeTest extends kyo.test.Test[Any]:
         // filesystem is already wrong: 987654 ms becomes 987.6539999999999850 s, and reading it back
         // gives 987653. Every value below round-trips exactly in whole seconds, so the failure is the
         // conversion rather than the filesystem's resolution.
-        Scope.run {
+        Scope.run(Path.run {
             val values = Chunk(987654L, 1234567L, 1_000_000_000_123L)
             Path.tempDir("kyo-node-mtime").map { dir =>
                 Kyo.foreach(values.zipWithIndex) { (target, i) =>
@@ -44,11 +44,11 @@ class PathNodeTest extends kyo.test.Test[Any]:
                     }
                 }.unit
             }
-        }
+        })
     }
 
     "Node copyAttributes controls copied modification time" in {
-        Scope.run {
+        Scope.run(Path.run {
             val sourceMtime = 1234567L
             for
                 dir <- Path.tempDir("kyo-node-copy-stat")
@@ -67,20 +67,20 @@ class PathNodeTest extends kyo.test.Test[Any]:
                 assert(freshStat.lastModifiedMs != sourceMtime)
                 assert(preservedStat.lastModifiedMs == sourceMtime)
             end for
-        }
+        })
     }
 
     "Node directory copy enforces replacement policy for an existing target" in {
-        Scope.run {
+        Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-node-copy-directory")
                 source = dir / "source"
                 target = dir / "target"
                 _     <- source.mkDir
                 _     <- target.mkDir
-                never <- Abort.run[FileSystemException](source.copy(target, Path.CopyOptions(replace = Path.Replace.Never)))
+                never <- Abort.run[FileSystemException](Path.run(source.copy(target, Path.CopyOptions(replace = Path.Replace.Never))))
                 _     <- source.copy(target, Path.CopyOptions(replace = Path.Replace.Existing))
             yield assert(never.failure.exists(_.isInstanceOf[FileAlreadyExistsException]))
-        }
+        })
     }
 end PathNodeTest

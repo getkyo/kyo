@@ -185,12 +185,12 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
         val maxAge  = 60.seconds
         val staleMs = 1_000_000_000_000L // 2001-09-08 UTC
         Scope.run {
-            Path.tempDir("inv009-evict").map { dir =>
+            Path.run(Path.tempDir("inv009-evict")).map { dir =>
                 val staleFile = dir / "stale.krfl"
                 val freshFile = dir / "fresh.krfl"
-                staleFile.writeBytes(Span.from(Array[Byte](0x01))).map { _ =>
-                    staleFile.setLastModified(staleMs).map { _ =>
-                        freshFile.writeBytes(Span.from(Array[Byte](0x02))).map { _ =>
+                Path.run(staleFile.writeBytes(Span.from(Array[Byte](0x01)))).map { _ =>
+                    Path.run(staleFile.setLastModified(staleMs)).map { _ =>
+                        Path.run(freshFile.writeBytes(Span.from(Array[Byte](0x02)))).map { _ =>
                             Abort.run[TastyError](
                                 Tasty.evictOlderThan(dir.toString, maxAge)
                             ).map { result =>
@@ -199,8 +199,8 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
                                     case Result.Failure(e) =>
                                         fail(s"evictOlderThan must not abort; got $e")
                                     case Result.Success(_) =>
-                                        staleFile.exists.map { staleExists =>
-                                            freshFile.exists.map { freshExists =>
+                                        Path.runReadOnly(staleFile.exists).map { staleExists =>
+                                            Path.runReadOnly(freshFile.exists).map { freshExists =>
                                                 assert(
                                                     !staleExists,
                                                     s"stale.krfl must have been deleted by evictOlderThan"
@@ -223,9 +223,9 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
 
     "withClasspath(roots) cold-load reads from the filesystem" in {
         Scope.run {
-            Path.tempDir("inv009-cold").map { tmpDir =>
+            Path.run(Path.tempDir("inv009-cold")).map { tmpDir =>
                 val tastyFile = tmpDir / "PlainClass.tasty"
-                tastyFile.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty)).map { _ =>
+                Path.run(tastyFile.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty))).map { _ =>
                     Abort.run[TastyError](
                         Tasty.withClasspath(Seq(tmpDir.toString)) {
                             Tasty.classpath.map(_.symbols.size)
