@@ -2,6 +2,7 @@ package kyo.kernel2
 
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.internal.Context
 import kyo.test.Test
 import language.implicitConversions
 
@@ -30,7 +31,7 @@ class PendingSchedulerTest extends Test[Any]:
                 }
             }
         }
-        val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
+        val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program, Context.empty)(
             [C] => (input, cont) => Maybe.Absent
         )
         assert(log == List("acq-outer", "acq-inner"))
@@ -50,7 +51,7 @@ class PendingSchedulerTest extends Test[Any]:
             ask.map(a => a + v)
         }
         var parked: Any = null
-        val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
+        val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program, Context.empty)(
             [C] =>
                 (input, cont) =>
                     parked = cont
@@ -79,7 +80,7 @@ class PendingSchedulerTest extends Test[Any]:
             k = k.map(_ + 1)
             i += 1
         var captured: Any = null
-        val r = ArrowEffect.handlePartial(Tag[SchedulerAsk], k)(
+        val r = ArrowEffect.handlePartial(Tag[SchedulerAsk], k, Context.empty)(
             [C] =>
                 (input, cont) =>
                     captured = cont

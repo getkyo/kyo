@@ -7,6 +7,7 @@ import kyo.Maybe.Present
 import kyo.Tag
 import kyo.discard
 import kyo.kernel2.*
+import kyo.kernel2.internal.Context
 import kyo.test.Test
 import language.implicitConversions
 
@@ -127,7 +128,7 @@ class EffectTest extends Test[Any]:
         ArrowEffect.suspend[Any](Tag[EffAsk], ())
 
     def park(v: Int < EffAsk): Int < EffAsk =
-        ArrowEffect.handlePartial(Tag[EffAsk], v)(
+        ArrowEffect.handlePartial(Tag[EffAsk], v, Context.empty)(
             [C] => (input, cont) => Maybe.Absent
         )
 

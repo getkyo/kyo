@@ -6,6 +6,7 @@ import kyo.Maybe.Absent
 import kyo.Maybe.Present
 import kyo.Tag
 import kyo.discard
+import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Kyo
 import kyo.test.Test
 import language.implicitConversions
@@ -299,7 +300,7 @@ class ArrowEffectTest extends Test[Any]:
     "handlePartial" - {
         "evaluates pure values" in {
             val x: Int < TestEffect1 = 5
-            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x)(
+            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x, Context.empty)(
                 [C] => (input, cont) => Maybe(cont(input.toString))
             )
             assert(result.evalNow == Maybe(5))
@@ -307,7 +308,7 @@ class ArrowEffectTest extends Test[Any]:
 
         "resolves effects while driving" in {
             val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
-            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x)(
+            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x, Context.empty)(
                 [C] => (input, cont) => Maybe(cont(input.toString))
             )
             assert(result.evalNow == Maybe(6))
@@ -317,7 +318,7 @@ class ArrowEffectTest extends Test[Any]:
             var called               = false
             val x: Int < TestEffect1 = Effect.defer(5)
             kyo.kernel2.internal.Safepoint.get.preempt()
-            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x)(
+            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x, Context.empty)(
                 [C] =>
                     (input, cont) =>
                         called = true
@@ -329,7 +330,7 @@ class ArrowEffectTest extends Test[Any]:
 
         "evaluates nested suspensions" in {
             val x: Int < TestEffect1 = Effect.defer(Effect.defer(5))
-            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x)(
+            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x, Context.empty)(
                 [C] => (input, cont) => Maybe(cont(input.toString))
             )
             assert(result.evalNow == Maybe(5))
@@ -481,7 +482,7 @@ class ArrowEffectTest extends Test[Any]:
         "handlePartial on Nested" - {
 
             def handle[A, S](v: A < (S & NestedTestEffect)): A < (S & NestedTestEffect) =
-                ArrowEffect.handlePartial(nestedTag, v)(
+                ArrowEffect.handlePartial(nestedTag, v, Context.empty)(
                     [C] => (input, cont) => Maybe(cont(input * 10))
                 )
 
@@ -835,7 +836,7 @@ class ArrowEffectTest extends Test[Any]:
         val partial: Int < Get = ArrowEffect.handleResume(Tag[Echo], program)(
             [C] => (in) => in * 10
         )
-        val parked = ArrowEffect.handlePartial(Tag[Get], partial)(
+        val parked = ArrowEffect.handlePartial(Tag[Get], partial, Context.empty)(
             [C] => (in, cont) => kyo.Maybe.Absent
         )
         val result = ArrowEffect.handleResume(Tag[Get], parked)(
@@ -892,7 +893,7 @@ class ArrowEffectTest extends Test[Any]:
         val handled: Int < Get = ArrowEffect.handleResume(Tag[Echo], program)(
             [C] => (in) => in * 10
         )
-        val parked = ArrowEffect.handlePartial(Tag[Get], handled)(
+        val parked = ArrowEffect.handlePartial(Tag[Get], handled, Context.empty)(
             [C] => (in, cont) => kyo.Maybe.Absent
         )
         val resumed = ArrowEffect.handleResume(Tag[Get], parked)(
@@ -982,7 +983,7 @@ class ArrowEffectTest extends Test[Any]:
             [C] => (in, state, cont) => Loop.continue(state + in, cont(in)),
             (state, a) => state * 1000 + a
         )
-        val parked = ArrowEffect.handlePartial(Tag[Get], handled)(
+        val parked = ArrowEffect.handlePartial(Tag[Get], handled, Context.empty)(
             [C] => (in, cont) => kyo.Maybe.Absent
         )
         val result = ArrowEffect.handleResume(Tag[Get], parked)(
@@ -994,7 +995,7 @@ class ArrowEffectTest extends Test[Any]:
     "handlePartial handles operations deeply at the drive boundary" in {
         import kyo.Maybe
         val program = echo(1).map(a => echo(a + 1).map(b => a + b))
-        val result = ArrowEffect.handlePartial(Tag[Echo], program)(
+        val result = ArrowEffect.handlePartial(Tag[Echo], program, Context.empty)(
             [C] => (in, cont) => Maybe(cont(in * 10))
         )
         assert(result.asInstanceOf[Int < Any].eval == 120)
@@ -1006,7 +1007,7 @@ class ArrowEffectTest extends Test[Any]:
         var captured: Any = null
         var slices        = 0
         def slice(v: Int < Echo): Int < Echo =
-            ArrowEffect.handlePartial(Tag[Echo], v)(
+            ArrowEffect.handlePartial(Tag[Echo], v, Context.empty)(
                 [C] =>
                     (in, cont) =>
                         slices += 1
@@ -1027,7 +1028,7 @@ class ArrowEffectTest extends Test[Any]:
         var lastResort = 0
         val program    = echo(1).map(a => echo(a + 1).map(b => a + b))
         val handled    = ArrowEffect.handleResume(Tag[Echo], program)([C] => (in) => in * 10)
-        val result = ArrowEffect.handlePartial(Tag[Echo], handled.asInstanceOf[Int < Echo])(
+        val result = ArrowEffect.handlePartial(Tag[Echo], handled.asInstanceOf[Int < Echo], Context.empty)(
             [C] =>
                 (in, cont) =>
                     lastResort += 1
@@ -1045,7 +1046,7 @@ class ArrowEffectTest extends Test[Any]:
             [C] => (_) => 5
         ).asInstanceOf[Int < Echo]
         var captured: Any = null
-        val parked = ArrowEffect.handlePartial(Tag[Echo], bound)(
+        val parked = ArrowEffect.handlePartial(Tag[Echo], bound, Context.empty)(
             [C] =>
                 (in, cont) =>
                     captured = cont
@@ -1061,7 +1062,7 @@ class ArrowEffectTest extends Test[Any]:
             if i == 0 then 0
             else echo(i).map(_ => program(i - 1))
         var answers = 0
-        val r = ArrowEffect.handlePartial(Tag[Echo], program(10000))(
+        val r = ArrowEffect.handlePartial(Tag[Echo], program(10000), Context.empty)(
             [C] =>
                 (in, cont) =>
                     answers += 1
@@ -1069,7 +1070,7 @@ class ArrowEffectTest extends Test[Any]:
                     Maybe(cont(in))
         )
         assert(answers == 2)
-        val rest = ArrowEffect.handlePartial(Tag[Echo], r)(
+        val rest = ArrowEffect.handlePartial(Tag[Echo], r, Context.empty)(
             [C] => (in, cont) => Maybe(cont(in))
         )
         assert(rest.asInstanceOf[Int < Any].eval == 0)

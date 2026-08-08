@@ -3,6 +3,7 @@ package kyo.kernel2
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.internal.Context
 import kyo.test.Test
 import language.implicitConversions
 
@@ -16,7 +17,7 @@ class ObserveTest extends Test[Any]:
 
     def park(v: Int < ObserveAsk): Arrow[Int, Int, ObserveAsk] =
         var parked: Arrow[Int, Int, ObserveAsk] = null
-        val _ = ArrowEffect.handlePartial(Tag[ObserveAsk], v)(
+        val _ = ArrowEffect.handlePartial(Tag[ObserveAsk], v, Context.empty)(
             [C] =>
                 (input, cont) =>
                     parked = cont

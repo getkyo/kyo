@@ -2,6 +2,7 @@ package kyo.kernel2
 
 import kyo.Tag
 import kyo.discard
+import kyo.kernel2.internal.Context
 import kyo.test.Test
 import language.implicitConversions
 
@@ -238,7 +239,7 @@ class ContextEffectTest extends Test[Any]:
             op.map(a => env.map(b => a + b))
         val bound: Int < CtxOp = ContextEffect.handle(Tag[Env], 5)(program)
         var captured: Any      = null
-        val parked = ArrowEffect.handlePartial(Tag[CtxOp], bound)(
+        val parked = ArrowEffect.handlePartial(Tag[CtxOp], bound, Context.empty)(
             [C] =>
                 (in, cont) =>
                     captured = cont

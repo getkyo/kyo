@@ -2,6 +2,7 @@ package kyo.kernel2
 
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.internal.Context
 import kyo.test.Test
 import language.implicitConversions
 
@@ -831,7 +832,7 @@ class LoopTest extends Test[Any]:
             }
         }
         var count = 0
-        val parked = ArrowEffect.handlePartial(Tag[LoopAsk], program)(
+        val parked = ArrowEffect.handlePartial(Tag[LoopAsk], program, Context.empty)(
             [C] =>
                 (input, cont) =>
                     count += 1
