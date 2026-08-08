@@ -40,16 +40,24 @@ your in-doc comment; eval runs Masked (it must poll: a non-polling eval would
 livelock on a pending request the same way Overflow does), and a Preemptible drive
 nested in a slice is unsupported and documented, which is the #24 consumption rule.
 
-Progress ledger (overnight run): done and committed green: #7 `8ca699fac0`, #8
-`eba87074f4`, #10 `a9d5624818`, #25 `7ef7fca9de` (Chunk, your instruction), #1
-`40b715c811`, #20 `3fa2cad56f`, #11 `32f78f8e3b`, #12 `43d5c021a7`, #9+#28
-`8440e2e013`, #14 `25bb4f1f07`. In flight: #3+#4+#29 (typed handlers, ArrowHandler
-and ContextBinding naming, pure installation with no install-time evals, per your
-overnight rulings; suite running). Then: cast review sweep (your instruction), #26
-(nodes to internal), #15 (with #21 and #23 inside), #17 (benchmarks first), #18
-quality pass ending in a review request to you.
+Progress ledger (overnight run), all committed with the full suite green: #7
+`8ca699fac0`, #8 `eba87074f4`, #10 `a9d5624818`, #25 `7ef7fca9de`, #1 `40b715c811`,
+#20 `3fa2cad56f`, #11 `32f78f8e3b`, #12 `43d5c021a7`, #9+#28 `8440e2e013`, #14
+`25bb4f1f07`, #3+#4+#29 `daf66e9585` (typed handlers, pure installation, guarded
+dispatch), cast sweep `c0229dfe1c`, #26 `9118d5a4b4` (nodes to internal), #15+#21+#23
+`863a0b87f0` (Safepoint integration, Preempted, detached fallback). #17 in flight
+(benchmark-first A/B running). #18 doc quality pass committed; review request pending.
 Closed by ruling: #16 dropped (nicety kept), #19 dropped, #13 keep-old-kernel via
 #18, #22 dropped, #24 answered.
+
+JMH after the preemption integration (vs the interim conformance ledger): eagerMap5
+5.67 to 4.62 ns/op (deleting Overflow made the thread field total, removing a type
+test from the hot get), suspension 480 to 441 ns/op, state10 4,576 to 4,560 B/op and
+narrowIter 12,040 to 12,024 B/op (the typed handlers removed the +16 B dispatch
+closure), stateMap10k 2.12 to 2.06 ms, deepBind10k 68.5 to 66.6 us, resumeFused 18.4
+ns/op with eagerMap5 and resumeFused still allocation-free. Every row is at or better
+than the ledger; the remaining +0.9 ns on eagerMap5 versus the no-preemption floor is
+the preemption capability's measured price.
 
 # Needs your attention
 
