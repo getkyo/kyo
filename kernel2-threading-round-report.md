@@ -5,7 +5,7 @@ the two findings it surfaced and the combinator fix you directed. One item needs
 your ruling (section 4); everything else is done and committed.
 
 # 1. What landed: the context as an execution parameter
-
+but you keep the preempt function in handlePartial right?
 The old kernel's mechanism, ported faithfully. The context rides every execution
 application and is never stored in a node:
 
@@ -116,7 +116,7 @@ mechanism itself, the same parameter the old kernel passes on every continuation
 application.
 
 # 3. The combinator fix you directed: immutable Chunks everywhere
-
+check if you can keep code closer to the old kernel
 Every collection combinator in the `Kyo` companion shared a mutable iterator and
 often a mutable builder across effect steps:
 
@@ -156,6 +156,8 @@ Committed as `c68ac9ce1c`, with reproduction tests written first and confirmed
 failing for the right reason on the old code.
 
 # 4. NEEDS YOUR RULING: the flat chain loses binding scope
+
+I'm thinking we need a different kind of arrow step: rotate. Take a look at https://gist.github.com/fwbrasil/8c8b2b0236793391546c624cbbacd421
 
 The one red test in the suite is structural. The scenario: a binding installed
 OUTSIDE an operation handler whose CLAUSE reads the context:
