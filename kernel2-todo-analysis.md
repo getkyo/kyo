@@ -53,33 +53,39 @@ Authorized queue, mine to execute (details at the end of the doc):
 # Needs your attention
 
 ## 14. The `LastResort` boundary carrier
-Didn't we redesign handlePartial to return the computation? there should be no need for the var?
 - Files: `Pending.scala`, `ArrowEffect.scala`
 - Status: OPEN DISCUSSION. You are not convinced; the use is shown below with the
   real code. No implementation until you rule. Track A's design also validates or
   replaces this mechanism against the real IOTask consumer.
 
-The use, concretely. `LastResort`'s only producer is `ArrowEffect.handlePartial`, and
-`handlePartial`'s only real user is the scheduler: it is how a task drives one slice
-of a fiber. The fiber's computation contains suspensions of the scheduler's own
-runtime effect (the kernel2 stand-in for what IOTask interprets in kyo-core today,
-like joining a promise). PendingSchedulerTest is the working example. Parking a fiber
-and resuming it out of band:
+Your question: "Didn't we redesign handlePartial to return the computation? there
+should be no need for the var?" You are right on both counts, and my earlier example
+was badly chosen. handlePartial returns the remainder with the suspension still
+pending, so the remainder IS the fiber's stored state and nothing needs capturing.
+The canonical slice loop:
 
 ```scala
-var parked: Any = null
-val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
-    [C] =>
-        (input, cont) =>
-            parked = cont          // stash the continuation for the completion callback
-            Maybe.Absent           // park: this slice is over, the drive returns
+// slice 1: park. Store the returned remainder; capture nothing.
+var fiber = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
+    [C] => (input, cont) => Maybe.Absent
 )
-// later, out of band (promise completed on another thread):
-val resumed = parked.asInstanceOf[Arrow[Int, Int, SchedulerAsk]](100)
-assert(resumed.asInstanceOf[Int < Any].eval == 142)   // bracket released in-band
+// wake-up, slice 2: re-enter on the remainder; the clause answers in place now
+fiber = ArrowEffect.handlePartial(Tag[SchedulerAsk], fiber)(
+    [C] => (input, cont) => Maybe(cont(promiseResult))
+)
 ```
 
-Interrupting instead of resuming (finalizers still run):
+The continuation the clause receives is fresh at every re-entry, so a completed
+promise's value flows in through `cont(value)` with no out-of-band state. The
+var-capturing style in PendingSchedulerTest pins an ADDITIONAL capability (applying
+the captured continuation directly from a completion callback, without waiting for a
+slice); it is not the canonical pattern, and I have corrected this section to lead
+with the remainder loop.
+
+The use, concretely. `LastResort`'s only producer is `ArrowEffect.handlePartial`, and
+`handlePartial`'s only real user is the scheduler: it is how a task drives one slice
+of a fiber, as in the loop above. Interrupting instead of resuming (finalizers still
+run):
 
 ```scala
 val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
@@ -88,9 +94,9 @@ val remainder = ArrowEffect.handlePartial(Tag[SchedulerAsk], program)(
 remainder.discard    // runs rel-inner, rel-outer: the brackets the park was holding
 ```
 
-At the swap round, IOTask's slice loop is this pattern: drive the fiber's computation
-with `handlePartial`, answer scheduler operations in-slice via `Present(next)`, park on
-`Absent` after stashing the continuation, re-enter next slice with the same clause.
+At the swap round, IOTask's slice loop is the remainder pattern above: drive with
+`handlePartial`, answer scheduler operations in-slice via `Present`, park on `Absent`
+by storing the returned remainder, re-enter it next slice.
 
 What `LastResort` itself is: the internal envelope carrying handlePartial's
 (tag, clause) into `evalLoop`, consulted only for a suspension that NO installed
@@ -136,10 +142,21 @@ read the full design critically, and bring you a summary with a concrete
 recommendation; the decision is yours then.
 
 ## 24. Is clearing the preempt flag enough?
-is an alternative making it a number instead of a flag?
 - Files: `internal/Safepoint.scala`
 - Status: answered directly below (no agent needed for this one); to be reconciled
   with track A's landed design when I summarize it for you.
+
+Your follow-up: would making it a number instead of a flag be an alternative? My
+answer: no, a counter does not close the one real gap (case 5 below), because
+requests are not addressed to a particular drive: an inner boundary decrementing one
+unit still swallows a request that was aimed at the scheduler's slice. And since the
+response to N requests is identical to the response to one (yield the slice; the
+actual information lives in the conditions the requesters published outside the
+slot), the signal is naturally level-triggered; a counter adds atomic state beside
+the slot swap with no behavioral difference. This mirrors the earlier Safepoint
+design round, where the request-count proposal reduced to the 0/1 state for the same
+reason. What fixes case 5 is the consumption-ownership rule, with the flag as it is.
+A count could still be worth it for diagnostics; that is not a correctness argument.
 
 Your question: do we have cases where preempted clearing wouldn't be enough? My
 analysis, case by case against the actual protocol (requester publishes its condition,
