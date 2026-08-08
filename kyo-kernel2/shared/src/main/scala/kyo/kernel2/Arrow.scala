@@ -13,6 +13,7 @@ import scala.annotation.tailrec
 
 sealed abstract class Arrow[-A, +B, -S]:
     /** Whether any delimiter lives in this arrow: lets dispatch skip handler-free subtrees. */
+    // TODO can we avoid?
     private[kyo] def hasHandler: Boolean
 end Arrow
 
@@ -30,6 +31,7 @@ object Arrow:
         def next: Arrow[X, B, S]
     end Step
 
+    // TODO this is a Safepoint concern
     private[kyo] inline def Period = 512
     private inline def SmallLimit  = 32
 

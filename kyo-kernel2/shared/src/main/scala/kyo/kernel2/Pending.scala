@@ -26,6 +26,7 @@ object `<`:
       * The CanLift evidence rejects statically-pending values at compile time: accidental nesting must go through an explicit `Kyo.lift`
       * or `flatten`. The macro elides the runtime check when the type is provably not a computation.
       */
+    // TODO let's move these methods including abortcast to a new superclass Lifting and extends in the < companion
     implicit inline def lift[A: CanLift, S](v: A): A < S = ${ LiftMacro.liftMacro[A, S]('v) }
 
     implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
@@ -87,6 +88,7 @@ object `<`:
             case _              => s"Kyo(${ra.asString(Kyo.unwrap(value).asInstanceOf[A])})"
     end given
 
+    // TODO Remove? It seems an artifact of older prototype versions?
     def liftSlow[A](v: A): A < Any =
         v match
             case _: Kyo[?, ?] | _: Kyo.Nested[?] => Kyo.Nested(v).asInstanceOf[A < Any]
@@ -99,6 +101,7 @@ object `<`:
         // runtime machinery, not user surface: the abandon trigger for a parked computation,
         // running the finalizers its brackets carry. The scheduler calls it when dropping a
         // continuation that will never be resumed.
+        // TODO would finalize be more clear?
         private[kyo] def discard: Unit =
             discardValue(self) match
                 case Nil => ()
@@ -114,7 +117,7 @@ object `<`:
                 def frame = _frame
                 def run[C, S3](v: Any, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f(v.asInstanceOf[A])
-                    (cont: Any) match
+                    (cont: Any) match // TODO do not widen to Any. Use @unchcked instead
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
@@ -154,6 +157,7 @@ object `<`:
                     val w = f
                     (cont: Any) match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
+                            // TODO let's rename unwrap to unnest
                             o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w)
@@ -315,6 +319,7 @@ object `<`:
     end extension
 
     extension [A, S](self: A < S)
+        // TODO do not keep forwarding methods like this
         private[kyo] def unsafeGet: A =
             Kyo.unwrap(self).asInstanceOf[A]
     end extension
@@ -325,6 +330,7 @@ object `<`:
             self.map(v => v)
     end extension
 
+    // TODO let's move this to Observe.scala and tihs method becomes Observe.apply
     private[kyo] def observe[A, S](observer: (Frame, Any) => Unit)(v: A < S): A < S =
         v match
             case kyo: Kyo[A, S] @unchecked =>
@@ -376,6 +382,7 @@ object `<`:
             else Kyo.unwrap(self).asInstanceOf[A]
 
         /** Evaluates within a preemption budget, returning the remaining computation. */
+        // TODO I don't think the period is used anymore?
         def eval(preempt: () => Boolean, period: Int): A < Any =
             driveLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period), boundary = true).asInstanceOf[A < Any]
 
@@ -383,6 +390,8 @@ object `<`:
 
     private val never: () => Boolean = () => false
 
+
+    // TODO no forwarding methods!
     private[kyo] def neverPreempt: () => Boolean = never
 
     private inline def BracketDepth = 512
@@ -469,16 +478,18 @@ object `<`:
         v.isInstanceOf[Kyo.Defer[?, ?, ?]]
 
     /** The drive-boundary handler of last resort: consulted only when no installed delimiter matches. */
+    // TODO wtf is this? how can you remove it?
     final private[kyo] class LastResort(
         val effectTag: Tag[Any],
         val clause: [C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]
     )
+    // TODO you're using multiple names for the same kind of things: drive, dispatch, eval. Please consolidate to eval
 
     /** Drives a freshly installed handler's region immediately: handling evaluates as far as it can, like every other strict
       * position in the kernel. Preemption for these drives is a later iteration.
       */
     private[kyo] def driveInstalled(v: Any < Any): Any < Any =
-        driveLoop(v, never, 1, boundary = false)
+        driveLoop(v, never, 1, boundary = false) // TODO no forwarding methods like this
 
     private[kyo] def drivePartial(
         v0: Any < Any,
@@ -491,7 +502,7 @@ object `<`:
     private def driveLoop(
         v0: Any < Any,
         preempt: () => Boolean,
-        stride: Int,
+        stride: Int, // TODO unused?
         boundary: Boolean,
         last: LastResort | Null = null
     ): Any < Any =
@@ -733,6 +744,7 @@ object `<`:
       * Matching delimiters are collected innermost to outermost; each transform receives the resolution of the delimiters outside it, so
       * the innermost result is the read's value. Absent when no delimiter matches.
       */
+    // TODO this is quite expensive! add benchmarks. shouldn't the context be threaded as a param?
     private def resolveContext(readTag: Tag[Any], chain: Arrow[Any, Any, Any]): Maybe[Any] =
         @tailrec def collect(
             cur: Arrow[Any, Any, Any],
@@ -782,7 +794,7 @@ object `<`:
       * already produced the final value.
       */
     private def outcomeStep(h: Handler.Loop): Arrow[Any, Any, Any] =
-        Arrow.of(
+        Arrow.of( // TODO why is this necessary?
             new Arrow.Transform[Any, Any, Any]:
                 def frame = h.frame
                 def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =

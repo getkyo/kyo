@@ -9,6 +9,7 @@ import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 
+// TODO ah, KyoException is in kyo-data. HOw can we avoid it here?
 final private[kyo] class KyoException extends Exception(null, null, false, false):
     var frames: Chunk[(String, Frame)] = Chunk.empty
     var installed: Int                 = 0

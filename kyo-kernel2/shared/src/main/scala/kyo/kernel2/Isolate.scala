@@ -103,6 +103,7 @@ object Isolate:
           * The snapshot materializes at a boundary drive, the same late resolution a context read gets: bindings installed between
           * construction and the boundary are visible. Noninheritable bindings are filtered before the fork sees them.
           */
+        // TODO let's try to have a more elegant solution for this. See the use in kyo-core and IOTask
         private[kyo] def runDetached[A, S](f: (Trace, Context) => A < S)(using Frame): A < S =
             val snapshot = new Kyo.ContextSnapshot(summon[Frame]).asInstanceOf[Context < Any]
             snapshot.map(context => f(Trace.empty, context.inherit))

@@ -24,15 +24,17 @@ sealed abstract private[kyo] class Handler extends Arrow.Transform[Any, Any, Any
 private[kyo] object Handler:
 
     /** Delimiters that interpret control operations; context bindings are the sibling kind. */
-    sealed abstract class Operation extends Handler
+    sealed abstract class Operation extends Handler // Is this ArrowHandler?
 
     /** Erased shape of a continuation-taking clause. */
+    // TODO no type aliases like these ones please. No forwarding types or methods
     type Clause = [C] => (Any, Arrow[Any, Any, Any]) => Any < Any
 
     /** Erased shape of an input-only clause. */
     type InputClause = [C] => Any => Any < Any
 
     /** Deep handler with a first-class continuation (ctl format). */
+    // TODO fuck man, I told you to fucking use type-safe code. These all seem can be type safe.
     final class Cont(val effectTag: Tag[Any], val clause: Clause, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             cont(`<`.liftSlow(v))

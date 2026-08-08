@@ -77,6 +77,7 @@ object Effect:
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
+        // TODO can't we have defer with just an Arrow or even just an abstract method like the existing old kernel?
         Kyo.Defer(
             (),
             Arrow.of(

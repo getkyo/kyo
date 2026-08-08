@@ -21,6 +21,7 @@ object Kyo:
     /** Lifts a value into the effect context without suspension, including nested computations. The explicit route for intentional
       * nesting, which the implicit lift rejects at compile time.
       */
+    // TODO this is incorrect, lifting must come from < and handle nesting. Remove
     private[kyo] inline def lift[A, S](inline v: A): A < S = v
 
     // Compiled as a JVM static of class Kyo: hot callers (minted arrow fragments,
@@ -33,20 +34,20 @@ object Kyo:
 
     // a case class so re-wrapping at pass-through positions preserves value equality
     final private[kyo] case class Nested[+A](value: A):
-        override def toString = "Nested"
+        override def toString = "Nested" // TODO please provide proper toString impls
 
     /** A bare suspension: an effect request with no continuation attached yet.
       *
       * The two suspension kinds share the chain machinery through [[Continue]]: an arrow operation awaiting a handler clause, or a context
       * read awaiting the innermost binding.
       */
-    sealed abstract class Suspension[X, -E] extends Kyo[X, E]:
+    sealed abstract class Suspension[X, -E] extends Kyo[X, E]: // TODO this should be [+A, -S]? Please consistent naming
 
         final private[kyo] def map[B, S](f: Arrow[X, B, S]): B < (E & S) =
             Continue[X, B, E & S](this, f.asInstanceOf[Arrow[X, B, E & S]])
 
         final private[kyo] def prepend(f: Arrow[Any, Any, Any]): X < E =
-            map(f.asInstanceOf[Arrow[X, X, Any]])
+            map(f.asInstanceOf[Arrow[X, X, Any]]) // TODO this doesn't seem to make sense?
 
     end Suspension
 
@@ -60,6 +61,7 @@ object Kyo:
 
     end Suspend
 
+    // TODO these should be handled with the context param threaded + Defer not specific suspensions. See the old kernel
     abstract class ContextRead[V, E <: ContextEffect[V]] extends Suspension[V, E]:
 
         def tag: Tag[E]
@@ -71,6 +73,7 @@ object Kyo:
     end ContextRead
 
     /** A whole-environment read: resolves at boundary drives to the visible context bindings, the fork-time snapshot carrier. */
+    // TODO how about a single 
     final private[kyo] class ContextSnapshot(val frame: Frame) extends Suspension[kyo.kernel2.internal.Context, Any]:
         override def toString = "ContextSnapshot(" + frame.position.show + ")"
 

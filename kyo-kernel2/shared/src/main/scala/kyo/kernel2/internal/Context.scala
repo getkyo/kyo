@@ -13,6 +13,7 @@ import kyo.kernel2.*
   */
 private[kyo] opaque type Context = Map[Tag[Any], AnyRef]
 
+// TODO this was very old code in the last kernel. Could we migrate this to TypeMap?
 private[kyo] object Context:
 
     val empty: Context = Map.empty

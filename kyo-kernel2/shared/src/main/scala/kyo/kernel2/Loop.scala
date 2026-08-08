@@ -73,6 +73,8 @@ object Loop:
             def _3 = v3
             def _4 = v4
 
+    // TODO I don't think this is optimized liek the old kernel was?
+
     /** Completes a stateful loop with unit. */
     inline def done[A]: Outcome[A, Unit] = ()
 

@@ -6,6 +6,7 @@ package kyo.kernel2.internal
   * machinery lands with the trace round; until then this type keeps the boundary signatures (Isolate.internal.runDetached) in the
   * current kernel's shape while carrying nothing.
   */
+// TODO remove? we replace this with a new mechanism!
 final private[kyo] class Trace private[kyo] ()
 
 private[kyo] object Trace:
