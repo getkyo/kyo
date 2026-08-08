@@ -10,23 +10,19 @@ item; all changes confined to kyo-kernel2; every command logged and watched.
 
 # Needs your attention
 
-## 18b. Binding-scope encoding: one ruling closes the round
-- Full context: `kernel2-threading-round-report.md` section 4 (and the design doc's
-  section 2.3a). The context threading you approved is implemented, benchmarked,
-  and committed; the suite is 617 of 618 green. The one red test is structural: a
-  binding installed OUTSIDE an operation handler must be visible to the handler's
-  CLAUSE (old-kernel scoping by wrapper nesting), but pure installation makes
-  outside-installed and inside-installed bindings produce byte-identical chains,
-  so no dispatch rule can scope clauses correctly for both.
-- Your ruling picks the encoding:
-  1. A nesting-preserving `Bound(inner, binding, cont)` node, the old kernel's
-     wrapper made explicit: exact old-kernel scoping; touches drive and dispatch.
-     My recommendation.
-  2. Entry and exit markers in the chain with a scope-depth walk at dispatch:
-     keeps the flat chain, fragile under dispatch's chain surgery.
-  3. Prefix-fold at dispatch: smallest change, fixes the failing case, leaks
-     inside-installed bindings into clause scope (documented divergence from the
-     old kernel in exactly the indistinguishable case).
+## 18c. The rotation/handlers design awaits your validation
+- The single design you directed (rotation + real handler formats + the evidence
+  environment) is complete in `kernel2-rotation-handlers-design.md`, with the
+  experiment series E1 (in-place Resume ceiling: ~15x time, ~100x allocation),
+  E2/E2b (the evidence representation: one final array class), and E3 (an
+  executable model of the whole synthesis matching the OLD kernel on 11
+  reference programs, including the clause-scope red test, the Catching
+  over-guard, and typed multi-shot replay).
+- It subsumes the earlier 18b ruling: region nodes ARE the nesting-preserving
+  encoding, so the binding-scope question is closed by the same design.
+- Ruling points are the doc's section 7: approve the synthesis, and pick the
+  environment shape (recommendation: one environment; Context is its
+  inheritable subset).
 
 ## 27. `object Kyo`'s utility surface belongs at `kyo.Kyo`
 - Blocked by design until the swap round: the kyo-test runner classpath carries the
