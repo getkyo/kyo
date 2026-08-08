@@ -16,11 +16,11 @@ class DigestEqualityTest extends kyo.test.Test[Any]:
 
     "compute on real files is deterministic across two calls" in {
         Scope.run {
-            Path.tempDir("kyo-deq").map { dir =>
+            Path.run(Path.tempDir("kyo-deq")).map { dir =>
                 val fileA = dir / "Alpha.tasty"
                 val fileB = dir / "Beta.tasty"
-                fileA.writeBytes(Span.from(Array[Byte](0x01, 0x02, 0x03, 0x04, 0x05))).map { _ =>
-                    fileB.writeBytes(Span.from(Array[Byte](0x10, 0x20, 0x30, 0x40))).map { _ =>
+                Path.run(fileA.writeBytes(Span.from(Array[Byte](0x01, 0x02, 0x03, 0x04, 0x05)))).map { _ =>
+                    Path.run(fileB.writeBytes(Span.from(Array[Byte](0x10, 0x20, 0x30, 0x40)))).map { _ =>
                         val root = dir.toString
                         Abort.run[TastyError] {
                             DigestComputer.compute(Seq(root)).map { d1 =>
@@ -46,14 +46,14 @@ class DigestEqualityTest extends kyo.test.Test[Any]:
 
     "compute result changes when a file is added to the root" in {
         Scope.run {
-            Path.tempDir("kyo-deq-add").map { dir =>
+            Path.run(Path.tempDir("kyo-deq-add")).map { dir =>
                 val fileA = dir / "Alpha.tasty"
-                fileA.writeBytes(Span.from(Array[Byte](0x01, 0x02, 0x03))).map { _ =>
+                Path.run(fileA.writeBytes(Span.from(Array[Byte](0x01, 0x02, 0x03)))).map { _ =>
                     val root = dir.toString
                     Abort.run[TastyError] {
                         DigestComputer.compute(Seq(root)).map { d1 =>
                             val fileB = dir / "Beta.tasty"
-                            fileB.writeBytes(Span.from(Array[Byte](0x04, 0x05, 0x06))).map { _ =>
+                            Path.run(fileB.writeBytes(Span.from(Array[Byte](0x04, 0x05, 0x06)))).map { _ =>
                                 DigestComputer.compute(Seq(root)).map { d2 =>
                                     (d1, d2)
                                 }

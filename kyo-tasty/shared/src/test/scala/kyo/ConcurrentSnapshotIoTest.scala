@@ -19,7 +19,7 @@ class ConcurrentSnapshotIoTest extends kyo.test.Test[Any]:
     "concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" in {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
         Scope.run {
-            Path.tempDir("kyo-conc-snap").map { dir =>
+            Path.run(Path.tempDir("kyo-conc-snap")).map { dir =>
                 val tmpDir       = dir.toString
                 val hexDigest    = DigestComputer.toHexString(digest)
                 val snapshotPath = s"$tmpDir/$hexDigest.krfl"

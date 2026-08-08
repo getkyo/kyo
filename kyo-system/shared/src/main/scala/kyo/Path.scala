@@ -7,8 +7,8 @@ import kyo.internal.PathPlatformSpecific
 /** A cross-platform, immutable file-system path with effect-tracked I/O.
   *
   * Path provides a unified API for file operations across JVM, Scala.js (Node.js), and Scala Native. Every I/O operation is tracked in the
-  * type system: reads carry `Abort[FileReadException]`, writes carry `Abort[FileWriteException]`, and directory mutations carry
-  * `Abort[FileStructureException]`. This means the compiler enforces that callers handle (or propagate) every possible failure mode.
+  * type system via capability effects: reads carry `PathRead` and writes carry `PathWrite`. A runner (`Path.run`, `Path.runReadOnly`,
+  * `Path.runWith`, or `Path.runReadOnlyWith`) discharges the capability and leaves `Sync & Abort[FileSystemException]` as the residual.
   *
   * Paths are constructed via the `/` operator or the `apply` factory:
   *
@@ -16,15 +16,18 @@ import kyo.internal.PathPlatformSpecific
   * val config = Path / "etc" / "app" / "config.toml"
   * val data   = Path("var", "data", "app")
   *
-  * // Read with typed error handling
-  * val content: String < (Sync & Abort[FileReadException]) = config.read
+  * // Read with capability effect
+  * val content: String < PathRead = config.read
+  *
+  * // Discharge with the host runner
+  * val result: String < (Sync & Abort[FileSystemException]) = Path.runReadOnly(content)
   *
   * // Streaming reads are Scope-managed (file handle auto-closed)
-  * val lines: Stream[String, Scope & Sync & Abort[FileReadException]] = config.readLinesStream
+  * val lines: Stream[String, PathRead & Scope & Sync] = config.readLinesStream
   * }}}
   *
-  * Inspection methods (`isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than failing, so they
-  * require only `Sync` and not `Abort`. `exists` answers `false` for an absent path and fails only when the filesystem refuses the question.
+  * Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) return `false` for inaccessible paths rather than
+  * failing, so they require only `PathRead` and not explicit `Abort`.
   *
   * **Streaming operations** (`readStream`, `readBytesStream`, `readLinesStream`, `walk`, `tail`, `tailBytes`) return `Stream` values
   * that carry `Scope` in their effect type. The underlying OS resource (file handle, directory handle) is acquired when the stream
@@ -34,8 +37,41 @@ import kyo.internal.PathPlatformSpecific
   *   [[FileSystemException]] for the typed error hierarchy
   * @see
   *   [[kyo.Path.Unsafe]] for the abstract platform-specific implementation class
+  * @see
+  *   [[PathRead]] for the read capability
+  * @see
+  *   [[PathWrite]] for the write capability (extends PathRead)
   */
 opaque type Path = Path.Unsafe
+
+import kyo.kernel.ArrowEffect
+
+/** Read capability for the file system: existence queries, reads, `list`, `walk`, `realPath`,
+  * `confinedTo`, `stat`, `size`. A computation that only reads carries `< PathRead` in its row;
+  * `Sync` and the `Abort[FileSystemException]` umbrella are folded into the capability and become visible
+  * only after a runner discharges it. Discharge with [[Path.runReadOnly]] (read-only) or
+  * [[Path.run]] (read and write). `PathWrite <: PathRead`: a write-capable context also satisfies
+  * reads, and a read-only runner rejects write programs at the call site.
+  *
+  * @see
+  *   [[Path.run]], [[Path.runReadOnly]], [[Path.runWith]], [[Path.runReadOnlyWith]] for the runners
+  * @see
+  *   [[FileSystem]] for the pluggable backend the runners install
+  */
+sealed trait PathRead extends ArrowEffect[[A] =>> Path.Op[A], Id]
+
+/** Write capability for the file system: writes, appends, `truncate`, `mkDir`, `mkFile`, `move`,
+  * `copy`, `remove`, and the scoped `tempDir`. Because `PathWrite <: PathRead`, a write-capable
+  * context also satisfies read operations, a mixed read plus write program's row collapses to
+  * `PathWrite`, and [[Path.runReadOnly]] rejects a program containing a write at the call site.
+  *
+  * Discharge with [[Path.run]] or [[Path.runWith]]; only these runners can satisfy `PathWrite`
+  * in a program's row.
+  *
+  * @see
+  *   [[PathRead]] for the read capability this extends
+  */
+sealed trait PathWrite extends PathRead
 
 object Path extends PathPlatformSpecific:
 
@@ -177,8 +213,248 @@ object Path extends PathPlatformSpecific:
     infix def /(part: Path.Part)(using Frame): Path =
         make(flattenParts(Seq(part)))
 
-    /** A handle to a service-created temporary directory. Vended by `FileSystem.Write.tempDir` so a
-      * caller removes the directory through the service that created it. Internal.
+    // --- Shared op family ---
+
+    /** Reified filesystem operations. Read-group cases suspend under `Tag[PathRead]`, write-group
+      * cases under `Tag[PathWrite]`; `Output = Id` (each case resumes with its raw `A`, no `Result`
+      * wrapper, so a failing op short-circuits the runner through the residual `Abort[FileSystemException]`).
+      * One shared op family serves both capabilities: a class cannot extend `ArrowEffect` twice with
+      * different inputs, and `PathWrite <: PathRead` inherits `PathRead`'s input constructor, so the read
+      * operations are the read-group cases and the mutations are the write-group cases of this one enum.
+      */
+    private[kyo] enum Op[A]:
+        // read-group (suspend under Tag[PathRead])
+        case Exists(path: Path)                                                             extends Op[Boolean]
+        case ExistsFollow(path: Path, followLinks: Boolean)                                 extends Op[Boolean]
+        case IsDirectory(path: Path)                                                        extends Op[Boolean]
+        case IsRegularFile(path: Path)                                                      extends Op[Boolean]
+        case IsSymbolicLink(path: Path)                                                     extends Op[Boolean]
+        case RealPath(path: Path)                                                           extends Op[Path]
+        case RealPathPrefix(path: Path)                                                     extends Op[Path]
+        case Read(path: Path)                                                               extends Op[String]
+        case ReadCharset(path: Path, charset: Charset)                                      extends Op[String]
+        case ReadBytes(path: Path)                                                          extends Op[Span[Byte]]
+        case ReadLines(path: Path)                                                          extends Op[Chunk[String]]
+        case ReadLinesCharset(path: Path, charset: Charset)                                 extends Op[Chunk[String]]
+        case Size(path: Path)                                                               extends Op[Long]
+        case Stat(path: Path)                                                               extends Op[Path.PathStat]
+        case ListDir(path: Path)                                                            extends Op[Chunk[Path]]
+        case ListGlob(path: Path, glob: Glob, caseSensitivity: Maybe[Glob.CaseSensitivity]) extends Op[Chunk[Path]]
+        case DefaultCaseSensitivity()                                                       extends Op[Glob.CaseSensitivity]
+        case OpenRead(path: Path)                                                           extends Op[Path.ReadHandle]
+        case OpenReadLines(path: Path, charset: Charset)                                    extends Op[Path.LineReadHandle]
+        case OpenWalk(path: Path, maxDepth: Int, followLinks: Boolean)                      extends Op[Path.WalkHandle]
+        case Raise(error: Result.Error[FileSystemException])                                extends Op[Nothing]
+        // write-group (suspend under Tag[PathWrite])
+        case Write(path: Path, value: String, options: WriteOptions)                extends Op[Unit]
+        case WriteBytes(path: Path, value: Span[Byte], options: WriteOptions)       extends Op[Unit]
+        case WriteLines(path: Path, value: Chunk[String], options: WriteOptions)    extends Op[Unit]
+        case Append(path: Path, value: String, options: WriteOptions)               extends Op[Unit]
+        case AppendBytes(path: Path, value: Span[Byte], options: WriteOptions)      extends Op[Unit]
+        case AppendLines(path: Path, value: Chunk[String], options: WriteOptions)   extends Op[Unit]
+        case Truncate(path: Path, size: Long)                                       extends Op[Unit]
+        case SetLastModified(path: Path, epochMs: Long)                             extends Op[Unit]
+        case MkDir(path: Path)                                                      extends Op[Unit]
+        case MkFile(path: Path)                                                     extends Op[Unit]
+        case Move(from: Path, to: Path, options: MoveOptions)                       extends Op[Unit]
+        case Copy(from: Path, to: Path, options: CopyOptions)                       extends Op[Unit]
+        case Remove(path: Path)                                                     extends Op[Boolean]
+        case RemoveExisting(path: Path)                                             extends Op[Unit]
+        case RemoveAll(path: Path)                                                  extends Op[Unit]
+        case OpenWrite(path: Path, append: Boolean, options: WriteOptions)          extends Op[Path.WriteHandle]
+        case TempDir(prefix: String)                                                extends Op[Path.TempDirHandle]
+        case WriteChunk(handle: Path.WriteHandle, chunk: Chunk[Byte])               extends Op[Unit]
+        case WriteString(handle: Path.WriteHandle, value: String, charset: Charset) extends Op[Unit]
+    end Op
+
+    // --- Runners ---
+
+    /** Runs `program`, discharging both write and read capabilities against the Local-selected
+      * [[FileSystem]]. Every filesystem op inside `program` suspends under `PathWrite` or
+      * `PathRead` and is dispatched to that backend; the residual folds the per-op
+      * `Abort[File*Exception]` markers into the umbrella `Abort[FileSystemException]`.
+      *
+      * Residual: `Sync & Abort[FileSystemException] & S` (the caller's tail `S` rides through).
+      *
+      * @see
+      *   [[runWith]] to install a custom [[FileSystem]]
+      */
+    def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileSystemException] & S) =
+        FileSystem.useErased(service => runWith(service)(program))
+
+    /** Runs `program`, discharging the read capability only against the Local-selected service. A write
+      * op left in the program keeps `PathWrite` undischarged, so the ascribed read-only residual does
+      * not compile (the negative capability law).
+      *
+      * Use this at API boundaries that must not mutate the filesystem (read-only config loaders,
+      * projection rebuilds). The effect row is identical to [[run]] except that write ops are rejected
+      * at the call site rather than at runtime.
+      *
+      * @see
+      *   [[runReadOnlyWith]] to install a custom read-only [[FileSystem]]
+      */
+    def runReadOnly[A, S](program: A < (PathRead & S))(using Frame): A < (Sync & Abort[FileSystemException] & S) =
+        FileSystem.useReadErased(service => runReadOnlyWith(service)(program))
+
+    /** Runs `program` against an explicit `fileSystem`, discharging write and read; the backend's own
+      * effect `FS` rides the residual (the Journal `Backend[S]` mapping).
+      *
+      * The selected service determines when writes become durable relative to the enclosing run.
+      */
+    def runWith[A, S, FS](fileSystem: FileSystem.Write[FS])(program: A < (PathWrite & S))(using
+        Frame
+    ): A < (FS & Abort[FileSystemException] & S) =
+        FileSystem.letErased(fileSystem) {
+            ArrowEffect.handle[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)(
+                [C] => (op, cont) => dispatch(fileSystem, op).map(cont)
+            )
+        }
+
+    /** Runs `program` against an explicit `service`, discharging the read capability only.
+      *
+      * Same negative-capability law as [[runReadOnly]]: a write op in `program` keeps `PathWrite`
+      * undischarged and fails to compile. The service's effect `FS` and the caller's tail `S` both
+      * ride the residual unchanged.
+      */
+    def runReadOnlyWith[A, S, FS](fileSystem: FileSystem.Read[FS])(program: A < (PathRead & S))(using
+        Frame
+    ): A < (FS & Abort[FileSystemException] & S) =
+        FileSystem.letReadErased(fileSystem) {
+            ArrowEffect.handle[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)(
+                [C] => (op, cont) => dispatchRead(fileSystem, op).map(cont)
+            )
+        }
+
+    /** Stateless isolation for read operations. Each child captures the Local-selected backend and
+      * installs an independent Path handler around its computation.
+      */
+    given isolateRead: Isolate[PathRead, Async, PathRead] with
+        type State        = FileSystem.Read[Any]
+        type Transform[A] = Result[FileSystemException, A]
+
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathRead & Async & S) =
+            FileSystem.useReadErased(f)
+
+        def isolate[A, S](state: State, value: A < (S & PathRead))(using Frame): Result[FileSystemException, A] < (Async & S) =
+            Abort.run[FileSystemException](runReadOnlyWith(state)(value))
+
+        def restore[A, S](value: Result[FileSystemException, A] < S)(using Frame): A < (PathRead & S) =
+            value.map {
+                case Result.Success(result) => result
+                case Result.Failure(error) =>
+                    ArrowEffect.suspend(Tag[PathRead], Op.Raise(Result.Failure(error)))
+                case panic: Result.Panic =>
+                    ArrowEffect.suspend(Tag[PathRead], Op.Raise(panic))
+            }
+    end isolateRead
+
+    /** Stateless isolation for write operations. See [[isolateRead]]. */
+    given isolateWrite: Isolate[PathWrite, Sync, PathWrite] with
+        type State        = FileSystem.Write[Any]
+        type Transform[A] = Result[FileSystemException, A]
+
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathWrite & Sync & S) =
+            FileSystem.useErased(f)
+
+        def isolate[A, S](state: State, value: A < (S & PathWrite))(using Frame): Result[FileSystemException, A] < (Sync & S) =
+            Abort.run[FileSystemException](runWith(state)(value))
+
+        def restore[A, S](value: Result[FileSystemException, A] < S)(using Frame): A < (PathWrite & S) =
+            value.map {
+                case Result.Success(result) => result
+                case Result.Failure(error) =>
+                    ArrowEffect.suspend(Tag[PathWrite], Op.Raise(Result.Failure(error)))
+                case panic: Result.Panic =>
+                    ArrowEffect.suspend(Tag[PathWrite], Op.Raise(panic))
+            }
+    end isolateWrite
+
+    private def dispatch[S, C](service: FileSystem.Write[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
+        op match
+            case Op.Exists(p)                 => service.exists(p)
+            case Op.ExistsFollow(p, f)        => service.exists(p, f)
+            case Op.IsDirectory(p)            => service.isDirectory(p)
+            case Op.IsRegularFile(p)          => service.isRegularFile(p)
+            case Op.IsSymbolicLink(p)         => service.isSymbolicLink(p)
+            case Op.RealPath(p)               => service.realPath(p)
+            case Op.RealPathPrefix(p)         => service.realPathPrefix(p)
+            case Op.Read(p)                   => service.read(p)
+            case Op.ReadCharset(p, c)         => service.read(p, c)
+            case Op.ReadBytes(p)              => service.readBytes(p)
+            case Op.ReadLines(p)              => service.readLines(p)
+            case Op.ReadLinesCharset(p, c)    => service.readLines(p, c)
+            case Op.Size(p)                   => service.size(p)
+            case Op.Stat(p)                   => service.stat(p)
+            case Op.ListDir(p)                => service.list(p)
+            case Op.ListGlob(p, g, c)         => c.fold(service.list(p, g))(service.list(p, g, _))
+            case Op.DefaultCaseSensitivity()  => service.defaultCaseSensitivity
+            case Op.OpenRead(p)               => service.openRead(p)
+            case Op.OpenReadLines(p, c)       => service.openReadLines(p, c)
+            case Op.OpenWalk(p, d, f)         => service.openWalk(p, d, f)
+            case Op.Raise(error)              => Abort.error(error)
+            case Op.Write(p, v, cf)           => service.write(p, v, cf)
+            case Op.WriteBytes(p, v, options) => service.writeBytes(p, v, options)
+            case Op.WriteLines(p, v, cf)      => service.writeLines(p, v, cf)
+            case Op.Append(p, v, cf)          => service.append(p, v, cf)
+            case Op.AppendBytes(p, v, cf)     => service.appendBytes(p, v, cf)
+            case Op.AppendLines(p, v, cf)     => service.appendLines(p, v, cf)
+            case Op.Truncate(p, s)            => service.truncate(p, s)
+            case Op.SetLastModified(p, e)     => service.setLastModified(p, e)
+            case Op.MkDir(p)                  => service.mkDir(p)
+            case Op.MkFile(p)                 => service.mkFile(p)
+            case Op.Move(f, t, options)       => service.move(f, t, options)
+            case Op.Copy(f, t, options)       => service.copy(f, t, options)
+            case Op.Remove(p)                 => service.remove(p)
+            case Op.RemoveExisting(p)         => service.removeExisting(p)
+            case Op.RemoveAll(p)              => service.removeAll(p)
+            case Op.OpenWrite(p, a, cf)       => service.openWrite(p, a, cf)
+            case Op.TempDir(prefix)           => service.tempDir(prefix)
+            case Op.WriteChunk(h, ch)         => service.writeChunk(h, ch)
+            case Op.WriteString(h, s, c)      => service.writeString(h, s, c)
+    end dispatch
+
+    private def dispatchRead[S, C](service: FileSystem.Read[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
+        op match
+            case Op.Exists(p)                => service.exists(p)
+            case Op.ExistsFollow(p, f)       => service.exists(p, f)
+            case Op.IsDirectory(p)           => service.isDirectory(p)
+            case Op.IsRegularFile(p)         => service.isRegularFile(p)
+            case Op.IsSymbolicLink(p)        => service.isSymbolicLink(p)
+            case Op.RealPath(p)              => service.realPath(p)
+            case Op.RealPathPrefix(p)        => service.realPathPrefix(p)
+            case Op.Read(p)                  => service.read(p)
+            case Op.ReadCharset(p, c)        => service.read(p, c)
+            case Op.ReadBytes(p)             => service.readBytes(p)
+            case Op.ReadLines(p)             => service.readLines(p)
+            case Op.ReadLinesCharset(p, c)   => service.readLines(p, c)
+            case Op.Size(p)                  => service.size(p)
+            case Op.Stat(p)                  => service.stat(p)
+            case Op.ListDir(p)               => service.list(p)
+            case Op.ListGlob(p, g, c)        => c.fold(service.list(p, g))(service.list(p, g, _))
+            case Op.DefaultCaseSensitivity() => service.defaultCaseSensitivity
+            case Op.OpenRead(p)              => service.openRead(p)
+            case Op.OpenReadLines(p, c)      => service.openReadLines(p, c)
+            case Op.OpenWalk(p, d, f)        => service.openWalk(p, d, f)
+            case Op.Raise(error)             => Abort.error(error)
+            case _ => Abort.panic[FileSystemException](new IllegalStateException("PathWrite operation reached the PathRead handler"))
+    end dispatchRead
+
+    // --- Scoped tempDir ---
+
+    /** Creates a temporary directory in the active service and registers its recursive removal with
+      * the enclosing `Scope`. The removal runs through the service that created the directory, so a
+      * temp dir made by one service is never deleted by another service's `removeAll`. There is no
+      * unscoped public temp-directory primitive. The location of the created directory is
+      * service-defined; the host service uses the OS temporary directory.
+      */
+    def tempDir(prefix: String = "kyo")(using Frame): Path < (PathWrite & Sync & Scope) =
+        Scope.acquireRelease(
+            ArrowEffect.suspend(Tag[PathWrite], Op.TempDir(prefix))
+        )(handle => Sync.Unsafe.defer(handle.remove())) // Unsafe: service-vended recursive cleanup at Scope exit
+            .map(_.path)
+
+    /** A handle to a service-created temporary directory. Vended by [[FileSystem.tempDir]] so the scoped
+      * [[Path.tempDir]] finalizer removes through the creating service. Internal.
       */
     abstract private[kyo] class TempDirHandle:
         def path: Path
@@ -248,24 +524,24 @@ object Path extends PathPlatformSpecific:
         // --- Inspection ---
 
         /** Returns `true` if this path exists in the file system (following symbolic links). */
-        def exists(using Frame): Boolean < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.exists()))
+        inline def exists(using inline frame: Frame): Boolean < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.Exists(self))
 
         /** Returns `true` if this path exists, optionally following symbolic links. */
-        def exists(followLinks: Boolean)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.exists(followLinks)))
+        inline def exists(followLinks: Boolean)(using inline frame: Frame): Boolean < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ExistsFollow(self, followLinks))
 
         /** Returns `true` if this path is a directory. */
-        def isDirectory(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.isDirectory())
+        inline def isDirectory(using inline frame: Frame): Boolean < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.IsDirectory(self))
 
         /** Returns `true` if this path is a regular file. */
-        def isRegularFile(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.isRegularFile())
+        inline def isRegularFile(using inline frame: Frame): Boolean < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.IsRegularFile(self))
 
         /** Returns `true` if this path is a symbolic link. */
-        def isSymbolicLink(using Frame): Boolean < Sync =
-            Sync.Unsafe.defer(self.unsafe.isSymbolicLink())
+        inline def isSymbolicLink(using inline frame: Frame): Boolean < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.IsSymbolicLink(self))
 
         /** Returns the canonical absolute path with every symbolic link in the chain resolved.
           *
@@ -274,8 +550,8 @@ object Path extends PathPlatformSpecific:
           * path-under-root validation: compare `path.realPath` against `root.realPath` instead
           * of relying on syntactic checks (which miss symlinks that point outside the root).
           */
-        def realPath(using Frame): Path < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.realPath()))
+        inline def realPath(using inline frame: Frame): Path < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(self))
 
         /** Returns this path resolved to its canonical real path, but only if that real path is contained
           * within `root` (after resolving `root`'s own symlinks).
@@ -284,44 +560,46 @@ object Path extends PathPlatformSpecific:
           * pointing outside is rejected. The pure path-prefix comparison runs against the canonical parts
           * of both paths; a path equal to `root` is considered contained.
           *
-          * Both `self` and `root` must exist; if either does not, fails with `FileNotFoundException`.
           * If `self`'s real path is outside `root`'s real path, fails with `FileAccessDeniedException`
           * carrying the offending real path.
           *
           * Useful for any tool that exposes a configured root and accepts user-supplied relative paths:
           * call `(root / userInput).confinedTo(root)` to obtain a path that is statically known to live
-          * under the root, defending against symlink escapes.
+          * under the root, defending against symlink escapes. Run the check before using the path,
+          * which is also the ordering under which every backend resolves links.
+          *
+          * The check is only as strong as the active backend's `realPath`. Host backends resolve
+          * every link, and require both `self` and `root` to exist: either one missing fails with
+          * `FileNotFoundException`.
           */
-        def confinedTo(root: Path)(using Frame): Path < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer {
-                Abort.get(root.unsafe.realPath()).map { rootReal =>
-                    Abort.get(self.unsafe.realPath()).map { selfReal =>
-                        if selfReal.parts.take(rootReal.parts.size) == rootReal.parts then (selfReal: Path < Abort[FileReadException])
-                        else Abort.fail[FileReadException](FileAccessDeniedException(selfReal))
-                    }
+        def confinedTo(root: Path)(using Frame): Path < (PathRead & Abort[FileSystemException]) =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(root)).map { rootReal =>
+                ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(self)).map { selfReal =>
+                    if selfReal.parts.take(rootReal.parts.size) == rootReal.parts then selfReal
+                    else Abort.fail(FileAccessDeniedException(selfReal))
                 }
             }
 
         // --- Read ---
 
         /** Reads the entire file contents as a UTF-8 string. */
-        def read(using Frame): String < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.read()))
+        inline def read(using inline frame: Frame): String < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.Read(self))
 
         /** Reads the entire file contents using the given charset. */
-        def read(charset: Charset)(using Frame): String < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.read(charset)))
+        inline def read(charset: Charset)(using inline frame: Frame): String < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadCharset(self, charset))
 
         /** Reads the entire file contents as a `Span[Byte]`. */
-        def readBytes(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.readBytes()))
+        inline def readBytes(using inline frame: Frame): Span[Byte] < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadBytes(self))
 
         /** Returns the size in bytes of the regular file at this path.
           *
           * Fails with `FileReadException` if the path does not exist, is not a regular file, or the underlying read fails.
           */
-        def size(using Frame): Long < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.size()))
+        inline def size(using inline frame: Frame): Long < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.Size(self))
 
         /** Returns mtime and size atomically from a single underlying syscall.
           *
@@ -330,31 +608,31 @@ object Path extends PathPlatformSpecific:
           * Prefer this over separate `lastModified` + `size` reads when both are needed:
           * a single syscall guarantees the two values reflect the same instant.
           */
-        def stat(using Frame): PathStat < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.stat()))
+        inline def stat(using inline frame: Frame): PathStat < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.Stat(self))
 
         /** Reads all lines from the file as a `Chunk[String]` (UTF-8). */
-        def readLines(using Frame): Chunk[String] < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.readLines()))
+        inline def readLines(using inline frame: Frame): Chunk[String] < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadLines(self))
 
         /** Reads all lines from the file as a `Chunk[String]` using the given charset. */
-        def readLines(charset: Charset)(using Frame): Chunk[String] < (Sync & Abort[FileReadException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.readLines(charset)))
+        inline def readLines(charset: Charset)(using inline frame: Frame): Chunk[String] < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadLinesCharset(self, charset))
 
         /** Streams the file contents as UTF-8 decoded strings (chunked by the platform buffer size). */
-        def readStream(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
+        def readStream(using Frame): Stream[String, PathRead & Scope & Sync] =
             readStream(StandardCharsets.UTF_8)
 
         /** Streams the file contents as decoded strings using the given charset. */
-        def readStream(charset: Charset)(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
+        def readStream(charset: Charset)(using Frame): Stream[String, PathRead & Scope & Sync] =
             readStream(charset, 8192)
 
         /** Streams the file contents as decoded strings using the given charset and read buffer size. */
-        def readStream(charset: Charset, bufferSize: Int)(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
+        def readStream(charset: Charset, bufferSize: Int)(using Frame): Stream[String, PathRead & Scope & Sync] =
             Stream {
                 Scope.acquireRelease(
-                    Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the read handle at Scope exit
+                    ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(self))
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended read handle at Scope exit
                     val rawBuf      = new Array[Byte](bufferSize)
                     val decoder     = charset.newDecoder()
                     val maxTrailing = math.ceil(charset.newEncoder().maxBytesPerChar()).toInt
@@ -362,7 +640,7 @@ object Path extends PathPlatformSpecific:
                         java.nio.ByteBuffer.allocate(bufferSize + maxTrailing) // extra space for incomplete trailing multi-byte sequence
                     val outBuf = java.nio.CharBuffer.allocate(math.ceil(bufferSize * decoder.maxCharsPerByte()).toInt)
                     Loop.foreach {
-                        // Unsafe: bridges read-handle chunk reads into the Sync tier.
+                        // Unsafe: bridges vended read-handle chunk reads into the Sync tier.
                         Sync.Unsafe.defer {
                             val result = handle.readChunk(rawBuf)
                             if result.isEof then
@@ -394,17 +672,17 @@ object Path extends PathPlatformSpecific:
             }
 
         /** Streams the raw bytes of the file. */
-        def readBytesStream(using Frame): Stream[Byte, Scope & Sync & Abort[FileReadException]] =
+        def readBytesStream(using Frame): Stream[Byte, PathRead & Scope & Sync] =
             readBytesStream(8192)
 
         /** Streams the raw bytes of the file using the given read buffer size. */
-        def readBytesStream(bufferSize: Int)(using Frame): Stream[Byte, Scope & Sync & Abort[FileReadException]] =
+        def readBytesStream(bufferSize: Int)(using Frame): Stream[Byte, PathRead & Scope & Sync] =
             Stream {
                 Scope.acquireRelease(
-                    Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the read handle at Scope exit
+                    ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(self))
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended read handle at Scope exit
                     Loop.foreach {
-                        // Unsafe: bridges read-handle chunk reads into the Sync tier.
+                        // Unsafe: bridges vended read-handle chunk reads into the Sync tier.
                         Sync.Unsafe.defer {
                             val buf    = new Array[Byte](bufferSize)
                             val result = handle.readChunk(buf)
@@ -420,17 +698,17 @@ object Path extends PathPlatformSpecific:
             }
 
         /** Streams the file line-by-line as UTF-8 strings. */
-        def readLinesStream(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
+        def readLinesStream(using Frame): Stream[String, PathRead & Scope & Sync] =
             readLinesStream(StandardCharsets.UTF_8)
 
         /** Streams the file line-by-line using the given charset. */
-        def readLinesStream(charset: Charset)(using Frame): Stream[String, Scope & Sync & Abort[FileReadException]] =
+        def readLinesStream(charset: Charset)(using Frame): Stream[String, PathRead & Scope & Sync] =
             Stream {
                 Scope.acquireRelease(
-                    Sync.Unsafe.defer(Abort.get(self.unsafe.openReadLines(charset)))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the read handle at Scope exit
+                    ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenReadLines(self, charset))
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended read handle at Scope exit
                     Loop.foreach {
-                        // Unsafe: bridges the line-read handle into the Sync tier.
+                        // Unsafe: bridges vended line-read handle into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.readLine() match
                                 case Absent        => Loop.done
@@ -441,11 +719,11 @@ object Path extends PathPlatformSpecific:
             }
 
         /** Tails the file, emitting new lines as they are appended. Uses a 100ms default poll delay. */
-        def tail(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
+        def tail(using Frame): Stream[String, PathRead & Async & Scope] =
             tail(100.millis)
 
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls. */
-        def tail(pollDelay: Duration)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
+        def tail(pollDelay: Duration)(using Frame): Stream[String, PathRead & Async & Scope] =
             tail(pollDelay, 8.kib)
 
         /** Tails the file, emitting new lines as they are appended, sleeping `pollDelay` between polls, using the given read buffer size.
@@ -454,7 +732,7 @@ object Path extends PathPlatformSpecific:
           * replacement, and a deletion of the name do to the stream. A truncation in place drops the pending partial line along with the
           * rest of the old content, so no line ever spans the rewind.
           */
-        def tail(pollDelay: Duration, bufferSize: ByteSize)(using Frame): Stream[String, Async & Scope & Abort[FileReadException]] =
+        def tail(pollDelay: Duration, bufferSize: ByteSize)(using Frame): Stream[String, PathRead & Async & Scope] =
             // State carried between reads: leftover bytes from an incomplete UTF-8 sequence, plus the pending incomplete line text.
             // `follow` restores this initial state when the file is truncated, so neither survives a rewind.
             val emptyBytes = new Array[Byte](0)
@@ -522,7 +800,7 @@ object Path extends PathPlatformSpecific:
             from: Origin = Origin.End,
             pollDelay: Duration = 100.millis,
             bufferSize: ByteSize = 8.kib
-        )(using Frame): Stream[Byte, Async & Scope & Abort[FileReadException]] =
+        )(using Frame): Stream[Byte, PathRead & Async & Scope] =
             follow[Byte, Unit](self, from, pollDelay, bufferSize, ()) { (_, buf, n) =>
                 // The loop reuses `buf`, so each emitted chunk gets its own copy
                 Step.Continue(Chunk.fromNoCopy(java.util.Arrays.copyOf(buf, n)), ())
@@ -531,93 +809,88 @@ object Path extends PathPlatformSpecific:
         // --- Write ---
 
         /** Writes `value` to the file according to `options`. */
-        def write(value: String, options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.write(value, options)))
+        inline def write(value: String, options: WriteOptions = WriteOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.Write(self, value, options))
 
         /** Writes raw bytes to the file. */
-        def writeBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.writeBytes(value, options)))
+        inline def writeBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteBytes(self, value, options))
 
         /** Writes a collection of lines to the file.
           *
           * Each line is written followed by the platform line separator (including the last line), so `writeLines(Chunk("a", "b"))`
           * produces `"a\nb\n"` on Unix. Use `write(lines.mkString(lineSep))` if you need to control trailing newline behavior.
           */
-        def writeLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using
-            Frame
-        ): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.writeLines(value, options)))
+        inline def writeLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteLines(self, value, options))
 
         /** Appends `value` to the file according to `options`. */
-        def append(value: String, options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.append(value, options)))
+        inline def append(value: String, options: WriteOptions = WriteOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.Append(self, value, options))
 
         /** Appends raw bytes to the file. */
-        def appendBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.appendBytes(value, options)))
+        inline def appendBytes(value: Span[Byte], options: WriteOptions = WriteOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.AppendBytes(self, value, options))
 
         /** Appends a collection of lines to the file.
           *
           * Each line is written followed by the platform line separator (including the last line), so `appendLines(Chunk("a", "b"))`
           * produces `"a\nb\n"` on Unix. Use `write(lines.mkString(lineSep))` if you need to control trailing newline behavior.
           */
-        def appendLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using
-            Frame
-        ): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.appendLines(value, options)))
+        inline def appendLines(value: Chunk[String], options: WriteOptions = WriteOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.AppendLines(self, value, options))
 
         /** Truncates the file to at most `size` bytes. */
-        def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.truncate(size)))
+        inline def truncate(size: Long)(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.Truncate(self, size))
 
         /** Sets the last-modified time of the file to `epochMs` milliseconds since the Unix epoch.
           *
           * Fails with `FileWriteException` if the path does not exist or the operation is not permitted.
           */
-        def setLastModified(epochMs: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.setLastModified(epochMs)))
+        inline def setLastModified(epochMs: Long)(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.SetLastModified(self, epochMs))
 
         // --- Directory / structure ---
 
         /** Creates this path as a directory (including all missing parent directories). */
-        def mkDir(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.mkDir()))
+        inline def mkDir(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.MkDir(self))
 
         /** Creates this path as an empty file (parent directories created if missing). */
-        def mkFile(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.mkFile()))
+        inline def mkFile(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.MkFile(self))
 
         /** Lists all direct children of this directory. */
-        def list(using Frame): Chunk[Path] < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.list()))
+        inline def list(using inline frame: Frame): Chunk[Path] < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ListDir(self))
 
-        /** Lists direct children of this directory whose names match `glob`, comparing case-sensitively. */
-        def list(glob: Glob)(using Frame): Chunk[Path] < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.list(glob, Glob.CaseSensitivity.Sensitive)))
+        /** Lists direct children of this directory whose names match `glob`. */
+        inline def list(glob: Glob)(using inline frame: Frame): Chunk[Path] < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ListGlob(self, glob, Absent))
 
-        /** Lists direct children of this directory whose names match `glob` under `caseSensitivity`. */
-        def list(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using Frame): Chunk[Path] < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.list(glob, caseSensitivity)))
+        inline def list(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using inline frame: Frame): Chunk[Path] < PathRead =
+            ArrowEffect.suspend(Tag[PathRead], Path.Op.ListGlob(self, glob, Maybe(caseSensitivity)))
 
         /** Streams all entries under this directory tree (unlimited depth, not following links). */
-        def walk(using Frame): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+        def walk(using Frame): Stream[Path, PathRead & Scope & Sync] =
             walk(Int.MaxValue, followLinks = false)
 
         /** Streams all entries under this directory tree up to `maxDepth`, optionally following symbolic links. */
         def walk(maxDepth: Int = Int.MaxValue, followLinks: Boolean = false)(using
             Frame
-        ): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+        ): Stream[Path, PathRead & Scope & Sync] =
             walkWhere(maxDepth, followLinks)(_ => true)
 
         private def walkWhere(maxDepth: Int, followLinks: Boolean)(matches: Path => Boolean)(using
             Frame
-        ): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+        ): Stream[Path, PathRead & Scope & Sync] =
             Stream {
                 Scope.acquireRelease(
-                    Sync.Unsafe.defer(Abort.get(self.unsafe.openWalk(maxDepth, followLinks)))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the walk handle at Scope exit
+                    ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenWalk(self, maxDepth, followLinks))
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended walk handle at Scope exit
                     Loop.foreach {
-                        // Unsafe: bridges walk-handle iteration into the Sync tier.
+                        // Unsafe: bridges vended walk-handle iteration into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.next() match
                                 case Absent => Loop.done
@@ -629,35 +902,33 @@ object Path extends PathPlatformSpecific:
                 }
             }
 
-        /** Streams entries under this directory tree whose relative paths match `glob`, comparing case-sensitively. */
-        def walk(glob: Glob)(using Frame): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
-            walk(glob, Glob.CaseSensitivity.Sensitive)
+        def walk(glob: Glob)(using Frame): Stream[Path, PathRead & Scope & Sync] =
+            Stream.unwrap(
+                ArrowEffect.suspend(Tag[PathRead], Path.Op.DefaultCaseSensitivity()).map(cs => walk(glob, cs))
+            )
 
-        /** Streams entries under this directory tree whose relative paths match `glob` under `caseSensitivity`. */
-        def walk(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using
-            Frame
-        ): Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+        def walk(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using Frame): Stream[Path, PathRead & Scope & Sync] =
             walkWhere(Int.MaxValue, followLinks = false)(path => glob.matches(path.parts.drop(self.parts.size), caseSensitivity))
 
         /** Moves this path to `to`. */
-        def move(to: Path, options: MoveOptions = MoveOptions())(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.move(to, options)))
+        inline def move(to: Path, options: MoveOptions = MoveOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.Move(self, to, options))
 
         /** Copies this path to `to`. */
-        def copy(to: Path, options: CopyOptions = CopyOptions())(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.copy(to, options)))
+        inline def copy(to: Path, options: CopyOptions = CopyOptions())(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.Copy(self, to, options))
 
         /** Deletes this path if it exists. Returns `true` if it was deleted, `false` if it did not exist. */
-        def remove(using Frame): Boolean < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.remove()))
+        inline def remove(using inline frame: Frame): Boolean < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.Remove(self))
 
         /** Deletes this path, raising `FileNotFoundException` if it does not exist. */
-        def removeExisting(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.removeExisting()))
+        inline def removeExisting(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveExisting(self))
 
         /** Recursively deletes this path and all of its contents. */
-        def removeAll(using Frame): Unit < (Sync & Abort[FileStructureException]) =
-            Sync.Unsafe.defer(Abort.get(self.unsafe.removeAll()))
+        inline def removeAll(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveAll(self))
 
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe code. */
         def unsafe: Path.Unsafe = self
@@ -775,6 +1046,15 @@ object Path extends PathPlatformSpecific:
         end if
     end poll
 
+    /** Fails the enclosing read capability with `error`.
+      *
+      * A failure the loop detects itself, rather than one a backend call returned, still belongs on the runner's
+      * `Abort[FileSystemException]`. Suspending [[Path.Op.Raise]] puts it there without giving every follower an
+      * `Abort` row of its own.
+      */
+    private def raiseRead(error: Result.Error[FileSystemException])(using Frame): Nothing < PathRead =
+        ArrowEffect.suspend(Tag[PathRead], Op.Raise(error))
+
     /** Polling loop shared by [[Path.tailBytes]] and [[Path.tail]].
       *
       * Opens a `Scope`-managed read handle, seeks to the position `from` selects, then reads until the end of the file, sleeping
@@ -792,6 +1072,9 @@ object Path extends PathPlatformSpecific:
       * re-arm an unbroken replay.
       *
       * `step` receives the read buffer itself, which the loop reuses across iterations: it must copy any bytes it retains.
+      *
+      * The handle comes from the installed read service, exactly as [[Path.openRead]] gets its own, so a follower reads whatever
+      * filesystem the enclosing runner selected rather than always the host.
       */
     private[kyo] def follow[V, St](
         self: Path,
@@ -801,12 +1084,12 @@ object Path extends PathPlatformSpecific:
         initialState: St
     )(
         step: (St, Array[Byte], Int) => Step[V, St]
-    )(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, Async & Scope & Abort[FileReadException]] =
+    )(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, PathRead & Async & Scope] =
         val capacity = readBufferCapacity(bufferSize)
         Stream {
             Scope.acquireRelease(
-                // Unsafe: closes the read handle at Scope exit
-                Sync.Unsafe.defer(Abort.get(self.unsafe.openRead()))
+                ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(self))
+                // Unsafe: closes the vended read handle at Scope exit
             )(handle => Sync.Unsafe.defer(handle.close())).map { handle =>
                 // Unsafe: the read handle is a single-consumer cursor owned by this stream, so its
                 // position, size, and buffer reads are bridged into Sync one call at a time.
@@ -820,35 +1103,40 @@ object Path extends PathPlatformSpecific:
                             // Clamped so a negative offset means the same thing everywhere: JVM and Native raise a raw
                             // IllegalArgumentException from the channel, while Node reads from the current position instead.
                             case Origin.Offset(bytes) => Result.succeed(math.max(0L, bytes))
-                    Abort.get(startPos).map { start =>
-                        Sync.Unsafe.defer {
-                            handle.position(start)
-                            val buf = new Array[Byte](capacity)
-                            Loop(start, initialState) { (pos, state) =>
-                                Sync.Unsafe.defer {
-                                    poll(handle, buf, pos) match
-                                        case Poll.Data(n) =>
-                                            step(state, buf, n) match
-                                                case Step.Continue(values, next) =>
-                                                    if values.isEmpty then Loop.continue(pos + n, next)
-                                                    else Emit.valueWith(values)(Loop.continue(pos + n, next))
-                                                case Step.Stop(values) =>
-                                                    if values.isEmpty then Loop.done(())
-                                                    else Emit.valueWith(values)(Loop.done(()))
-                                        case Poll.Rewound =>
-                                            Sync.Unsafe.defer(handle.position(0L))
-                                                .andThen(Async.sleep(pollDelay))
-                                                .andThen(Loop.continue(0L, initialState))
-                                        case Poll.Idle =>
-                                            Async.sleep(pollDelay)
-                                                .andThen(Loop.continue(pos, state))
-                                        case Poll.Unreadable(error) =>
-                                            // The handle can no longer be measured, so the stream fails instead of idling.
-                                            Abort.error(error)
+                    startPos.foldError(
+                        start =>
+                            Sync.Unsafe.defer {
+                                handle.position(start)
+                                val buf = new Array[Byte](capacity)
+                                Loop(start, initialState) { (pos, state) =>
+                                    Sync.Unsafe.defer {
+                                        poll(handle, buf, pos) match
+                                            case Poll.Data(n) =>
+                                                step(state, buf, n) match
+                                                    case Step.Continue(values, next) =>
+                                                        if values.isEmpty then Loop.continue(pos + n, next)
+                                                        else Emit.valueWith(values)(Loop.continue(pos + n, next))
+                                                    case Step.Stop(values) =>
+                                                        if values.isEmpty then Loop.done(())
+                                                        else Emit.valueWith(values)(Loop.done(()))
+                                            case Poll.Rewound =>
+                                                Sync.Unsafe.defer(handle.position(0L))
+                                                    .andThen(Async.sleep(pollDelay))
+                                                    .andThen(Loop.continue(0L, initialState))
+                                            case Poll.Idle =>
+                                                Async.sleep(pollDelay)
+                                                    .andThen(Loop.continue(pos, state))
+                                            case Poll.Unreadable(error) =>
+                                                // The handle can no longer be measured. Raising through the capability keeps the
+                                                // failure on the runner's Abort[FileSystemException] instead of adding an Abort
+                                                // row of its own to every follower's type.
+                                                raiseRead(error)
+                                    }
                                 }
-                            }
-                        }
-                    }
+                            },
+                        // The file could not be measured at all, so the stream never starts.
+                        error => raiseRead(error)
+                    )
                 }
             }
         }

@@ -95,11 +95,11 @@ class DocsMarkdownTest extends WebsiteTest:
     // ---- Two-space nested list ----
 
     "two-space nested list does not flatten" in {
-        val source = "- Exception\n  - FileException\n  - TimeoutException\n"
+        val source = "- Exception\n  - FileSystemException\n  - TimeoutException\n"
         for html <- transpileHtml(source)
         yield
             assert(html.contains("<ul"), s"Expected ul: $html")
-            assert(html.contains("FileException"), s"Expected sub-item: $html")
+            assert(html.contains("FileSystemException"), s"Expected sub-item: $html")
             // Two nested <ul> tags means the list is nested.
             assert(html.indexOf("<ul") != html.lastIndexOf("<ul"), s"Expected nested ul: $html")
         end for

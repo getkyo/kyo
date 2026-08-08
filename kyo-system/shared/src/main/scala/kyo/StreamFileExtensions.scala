@@ -1,14 +1,16 @@
 package kyo
 
+import kyo.kernel.ArrowEffect
+
 /** Stream extensions that write byte and text streams to the file system.
   *
-  * These sinks acquire a write handle in a `Scope`, stream the content, and remove the
+  * These sinks acquire a write handle via a capability op in a `Scope`, stream the content, and remove the
   * partially-written file on failure (the handle's `finish()` is never reached on failure, triggering
-  * delete-on-close). They live in kyo-system alongside [[kyo.Path]] because they are typed in terms of
-  * it; kyo-core keeps the platform-neutral stream combinators.
+  * delete-on-close). They live in kyo-system alongside [[kyo.Path]] because they couple to the file
+  * capability; kyo-core keeps the platform-neutral stream combinators.
   *
   * @see
-  *   [[kyo.Path]] for the path type the sinks target
+  *   [[kyo.Path]] for the file-path capability the sinks target
   */
 object StreamFileExtensions:
 
@@ -17,13 +19,13 @@ object StreamFileExtensions:
           * handle is acquired in a `Scope` and closed when the stream completes or fails; on failure the
           * partially-written file is removed (the handle's `finish()` is never reached).
           */
-        def writeTo(path: Path)(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        def writeTo(path: Path)(using Frame): Unit < (Scope & PathWrite & Sync & S) =
             Scope.acquireRelease(
-                Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, Path.WriteOptions())))
-            )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the write handle at Scope exit
+                ArrowEffect.suspend(Tag[PathWrite], Path.Op.OpenWrite(path, append = false, Path.WriteOptions()))
+            )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended write handle at Scope exit
                 stream.foreachChunk { chunk =>
-                    Sync.Unsafe.defer(Abort.get(handle.writeBytes(chunk)))
-                }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the write handle complete
+                    ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteChunk(handle, chunk))
+                }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the vended write handle complete
             }
     end extension
 
@@ -34,13 +36,13 @@ object StreamFileExtensions:
           */
         def writeTo(path: Path, charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8)(using
             Frame
-        ): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        ): Unit < (Scope & PathWrite & Sync & S) =
             Scope.acquireRelease(
-                Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, Path.WriteOptions())))
-            )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the write handle at Scope exit
+                ArrowEffect.suspend(Tag[PathWrite], Path.Op.OpenWrite(path, append = false, Path.WriteOptions()))
+            )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended write handle at Scope exit
                 stream.foreach { s =>
-                    Sync.Unsafe.defer(Abort.get(handle.writeString(s, charset)))
-                }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the write handle complete
+                    ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteString(handle, s, charset))
+                }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the vended write handle complete
             }
 
         /** Writes each string element as a separate line to `path` using the given charset.
@@ -51,14 +53,14 @@ object StreamFileExtensions:
           */
         def writeLinesTo(path: Path, charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8)(using
             Frame
-        ): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        ): Unit < (Scope & PathWrite & Sync & S) =
             Sync.defer(java.lang.System.lineSeparator()).map { sep =>
                 Scope.acquireRelease(
-                    Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, Path.WriteOptions())))
-                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the write handle at Scope exit
+                    ArrowEffect.suspend(Tag[PathWrite], Path.Op.OpenWrite(path, append = false, Path.WriteOptions()))
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended write handle at Scope exit
                     stream.foreach { s =>
-                        Sync.Unsafe.defer(Abort.get(handle.writeString(s + sep, charset)))
-                    }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the write handle complete
+                        ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteString(handle, s + sep, charset))
+                    }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the vended write handle complete
                 }
             }
     end extension

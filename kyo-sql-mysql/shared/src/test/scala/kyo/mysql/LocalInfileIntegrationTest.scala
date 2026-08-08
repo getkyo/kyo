@@ -112,13 +112,15 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
                 withLoadTable(client) { tbl =>
                     // Create a temp file with CSV data, use Path.readBytesStream to upload it.
                     Path.temp(prefix = "kyo-infile", suffix = ".csv").flatMap { tmpPath =>
-                        Scope.ensure(Abort.run[FileStructureException](tmpPath.remove).unit).andThen {
+                        Scope.ensure(Abort.run[FileSystemException](Path.run(tmpPath.remove)).unit).andThen {
                             val csv = "1,alice\n2,bob\n3,carol\n"
-                            tmpPath.writeBytes(Span.from(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8))).flatMap { _ =>
+                            Path.run(tmpPath.writeBytes(Span.from(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)))).flatMap { _ =>
                                 val sql =
                                     s"LOAD DATA LOCAL INFILE '${tmpPath.toString}' INTO TABLE $tbl FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' (id, name)"
                                 Scope.run {
-                                    client.loadLocalInfile(sql, tmpPath.readBytesStream)
+                                    // The upload stream carries PathRead, discharged here so the read runs against
+                                    // the same host filesystem the temp file was written to.
+                                    Path.run(client.loadLocalInfile(sql, tmpPath.readBytesStream))
                                 }.flatMap { affected =>
                                     assert(affected == 3L, s"Expected 3 affected rows, got $affected")
                                     client.query(s"SELECT COUNT(*) FROM $tbl").flatMap { result =>

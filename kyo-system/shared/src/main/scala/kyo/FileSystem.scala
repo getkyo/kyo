@@ -2,12 +2,13 @@ package kyo
 
 import java.nio.charset.Charset
 
-/** Filesystem backend tiers, effect-polymorphic in the backend effect `S`. [[Read]] exposes
+/** Filesystem backend capabilities, effect-polymorphic in the backend effect `S`. [[Read]] exposes
   * inspection and content reads. [[Write]] extends it with mutation and structure operations.
   * Each public operation records the applicable typed failure category in its effect row and
   * accepts a call-site [[Frame]].
   *
-  * @see [[FileSystem.host]] for the backend over the platform implementations in this module
+  * @see [[Path.runReadOnlyWith]] for installing a read capability
+  * @see [[Path.runWith]] for installing a write capability
   */
 object FileSystem:
 
@@ -122,8 +123,42 @@ object FileSystem:
 
     end Write
 
-    /** Default host backend: delegates every operation to [[Path.Unsafe]], so it answers exactly what
-      * the [[Path]] methods answer.
+    private val local = Local.init[FileSystem.Write[Any]](
+        FileSystem.host.asInstanceOf[FileSystem.Write[Any]]
+    )
+
+    private val readLocal = Local.init[FileSystem.Read[Any]](
+        FileSystem.host.asInstanceOf[FileSystem.Read[Any]]
+    )
+
+    /** Runs `value` with `fileSystem` selected as the backend used by [[Path.run]] and
+      * [[Path.runReadOnly]]. The selection is inherited by child fibers and restored when the
+      * dynamic scope exits.
+      *
+      * @tparam FS the backend's own effect, preserved in the result row
+      */
+    def let[A, S, FS](fileSystem: FileSystem.Write[FS])(value: A < S)(using Frame): A < (FS & S) =
+        local.let(fileSystem.asInstanceOf[FileSystem.Write[Any]])(
+            readLocal.let(fileSystem.asInstanceOf[FileSystem.Read[Any]])(value)
+        )
+
+    private[kyo] def useErased[A, S](f: FileSystem.Write[Any] => A < S)(using Frame): A < S =
+        local.use(f)
+
+    private[kyo] def useReadErased[A, S](f: FileSystem.Read[Any] => A < S)(using Frame): A < S =
+        readLocal.use(f)
+
+    private[kyo] def letErased[A, S, FS](fileSystem: FileSystem.Write[FS])(value: A < S)(using Frame): A < S =
+        local.let(fileSystem.asInstanceOf[FileSystem.Write[Any]])(
+            readLocal.let(fileSystem.asInstanceOf[FileSystem.Read[Any]])(value)
+        )
+
+    private[kyo] def letReadErased[A, S, FS](fileSystem: FileSystem.Read[FS])(value: A < S)(using Frame): A < S =
+        readLocal.let(fileSystem.asInstanceOf[FileSystem.Read[Any]])(value)
+
+    /** Default host backend: delegates every op to [[Path.Unsafe]], translating the concrete
+      * `Result[File*Exception, A]` into `Abort[FileSystemException]`, so it preserves current
+      * `Path` behavior exactly.
       */
     def host: FileSystem.Write[Sync] = HostFileSystem()
 

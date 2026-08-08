@@ -19,12 +19,12 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
     // jrt:/ cold loads can still be slow on a contended runner; keep a generous per-leaf budget.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
 
-    "allSymbols.count(isGiven) ~= 570 on standard classpath" in {
+    "allSymbols.count(isGiven) ~= 585 on standard classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val count = classpath.symbols.count(_.isGiven)
             assert(
-                count >= 555 && count <= 585,
-                s"Expected ~570 given instances on standard classpath; found $count"
+                count >= 570 && count <= 600,
+                s"Expected ~585 given instances on standard classpath; found $count"
             )
             succeed
         }

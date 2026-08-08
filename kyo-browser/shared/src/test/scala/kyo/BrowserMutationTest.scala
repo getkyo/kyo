@@ -1126,10 +1126,10 @@ class BrowserMutationTest extends BrowserTest:
             ).andThen {
                 Scope.run {
                     for
-                        tmp1 <- Path.tempScoped("kyo-setFiles-a-", ".txt")
-                        tmp2 <- Path.tempScoped("kyo-setFiles-b-", ".txt")
-                        _    <- tmp1.write("alpha")
-                        _    <- tmp2.write("beta")
+                        tmp1 <- Path.run(Path.tempScoped("kyo-setFiles-a-", ".txt"))
+                        tmp2 <- Path.run(Path.tempScoped("kyo-setFiles-b-", ".txt"))
+                        _    <- Path.run(tmp1.write("alpha"))
+                        _    <- Path.run(tmp2.write("beta"))
                         paths = Chunk(tmp1, tmp2)
                         _ <- Browser.setFiles(Browser.Selector.css("#fileInput"), paths)
                         // Single multi-field eval: one CDP round-trip returning length and both basenames.
@@ -1185,10 +1185,10 @@ class BrowserMutationTest extends BrowserTest:
             ).andThen {
                 Scope.run {
                     for
-                        tmp1 <- Path.tempScoped("kyo-setFiles-seq-a-", ".txt")
-                        tmp2 <- Path.tempScoped("kyo-setFiles-seq-b-", ".txt")
-                        _    <- tmp1.write("alpha")
-                        _    <- tmp2.write("beta")
+                        tmp1 <- Path.run(Path.tempScoped("kyo-setFiles-seq-a-", ".txt"))
+                        tmp2 <- Path.run(Path.tempScoped("kyo-setFiles-seq-b-", ".txt"))
+                        _    <- Path.run(tmp1.write("alpha"))
+                        _    <- Path.run(tmp2.write("beta"))
                         // Use an explicit List[Path] to exercise the widened Seq parameter type.
                         paths: Seq[Path] = List(tmp1, tmp2)
                         _ <- Browser.setFiles(Browser.Selector.css("#fileInput"), paths)
