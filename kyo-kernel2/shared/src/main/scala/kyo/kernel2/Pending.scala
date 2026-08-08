@@ -102,11 +102,14 @@ object `<`:
         // brackets carry. The scheduler calls it when dropping a continuation that will
         // never be resumed.
         private[kyo] def finalizeBracket: Unit =
-            finalizeValue(self) match
-                case Nil => ()
-                case t :: rest =>
-                    rest.foreach(t.addSuppressed)
+            val errors = finalizeValue(self)
+            errors.headMaybe match
+                case Maybe.Present(t) =>
+                    errors.dropLeft(1).foreach(t.addSuppressed)
                     throw t
+                case Maybe.Absent => ()
+            end match
+        end finalizeBracket
     end extension
 
     extension [A, S](inline self: A < S)
@@ -385,35 +388,35 @@ object `<`:
 
     private inline def BracketDepth = 512
 
-    private def finalizeValue[A, S](v: A < S): List[Throwable] =
+    private def finalizeValue[A, S](v: A < S): Chunk[Throwable] =
         v match
             case kyo: Kyo.Continue[?, ?, ?] => finalizeArrow(kyo.cont)
             case kyo: Kyo.Defer[?, ?, ?]    => finalizeArrow(kyo.cont)
-            case _                          => Nil
+            case _                          => Chunk.empty
 
-    private def finalizeArrow(arrow: Any): List[Throwable] =
+    private def finalizeArrow(arrow: Any): Chunk[Throwable] =
         arrow match
             case finalize: Finalize[?, ?, ?] =>
                 try
                     val _ = finalize.bracket.release(finalize.value).asInstanceOf[Unit < Any].eval
-                    Nil
+                    Chunk.empty
                 catch
                     case t: Throwable =>
                         KyoException.attach(t, "release", finalize.bracket.frame)
-                        t :: Nil
+                        Chunk(t)
             case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                 finalizeChain(o)
             case at: Arrow.AndThen[?, ?, ?, ?] =>
-                finalizeArrow(at.a) ++ finalizeArrow(at.b)
+                finalizeArrow(at.a).concat(finalizeArrow(at.b))
             case _ =>
-                Nil
+                Chunk.empty
 
-    private def finalizeChain(o: Arrow.Offset[Any, Any, Any, Any]): List[Throwable] =
-        @tailrec def loop(cur: Any, errors: List[Throwable]): List[Throwable] =
+    private def finalizeChain(o: Arrow.Offset[Any, Any, Any, Any]): Chunk[Throwable] =
+        @tailrec def loop(cur: Any, errors: Chunk[Throwable]): Chunk[Throwable] =
             cur match
-                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(o.next, errors ++ finalizeArrow(o.head))
+                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(o.next, errors.concat(finalizeArrow(o.head)))
                 case _                                              => errors
-        loop(o, Nil)
+        loop(o, Chunk.empty)
     end finalizeChain
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
