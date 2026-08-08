@@ -29,8 +29,10 @@ object Arrow:
         def next: Arrow[Mid, B, S]
     end Step
 
+    // TODO write a doc explaning this mechanism using code snippets. Self-contained, direct, and clear. Then ask me to review
     private inline def SmallLimit = 32
 
+    // TODO let's move internal types and impls to a `private object internal` under this Arrow companion
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
         def frame: Frame
         // context and handlers are the execution ambient, threaded from the caller:
@@ -92,12 +94,12 @@ object Arrow:
           * semantics without asking the caller for them. Execution paths use the parameter-passing form, never this one.
           */
         def apply[S2](v: A < S2): B < (S & S2) =
-            if self.asInstanceOf[AnyRef] eq empty then
+            if isEmpty(self) then
                 v.asInstanceOf[B < (S & S2)]
             else if v.isInstanceOf[Kyo[?, ?]] then
                 v.asInstanceOf[Kyo[A, S2]].map(self)
             else
-                Kyo.Defer[A, B, S & S2](v, self)
+                Kyo.Defer(v, self)
 
         /** The execution form: applies this arrow now, under the context and handlers the caller is executing with.
           *
@@ -105,8 +107,9 @@ object Arrow:
           * `Context.empty` and `Handlers.empty` are fabricated only at the true roots (eval, evalPartial) and at construction-time
           * eager runs of kernel-minted transforms, which cannot consume them.
           */
+        // TODO Context and Handlers should not leak outside of the kernel. Arrow is meant to be user facing
         def apply[S2](v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
-            if self.asInstanceOf[AnyRef] eq empty then
+            if isEmpty(self) then
                 v.asInstanceOf[B < (S & S2)]
             else if v.isInstanceOf[Kyo[?, ?]] then
                 // the one place suspensions bubble: a fun-format operation in scope is
@@ -115,7 +118,8 @@ object Arrow:
                 if handlers.isEmpty then kyo.asInstanceOf[Kyo[A, S2]].map(self)
                 else
                     val answered = ArrowEffect.answerNow(kyo, context, handlers)
-                    if answered.asInstanceOf[AnyRef] eq null then kyo.asInstanceOf[Kyo[A, S2]].map(self)
+                    if answered.asInstanceOf[AnyRef] eq null then
+                        kyo.asInstanceOf[Kyo[A, S2]].map(self) // TODO I know null is likely for performance but let's use Maybe and keep a flag for me if there's a regression. Use Maybe
                     else self(answered.asInstanceOf[A < S2], context, handlers)
                 end if
             else
@@ -128,11 +132,12 @@ object Arrow:
                         applySlow(self, v, context, handlers)
 
         def map[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-            if self.asInstanceOf[AnyRef] eq empty then f.asInstanceOf[Arrow[A, C, S & S2]]
-            else if f.asInstanceOf[AnyRef] eq empty then self.asInstanceOf[Arrow[A, C, S & S2]]
+            if isEmpty(self) then f.asInstanceOf[Arrow[A, C, S & S2]]
+            else if isEmpty(f) then self.asInstanceOf[Arrow[A, C, S & S2]]
             else new AndThen(self, f)
 
         private[kyo] def optimize: Arrow[A, B, S] =
+            // TODO use a more intuitive name for the method
             def respine(node: Arrow[?, ?, ?], rest: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
                 node match
                     case at: AndThen[?, ?, ?, ?] =>
@@ -182,6 +187,7 @@ object Arrow:
             end count
             self match
                 case at: AndThen[?, ?, ?, ?] =>
+                    // This logic seems quite complex, is it well optimized? should the count be discarded after the check? can't it optimize something later?
                     if count(at, 0) > 0 then respine(at, empty).asInstanceOf[Arrow[A, B, S]]
                     else unfold(at).asInstanceOf[Arrow[A, B, S]]
                 case _ =>
@@ -198,7 +204,7 @@ object Arrow:
         private[kyo] inline def step: Maybe[Step[A, B, S]] =
             self match
                 case o: Offset[Any, Any, Any, Any] @unchecked =>
-                    Maybe(o.asInstanceOf[Step[A, B, S]])
+                    Maybe(o.asInstanceOf[Step[A, B, S]]) // TODO Maybe(self) ?
                 case _ =>
                     stepSlow(self)
 
@@ -209,12 +215,12 @@ object Arrow:
             case at: AndThen[?, ?, ?, ?] =>
                 self.optimize.step
             case t: Transform[?, ?, ?] =>
-                if t.asInstanceOf[AnyRef] eq empty then Maybe.Absent
+                if isEmpty(t) then Maybe.Absent
                 else Maybe(new Offset(t.asInstanceOf[Transform[Any, Any, Any]], empty).asInstanceOf[Step[A, B, S]])
     end stepSlow
 
     private def rescue[A, B, S, S2](self: Arrow[A, B, S], v: A < S2): B < (S & S2) =
-        Kyo.Defer[A, B, S & S2](v, self)
+        Kyo.Defer(v, self)
 
     private def guardedRun[A, B, S, S2](t: Transform[A, B, S], v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
         val safepoint = Safepoint.get
@@ -237,7 +243,7 @@ object Arrow:
             case at: AndThen[?, ?, ?, ?] =>
                 self.optimize(v, context, handlers)
             case _ =>
-                Kyo.Defer[A, B, S & S2](v, self)
+                Kyo.Defer(v, self)
     end applySlow
 
     /** The pre-linked chain node: simultaneously an Arrow (it can be stored, composed,
@@ -280,7 +286,7 @@ object Arrow:
     private val optimizeBuffer = new ThreadLocal[java.util.ArrayDeque[Any]]:
         override def initialValue = new java.util.ArrayDeque[Any]
 
-    private[kyo] def isEmpty[A, B, S](f: Arrow[A, B, S]): Boolean =
+    private[kyo] inline def isEmpty[A, B, S](f: Arrow[A, B, S]): Boolean =
         f.asInstanceOf[AnyRef] eq empty
 
 end Arrow

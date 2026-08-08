@@ -27,7 +27,7 @@ object ContextEffect:
       */
     @nowarn("msg=anonymous")
     private[kyo] def runDetached[A, S](f: Context => A < S)(using _frame: Frame): A < S =
-        Kyo.Defer[Unit, A, S](
+        Kyo.Defer(
             (),
             new Arrow.Transform[Unit, A, S]:
                 def frame = _frame
@@ -52,7 +52,8 @@ object ContextEffect:
     inline def suspend[V, E <: ContextEffect[V]](
         inline effectTag: Tag[E]
     )(using inline _frame: Frame): V < E =
-        Kyo.Defer[Unit, V, E](
+        // TODO how about Defer is an abstract class so we can override the value as () without creating a field?
+        Kyo.Defer(
             (),
             new Arrow.Transform[Unit, V, E]:
                 def frame = _frame
@@ -67,7 +68,7 @@ object ContextEffect:
     )(
         inline f: V => B < S
     )(using inline _frame: Frame): B < (E & S) =
-        suspend[V, E](effectTag).map(f)
+        suspend(effectTag).map(f)
 
     /** Reads the value of `E` if a binding is in scope, or the default otherwise.
       *
@@ -79,7 +80,7 @@ object ContextEffect:
         inline default: => V
     )(using inline _frame: Frame): V < Any =
         val fallback: () => V = () => default
-        Kyo.Defer[Unit, V, Any](
+        Kyo.Defer(
             (),
             new Arrow.Transform[Unit, V, Any]:
                 def frame = _frame
@@ -95,7 +96,7 @@ object ContextEffect:
     )(
         inline f: V => B < S
     )(using inline _frame: Frame): B < S =
-        suspend[V, E](effectTag, default).map(f)
+        suspend(effectTag, default).map(f)
 
     /** Provides a constant binding for `E` within the computation's scope. */
     def handle[V, E <: ContextEffect[V], A, S](

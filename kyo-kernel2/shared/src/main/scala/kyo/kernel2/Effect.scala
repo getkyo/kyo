@@ -70,7 +70,7 @@ object Effect:
             def frame = _frame
             def run[C, S2](v: Unit, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
                 cont(f, context, handlers)
-        Kyo.Defer[Unit, A, S]((), thunk)
+        Kyo.Defer((), thunk)
     end defer
 
     /** Acquires a resource, uses it, and guarantees release.

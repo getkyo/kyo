@@ -159,6 +159,7 @@ object ArrowEffect:
       * suspension rotates the handler into its continuation, a Defer and a Bracket carry the rotate step into theirs. Settled values
       * never reach here; each loop's own settled arm completes them.
       */
+    // TODO can we have a name indicating rotation? rotateRight? Please use cosnistent and regular terminology in the module
     private[kernel2] def rewrap[A, B, S, S2](
         v: Kyo[A, S],
         rotated: [X] => Arrow[X, A, S] => Arrow[X, B, S2],
@@ -171,7 +172,7 @@ object ArrowEffect:
                 s.continue(rotated(s.cont))
             case d: Kyo.Defer[a, A, S] @unchecked =>
                 // the deferred value's residual row after this handler is the loop's output row: the fold's premise, not provable
-                new Kyo.Defer[a, B, S2](d.value.asInstanceOf[a < S2], rotated(d.cont))
+                Kyo.Defer(d.value.asInstanceOf[a < S2], rotated(d.cont))
             case b: Kyo.Bracket[r, A, S] @unchecked =>
                 if b.acquire.isInstanceOf[Kyo[?, ?]] then
                     // acquire is sequenced before the bracket: fold it as the head of the computation and rebuild the bracket
@@ -228,7 +229,7 @@ object ArrowEffect:
                     val k = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
                     if w.isInstanceOf[Kyo[?, ?]] then
                         // an effectful answer runs at the handler's scope, rotating across suspensions
-                        k(scoped[Any, Any, Any](entry)(w), context, handlers)
+                        k(scoped(entry)(w), context, handlers)
                     else
                         k(defaultLift(w), context, handlers)
                     end if
@@ -244,7 +245,7 @@ object ArrowEffect:
     private def scoped[A, S, S2](entry: Handlers.Entry)(w: A < S): A < S2 =
         w match
             case k: Kyo[A, S] @unchecked =>
-                rewrap[A, A, S, S2](
+                rewrap(
                     k,
                     [X] => (chain: Arrow[X, A, S]) => Rotate.at[X, A, S, S2](chain, entry),
                     (v, _, _) => scoped[A, S, S2](entry)(v),
@@ -302,7 +303,11 @@ object ArrowEffect:
         def loop(v: A < (E & S & S2), context: Context, handlers: Handlers): A < (S & S2) =
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S & S2] @unchecked if effectTag.erased <:< s.erasedTag =>
-                    loop(s.cont(h.handle[x](s.input), context, handlers), context, handlers)
+                    loop(
+                        s.cont(h.handle[x](s.input), context, handlers),
+                        context,
+                        handlers
+                    ) // TODO I still don't understand why we aren't adding a handler to handlers here. Are you sure these new handlers are optimized as I meant?
                 case k: Kyo[A, E & S & S2] @unchecked =>
                     rewrap(k, [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.handler(chain, h, loop, frame), loop, context, handlers)
                 case v =>
@@ -378,7 +383,7 @@ object ArrowEffect:
     )(
         handle: [C] => (I[C], O[C] => A < (E & S)) => Loop.Outcome[A < (E & S), A] < S2
     )(using frame: Frame): A < (S & S2) =
-        handleLoop[I, O, E, A, A, S, S2, Unit](effectTag, (), v)(
+        handleLoop(effectTag, (), v)(
             [C] =>
                 (input, _, cont) =>
                     handle(input, cont).map {
