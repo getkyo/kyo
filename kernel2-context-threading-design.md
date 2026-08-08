@@ -384,6 +384,51 @@ was the original motivation for threading the parameter; under R1 the hot path f
 fiber-context reads (no local binding) is one failed chain search plus the map
 lookup.
 
+### 2.3d Rotation generalized: the operation that replaces prepend
+
+Your framing is broader than a binding fix, and a probe just confirmed it
+empirically. The prepend encoding loses every wrapper's region EXIT, not just
+bindings':
+
+```scala
+// kernel2 today: the throwing map is OUTSIDE the catching region, yet f catches it
+val guarded = Effect.catching(ask.map(_ + 1))(_ => -1)
+val outside = guarded.map(v => (throw new RuntimeException("boom")): Int)
+handle(...)(outside).eval   // kernel2: -1 (over-guard). old kernel: boom escapes.
+```
+
+Verified against both kernels: the old kernel scopes the guard correctly, kernel2
+catches past the region end. `Observe.Step` over-observes by the identical shape.
+Three defects, one cause: `prepend` re-arms a wrapper at the FRONT of whatever
+remainder exists, erasing where its region ends.
+
+The rotation kernel fixes the class, and makes the handlers real:
+
+1. **Every wrapper is a boundary delimiter.** `Handler.Cont/Resume/Stop/First/
+   Loop`, `Catching`, `Observe.Step`, and `ContextBinding` install by APPENDING at
+   their region's end, purely. Chain position IS scope. `prepend`,
+   `Arrow.Interceptor`, and the pass-through `as` cast are deleted.
+2. **Rotation is the crossing operation.** When a suspension bubbles outward
+   through a delimiter, the delimiter decides its crossing: an `ArrowHandler`
+   with a matching tag dispatches (the captured continuation is exactly the
+   region up to itself, by construction); any other delimiter rotates into the
+   suspension's continuation, preserving nesting order (the gist's law). Today's
+   dispatch search, prefix capture, and per-dispatch `optimize` re-walks collapse
+   into this one structural step, and the delimiters stop being passive markers
+   interpreted by a distant erased match: each carries its own crossing.
+3. **Reads dispatch like operations** (R1): resolve against the innermost
+   matching `ContextBinding` delimiter crossed on the way out, falling back to
+   the threaded context at the boundary (`handlePartial`'s parameter, the fiber
+   carrier). Clause scope is correct by position for every wrapper kind.
+4. **Throws unwind to the nearest downstream Catching delimiter**, which is now
+   the correctly-scoped generalization of dispatch's existing clause-throw
+   unwind: the region end is marked, so the over-guard disappears.
+
+What remains of the threading round: the run-signature context parameter and its
+supply rules (roots, drives, handlePartial) stay as the boundary carrier; the
+binding-as-interceptor and read-as-context-lookup pieces are replaced by
+delimiter dispatch with context fallback.
+
 ## 2.4 Drives: who supplies the parameter
 
 1. `evalLoop(v0, mode, context)`: the Defer arm passes it, dispatch closes it into
