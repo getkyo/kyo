@@ -21,6 +21,38 @@ class EffectTest extends Test[Any]:
         ArrowEffect.suspend[Any](Tag[TestEffect1], i)
 
     "catching" - {
+        def ask: Int < EffAsk = ArrowEffect.suspend[Any](Tag[EffAsk], ())
+
+        "a throw outside the guarded computation escapes" in {
+            // scope is structural: a step appended after catching is outside it, so
+            // the throw fires instead of being rescued to -1
+            interceptThrown[RuntimeException] {
+                val guarded = Effect.catching(ask.map(_ + 1))(_ => -1)
+                val handled = ArrowEffect.handle(Tag[EffAsk], guarded.map(_ => (throw new RuntimeException("boom")): Int))(
+                    [C] => (_, cont) => cont(5)
+                )
+                handled.eval
+            }
+        }
+
+        "a throw after a suspension resumes inside the guarded computation is caught" in {
+            // the guard rotates with the computation: the throw happens after the
+            // operation resumes with 5, and still lands in the rescue
+            val guarded =
+                Effect.catching(ask.map(x => if x > 0 then throw new RuntimeException("boom") else x))(_ => -7)
+            assert(ArrowEffect.handle(Tag[EffAsk], guarded)([C] => (_, cont) => cont(5)).eval == -7)
+        }
+
+        "handleStop discards the rest of the computation, dropping a guard inside it" in {
+            // the discard is not an exception: the guarded region between the
+            // operation and the handler is dropped without its rescue running
+            val region = Effect.catching(ask.map(_ + 999))(_ => -1)
+            val handled = ArrowEffect.handleStop(Tag[EffAsk], region)(
+                [C] => (_) => 15
+            )
+            assert(handled.map(_ + 1).eval == 16)
+        }
+
         "match" in {
             val effect = Effect.catching {
                 throw new RuntimeException("Test exception")

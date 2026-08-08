@@ -6,9 +6,10 @@ import kyo.kernel2.internal.Context
 import kyo.test.Test
 import language.implicitConversions
 
-sealed trait Env   extends ContextEffect[Int]
-sealed trait Name  extends ContextEffect[String]
-sealed trait CtxOp extends ArrowEffect[Const[Unit], Const[Int]]
+sealed trait Env    extends ContextEffect[Int]
+sealed trait Name   extends ContextEffect[String]
+sealed trait CtxOp  extends ArrowEffect[Const[Unit], Const[Int]]
+sealed trait CtxOp2 extends ArrowEffect[Const[Int], Const[Int]]
 
 class ContextEffectTest extends Test[Any]:
 
@@ -266,12 +267,36 @@ class ContextEffectTest extends Test[Any]:
         assert(k(20).asInstanceOf[Int < Any].eval == 25)
     }
 
-    "context reads inside arrow handler clauses resolve against the clause scope" in {
+    "context reads inside a handle function resolve at the handler's scope" in {
         val program = op.map(_ + 1)
         val handled: Int < Env = ArrowEffect.handleResume(Tag[CtxOp], program.asInstanceOf[Int < (CtxOp & Env)])(
             [C] => (_) => env.map(_ * 2)
         )
         assert(ContextEffect.handle(Tag[Env], 3)(handled).eval == 7)
+    }
+
+    "a rebind inside the handled computation stays invisible to the handle function" in {
+        // reads inside the handled computation see the inner binding; the handle
+        // function sees the binding outside the handler: 100 * 2 = 200 answers the
+        // operation, and the inner read of 42 completes 200 * 1000 + 42
+        val program: Int < (Env & CtxOp) = op.flatMap(x => env.map(e => x * 1000 + e))
+        val inner                        = ContextEffect.handle(Tag[Env], 42)(program)
+        val handled = ArrowEffect.handleResume(Tag[CtxOp], inner.asInstanceOf[Int < (CtxOp & Env)])(
+            [C] => (_) => env.map(_ * 2)
+        )
+        assert(ContextEffect.handle(Tag[Env], 100)(handled).eval == 200042)
+    }
+
+    "a handle function suspending on an outer effect keeps its scope after resuming" in {
+        // the handle function parks on CtxOp2, resumes with 8, and its read still
+        // resolves at the handler's scope (3), not the inner rebind (42)
+        def t(i: Int): Int < CtxOp2 = ArrowEffect.suspend[Any](Tag[CtxOp2], i)
+        val inner                   = ContextEffect.handle(Tag[Env], 42)(op)
+        val handled: Int < (Env & CtxOp2) = ArrowEffect.handleResume(Tag[CtxOp], inner.asInstanceOf[Int < (CtxOp & Env & CtxOp2)])(
+            [C] => (_) => t(7).flatMap(x => env.map(e => x * 1000 + e))
+        )
+        val bound = ContextEffect.handle(Tag[Env], 3)(handled)
+        assert(ArrowEffect.handle(Tag[CtxOp2], bound)([C] => (in, cont) => cont(in + 1)).eval == 8003)
     }
 
     "a bare defaulted read resolves at the boundary" in {

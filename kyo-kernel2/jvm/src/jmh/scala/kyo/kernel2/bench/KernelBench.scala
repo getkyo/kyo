@@ -7,6 +7,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.*
 import kyo.kernel2.internal.Context
+import kyo.kernel2.internal.Handlers
 import language.implicitConversions
 import org.openjdk.jmh.annotations.*
 
@@ -50,7 +51,7 @@ class KernelBench:
             [C] =>
                 (in, cont) =>
                     cont.step match
-                        case Maybe.Present(s) => Maybe(s.head.run(in, Context.empty, s.next).asInstanceOf[Int < BenchEcho])
+                        case Maybe.Present(s) => Maybe(s.head.run(in, Context.empty, Handlers.empty, s.next).asInstanceOf[Int < BenchEcho])
                         case Maybe.Absent     => Maybe(in: Int < BenchEcho)
         ).asInstanceOf[Int < Any].eval
 
