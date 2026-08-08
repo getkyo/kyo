@@ -128,10 +128,12 @@ Per format, `resume` IS the semantics, and its body type-checks with no cast:
 def resume(input, cont) = Handled(clause(input, cont), this)
 // First: shallow, the handler leaves; cont is the raw unhandled remainder
 def resume(input, cont) = clause(input, cont)
-// Loop: state evolves by a replacement node, no mutation anywhere
+// Loop: the clause returns the EXISTING Loop.Outcome2 (a Continue2, or the bare
+// done value: the opaque union O | Continue2), interpreted exactly as today's
+// outcomeStep does, with replaceState installing the next iteration's handler
 def resume(input, cont) = clause(input, state, cont).map {
-    case Continue(st, next) => Handled(next, withState(st))
-    case Done(b)            => b
+    case c: Loop.Continue2[?, ?] => Handled(c._2, replaceState(c._1))
+    case done                    => done
 }
 // Stop: never called; the drive unwinds without capturing (2.6)
 // Resume: answered in place at the site (2.5); defined only as the uniform fallback
