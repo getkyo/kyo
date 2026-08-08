@@ -27,9 +27,12 @@ sealed abstract private[kyo] class Handler[-A, +B, -S] extends Arrow.Transform[A
     /** Installs this delimiter around a region, purely: nothing evaluates here, and the region's operations dispatch to this delimiter
       * when a drive reaches them. The cast discharges the region's effect from the row, which is the meaning of installation: every
       * operation of `E` inside the region is interpreted by this delimiter, so the result no longer carries `E`.
+      *
+      * A settled value takes the eager execution form: the handler's completion step (pass-through, or `done`) is context-pure, so
+      * the construction-time empty context is inert, and the value must not detour through a Defer.
       */
     final private[kyo] def install[E, S2](v: A < (E & S2)): B < (S2 & S) =
-        this(v).asInstanceOf[B < (S2 & S)]
+        this(v, Context.empty).asInstanceOf[B < (S2 & S)]
 end Handler
 
 private[kyo] object Handler:
