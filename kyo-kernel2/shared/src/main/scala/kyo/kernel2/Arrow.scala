@@ -31,9 +31,7 @@ object Arrow:
         def next: Arrow[Mid, B, S]
     end Step
 
-    // TODO this is a Safepoint concern
-    private[kyo] inline def Period = 512
-    private inline def SmallLimit  = 32
+    private inline def SmallLimit = 32
 
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
         private[kyo] def hasHandler: Boolean = false
@@ -145,7 +143,7 @@ object Arrow:
                 val it = buffer.descendingIterator()
                 @tailrec def link(acc: Arrow[Any, Any, Any], n: Int): Arrow[Any, Any, Any] =
                     if !it.hasNext then acc
-                    else if n == Period then
+                    else if n == Safepoint.Period then
                         link(new Offset(segmentBoundary, acc), 0)
                     else link(new Offset(it.next().asInstanceOf[Transform[Any, Any, Any]], acc), n + 1)
                 val result = link(empty, 0)

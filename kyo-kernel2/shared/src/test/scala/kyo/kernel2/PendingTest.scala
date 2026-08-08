@@ -10,6 +10,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel2.*
 import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.Safepoint
 import kyo.render
 import kyo.test.Test
 import language.implicitConversions
@@ -666,43 +667,29 @@ class PendingTest extends Test[Any]:
             k = k.map(_ + 1)
             i += 1
         val resumed = park(k)(0).asInstanceOf[Int < Any]
-        var polls   = 0
-        val suspended = resumed.eval(
-            () =>
-                polls += 1; polls == 2
-            ,
-            512
-        )
-        assert(polls == 2)
+        // a step requests preemption of its own thread: the drive parks at its next poll
+        // and evalPartial consumes the request at exit
+        val program: Int < Any =
+            (0: Int < Any).flatMap { _ =>
+                Safepoint.get.preempt()
+                resumed
+            }
+        val suspended = program.evalPartial
+        assert(suspended.evalNow == Maybe.empty)
         assert(suspended.eval == 10000)
     }
 
-    "period controls poll cadence" in {
-        def parkAndResume(): Int < Any =
-            var k: Int < Ask = ask
-            var i            = 0
-            while i < 10000 do
-                k = k.map(_ + 1)
-                i += 1
-            park(k)(0).asInstanceOf[Int < Any]
-        end parkAndResume
-        var p512 = 0
-        assert(parkAndResume().eval(
-            () =>
-                p512 += 1;
-                false
-            ,
-            512
-        ).eval == 10000)
-        var p4096 = 0
-        assert(parkAndResume().eval(
-            () =>
-                p4096 += 1;
-                false
-            ,
-            4096
-        ).eval == 10000)
-        assert(p512 > p4096)
+    "a pending request parks a drive at its first poll" in {
+        var k: Int < Ask = ask
+        var i            = 0
+        while i < 10000 do
+            k = k.map(_ + 1)
+            i += 1
+        val resumed = park(k)(0).asInstanceOf[Int < Any]
+        Safepoint.get.preempt()
+        val suspended = resumed.evalPartial
+        assert(suspended.evalNow == Maybe.empty)
+        assert(suspended.eval == 10000)
     }
 
     "deep resumed continuation is stack safe" in {

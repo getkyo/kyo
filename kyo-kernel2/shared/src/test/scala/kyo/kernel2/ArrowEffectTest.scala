@@ -313,10 +313,11 @@ class ArrowEffectTest extends Test[Any]:
             assert(result.evalNow == Maybe(6))
         }
 
-        "respects the preempt condition" in {
+        "respects a pending preemption request" in {
             var called               = false
             val x: Int < TestEffect1 = Effect.defer(5)
-            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x, () => true, 1)(
+            kyo.kernel2.internal.Safepoint.get.preempt()
+            val result = ArrowEffect.handlePartial(Tag[TestEffect1], x)(
                 [C] =>
                     (input, cont) =>
                         called = true
@@ -1054,23 +1055,20 @@ class ArrowEffectTest extends Test[Any]:
         assert(k(100).asInstanceOf[Int < Any].eval == 110)
     }
 
-    "handlePartial polls preemption across dispatches" in {
+    "handlePartial parks on a request between dispatches and the remainder resumes" in {
         import kyo.Maybe
         def program(i: Int): Int < Echo =
             if i == 0 then 0
             else echo(i).map(_ => program(i - 1))
-        var polls = 0
-        val r = ArrowEffect.handlePartial(
-            Tag[Echo],
-            program(10000),
-            () =>
-                polls += 1; polls == 2
-            ,
-            512
-        )(
-            [C] => (in, cont) => Maybe(cont(in))
+        var answers = 0
+        val r = ArrowEffect.handlePartial(Tag[Echo], program(10000))(
+            [C] =>
+                (in, cont) =>
+                    answers += 1
+                    if answers == 2 then kyo.kernel2.internal.Safepoint.get.preempt()
+                    Maybe(cont(in))
         )
-        assert(polls == 2)
+        assert(answers == 2)
         val rest = ArrowEffect.handlePartial(Tag[Echo], r)(
             [C] => (in, cont) => Maybe(cont(in))
         )

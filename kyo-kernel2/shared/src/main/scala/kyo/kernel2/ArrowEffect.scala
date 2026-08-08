@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Handler
 import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
@@ -217,21 +218,19 @@ object ArrowEffect:
       */
     private[kyo] def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
         effectTag: Tag[E],
-        v: A < (E & S),
-        preempt: () => Boolean = `<`.neverPreempt,
-        period: Int = Arrow.Period
+        v: A < (E & S)
     )(
         clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
     )(using frame: Frame): A < (E & S) =
-        val stride = Integer.max(1, period / Arrow.Period)
-        // n counts answered operations down to the preemption poll, the same cadence the
-        // in-drive dispatch arms keep for their own steps
-        @tailrec def slice(cur: A < (E & S), n: Int): A < (E & S) =
+        // this loop is the slice's Preemptible boundary: the inner drives cascade parks without consuming, and the request is
+        // consumed exactly once here, when the slice decides to return the remainder
+        @tailrec def slice(cur: A < (E & S)): A < (E & S) =
             inline def continue(next: A < (E & S)): A < (E & S) =
-                if n == 0 then
-                    if preempt() then next else slice(next, stride - 1)
-                else slice(next, n - 1)
-            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], preempt, stride).asInstanceOf[A < (E & S)]
+                if Safepoint.pollPreempt() then
+                    val _ = Safepoint.clearPreempt()
+                    next
+                else slice(next)
+            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], `<`.EvalCascade).asInstanceOf[A < (E & S)]
             r match
                 case k: Kyo.Continue[?, ?, ?] @unchecked =>
                     k.suspend match
@@ -250,10 +249,13 @@ object ArrowEffect:
                     clause[c](s.input.asInstanceOf[I[c]], Arrow[O[c]].asInstanceOf[Arrow[O[c], A, E & S]]) match
                         case Maybe.Present(next) => continue(next)
                         case Maybe.Absent        => r
-                case _ => r
+                case _ =>
+                    if Safepoint.pollPreempt() then
+                        val _ = Safepoint.clearPreempt()
+                    r
             end match
         end slice
-        slice(v, 0)
+        slice(v)
     end handlePartial
 
 end ArrowEffect

@@ -254,23 +254,26 @@ object `<` extends Implicits:
 
         /** Evaluates the computation to its value.
           *
-          * All effects must have handlers installed; reaching a suspension with no matching delimiter is a defect and throws.
+          * The drive runs Masked: eval must return `A`, so it cannot hand back a remainder, and a non-polling drive would spin on a
+          * pending request; it absorbs requests and re-issues them at exit so an enclosing slice still sees them. All effects must
+          * have handlers installed; reaching a suspension with no matching delimiter is a defect and throws.
           */
         def eval: A =
             if self.isInstanceOf[Kyo[?, ?]] then
-                evalLoop(self.asInstanceOf[Any < Any], neverPreempt, 1) match
+                evalLoop(self.asInstanceOf[Any < Any], EvalMasked) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
                     case v                  => Kyo.unnest(v).asInstanceOf[A]
             else Kyo.unnest(self).asInstanceOf[A]
 
-        /** Evaluates within a preemption budget, returning the remaining computation. */
-        // TODO I don't think the period is used anymore?
-        def eval(preempt: () => Boolean, period: Int): A < Any =
-            evalLoop(self.asInstanceOf[Any < Any], preempt, Integer.max(1, period / Arrow.Period)).asInstanceOf[A < Any]
+        /** Evaluates until the computation completes or a preemption request is consumed, returning the remainder.
+          *
+          * The clause-free Preemptible drive: the caller re-schedules the remainder and drives it again. The request is consumed once
+          * at exit, so the caller's authoritative check after this returns observes every condition published before the request.
+          */
+        private[kyo] def evalPartial: A < Any =
+            evalLoop(self.asInstanceOf[Any < Any], EvalPreemptible).asInstanceOf[A < Any]
 
     end extension
-
-    private[kyo] val neverPreempt: () => Boolean = () => false
 
     private inline def BracketDepth = 512
 
@@ -347,16 +350,23 @@ object `<` extends Implicits:
                 EffectTrace.attach(t2, "release", bracket.frame)
                 t.addSuppressed(t2)
 
-    private def preempted(v: Any < Any): Boolean =
-        v.isInstanceOf[Kyo.Defer[?, ?, ?]]
+    /** The three drive modes. Preemptible is the slice boundary: it stops on a request and its caller consumes it once at exit.
+      * Masked cannot hand back a remainder, so it absorbs requests at each poll and re-issues them at exit. Cascade is an inner drive
+      * that neither consumes nor re-issues: it returns the remainder so the request reaches the enclosing slice.
+      */
+    private[kyo] inline def EvalPreemptible = 0
+    private[kyo] inline def EvalMasked      = 1
+    private[kyo] inline def EvalCascade     = 2
 
-    private[kyo] def evalLoop(
-        v0: Any < Any,
-        preempt: () => Boolean,
-        stride: Int
-    ): Any < Any =
+    private[kyo] def evalLoop(v0: Any < Any, mode: Int): Any < Any =
         def recur(v: Any < Any, depth: Int): Any < Any =
-            @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
+            @tailrec def loop(curr: Any < Any): Any < Any =
+                // the poll sits at the top of the loop: it covers Defer pops, suspension dispatches, and the bare arm with one
+                // site, and every mode must poll, because a drive that ignores a pending request cannot make progress through a
+                // lone-transform Defer (every enter refuses and the identical rescue comes back)
+                if Safepoint.pollPreempt() then
+                    if mode == EvalMasked then Safepoint.maskPreempt()
+                    else return curr
                 curr match
                     case bracket: Kyo.Bracket[Any, Any, Any] @unchecked =>
                         if depth >= BracketDepth then bracket
@@ -364,7 +374,7 @@ object `<` extends Implicits:
                             recur(bracket.acquire, depth + 1) match
                                 case suspended: Kyo[Any, Any] @unchecked =>
                                     val wrapped = suspended.map(reacquire(bracket))
-                                    if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
+                                    if depth == 0 then loop(wrapped) else wrapped
                                 case acquired =>
                                     val resource = Kyo.unnest(acquired)
                                     val result =
@@ -376,56 +386,62 @@ object `<` extends Implicits:
                                     result match
                                         case suspended: Kyo[Any, Any] @unchecked =>
                                             val wrapped = suspended.map(new Finalize[Any, Any, Any](bracket, resource))
-                                            if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
+                                            if depth == 0 then loop(wrapped) else wrapped
                                         case _ =>
-                                            recur(bracket.release(resource), depth + 1) match
+                                            // release runs masked, mirroring the current kernel: neither a time slice nor an
+                                            // interrupt cuts a finalizer that is already running
+                                            Safepoint.maskPreempt()
+                                            val released =
+                                                try recur(bracket.release(resource), depth + 1)
+                                                finally Safepoint.unmaskPreempt()
+                                            released match
                                                 case suspended: Kyo[Any, Any] @unchecked =>
                                                     val wrapped = suspended.map(constant(result))
-                                                    if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
+                                                    if depth == 0 then loop(wrapped) else wrapped
                                                 case _ =>
                                                     result
+                                            end match
                                     end match
                     case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
-                        if n == 0 then
-                            if preempt() then curr
-                            else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
-                        else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
+                        loop(defer.cont(defer.value.asInstanceOf[Any < Any]))
                     case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
                         evalSuspension(c) match
-                            case Maybe.Present(next) =>
-                                if n == 0 then
-                                    if preempt() then next
-                                    else loop(next, stride - 1)
-                                else loop(next, n - 1)
-                            case _ => curr
+                            case Maybe.Present(next) => loop(next)
+                            case _                   => curr
                     case s: Kyo.Suspension[?, ?] @unchecked if depth == 0 =>
                         // a bare suspension has no chain yet: dispatch it as a continue with the
                         // empty arrow so context defaults still apply
                         val c = new Kyo.Continue(s.asInstanceOf[Kyo.Suspension[Any, Any]], Arrow[Any])
                         evalSuspension(c) match
-                            case Maybe.Present(next) =>
-                                if n == 0 then
-                                    if preempt() then next
-                                    else loop(next, stride - 1)
-                                else loop(next, n - 1)
-                            case _ => curr
+                            case Maybe.Present(next) => loop(next)
+                            case _                   => curr
                         end match
                     case kyo: Kyo[Any, Any] @unchecked =>
                         curr
                     case _ =>
                         curr
-            loop(v, 0)
+                end match
+            end loop
+            loop(v)
         end recur
         // the drive is a fresh trampoline: it runs with its own depth budget so frames the caller
         // already committed cannot starve it into re-rescuing the same step forever
         val safepoint = Safepoint.get
         val saved     = safepoint.openDrive()
-        try recur(v0, 0)
+        try
+            val result = recur(v0, 0)
+            // the Preemptible boundary consumes exactly once, at exit: consuming at the poll site would break the bracket
+            // cascade, which decides whether to keep driving by observing that the request is still pending
+            if mode == EvalPreemptible then
+                val _ = Safepoint.clearPreempt()
+            result
         catch
             case ex: Throwable =>
                 EffectTrace.install(ex)
                 throw ex
-        finally safepoint.closeDrive(saved)
+        finally
+            if mode == EvalMasked then Safepoint.unmaskPreempt()
+            safepoint.closeDrive(saved)
         end try
     end evalLoop
 
