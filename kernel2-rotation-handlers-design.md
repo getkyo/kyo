@@ -462,7 +462,7 @@ region-entry benchmark row); parks stop paying per-park prepend re-installs.
 temporary probe; it is deleted when the implementation round lands and the
 reference programs become suite tests.
 
-# Typed cleanup round (planned)
+# Typed cleanup round (IMPLEMENTED)
 
 Goal per ruling: remove the Any-erased machinery without perf regressions. No new
 vocabulary; the pieces keep their names (Rotate, handle loop, chain, rewrap).
@@ -499,3 +499,32 @@ vocabulary; the pieces keep their names (Rotate, handle loop, chain, rewrap).
    acquire raises the stopped operation), compare with the old kernel's behavior
    for aborts inside resource acquisition (abort propagates, nothing acquired,
    release not run), then fix so a stop inside acquire discards the bracket.
+
+
+## Typed round results
+
+Landed across commits bd688eda04 (typing) and e7fa57585b (bracket semantics):
+
+- Rotate[A, B, S] with typed factories; rewrap over Kyo[A, S] with a
+  polymorphic rotated function; loops typed per form with existential captures
+  at the tag-guarded arm and their own settled arms; catching and the context
+  binding loop typed; Suspend.continue generalized to a typed output.
+- Board clean against the pre-typed record: every row at or better
+  (stateMap10k 519 us / 3,111,859 B, its best; suspension and narrowIter back
+  at baseline). loopSuspend1k keeps the known +2.1 ns/iteration from the typed
+  Loop step inputs (re-add list).
+- The typing pressure exposed the bracket acquire corruption: a handler ending
+  the computation while acquire was in flight completed the acquire with its
+  own value. Resolution: a pending acquire folds as the head of the
+  computation and the bracket is rebuilt around the settled resource, so the
+  continuation from an operation inside acquire spans acquire, bracket, and
+  use (old kernel semantics). Three pins cover the seam; two reproduced the
+  corruption before the fix.
+- Remaining erased surfaces, each documented in place: the drive (evalLoop),
+  answerNow and handlePartial at drive currency, the Offset fused interior,
+  the release fold inside the settled-acquire bracket wrap, and the
+  unnest/opaque-boundary casts. Defer values are settled by construction at
+  rewrap time (every construction site defers only non-Kyo values), so the
+  Defer arm's row retype carries no reachable hole.
+
+Suite: 626/626 (623 plus the three bracket-acquire pins).

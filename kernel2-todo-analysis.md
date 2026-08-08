@@ -139,3 +139,12 @@ Bracket arm's loop-wrapped acquire is a known typing pressure point to resolve
 during that round (an aborting ctl handler inside acquire currently completes
 the acquire with the handler's value; the typed rewrite must settle the intended
 semantics with a pin).
+
+# Type-safety round: closed
+
+Rotate/rewrap/loops typed end to end (commit bd688eda04); the Finalize.scala
+and Eval.scala centralization preceded it (commit cc446cf27b). The typing
+exposed and fixed the bracket acquire corruption under non-resuming handlers
+(commit e7fa57585b, three pins, old-kernel semantics). Suite 626/626, board
+clean, loopSuspend1k's +2.1 ns/iteration from typed Loop inputs remains the
+only known cost, recoverable via the erased-input re-add item.
