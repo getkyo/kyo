@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Handler
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 
 /** An effect whose operations are functions awaiting implementation.
   *
@@ -215,7 +216,7 @@ object ArrowEffect:
     ): Unit =
         def probe(suspension: Kyo.Suspension[?, ?]): Unit =
             suspension match
-                case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
+                case s: Kyo.Suspend[?, ?, ?, ?] @unchecked if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
                     f(s.input.asInstanceOf[I[Any]])
                 case _ => ()
         v match
@@ -241,14 +242,15 @@ object ArrowEffect:
     )(using frame: Frame): B < (S & S2 & S3) =
         Effect.catching(ArrowEffect.handle[I, O, E, A, S, S2](effectTag, v)(handle).map(done))(recover)
 
-    /** Drives the computation, handling `E` as the effect of last resort (the runtime boundary).
+    /** Drives the computation, interpreting unmatched operations of `E` outside it (the runtime boundary).
       *
-      * Unlike the installing handle APIs, this drives immediately and the clause is not a delimiter: it is consulted only for operations
-      * of `E` that no installed delimiter matched, making it the outermost handler. The clause receives the operation input and the full
-      * continuation (delimiters included) and decides: `Present(next)` continues the drive with `next`, deep across operations; `Absent`
-      * parks the drive with the suspension still pending, typically after capturing the continuation to resume out of band. This is the
-      * scheduler integration point: a task drives its computation handling the runtime's own effect here, parks on `Absent`, and re-enters
-      * with the same clause on the next slice. Preemption polls on the same cadence as the plain drive.
+      * Unlike the installing handle APIs, this is a loop around the plain drive, not a delimiter: the drive runs until it completes or
+      * parks, and when the parked suspension is an operation of `E` that no installed delimiter matched, the clause receives the
+      * operation input and the full continuation (delimiters included) and decides. `Present(next)` keeps driving this slice with
+      * `next`, deep across operations; `Absent` returns the remainder with the suspension still pending, and re-entering with the same
+      * clause resumes it (the continuation the clause receives is fresh at every re-entry). This is the scheduler integration point: a
+      * task drives one slice per call, parks by storing the returned remainder, and re-enters it on the next slice. Preemption polls
+      * inside the drive on its usual cadence.
       */
     private[kyo] def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
         effectTag: Tag[E],
@@ -258,20 +260,43 @@ object ArrowEffect:
     )(
         clause: [C] => (I[C], Arrow[O[C], A, E & S]) => Maybe[A < (E & S)]
     )(using frame: Frame): A < (E & S) =
-        `<`.evalLoop(
-            v.asInstanceOf[Any < Any],
-            preempt,
-            Integer.max(1, period / Arrow.Period),
-            boundary = true,
-            new `<`.LastResort(
-                effectTag.asInstanceOf[Tag[Any]],
-                clause.asInstanceOf[[C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]]
-            )
-        ).asInstanceOf[A < (E & S)]
+        val stride = Integer.max(1, period / Arrow.Period)
+        // n counts answered operations down to the preemption poll, the same cadence the
+        // in-drive dispatch arms keep for their own steps
+        @tailrec def slice(cur: A < (E & S), n: Int): A < (E & S) =
+            inline def continue(next: A < (E & S)): A < (E & S) =
+                if n == 0 then
+                    if preempt() then next else slice(next, stride - 1)
+                else slice(next, n - 1)
+            val r = `<`.evalLoop(cur.asInstanceOf[Any < Any], preempt, stride, boundary = true).asInstanceOf[A < (E & S)]
+            r match
+                case k: Kyo.Continue[?, ?, ?] @unchecked =>
+                    k.suspend match
+                        case s: Kyo.Suspend[?, ?, ?, c] if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
+                            // the tag match justifies reading the operation at this handler's types
+                            clause[c](
+                                s.input.asInstanceOf[I[c]],
+                                k.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize.asInstanceOf[Arrow[O[c], A, E & S]]
+                            ) match
+                                case Maybe.Present(next) => continue(next)
+                                case Maybe.Absent        => r
+                        case _ => r
+                case s: Kyo.Suspend[?, ?, ?, c] @unchecked if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
+                    // a bare operation is the whole remaining computation, so the identity
+                    // continuation is its continuation to this boundary
+                    clause[c](s.input.asInstanceOf[I[c]], Arrow[O[c]].asInstanceOf[Arrow[O[c], A, E & S]]) match
+                        case Maybe.Present(next) => continue(next)
+                        case Maybe.Absent        => r
+                case _ => r
+            end match
+        end slice
+        slice(v, 0)
+    end handlePartial
 
     /** Drives a freshly installed handler's region immediately: handling evaluates as far as it can, like every other strict position in
       * the kernel. Preemption for these drives is a later iteration.
       */
+    // TODO WHAT THE FLYING FUCK IS THIS!?!?!? the kernel must not have evals like that. Remove this, it's unnaceptable
     private def install[A, S, B, S2](v: A < S, h: Handler): B < S2 =
         `<`.evalLoop(
             h.asInstanceOf[Arrow[Any, Any, Any]](v.asInstanceOf[Any < Any]),

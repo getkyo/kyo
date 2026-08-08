@@ -348,18 +348,11 @@ object `<` extends Implicits:
     private def preempted(v: Any < Any): Boolean =
         v.isInstanceOf[Kyo.Defer[?, ?, ?]]
 
-    /** The drive-boundary handler of last resort: consulted only when no installed delimiter matches. */
-    // TODO wtf is this? how can you remove it?
-    final private[kyo] class LastResort(
-        val effectTag: Tag[Any],
-        val clause: [C] => (Any, Arrow[Any, Any, Any]) => Maybe[Any < Any]
-    )
     private[kyo] def evalLoop(
         v0: Any < Any,
         preempt: () => Boolean,
         stride: Int, // TODO unused?
-        boundary: Boolean,
-        last: LastResort | Null = null
+        boundary: Boolean
     ): Any < Any =
         def recur(v: Any < Any, depth: Int): Any < Any =
             @tailrec def loop(curr: Any < Any, n: Int): Any < Any =
@@ -397,7 +390,7 @@ object `<` extends Implicits:
                             else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), stride - 1)
                         else loop(defer.cont(defer.value.asInstanceOf[Any < Any]), n - 1)
                     case c: Kyo.Continue[?, ?, ?] @unchecked if depth == 0 =>
-                        evalSuspension(c, boundary).orElse(evalBoundary(c, last)) match
+                        evalSuspension(c, boundary) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -408,7 +401,7 @@ object `<` extends Implicits:
                         // a bare suspension has no chain yet: dispatch it as a continue with the
                         // empty arrow so boundary clauses and context defaults still apply
                         val c = new Kyo.Continue(s.asInstanceOf[Kyo.Suspension[Any, Any]], Arrow[Any])
-                        evalSuspension(c, boundary).orElse(evalBoundary(c, last)) match
+                        evalSuspension(c, boundary) match
                             case Maybe.Present(next) =>
                                 if n == 0 then
                                     if preempt() then next
@@ -576,23 +569,6 @@ object `<` extends Implicits:
         if !chain.hasHandler then Maybe.Absent
         else search(chain, Nil, Nil)
     end evalOperation
-
-    /** Consults the drive-boundary clause for a suspension no delimiter matched.
-      *
-      * The clause receives the operation input and the full optimized chain as the continuation, delimiters included, so a later
-      * resumption re-installs every traveling handler by construction. Present continues the drive; Absent parks it with the suspension
-      * still pending, typically after the clause captured the continuation for an out-of-band resume.
-      */
-    private def evalBoundary(c: Kyo.Continue[?, ?, ?], last: LastResort | Null): Maybe[Any < Any] =
-        last match
-            case null => Maybe.Absent
-            case last: LastResort =>
-                c.suspend match
-                    case s: Kyo.Suspend[?, ?, ?, ?] if last.effectTag <:< s.tag.asInstanceOf[Tag[Any]] =>
-                        last.clause[Any](s.input, c.cont.asInstanceOf[Arrow[Any, Any, Any]].optimize)
-                    case _ =>
-                        Maybe.Absent
-    end evalBoundary
 
     /** Resolves a context read against the chain's binding delimiters.
       *
