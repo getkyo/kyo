@@ -2,6 +2,7 @@ package kyo.kernel2
 
 import kyo.Render
 import kyo.kernel2.internal.CanLift
+import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.LiftMacro
 import language.implicitConversions
 import scala.quoted.*

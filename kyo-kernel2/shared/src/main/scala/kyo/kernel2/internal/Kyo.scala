@@ -1,9 +1,10 @@
-package kyo.kernel2
+package kyo.kernel2.internal
 
 import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.*
 import language.implicitConversions
 import scala.annotation.nowarn
 import scala.annotation.static

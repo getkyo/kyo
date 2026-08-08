@@ -1,5 +1,7 @@
 package kyo.kernel2.bench
 
+import kyo.kernel2.internal.Kyo
+
 import java.util.concurrent.TimeUnit
 import kyo.Maybe
 import kyo.Tag

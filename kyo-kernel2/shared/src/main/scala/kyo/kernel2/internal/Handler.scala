@@ -6,7 +6,6 @@ import kyo.Tag
 import kyo.kernel2.<
 import kyo.kernel2.Arrow
 import kyo.kernel2.ArrowEffect
-import kyo.kernel2.Kyo
 
 /** The park-time reification of an effect handler: a delimiter in the continuation chain.
   *

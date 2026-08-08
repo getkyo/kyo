@@ -1,6 +1,7 @@
 package kyo.kernel2
 
 import kyo.Frame
+import kyo.kernel2.internal.Kyo
 import scala.annotation.tailrec
 
 /** Instrumentation hook: observes every step of a computation with an effectful observer.

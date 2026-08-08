@@ -6,6 +6,7 @@ import kyo.Maybe.Absent
 import kyo.Maybe.Present
 import kyo.Tag
 import kyo.TypeMap
+import kyo.kernel2.internal.Kyo
 import kyo.test.Test
 import scala.annotation.nowarn
 import scala.annotation.tailrec

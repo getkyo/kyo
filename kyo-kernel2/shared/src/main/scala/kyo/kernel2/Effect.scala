@@ -2,6 +2,7 @@ package kyo.kernel2
 
 import kyo.Frame
 import kyo.kernel2.internal.EffectTrace
+import kyo.kernel2.internal.Kyo
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 

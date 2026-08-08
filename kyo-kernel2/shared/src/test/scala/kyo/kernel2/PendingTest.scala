@@ -9,6 +9,7 @@ import kyo.Result
 import kyo.Tag
 import kyo.discard
 import kyo.kernel2.*
+import kyo.kernel2.internal.Kyo
 import kyo.render
 import kyo.test.Test
 import language.implicitConversions

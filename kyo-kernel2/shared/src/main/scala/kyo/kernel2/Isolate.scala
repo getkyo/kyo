@@ -4,6 +4,7 @@ import Isolate.internal.*
 import kyo.Ansi.*
 import kyo.Frame
 import kyo.kernel2.internal.*
+import kyo.kernel2.internal.Kyo
 import scala.annotation.nowarn
 import scala.quoted.*
 

@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.Handler
+import kyo.kernel2.internal.Kyo
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 

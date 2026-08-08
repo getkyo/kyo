@@ -2,6 +2,7 @@ package kyo.kernel2
 
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel2.internal.Kyo
 import kyo.test.Test
 import language.implicitConversions
 

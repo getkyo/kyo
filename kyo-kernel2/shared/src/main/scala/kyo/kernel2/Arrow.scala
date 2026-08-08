@@ -5,6 +5,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.internal.EffectTrace
+import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
