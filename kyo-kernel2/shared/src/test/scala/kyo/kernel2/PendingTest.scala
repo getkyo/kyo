@@ -810,7 +810,7 @@ class PendingTest extends Test[Any]:
                     remaining = remaining.tail
                     cont.step match
                         case Maybe.Present(s) => Maybe(s.head.run(a, s.next).asInstanceOf[Int < Ask])
-                        case Maybe.Absent     => Maybe(Kyo.lift(a).asInstanceOf[Int < Ask])
+                        case Maybe.Absent     => Maybe(a: Int < Ask)
         )
         assert(result.asInstanceOf[Int < Any].eval == 20)
     }

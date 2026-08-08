@@ -197,11 +197,11 @@ class KyoTest extends Test[Any]:
 
     "when" - {
         "true" in {
-            val trueEffect = Kyo.when(Kyo.lift(true))(Kyo.lift(1), Kyo.lift(2))
+            val trueEffect = Kyo.when(true)(1, 2)
             assert(trueEffect.eval == 1)
         }
         "false" in {
-            val falseEffect = Kyo.when(Kyo.lift(false))(Kyo.lift(1), Kyo.lift(2))
+            val falseEffect = Kyo.when(false)(1, 2)
             assert(falseEffect.eval == 2)
         }
         "effectful true" in {
@@ -214,11 +214,11 @@ class KyoTest extends Test[Any]:
         }
         "single branch" - {
             "true" in {
-                val trueEffect = Kyo.when(Kyo.lift(true))(Kyo.lift(1))
+                val trueEffect = Kyo.when(true)(1)
                 assert(trueEffect.eval == Present(1))
             }
             "false" in {
-                val falseEffect = Kyo.when(Kyo.lift(false))(Kyo.lift(1))
+                val falseEffect = Kyo.when(false)(1)
                 assert(falseEffect.eval == Absent)
             }
             "effectful true" in {
@@ -234,11 +234,11 @@ class KyoTest extends Test[Any]:
 
     "unless" - {
         "true" in {
-            val trueEffect = Kyo.unless(Kyo.lift(true))(Kyo.lift(1))
+            val trueEffect = Kyo.unless(true)(1)
             assert(trueEffect.eval == Absent)
         }
         "false" in {
-            val falseEffect = Kyo.unless(Kyo.lift(false))(Kyo.lift(1))
+            val falseEffect = Kyo.unless(false)(1)
             assert(falseEffect.eval == Present(1))
         }
         "effectful true" in {

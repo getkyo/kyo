@@ -49,7 +49,7 @@ class KernelBench:
                 (in, cont) =>
                     cont.step match
                         case Maybe.Present(s) => Maybe(s.head.run(in, s.next).asInstanceOf[Int < BenchEcho])
-                        case Maybe.Absent     => Maybe(Kyo.lift(in).asInstanceOf[Int < BenchEcho])
+                        case Maybe.Absent     => Maybe(in: Int < BenchEcho)
         ).asInstanceOf[Int < Any].eval
 
     def runCounter(v: => Int < BenchCounter, n0: Int): Int =
