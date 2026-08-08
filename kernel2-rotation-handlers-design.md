@@ -98,71 +98,76 @@ structure IS the environment. When the park reaches its owning node, that node
 captures the accumulated remainder as the delimited continuation, at the node's
 own types.
 
-## 2.4 The typed dispatch shape (settled by E3)
+## 2.4 Dispatch: one method per format on the existing Handler classes
 
-Dispatch stops being an erased search-and-act and becomes method calls ON the
-handler, where all its types are bound. Each format defines its semantics as a
-typed method; the drive reaches them through final bridge methods that carry the
-kernel's ONLY two casts (the tag-keyed input recovery, justified because the
-drive matched the tag first, and the trampoline currency of the accumulated
-remainder):
+Not a new abstraction layer. Kernel2's `Handler.ArrowHandler` subclasses already
+store their clause at the public types and already carry the completion step
+(`run`). The change is that each format's dispatch semantics moves from
+`evalOperation`'s erased search-and-act into one method on the handler, where
+its types are bound:
 
 ```scala
-sealed trait MHandler[I[_], O[_], E <: Eff[I, O], A, B, S]:
-    def tag: Tag[E]
-    def onComplete(a: A): MK[B, S]                                // region finished
-    def onPark(input: I[Any], k: O[Any] => MK[A, E & S]): MK[B, S] // op parked here
-
-    final def parkErased(input: Any, k: Any => MK[Any, Any]): MK[Any, Any] =
-        onPark(input.asInstanceOf[I[Any]], o => k(o).asInstanceOf[MK[A, E & S]]).asInstanceOf[MK[Any, Any]]
-    final def completeErased(a: Any): MK[Any, Any] = ...
-    final def rewrapErased(inner: MK[Any, Any]): MK[Any, Any] = ...
+sealed abstract class ArrowHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S]:
+    def effectTag: Tag[E]
+    /** completion: today's run step, unchanged */
+    def complete(v: A): B < S
+    /** a suspension of this region's effect reached its handler: the input and
+      * the captured remainder, at the handler's own types */
+    def resume(input: I[Any], cont: O[Any] => A < (E & S)): B < S
 ```
 
-Inside `onPark` every format's semantics type-checks with no cast at all:
+Per format, `resume` IS the semantics, and its body type-checks with no cast:
 
 ```scala
 // Cont: deep, the clause result re-enters the region (spliced deep handler)
-def onPark(input, k) = Handled(clause[Any](input, k), this)
-// First: shallow, the handler leaves; k is the raw unhandled remainder
-def onPark(input, k) = clause[Any](input, k)
-// Loop: state evolves by replacement node, no mutation anywhere
-def onPark(input, k) = clause[Any](input, state, k).flatMap {
-    case Continue(st, next) => Handled(next, copy(state = st))
-    case Done(b)            => Pure(b)
+def resume(input, cont) = Handled(clause(input, cont), this)
+// First: shallow, the handler leaves; cont is the raw unhandled remainder
+def resume(input, cont) = clause(input, cont)
+// Loop: state evolves by a replacement node, no mutation anywhere
+def resume(input, cont) = clause(input, state, cont).map {
+    case Continue(st, next) => Handled(next, withState(st))
+    case Done(b)            => b
 }
+// Stop: never called; the drive unwinds without capturing (2.6)
+// Resume: answered in place at the site (2.5); defined only as the uniform fallback
 ```
 
-Today's `evalOperation` erased search, its `[C]`-instantiation casts, the
-`prefixArrow` folds, and `Interceptor.as` are all deleted; their replacements are
-the typed methods above.
+The drive still trades in erased values (the trampoline currency, the old
+kernel's OX/IX), so the call into `resume` carries exactly two casts, justified
+by the tag match that precedes it: the input recovery and the remainder's type.
+Whether they sit at the drive's call site (the old kernel's style) or in one
+final erased entry method on the class is a code-layout choice for the
+implementation round; either way it is one boundary, the same one `Context.get`
+carries today.
 
-## 2.5 The clause bracket and the deep-handler knot (settled by E3)
+Deleted outright: `evalOperation`'s erased search, its `[C]`-instantiation
+casts, the `prefixArrow` folds, and `Interceptor.as`. The probe file uses
+heavier scaffolding (an `onPark`/`parkErased` method family and `M`-prefixed
+names) because its frame stack holds handlers existentially in plain Scala;
+that is model scaffolding, not the proposed surface.
+
+## 2.5 Resume clauses run at their region's entry scope (settled by E3)
 
 Two mechanisms make in-place Resume execution scope-correct:
 
-1. **The Under bracket.** A Resume clause runs at the operation's site but under
-   the environment captured at its region's ENTRY. The drive brackets the clause
-   with an `Under(entryScope, clause)` node; when the clause completes, the site
-   environment is restored and the value flows into the untouched remainder.
-   The bracket is itself a node, so a park from INSIDE the clause re-wraps it
-   (rotation) and the rest of the clause still runs at clause scope after
-   resumption. Program p9 pins exactly this and matches the old kernel.
-2. **The deep-handler knot.** The environment a clause runs under is the entry
-   environment EXTENDED WITH THE REGION ITSELF:
-
-   ```scala
-   final class REntry(val handler: MHandler[?, ?, ?, ?, ?, ?], val entryEnv: Evidence):
-       lazy val clauseEnv: Evidence = entryEnv.set(handler.tag.erased, this)
-   ```
-
-   So an operation of the region's own effect inside a clause is interpreted by
-   the same handler (deep semantics, as the old kernel's handler loop re-handling
-   the clause result), while everything else resolves OUTSIDE the region. The
-   same `clauseEnv` is what the drive installs when it enters the region, so
-   region code and clause code share one environment value and inner rebinds
-   (p2's `Env=42` inside the region) shadow reads inside the region without ever
-   leaking into the clause.
+1. **The entry-scope bracket.** A Resume clause runs at the operation's site but
+   under the environment captured at its region's ENTRY. The drive brackets the
+   clause with a node carrying that entry scope; when the clause completes, the
+   site environment is restored and the value flows into the untouched
+   remainder. Because the bracket is itself a node, a suspension from INSIDE the
+   clause re-wraps it like any region (rotation), so the rest of the clause
+   still runs at clause scope after resumption. Program p9 pins exactly this
+   and matches the old kernel.
+2. **Deep handlers by self-reference.** The environment a clause runs under is
+   the entry environment extended with the region itself: an operation of the
+   region's own effect inside a clause is interpreted by the same handler (deep
+   semantics, the old kernel's handler loop re-handling the clause result),
+   while everything else resolves OUTSIDE the region. The same environment
+   value is what the drive installs when it enters the region, so region code
+   and clause code share it, and an inner rebind (p2's `Env=42` inside the
+   region) shadows reads inside the region without ever leaking into the
+   clause. In the model this is one lazy self-referential field on the
+   environment entry; the kernel encoding is the implementation round's choice.
 
 ## 2.6 One frame stack, three walks
 
