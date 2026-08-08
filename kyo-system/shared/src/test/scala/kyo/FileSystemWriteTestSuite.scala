@@ -80,4 +80,12 @@ abstract class FileSystemWriteTestSuite extends kyo.test.Test[Any]:
         }
     }
 
+    "write suite releases scoped channels" in {
+        createFileSystem.map { (fileSystem, root) =>
+            Scope.run(fileSystem.openWriteChannel(root / "scoped.bin", FileSystem.WriteOpen.Create)).map { channel =>
+                Abort.run[FileWriteException](channel.writeAt(0L, Span(1.toByte))).map(result => assert(result.isFailure))
+            }
+        }
+    }
+
 end FileSystemWriteTestSuite

@@ -13,6 +13,7 @@ import scala.scalajs.js.typedarray.Uint8Array
 @js.native
 @JSImport("node:fs", JSImport.Namespace)
 private[kyo] object NodeFs extends js.Object:
+    val constants: NodeFsConstants                                                             = js.native
     def existsSync(path: String): Boolean                                                      = js.native
     def realpathSync(path: String): String                                                     = js.native
     def statSync(path: String): NodeStats                                                      = js.native
@@ -32,22 +33,37 @@ private[kyo] object NodeFs extends js.Object:
     def rmdirSync(path: String): Unit                                                          = js.native
     def truncateSync(path: String, len: Double): Unit                                          = js.native
     def openSync(path: String, flags: String): Int                                             = js.native
+    def openSync(path: String, flags: Int): Int                                                = js.native
     def readSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int, position: Double): Int = js.native
     // Declared without a trailing position argument, which is the whole point: Node then writes at the
     // file description's own cursor, the only offset `O_APPEND` acts on. `NodeWriteHandle` must call this
     // overload, since a positioned write on a descriptor opened to append is silent data loss.
-    def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int): Int     = js.native
-    def writeSync(fd: Int, data: String, position: Double, encoding: String): Int = js.native
-    def closeSync(fd: Int): Unit                                                  = js.native
-    def fsyncSync(fd: Int): Unit                                                  = js.native
-    def fstatSync(fd: Int): NodeStats                                             = js.native
-    def symlinkSync(target: String, path: String): Unit                           = js.native
-    def readlinkSync(path: String): String                                        = js.native
-    def mkdtempSync(prefix: String): String                                       = js.native
-    def writeFileSync(path: String, data: String): Unit                           = js.native
-    def utimesSync(path: String, atime: Double, mtime: Double): Unit              = js.native
-    def lutimesSync(path: String, atime: Double, mtime: Double): Unit             = js.native
+    def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int): Int = js.native
+    // The positioned overloads exist for `NodeRawChannel` alone, whose whole contract is that a call
+    // never moves the descriptor's own cursor. No append path may reach them.
+    def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int, position: Double): Int = js.native
+    def writeSync(fd: Int, data: String, position: Double, encoding: String): Int               = js.native
+    def closeSync(fd: Int): Unit                                                                = js.native
+    def fsyncSync(fd: Int): Unit                                                                = js.native
+    def fdatasyncSync(fd: Int): Unit                                                            = js.native
+    def fstatSync(fd: Int): NodeStats                                                           = js.native
+    def ftruncateSync(fd: Int, len: Double): Unit                                               = js.native
+    def symlinkSync(target: String, path: String): Unit                                         = js.native
+    def chmodSync(path: String, mode: Int): Unit                                                = js.native
+    def readlinkSync(path: String): String                                                      = js.native
+    def mkdtempSync(prefix: String): String                                                     = js.native
+    def writeFileSync(path: String, data: String): Unit                                         = js.native
+    def utimesSync(path: String, atime: Double, mtime: Double): Unit                            = js.native
+    def lutimesSync(path: String, atime: Double, mtime: Double): Unit                           = js.native
 end NodeFs
+
+@js.native
+private[kyo] trait NodeFsConstants extends js.Object:
+    val O_WRONLY: Int = js.native
+    val O_RDWR: Int   = js.native
+    val O_CREAT: Int  = js.native
+    val O_EXCL: Int   = js.native
+end NodeFsConstants
 
 @js.native
 trait NodeStats extends js.Object:
@@ -131,6 +147,14 @@ private[kyo] object NodeError:
             case "EISDIR"           => FileIsADirectoryException(path)
             case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Write)
             case _                  => FileIOException(path, FileSystemOperation.Write, e)
+
+    def translateSync(path: Path, e: js.JavaScriptException)(using Frame): FileWriteException =
+        codeOf(e) match
+            case "ENOENT"           => FileNotFoundException(path)
+            case "EACCES" | "EPERM" => FileAccessDeniedException(path)
+            case "EISDIR"           => FileIsADirectoryException(path)
+            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Sync)
+            case _                  => FileIOException(path, FileSystemOperation.Sync, e)
 
     def translateFs(path: Path, operation: FileSystemOperation, e: js.JavaScriptException)(using Frame): FileStructureException =
         codeOf(e) match
@@ -504,6 +528,45 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             new NodeWriteHandle(fd, safe)
         }
 
+    // --- Positioned channel ---
+
+    // Numeric non-append flags preserve explicit readSync/writeSync positions. Combining O_CREAT
+    // with the requested access mode creates atomically without truncating existing content.
+    private def openRawChannel(mode: Path.RawChannelAccess): Path.RawChannel =
+        val constants = NodeFs.constants
+        mode match
+            case Path.RawChannelAccess.Read =>
+                new NodeRawChannel(NodeFs.openSync(pathStr, "r"), safe)
+            case Path.RawChannelAccess.Write(open) =>
+                if open != FileSystem.WriteOpen.Existing then ensureParent()
+                val flags = open match
+                    case FileSystem.WriteOpen.Existing  => constants.O_WRONLY
+                    case FileSystem.WriteOpen.Create    => constants.O_WRONLY | constants.O_CREAT
+                    case FileSystem.WriteOpen.CreateNew => constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+                new NodeRawChannel(NodeFs.openSync(pathStr, flags), safe)
+            case Path.RawChannelAccess.ReadWrite(open) =>
+                if open != FileSystem.WriteOpen.Existing then ensureParent()
+                val flags = open match
+                    case FileSystem.WriteOpen.Existing  => constants.O_RDWR
+                    case FileSystem.WriteOpen.Create    => constants.O_RDWR | constants.O_CREAT
+                    case FileSystem.WriteOpen.CreateNew => constants.O_RDWR | constants.O_CREAT | constants.O_EXCL
+                new NodeRawChannel(NodeFs.openSync(pathStr, flags), safe)
+        end match
+    end openRawChannel
+
+    def openReadChannelRaw()(using AllowUnsafe, Frame): Result[FileReadException, Path.RawChannel] =
+        catchRead(openRawChannel(Path.RawChannelAccess.Read))
+    def openWriteChannelRaw(open: FileSystem.WriteOpen)(using
+        AllowUnsafe,
+        Frame
+    ): Result[FileWriteException | FileStructureException, Path.RawChannel] =
+        catchChannelWrite(openRawChannel(Path.RawChannelAccess.Write(open)))
+    def openReadWriteChannelRaw(open: FileSystem.WriteOpen)(using
+        AllowUnsafe,
+        Frame
+    ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel] =
+        catchChannelWrite(openRawChannel(Path.RawChannelAccess.ReadWrite(open)))
+
     // --- Private helpers ---
 
     /** Splits content by newlines, dropping a single trailing empty element if the content ends with '\n'. This matches the behaviour of
@@ -546,6 +609,16 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     private def catchWrite[A](expr: => A)(using Frame): Result[FileWriteException, A] =
         try Result.succeed(expr)
         catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(safe, e))
+            case e: Throwable              => Result.panic(e)
+
+    private def catchChannelWrite[A](expr: => A)(using Frame): Result[FileWriteException | FileStructureException, A] =
+        try Result.succeed(expr)
+        catch
+            case e: js.JavaScriptException
+                if !js.isUndefined(e.exception.asInstanceOf[js.Dynamic].code) &&
+                    e.exception.asInstanceOf[js.Dynamic].code.asInstanceOf[String] == "EEXIST" =>
+                Result.fail(FileAlreadyExistsException(safe))
             case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(safe, e))
             case e: Throwable              => Result.panic(e)
 
@@ -748,6 +821,71 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
     end close
 
 end NodeWriteHandle
+
+// --- NodeRawChannel ---
+
+/** Concrete positioned raw channel backed by a Node.js file descriptor, using `readSync`/
+  * `writeSync`'s explicit `position` argument so no call moves the fd's own read/write cursor.
+  */
+final private[kyo] class NodeRawChannel(fd: Int, path: Path) extends Path.RawChannel:
+
+    private val closed = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    def readAt(pos: Long, len: Int)(using AllowUnsafe, Frame): Result[FileReadException, Array[Byte]] =
+        try
+            val uint8 = new Uint8Array(len)
+            var total = 0
+            var eof   = false
+            while total < len && !eof do
+                val n = NodeFs.readSync(fd, uint8, total, len - total, (pos + total).toDouble)
+                if n == 0 then eof = true else total += n
+            val out = new Array[Byte](total)
+            var i   = 0
+            while i < total do
+                out(i) = uint8(i).toByte
+                i += 1
+            Result.succeed(out)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def writeAt(pos: Long, bytes: Array[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+        try
+            val uint8   = bytesToUint8Array(bytes)
+            var written = 0
+            while written < bytes.length do
+                written += NodeFs.writeSync(fd, uint8, written, bytes.length - written, (pos + written).toDouble)
+            Result.unit
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def sync(metadata: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+        try
+            if metadata then NodeFs.fsyncSync(fd) else NodeFs.fdatasyncSync(fd)
+            Result.unit
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateSync(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+        try
+            NodeFs.ftruncateSync(fd, size.toDouble)
+            Result.unit
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
+        try Result.succeed(NodeFs.fstatSync(fd).size.toLong)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def close()(using AllowUnsafe): Unit =
+        if closed.compareAndSet(false, true) then NodeFs.closeSync(fd)
+
+end NodeRawChannel
 
 // --- Byte / Uint8Array conversion helpers ---
 
