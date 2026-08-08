@@ -797,7 +797,7 @@ class PendingTest extends Test[Any]:
     "a computation as a value survives the chain" in {
         val inner: Int < Any = (1: Int < Any).map(_ + 1)
         val program: (Int < Any) < Ask =
-            ask.map(n => `<`.liftSlow(inner.map(_ + n)))
+            ask.map(n => Kyo.lift(inner.map(_ + n)))
         val handled = ArrowEffect.handle(Tag[Ask], program)(
             [C] => (input, cont) => cont(10)
         )
@@ -849,7 +849,7 @@ class PendingTest extends Test[Any]:
                     remaining = remaining.tail
                     cont.step match
                         case Maybe.Present(s) => Maybe(s.head.run(a, s.next).asInstanceOf[Int < Ask])
-                        case Maybe.Absent     => Maybe(`<`.liftSlow(a).asInstanceOf[Int < Ask])
+                        case Maybe.Absent     => Maybe(Kyo.lift(a).asInstanceOf[Int < Ask])
         )
         assert(result.asInstanceOf[Int < Any].eval == 20)
     }

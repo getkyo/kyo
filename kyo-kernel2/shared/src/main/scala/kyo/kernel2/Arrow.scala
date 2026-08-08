@@ -72,9 +72,9 @@ object Arrow:
     private val empty = new Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            // liftSlow, not a cast: a raw value that is itself a computation must
+            // Kyo.lift, not a cast: a raw value that is itself a computation must
             // re-enter the chain as data (Nested), not as a suspension to run
-            cont(`<`.liftSlow(v))
+            cont(Kyo.lift(v))
 
     // Spliced into long chains every Period elements by optimize: hops unwind here
     // via the returned Defer and evalLoop's trampoline drives the next segment, so
@@ -83,7 +83,7 @@ object Arrow:
     private val segmentBoundary = new Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            Kyo.Defer(`<`.liftSlow(v), cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
+            Kyo.Defer(Kyo.lift(v), cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
 
     def apply[A]: Arrow[A, A, Any] = empty.asInstanceOf[Arrow[A, A, Any]]
 
@@ -97,7 +97,7 @@ object Arrow:
             else
                 self match
                     case o: Offset[Any, Any, Any, Any] @unchecked =>
-                        o.head.run(Kyo.unwrap(v), o.next).asInstanceOf[B < (S & S2)]
+                        o.head.run(Kyo.unnest(v), o.next).asInstanceOf[B < (S & S2)]
                     case t: Transform[A, B, S] @unchecked =>
                         guardedRun(t, v)
                     case _ =>
@@ -197,7 +197,7 @@ object Arrow:
         if !safepoint.enter() then rescue(t, v)
         else
             try
-                val r = t.run(Kyo.unwrap(v), Arrow[B]).asInstanceOf[B < (S & S2)]
+                val r = t.run(Kyo.unnest(v), Arrow[B]).asInstanceOf[B < (S & S2)]
                 safepoint.exit()
                 r
             catch
@@ -245,8 +245,8 @@ object Arrow:
                             o.next.map(k)(w.asInstanceOf[Any < Any])
                         else
                             o.next match
-                                case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unwrap(w))
-                                case _                                        => k(Kyo.unwrap(w).asInstanceOf[Any < Any])
+                                case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unnest(w))
+                                case _                                        => k(Kyo.unnest(w).asInstanceOf[Any < Any])
                         end if
             loop(this.asInstanceOf[Offset[Any, Any, Any, Any]], v).asInstanceOf[C2 < (S & S2)]
         end run

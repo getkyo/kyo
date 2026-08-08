@@ -28,11 +28,8 @@ object LiftMacro:
 
         mode match
             case Mode.Cast                      => '{ $v.asInstanceOf[A < S] }
-            case Mode.Nested | Mode.DefaultLift => '{ LiftMacro.defaultLift[A, S]($v) }
+            case Mode.Nested | Mode.DefaultLift => '{ Kyo.lift[A, S]($v) }
         end match
     end liftMacro
-
-    final def defaultLift[A, S](v: A): A < S =
-        `<`.liftSlow(v).asInstanceOf[A < S]
 
 end LiftMacro

@@ -18,16 +18,20 @@ sealed abstract class Kyo[+A, -S]:
 
 object Kyo:
 
-    /** Lifts a value into the effect context without suspension, including nested computations. The explicit route for intentional
-      * nesting, which the implicit lift rejects at compile time.
+    /** Lifts a value into the effect context without suspension, including nested computations: a value that is itself a computation
+      * enters as data (a [[Nested]] box), not as a suspension to run. The explicit route for intentional nesting, which the implicit
+      * lift rejects at compile time.
       */
-    // TODO this is incorrect, lifting must come from < and handle nesting. Remove
-    private[kyo] inline def lift[A, S](inline v: A): A < S = v
+    inline def lift[A, S](inline v: A): A < S =
+        v match
+            case v: Kyo[?, ?] => Nested(v).asInstanceOf[A < S]
+            case v: Nested[?] => Nested(v).asInstanceOf[A < S]
+            case v            => v.asInstanceOf[A < S]
 
     // Compiled as a JVM static of class Kyo: hot callers (minted arrow fragments,
     // Arrow.apply, Offset.run) reach it via invokestatic with no module load and,
     // in minted fragments, no captured reference to an enclosing object.
-    @static def unwrap(v: Any): Any =
+    @static def unnest(v: Any): Any =
         v match
             case n: Nested[?] => n.value
             case _            => v

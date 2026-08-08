@@ -3,96 +3,19 @@ package kyo.kernel2
 import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
-import kyo.Render
 import kyo.Tag
-import kyo.kernel2.internal.CanLift
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Handler
 import kyo.kernel2.internal.KyoException
-import kyo.kernel2.internal.LiftMacro
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
-import scala.quoted.*
 
 opaque type <[+A, -S] = A | Kyo[A, S] | Kyo.Nested[A]
 
-object `<`:
-
-    /** Implicitly lifts a value into the effect context.
-      *
-      * The CanLift evidence rejects statically-pending values at compile time: accidental nesting must go through an explicit `Kyo.lift`
-      * or `flatten`. The macro elides the runtime check when the type is provably not a computation.
-      */
-    // TODO let's move these methods including abortcast to a new superclass Lifting and extends in the < companion
-    implicit inline def lift[A: CanLift, S](v: A): A < S = ${ LiftMacro.liftMacro[A, S]('v) }
-
-    implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
-
-    implicit inline def liftUnit[S](inline v: Unit): Unit < S = v.asInstanceOf[Unit < S]
-
-    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ abortCastUnitImpl[S1, S2]('v) }
-
-    private def abortCastUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
-        import quotes.reflect.*
-        val source = TypeRepr.of[S1].show
-        report.errorAndAbort(
-            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
-               |This may be due to an effect type mismatch.
-               |Consider removing or adjusting the type constraint on the left-hand side.
-               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
-        )
-    end abortCastUnitImpl
-
-    /** Converts a pure single-argument function to an effectful computation. */
-    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
-        using inline flat: CanLift[B]
-    ): A1 => B < Any =
-        a1 => lift(f(a1))
-
-    /** Converts a pure two-argument function to an effectful computation. */
-    implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2) => B < Any =
-        (a1, a2) => lift(f(a1, a2))
-
-    /** Converts a pure three-argument function to an effectful computation. */
-    implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3) => B < Any =
-        (a1, a2, a3) => lift(f(a1, a2, a3))
-
-    /** Converts a pure four-argument function to an effectful computation. */
-    implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4) => B < Any =
-        (a1, a2, a3, a4) => lift(f(a1, a2, a3, a4))
-
-    /** Converts a pure five-argument function to an effectful computation. */
-    implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B](inline f: (A1, A2, A3, A4, A5) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5) => B < Any =
-        (a1, a2, a3, a4, a5) => lift(f(a1, a2, a3, a4, a5))
-
-    /** Converts a pure six-argument function to an effectful computation. */
-    implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B](inline f: (A1, A2, A3, A4, A5, A6) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5, A6) => B < Any =
-        (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
-
-    given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        def asString(value: APendingS): String = value match
-            case sus: Kyo[?, ?] => sus.toString
-            case _              => s"Kyo(${ra.asString(Kyo.unwrap(value).asInstanceOf[A])})"
-    end given
-
-    // TODO Remove? It seems an artifact of older prototype versions?
-    def liftSlow[A](v: A): A < Any =
-        v match
-            case _: Kyo[?, ?] | _: Kyo.Nested[?] => Kyo.Nested(v).asInstanceOf[A < Any]
-            case _                               => v
+object `<` extends Implicits:
 
     implicit private[kyo] inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
 
@@ -121,7 +44,7 @@ object `<`:
                     val w = f(v.asInstanceOf[A])
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
-                            o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
+                            o.head.run(Kyo.unnest(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w)
                     end match
@@ -142,7 +65,7 @@ object `<`:
                     val w = f(v.asInstanceOf[A])
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
-                            o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
+                            o.head.run(Kyo.unnest(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w)
                     end match
@@ -159,8 +82,7 @@ object `<`:
                     val w = f
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
-                            // TODO let's rename unwrap to unnest
-                            o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
+                            o.head.run(Kyo.unnest(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w)
                     end match
@@ -316,7 +238,7 @@ object `<`:
         private[kyo] inline def evalNow: Maybe[A] =
             self match
                 case _: Kyo[?, ?] => Maybe.empty
-                case v            => Maybe(Kyo.unwrap(v).asInstanceOf[A])
+                case v            => Maybe(Kyo.unnest(v).asInstanceOf[A])
 
     end extension
 
@@ -352,8 +274,8 @@ object `<`:
                             w.asInstanceOf[Kyo[Any, Any]].map(rest)
                         else
                             o.next match
-                                case n: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unwrap(w))
-                                case _                                              => Kyo.unwrap(w)
+                                case n: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unnest(w))
+                                case _                                              => Kyo.unnest(w)
                         end if
             cont match
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
@@ -374,8 +296,8 @@ object `<`:
             if self.isInstanceOf[Kyo[?, ?]] then
                 evalLoop(self.asInstanceOf[Any < Any], neverPreempt, 1, boundary = true) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
-                    case v                  => Kyo.unwrap(v).asInstanceOf[A]
-            else Kyo.unwrap(self).asInstanceOf[A]
+                    case v                  => Kyo.unnest(v).asInstanceOf[A]
+            else Kyo.unnest(self).asInstanceOf[A]
 
         /** Evaluates within a preemption budget, returning the remaining computation. */
         // TODO I don't think the period is used anymore?
@@ -420,7 +342,7 @@ object `<`:
     end finalizeChain
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
-        val lifted = liftSlow(v)
+        val lifted = Kyo.lift(v)
         new Arrow.Transform[Unit, A, Any]:
             def frame = Frame.internal
             def run[C, S2](x: Any, cont: Arrow[A, C, S2]): C < (Any & S2) =
@@ -488,7 +410,7 @@ object `<`:
                                     val wrapped = suspended.map(reacquire(bracket))
                                     if depth == 0 && !preempted(wrapped) then loop(wrapped, n) else wrapped
                                 case acquired =>
-                                    val resource = Kyo.unwrap(acquired)
+                                    val resource = Kyo.unnest(acquired)
                                     val result =
                                         try recur(bracket.cont(acquired), depth + 1)
                                         catch
@@ -567,13 +489,13 @@ object `<`:
                 evalOperation(s.tag.asInstanceOf[Tag[Any]], s.input, chain)
             case r: Kyo.ContextRead[?, ?] if boundary =>
                 resolveContext(r.tag.asInstanceOf[Tag[Any]], chain) match
-                    case Maybe.Present(value) => Maybe(chain(liftSlow(value)))
+                    case Maybe.Present(value) => Maybe(chain(Kyo.lift(value)))
                     case Maybe.Absent =>
                         r.default match
-                            case Maybe.Present(d) => Maybe(chain(liftSlow(d())))
+                            case Maybe.Present(d) => Maybe(chain(Kyo.lift(d())))
                             case Maybe.Absent     => Maybe.Absent
             case s: Kyo.ContextSnapshot if boundary =>
-                Maybe(chain(liftSlow(snapshotContext(chain))))
+                Maybe(chain(Kyo.lift(snapshotContext(chain))))
             case _ =>
                 Maybe.Absent
         end match
@@ -773,7 +695,7 @@ object `<`:
                         val h2 = new Handler.Loop(h.effectTag, next._1, h.clause, h.done, h.frame)
                         cont(h2.asInstanceOf[Arrow[Any, Any, Any]](next._2.asInstanceOf[Any < Any]))
                     case b =>
-                        cont(liftSlow(b))
+                        cont(Kyo.lift(b))
     end outcomeStep
 
 end `<`

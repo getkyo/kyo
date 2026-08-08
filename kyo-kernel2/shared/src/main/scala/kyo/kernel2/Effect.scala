@@ -55,7 +55,7 @@ object Effect:
         def frame = _frame
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             val w =
-                try cont(`<`.liftSlow(v))
+                try cont(Kyo.lift(v))
                 catch
                     case ex if NonFatal(ex) =>
                         KyoException.attach(ex, "catching", _frame)

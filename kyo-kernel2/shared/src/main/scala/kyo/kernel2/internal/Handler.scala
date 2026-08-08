@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel2.<
 import kyo.kernel2.Arrow
+import kyo.kernel2.Kyo
 
 /** The park-time reification of an effect handler: a delimiter in the continuation chain.
   *
@@ -37,17 +38,17 @@ private[kyo] object Handler:
     // TODO fuck man, I told you to fucking use type-safe code. These all seem can be type safe.
     final class Cont(val effectTag: Tag[Any], val clause: Clause, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            cont(`<`.liftSlow(v))
+            cont(Kyo.lift(v))
 
     /** Deep handler that answers each operation in place (fun format). */
     final class Resume(val effectTag: Tag[Any], val clause: InputClause, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            cont(`<`.liftSlow(v))
+            cont(Kyo.lift(v))
 
     /** Deep handler that ends the region at each operation (final ctl format). */
     final class Stop(val effectTag: Tag[Any], val clause: InputClause, val frame: Frame) extends Operation:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            cont(`<`.liftSlow(v))
+            cont(Kyo.lift(v))
 
     /** Erased shape of a stateful loop clause. */
     type LoopClause = [C] => (Any, Any, Arrow[Any, Any, Any]) => Any < Any
@@ -74,7 +75,7 @@ private[kyo] object Handler:
       */
     final class Context(val effectTag: Tag[Any], val transform: Maybe[Any] => Any, val frame: Frame) extends Handler:
         def run[C, S2](v: Any, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            cont(`<`.liftSlow(v))
+            cont(Kyo.lift(v))
 
     /** Shallow handler: handles only the first operation, then leaves the region. */
     final class First(val effectTag: Tag[Any], val clause: Clause, val done: Any => Any < Any, val frame: Frame) extends Operation:

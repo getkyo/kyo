@@ -74,7 +74,7 @@ object ArrowEffect:
                 (input, cont) =>
                     handle(
                         input.asInstanceOf[I[C]],
-                        o => cont(`<`.liftSlow(o)).asInstanceOf[A < (E & S & S2)]
+                        o => cont(Kyo.lift(o)).asInstanceOf[A < (E & S & S2)]
                     ).asInstanceOf[Any < Any]
         install(v, new Handler.Cont(effectTag.asInstanceOf[Tag[Any]], clause, frame))
     end handle
@@ -123,7 +123,7 @@ object ArrowEffect:
                 (input, cont) =>
                     handle(
                         input.asInstanceOf[I[C]],
-                        o => cont(`<`.liftSlow(o)).asInstanceOf[A < (E & S)]
+                        o => cont(Kyo.lift(o)).asInstanceOf[A < (E & S)]
                     ).asInstanceOf[Any < Any]
         install(
             v,
@@ -190,7 +190,7 @@ object ArrowEffect:
                     handle(
                         input.asInstanceOf[I[C]],
                         state.asInstanceOf[State],
-                        o => cont(`<`.liftSlow(o)).asInstanceOf[A < (E & S)]
+                        o => cont(Kyo.lift(o)).asInstanceOf[A < (E & S)]
                     ).asInstanceOf[Any < Any]
         install(
             v,
