@@ -286,7 +286,7 @@ object Path extends PathPlatformSpecific:
       * Residual: `Sync & Abort[FileSystemException] & S` (the caller's tail `S` rides through).
       *
       * @see
-      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, root-confined host)
+      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, zip, root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileSystemException] & S) =
         FileSystem.useErased(service => runWith(service)(program))
@@ -308,9 +308,9 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against an explicit `fileSystem`, discharging write and read; the backend's own
       * effect `FS` rides the residual (the Journal `Backend[S]` mapping).
       *
-      * Install [[FileSystem.inMemory]] for hermetic tests, or [[FileSystem.host]](root) for
-      * root-confined host I/O. The selected service determines when writes become durable
-      * relative to the enclosing run.
+      * Install [[FileSystem.inMemory]] for hermetic tests, [[FileSystem.zip]] (wrapped in `Scope`)
+      * for whole-archive rewrites, or [[FileSystem.host]](root) for root-confined host I/O. The
+      * selected service determines when writes become durable relative to the enclosing run.
       */
     def runWith[A, S, FS](fileSystem: FileSystem.Write[FS])(program: A < (PathWrite & S))(using
         Frame
@@ -531,11 +531,11 @@ object Path extends PathPlatformSpecific:
 
     /** Creates a temporary directory in the active service and registers its recursive removal with
       * the enclosing `Scope`. The removal runs through the service that created the directory (host:
-      * real recursive delete; in-memory: map-subtree removal), so a temp dir made by one service is
-      * never deleted by another service's `removeAll`. There is no unscoped public temp-directory
-      * primitive. The location of the created directory is service-defined: unconfined host services
-      * use the OS temporary directory; root-confined host services create the directory inside their
-      * root.
+      * real recursive delete; in-memory: map-subtree removal; zip: upper-entry discard), so a temp
+      * dir made by a staged service is never deleted by a host-tier `removeAll`. There is no unscoped
+      * public temp-directory primitive. The location of the created directory is service-defined:
+      * unconfined host services use the OS temporary directory; root-confined host services create the
+      * directory inside their root.
       */
     def tempDir(prefix: String = "kyo")(using Frame): Path < (PathWrite & Sync & Scope) =
         Scope.acquireRelease(
@@ -561,6 +561,62 @@ object Path extends PathPlatformSpecific:
     abstract private[kyo] class ChannelCloseHandle:
         def close()(using AllowUnsafe): Unit
     end ChannelCloseHandle
+
+    /** A committed filesystem entry surfaced at commit time by [[Conflict]] (the live lower view and
+      * the staged view) and accepted as input by [[Resolution.Write]] (a caller-supplied
+      * replacement entry for the conflicting path).
+      *
+      * Two cases: `File(bytes, stat)` carries the full byte content and stat metadata for a regular
+      * file; `Directory(stat)` carries only the stat for a directory. Symlink entries are excluded
+      * until `Path` grows public symlink operations.
+      *
+      * `Path.Entry` derives `CanEqual`. File content (a `Span[Byte]`) does not derive `CanEqual`,
+      * so equality on `File` entries compares the `Span` reference, not the content. To compare
+      * file bytes structurally use `bytes.toArrayUnsafe sameElements other.toArrayUnsafe`.
+      */
+    enum Entry derives CanEqual:
+        case File(bytes: Span[Byte], stat: Path.PathStat)
+        case Directory(stat: Path.PathStat)
+
+    /** The base observation a staging backend records for a lower entry at first sight, and the value
+      * carried by [[Conflict.ancestor]]. It is exactly what the read-set stores so that a commit
+      * can surface it without re-reading the lower: the observed entry kind, the size for a regular
+      * file, the last-modified time where available, and a content hash only when the backend can
+      * supply one cheaply.
+      *
+      * No bytes are retained. A `Stamp` is cheaper than a [[Path.Entry]] because it omits file
+      * content; the read-set records one stamp per observed path, not the bytes, keeping staging
+      * memory cost proportional to the number of distinct paths touched rather than their content
+      * size. A stamp is also the unit of divergence detection at commit: the commit compares each
+      * stamped path against the live lower to decide whether a conflict exists.
+      *
+      * `contentHash` is an optional hook for backend-supplied fingerprints (for example, a block
+      * hash from a content-addressed store); the base host backend leaves it `Absent`.
+      */
+    final case class Stamp(
+        entryType: Stamp.Kind,
+        size: Maybe[ByteSize],
+        lastModifiedMs: Maybe[Long],
+        contentHash: Maybe[Span[Byte]]
+    ) derives CanEqual
+
+    object Stamp:
+        /** The entry kind recorded by a [[Path.Stamp]] at the time a staging backend first observed a
+          * lower-layer path.
+          *
+          * Three cases: `File` means the path existed as a regular file when observed; `Directory`
+          * means it existed as a directory; `Absent` means the path did not exist at observation time.
+          *
+          * Note the distinction between `Kind.Absent` and a `Maybe.Absent` [[Conflict.ancestor]]:
+          * `Kind.Absent` stamps a path that WAS observed but happened to not exist at that moment;
+          * `Maybe.Absent` ancestor means the path was NEVER read through the staging backend at all, so no
+          * stamp was ever recorded for it. Both can appear on a [[Conflict]], but their semantics
+          * differ: `Kind.Absent` is a confirmed observation of absence; `Maybe.Absent` is a gap in
+          * the read-set.
+          */
+        enum Kind derives CanEqual:
+            case File, Directory, Absent
+    end Stamp
 
     /** A Scope-managed positioned read capability into an open file.
       *
@@ -791,10 +847,10 @@ object Path extends PathPlatformSpecific:
           *
           *   - Host backends resolve every link, and require both `self` and `root` to exist: either
           *     one missing fails with `FileNotFoundException`.
-          *   - Backends whose paths are pure keys with no link topology (in-memory) resolve a path
-          *     to itself, so the check reduces to a parts-prefix comparison and an absent path does
-          *     not fail. Those backends have no symlinks, so resolution has nothing to defend
-          *     against.
+          *   - Backends whose paths are pure keys with no link topology (in-memory, both zip
+          *     backends) resolve a path to itself, so the check reduces to a parts-prefix comparison
+          *     and an absent path does not fail. Those backends have no symlinks, so resolution has
+          *     nothing to defend against.
           */
         def confinedTo(root: Path)(using Frame): Path < (PathRead & Abort[FileSystemException]) =
             ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(root)).map { rootReal =>

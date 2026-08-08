@@ -125,7 +125,7 @@ class PathChannelTest extends kyo.test.Test[Any]:
         }
     }
 
-    "CreateNew admits exactly one concurrent creator on in-memory" in {
+    "CreateNew admits exactly one concurrent creator on in-memory and zip rewrite" in {
         def contend(fs: FileSystem.Write[Sync], path: Path)(using Frame): Int < (Sync & Async & Scope) =
             for
                 gate <- Latch.init(1)
@@ -144,7 +144,13 @@ class PathChannelTest extends kyo.test.Test[Any]:
 
         Scope.run {
             FileSystem.inMemory.map { inMemory =>
-                contend(inMemory, Path("create-new-race.bin")).map(count => assert(count == 1))
+                contend(inMemory, Path("create-new-race.bin")).map(count => assert(count == 1)).andThen {
+                    hostTempDir("kyo-zip-create-new-race").map { dir =>
+                        FileSystem.zip(dir / "race.zip").map { zip =>
+                            contend(zip, Path("entry.bin")).map(count => assert(count == 1))
+                        }
+                    }
+                }
             }
         }
     }
