@@ -240,183 +240,162 @@ object Kyo:
         loop(0, Chunk.empty)
     end fill
 
-    /** Applies an effect-producing function to each element, preserving the collection type. */
+    /** Applies an effect-producing function to each element, preserving the collection type.
+      *
+      * All collection combinators snapshot the source into an indexed Chunk and thread immutable state through the loop: a multi-shot
+      * continuation replays from its captured index and accumulator, never a shared iterator or builder.
+      */
     def foreach[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => B < S)(using Frame): CC[B] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[B]
-        def loop(): CC[B] < S =
-            if !it.hasNext then builder.result()
-            else
-                f(it.next()).map { b =>
-                    builder += b
-                    loop()
-                }
-        loop()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Chunk[B]): CC[B] < S =
+            if i == len then source.iterableFactory.from(acc)
+            else f(elements(i)).map(b => loop(i + 1, acc.append(b)))
+        loop(0, Chunk.empty)
     end foreach
 
     /** Applies an effect-producing function returning collections and concatenates the results. */
     def foreachConcat[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => IterableOnce[B] < S)(using
         Frame
     ): CC[B] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[B]
-        def loop(): CC[B] < S =
-            if !it.hasNext then builder.result()
-            else
-                f(it.next()).map { bs =>
-                    builder ++= bs
-                    loop()
-                }
-        loop()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Chunk[B]): CC[B] < S =
+            if i == len then source.iterableFactory.from(acc)
+            else f(elements(i)).map(bs => loop(i + 1, acc.concat(Chunk.from(bs))))
+        loop(0, Chunk.empty)
     end foreachConcat
 
     /** Applies an effect-producing function to each element with its index. */
     def foreachIndexed[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: (Int, A) => B < S)(using
         Frame
     ): CC[B] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[B]
-        def loop(i: Int): CC[B] < S =
-            if !it.hasNext then builder.result()
-            else
-                f(i, it.next()).map { b =>
-                    builder += b
-                    loop(i + 1)
-                }
-        loop(0)
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Chunk[B]): CC[B] < S =
+            if i == len then source.iterableFactory.from(acc)
+            else f(i, elements(i)).map(b => loop(i + 1, acc.append(b)))
+        loop(0, Chunk.empty)
     end foreachIndexed
 
     /** Applies an effect-producing function to each element, discarding the results. */
     def foreachDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Any < S)(using
         Frame
     ): Unit < S =
-        val it = source.iterator
-        def loop(): Unit < S =
-            if !it.hasNext then ()
-            else f(it.next()).map(_ => loop())
-        loop()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int): Unit < S =
+            if i == len then ()
+            else f(elements(i)).map(_ => loop(i + 1))
+        loop(0)
     end foreachDiscard
 
     /** Keeps the elements whose effectful predicate evaluates to true. */
     def filter[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): CC[A] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[A]
-        def loop(): CC[A] < S =
-            if !it.hasNext then builder.result()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Chunk[A]): CC[A] < S =
+            if i == len then source.iterableFactory.from(acc)
             else
-                val a = it.next()
-                f(a).map { keep =>
-                    if keep then builder += a
-                    loop()
-                }
-        loop()
+                val a = elements(i)
+                f(a).map(keep => loop(i + 1, if keep then acc.append(a) else acc))
+        loop(0, Chunk.empty)
     end filter
 
     /** Folds the elements with an effect-producing operator. */
     def foldLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(acc: B)(f: (B, A) => B < S)(using
         Frame
     ): B < S =
-        val it = source.iterator
-        def loop(b: B): B < S =
-            if !it.hasNext then b
-            else f(b, it.next()).map(loop)
-        loop(acc)
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, b: B): B < S =
+            if i == len then b
+            else f(b, elements(i)).map(loop(i + 1, _))
+        loop(0, acc)
     end foldLeft
 
     /** Applies an effect-producing partial transformation, keeping the Present results. */
     def collect[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
         Frame
     ): CC[B] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[B]
-        def loop(): CC[B] < S =
-            if !it.hasNext then builder.result()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Chunk[B]): CC[B] < S =
+            if i == len then source.iterableFactory.from(acc)
             else
-                f(it.next()).map { m =>
-                    m match
-                        case Maybe.Present(b) => builder += b
-                        case Maybe.Absent     => ()
-                    loop()
+                f(elements(i)).map {
+                    case Maybe.Present(b) => loop(i + 1, acc.append(b))
+                    case Maybe.Absent     => loop(i + 1, acc)
                 }
-        loop()
+        loop(0, Chunk.empty)
     end collect
 
     /** Runs the effects in the collection, collecting the results. */
     def collectAll[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): CC[A] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[A]
-        def loop(): CC[A] < S =
-            if !it.hasNext then builder.result()
-            else
-                it.next().map { a =>
-                    builder += a
-                    loop()
-                }
-        loop()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Chunk[A]): CC[A] < S =
+            if i == len then source.iterableFactory.from(acc)
+            else elements(i).map(a => loop(i + 1, acc.append(a)))
+        loop(0, Chunk.empty)
     end collectAll
 
     /** Runs the effects in the collection, discarding the results. */
     def collectAllDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): Unit < S =
-        val it = source.iterator
-        def loop(): Unit < S =
-            if !it.hasNext then ()
-            else it.next().map(_ => loop())
-        loop()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int): Unit < S =
+            if i == len then ()
+            else elements(i).map(_ => loop(i + 1))
+        loop(0)
     end collectAllDiscard
 
     /** Returns the first Present result of the effectful transformation, if any. */
     def findFirst[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
         Frame
     ): Maybe[B] < S =
-        val it = source.iterator
-        def loop(): Maybe[B] < S =
-            if !it.hasNext then Maybe.Absent
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int): Maybe[B] < S =
+            if i == len then Maybe.Absent
             else
-                f(it.next()).map {
+                f(elements(i)).map {
                     case found @ Maybe.Present(_) => (found: Maybe[B])
-                    case Maybe.Absent             => loop()
+                    case Maybe.Absent             => loop(i + 1)
                 }
-        loop()
+        loop(0)
     end findFirst
 
     /** Takes the longest prefix whose effectful predicate evaluates to true. */
     def takeWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): CC[A] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[A]
-        def loop(): CC[A] < S =
-            if !it.hasNext then builder.result()
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Chunk[A]): CC[A] < S =
+            if i == len then source.iterableFactory.from(acc)
             else
-                val a = it.next()
+                val a = elements(i)
                 f(a).map { keep =>
-                    if keep then
-                        builder += a
-                        loop()
-                    else builder.result()
+                    if keep then loop(i + 1, acc.append(a))
+                    else source.iterableFactory.from(acc)
                 }
-        loop()
+        loop(0, Chunk.empty)
     end takeWhile
 
     /** Splits at the first element whose effectful predicate evaluates to false. */
     def span[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): (CC[A], CC[A]) < S =
-        val it     = source.iterator
-        val prefix = source.iterableFactory.newBuilder[A]
-        def loop(): (CC[A], CC[A]) < S =
-            if !it.hasNext then (prefix.result(), source.iterableFactory.empty[A])
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, prefix: Chunk[A]): (CC[A], CC[A]) < S =
+            if i == len then (source.iterableFactory.from(prefix), source.iterableFactory.empty[A])
             else
-                val a = it.next()
+                val a = elements(i)
                 f(a).map { keep =>
-                    if keep then
-                        prefix += a
-                        loop()
-                    else
-                        val suffix = source.iterableFactory.newBuilder[A]
-                        suffix += a
-                        suffix ++= it
-                        (prefix.result(), suffix.result())
+                    if keep then loop(i + 1, prefix.append(a))
+                    else (source.iterableFactory.from(prefix), source.iterableFactory.from(elements.dropLeft(i)))
                 }
-        loop()
+        loop(0, Chunk.empty)
     end span
 
     /** Drops the longest prefix whose effectful predicate evaluates to true. */
@@ -427,54 +406,45 @@ object Kyo:
     def partition[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): (CC[A], CC[A]) < S =
-        val it  = source.iterator
-        val yes = source.iterableFactory.newBuilder[A]
-        val no  = source.iterableFactory.newBuilder[A]
-        def loop(): (CC[A], CC[A]) < S =
-            if !it.hasNext then (yes.result(), no.result())
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, yes: Chunk[A], no: Chunk[A]): (CC[A], CC[A]) < S =
+            if i == len then (source.iterableFactory.from(yes), source.iterableFactory.from(no))
             else
-                val a = it.next()
+                val a = elements(i)
                 f(a).map { matches =>
-                    if matches then yes += a else no += a
-                    loop()
+                    if matches then loop(i + 1, yes.append(a), no)
+                    else loop(i + 1, yes, no.append(a))
                 }
-        loop()
+        loop(0, Chunk.empty, Chunk.empty)
     end partition
 
     /** Partitions the elements by an effectful Either transformation: (lefts, rights). */
     def partitionMap[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, A1, A2, S](source: CC[A])(f: A => Either[A1, A2] < S)(using
         Frame
     ): (CC[A1], CC[A2]) < S =
-        val it     = source.iterator
-        val lefts  = source.iterableFactory.newBuilder[A1]
-        val rights = source.iterableFactory.newBuilder[A2]
-        def loop(): (CC[A1], CC[A2]) < S =
-            if !it.hasNext then (lefts.result(), rights.result())
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, lefts: Chunk[A1], rights: Chunk[A2]): (CC[A1], CC[A2]) < S =
+            if i == len then (source.iterableFactory.from(lefts), source.iterableFactory.from(rights))
             else
-                f(it.next()).map { e =>
-                    e match
-                        case Left(a1)  => lefts += a1
-                        case Right(a2) => rights += a2
-                    loop()
+                f(elements(i)).map {
+                    case Left(a1)  => loop(i + 1, lefts.append(a1), rights)
+                    case Right(a2) => loop(i + 1, lefts, rights.append(a2))
                 }
-        loop()
+        loop(0, Chunk.empty, Chunk.empty)
     end partitionMap
 
     /** Computes the running fold of the elements, starting with `z`. */
     def scanLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(z: B)(op: (B, A) => B < S)(using
         Frame
     ): CC[B] < S =
-        val it      = source.iterator
-        val builder = source.iterableFactory.newBuilder[B]
-        builder += z
-        def loop(b: B): CC[B] < S =
-            if !it.hasNext then builder.result()
-            else
-                op(b, it.next()).map { next =>
-                    builder += next
-                    loop(next)
-                }
-        loop(z)
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, b: B, acc: Chunk[B]): CC[B] < S =
+            if i == len then source.iterableFactory.from(acc)
+            else op(b, elements(i)).map(next => loop(i + 1, next, acc.append(next)))
+        loop(0, z, Chunk(z))
     end scanLeft
 
     /** Groups the elements by an effectful key function. */
@@ -487,79 +457,84 @@ object Kyo:
     def groupMap[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, K, B, S](source: CC[A])(key: A => K < S)(f: A => B < S)(using
         Frame
     ): Map[K, CC[B]] < S =
-        val it       = source.iterator
-        val builders = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[B, CC[B]]]
-        def loop(): Map[K, CC[B]] < S =
-            if !it.hasNext then builders.iterator.map((k, b) => (k, b.result())).toMap
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, acc: Map[K, Chunk[B]]): Map[K, CC[B]] < S =
+            if i == len then acc.map((k, chunk) => (k, source.iterableFactory.from(chunk)))
             else
-                val a = it.next()
+                val a = elements(i)
                 key(a).map { k =>
                     f(a).map { b =>
-                        builders.getOrElseUpdate(k, source.iterableFactory.newBuilder[B]) += b
-                        loop()
+                        loop(i + 1, acc.updated(k, acc.getOrElse(k, Chunk.empty).append(b)))
                     }
                 }
-        loop()
+        loop(0, Map.empty)
     end groupMap
 
     /** Transforms each map entry into a new entry. */
     def foreach[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => (K2, V2) < S)(using Frame): Map[K2, V2] < S =
-        val it = source.iterator
-        def loop(acc: Map[K2, V2]): Map[K2, V2] < S =
-            if !it.hasNext then acc
-            else f(it.next()).map(kv => loop(acc + kv))
-        loop(Map.empty)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K2, V2]): Map[K2, V2] < S =
+            if i == len then acc
+            else f(entries(i)).map(kv => loop(i + 1, acc + kv))
+        loop(0, Map.empty)
     end foreach
 
     /** Transforms each map entry into a value, collecting the results. */
     @targetName("foreachToChunk")
     def foreach[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => B < S)(using Frame): Chunk[B] < S =
-        val it = source.iterator
-        def loop(acc: Chunk[B]): Chunk[B] < S =
-            if !it.hasNext then acc
-            else f(it.next()).map(b => loop(acc.append(b)))
-        loop(Chunk.empty)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Chunk[B]): Chunk[B] < S =
+            if i == len then acc
+            else f(entries(i)).map(b => loop(i + 1, acc.append(b)))
+        loop(0, Chunk.empty)
     end foreach
 
     /** Transforms each map entry into entries, concatenating the results. */
     def foreachConcat[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[(K2, V2)] < S)(using
         Frame
     ): Map[K2, V2] < S =
-        val it = source.iterator
-        def loop(acc: Map[K2, V2]): Map[K2, V2] < S =
-            if !it.hasNext then acc
-            else f(it.next()).map(kvs => loop(acc ++ kvs))
-        loop(Map.empty)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K2, V2]): Map[K2, V2] < S =
+            if i == len then acc
+            else f(entries(i)).map(kvs => loop(i + 1, acc ++ kvs))
+        loop(0, Map.empty)
     end foreachConcat
 
     /** Transforms each map entry into values, concatenating the results. */
     @targetName("foreachConcatToChunk")
     def foreachConcat[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[B] < S)(using Frame): Chunk[B] < S =
-        val it = source.iterator
-        def loop(acc: Chunk[B]): Chunk[B] < S =
-            if !it.hasNext then acc
-            else f(it.next()).map(bs => loop(acc.concat(Chunk.from(bs))))
-        loop(Chunk.empty)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Chunk[B]): Chunk[B] < S =
+            if i == len then acc
+            else f(entries(i)).map(bs => loop(i + 1, acc.concat(Chunk.from(bs))))
+        loop(0, Chunk.empty)
     end foreachConcat
 
     /** Applies an effect-producing function to each map entry, discarding the results. */
     def foreachDiscard[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Any < S)(using Frame): Unit < S =
-        val it = source.iterator
-        def loop(): Unit < S =
-            if !it.hasNext then ()
-            else f(it.next()).map(_ => loop())
-        loop()
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int): Unit < S =
+            if i == len then ()
+            else f(entries(i)).map(_ => loop(i + 1))
+        loop(0)
     end foreachDiscard
 
     /** Keeps the entries whose effectful predicate evaluates to true. */
     def filter[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
-        val it = source.iterator
-        def loop(acc: Map[K1, V1]): Map[K1, V1] < S =
-            if !it.hasNext then acc
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K1, V1]): Map[K1, V1] < S =
+            if i == len then acc
             else
-                val kv = it.next()
-                f(kv).map(keep => loop(if keep then acc + kv else acc))
-        loop(Map.empty)
+                val kv = entries(i)
+                f(kv).map(keep => loop(i + 1, if keep then acc + kv else acc))
+        loop(0, Map.empty)
     end filter
 
     /** Keeps the entries whose key passes the effectful predicate. */
@@ -568,96 +543,104 @@ object Kyo:
 
     /** Folds the map entries with an effect-producing operator. */
     def foldLeft[K1, V1, B, S](source: Map[K1, V1])(acc: B)(f: (B, (K1, V1)) => B < S)(using Frame): B < S =
-        val it = source.iterator
-        def loop(b: B): B < S =
-            if !it.hasNext then b
-            else f(b, it.next()).map(loop)
-        loop(acc)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, b: B): B < S =
+            if i == len then b
+            else f(b, entries(i)).map(loop(i + 1, _))
+        loop(0, acc)
     end foldLeft
 
     /** Applies an effect-producing partial transformation to entries, keeping the Present results. */
     def collect[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[(K2, V2)] < S)(using Frame): Map[K2, V2] < S =
-        val it = source.iterator
-        def loop(acc: Map[K2, V2]): Map[K2, V2] < S =
-            if !it.hasNext then acc
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K2, V2]): Map[K2, V2] < S =
+            if i == len then acc
             else
-                f(it.next()).map {
-                    case Maybe.Present(kv) => loop(acc + kv)
-                    case Maybe.Absent      => loop(acc)
+                f(entries(i)).map {
+                    case Maybe.Present(kv) => loop(i + 1, acc + kv)
+                    case Maybe.Absent      => loop(i + 1, acc)
                 }
-        loop(Map.empty)
+        loop(0, Map.empty)
     end collect
 
     /** Applies an effect-producing partial transformation to entries, keeping the Present values. */
     @targetName("collectToChunk")
     def collect[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using Frame): Chunk[B] < S =
-        val it = source.iterator
-        def loop(acc: Chunk[B]): Chunk[B] < S =
-            if !it.hasNext then acc
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Chunk[B]): Chunk[B] < S =
+            if i == len then acc
             else
-                f(it.next()).map {
-                    case Maybe.Present(b) => loop(acc.append(b))
-                    case Maybe.Absent     => loop(acc)
+                f(entries(i)).map {
+                    case Maybe.Present(b) => loop(i + 1, acc.append(b))
+                    case Maybe.Absent     => loop(i + 1, acc)
                 }
-        loop(Chunk.empty)
+        loop(0, Chunk.empty)
     end collect
 
     /** Runs the effects in the map's values, collecting the results. */
     def collectAll[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Map[K1, V1] < S =
-        val it = source.iterator
-        def loop(acc: Map[K1, V1]): Map[K1, V1] < S =
-            if !it.hasNext then acc
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K1, V1]): Map[K1, V1] < S =
+            if i == len then acc
             else
-                val (k, v) = it.next()
-                v.map(v1 => loop(acc.updated(k, v1)))
-        loop(Map.empty)
+                val (k, v) = entries(i)
+                v.map(v1 => loop(i + 1, acc.updated(k, v1)))
+        loop(0, Map.empty)
     end collectAll
 
     /** Runs the effects in the map's values, discarding the results. */
     def collectAllDiscard[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Unit < S =
-        val it = source.iterator
-        def loop(): Unit < S =
-            if !it.hasNext then ()
-            else it.next()._2.map(_ => loop())
-        loop()
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int): Unit < S =
+            if i == len then ()
+            else entries(i)._2.map(_ => loop(i + 1))
+        loop(0)
     end collectAllDiscard
 
     /** Returns the first Present result of the effectful transformation over entries, if any. */
     def findFirst[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using Frame): Maybe[B] < S =
-        val it = source.iterator
-        def loop(): Maybe[B] < S =
-            if !it.hasNext then Maybe.Absent
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int): Maybe[B] < S =
+            if i == len then Maybe.Absent
             else
-                f(it.next()).map {
+                f(entries(i)).map {
                     case found @ Maybe.Present(_) => (found: Maybe[B])
-                    case Maybe.Absent             => loop()
+                    case Maybe.Absent             => loop(i + 1)
                 }
-        loop()
+        loop(0)
     end findFirst
 
     /** Takes entries, in iteration order, while the effectful predicate evaluates to true. */
     def takeWhile[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
-        val it = source.iterator
-        def loop(acc: Map[K1, V1]): Map[K1, V1] < S =
-            if !it.hasNext then acc
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K1, V1]): Map[K1, V1] < S =
+            if i == len then acc
             else
-                val kv = it.next()
-                f(kv).map(keep => if keep then loop(acc + kv) else acc)
-        loop(Map.empty)
+                val kv = entries(i)
+                f(kv).map(keep => if keep then loop(i + 1, acc + kv) else acc)
+        loop(0, Map.empty)
     end takeWhile
 
     /** Splits the entries, in iteration order, at the first whose effectful predicate evaluates to false. */
     def span[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): (Map[K1, V1], Map[K1, V1]) < S =
-        val it = source.iterator
-        def loop(prefix: Map[K1, V1]): (Map[K1, V1], Map[K1, V1]) < S =
-            if !it.hasNext then (prefix, Map.empty)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, prefix: Map[K1, V1]): (Map[K1, V1], Map[K1, V1]) < S =
+            if i == len then (prefix, Map.empty)
             else
-                val kv = it.next()
+                val kv = entries(i)
                 f(kv).map { keep =>
-                    if keep then loop(prefix + kv)
-                    else (prefix, (Map.newBuilder[K1, V1] += kv ++= it).result())
+                    if keep then loop(i + 1, prefix + kv)
+                    else (prefix, entries.dropLeft(i).foldLeft(Map.empty[K1, V1])(_ + _))
                 }
-        loop(Map.empty)
+        loop(0, Map.empty)
     end span
 
     /** Drops entries, in iteration order, while the effectful predicate evaluates to true. */
@@ -668,61 +651,66 @@ object Kyo:
     def partition[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using
         Frame
     ): (Map[K1, V1], Map[K1, V1]) < S =
-        val it = source.iterator
-        def loop(yes: Map[K1, V1], no: Map[K1, V1]): (Map[K1, V1], Map[K1, V1]) < S =
-            if !it.hasNext then (yes, no)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, yes: Map[K1, V1], no: Map[K1, V1]): (Map[K1, V1], Map[K1, V1]) < S =
+            if i == len then (yes, no)
             else
-                val kv = it.next()
-                f(kv).map(matches => if matches then loop(yes + kv, no) else loop(yes, no + kv))
-        loop(Map.empty, Map.empty)
+                val kv = entries(i)
+                f(kv).map(matches => if matches then loop(i + 1, yes + kv, no) else loop(i + 1, yes, no + kv))
+        loop(0, Map.empty, Map.empty)
     end partition
 
     /** Partitions the entries by an effectful Either transformation: (lefts, rights). */
     def partitionMap[K1, V1, K2, V2, K3, V3, S](source: Map[K1, V1])(f: ((K1, V1)) => Either[(K2, V2), (K3, V3)] < S)(using
         Frame
     ): (Map[K2, V2], Map[K3, V3]) < S =
-        val it = source.iterator
-        def loop(lefts: Map[K2, V2], rights: Map[K3, V3]): (Map[K2, V2], Map[K3, V3]) < S =
-            if !it.hasNext then (lefts, rights)
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, lefts: Map[K2, V2], rights: Map[K3, V3]): (Map[K2, V2], Map[K3, V3]) < S =
+            if i == len then (lefts, rights)
             else
-                f(it.next()).map {
-                    case Left(kv)  => loop(lefts + kv, rights)
-                    case Right(kv) => loop(lefts, rights + kv)
+                f(entries(i)).map {
+                    case Left(kv)  => loop(i + 1, lefts + kv, rights)
+                    case Right(kv) => loop(i + 1, lefts, rights + kv)
                 }
-        loop(Map.empty, Map.empty)
+        loop(0, Map.empty, Map.empty)
     end partitionMap
 
     /** Computes the running fold of the entries, starting with `z`. */
     def scanLeft[K1, V1, B, S](source: Map[K1, V1])(z: B)(op: (B, (K1, V1)) => B < S)(using Frame): Chunk[B] < S =
-        val it = source.iterator
-        def loop(b: B, acc: Chunk[B]): Chunk[B] < S =
-            if !it.hasNext then acc
-            else op(b, it.next()).map(next => loop(next, acc.append(next)))
-        loop(z, Chunk(z))
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, b: B, acc: Chunk[B]): Chunk[B] < S =
+            if i == len then acc
+            else op(b, entries(i)).map(next => loop(i + 1, next, acc.append(next)))
+        loop(0, z, Chunk(z))
     end scanLeft
 
     /** Groups the entries by an effectful key function. */
     def groupBy[K1, V1, K2, S](source: Map[K1, V1])(f: ((K1, V1)) => K2 < S)(using Frame): Map[K2, Map[K1, V1]] < S =
-        val it = source.iterator
-        def loop(acc: Map[K2, Map[K1, V1]]): Map[K2, Map[K1, V1]] < S =
-            if !it.hasNext then acc
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K2, Map[K1, V1]]): Map[K2, Map[K1, V1]] < S =
+            if i == len then acc
             else
-                val kv = it.next()
-                f(kv).map(k2 => loop(acc.updated(k2, acc.getOrElse(k2, Map.empty) + kv)))
-        loop(Map.empty)
+                val kv = entries(i)
+                f(kv).map(k2 => loop(i + 1, acc.updated(k2, acc.getOrElse(k2, Map.empty) + kv)))
+        loop(0, Map.empty)
     end groupBy
 
     /** Groups the entries by an effectful key function, transforming each with an effectful value function. */
     def groupMap[K1, V1, K2, V2, S](source: Map[K1, V1])(key: ((K1, V1)) => K2 < S)(f: ((K1, V1)) => V2 < S)(using
         Frame
     ): Map[K2, Chunk[V2]] < S =
-        val it = source.iterator
-        def loop(acc: Map[K2, Chunk[V2]]): Map[K2, Chunk[V2]] < S =
-            if !it.hasNext then acc
+        val entries = Chunk.from(source).toIndexed
+        val len     = entries.length
+        def loop(i: Int, acc: Map[K2, Chunk[V2]]): Map[K2, Chunk[V2]] < S =
+            if i == len then acc
             else
-                val kv = it.next()
-                key(kv).map(k2 => f(kv).map(v2 => loop(acc.updated(k2, acc.getOrElse(k2, Chunk.empty).append(v2)))))
-        loop(Map.empty)
+                val kv = entries(i)
+                key(kv).map(k2 => f(kv).map(v2 => loop(i + 1, acc.updated(k2, acc.getOrElse(k2, Chunk.empty).append(v2)))))
+        loop(0, Map.empty)
     end groupMap
 
     // for kyo-direct
@@ -732,16 +720,17 @@ object Kyo:
         acc: (B, Boolean, A) => B,
         epilog: B => C
     )(using Frame): C < S =
-        val it = source.iterator
-        def loop(b: B): C < S =
-            if !it.hasNext then epilog(b)
+        val elements = Chunk.from(source).toIndexed
+        val len      = elements.length
+        def loop(i: Int, b: B): C < S =
+            if i == len then epilog(b)
             else
-                val a = it.next()
+                val a = elements(i)
                 f(a).map { cond =>
-                    if cond then loop(acc(b, cond, a))
+                    if cond then loop(i + 1, acc(b, cond, a))
                     else epilog(acc(b, cond, a))
                 }
-        loop(prolog)
+        loop(0, prolog)
     end shiftedWhile
 
 end Kyo

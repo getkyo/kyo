@@ -670,6 +670,32 @@ class KyoTest extends Test[Any]:
         collectionTests[Seq]("Seq", [X] => seq => Seq.from(seq))
     }
 
+    "combinators replay correctly under multi-shot continuations" - {
+        // each operation is resumed twice; every replay must traverse the source
+        // independently, so no combinator may share an iterator or builder across
+        // effect steps
+        def branch[A, S](v: List[A] < (TestEffect1 & S)): List[A] < S =
+            ArrowEffect.handle(Tag[TestEffect1], v)(
+                [C] => (input, cont) => cont(input).map(a => cont(input + 100).map(b => a ++ b))
+            )
+
+        "foreach" in {
+            val v = Kyo.foreach(List(1, 2))(i => TestEffect1(i))
+            assert(branch(v).eval == List(1, 2, 1, 102, 101, 2, 101, 102))
+        }
+
+        "foldLeft" in {
+            val v = Kyo.foldLeft(List(1, 2))(0)((acc, i) => TestEffect1(i).map(acc + _))
+            assert(branch(v.map(List(_))).eval == List(3, 103, 103, 203))
+        }
+
+        "takeWhile on Map" in {
+            val m = Map(1 -> 1, 2 -> 2)
+            val v = Kyo.takeWhile(m)(kv => TestEffect1(kv._1).map(_ < 1000))
+            assert(branch(v.map(m2 => List(m2.size))).eval == List(2, 2, 2, 2))
+        }
+    }
+
     "lift" - {
         "should create a pure effect" in {
             val effect = Kyo.lift[Int, Any](42)
