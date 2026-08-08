@@ -8,10 +8,10 @@ import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.LiftMacro
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
-import scala.annotation.static
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -42,8 +42,8 @@ object `<` extends Implicits:
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                    val w = f(v.asInstanceOf[A])
+                def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                    val w = f(v)
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
@@ -65,8 +65,8 @@ object `<` extends Implicits:
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
-                    val w = f(v.asInstanceOf[A])
+                def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                    val w = f(v)
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
@@ -82,7 +82,7 @@ object `<` extends Implicits:
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
             val arrow = new Arrow.Transform[A, B, S2]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
@@ -99,7 +99,7 @@ object `<` extends Implicits:
         inline def unit(using inline _frame: Frame): Unit < S =
             val arrow = new Arrow.Transform[A, Unit, Any]:
                 def frame = _frame
-                def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[Unit, C, S3]): C < (Any & S3) =
+                def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[Unit, C, S3]): C < (Any & S3) =
                     cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                             o.head.run((), context, handlers, o.next).asInstanceOf[C < (Any & S3)]
@@ -314,10 +314,10 @@ object `<` extends Implicits:
     end finalizeChain
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
-        val lifted = Kyo.lift(v)
+        val lifted = LiftMacro.defaultLift(v)
         new Arrow.Transform[Unit, A, Any]:
             def frame = Frame.internal
-            def run[C, S2](x: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (Any & S2) =
+            def run[C, S2](x: Unit, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (Any & S2) =
                 cont(lifted.asInstanceOf[A < Any], context, handlers)
         end new
     end yieldValue
@@ -325,8 +325,8 @@ object `<` extends Implicits:
     final private[kyo] class Finalize[R, A, S](val bracket: Kyo.Bracket[R, ?, S], val value: R)
         extends Arrow.Transform[A, A, S]:
         def frame = bracket.frame
-        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
-            cont(yieldValue(v.asInstanceOf[A])(bracket.release(value), context, handlers), context, handlers)
+        def run[C, S2](v: A, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+            cont(yieldValue(v)(bracket.release(value), context, handlers), context, handlers)
     end Finalize
 
     private def constant(v: Any < Any): Arrow[Any, Any, Any] =

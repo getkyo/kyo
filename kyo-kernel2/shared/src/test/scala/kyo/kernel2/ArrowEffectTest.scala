@@ -7,7 +7,6 @@ import kyo.Maybe.Present
 import kyo.Tag
 import kyo.discard
 import kyo.kernel2.internal.Context
-import kyo.kernel2.internal.Kyo
 import kyo.test.Test
 import language.implicitConversions
 

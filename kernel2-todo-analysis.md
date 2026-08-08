@@ -85,3 +85,42 @@ Loop drivers (issue 17, before vs after the tailrec port):
 |-----|--------|-------|
 | loopPure10k | 76,883 ns / 320,344 B | 18,912 ns / 160,008 B (4.1x; the remaining 16 B per iteration is the outcome carrier) |
 | loopSuspend1k | 63,922 ns / 379,934 B | 71,439 ns / 379,938 B (about 7.5 ns per resumed iteration from re-entry type tests, on a dispatch-dominated path; recorded honestly) |
+
+# Simplification round: typed inputs, Kyo reorganization, central lift
+
+State as of this round (all changes in kyo-kernel2):
+
+- Transform.run takes its typed input again: `run[C, S2](v: A, ...)`. The erased
+  `v: Any` parameter was an allocation-avoidance trick and is removed per ruling;
+  minted transforms consume `f(v)` directly, ContextEffect reads take `v: Unit`,
+  bracket use takes `v: R`, Loop step transforms take their outcome types.
+- The user-facing combinator surface moved out of the kernel-internal node file:
+  `kyo/kernel2/Kyo.scala` is the public object (combinators only), the node
+  hierarchy lives in `internal/KyoInternal.scala` (object `internal.Kyo`).
+- Lifting is done only by the pending type's central lift methods. The implicit
+  route stays in Implicits.scala backed by LiftMacro; the runtime nesting wrap is
+  `LiftMacro.defaultLift` (the macro emits it, kernel raw re-entry sites call it
+  directly on their erased currency). Public `Kyo.lift` is the old kernel's
+  `= v`: zero cost, and the explicit route for intentional nesting since the
+  macro settles pending types at expansion. `Nested` no longer escapes
+  kyo.kernel2.internal; `fromKyo` (Kyo => <, free retyping) already exists in
+  Pending.scala.
+- All `@static` annotations removed (Safepoint had 11, internal.Kyo.unnest had
+  one). Root cause of two separate "value X is not a member of object" compile
+  mysteries (unnest, then Safepoint.pollPreempt) that survived clean rebuilds;
+  empirically tied to @static on object members under sbt/zinc with Scala 3.8.4.
+
+Removed-for-now optimizations to revisit at the end of the work, each only with
+a measured win and a compile-stability check:
+
+1. Erased `v: Any` Transform.run parameter (megamorphic call-site erasure).
+2. `@static` on hot object members (unnest, Safepoint accessors).
+
+Next round: unsafe-code cleanup. Type the rotate machinery (`Rotate` with real
+type parameters instead of `Arrow.Transform[Any, Any, Any]`), the handle loops'
+currencies (old-kernel-style existential captures at the tag-matched arm), and
+rewrap. Casts remain only at documented tag-keyed and trampoline boundaries. The
+Bracket arm's loop-wrapped acquire is a known typing pressure point to resolve
+during that round (an aborting ctl handler inside acquire currently completes
+the acquire with the handler's value; the typed rewrite must settle the intended
+semantics with a pin).

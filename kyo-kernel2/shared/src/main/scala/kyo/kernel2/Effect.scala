@@ -59,7 +59,7 @@ object Effect:
     private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         val thunk = new Arrow.Transform[Unit, A, S]:
             def frame = _frame
-            def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+            def run[C, S2](v: Unit, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
                 cont(f, context, handlers)
         Kyo.Defer[Unit, A, S]((), thunk)
     end defer
@@ -82,8 +82,8 @@ object Effect:
             val useArrow: Arrow[R, A, S] =
                 new Arrow.Transform[R, A, S]:
                     def frame = _frame
-                    def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
-                        cont(useF(v.asInstanceOf[R]), context, handlers)
+                    def run[C, S2](v: R, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+                        cont(useF(v), context, handlers)
             def acquire       = acquireF
             def release(r: R) = releaseF(r)
             def cont          = useArrow

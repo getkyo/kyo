@@ -8,10 +8,10 @@ import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.LiftMacro.defaultLift
 import kyo.kernel2.internal.Safepoint
 import language.implicitConversions
 import scala.annotation.nowarn
-import scala.annotation.static
 import scala.annotation.tailrec
 
 sealed abstract class Arrow[-A, +B, -S]
@@ -33,15 +33,12 @@ object Arrow:
 
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
         def frame: Frame
-        // v is Any rather than A: a typed parameter makes subclasses with a concrete
-        // A carry an erasure bridge, and the extra call level halves how many fused
-        // steps the JIT can inline per compilation.
         // context and handlers are the execution ambient, threaded from the caller:
         // plain transforms pass them through untouched, bindings pass an updated
         // context downstream, handled scopes pass extended handlers downstream, reads
         // and local operation dispatch consume them. Neither is ever stored; they
         // exist only in flight.
-        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[B, C, S2]): C < (S & S2)
+        def run[C, S2](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S2]): C < (S & S2)
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
 
@@ -73,7 +70,7 @@ object Arrow:
         def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             // Kyo.lift, not a cast: a raw value that is itself a computation must
             // re-enter the chain as data (Nested), not as a suspension to run
-            cont(Kyo.lift(v), context, handlers)
+            cont(defaultLift(v), context, handlers)
 
     // Spliced into long chains every Period elements by optimize: hops unwind here
     // via the returned Defer and evalLoop's trampoline drives the next segment, so
@@ -82,7 +79,7 @@ object Arrow:
     private val segmentBoundary = new Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            Kyo.Defer(Kyo.lift(v), cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
+            Kyo.Defer(defaultLift(v), cont.asInstanceOf[Arrow[Any, Any, Any]]).asInstanceOf[C < (Any & S2)]
 
     def apply[A]: Arrow[A, A, Any] = empty.asInstanceOf[Arrow[A, A, Any]]
 
@@ -224,7 +221,7 @@ object Arrow:
         if !safepoint.enter() then rescue(t, v)
         else
             try
-                val r = t.run(Kyo.unnest(v), context, handlers, Arrow[B]).asInstanceOf[B < (S & S2)]
+                val r = t.run(Kyo.unnest(v).asInstanceOf[A], context, handlers, Arrow[B]).asInstanceOf[B < (S & S2)]
                 safepoint.exit()
                 r
             catch
@@ -254,7 +251,7 @@ object Arrow:
         type Mid = B
         def frame = Frame.internal
 
-        def run[C2, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[C, C2, S2]): C2 < (S & S2) =
+        def run[C2, S2](v: A, context: Context, handlers: Handlers, cont: Arrow[C, C2, S2]): C2 < (S & S2) =
             val k = cont.asInstanceOf[Arrow[Any, Any, Any]]
             @tailrec def loop(o: Offset[Any, Any, Any, Any], cur: Any): Any =
                 o.head match

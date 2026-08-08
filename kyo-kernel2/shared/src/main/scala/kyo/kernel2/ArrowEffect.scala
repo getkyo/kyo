@@ -7,6 +7,7 @@ import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.EffectTrace
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.LiftMacro.defaultLift
 import kyo.kernel2.internal.ResumeHandler
 import kyo.kernel2.internal.Safepoint
 import scala.annotation.nowarn
@@ -85,7 +86,7 @@ object ArrowEffect:
             new Rotate(chain):
                 def frame = _frame
                 def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                    cont(loop(chain(Kyo.lift(v), context, handlers), context, handlers), context, handlers)
+                    cont(loop(chain(defaultLift(v), context, handlers), context, handlers), context, handlers)
 
         /** Re-entry for a fun-format handle loop: the handler registers around the contained application, so its operations are
           * answered where they surface.
@@ -100,7 +101,7 @@ object ArrowEffect:
                 def frame = _frame
                 def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
                     val extended = handlers.add(new Handlers.Entry(h, context, handlers))
-                    cont(loop(chain(Kyo.lift(v), context, extended), context, handlers), context, handlers)
+                    cont(loop(chain(defaultLift(v), context, extended), context, handlers), context, handlers)
 
         /** Re-entry for a binding: this scope's context is derived from the incoming one around the contained application. */
         def binding(
@@ -112,7 +113,7 @@ object ArrowEffect:
             new Rotate(chain):
                 def frame = _frame
                 def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                    cont(loop(chain(Kyo.lift(v), bind(context), handlers), context, handlers), context, handlers)
+                    cont(loop(chain(defaultLift(v), bind(context), handlers), context, handlers), context, handlers)
 
         /** Re-entry for a guarded computation: a throw inside the contained chain lands in the rescue, which replaces the guarded
           * computation and is not re-guarded.
@@ -127,7 +128,7 @@ object ArrowEffect:
                 def frame = _frame
                 def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
                     val w =
-                        try chain(Kyo.lift(v), context, handlers)
+                        try chain(defaultLift(v), context, handlers)
                         catch
                             case ex if NonFatal(ex) =>
                                 EffectTrace.attach(ex, "catching", _frame)
@@ -142,7 +143,7 @@ object ArrowEffect:
             new Rotate(chain):
                 def frame = entry.handler.frame
                 def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                    cont(scoped(entry)(chain(Kyo.lift(v), entry.entryContext, entry.entryHandlers)), context, handlers)
+                    cont(scoped(entry)(chain(defaultLift(v), entry.entryContext, entry.entryHandlers)), context, handlers)
 
     end Rotate
 
@@ -199,7 +200,7 @@ object ArrowEffect:
                         // an effectful answer runs at the handler's scope, rotating across suspensions
                         k(scoped(entry)(w), context, handlers)
                     else
-                        k(Kyo.lift(w), context, handlers)
+                        k(defaultLift(w), context, handlers)
                     end if
                 end if
             case _ =>
@@ -229,7 +230,7 @@ object ArrowEffect:
             v match
                 case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
                     val k      = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                    val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S & S2)]
+                    val resume = (x: Any) => k(defaultLift(x), context, handlers).asInstanceOf[A < (E & S & S2)]
                     // the recursive call stays in the arm as a direct self-call: that is what
                     // keeps deep eager handling stack safe
                     loop(
@@ -310,7 +311,7 @@ object ArrowEffect:
             v match
                 case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
                     val k      = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                    val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S)]
+                    val resume = (x: Any) => k(defaultLift(x), context, handlers).asInstanceOf[A < (E & S)]
                     // shallow: the handler leaves, so the result is not looped
                     handle[Any](s.input.asInstanceOf[I[Any]], resume.asInstanceOf[O[Any] => A < (E & S)]).asInstanceOf[Any < Any]
                 case v if v.isInstanceOf[Kyo[?, ?]] =>
@@ -381,19 +382,19 @@ object ArrowEffect:
                             new Arrow.Transform[Any, Any, Any]:
                                 def frame = handleLoopFrame
                                 def run[C, S3](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S3]): C < (Any & S3) =
-                                    cont(outcome(Kyo.lift(v), context, handlers), context, handlers)
+                                    cont(outcome(defaultLift(v), context, handlers), context, handlers)
                         )
                     case out =>
                         Kyo.unnest(out) match
                             case next: Loop.Continue2[?, ?] @unchecked =>
                                 loop(next._1.asInstanceOf[State], next._2.asInstanceOf[Any < Any], context, handlers)
                             case b =>
-                                Kyo.lift(b)
+                                defaultLift(b)
             end outcome
             v match
                 case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if effectTag.erased <:< s.erasedTag =>
                     val k      = s.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                    val resume = (x: Any) => k(Kyo.lift(x), context, handlers).asInstanceOf[A < (E & S)]
+                    val resume = (x: Any) => k(defaultLift(x), context, handlers).asInstanceOf[A < (E & S)]
                     outcome(
                         handle[Any](s.input.asInstanceOf[I[Any]], state, resume.asInstanceOf[O[Any] => A < (E & S)])
                             .asInstanceOf[Any < Any],

@@ -4,7 +4,7 @@ import Isolate.internal.*
 import kyo.Ansi.*
 import kyo.Frame
 import kyo.kernel2.internal.*
-import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.LiftMacro.defaultLift
 import scala.annotation.nowarn
 import scala.quoted.*
 
@@ -55,7 +55,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
     /** Isolates 'Remove' effects while exposing them as nested 'Restore' effects. */
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
         capture { state =>
-            isolate(state, v).map(r => Kyo.lift(restore(r)))
+            isolate(state, v).map(r => defaultLift(restore(r)))
         }
 
     /** Runs a computation with full state lifecycle management. */

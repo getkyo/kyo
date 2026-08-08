@@ -31,7 +31,7 @@ object ContextEffect:
             (),
             new Arrow.Transform[Unit, A, S]:
                 def frame = _frame
-                def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+                def run[C, S2](v: Unit, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
                     cont(f(context.inherit), context, handlers)
         )
 
@@ -56,7 +56,7 @@ object ContextEffect:
             (),
             new Arrow.Transform[Unit, V, E]:
                 def frame = _frame
-                def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[V, C, S2]): C < (E & S2) =
+                def run[C, S2](v: Unit, context: Context, handlers: Handlers, cont: Arrow[V, C, S2]): C < (E & S2) =
                     cont(context.get[V, E](effectTag), context, handlers)
         )
     end suspend
@@ -83,7 +83,7 @@ object ContextEffect:
             (),
             new Arrow.Transform[Unit, V, Any]:
                 def frame = _frame
-                def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[V, C, S2]): C < (Any & S2) =
+                def run[C, S2](v: Unit, context: Context, handlers: Handlers, cont: Arrow[V, C, S2]): C < (Any & S2) =
                     cont(context.getOrElse[V, E, V](effectTag, fallback()), context, handlers)
         )
     end suspend

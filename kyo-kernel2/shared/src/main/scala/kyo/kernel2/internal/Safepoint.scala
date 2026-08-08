@@ -2,7 +2,6 @@ package kyo.kernel2.internal
 
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicReferenceArray
-import scala.annotation.static
 import scala.annotation.tailrec
 
 /** The kernel's runtime guard: a per-thread token gating eager execution behind depth accounting and preemption polling.
@@ -152,12 +151,12 @@ private[kyo] object Safepoint:
         private[kyo] def endSlice(): Unit              = restore.endSlice()
     end Preempted
 
-    @static private val slots = new AtomicReferenceArray[Safepoint](Slots)
+    private val slots = new AtomicReferenceArray[Safepoint](Slots)
 
-    @static private val detached = new ThreadLocal[Cell]
+    private val detached = new ThreadLocal[Cell]
 
     /** The current thread's safepoint state. */
-    @static def get: Safepoint =
+    def get: Safepoint =
         val self = Thread.currentThread()
         // getId, not threadId: threadId is absent from the Scala.js javalib and fails JS and
         // Wasm linking (it type-checks against the JDK, then breaks at link). getId is
@@ -172,7 +171,7 @@ private[kyo] object Safepoint:
     /** Whether a request is pending for this thread, converting an expired slice deadline into an ordinary request first.
       * Observation only; consumption is [[clearPreempt]].
       */
-    @static def pollPreempt(): Boolean =
+    def pollPreempt(): Boolean =
         get match
             case _: Preempted => true
             case a: Active =>
@@ -185,7 +184,7 @@ private[kyo] object Safepoint:
     /** Consumes the pending request, true when one was pending. The exchange orders the requester's condition writes before the
       * caller's subsequent authoritative check.
       */
-    @static def clearPreempt(): Boolean =
+    def clearPreempt(): Boolean =
         get match
             case p: Preempted =>
                 val _ = p.restore.home.swap(p, p.restore)
@@ -196,7 +195,7 @@ private[kyo] object Safepoint:
     /** Masked-region absorb: consumes a pending request and records it for re-issue at the region's exit, so the region keeps
       * making progress while the enclosing slice still sees the request.
       */
-    @static def maskPreempt(): Unit =
+    def maskPreempt(): Unit =
         get match
             case p: Preempted =>
                 if p.restore.home.swap(p, p.restore) then p.restore.markMasked()
@@ -204,7 +203,7 @@ private[kyo] object Safepoint:
                 ()
 
     /** Masked-region exit: re-issues an absorbed request. A request that landed fresh during the region supersedes the recorded one. */
-    @static def unmaskPreempt(): Unit =
+    def unmaskPreempt(): Unit =
         get match
             case a: Active =>
                 if a.takeMasked() then a.preempt()
@@ -212,7 +211,7 @@ private[kyo] object Safepoint:
                 val _ = p.restore.takeMasked()
 
     /** Arms the slice deadline and returns the instance the slice owner publishes for requesters. */
-    @static def beginSlice(deadlineMillis: Long): Safepoint =
+    def beginSlice(deadlineMillis: Long): Safepoint =
         val sp = get
         sp match
             case a: Active    => a.arm(deadlineMillis)
@@ -220,7 +219,7 @@ private[kyo] object Safepoint:
         sp
     end beginSlice
 
-    @static private def slow(self: Thread, tid: Long): Safepoint =
+    private def slow(self: Thread, tid: Long): Safepoint =
         val d = detached.get()
         if d ne null then d.current
         else
@@ -249,7 +248,7 @@ private[kyo] object Safepoint:
       * preemption delivery. A detached thread never migrates back to a slot: probing per frame for its lifetime costs more than the
       * detached path, and a migration would split depth accounting across two instances.
       */
-    @static private def detach(self: Thread): Safepoint =
+    private def detach(self: Thread): Safepoint =
         val cell   = new Cell
         val active = new Active(self, cell)
         cell.set(active)
@@ -257,7 +256,7 @@ private[kyo] object Safepoint:
         active
     end detach
 
-    @static private[kyo] def owned: Boolean =
+    private[kyo] def owned: Boolean =
         val self = Thread.currentThread()
         @tailrec def scan(i: Int): Boolean =
             if i == Slots then false

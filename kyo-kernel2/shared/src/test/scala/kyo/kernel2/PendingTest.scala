@@ -11,7 +11,6 @@ import kyo.discard
 import kyo.kernel2.*
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Handlers
-import kyo.kernel2.internal.Kyo
 import kyo.kernel2.internal.Safepoint
 import kyo.render
 import kyo.test.Test
@@ -715,8 +714,8 @@ class PendingTest extends Test[Any]:
     def transform(f: Int => Int): Arrow[Int, Int, Any] =
         new Arrow.Transform[Int, Int, Any]:
             def frame = Frame.derive
-            def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Int, C, S2]): C < (Any & S2) =
-                cont(f(v.asInstanceOf[Int]), context, handlers)
+            def run[C, S2](v: Int, context: Context, handlers: Handlers, cont: Arrow[Int, C, S2]): C < (Any & S2) =
+                cont(f(v), context, handlers)
 
     "handlers route by tag and nest" in {
         val ask2: Int < Ask2 =

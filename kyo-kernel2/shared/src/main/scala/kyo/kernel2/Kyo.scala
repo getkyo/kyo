@@ -1,134 +1,30 @@
-package kyo.kernel2.internal
+package kyo.kernel2
 
 import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
-import kyo.Tag
-import kyo.kernel2.*
 import language.implicitConversions
 import scala.annotation.nowarn
-import scala.annotation.static
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
-// TODO this is meant as internal
-sealed abstract class Kyo[+A, -S]:
-    private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
-
-// TODO this should be in the kyo package
+/** Utility functions for working with Kyo computations.
+  *
+  * Provides sequential operations over collections and effects, conformant with the current kernel's kyo.Kyo object; it moves to the
+  * kyo package when this kernel replaces the current one. The current kernel also ships per-collection specializations (List, Seq,
+  * Chunk, Set) of the generic variants below; those are performance work for the optimization round, since overload resolution binds
+  * the generic variant source-compatibly.
+  */
 object Kyo:
 
-    /** Lifts a value into the effect context without suspension, including nested computations: a value that is itself a computation
-      * enters as data (a [[Nested]] box), not as a suspension to run. The explicit route for intentional nesting, which the implicit
-      * lift rejects at compile time.
-      */
-    inline def lift[A, S](inline v: A): A < S =
-        v match
-            case v: Kyo[?, ?] => Nested(v).asInstanceOf[A < S]
-            case v: Nested[?] => Nested(v).asInstanceOf[A < S]
-            case v            => v.asInstanceOf[A < S]
-
-    // Compiled as a JVM static of class Kyo: hot callers (minted arrow fragments,
-    // Arrow.apply, Offset.run) reach it via invokestatic with no module load and,
-    // in minted fragments, no captured reference to an enclosing object.
-    @static def unnest(v: Any): Any =
-        v match
-            case n: Nested[?] => n.value
-            case _            => v
-
-    // a case class so re-wrapping at pass-through positions preserves value equality
-    final private[kyo] case class Nested[+A](value: A)
-
-    /** A suspension: an arrow-effect operation with the fused continuation from its output.
+    /** Lifts a value into the effect context without suspension.
       *
-      * The one suspension shape: a bare operation's continuation is the identity arrow (the shared empty, so it costs nothing), and
-      * mapping extends the continuation on a fresh node that still points at the bare operation. Every dispatch site matches this class
-      * alone. Context reads are plain [[Defer]]s consuming the threaded context, so no read node exists.
+      * Zero cost: the body is the pending type's central lift conversion. Unlike the implicit route, the explicit call accepts a value
+      * that is statically a computation, which enters as data (intentional nesting).
       */
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S] extends Kyo[B, S]:
-
-        def input: I[A]
-        def tag: Tag[E]
-        def frame: Frame
-
-        /** The fused continuation from the operation's output; the identity arrow for a bare operation. */
-        def cont: Arrow[O[A], B, S]
-
-        /** The bare operation this suspension extends; itself for a bare one. */
-        private[kyo] def origin: Suspend[I, O, E, A, O[A], E]
-
-        final private[kyo] def erasedTag: Tag[Any] = tag.erased
-
-        final private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
-            Continue(origin, cont.map(f))
-
-        /** This suspension with a different continuation, at the drive's currency: the cast is the trampoline currency, and the
-          * result stays anchored at the operation's own types through `origin`.
-          */
-        final private[kyo] def continue(cont2: Arrow[Any, Any, Any]): Kyo[Any, Any] =
-            Continue(origin, cont2.asInstanceOf[Arrow[O[A], Any, Any]])
-
-        override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
-
-    end Suspend
-
-    final private[kyo] class Continue[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
-        override val origin: Suspend[I, O, E, A, O[A], E],
-        val cont: Arrow[O[A], B, S]
-    ) extends Suspend[I, O, E, A, B, S]:
-
-        def input = origin.input
-        def tag   = origin.tag
-        def frame = origin.frame
-
-        override def toString = "Continue(" + origin + ", " + cont + ")"
-
-    end Continue
-
-    abstract class Bracket[R, A, S] extends Kyo[A, S]:
-
-        def acquire: R < S
-        def release(r: R): Unit < S
-        def cont: Arrow[R, A, S]
-        def frame: Frame
-
-        final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
-            val outer = this
-            new Bracket[R, B, S & S2]:
-                def acquire       = outer.acquire
-                def release(r: R) = outer.release(r)
-                def cont          = outer.cont.map(f)
-                def frame         = outer.frame
-            end new
-        end map
-
-        final override def toString = "Bracket(" + frame.position.show + ")"
-
-    end Bracket
-
-    // public because the inline trampoline's Defer arm expands at user sites.
-    // value is a pending value, not a bare A: variance then types the public
-    // deferring application and the drive's pop without casts
-    final class Defer[A, +B, -S](
-        val value: A < S,
-        val cont: Arrow[A, B, S]
-    ) extends Kyo[B, S]:
-
-        private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
-            Defer(value, cont.map(f))
-
-        override def toString = "Defer(" + cont + ")"
-
-    end Defer
-
-    // ------------------------------------------------------------------------------------------------------------------
-    // Companion utilities: the user-facing Kyo combinator surface, conformant with the current kernel's kyo.Kyo object.
-    // The current kernel also ships per-collection specializations (List, Seq, Chunk, Set) of the generic variants below;
-    // those are performance work for the optimization round, since overload resolution binds the generic variant
-    // source-compatibly.
-    // ------------------------------------------------------------------------------------------------------------------
+    inline def lift[A, S](inline v: A): A < S = v
 
     /** A pure effect that produces Unit. */
     inline def unit: Unit < Any = ()

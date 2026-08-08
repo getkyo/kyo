@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.LiftMacro.defaultLift
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
@@ -103,8 +104,8 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome[A, O], O, S]:
                         def frame = _frame
-                        def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
-                            cont(loop(Kyo.lift(o.asInstanceOf[Outcome[A, O]])), context, handlers)
+                        def run[C, S2](o: Outcome[A, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
+                            cont(loop(defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome[A, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(run(input))
@@ -119,8 +120,8 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome2[A, B, O], O, S]:
                         def frame = _frame
-                        def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
-                            cont(loop(Kyo.lift(o.asInstanceOf[Outcome2[A, B, O]])), context, handlers)
+                        def run[C, S2](o: Outcome2[A, B, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
+                            cont(loop(defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome2[A, B, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(run(input1, input2))
@@ -137,8 +138,9 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome3[A, B, C, O], O, S]:
                         def frame = _frame
-                        def run[C2, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
-                            cont(loop(Kyo.lift(o.asInstanceOf[Outcome3[A, B, C, O]])), context, handlers)
+                        def run[C2, S2](o: Outcome3[A, B, C, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2])
+                            : C2 < (S & S2) =
+                            cont(loop(defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome3[A, B, C, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(run(input1, input2, input3))
@@ -155,8 +157,9 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome4[A, B, C, D, O], O, S]:
                         def frame = _frame
-                        def run[C2, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
-                            cont(loop(Kyo.lift(o.asInstanceOf[Outcome4[A, B, C, D, O]])), context, handlers)
+                        def run[C2, S2](o: Outcome4[A, B, C, D, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2])
+                            : C2 < (S & S2) =
+                            cont(loop(defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome4[A, B, C, D, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(run(input1, input2, input3, input4))
@@ -171,8 +174,8 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome[Unit, O], O, S]:
                         def frame = _frame
-                        def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
-                            cont(loop(idx, Kyo.lift(o.asInstanceOf[Outcome[Unit, O]])), context, handlers)
+                        def run[C, S2](o: Outcome[Unit, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
+                            cont(loop(idx, defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome[Unit, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(0, run(0))
@@ -187,8 +190,8 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome[A, O], O, S]:
                         def frame = _frame
-                        def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
-                            cont(loop(idx, Kyo.lift(o.asInstanceOf[Outcome[A, O]])), context, handlers)
+                        def run[C, S2](o: Outcome[A, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
+                            cont(loop(idx, defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome[A, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(0, run(0, input))
@@ -205,8 +208,8 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome2[A, B, O], O, S]:
                         def frame = _frame
-                        def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
-                            cont(loop(idx, Kyo.lift(o.asInstanceOf[Outcome2[A, B, O]])), context, handlers)
+                        def run[C, S2](o: Outcome2[A, B, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
+                            cont(loop(idx, defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome2[A, B, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(0, run(0, input1, input2))
@@ -223,8 +226,9 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome3[A, B, C, O], O, S]:
                         def frame = _frame
-                        def run[C2, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
-                            cont(loop(idx, Kyo.lift(o.asInstanceOf[Outcome3[A, B, C, O]])), context, handlers)
+                        def run[C2, S2](o: Outcome3[A, B, C, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2])
+                            : C2 < (S & S2) =
+                            cont(loop(idx, defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome3[A, B, C, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(0, run(0, input1, input2, input3))
@@ -242,8 +246,9 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome4[A, B, C, D, O], O, S]:
                         def frame = _frame
-                        def run[C2, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
-                            cont(loop(idx, Kyo.lift(o.asInstanceOf[Outcome4[A, B, C, D, O]])), context, handlers)
+                        def run[C2, S2](o: Outcome4[A, B, C, D, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2])
+                            : C2 < (S & S2) =
+                            cont(loop(idx, defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome4[A, B, C, D, O], S]].map(step)
                 case res => res.asInstanceOf[O]
         loop(0, run(0, input1, input2, input3, input4))
@@ -258,8 +263,8 @@ object Loop:
                 case kyo: Kyo[?, ?] =>
                     val step = new Arrow.Transform[Outcome[Unit, A], A, S]:
                         def frame = _frame
-                        def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
-                            cont(loop(Kyo.lift(o.asInstanceOf[Outcome[Unit, A]])), context, handlers)
+                        def run[C, S2](o: Outcome[Unit, A], context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+                            cont(loop(defaultLift(o)), context, handlers)
                     kyo.asInstanceOf[Kyo[Outcome[Unit, A], S]].map(step)
                 case res => res.asInstanceOf[A]
         loop(run)

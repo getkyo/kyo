@@ -2,7 +2,6 @@ package kyo.kernel2
 
 import kyo.Chunk
 import kyo.Maybe
-import kyo.kernel2.internal.Kyo
 import kyo.test.Test
 
 @TestVariant("Coll", "List", "Chunk")

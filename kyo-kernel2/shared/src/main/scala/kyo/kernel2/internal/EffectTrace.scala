@@ -6,7 +6,6 @@ import kyo.Maybe
 import kyo.Tag
 import language.implicitConversions
 import scala.annotation.nowarn
-import scala.annotation.static
 import scala.annotation.tailrec
 
 final private[kyo] class EffectTrace extends Exception(null, null, false, false):

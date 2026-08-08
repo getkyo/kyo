@@ -4,6 +4,7 @@ import kyo.Frame
 import kyo.kernel2.internal.Context
 import kyo.kernel2.internal.Handlers
 import kyo.kernel2.internal.Kyo
+import kyo.kernel2.internal.LiftMacro.defaultLift
 import scala.annotation.tailrec
 
 /** Instrumentation hook: observes every step of a computation with an effectful observer.
@@ -47,7 +48,7 @@ private[kyo] object Observe:
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                     cont(step(o, v, context, handlers), context, handlers)
                 case _ =>
-                    cont(Kyo.lift(v), context, handlers)
+                    cont(defaultLift(v), context, handlers)
 
         // one observed transform per observer completion; recursion goes through the
         // continuation arrow, so the depth guard keeps arbitrarily long observed
@@ -72,7 +73,7 @@ private[kyo] object Observe:
                         else
                             o.next match
                                 case n: Arrow.Offset[Any, Any, Any, Any] @unchecked => step(n, Kyo.unnest(w), context, handlers)
-                                case _                                              => Kyo.lift(Kyo.unnest(w))
+                                case _                                              => defaultLift(Kyo.unnest(w))
                     cont2(next, context, handlers)
                 end run
             afterObserver(observer(t.frame, cur), context, handlers)
