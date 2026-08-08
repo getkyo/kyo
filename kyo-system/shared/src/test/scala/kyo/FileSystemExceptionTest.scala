@@ -16,9 +16,12 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             FileDirectoryNotEmptyException(p),
             FileInvalidPathException("nul", FileSystemOperation.Read),
             FileIOException(p, FileSystemOperation.Read, cause),
-            FileAtomicMoveUnsupportedException(p, target)
+            FileAtomicMoveUnsupportedException(p, target),
+            FileLockUnavailableException(p),
+            FileLockTimeoutException(p, 10.millis),
+            FileLockOwnershipLostException(p)
         )
-        assert(values.size == 8)
+        assert(values.size == 11)
         assert(values(5).asInstanceOf[FileInvalidPathException].input == "nul")
         assert(values(6).asInstanceOf[FileIOException].operation == FileSystemOperation.Read)
         assert(values(6).getCause eq cause)
@@ -30,6 +33,8 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
         assert(FileNotFoundException(p).isInstanceOf[FileReadException])
         assert(FileAlreadyExistsException(p).isInstanceOf[FileStructureException])
         assert(FileAtomicMoveUnsupportedException(p, Path("to")).isInstanceOf[FileStructureException])
+        assert(FileLockTimeoutException(p, 1.millis).isInstanceOf[FileLockException])
+        assert(FileLockOwnershipLostException(p).isInstanceOf[FileLockException])
     }
 
     "FileIsADirectoryException is FileReadException and FileWriteException but not FileStructureException" in {

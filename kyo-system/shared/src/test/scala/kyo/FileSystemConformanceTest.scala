@@ -53,6 +53,7 @@ final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) exten
     export delegate.isRegularFile
     export delegate.isSymbolicLink
     export delegate.list
+    export delegate.lock
     export delegate.openRead
     export delegate.openReadChannel
     export delegate.openReadChannelUnscoped
@@ -64,6 +65,7 @@ final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) exten
     export delegate.realPath
     export delegate.size
     export delegate.stat
+    export delegate.tryLock
 end UserReadOnlyFileSystemFixture
 
 class UserReadOnlyFileSystemConformanceTest extends FileSystemReadTestSuite:

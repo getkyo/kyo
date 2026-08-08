@@ -32,6 +32,7 @@ class FileSystemTest extends kyo.test.Test[Any]:
         export delegate.isRegularFile
         export delegate.isSymbolicLink
         export delegate.list
+        export delegate.lock
         export delegate.mkDir
         export delegate.mkFile
         export delegate.move
@@ -56,6 +57,7 @@ class FileSystemTest extends kyo.test.Test[Any]:
         export delegate.temp
         export delegate.tempDir
         export delegate.truncate
+        export delegate.tryLock
         export delegate.writeBytes
         export delegate.writeChunk
         export delegate.writeLines
