@@ -98,32 +98,30 @@ object Loop:
     /** Loops over one state value until the iteration completes. */
     @nowarn("msg=anonymous")
     inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
+        lazy val step = new Arrow.Transform[Outcome[A, O], O, S]:
+            def frame = _frame
+            def run[C, S2](o: Outcome[A, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
+                cont(loop(defaultLift(o)), context, handlers)
         @tailrec def loop(v: Outcome[A, O] < S): O < S =
             v match
                 case next: Continue[A] @unchecked => loop(run(next._1))
-                case kyo: Kyo[?, ?] =>
-                    val step = new Arrow.Transform[Outcome[A, O], O, S]:
-                        def frame = _frame
-                        def run[C, S2](o: Outcome[A, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
-                            cont(loop(defaultLift(o)), context, handlers)
-                    kyo.asInstanceOf[Kyo[Outcome[A, O], S]].map(step)
-                case res => res.asInstanceOf[O]
+                case kyo: Kyo[?, ?]               => kyo.asInstanceOf[Kyo[Outcome[A, O], S]].map(step)
+                case res                          => res.asInstanceOf[O]
         loop(run(input))
     end apply
 
     /** Loops over two state values until the iteration completes. */
     @nowarn("msg=anonymous")
     inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(using inline _frame: Frame): O < S =
+        lazy val step = new Arrow.Transform[Outcome2[A, B, O], O, S]:
+            def frame = _frame
+            def run[C, S2](o: Outcome2[A, B, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
+                cont(loop(defaultLift(o)), context, handlers)
         @tailrec def loop(v: Outcome2[A, B, O] < S): O < S =
             v match
                 case next: Continue2[A, B] @unchecked => loop(run(next._1, next._2))
-                case kyo: Kyo[?, ?] =>
-                    val step = new Arrow.Transform[Outcome2[A, B, O], O, S]:
-                        def frame = _frame
-                        def run[C, S2](o: Outcome2[A, B, O], context: Context, handlers: Handlers, cont: Arrow[O, C, S2]): C < (S & S2) =
-                            cont(loop(defaultLift(o)), context, handlers)
-                    kyo.asInstanceOf[Kyo[Outcome2[A, B, O], S]].map(step)
-                case res => res.asInstanceOf[O]
+                case kyo: Kyo[?, ?]                   => kyo.asInstanceOf[Kyo[Outcome2[A, B, O], S]].map(step)
+                case res                              => res.asInstanceOf[O]
         loop(run(input1, input2))
     end apply
 
@@ -132,17 +130,15 @@ object Loop:
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
         inline run: (A, B, C) => Outcome3[A, B, C, O] < S
     )(using inline _frame: Frame): O < S =
+        lazy val step = new Arrow.Transform[Outcome3[A, B, C, O], O, S]:
+            def frame = _frame
+            def run[C2, S2](o: Outcome3[A, B, C, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
+                cont(loop(defaultLift(o)), context, handlers)
         @tailrec def loop(v: Outcome3[A, B, C, O] < S): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked => loop(run(next._1, next._2, next._3))
-                case kyo: Kyo[?, ?] =>
-                    val step = new Arrow.Transform[Outcome3[A, B, C, O], O, S]:
-                        def frame = _frame
-                        def run[C2, S2](o: Outcome3[A, B, C, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2])
-                            : C2 < (S & S2) =
-                            cont(loop(defaultLift(o)), context, handlers)
-                    kyo.asInstanceOf[Kyo[Outcome3[A, B, C, O], S]].map(step)
-                case res => res.asInstanceOf[O]
+                case kyo: Kyo[?, ?]                      => kyo.asInstanceOf[Kyo[Outcome3[A, B, C, O], S]].map(step)
+                case res                                 => res.asInstanceOf[O]
         loop(run(input1, input2, input3))
     end apply
 
@@ -151,17 +147,15 @@ object Loop:
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
         inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
     )(using inline _frame: Frame): O < S =
+        lazy val step = new Arrow.Transform[Outcome4[A, B, C, D, O], O, S]:
+            def frame = _frame
+            def run[C2, S2](o: Outcome4[A, B, C, D, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
+                cont(loop(defaultLift(o)), context, handlers)
         @tailrec def loop(v: Outcome4[A, B, C, D, O] < S): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked => loop(run(next._1, next._2, next._3, next._4))
-                case kyo: Kyo[?, ?] =>
-                    val step = new Arrow.Transform[Outcome4[A, B, C, D, O], O, S]:
-                        def frame = _frame
-                        def run[C2, S2](o: Outcome4[A, B, C, D, O], context: Context, handlers: Handlers, cont: Arrow[O, C2, S2])
-                            : C2 < (S & S2) =
-                            cont(loop(defaultLift(o)), context, handlers)
-                    kyo.asInstanceOf[Kyo[Outcome4[A, B, C, D, O], S]].map(step)
-                case res => res.asInstanceOf[O]
+                case kyo: Kyo[?, ?]                         => kyo.asInstanceOf[Kyo[Outcome4[A, B, C, D, O], S]].map(step)
+                case res                                    => res.asInstanceOf[O]
         loop(run(input1, input2, input3, input4))
     end apply
 
@@ -257,16 +251,15 @@ object Loop:
     /** Loops until the iteration completes, without state. */
     @nowarn("msg=anonymous")
     inline def foreach[A, S](inline run: => Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
+        lazy val step = new Arrow.Transform[Outcome[Unit, A], A, S]:
+            def frame = _frame
+            def run[C, S2](o: Outcome[Unit, A], context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
+                cont(loop(defaultLift(o)), context, handlers)
         @tailrec def loop(v: Outcome[Unit, A] < S): A < S =
             v match
                 case next: Continue[Unit] @unchecked => loop(run)
-                case kyo: Kyo[?, ?] =>
-                    val step = new Arrow.Transform[Outcome[Unit, A], A, S]:
-                        def frame = _frame
-                        def run[C, S2](o: Outcome[Unit, A], context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
-                            cont(loop(defaultLift(o)), context, handlers)
-                    kyo.asInstanceOf[Kyo[Outcome[Unit, A], S]].map(step)
-                case res => res.asInstanceOf[A]
+                case kyo: Kyo[?, ?]                  => kyo.asInstanceOf[Kyo[Outcome[Unit, A], S]].map(step)
+                case res                             => res.asInstanceOf[A]
         loop(run)
     end foreach
 
