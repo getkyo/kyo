@@ -117,7 +117,7 @@ object `<`:
                 def frame = _frame
                 def run[C, S3](v: Any, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f(v.asInstanceOf[A])
-                    (cont: Any) match // TODO do not widen to Any. Use @unchcked instead
+                    cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
@@ -138,7 +138,7 @@ object `<`:
                 def frame = _frame
                 def run[C, S3](v: Any, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f(v.asInstanceOf[A])
-                    (cont: Any) match
+                    cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
@@ -155,7 +155,7 @@ object `<`:
                 def frame = _frame
                 def run[C, S3](v: Any, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f
-                    (cont: Any) match
+                    cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             // TODO let's rename unwrap to unnest
                             o.head.run(Kyo.unwrap(w), o.next).asInstanceOf[C < (S2 & S3)]
@@ -172,7 +172,7 @@ object `<`:
             val arrow = new Arrow.Transform[A, Unit, Any]:
                 def frame = _frame
                 def run[C, S3](v: Any, cont: Arrow[Unit, C, S3]): C < (Any & S3) =
-                    (cont: Any) match
+                    cont match
                         case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                             o.head.run((), o.next).asInstanceOf[C < (Any & S3)]
                         case _ =>
@@ -349,11 +349,11 @@ object `<`:
                                 else Arrow.map(this)(o.next)
                             w.asInstanceOf[Kyo[Any, Any]].map(rest)
                         else
-                            (o.next: Any) match
+                            o.next match
                                 case n: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unwrap(w))
                                 case _                                              => Kyo.unwrap(w)
                         end if
-            (cont: Any) match
+            cont match
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                     loop(o, v).asInstanceOf[C < (Any & S2)]
                 case _ =>

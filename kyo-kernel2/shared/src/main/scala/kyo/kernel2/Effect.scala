@@ -37,7 +37,7 @@ object Effect:
     )(using _frame: Frame): B < (S & S2) =
         try
             val w = v
-            (w: Any) match
+            w match
                 case kyo: Kyo[?, ?] =>
                     val handler = f.asInstanceOf[Throwable => Any < Any]
                     kyo.prepend(new Catching(handler, _frame)).asInstanceOf[B < (S & S2)]
@@ -60,7 +60,7 @@ object Effect:
                     case ex if NonFatal(ex) =>
                         KyoException.attach(ex, "catching", _frame)
                         return handler(ex).asInstanceOf[C < (Any & S2)]
-            (w: Any) match
+            w match
                 case kyo: Kyo[?, ?] =>
                     // re-arm across the park so later steps stay intercepted
                     kyo.prepend(this).asInstanceOf[C < (Any & S2)]

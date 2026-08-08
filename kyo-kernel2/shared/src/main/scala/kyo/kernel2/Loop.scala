@@ -94,7 +94,7 @@ object Loop:
     inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
         def loop(v: Outcome[A, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue[A] @unchecked => loop(run(next._1))
                     case res                          => res.asInstanceOf[O]
             }
@@ -105,7 +105,7 @@ object Loop:
     inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(using inline _frame: Frame): O < S =
         def loop(v: Outcome2[A, B, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue2[A, B] @unchecked => loop(run(next._1, next._2))
                     case res                              => res.asInstanceOf[O]
             }
@@ -118,7 +118,7 @@ object Loop:
     )(using inline _frame: Frame): O < S =
         def loop(v: Outcome3[A, B, C, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue3[A, B, C] @unchecked => loop(run(next._1, next._2, next._3))
                     case res                                 => res.asInstanceOf[O]
             }
@@ -131,7 +131,7 @@ object Loop:
     )(using inline _frame: Frame): O < S =
         def loop(v: Outcome4[A, B, C, D, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue4[A, B, C, D] @unchecked => loop(run(next._1, next._2, next._3, next._4))
                     case res                                    => res.asInstanceOf[O]
             }
@@ -142,7 +142,7 @@ object Loop:
     inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using inline _frame: Frame): O < S =
         def loop(idx: Int)(v: Outcome[Unit, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue[Unit] @unchecked => loop(idx + 1)(run(idx + 1))
                     case res                             => res.asInstanceOf[O]
             }
@@ -153,7 +153,7 @@ object Loop:
     inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
         def loop(idx: Int)(v: Outcome[A, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue[A] @unchecked => loop(idx + 1)(run(idx + 1, next._1))
                     case res                          => res.asInstanceOf[O]
             }
@@ -166,7 +166,7 @@ object Loop:
     )(using inline _frame: Frame): O < S =
         def loop(idx: Int)(v: Outcome2[A, B, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue2[A, B] @unchecked => loop(idx + 1)(run(idx + 1, next._1, next._2))
                     case res                              => res.asInstanceOf[O]
             }
@@ -179,7 +179,7 @@ object Loop:
     )(using inline _frame: Frame): O < S =
         def loop(idx: Int)(v: Outcome3[A, B, C, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue3[A, B, C] @unchecked => loop(idx + 1)(run(idx + 1, next._1, next._2, next._3))
                     case res                                 => res.asInstanceOf[O]
             }
@@ -192,7 +192,7 @@ object Loop:
     )(using inline _frame: Frame): O < S =
         def loop(idx: Int)(v: Outcome4[A, B, C, D, O] < S): O < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue4[A, B, C, D] @unchecked =>
                         loop(idx + 1)(run(idx + 1, next._1, next._2, next._3, next._4))
                     case res => res.asInstanceOf[O]
@@ -204,7 +204,7 @@ object Loop:
     inline def foreach[A, S](inline run: => Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
         def loop(v: Outcome[Unit, A] < S): A < S =
             v.map { o =>
-                (o: Any) match
+                o match
                     case next: Continue[Unit] @unchecked => loop(run)
                     case res                             => res.asInstanceOf[A]
             }

@@ -244,7 +244,7 @@ object Arrow:
                         if w.isInstanceOf[Kyo[?, ?]] then
                             o.next.map(k)(w.asInstanceOf[Any < Any])
                         else
-                            (o.next: Any) match
+                            o.next match
                                 case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unwrap(w))
                                 case _                                        => k(Kyo.unwrap(w).asInstanceOf[Any < Any])
                         end if

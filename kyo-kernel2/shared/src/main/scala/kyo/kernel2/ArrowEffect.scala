@@ -218,7 +218,7 @@ object ArrowEffect:
                 case s: Kyo.Suspend[?, ?, ?, ?] if effectTag.asInstanceOf[Tag[Any]] <:< s.tag.asInstanceOf[Tag[Any]] =>
                     f(s.input.asInstanceOf[I[Any]])
                 case _ => ()
-        (v: Any) match
+        v match
             case c: Kyo.Continue[?, ?, ?] => probe(c.suspend)
             case s: Kyo.Suspension[?, ?]  => probe(s)
             case _                        => ()
