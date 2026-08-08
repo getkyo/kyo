@@ -46,7 +46,7 @@ class PathTest extends kyo.test.Test[Any]:
     // On Windows an absolute path is rooted on a drive (e.g. C:\). Reconstructing
     // a path from `parts` (via `/`, `apply`, `parent`, ...) must preserve that
     // drive root; dropping it re-anchors the path to the process's CWD drive,
-    // silently corrupting real I/O.
+    // silently corrupting real I/O and `confinedTo`.
     // =========================================================================
 
     "/ preserves the Windows drive letter" in {
