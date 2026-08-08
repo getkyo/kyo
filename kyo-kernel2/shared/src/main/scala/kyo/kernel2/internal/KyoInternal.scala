@@ -45,11 +45,12 @@ object Kyo:
         final private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Continue(origin, cont.map(f))
 
-        /** This suspension with a different continuation, at the drive's currency: the cast is the trampoline currency, and the
-          * result stays anchored at the operation's own types through `origin`.
+        /** This suspension with a different continuation. The input stays existential and the one cast re-anchors it at the
+          * operation's own types through `origin`: the callers hold the continuation at the operation's output type (rewrap) or at
+          * the drive's currency (observation), and neither can name that type from outside.
           */
-        final private[kyo] def continue(cont2: Arrow[Any, Any, Any]): Kyo[Any, Any] =
-            Continue(origin, cont2.asInstanceOf[Arrow[O[A], Any, Any]])
+        final private[kyo] def continue[C, S2](cont2: Arrow[?, C, S2]): Kyo[C, S2] =
+            Continue(origin, cont2.asInstanceOf[Arrow[O[A], C, S2]])
 
         override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
 

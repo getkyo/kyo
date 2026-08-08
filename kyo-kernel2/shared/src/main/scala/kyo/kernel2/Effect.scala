@@ -39,10 +39,19 @@ object Effect:
     def catching[A, S, B >: A, S2](v: => A < S)(
         f: Throwable => B < S2
     )(using _frame: Frame): B < (S & S2) =
-        val rescue = f.asInstanceOf[Throwable => Any < Any]
-        def loop(w: Any < Any, context: Context, handlers: Handlers): Any < Any =
-            ArrowEffect.rewrap(w, ArrowEffect.Rotate.guard(_, rescue, loop, _frame), loop, context, handlers)
-        try loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[B < (S & S2)]
+        def loop(w: B < (S & S2), context: Context, handlers: Handlers): B < (S & S2) =
+            w match
+                case k: Kyo[B, S & S2] @unchecked =>
+                    ArrowEffect.rewrap(
+                        k,
+                        [X] => (chain: Arrow[X, B, S & S2]) => ArrowEffect.Rotate.guard(chain, f, loop, _frame),
+                        loop,
+                        context,
+                        handlers
+                    )
+                case v =>
+                    v
+        try loop(v, Context.empty, Handlers.empty)
         catch
             case ex if NonFatal(ex) =>
                 EffectTrace.attach(ex, "catching", _frame)

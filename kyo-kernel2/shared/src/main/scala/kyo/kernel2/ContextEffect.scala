@@ -114,11 +114,21 @@ object ContextEffect:
                     if context.contains(effectTag) then ifDefined(context.get[V, E](effectTag))
                     else ifUndefined
                 context.set(effectTag, value)
-        def loop(w: Any < Any, context: Context, handlers: Handlers): Any < Any =
-            ArrowEffect.rewrap(w, ArrowEffect.Rotate.binding(_, bind, loop, frame), loop, context, handlers)
-        // the cast discharges E from the row: every read of E inside the bound
-        // computation resolves against this binding through the threaded context
-        loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[A < S]
+        def loop(w: A < (E & S), context: Context, handlers: Handlers): A < S =
+            w match
+                case k: Kyo[A, E & S] @unchecked =>
+                    ArrowEffect.rewrap(
+                        k,
+                        [X] => (chain: Arrow[X, A, E & S]) => ArrowEffect.Rotate.binding(chain, bind, loop, frame),
+                        loop,
+                        context,
+                        handlers
+                    )
+                case v =>
+                    // settled: every read of E inside the bound computation resolved against
+                    // this binding through the threaded context, discharging E from the row
+                    v.asInstanceOf[A < S]
+        loop(v, Context.empty, Handlers.empty)
     end handle
 
 end ContextEffect

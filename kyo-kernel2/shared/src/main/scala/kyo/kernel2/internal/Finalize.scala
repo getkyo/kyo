@@ -75,7 +75,7 @@ private[kyo] object Finalize:
                     case t: Throwable =>
                         EffectTrace.attach(t, "release", finalize.bracket.frame)
                         Chunk(t)
-            case r: ArrowEffect.Rotate =>
+            case r: ArrowEffect.Rotate[?, ?, ?] =>
                 // a rotate step contains its handler's remaining chain: finalizers in there run too
                 finalizeArrow(r.inner)
             case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
