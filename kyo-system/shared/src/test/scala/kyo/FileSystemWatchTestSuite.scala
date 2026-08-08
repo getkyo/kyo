@@ -208,3 +208,21 @@ class HostPathWatchTest extends FileSystemWatchTestSuite:
         }
     end withFileSystem
 end HostPathWatchTest
+
+/** The in-memory backend has its own watcher, pushed to from each mutation into the channel every
+  * registered watcher holds, and entirely separate from the polling watcher the host backend uses.
+  * It advertises the Watch tier, so it owes the same contract; before this it had only its own
+  * ad-hoc cases and the two implementations were never held to the same assertions.
+  */
+class InMemoryPathWatchTest extends FileSystemWatchTestSuite:
+    private given Frame = Frame.internal
+
+    protected def withFileSystem(
+        use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) => Unit <
+            (Async & Sync & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("in-memory-watch-root")
+            fileSystem.mkDir(root).andThen(use(fileSystem, root))
+        }
+end InMemoryPathWatchTest
