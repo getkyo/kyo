@@ -181,7 +181,6 @@ class BrowserLauncherTest extends BaseBrowserTest:
         Scope.run {
             for
                 tmp <- Path.tempDir("kyo-browser-pollDevTools-test-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
                 outcome <- Abort.run[BrowserSetupException] {
                     BrowserLauncher.pollDevToolsActivePort(tmp, timeout, 50.millis)
                 }
@@ -203,7 +202,6 @@ class BrowserLauncherTest extends BaseBrowserTest:
         Scope.run {
             for
                 tmp <- Path.tempDir("kyo-browser-pollDevTools-happy-")
-                _   <- Scope.ensure(Abort.run[FileFsException](tmp.removeAll).unit)
                 _   <- (tmp / BrowserLauncher.devToolsActivePortFile).write("9222\n/devtools/browser/test-uuid\n")
                 url <- BrowserLauncher.pollDevToolsActivePort(tmp, 5.seconds, 50.millis)
             yield assert(url == "ws://127.0.0.1:9222/devtools/browser/test-uuid")

@@ -441,7 +441,10 @@ object ScramPlusIntegrationTest:
       */
     private def initContainer(using Frame): TlsCtx < (Async & Abort[ContainerException]) =
         Scope.run {
-            Abort.run[FileFsException](Path.tempDir(prefix = "kyo-sql-scram-plus-")).flatMap {
+            // tempDirUnscoped, not the `Scope`-managed Path.tempDir: the container this directory is
+            // bind-mounted into is a singleton that outlives this `Scope.run`, so a scope-registered
+            // removal would delete the certs while the server is still reading them.
+            Abort.run[FileStructureException](Path.tempDirUnscoped(prefix = "kyo-sql-scram-plus-")).flatMap {
                 case Result.Failure(e) =>
                     Abort.fail(ContainerBackendException(s"temp dir creation failed: ${e.getMessage}"))
                 case Result.Panic(t) =>

@@ -1101,7 +1101,11 @@ class JsonlTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-jsonl-write-no-folders")
                 file = dir / "nested" / "out.jsonl"
-                r      <- Abort.run[FileWriteException](Jsonl.write(file, Stream.init(Chunk(Event("a", 1))), createFolders = false))
+                r <- Abort.run[FileWriteException](Jsonl.write(
+                    file,
+                    Stream.init(Chunk(Event("a", 1))),
+                    createFolders = false
+                ))
                 exists <- file.exists
                 _      <- dir.removeAll
             yield
@@ -1269,7 +1273,11 @@ class JsonlTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-jsonl-append-no-folders")
                 file = dir / "nested" / "out.jsonl"
-                r      <- Abort.run[FileWriteException](Jsonl.append(file, Stream.init(Chunk(Event("a", 1))), createFolders = false))
+                r <- Abort.run[FileWriteException](Jsonl.append(
+                    file,
+                    Stream.init(Chunk(Event("a", 1))),
+                    createFolders = false
+                ))
                 exists <- file.exists
                 _      <- dir.removeAll
             yield

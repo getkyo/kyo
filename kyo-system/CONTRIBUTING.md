@@ -1,167 +1,115 @@
 # Contributing to kyo-system
 
-This file documents the internal design contracts, invariants, and conventions
-specific to `kyo-system`. Read the root `CONTRIBUTING.md` first; everything there
-applies here, and this file extends it with module-local rules.
+Read the repository root [CONTRIBUTING.md](../CONTRIBUTING.md) first. This guide records the
+filesystem, process, and environment conventions specific to `kyo-system`.
 
----
+## Architecture
 
-## Path API
+`kyo-system` is a four-platform cross-project for JVM, JavaScript, Native, and Wasm. Public
+filesystem behavior belongs in `shared`; platform leaves contain only host integration.
 
-### Safe-tier surface
+The module owns these boundaries:
 
-`Path` is an opaque type wrapping `Path.Unsafe`. The safe tier (extension
-methods on `Path`, defined in `object Path`) provides effect-tracked I/O:
+| Surface | Safe API | Effect row |
+|---|---|---|
+| Filesystem reads | `Path` | `Sync`, `Abort[FileReadException]` |
+| Filesystem writes | `Path` | `Sync`, `Abort[FileWriteException]`, `Abort[FileStructureException]` |
+| Commands and processes | `Command`, `Process` | `Sync`, `Async`, `Scope` |
+| Environment | `System` | `Sync` |
 
-| Safe method                       | Effect row                                             |
-|-----------------------------------|--------------------------------------------------------|
-| `path.exists`                     | `Boolean < Sync`                                       |
-| `path.isDirectory`                | `Boolean < Sync`                                       |
-| `path.isRegularFile`              | `Boolean < Sync`                                       |
-| `path.isSymbolicLink`             | `Boolean < Sync`                                       |
-| `path.realPath`                   | `Path < (Sync & Abort[FileException])`                 |
-| `path.size`                       | `Long < (Sync & Abort[FileReadException])`             |
-| `path.read`                       | `String < (Sync & Abort[FileReadException])`           |
-| `path.readBytes`                  | `Span[Byte] < (Sync & Abort[FileReadException])`       |
-| `path.readLines`                  | `Chunk[String] < (Sync & Abort[FileReadException])`    |
-| `path.readStream`                 | `Stream[String, Scope & Sync & Abort[...]]`            |
-| `path.readBytesStream`            | `Stream[Byte, Scope & Sync & Abort[...]]`              |
-| `path.readLinesStream`            | `Stream[String, Scope & Sync & Abort[...]]`            |
-| `path.tail`                       | `Stream[String, Async & Scope & Abort[...]]`           |
-| `path.tailBytes`                  | `Stream[Byte, Async & Scope & Abort[...]]`             |
-| `path.write`, `writeBytes`, ...   | `Unit < (Sync & Abort[FileWriteException])`            |
-| `path.append`, `appendBytes`, ... | `Unit < (Sync & Abort[FileWriteException])`            |
-| `path.mkDir`, `mkFile`            | `Unit < (Sync & Abort[FileFsException])`               |
-| `path.list`                       | `Chunk[Path] < (Sync & Abort[FileFsException])`        |
-| `path.walk`                       | `Stream[Path, Sync & Scope & Abort[FileFsException]]`  |
-| `path.move`, `copy`, `remove`     | `(Unit|Boolean) < (Sync & Abort[FileFsException])`     |
+A method carries the failure category it can actually raise, never a wider one. Keep the category
+visible in return types and compile-time tests.
 
-#### Companion-level constants
+### Source layout
 
-```scala
-Path.pathSeparator  // ":" on Unix, ";" on Windows, Node's path.delimiter on JS
-Path.fileSeparator  // "/" on Unix, "\\" on Windows, Node's path.sep on JS
+```text
+kyo-system/
+  shared/src/main/scala/kyo/
+    Path.scala
+    FileSystemException.scala
+    Command.scala
+    Process.scala
+    System.scala
+  jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala
+  js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala
 ```
 
-Both are `val` on `object Path`, computed once at companion-object
-initialization via `platformPathSeparator` / `platformFileSeparator` on the
-`PathPlatformSpecific` trait.
+## Path operation flow
 
-#### `Path.Origin`
+1. A safe `Path` extension bridges the matching `Path.Unsafe` operation through `Sync.Unsafe.defer`.
+2. The unsafe tier returns a `Result` carrying a precise filesystem failure marker.
+3. `Abort.get` lifts that `Result` into the method's declared `Abort` row.
 
-`Path.Origin` says where a byte-level read begins: `Start` replays existing
-content, `End` skips existing content, and `Offset(bytes)` resumes at a recorded
-position. A negative `Offset` is clamped to 0 on every platform.
+Safe methods carry `Sync` plus a precise `Abort` row. Do not expose platform exceptions or widen an
+`Abort` row past what the unsafe tier can return.
 
-`tailBytes` defaults to `Origin.End` because it is the byte-level view of a
-followed file. `path.tail` passes `Origin.End` explicitly because the two are
-siblings over one polling loop. Other drivers over the loop choose their own
-default. `Jsonl.follow` in `kyo-schema-json` defaults to `Origin.Start` so it
-replays existing records before following new ones.
+Every unsafe bridge must have a nearby `// Unsafe:` comment explaining the boundary. Unsafe methods
+return `Result`; safe backend methods lift those results into `Abort`.
 
-#### Key design points
+## Following a file
 
-- `Path` is immutable. All I/O goes through `Sync.Unsafe.defer` at the safe
-  tier and `AllowUnsafe` at the abstract-class tier.
-- Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`)
-  require only `Sync`, not `Abort`: they return `false` for inaccessible paths.
-- Streaming methods carry `Scope` so the underlying OS handle is closed when the
-  enclosing scope exits, regardless of whether it completes normally or aborts.
-- `path.tail` and `path.tailBytes` add `Async` because they sleep between polls.
-  Both drive one `private[kyo] follow` loop, which owns the open handle, polling,
-  and truncation rewind. `tail` threads UTF-8 and line-buffer state through that
-  loop.
-- A `follow` step returns `Path.Step`: `Continue(values, state)` reads again,
-  while `Stop(values)` emits those values and completes. `Stop` carries no state
-  because no later iteration can consume it. `Jsonl.followResults` uses this to
-  stop when its framer can no longer frame another record.
-- Following tracks the open file, not the name. A rename or deletion is invisible
-  to a running stream. Truncation rewinds to byte 0 and restores the step's
-  initial state so buffered bytes from before the rewind cannot be spliced onto
-  the replayed content.
+`Path.Origin` says where a byte-level read begins: `Start` replays existing content, `End` skips
+existing content, and `Offset(bytes)` resumes at a recorded position. A negative `Offset` is clamped
+to 0 on every platform.
 
-### Unsafe tier
+`tailBytes` defaults to `Origin.End` because it is the byte-level view of a followed file.
+`path.tail` passes `Origin.End` explicitly because the two are siblings over one polling loop. Other
+drivers over the loop choose their own default. `Jsonl.follow` in `kyo-schema-json` defaults to
+`Origin.Start` so it replays existing records before following new ones.
 
-`Path.Unsafe` is the abstract class that platform implementations extend. Each
-abstract method takes `(using AllowUnsafe, Frame)` (or just `AllowUnsafe` for
-handle operations). The safe-tier extension methods delegate to `self.unsafe.*`
-inside `Sync.Unsafe.defer`.
+- `path.tail` and `path.tailBytes` carry `Async & Scope & Abort[FileReadException]`: `Abort` because
+  opening and measuring the handle can fail, `Async` because they sleep between polls, and `Scope`
+  because the handle closes when the enclosing scope exits.
+- Both drive one `private[kyo] follow` loop, which owns the open handle, polling, and truncation
+  rewind. `tail` threads UTF-8 and line-buffer state through that loop.
+- A `follow` step returns `Path.Step`: `Continue(values, state)` reads again, while `Stop(values)`
+  emits those values and completes. `Stop` carries no state because no later iteration can consume
+  it. `Jsonl.followResults` uses this to stop when its framer can no longer frame another record.
+- Following tracks the open file, not the name. A rename or deletion is invisible to a running
+  stream. Truncation rewinds to byte 0 and restores the step's initial state so buffered bytes from
+  before the rewind cannot be spliced onto the replayed content.
 
-The safe-tier lift for a method that returns a `Result` is always:
+## Portable matching and named policies
 
-```scala
-def myOp(using Frame): T < (Sync & Abort[SomeException]) =
-    Sync.Unsafe.defer(Abort.get(self.unsafe.myOp()))
-```
+Path listing and walking accept `Glob`, defined in `kyo-data`. Backends must not compile their own
+regular expressions or use host glob APIs. Match paths relative to the listed or walked root and use
+the backend's default case sensitivity unless the caller supplies one.
 
-For a method that returns a plain value (no failure), omit the `Abort.get`:
+Movement and copying use `Path.MoveOptions` and `Path.CopyOptions`. File writes use
+`Path.WriteOptions`. Add policy fields to these values instead of restoring Boolean argument
+clusters. Required atomicity must either succeed atomically or fail before mutating the target.
 
-```scala
-def myFlag(using Frame): Boolean < Sync =
-    Sync.Unsafe.defer(self.unsafe.myFlag())
-```
+## Error contracts
 
-### Adding a new Path operation
+`FileSystemException` is the umbrella. Concrete exceptions mix in only the marker traits for the
+operations that can raise them:
 
-1. Add the abstract method to `Path.Unsafe` in
-   `shared/src/main/scala/kyo/Path.scala`. Decide its `Result` error type:
-   `FileReadException`, `FileWriteException`, or `FileFsException`.
+- `FileReadException`
+- `FileWriteException`
+- `FileStructureException`
 
-2. Add the safe-tier extension method directly below the other safe methods in
-   `object Path` (`extension (self: Path)`). Always lift with
-   `Sync.Unsafe.defer(Abort.get(...))`.
+Use `FileIOException(path, operation, cause)` only when no more precise leaf describes the failure.
+Preserve `Result.Panic` as a panic. Do not translate interruption, programmer defects, or unexpected
+throwables into expected filesystem failures.
 
-3. Implement in `jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala`
-   on `NioPathUnsafe` using `java.nio.file.*`.
+## Adding an operation
 
-4. Implement in `js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala`
-   on the JS path class using the `NodeFs` / `NodePath` facades.
+1. Decide whether the operation needs read or write authority.
+2. Add a focused shared test that proves behavior and its precise failure case.
+3. Add the safe `Path` surface bridging the unsafe tier, when the operation belongs on `Path`.
+4. Implement both platform leaves for host behavior.
+5. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
+6. Compile and test JVM, JavaScript, Native, and Wasm.
 
-5. Add cross-platform test leaves in
-   `shared/src/test/scala/kyo/PathTest.scala`. Use `runJVM { ... }` only for
-   leaves that test mechanics that genuinely require JVM APIs (e.g., `mmap`
-   internals). Contract-level tests belong in the cross-platform shared tree.
+Do not add an operation to the unsafe tier without completing every layer above it.
 
-### Cross-platform discipline
+## Testing
 
-Source tree layout for `Path`:
+Shared behavior belongs in `shared/src/test`. A test file must share a prefix with its production
+source. Platform tests are reserved for genuine host integration differences.
 
-| Tree              | Content                                                     |
-|-------------------|-------------------------------------------------------------|
-| `shared/src/main` | `Path.scala` (opaque type, safe tier, abstract `Unsafe`)    |
-| `shared/src/main` | `internal/PathDirectories.scala` (shared dir logic)         |
-| `jvm-native/src/main` | `NioPathUnsafe` backed by `java.nio.file.Path`          |
-| `js-wasm/src/main`    | Node.js-backed impl using `NodeFs` / `NodePath` facades |
+Test effect rows and backend authority with `typeCheck` and `typeCheckErrors`. Never use sleeps or blocking primitives
+to make scheduling tests pass.
 
-The JS implementation uses `@JSImport("node:fs", ...)` and
-`@JSImport("node:path", ...)` facades (`NodeFs`, `NodePath`, `NodeStats`).
-These facades are the only place where `js.native` / `@js.native` appears in
-path-related code.
-
-When adding a new platform-specific capability, supply a stub in every platform
-leaf. On a non-supporting platform the stub must raise the appropriate
-`FileException` or return a documented no-op; it must never throw a raw
-exception.
-
----
-
-## FileException hierarchy
-
-`FileException` is a sealed abstract base. `FileReadException`,
-`FileWriteException`, and `FileFsException` are sealed marker traits on it,
-one per operation category. Each concrete case class implements only the
-traits of the operations that can actually raise it, so a single exception
-can carry more than one marker:
-
-| Concrete case class              | Read | Write | Fs |
-|-----------------------------------|:----:|:-----:|:--:|
-| `FileNotFoundException`           | x    | x     | x  |
-| `FileAccessDeniedException`       | x    | x     | x  |
-| `FileIsADirectoryException`       | x    | x     |    |
-| `FileNotADirectoryException`      |      |       | x  |
-| `FileAlreadyExistsException`      |      |       | x  |
-| `FileDirectoryNotEmptyException`  |      |       | x  |
-| `FileIOException`                 | x    | x     | x  |
-
-Use the most specific subtype. Do not use `FileIOException` when a more
-specific variant exists (e.g., `FileNotFoundException` for a missing file).
+Before submission, run the affected module tests on all four platforms and the module doctest. Read
+formatted files again after sbt completes because compilation formats sources.

@@ -1990,7 +1990,7 @@ class ContainerItTest extends BasePodTest:
             val imgName = uniqueName("kyo-built-inc")
             for
                 _ <- dir.mkDir
-                // Two RUN steps with a sleep each — enough to verify first event arrives before the
+                // Two RUN steps with a sleep each, enough to verify first event arrives before the
                 // final event (streaming, not collect-then-emit). Adding a third step would just
                 // extend total time without strengthening the signal.
                 _ <- (dir / "Dockerfile").write(
@@ -2028,7 +2028,7 @@ class ContainerItTest extends BasePodTest:
                 // the build completes, the first event would arrive at 4s+.
                 assert(
                     firstMs < 3000,
-                    s"First build event took ${firstMs}ms — expected < 3000ms for a 4s build. " +
+                    s"First build event took ${firstMs}ms, expected < 3000ms for a 4s build. " +
                         "Events are likely buffered until build completes (not streaming)"
                 )
             end for

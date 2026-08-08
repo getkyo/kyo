@@ -1,42 +1,29 @@
 package kyo
 
-/** Stream sinks that write byte and text streams to the file system.
+/** Stream extensions that write byte and text streams to the file system.
   *
-  * These live in kyo-system rather than kyo-core because they are typed in terms of [[kyo.Path]] and [[kyo.FileException]]. Keeping them in
-  * kyo-core would make kyo-core depend on kyo-system, which already depends on kyo-core.
+  * These sinks acquire a write handle in a `Scope`, stream the content, and remove the
+  * partially-written file on failure (the handle's `finish()` is never reached on failure, triggering
+  * delete-on-close). They live in kyo-system alongside [[kyo.Path]] because they are typed in terms of
+  * it; kyo-core keeps the platform-neutral stream combinators.
   *
   * @see
-  *   [[kyo.Path]] for the path type these sinks target
+  *   [[kyo.Path]] for the path type the sinks target
   */
 object StreamFileExtensions:
 
-    /** Shared write logic: opens a write handle via Scope, runs the body, and removes the partial file on failure. */
-    private def writeWith[S](path: Path)(
-        body: Path.WriteHandle => Unit < (Sync & Abort[FileWriteException] & S)
-    )(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-        Scope
-            .acquireRelease(
-                Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, createFolders = true)))
-            )(handle => Sync.Unsafe.defer(handle.close()))
-            .map { handle =>
-                Abort.run[FileWriteException](body(handle)).map {
-                    case Result.Failure(e) =>
-                        path.remove.andThen(Abort.fail(e))
-                    case ok => Abort.get(ok)
-                }
-            }
-
     extension [S](stream: Stream[Byte, S])
-        /** Writes each byte of the stream to `path`, creating parent directories as needed.
-          *
-          * The write channel is acquired in a `Scope` and released when the stream completes or fails. If the stream fails, the
-          * partially-written file is deleted before re-raising the error.
+        /** Writes each byte of the stream to `path`, creating parent directories as needed. The write
+          * handle is acquired in a `Scope` and closed when the stream completes or fails; on failure the
+          * partially-written file is removed (the handle's `finish()` is never reached).
           */
-        def writeTo(path: Path)(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-            writeWith(path) { handle =>
+        def writeTo(path: Path)(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+            Scope.acquireRelease(
+                Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, Path.WriteOptions())))
+            )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the write handle at Scope exit
                 stream.foreachChunk { chunk =>
                     Sync.Unsafe.defer(Abort.get(handle.writeBytes(chunk)))
-                }
+                }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the write handle complete
             }
     end extension
 
@@ -45,34 +32,36 @@ object StreamFileExtensions:
           *
           * The write channel is acquired in a `Scope` and released when the stream completes or fails.
           */
-        def writeTo(
-            path: Path,
-            charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8
-        )(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-            writeWith(path) { handle =>
+        def writeTo(path: Path, charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8)(using
+            Frame
+        ): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+            Scope.acquireRelease(
+                Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, Path.WriteOptions())))
+            )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the write handle at Scope exit
                 stream.foreach { s =>
                     Sync.Unsafe.defer(Abort.get(handle.writeString(s, charset)))
-                }
+                }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the write handle complete
             }
 
         /** Writes each string element as a separate line to `path` using the given charset.
           *
           * The write channel is acquired in a `Scope` and released when the stream completes or fails. If the stream fails, the
-          * partially-written file is deleted before re-raising the error.
+          * partially-written file is deleted before re-raising the error. The line separator is
+          * `java.lang.System.lineSeparator()`: `\n` on JS (Scala.js shim) and the host OS separator on JVM and Native.
           */
-        def writeLinesTo(
-            path: Path,
-            charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8
-        )(using Frame): Unit < (Scope & Sync & Abort[FileException] & S) =
-            System.lineSeparator.map { sep =>
-                writeWith(path) { handle =>
+        def writeLinesTo(path: Path, charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8)(using
+            Frame
+        ): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+            Sync.defer(java.lang.System.lineSeparator()).map { sep =>
+                Scope.acquireRelease(
+                    Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append = false, Path.WriteOptions())))
+                )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the write handle at Scope exit
                     stream.foreach { s =>
                         Sync.Unsafe.defer(Abort.get(handle.writeString(s + sep, charset)))
-                    }
+                    }.andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the write handle complete
                 }
             }
     end extension
-
 end StreamFileExtensions
 
 export StreamFileExtensions.*

@@ -627,7 +627,7 @@ class AeronTransportTest extends Test:
                                 subResult.isEmpty,
                                 s"iteration $i: asyncAddSubscription on closed client must return Absent; got $subResult"
                             )
-                        }.andThen(dir.removeAll)
+                        }
                     }
                 }.andThen(Loop.continue)
         }

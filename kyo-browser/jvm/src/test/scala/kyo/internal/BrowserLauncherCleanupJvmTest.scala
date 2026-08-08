@@ -17,8 +17,9 @@ import scala.jdk.CollectionConverters.*
   *
   *   1. The Chrome subprocess is registered with the enclosing `Scope` via `Command.spawn`'s
   *      `Scope.acquireRelease(proc)((_) => destroyForcibly())`.
-  *   2. The user-data temp directory is registered via `Scope.ensure(Abort.run[FileFsException](tmpDir.removeAll).unit)`,
-  *      which runs LIFO **after** the process is killed so the directory is no longer locked when removeAll runs.
+  *   2. The user-data temp directory is cleaned up via two complementary finalizers: `Path.tempDir`'s own
+  *      `Scope.acquireRelease` and the `Scope.ensure(removeTmpDir(...))` in `BrowserLauncher.launch`, both
+  *      of which run LIFO **after** the process is killed so the directory is no longer locked when removeAll runs.
   *
   * Plus a JVM-level safety net via `BrowserLauncherPlatform.registerShutdownHook(proc)` for the case where the JVM exits before scope
   * finalizers run (BrowserLauncherPlatform.scala:5-27).

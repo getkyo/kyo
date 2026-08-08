@@ -95,14 +95,18 @@ object AeronDriver:
                     s"clientLivenessTimeout (${settings.clientLivenessTimeout})"
             ))
         else
-            Abort.run[FileFsException](Path.tempDir("kyo-aeron-driver")).map {
+            // tempDirUnscoped, not the `Scope`-managed Path.tempDir: this driver's directory belongs to
+            // the caller for exactly as long as the driver does, and no enclosing scope may remove it.
+            Abort.run[FileStructureException](Path.tempDirUnscoped("kyo-aeron-driver")).map {
                 case Result.Success(dir) =>
                     // The directory outlives the start call, so a failed start removes it here rather
                     // than leaving an empty directory behind for the caller to notice.
                     Abort.recover[Nothing](
                         onFail = (never: Nothing) => never,
                         onPanic = (t: Throwable) =>
-                            Abort.run[FileFsException](dir.removeAll).andThen(Abort.panic(t))
+                            // Unsafe: removes host-tier, matching the tier tempDirUnscoped created it in,
+                            // and discards the outcome so cleanup cannot replace the panic it follows.
+                            Sync.Unsafe.defer(discard(dir.unsafe.removeAll())).andThen(Abort.panic(t))
                     ) {
                         AeronPlatform.driver(
                             dir.unsafe.show,
