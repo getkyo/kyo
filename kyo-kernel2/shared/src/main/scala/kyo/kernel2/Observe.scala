@@ -40,12 +40,13 @@ private[kyo] object Observe:
     /** The observed segment: contains the chain it observes and walks it one step at a time, sequencing the observer in front of each
       * step. On a suspension the remaining segment is wrapped again, so the observation travels with the computation.
       */
-    final private class Step(observer: (Frame, Any) => Any < Any, inner: Arrow[Any, Any, Any]) extends Arrow.Transform[Any, Any, Any]:
+    final private class Step(observer: (Frame, Any) => Any < Any, inner: Arrow[Any, Any, Any])
+        extends Arrow.Transform[Any, Any, Any]:
         def frame = Frame.internal
 
         def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             inner.optimize match
-                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                case o: Arrow.Step[Any, Any, Any, Any] @unchecked =>
                     cont(step(o, v, context, handlers), context, handlers)
                 case _ =>
                     cont(defaultLift(v), context, handlers)
@@ -55,11 +56,11 @@ private[kyo] object Observe:
         // chains stack safe. The post-observer step lives in a minted transform:
         // when the observer suspends, the step runs under the resuming drive's
         // context, never a stale capture.
-        private def step(o0: Arrow.Offset[Any, Any, Any, Any], cur: Any, context: Context, handlers: Handlers): Any < Any =
-            @tailrec def target(o: Arrow.Offset[Any, Any, Any, Any]): Arrow.Offset[Any, Any, Any, Any] =
+        private def step(o0: Arrow.Step[Any, Any, Any, Any], cur: Any, context: Context, handlers: Handlers): Any < Any =
+            @tailrec def target(o: Arrow.Step[Any, Any, Any, Any]): Arrow.Step[Any, Any, Any, Any] =
                 o.head match
-                    case jump: Arrow.Offset[Any, Any, Any, Any] @unchecked if Arrow.isEmpty(o.next) => target(jump)
-                    case _                                                                          => o
+                    case jump: Arrow.Step[Any, Any, Any, Any] @unchecked if Arrow.isEmpty(o.next) => target(jump)
+                    case _                                                                        => o
             val o = target(o0)
             val t = o.head
             val afterObserver = new Arrow.Transform[Any, Any, Any]:
@@ -72,8 +73,8 @@ private[kyo] object Observe:
                             w.asInstanceOf[Kyo[Any, Any]].map(new Step(observer, o.next))
                         else
                             o.next match
-                                case n: Arrow.Offset[Any, Any, Any, Any] @unchecked => step(n, Kyo.unnest(w), context, handlers)
-                                case _                                              => defaultLift(Kyo.unnest(w))
+                                case n: Arrow.Step[Any, Any, Any, Any] @unchecked => step(n, Kyo.unnest(w), context, handlers)
+                                case _                                            => defaultLift(Kyo.unnest(w))
                     cont2(next, context, handlers)
                 end run
             afterObserver(observer(t.frame, cur), context, handlers)

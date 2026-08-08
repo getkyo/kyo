@@ -41,7 +41,8 @@ object `<` extends Implicits:
                 def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f(v)
                     cont match
-                        case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
+                        // TODO this pattern appears in multiple parts of the codebase. We can't not inline the `run` call itself due to fusion but could we call non-inlined methods here to reduce bytecode size? or can you spot opportunities to reduce bytecode size by inspecting the bytecode?
+                        case o: Arrow.Step[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w, context, handlers)
@@ -64,7 +65,7 @@ object `<` extends Implicits:
                 def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f(v)
                     cont match
-                        case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
+                        case o: Arrow.Step[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w, context, handlers)
@@ -81,7 +82,7 @@ object `<` extends Implicits:
                 def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                     val w = f
                     cont match
-                        case o: Arrow.Offset[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
+                        case o: Arrow.Step[Any, Any, Any, Any] @unchecked if !w.isInstanceOf[Kyo[?, ?]] =>
                             o.head.run(Kyo.unnest(w), context, handlers, o.next).asInstanceOf[C < (S2 & S3)]
                         case _ =>
                             cont(w, context, handlers)
@@ -97,7 +98,7 @@ object `<` extends Implicits:
                 def frame = _frame
                 def run[C, S3](v: A, context: Context, handlers: Handlers, cont: Arrow[Unit, C, S3]): C < (Any & S3) =
                     cont match
-                        case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+                        case o: Arrow.Step[Any, Any, Any, Any] @unchecked =>
                             o.head.run((), context, handlers, o.next).asInstanceOf[C < (Any & S3)]
                         case _ =>
                             cont((), context, handlers)

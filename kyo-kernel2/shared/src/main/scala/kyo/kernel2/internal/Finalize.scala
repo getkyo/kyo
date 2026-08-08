@@ -78,18 +78,18 @@ private[kyo] object Finalize:
             case r: ArrowEffect.Rotate[?, ?, ?] =>
                 // a rotate step contains its handler's remaining chain: finalizers in there run too
                 finalizeArrow(r.inner)
-            case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
+            case o: Arrow.Step[Any, Any, Any, Any] @unchecked =>
                 finalizeChain(o)
             case at: Arrow.AndThen[?, ?, ?, ?] =>
                 finalizeArrow(at.a).concat(finalizeArrow(at.b))
             case _ =>
                 Chunk.empty
 
-    private def finalizeChain(o: Arrow.Offset[Any, Any, Any, Any]): Chunk[Throwable] =
+    private def finalizeChain(o: Arrow.Step[Any, Any, Any, Any]): Chunk[Throwable] =
         @tailrec def loop(cur: Any, errors: Chunk[Throwable]): Chunk[Throwable] =
             cur match
-                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(o.next, errors.concat(finalizeArrow(o.head)))
-                case _                                              => errors
+                case o: Arrow.Step[Any, Any, Any, Any] @unchecked => loop(o.next, errors.concat(finalizeArrow(o.head)))
+                case _                                            => errors
         loop(o, Chunk.empty)
     end finalizeChain
 
