@@ -27,7 +27,7 @@ object ContextEffect:
       * current kernel.
       */
     private[kyo] def runDetached[A, S](f: kyo.kernel2.internal.Context => A < S)(using Frame): A < S =
-        val snapshot = new Kyo.ContextSnapshot(summon[Frame]).asInstanceOf[kyo.kernel2.internal.Context < Any]
+        val snapshot: kyo.kernel2.internal.Context < Any = new Kyo.ContextSnapshot(summon[Frame])
         snapshot.map(context => f(context.inherit))
 
     /** A marker trait for context effects that do not persist across asynchronous boundaries.
@@ -43,11 +43,13 @@ object ContextEffect:
     inline def suspend[V, E <: ContextEffect[V]](
         inline effectTag: Tag[E]
     )(using inline _frame: Frame): V < E =
-        new Kyo.ContextRead[V, E]:
-            def tag     = effectTag
-            def default = Maybe.Absent
-            def frame   = _frame
-        .asInstanceOf[V < E]
+        val read: Kyo.ContextRead[V, E] =
+            new Kyo.ContextRead[V, E]:
+                def tag     = effectTag
+                def default = Maybe.Absent
+                def frame   = _frame
+        read
+    end suspend
 
     /** Reads the value of `E` and maps it in one step. */
     inline def suspendWith[V, E <: ContextEffect[V], B, S](
@@ -67,11 +69,13 @@ object ContextEffect:
         inline default: => V
     )(using inline _frame: Frame): V < Any =
         val fallback: () => V = () => default
-        new Kyo.ContextRead[V, E]:
-            def tag     = effectTag
-            def default = Maybe(fallback)
-            def frame   = _frame
-        .asInstanceOf[V < Any]
+        val read: Kyo.ContextRead[V, E] =
+            new Kyo.ContextRead[V, E]:
+                def tag     = effectTag
+                def default = Maybe(fallback)
+                def frame   = _frame
+        // the default makes the read total, so it carries no effect requirement
+        read.asInstanceOf[V < Any]
     end suspend
 
     /** Provides a constant binding for `E` within the computation's scope. */

@@ -49,7 +49,7 @@ object Kyo:
     sealed abstract class Suspension[+A, -S] extends Kyo[A, S]:
 
         final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
-            Continue[A, B, S & S2](this, f.asInstanceOf[Arrow[A, B, S & S2]])
+            Continue[A, B, S & S2](this, f)
 
         final private[kyo] def prepend(f: Arrow.Interceptor): A < S =
             map(f.as[A, Any])

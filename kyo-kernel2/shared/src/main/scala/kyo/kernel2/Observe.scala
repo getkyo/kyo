@@ -14,9 +14,10 @@ private[kyo] object Observe:
     def apply[A, S, S2](observer: (Frame, Any) => Any < S2)(v: A < S): A < (S & S2) =
         v match
             case kyo: Kyo[A, S] @unchecked =>
-                kyo.prepend(new Step(observer.asInstanceOf[(Frame, Any) => Any < Any])).asInstanceOf[A < (S & S2)]
+                // the observer's own effect row is erased into the interceptor and restored in the result type
+                kyo.prepend(new Step(observer.asInstanceOf[(Frame, Any) => Any < Any]))
             case _ =>
-                v.asInstanceOf[A < (S & S2)]
+                v
 
     final private class Step(observer: (Frame, Any) => Any < Any) extends Arrow.Interceptor:
         def frame = Frame.internal
@@ -26,7 +27,7 @@ private[kyo] object Observe:
                 case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
                     step(o, v).asInstanceOf[C < (Any & S2)]
                 case _ =>
-                    cont(v.asInstanceOf[Any < Any])
+                    cont(Kyo.lift(v))
 
         // one observed transform per observer completion; recursion goes through map, so
         // the depth guard keeps arbitrarily long observed chains stack safe

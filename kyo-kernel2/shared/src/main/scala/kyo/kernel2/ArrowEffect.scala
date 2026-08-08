@@ -37,11 +37,12 @@ object ArrowEffect:
         inline operationInput: I[A]
     ): O[A] < E =
         val in = operationInput
-        new Kyo.Suspend[I, O, E, A]:
-            def input = in
-            def tag   = effectTag
-            def frame = _frame
-        .asInstanceOf[O[A] < E]
+        val op: Kyo.Suspend[I, O, E, A] =
+            new Kyo.Suspend[I, O, E, A]:
+                def input = in
+                def tag   = effectTag
+                def frame = _frame
+        op
     end suspend
 
     /** Suspends an operation and maps its output in one step. */
