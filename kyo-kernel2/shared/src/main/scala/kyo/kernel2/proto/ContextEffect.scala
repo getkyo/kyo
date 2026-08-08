@@ -12,15 +12,15 @@ abstract class ContextEffect[V]
 object ContextEffect:
 
     def suspend[V, E <: ContextEffect[V]](tag: Tag[E]): V < E =
-        Read(tag, Maybe.Absent)
+        Read[V, E, V, E](tag, Maybe.Absent, v => Pure(v))
 
     /** A defaulted read: resolves the binding if one is in scope (locally or inherited through the evaluation boundary), the default
       * otherwise.
       */
     def suspend[V, E <: ContextEffect[V]](tag: Tag[E], default: => V): V < E =
-        Read(tag, Maybe(() => default))
+        Read[V, E, V, E](tag, Maybe(() => default), v => Pure(v))
 
     def handle[V, E <: ContextEffect[V], A, S](effectTag: Tag[E], value: V)(v: A < (E & S)): A < S =
-        Bound[V, E, A, S](v, effectTag, value)
+        Bound[V, E, A, S, A, Any](v, effectTag, value, a => Pure(a))
 
 end ContextEffect

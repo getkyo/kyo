@@ -6,6 +6,6 @@ object Effect:
       * `rescue`. A throw OUTSIDE the region does not: scope is the node, not a chain position.
       */
     def catching[A, S](v: => A < S)(rescue: Throwable => A < S): A < S =
-        Catching(pure(()).flatMap(_ => v), rescue)
+        Catching[A, S, A, Any](Defer(() => v), rescue, a => Pure(a))
 
 end Effect

@@ -5,7 +5,7 @@ import kyo.Tag
 /** The five handler formats (design 2.4). Clauses are stored AND invoked at their public types: `complete` is the region's completion
   * step, `resume` is the dispatch semantics when a suspension of the region's effect reaches its handler with the captured remainder.
   *
-  * The drive trades in erased values (the trampoline currency), so it enters through the three final bridge methods below; their casts are
+  * The drive trades in erased values (the trampoline currency), so it enters through the final bridge methods below; their casts are
   * justified by the tag match the drive performed first, and inside `complete`/`resume` everything type-checks with no cast.
   */
 sealed abstract class Handler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S]:
@@ -24,8 +24,8 @@ sealed abstract class Handler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S]:
         resume(input.asInstanceOf[I[Any]], o => cont(o).asInstanceOf[A < (E & S)]).asInstanceOf[Any < Any]
     final private[proto] def dispatchComplete(v: Any): Any < Any =
         complete(v.asInstanceOf[A]).asInstanceOf[Any < Any]
-    final private[proto] def rewrap(inner: Any < Any): Any < Any =
-        Handled[I, O, E, A, B, S](inner.asInstanceOf[A < (E & S)], this).asInstanceOf[Any < Any]
+    final private[proto] def rewrap(inner: Any < Any, exit: Any => Any < Any): Any < Any =
+        Handled[I, O, E, A, B, S, Any, Any](inner.asInstanceOf[A < (E & S)], this, exit).asInstanceOf[Any < Any]
 
 end Handler
 
@@ -38,7 +38,7 @@ object Handler:
     ) extends Handler[I, O, E, A, A, S]:
         def complete(v: A): A < S = pure(v)
         def resume(input: I[Any], cont: O[Any] => A < (E & S)): A < S =
-            Handled[I, O, E, A, A, S](clause[Any](input, cont), this)
+            Handled[I, O, E, A, A, S, A, Any](clause[Any](input, cont), this, a => Pure(a))
     end Cont
 
     /** Deep handler that answers each operation in place (fun format). The drive resolves these at the operation's SITE with no
@@ -50,7 +50,7 @@ object Handler:
     ) extends Handler[I, O, E, A, A, S]:
         def complete(v: A): A < S = pure(v)
         def resume(input: I[Any], cont: O[Any] => A < (E & S)): A < S =
-            Handled[I, O, E, A, A, S](clause[Any](input).flatMap(cont), this)
+            Handled[I, O, E, A, A, S, A, Any](clause[Any](input).flatMap(cont), this, a => Pure(a))
 
         /** the in-place site entry: just the clause, at the drive's currency */
         private[proto] def clauseFor(input: Any): Any < Any =
@@ -66,9 +66,9 @@ object Handler:
     ) extends Handler[I, O, E, A, A, S]:
         def complete(v: A): A < S = pure(v)
         def resume(input: I[Any], cont: O[Any] => A < (E & S)): A < S =
-            Handled[I, O, E, A, A, S](clause[Any](input), this)
+            Handled[I, O, E, A, A, S, A, Any](clause[Any](input), this, a => Pure(a))
         private[proto] def stopWith(input: Any): Any < Any =
-            Handled[I, O, E, A, A, S](clause[Any](input.asInstanceOf[I[Any]]), this).asInstanceOf[Any < Any]
+            Handled[I, O, E, A, A, S, A, Any](clause[Any](input.asInstanceOf[I[Any]]), this, a => Pure(a)).asInstanceOf[Any < Any]
     end Stop
 
     /** Shallow handler: handles only the first operation, then leaves; the continuation is the raw unhandled remainder. */
@@ -93,7 +93,7 @@ object Handler:
         def resume(input: I[Any], cont: O[Any] => A < (E & S)): B < S =
             clause[Any](input, state, cont).flatMap {
                 case Loop.Continue(st, next) =>
-                    Handled[I, O, E, A, B, S](next, new Loop[I, O, E, A, B, S, State](effectTag, st, clause, done))
+                    Handled[I, O, E, A, B, S, B, Any](next, new Loop[I, O, E, A, B, S, State](effectTag, st, clause, done), b => Pure(b))
                 case Loop.Done(b) => pure(b)
             }
     end Loop
