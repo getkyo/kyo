@@ -40,11 +40,16 @@ your in-doc comment; eval runs Masked (it must poll: a non-polling eval would
 livelock on a pending request the same way Overflow does), and a Preemptible drive
 nested in a slice is unsupported and documented, which is the #24 consumption rule.
 
-Authorized queue, in execution order, no stops: #7 (suite running) -> #8 -> #10 ->
-#1 -> #20 -> #11 -> #12 -> #14 (your fix) -> #3+#4 -> #15 (with #21 rename and #23
-detached-cell fix inside) -> #17 (benchmarks first).
-Closed this pass: #16 (dropped, nicety noted below), #19 (dropped entirely, your
-"just drop this").
+Progress ledger (overnight run): done and committed green: #7 `8ca699fac0`, #8
+`eba87074f4`, #10 `a9d5624818`, #25 `7ef7fca9de` (Chunk, your instruction), #1
+`40b715c811`, #20 `3fa2cad56f`, #11 `32f78f8e3b`, #12 `43d5c021a7`, #9+#28
+`8440e2e013`, #14 `25bb4f1f07`. In flight: #3+#4+#29 (typed handlers, ArrowHandler
+and ContextBinding naming, pure installation with no install-time evals, per your
+overnight rulings; suite running). Then: cast review sweep (your instruction), #26
+(nodes to internal), #15 (with #21 and #23 inside), #17 (benchmarks first), #18
+quality pass ending in a review request to you.
+Closed by ruling: #16 dropped (nicety kept), #19 dropped, #13 keep-old-kernel via
+#18, #22 dropped, #24 answered.
 
 # Needs your attention
 
