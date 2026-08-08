@@ -57,8 +57,10 @@ object RotationProbeMain:
 
         sealed trait MHandler[I[_], O[_], E <: Eff[I, O], A, B, S]:
             def tag: Tag[E]
+
             /** completion step when the region's inner computation finishes */
             def onComplete(a: A): MK[B, S]
+
             /** park behavior at the owning region: operation input and captured remainder, at the handler's public types */
             def onPark(input: I[Any], k: O[Any] => MK[A, E & S]): MK[B, S]
 
@@ -157,6 +159,7 @@ object RotationProbeMain:
                     val t = tags(i)
                     if (t eq key) || t.equals(key) then return Maybe(entries(i))
                     i -= 1
+                end while
                 Maybe.Absent
             end resolve
         end Evidence
@@ -173,6 +176,7 @@ object RotationProbeMain:
             val x = a.asInstanceOf[AnyRef]
             val y = b.asInstanceOf[AnyRef]
             (x eq y) || x.equals(y)
+        end tagMatches
 
         sealed trait Frm
         final case class FCont(f: Any => MK[Any, Any])                                 extends Frm
@@ -186,10 +190,10 @@ object RotationProbeMain:
                 case Left(p)  => throw new IllegalStateException("unhandled effect at root: " + p.tag)
 
         def drivePartial[A, S](v0: MK[A, S], boundary: Evidence): Either[Parked, A] =
-            var cur: MK[Any, Any]         = v0.asInstanceOf[MK[Any, Any]] // trampoline currency
-            var env                       = boundary
-            var stack: List[Frm]          = Nil
-            var out: Either[Parked, A]    = null
+            var cur: MK[Any, Any]      = v0.asInstanceOf[MK[Any, Any]] // trampoline currency
+            var env                    = boundary
+            var stack: List[Frm]       = Nil
+            var out: Either[Parked, A] = null
 
             // the park walk: pops frames outward accumulating the remainder; region, guard and
             // bracket frames re-wrap themselves around it (rotation); the owning region's handler
@@ -225,6 +229,9 @@ object RotationProbeMain:
                                     else
                                         val k0 = k
                                         k = a => h.rewrapErased(k0(a))
+                                    end if
+                            end match
+                end while
                 stack = s
             end parkTo
 
@@ -246,6 +253,8 @@ object RotationProbeMain:
                                         done = true
                                 case FUnder(_, saved) => env = saved
                                 case _                => ()
+                            end match
+                end while
                 stack = s
             end stopTo
 
@@ -266,6 +275,8 @@ object RotationProbeMain:
                                 case FRegion(_, saved) => env = saved
                                 case FUnder(_, saved)  => env = saved
                                 case _                 => ()
+                            end match
+                end while
                 stack = s
             end unwind
 
@@ -281,6 +292,7 @@ object RotationProbeMain:
                                     case FRegion(h, saved) => env = saved; cur = h.completeErased(a)
                                     case FGuard(_)         => () // value passes through, the guard expires
                                     case FUnder(_, saved)  => env = saved
+                                end match
                     case fm: FlatMap[?, ?, ?] =>
                         stack = FCont(fm.f.asInstanceOf[Any => MK[Any, Any]]) :: stack
                         cur = fm.v.asInstanceOf[MK[Any, Any]]
@@ -314,6 +326,7 @@ object RotationProbeMain:
                                         parkTo(op, t, mustMatch = true)
                             case Maybe.Absent =>
                                 parkTo(op, t, mustMatch = false)
+                        end match
             end step
 
             while out == null do
@@ -321,6 +334,7 @@ object RotationProbeMain:
                 catch
                     case ps: ParkSignal => out = Left(ps.parked)
                     case ex: Throwable  => unwind(ex)
+            end while
             out
         end drivePartial
 
@@ -382,7 +396,7 @@ object RotationProbeMain:
             catch case ex: Throwable => s"thrown ${ex.getClass.getSimpleName}: ${ex.getMessage}"
         val mv = capture(m)
         val rv = capture(r)
-        val ok = mv == rv
+        val ok = mv.equals(rv) // universal equals: the build compiles with strict equality
         if !ok then failures += 1
         println(f"$name%-28s model=$mv%-34s ref=$rv%-34s ${if ok then "OK" else "MISMATCH"}")
     end check
@@ -481,7 +495,7 @@ object RotationProbeMain:
         // re-wraps; after resumption the crossed region still handles its own ops
         check("p7-rotation-foreign")(
             drive(Handled(
-                Handled(
+                Handled[Const[Int], Const[Int], MT, Int, Int, MT2](
                     mt2(5).flatMap(x => mt(x + 1).map(_ * 10)),
                     HCont[Const[Int], Const[Int], MT, Int, MT2](mtTag, [C] => (in, k) => k(in + 100))
                 ),
