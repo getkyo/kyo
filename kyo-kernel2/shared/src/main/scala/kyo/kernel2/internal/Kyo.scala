@@ -16,7 +16,6 @@ import scala.collection.IterableOps
 // TODO this is meant as internal
 sealed abstract class Kyo[+A, -S]:
     private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
-    private[kyo] def prepend(f: Arrow.Interceptor): A < S
 
 // TODO this should be in the kyo package
 object Kyo:
@@ -57,9 +56,6 @@ object Kyo:
         final private[kyo] def map[B, S2](f: Arrow[O[A], B, S2]): B < (E & S2) =
             Continue[O[A], B, E & S2](this, f)
 
-        final private[kyo] def prepend(f: Arrow.Interceptor): O[A] < E =
-            map(f.as[O[A], Any])
-
         final override def toString = "Suspend(" + tag.show + ", " + frame.position.show + ")"
 
     end Suspend
@@ -71,9 +67,6 @@ object Kyo:
 
         private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Continue(suspend, cont.map(f))
-
-        private[kyo] def prepend(f: Arrow.Interceptor): B < S =
-            Continue(suspend, f.as[A, S].map(cont))
 
         override def toString = "Continue(" + suspend + ", " + cont + ")"
 
@@ -96,24 +89,6 @@ object Kyo:
             end new
         end map
 
-        final private[kyo] def prepend(f: Arrow.Interceptor): A < S =
-            val outer = this
-            new Bracket[R, A, S]:
-                def acquire =
-                    outer.acquire match
-                        case kyo: Kyo[R, S] @unchecked => kyo.prepend(f)
-                        case v                         => v
-                // release is wrapped too: a finalizer runs under the interceptors in
-                // scope at the bracket, bindings included
-                def release(r: R) =
-                    outer.release(r) match
-                        case kyo: Kyo[Unit, S] @unchecked => kyo.prepend(f)
-                        case v                            => v
-                def cont  = f.as[R, S].map(outer.cont)
-                def frame = outer.frame
-            end new
-        end prepend
-
         final override def toString = "Bracket(" + frame.position.show + ")"
 
     end Bracket
@@ -128,9 +103,6 @@ object Kyo:
 
         private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
             Defer(value, cont.map(f))
-
-        private[kyo] def prepend(f: Arrow.Interceptor): B < S =
-            Defer(value, f.as[A, S].map(cont))
 
         override def toString = "Defer(" + cont + ")"
 

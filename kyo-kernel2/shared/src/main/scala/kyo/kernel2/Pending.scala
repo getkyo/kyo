@@ -367,9 +367,9 @@ object `<` extends Implicits:
     private[kyo] inline def EvalMasked      = 1
     private[kyo] inline def EvalCascade     = 2
 
-    // context is a constant of the drive: parked remainders carry their re-armed
-    // interceptors, so plain re-application from the entry context reconstructs
-    // the in-scope bindings on every bounce
+    // context and handlers are constants of the drive: parked remainders carry their
+    // rotate steps, so plain re-application from the entry parameters reconstructs
+    // the in-scope bindings and handlers on every bounce
     private[kyo] def evalLoop(v0: Any < Any, mode: Int, context: Context, handlers: Handlers): Any < Any =
         def recur(v: Any < Any, depth: Int): Any < Any =
             @tailrec def loop(curr: Any < Any): Any < Any =

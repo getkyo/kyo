@@ -45,17 +45,6 @@ object Arrow:
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform
 
-    /** A pass-through transform: run forwards the value it receives into its continuation unchanged. It may wrap the evaluation
-      * (intercept exceptions, observe steps) but never alters or consumes the value. The only arrows prepend accepts, and the
-      * contract justifying the single cast in [[as]].
-      */
-    abstract private[kyo] class Interceptor extends Transform[Any, Any, Any]:
-        // Cast justified by the pass-through contract: on values the arrow is
-        // identity-typed, so Arrow[A, A, S] is its true shape at any A.
-        final private[kyo] def as[A, S]: Arrow[A, A, S] =
-            this.asInstanceOf[Arrow[A, A, S]]
-    end Interceptor
-
     final private[kyo] class AndThen[-A, B, +C, -S](
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
@@ -99,11 +88,11 @@ object Arrow:
 
     extension [A, B, S](self: Arrow[A, B, S])
 
-        /** Applies this arrow under the ambient context of the site where the result is embedded.
+        /** Applies this arrow under the ambient parameters of the site where the result is embedded.
           *
-          * Application constructs a Defer; the arrow runs when a drive pops it. Bindings enclosing the embedding site re-arm onto the
-          * node as it parks outward, so the arrow executes under exactly the context in scope there: resume-time semantics without
-          * asking the caller for a context. Execution paths use the context-passing form, never this one.
+          * Application constructs a Defer; the arrow runs when a drive pops it. Bindings and handlers enclosing the embedding site
+          * rotate around the node as it parks outward, so the arrow executes under exactly the parameters in scope there: resume-time
+          * semantics without asking the caller for them. Execution paths use the parameter-passing form, never this one.
           */
         def apply[S2](v: A < S2): B < (S & S2) =
             if self.asInstanceOf[AnyRef] eq empty then

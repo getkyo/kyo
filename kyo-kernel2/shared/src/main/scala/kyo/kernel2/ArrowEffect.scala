@@ -80,17 +80,32 @@ object ArrowEffect:
         private[kyo] val inner: Arrow[Any, Any, Any],
         register: Handler.Resume[?, ?, ?, ?, ?, ?],
         at: Handlers.Entry,
+        bind: Context => Context,
+        guard: Throwable => Any < Any,
         loop: (Any < Any, Context, Handlers) => Any < Any,
         _frame: Frame
     ) extends Arrow.Transform[Any, Any, Any]:
         def frame = _frame
         def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            val w =
+            def enter(): Any < Any =
                 if at ne null then inner(Kyo.lift(v), at.entryContext, at.entryHandlers)
                 else if register ne null then
                     inner(Kyo.lift(v), context, handlers.add(new Handlers.Entry(register, context, handlers)))
+                else if bind ne null then inner(Kyo.lift(v), bind(context), handlers)
                 else inner(Kyo.lift(v), context, handlers)
-            cont(loop(w, context, handlers), context, handlers)
+            if guard ne null then
+                // the guarded entry: a throw inside the contained chain lands in the
+                // rescue, which replaces the guarded computation and is not re-guarded
+                val w =
+                    try enter()
+                    catch
+                        case ex if scala.util.control.NonFatal(ex) =>
+                            EffectTrace.attach(ex, "catching", _frame)
+                            return cont(guard(ex), context, handlers)
+                cont(loop(w, context, handlers), context, handlers)
+            else
+                cont(loop(enter(), context, handlers), context, handlers)
+            end if
         end run
     end Rotate
 
@@ -143,7 +158,7 @@ object ArrowEffect:
         def loop(w: Any < Any, context: Context, handlers: Handlers): Any < Any =
             scoped(entry)(w)
         def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-            new Rotate(inner, null, entry, loop, entry.handler.frame)
+            new Rotate(inner, null, entry, null, null, loop, entry.handler.frame)
         w match
             case c: Kyo.Continue[?, ?, ?] =>
                 new Kyo.Continue[Any, Any, Any](c.suspend, rotated(c.cont.asInstanceOf[Arrow[Any, Any, Any]]))
@@ -175,7 +190,7 @@ object ArrowEffect:
     )(using frame: Frame): A < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-                new Rotate(inner, null, null, loop, frame)
+                new Rotate(inner, null, null, null, null, loop, frame)
             v match
                 case kyo: Kyo.Continue[?, ?, ?] =>
                     val s = kyo.suspend
@@ -232,7 +247,7 @@ object ArrowEffect:
         val h = new Handler.Resume[I, O, E, A, S, S2](effectTag, handle, frame)
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-                new Rotate(inner, h, null, loop, frame)
+                new Rotate(inner, h, null, null, null, loop, frame)
             v match
                 case kyo: Kyo.Continue[?, ?, ?] =>
                     val s = kyo.suspend
@@ -274,7 +289,7 @@ object ArrowEffect:
     )(using frame: Frame): A < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-                new Rotate(inner, null, null, loop, frame)
+                new Rotate(inner, null, null, null, null, loop, frame)
             v match
                 case kyo: Kyo.Continue[?, ?, ?] =>
                     val s = kyo.suspend
@@ -317,7 +332,7 @@ object ArrowEffect:
     )(using frame: Frame): B < (S & S2) =
         def loop(v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-                new Rotate(inner, null, null, loop, frame)
+                new Rotate(inner, null, null, null, null, loop, frame)
             v match
                 case kyo: Kyo.Continue[?, ?, ?] =>
                     val s = kyo.suspend
@@ -400,7 +415,7 @@ object ArrowEffect:
     )(using frame: Frame): B < (S & S2) =
         def loop(state: State, v: Any < Any, context: Context, handlers: Handlers): Any < Any =
             def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-                new Rotate(inner, null, null, (w, ctx, hs) => loop(state, w, ctx, hs), frame)
+                new Rotate(inner, null, null, null, null, (w, ctx, hs) => loop(state, w, ctx, hs), frame)
             // interprets the outcome once it materializes; effects raised while it is computed pass through to outer handlers
             def outcome(w: Any < Any, context: Context, handlers: Handlers): Any < Any =
                 w match

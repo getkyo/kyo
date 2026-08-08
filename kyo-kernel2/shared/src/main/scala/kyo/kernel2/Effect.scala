@@ -32,46 +32,40 @@ object Effect:
     /** Wraps a computation with error handling.
       *
       * The error handler `f` is called if a non-fatal exception is thrown during the initial evaluation or during any later step of the
-      * computation, including steps that run after the computation suspends and resumes: the interception travels with the parked
-      * continuation.
+      * guarded computation, including steps that run after the computation suspends and resumes: the guard rotates with the computation,
+      * wrapped around each suspended remainder. A throw in steps appended AFTER this call is outside the guarded computation and is not
+      * intercepted: scope is structural.
       */
     def catching[A, S, B >: A, S2](v: => A < S)(
         f: Throwable => B < S2
     )(using _frame: Frame): B < (S & S2) =
-        try
-            val w = v
+        val rescue = f.asInstanceOf[Throwable => Any < Any]
+        def loop(w: Any < Any, context: Context, handlers: Handlers): Any < Any =
+            def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                new ArrowEffect.Rotate(inner, null, null, null, rescue, loop, _frame)
             w match
-                case kyo: Kyo[?, ?] =>
-                    val handler = f.asInstanceOf[Throwable => Any < Any]
-                    kyo.prepend(new Catching(handler, _frame)).asInstanceOf[B < (S & S2)]
-                case _ =>
-                    w.asInstanceOf[B < (S & S2)]
+                case c: Kyo.Continue[?, ?, ?] =>
+                    new Kyo.Continue[Any, Any, Any](c.suspend, rotated(c.cont.asInstanceOf[Arrow[Any, Any, Any]]))
+                case s: Kyo.Suspend[?, ?, ?, ?] =>
+                    new Kyo.Continue[Any, Any, Any](s, rotated(Arrow[Any]))
+                case d: Kyo.Defer[?, ?, ?] =>
+                    new Kyo.Defer[Any, Any, Any](d.value.asInstanceOf[Any < Any], rotated(d.cont.asInstanceOf[Arrow[Any, Any, Any]]))
+                case b: Kyo.Bracket[Any, Any, Any] @unchecked =>
+                    new Kyo.Bracket[Any, Any, Any]:
+                        def acquire         = loop(b.acquire, context, handlers)
+                        def release(r: Any) = loop(b.release(r), context, handlers).asInstanceOf[Unit < Any]
+                        def cont            = rotated(b.cont.asInstanceOf[Arrow[Any, Any, Any]])
+                        def frame           = b.frame
+                case w => w
             end match
+        end loop
+        try loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[B < (S & S2)]
         catch
             case ex if NonFatal(ex) =>
                 EffectTrace.attach(ex, "catching", _frame)
                 f(ex)
         end try
     end catching
-
-    final private[kyo] class Catching(private[kyo] val handler: Throwable => Any < Any, _frame: Frame) extends Arrow.Interceptor:
-        def frame = _frame
-        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            val w =
-                try cont(Kyo.lift(v), context, handlers)
-                catch
-                    case ex if NonFatal(ex) =>
-                        EffectTrace.attach(ex, "catching", _frame)
-                        return handler(ex).asInstanceOf[C < (Any & S2)]
-            w match
-                case kyo: Kyo[?, ?] =>
-                    // re-arm across the park so later steps stay intercepted
-                    kyo.prepend(this).asInstanceOf[C < (Any & S2)]
-                case _ =>
-                    w
-            end match
-        end run
-    end Catching
 
     /** Suspends a computation so it runs when driven, not when constructed.
       *

@@ -98,47 +98,44 @@ object ContextEffect:
     /** Provides a binding for `E`, transforming any outer binding.
       *
       * `ifUndefined` supplies the value when no outer binding exists; `ifDefined` derives this scope's value from the outer one, read
-      * from the incoming context at each entry into the region, so nested handlers compose: reads observe the innermost binding, and
-      * each binding sees the resolution of the bindings outside it at execution time. Installation is pure: one interceptor node at
-      * the region's entry, nothing evaluates here.
+      * from the incoming context at each entry into the bound computation, so nested handlers compose: reads observe the innermost
+      * binding, and each binding sees the resolution of the bindings outside it at execution time. The binding rotates with the
+      * computation, wrapped around each suspended remainder, so every resumption re-derives it from the resume-time context and
+      * multi-shot continuations re-run it per invocation.
       */
     def handle[V, E <: ContextEffect[V], A, S](
         effectTag: Tag[E],
         ifUndefined: => V,
         ifDefined: V => V
     )(v: A < (E & S))(using frame: Frame): A < S =
-        v match
-            case kyo: Kyo[A, E & S] @unchecked =>
-                // the cast discharges E from the row: every read of E inside the
-                // region resolves against this binding through the threaded context
-                kyo.prepend(new ContextBinding[V, E](effectTag, () => ifUndefined, ifDefined, frame)).asInstanceOf[A < S]
-            case v =>
-                // a settled value contains no reads; E is vacuous
-                v.asInstanceOf[A < S]
-
-    /** A scoped binding, threaded through execution: on each entry into the region it derives this scope's value from the incoming
-      * context and passes the updated context inward. Parked remainders get the binding re-prepended, so every resumption re-derives
-      * it from the resume-time context, and multi-shot continuations re-run it per invocation.
-      */
-    final private[kyo] class ContextBinding[V, E <: ContextEffect[V]](
-        effectTag: Tag[E],
-        ifUndefined: () => V,
-        ifDefined: V => V,
-        _frame: Frame
-    ) extends Arrow.Interceptor:
-        def frame = _frame
-        def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-            val value =
-                if context.contains(effectTag) then ifDefined(context.get[V, E](effectTag))
-                else ifUndefined()
-            cont(Kyo.lift(v), context.set(effectTag, value), handlers) match
-                case kyo: Kyo[?, ?] =>
-                    // re-arm across the park so later entries re-derive the binding
-                    kyo.prepend(this).asInstanceOf[C < (Any & S2)]
-                case w =>
-                    w
+        val bind: Context => Context =
+            context =>
+                val value =
+                    if context.contains(effectTag) then ifDefined(context.get[V, E](effectTag))
+                    else ifUndefined
+                context.set(effectTag, value)
+        def loop(w: Any < Any, context: Context, handlers: Handlers): Any < Any =
+            def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                new ArrowEffect.Rotate(inner, null, null, bind, null, loop, frame)
+            w match
+                case c: Kyo.Continue[?, ?, ?] =>
+                    new Kyo.Continue[Any, Any, Any](c.suspend, rotated(c.cont.asInstanceOf[Arrow[Any, Any, Any]]))
+                case s: Kyo.Suspend[?, ?, ?, ?] =>
+                    new Kyo.Continue[Any, Any, Any](s, rotated(Arrow[Any]))
+                case d: Kyo.Defer[?, ?, ?] =>
+                    new Kyo.Defer[Any, Any, Any](d.value.asInstanceOf[Any < Any], rotated(d.cont.asInstanceOf[Arrow[Any, Any, Any]]))
+                case b: Kyo.Bracket[Any, Any, Any] @unchecked =>
+                    new Kyo.Bracket[Any, Any, Any]:
+                        def acquire         = loop(b.acquire, context, handlers)
+                        def release(r: Any) = loop(b.release(r), context, handlers).asInstanceOf[Unit < Any]
+                        def cont            = rotated(b.cont.asInstanceOf[Arrow[Any, Any, Any]])
+                        def frame           = b.frame
+                case w => w
             end match
-        end run
-    end ContextBinding
+        end loop
+        // the cast discharges E from the row: every read of E inside the bound
+        // computation resolves against this binding through the threaded context
+        loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[A < S]
+    end handle
 
 end ContextEffect
