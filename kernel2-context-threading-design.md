@@ -300,7 +300,37 @@ parameter mechanically.
 4. The subtype-tolerant chain-walk read resolution as a mechanism (binding matching
    now happens in `Context`'s map, keyed as the old kernel keyed it).
 
-# 5. Costs, measured before anything merges
+# 5a. Measured results (implementation round)
+
+The board, threading tip versus the pre-threading commit re-measured the same day
+on the same machine:
+
+| row | baseline | threading | delta |
+|-----|----------|-----------|-------|
+| eagerMap5 | 4.62 ns, 0 B | 4.62 ns, 0 B | none: the parameter is free on the pure path |
+| deepBind10k | 66.6-68.8 us / 160,336 B | 68.8 us / 160,336 B | noise band, alloc identical |
+| state10 | 828 ns / 4,560 B | 838 ns / 4,560 B | ~1% |
+| loopPure10k | 18.9 us / 160,008 B | 19.0 us / 160,008 B | noise |
+| loopSuspend1k | 71.4 us / 379,934 B | 70.4 us / 379,938 B | noise |
+| suspension | 447.7 ns / 2,120 B | 489.2 ns / 2,120 B | +9.3% time, alloc identical |
+| narrowIter | 2,490 ns / 12,024 B | 2,627 ns / 12,024 B | +5.5% time, alloc identical |
+| stateMap10k | 2.05 ms / 7,832,021 B | 2.39 ms / 8,792,071 B | +16.7% time, +96 B/iter under JMH |
+| resumeFused | 18.4 ns / 0 B | 28.4 ns / 16 B | the predicted public-defer price: one Defer, one pop |
+| contextRead100 (new) | n/a | 56 ns and 208 B per read under a binding | the new baseline |
+
+The stateMap10k allocation delta was diagnosed with a deterministic probe
+(constructor counters on Offset/AndThen/Continue/Defer/Suspend plus
+ThreadMXBean.getThreadAllocatedBytes around a single 10k-iteration run, at both
+commits): node counts are IDENTICAL (140,002 / 50,000 / 70,001 / 0 / 20,001) and
+the single-run allocation is IDENTICAL TO THE BYTE (7,671,984 B). The change
+allocates nothing extra. The +96 B/iter and the time deltas on the dispatch-heavy
+rows appear only under JMH's execution profile: the wider three-argument run
+signatures shift JIT inlining and escape-analysis boundaries, materializing
+allocations (resume closures, boxes) that the baseline profile scalar-replaces.
+This is the measured price of the threading mechanism itself, the same parameter
+the old kernel carries on every continuation application.
+
+# 5. Costs, estimated at design time (kept for the record)
 
 The plan is benchmarks-first: implement the threading on the branch, run the full
 KernelBench board plus one new row, and put the numbers next to the current ledger
