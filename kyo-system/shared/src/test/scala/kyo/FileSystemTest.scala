@@ -27,6 +27,7 @@ class FileSystemTest extends kyo.test.Test[Any]:
         export delegate.appendLines
         export delegate.copy
         export delegate.defaultCaseSensitivity
+        export delegate.durableReplace
         export delegate.exists
         export delegate.isDirectory
         export delegate.isRegularFile
@@ -45,6 +46,7 @@ class FileSystemTest extends kyo.test.Test[Any]:
         export delegate.openWalk
         export delegate.openWrite
         export delegate.openWriteChannel
+        export delegate.openWriteChannelUnscoped
         export delegate.readBytes
         export delegate.readLines
         export delegate.realPath
@@ -52,10 +54,13 @@ class FileSystemTest extends kyo.test.Test[Any]:
         export delegate.removeAll
         export delegate.removeExisting
         export delegate.setLastModified
+        export delegate.siblingTemporary
         export delegate.size
         export delegate.stat
+        export delegate.syncDirectory
         export delegate.temp
         export delegate.tempDir
+        export delegate.tempFileHandle
         export delegate.truncate
         export delegate.tryLock
         export delegate.writeBytes

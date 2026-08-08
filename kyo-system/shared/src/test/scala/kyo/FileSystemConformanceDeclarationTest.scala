@@ -10,10 +10,11 @@ class FileSystemConformanceDeclarationTest extends kyo.test.Test[Any]:
             classOf[FileSystemReadTestSuite],
             classOf[FileSystemWriteTestSuite],
             classOf[FileSystemChannelTestSuite],
+            classOf[FileSystemDurabilityTestSuite],
             classOf[FileSystemLockTestSuite],
             classOf[FileSystemWatchTestSuite]
         )
-        assert(suites.size == 5)
+        assert(suites.size == 6)
     }
 
     "a read-only fixture cannot select write members" in {
