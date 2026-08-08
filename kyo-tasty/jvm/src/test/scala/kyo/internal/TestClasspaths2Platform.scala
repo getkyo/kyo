@@ -113,7 +113,7 @@ private[kyo] object TestClasspaths2Platform:
     /** Run the concurrent reader+writer snapshot test.
       *
       * Writes an initial snapshot, then runs a reader fiber and a writer fiber concurrently via a Latch. The reader observes either pre-write
-      * or post-write content (never corrupt mid-write bytes) because SnapshotWriter uses Path.move(atomicMove=true). Returns true if the
+      * or post-write content (never corrupt mid-write bytes) because SnapshotWriter requires an atomic move. Returns true if the
       * reader completed without a Panic.
       */
     def runConcurrentReaderWriterTest(

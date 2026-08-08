@@ -52,12 +52,8 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     // ---- version override path is reflected in the cached directory ----
 
     /** Creates a temp directory that auto-deletes when the enclosing scope closes. */
-    private def tempDirScoped(prefix: String)(using Frame): Path < (Scope & Sync & Abort[FileFsException]) =
-        Path.tempDir(prefix).map { p =>
-            Scope.acquireRelease(p) { dir =>
-                Abort.run[FileFsException](dir.removeAll).unit
-            }
-        }
+    private def tempDirScoped(prefix: String)(using Frame): Path < (Scope & Sync & Abort[FileStructureException]) =
+        Path.tempDir(prefix)
 
     /** Builds a [[System]] override whose env returns `KYO_BROWSER_CACHE = cacheDir.unsafe.show`. OS/arch fall back to the host. */
     private def systemWithCache(cacheDir: Path)(os: OS, arch: Arch): System =
@@ -377,7 +373,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                             val target = ChromeDownloader.executablePath(vDir, _p, _b)
                             for
                                 _ <- counter.updateAndGet(_ + 1)
-                                _ <- Abort.run[FileFsException](target.parent match
+                                _ <- Abort.run[FileStructureException](target.parent match
                                     case Present(par) => par.mkDir
                                     case Absent       => Kyo.unit).map(_.getOrThrow)
                                 _ <- Abort.run[FileWriteException](target.write("fake-exec")).map(_.getOrThrow)

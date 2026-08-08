@@ -1,6 +1,8 @@
 package kyo.internal
 
+import java.io.InterruptedIOException
 import java.io.IOException
+import java.nio.channels.ClosedByInterruptException
 import java.nio.channels.FileChannel
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
@@ -10,6 +12,7 @@ import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.Files
 import java.nio.file.FileVisitOption
 import java.nio.file.FileVisitResult
+import java.nio.file.InvalidPathException
 import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
 import java.nio.file.NotDirectoryException
@@ -55,24 +58,44 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // --- Inspection ---
 
-    def exists()(using AllowUnsafe): Boolean =
-        Files.exists(jpath)
+    def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+        exists(followLinks = true)
 
-    def exists(followLinks: Boolean)(using AllowUnsafe): Boolean =
-        if followLinks then Files.exists(jpath)
-        else Files.exists(jpath, LinkOption.NOFOLLOW_LINKS)
+    def exists(followLinks: Boolean)(using
+        AllowUnsafe,
+        Frame
+    )
+        : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+        try
+            val options = if followLinks then Array.empty[LinkOption] else Array(LinkOption.NOFOLLOW_LINKS)
+            discard(Files.readAttributes(jpath, classOf[BasicFileAttributes], options*))
+            Result.succeed(true)
+        catch
+            case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isFileNotFound(e) => Result.succeed(false)
+            case _: NotDirectoryException                                 => Result.succeed(false)
+            case e: AccessDeniedException                                 => Result.fail(FileAccessDeniedException(safe))
+            case e: IOException          => Result.fail(FileIOException(safe, FileSystemOperation.Exists, e))
+            case e: InvalidPathException => Result.fail(FileInvalidPathException(e.getInput, FileSystemOperation.Exists))
+            case e: Throwable            => Result.panic(e)
 
     def isDirectory()(using AllowUnsafe): Boolean    = Files.isDirectory(jpath)
     def isRegularFile()(using AllowUnsafe): Boolean  = Files.isRegularFile(jpath)
     def isSymbolicLink()(using AllowUnsafe): Boolean = Files.isSymbolicLink(jpath)
 
-    def realPath()(using AllowUnsafe, Frame): Result[FileException, Path] =
+    def realPath()(using
+        AllowUnsafe,
+        Frame
+    )
+        : Result[FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException, Path] =
         try Result.succeed(Path.of(jpath.toRealPath()))
         catch
-            case e: IOException if isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
-            case e: AccessDeniedException            => Result.fail(FileAccessDeniedException(safe))
-            case e: IOException                      => Result.fail(FileIOException(safe, e))
-            case e: Throwable                        => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
+            case e: AccessDeniedException                                 => Result.fail(FileAccessDeniedException(safe))
+            case e: IOException          => Result.fail(FileIOException(safe, FileSystemOperation.RealPath, e))
+            case e: InvalidPathException => Result.fail(FileInvalidPathException(e.getInput, FileSystemOperation.RealPath))
+            case e: Throwable            => Result.panic(e)
 
     // --- Read ---
 
@@ -110,9 +133,9 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // --- Write ---
 
-    def write(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def write(value: String, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent(jpath)
+            if options.createFolders then ensureParent(jpath)
             discard(Files.writeString(
                 jpath,
                 value,
@@ -122,9 +145,9 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             ))
         }
 
-    def writeBytes(value: Span[Byte], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def writeBytes(value: Span[Byte], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent(jpath)
+            if options.createFolders then ensureParent(jpath)
             discard(Files.write(
                 jpath,
                 value.toArray,
@@ -134,9 +157,9 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             ))
         }
 
-    def writeLines(value: Chunk[String], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def writeLines(value: Chunk[String], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent(jpath)
+            if options.createFolders then ensureParent(jpath)
             discard(Files.write(
                 jpath,
                 value.toSeq.asJava,
@@ -147,21 +170,21 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             ))
         }
 
-    def append(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def append(value: String, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent(jpath)
+            if options.createFolders then ensureParent(jpath)
             discard(Files.writeString(jpath, value, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE))
         }
 
-    def appendBytes(value: Span[Byte], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def appendBytes(value: Span[Byte], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent(jpath)
+            if options.createFolders then ensureParent(jpath)
             discard(Files.write(jpath, value.toArray, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE))
         }
 
-    def appendLines(value: Chunk[String], createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+    def appendLines(value: Chunk[String], options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         catchWrite {
-            if createFolders then ensureParent(jpath)
+            if options.createFolders then ensureParent(jpath)
             discard(Files.write(
                 jpath,
                 value.toSeq.asJava,
@@ -187,67 +210,66 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // --- Directory / structure ---
 
-    def mkDir()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs(discard(Files.createDirectories(jpath)))
+    def mkDir()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Create)(discard(Files.createDirectories(jpath)))
 
-    def mkFile()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs {
+    def mkFile()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Create) {
             ensureParent(jpath)
             if !Files.exists(jpath) then discard(Files.createFile(jpath))
         }
 
-    def list()(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]] =
-        catchFs {
+    def list()(using AllowUnsafe, Frame): Result[FileStructureException, Chunk[Path]] =
+        catchFs(FileSystemOperation.List) {
             val jstream = Files.list(jpath)
             try Chunk.from(jstream.iterator().asScala.map(p => NioPathUnsafe(p).safe).toList)
             finally jstream.close()
         }
 
-    def list(glob: String)(using AllowUnsafe, Frame): Result[FileFsException, Chunk[Path]] =
-        catchFs {
-            val pattern = PathDirectories.globToRegex(glob)
-            val jstream = Files.list(jpath)
-            try
-                Chunk.from(
-                    jstream.iterator().asScala
-                        .filter { p => pattern.matches(p.getFileName.toString) }
-                        .map(p => NioPathUnsafe(p).safe)
-                        .toList
-                )
-            finally jstream.close()
-            end try
-        }
+    def list(glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using AllowUnsafe, Frame): Result[FileStructureException, Chunk[Path]] =
+        list().map(_.filter(path => glob.matches(Chunk(path.parts.last), caseSensitivity)))
 
-    def move(to: Path, replaceExisting: Boolean, atomicMove: Boolean, createFolders: Boolean)(using
+    def move(to: Path, options: Path.MoveOptions)(using
         AllowUnsafe,
         Frame
-    ): Result[FileFsException, Unit] =
-        catchFs {
+    ): Result[FileStructureException, Unit] =
+        try
             val target = toNioPath(to)
-            if createFolders then ensureParentOf(target)
-            val opts = buildMoveOptions(replaceExisting, atomicMove)
-            discard(Files.move(jpath, target, opts*))
-        }
+            if options.createFolders then ensureParentOf(target)
+            if options.atomicity == Path.Atomicity.Required then
+                NioAtomicMovePlatform.move(jpath, target, options.replace)
+            else
+                val opts = buildMoveOptions(options.replace)
+                discard(Files.move(jpath, target, opts*))
+            end if
+            Result.succeed(())
+        catch
+            case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
+            case e: IOException if options.atomicity == Path.Atomicity.Required && NioExceptionBoundary.isAtomicMoveUnsupported(e) =>
+                Result.fail(FileAtomicMoveUnsupportedException(safe, to))
+            case e: InvalidPathException => Result.fail(FileInvalidPathException(e.getInput, FileSystemOperation.Move))
+            case e: IOException          => Result.fail(translateIoe(safe, FileSystemOperation.Move, e))
+            case e: Throwable            => Result.panic(e)
 
-    def copy(to: Path, followLinks: Boolean, replaceExisting: Boolean, copyAttributes: Boolean, createFolders: Boolean)(using
+    def copy(to: Path, options: Path.CopyOptions)(using
         AllowUnsafe,
         Frame
-    ): Result[FileFsException, Unit] =
-        catchFs {
+    ): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Copy) {
             val target = toNioPath(to)
-            if createFolders then ensureParentOf(target)
-            val opts = buildCopyOptions(followLinks, replaceExisting, copyAttributes)
+            if options.createFolders then ensureParentOf(target)
+            val opts = buildCopyOptions(options)
             discard(Files.copy(jpath, target, opts*))
         }
 
-    def remove()(using AllowUnsafe, Frame): Result[FileFsException, Boolean] =
-        catchFs(Files.deleteIfExists(jpath))
+    def remove()(using AllowUnsafe, Frame): Result[FileStructureException, Boolean] =
+        catchFs(FileSystemOperation.Remove)(Files.deleteIfExists(jpath))
 
-    def removeExisting()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs(Files.delete(jpath))
+    def removeExisting()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Remove)(Files.delete(jpath))
 
-    def removeAll()(using AllowUnsafe, Frame): Result[FileFsException, Unit] =
-        catchFs {
+    def removeAll()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
+        catchFs(FileSystemOperation.Remove) {
             if Files.exists(jpath) then
                 val visitor = new SimpleFileVisitor[java.nio.file.Path]:
                     override def visitFile(p: java.nio.file.Path, a: BasicFileAttributes): FileVisitResult =
@@ -260,10 +282,10 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // --- Walk handle ---
 
-    def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileFsException, Path.WalkHandle] =
+    def openWalk(maxDepth: Int, followLinks: Boolean)(using AllowUnsafe, Frame): Result[FileStructureException, Path.WalkHandle] =
         val followOpts: Array[FileVisitOption] =
             if followLinks then Array(FileVisitOption.FOLLOW_LINKS) else Array.empty
-        catchFs {
+        catchFs(FileSystemOperation.Walk) {
             val jstream  = Files.walk(jpath, maxDepth, followOpts*)
             val iterator = jstream.iterator()
             new NioWalkHandle(iterator, jstream)
@@ -272,9 +294,9 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // --- Open write handle ---
 
-    def openWrite(append: Boolean, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle] =
+    def openWrite(append: Boolean, options: Path.WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle] =
         catchWrite {
-            if createFolders then ensureParent(jpath)
+            if options.createFolders then ensureParent(jpath)
             val opts =
                 if append then
                     Array(StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE)
@@ -297,18 +319,17 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             discard(Files.createDirectories(parent))
     end ensureParentOf
 
-    private def buildMoveOptions(replaceExisting: Boolean, atomicMove: Boolean): Array[CopyOption] =
+    private def buildMoveOptions(replace: Path.Replace): Array[CopyOption] =
         val buf = ListBuffer.empty[CopyOption]
-        if replaceExisting then buf += StandardCopyOption.REPLACE_EXISTING
-        if atomicMove then buf += StandardCopyOption.ATOMIC_MOVE
+        if replace == Path.Replace.Existing then buf += StandardCopyOption.REPLACE_EXISTING
         buf.toArray
     end buildMoveOptions
 
-    private def buildCopyOptions(followLinks: Boolean, replaceExisting: Boolean, copyAttributes: Boolean): Array[CopyOption] =
+    private def buildCopyOptions(options: Path.CopyOptions): Array[CopyOption] =
         val buf = ListBuffer.empty[CopyOption]
-        if replaceExisting then buf += StandardCopyOption.REPLACE_EXISTING
-        if copyAttributes then buf += StandardCopyOption.COPY_ATTRIBUTES
-        if !followLinks then buf += LinkOption.NOFOLLOW_LINKS
+        if options.replace == Path.Replace.Existing then buf += StandardCopyOption.REPLACE_EXISTING
+        if options.copyAttributes then buf += StandardCopyOption.COPY_ATTRIBUTES
+        if !options.followLinks then buf += LinkOption.NOFOLLOW_LINKS
         buf.toArray
     end buildCopyOptions
 
@@ -319,44 +340,35 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // Exception translation helpers
 
-    private def translateIoe(path: Path, e: IOException)(using Frame): FileFsException =
+    private def translateIoe(path: Path, operation: FileSystemOperation, e: IOException)(using Frame): FileStructureException =
         e match
             case _: NoSuchFileException                      => FileNotFoundException(path)
             case _: AccessDeniedException                    => FileAccessDeniedException(path)
             case _: NotDirectoryException                    => FileNotADirectoryException(path)
             case _: java.nio.file.FileAlreadyExistsException => FileAlreadyExistsException(path)
             case _: DirectoryNotEmptyException               => FileDirectoryNotEmptyException(path)
-            case _                                           => FileIOException(path, e)
-
-    // On Scala Native Windows ARM64, java.nio.file throws generic IOException
-    // instead of specific subclasses (NoSuchFileException, NotDirectoryException).
-    // Detect these via Windows error codes in the exception message.
-    private def isFileNotFound(e: IOException): Boolean =
-        e.isInstanceOf[NoSuchFileException] ||
-            (e.getMessage != null && (e.getMessage.contains("(2)") || e.getMessage.contains("(3)")))
-
-    private def isNotDirectory(e: IOException): Boolean =
-        e.isInstanceOf[NotDirectoryException] ||
-            (e.getMessage != null && e.getMessage.contains("(267)"))
+            case _                                           => FileIOException(path, operation, e)
 
     private def catchRead[A](expr: => A)(using Frame): Result[FileReadException, A] =
         try Result.succeed(expr)
         catch
-            case e: IOException if isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
-            case e: AccessDeniedException            =>
+            case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
+            case e: AccessDeniedException                                 =>
                 // On Windows, reading a directory raises AccessDeniedException instead of "Is a directory"
                 if java.nio.file.Files.isDirectory(jpath) then Result.fail(FileIsADirectoryException(safe))
                 else Result.fail(FileAccessDeniedException(safe))
             case e: IOException if e.getMessage != null && e.getMessage.contains("Is a directory") =>
                 Result.fail(FileIsADirectoryException(safe))
-            case e: IOException => Result.fail(FileIOException(safe, e))
+            case e: IOException => Result.fail(FileIOException(safe, FileSystemOperation.Read, e))
             case e: Throwable   => Result.panic(e)
 
     private def catchWrite[A](expr: => A)(using Frame): Result[FileWriteException, A] =
         try Result.succeed(expr)
         catch
-            case e: IOException if isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
-            case e: AccessDeniedException            =>
+            case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
+            case e: AccessDeniedException                                 =>
                 // On some platforms (Scala Native / macOS), writing to a directory raises
                 // AccessDeniedException (EACCES) rather than an IOException with "Is a directory".
                 // Detect this case by checking whether the target path is actually a directory.
@@ -364,24 +376,44 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
                 else Result.fail(FileAccessDeniedException(safe))
             case e: IOException if e.getMessage != null && e.getMessage.contains("Is a directory") =>
                 Result.fail(FileIsADirectoryException(safe))
-            case e: IOException => Result.fail(FileIOException(safe, e))
+            case e: IOException => Result.fail(FileIOException(safe, FileSystemOperation.Write, e))
             case e: Throwable   => Result.panic(e)
 
-    private def catchFs[A](expr: => A)(using Frame): Result[FileFsException, A] =
+    private def catchFs[A](operation: FileSystemOperation)(expr: => A)(using Frame): Result[FileStructureException, A] =
         try Result.succeed(expr)
         catch
-            case e: IOException if isFileNotFound(e)         => Result.fail(FileNotFoundException(safe))
-            case e: AccessDeniedException                    => Result.fail(FileAccessDeniedException(safe))
-            case e: java.nio.file.FileAlreadyExistsException => Result.fail(FileAlreadyExistsException(safe))
-            case e: DirectoryNotEmptyException               => Result.fail(FileDirectoryNotEmptyException(safe))
-            case e: IOException if isNotDirectory(e)         => Result.fail(FileNotADirectoryException(safe))
-            case e: IOException                              => Result.fail(FileIOException(safe, e))
-            case e: Throwable                                => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isFileNotFound(e) => Result.fail(FileNotFoundException(safe))
+            case e: AccessDeniedException                                 => Result.fail(FileAccessDeniedException(safe))
+            case e: java.nio.file.FileAlreadyExistsException              => Result.fail(FileAlreadyExistsException(safe))
+            case e: DirectoryNotEmptyException                            => Result.fail(FileDirectoryNotEmptyException(safe))
+            case e: IOException if NioExceptionBoundary.isNotDirectory(e) => Result.fail(FileNotADirectoryException(safe))
+            case e: IOException                                           => Result.fail(FileIOException(safe, operation, e))
+            case e: Throwable                                             => Result.panic(e)
 
 end NioPathUnsafe
 
+private[kyo] object NioExceptionBoundary:
+    private[kyo] def isFileNotFound(exception: IOException): Boolean =
+        exception.isInstanceOf[NoSuchFileException]
+
+    private[kyo] def isNotDirectory(exception: IOException): Boolean =
+        exception.isInstanceOf[NotDirectoryException]
+
+    private[kyo] def isAtomicMoveUnsupported(exception: IOException): Boolean =
+        exception.isInstanceOf[NioAtomicMoveUnsupportedException] ||
+            exception.getClass.getName == "java.nio.file.AtomicMoveNotSupportedException"
+
+    private[kyo] def isInterrupted(exception: IOException): Boolean =
+        exception.isInstanceOf[InterruptedIOException] || exception.isInstanceOf[ClosedByInterruptException]
+end NioExceptionBoundary
+
+final private[kyo] class NioAtomicMoveUnsupportedException extends IOException
+
 /** Concrete write handle backed by a `java.nio.channels.FileChannel`. */
 final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extends Path.WriteHandle:
+
+    private var finished = false
 
     def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
@@ -390,14 +422,23 @@ final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extend
             while buf.hasRemaining do discard(channel.write(buf))
             Result.unit
         catch
-            case e: IOException => Result.fail(FileIOException(path, e))
-            case e: Throwable   => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
+            case e: IOException                                          => Result.fail(FileIOException(path, FileSystemOperation.Write, e))
+            case e: Throwable                                            => Result.panic(e)
 
     def writeString(s: String, charset: Charset)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         writeBytes(Chunk.from(s.getBytes(charset)))
 
+    def finish()(using AllowUnsafe): Unit =
+        channel.force(true) // fsync: bytes are durable before the logical-completion flag
+        finished = true
+
     def close()(using AllowUnsafe): Unit =
         channel.close()
+        if !finished then
+            // Unsafe: removes the partially-written file if finish() was never called
+            discard(java.nio.file.Files.deleteIfExists(path.unsafe.asInstanceOf[NioPathUnsafe].jpath))
+    end close
 
 end NioWriteHandle
 
@@ -467,7 +508,7 @@ final private[kyo] class NioReadHandle(channel: FileChannel, path: Path) extends
         // measurement of an already-open channel, which leaves the same shape NioWriteHandle uses.
         try Result.succeed(channel.size())
         catch
-            case e: IOException => Result.fail(FileIOException(path, e))
+            case e: IOException => Result.fail(FileIOException(path, FileSystemOperation.Inspect, e))
             case e: Throwable   => Result.panic(e)
 
     def close()(using AllowUnsafe): Unit =
@@ -527,7 +568,8 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
     def temp(
         prefix: String = "kyo",
         suffix: String = ".tmp"
-    )(using Frame): Path < (Sync & Abort[FileFsException]) =
+    )(using Frame): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: bridges JVM temp-file creation into the Sync tier.
         Sync.Unsafe.defer(
             Abort.get(
                 try
@@ -537,8 +579,9 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                         ).safe
                     )
                 catch
+                    case e: java.io.IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
                     case e: java.io.IOException =>
-                        Result.fail(FileIOException(make(Chunk(prefix + suffix)), e))
+                        Result.fail(FileIOException(make(Chunk(prefix + suffix)), FileSystemOperation.Create, e))
             )
         )
 
@@ -549,9 +592,10 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
       * @param prefix
       *   prefix for the temp directory name (default `"kyo"`)
       */
-    def tempDir(
+    def tempDirUnscoped(
         prefix: String = "kyo"
-    )(using Frame): Path < (Sync & Abort[FileFsException]) =
+    )(using Frame): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: bridges JVM temp-directory creation into the Sync tier.
         Sync.Unsafe.defer(
             Abort.get(
                 try
@@ -561,8 +605,9 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                         ).safe
                     )
                 catch
+                    case e: java.io.IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
                     case e: java.io.IOException =>
-                        Result.fail(FileIOException(make(Chunk(prefix)), e))
+                        Result.fail(FileIOException(make(Chunk(prefix)), FileSystemOperation.Create, e))
             )
         )
 
@@ -576,7 +621,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
     override def tempScoped(
         prefix: String = "kyo",
         suffix: String = ".tmp"
-    )(using Frame): Path < (Sync & Scope & Abort[FileFsException]) =
+    )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
         super.tempScoped(prefix, suffix)
 
     private[kyo] def make(parts: Chunk[String]): Path =

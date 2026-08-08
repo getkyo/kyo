@@ -56,12 +56,12 @@ class TlsIntegrationTest extends SqlContainerTest:
         ) => A < (S & Async & Abort[SqlException])
     )(using
         Frame
-    ): A < (S & Async & Scope & Abort[ContainerException] & Abort[CommandException] & Abort[SqlException] & Abort[FileException]) =
+    ): A < (S & Async & Scope & Abort[ContainerException] & Abort[CommandException] & Abort[SqlException] & Abort[FileSystemException]) =
         // Step 1: generate self-signed cert on the host
         val username = "test"
         val password = "test"
         val database = "test"
-        Path.tempDir(prefix = "kyo-sql-tls-").flatMap { tempDirPath =>
+        Path.tempDirUnscoped(prefix = "kyo-sql-tls-").flatMap { tempDirPath =>
             val tempDir = tempDirPath.toString
             Command(
                 "openssl",

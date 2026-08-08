@@ -1,103 +1,176 @@
 # kyo-system
 
-The file system, OS processes, and the process environment: `Path`, `Command`, `Process`,
-`System`, and the `FileException` hierarchy. These types were part of `kyo-core` through
-the previous release and moved here unchanged.
+`kyo-system` is the file I/O, process execution, and environment layer for Kyo. File operations are tracked in the type system: reads carry `Abort[FileReadException]`, writes carry `Abort[FileWriteException]`, and structure changes carry `Abort[FileStructureException]`. Process launches carry `Abort[CommandException]`, and handles are `Scope`-managed for automatic cleanup. The same API compiles across JVM, Scala Native, and JavaScript (Node.js).
 
-Depends on `kyo-core`. Available on JVM, JS, Native, and WASM.
-
-`Path` is the cross-platform file API. `Command` and `Process` cover OS process execution.
-
-## `Path` construction and inspection
-
-Paths build with the `/` operator (immutable, value-typed):
+The following example reads a configuration file, fetches a git revision, runs a build step, and writes an artifact record:
 
 ```scala
+import kyo.*
+
+val deploy =
+    for
+        config  <- (Path / "etc" / "deploy.toml").read
+        version <- Command("git", "rev-parse", "--short", "HEAD").text
+        _       <- Command("sbt", "assembly").cwd(Path("backend")).waitForSuccess
+        _       <- (Path("dist") / "version.txt").write(version)
+    yield ()
+```
+
+## Filesystem failures in the type system
+
+Each `Path` method carries the failure category it can actually raise:
+
+| Operation group | Methods | Effect row |
+|---|---|---|
+| Inspection and reads | `exists`, `isDirectory`, `read`, `readBytes`, `readLines`, `size`, `stat`, `realPath`, the read streams | `Sync & Abort[FileReadException]` |
+| Writes | `write`, `writeBytes`, `writeLines`, `append`, `truncate`, `setLastModified` | `Sync & Abort[FileWriteException]` |
+| Structure changes | `mkDir`, `mkFile`, `list`, `walk`, `move`, `copy`, `remove`, `removeAll`, `tempDir` | `Sync & Abort[FileStructureException]` |
+
+`isDirectory`, `isRegularFile`, and `isSymbolicLink` answer `false` for an inaccessible path and carry only `Sync`.
+
+Portable matching uses a compiled `Glob`, never a platform-specific string matcher:
+
+```scala
+import kyo.*
+
+val scalaFiles =
+    Path("src").walk(glob"**/*.scala", Glob.CaseSensitivity.Sensitive).run
+```
+
+## File paths
+
+Before reading or writing, you need a path value that identifies the target without touching the disk. `Path` is an immutable value built with the `/` operator or the `apply` factory; pure accessors like `parts` and `parent` require no effects.
+
+The segment type `Part` accepts either a `String` or another `Path`; splicing a `Path` value expands its components inline:
+
+```scala
+import kyo.*
+
 val config: Path = Path / "etc" / "myapp" / "config.toml"
 val data: Path   = Path("var", "data", "myapp")
 
-val nested: Path = Path("home") / "user" / Path("projects", "kyo")
+// Splice an existing Path into another path
+val base: Path   = Path("home") / "user"
+val nested: Path = base / Path("projects", "kyo")
+
+// Pure accessors require no effects
+val parts: Chunk[String] = config.parts
 ```
 
-`Path.parts: Chunk[String]` lists components; `Path.name` returns the final segment; `Path.parent` returns the containing directory; `Path.extName` returns the extension (including the leading dot); `Path.isAbsolute` is the boolean predicate.
-
-`Path.projectPaths(qualifier, organization, application)` returns a `ProjectPaths` value with platform-appropriate config, cache, data, and log directories for the named application. The related `Path.basePaths: BasePaths` and `Path.userPaths: UserPaths` provide OS-standard root paths (temp dir, home dir, etc.) without requiring an application identity.
-
-Inspection methods return `... < Sync` (no `Abort`):
+Reading a file yields its content with the read failure category on the row:
 
 ```scala
 import kyo.*
-val config: Path = Path / "etc" / "myapp" / "config.toml"
-
-val checks: (Boolean, Boolean, Boolean) < Sync =
-    for
-        e <- config.exists
-        d <- config.isDirectory
-        f <- config.isRegularFile
-    yield (e, d, f)
-```
-
-> **Note:** `exists`, `isDirectory`, `isRegularFile`, and `isSymbolicLink` return `false` for inaccessible paths rather than failing. They require only `Sync`, not `Abort`.
-
-## Reading and writing
-
-Every reading method adds `Abort[FileReadException]`; every writing method adds `Abort[FileWriteException]`; directory-mutation methods add `Abort[FileFsException]`:
-
-```scala
-import kyo.*
-val config: Path = Path / "etc" / "myapp" / "config.toml"
 
 val text: String < (Sync & Abort[FileReadException]) =
-    config.read
-
-val bytes: Span[Byte] < (Sync & Abort[FileReadException]) =
-    config.readBytes
-
-val lines: Chunk[String] < (Sync & Abort[FileReadException]) =
-    config.readLines
-
-val wrote: Unit < (Sync & Abort[FileWriteException]) =
-    Path("var", "out.txt").write("hello\n")
-
-val appended: Unit < (Sync & Abort[FileWriteException]) =
-    Path("var", "log.txt").append("entry\n")
+    (Path / "etc" / "app.toml").read
 ```
 
-`write`, `writeBytes`, `writeLines`, `append`, `appendBytes`, `appendLines` accept an optional `createFolders: Boolean = true` to auto-create parent directories. `truncate(size)` shrinks or extends a file. `mkDir`, `list`, `list(glob)`, `move`, `copy`, `remove`, `removeExisting`, `removeAll` cover directory and lifecycle operations.
+`Path.fileSeparator` is the segment separator (`"/"` or `"\\"`) and `Path.pathSeparator` is the classpath-style delimiter (`":"` or `";"`) for the current OS.
 
-A typed handle of decode failure looks like:
+Pure accessors require no effects:
 
-```scala
-val result: Result[FileReadException, String] < Sync =
-    Abort.run[FileReadException] {
-        Path("missing.txt").read
-    }
+| Accessor | Type | Description |
+|---|---|---|
+| `parts` | `Chunk[String]` | Individual segments |
+| `name` | `Maybe[String]` | Final segment; `Absent` for a root or empty path |
+| `parent` | `Maybe[Path]` | Containing directory |
+| `extName` | `Maybe[String]` | Extension including the leading dot, e.g. `".gz"`; a leading dot in the filename is not treated as an extension |
+| `isAbsolute` | `Boolean` | Whether the path starts at a filesystem root |
 
-// On a missing file the result is:
-// Result.Failure(FileNotFoundException(Path("missing.txt")))
-```
-
-The `FileException` hierarchy:
-- `FileException` (sealed abstract base)
-  - `FileReadException`, `FileWriteException`, `FileFsException` (sealed marker traits)
-  - Concrete case classes: `FileNotFoundException`, `FileAccessDeniedException`, `FileIsADirectoryException`, `FileNotADirectoryException`, `FileAlreadyExistsException`, `FileDirectoryNotEmptyException`, `FileIOException`.
-
-## Streaming reads
-
-Streaming reads produce `Stream` values that carry `Scope` in their effect type. The OS handle is opened lazily and released when the enclosing `Scope` closes.
+`ancestors` is a pure `Stream[Path, Any]` that yields `self`, then its parent, grandparent, and so on up to the filesystem root without reading the disk. Use `Stream.find` to locate the nearest ancestor that satisfies a predicate, such as the first directory containing a `build.sbt` marker:
 
 ```scala
 import kyo.*
 
-val processed: Unit < (Async & Sync & Scope & Abort[FileReadException]) =
+val src: Path = Path("home") / "user" / "project" / "src"
+
+// Walk toward the root; return the first ancestor that contains build.sbt
+val projectRoot: Maybe[Path] < (Sync & Abort[FileReadException]) =
+    src.ancestors.find(ancestor => (ancestor / "build.sbt").exists)
+```
+
+### Inspecting files
+
+Before opening a file for read or write, check whether the path exists and what kind of entry it is. `isDirectory`, `isRegularFile`, and `isSymbolicLink` answer `false` for an inaccessible path rather than failing, so they carry only `Sync`. `exists` answers `false` for an absent path and fails only when the filesystem refuses the question:
+
+```scala
+import kyo.*
+
+val path: Path = Path / "dist" / "release" / "artifact.jar"
+
+val checks: (Boolean, Boolean) < (Sync & Abort[FileReadException]) =
+    for
+        e <- path.exists
+        f <- path.isRegularFile
+    yield (e, f)
+```
+
+`exists(followLinks: Boolean)` controls symlink traversal. All four methods return `false` on any permission or access failure.
+
+`realPath` resolves every symbolic link in the chain and returns the canonical absolute path. It fails with `FileNotFoundException` if any element of the path does not exist, or `FileAccessDeniedException` if the filesystem denies access:
+
+```scala
+import kyo.*
+
+val canonical: Path < (Sync & Abort[FileReadException]) =
+    (Path / "var" / "run" / "app.sock").realPath
+```
+
+## Reading files
+
+Once you know where a file lives, bulk reads and streams pull its contents. Each carries `Sync & Abort[FileReadException]`:
+
+```scala
+import kyo.*
+
+val path: Path = Path / "etc" / "app" / "config.toml"
+
+val text: String < (Sync & Abort[FileReadException]) =
+    path.read
+val bytes: Span[Byte] < (Sync & Abort[FileReadException]) =
+    path.readBytes
+val lines: Chunk[String] < (Sync & Abort[FileReadException]) =
+    path.readLines
+```
+
+All three accept an optional `java.nio.charset.Charset`; the default is UTF-8.
+
+`stat` returns `PathStat(lastModifiedMs, sizeBytes)` from a single underlying syscall, which guarantees both fields reflect the same measurement instant. Prefer `stat` over separate `size` and last-modified calls when both are needed:
+
+```scala
+import kyo.*
+
+val info: Path.PathStat < (Sync & Abort[FileReadException]) =
+    (Path / "var" / "data" / "records.db").stat
+
+val sz: Long < (Sync & Abort[FileReadException]) =
+    (Path / "var" / "data" / "records.db").size
+```
+
+Streaming reads keep only a buffer in memory at a time. The OS handle is opened when the stream starts and released when the enclosing `Scope` closes, whether by normal completion, error, or cancellation. All streaming read methods carry `Scope` in the stream's effect row:
+
+```scala
+import kyo.*
+
+val processed: Unit < (Sync & Scope & Abort[FileReadException]) =
     Path("var", "log", "events.ndjson")
         .readLinesStream
-        .map { line => parseEvent(line) }
-        .foreach { event => process(event) }
+        .foreach(line => Sync.defer(println(line)))
+```
 
-trait Event
-def parseEvent(line: String): Event = ???
-def process(e: Event): Unit < Sync  = ???
+`readStream(charset, bufferSize)` and `readBytesStream(bufferSize)` expose the buffer-size parameter for tuning. `walk` is a Scope-managed stream of directory entries (covered under Directory operations).
+
+`tail` polls for new content appended to a file. It seeks to EOF, then sleeps for the configured `pollDelay` (default 100ms) and reads any new bytes. When the file size decreases it resets to position 0, handling log rotation and truncation. The stream carries `Async` because of the poll sleep. `tail` is a poll loop; it does not use a kernel file-event API (inotify or kqueue):
+
+```scala
+import kyo.*
+
+val errors: Unit < (Async & Scope & Sync & Abort[FileReadException]) =
+    Path("var", "app.log")
+        .tail(500.millis)
+        .filter(_.contains("ERROR"))
+        .foreach(line => Sync.defer(println(line)))
 ```
 
 For typed JSONL/NDJSON decoding, including per-record error recovery and watch mode, use `Jsonl` from [kyo-schema-json](../kyo-schema-json/README.md).
@@ -125,65 +198,392 @@ Read buffer sizes are `ByteSize` values, so `readStream`, `readBytesStream`, `ta
 
 Following tracks the open file, not the path name. Rename-based rotation keeps reading the original file, deletion produces no further bytes and no failure while the open handle remains valid, and truncation in place rewinds to byte 0. Rename and deletion follow POSIX descriptor behavior; Windows may refuse those operations for an open file. A consumer that needs a replacement rotated into the original name must close the stream and open a new one.
 
-`readStream`, `readBytesStream`, `readLinesStream`, `walk` (directory tree), `tail` (follow text lines), and `tailBytes` (follow raw bytes) all return `Scope`-managed streams. `Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
+`Path.ReadResult` is the typed wrapper around the raw byte count returned by low-level read operations: `ReadResult.Eof` signals end-of-file, and a positive value is the number of bytes read.
 
-> **Note:** Streaming reads carry `Scope` in their effect type. The OS handle is released only when the enclosing `Scope` closes (normal completion, error, or cancellation).
+## Writing files
 
-## Running OS processes
-
-When you need to launch an external process (a git invocation, a build step), build a `Command`. Execute with `spawn` (returns a `Process` handle), `text` (collects stdout as `String`), `waitFor` (returns the exit code), or `waitForSuccess` (fails with `ExitCode` on a non-zero exit).
+Write methods carry `Sync & Abort[FileWriteException]` and create parent directories by default. Pass `Path.WriteOptions(createFolders = false)` to fail when the parent is absent:
 
 ```scala
-val output: String < (Async & Abort[CommandException]) =
-    Command("git", "rev-parse", "HEAD").text
+import kyo.*
 
-val exitCode: Process.ExitCode < (Async & Abort[CommandException]) =
-    Command("npm", "test").cwd(Path("frontend")).waitFor
+val out: Path = Path("dist") / "build" / "version.txt"
 
-val piped: String < (Async & Abort[CommandException]) =
-    Command("grep", "ERROR").andThen(Command("wc", "-l")).text
+val w: Unit < (Sync & Abort[FileWriteException]) =
+    out.write("1.0.0")
+val a: Unit < (Sync & Abort[FileWriteException]) =
+    out.append("\nbuilt by CI\n")
+val data: Span[Byte] = Span.from(Array[Byte](0x50.toByte, 0x4b.toByte))
+val wb: Unit < (Sync & Abort[FileWriteException]) =
+    out.writeBytes(data)
 ```
 
-`cwd(path)` changes the working directory. `envAppend(map)` adds environment variables. `andThen(that)` pipes stdout of the first command into stdin of the next. `Command.stdin` accepts a `String`, a `Span[Byte]`, a `Stream[Byte, Sync]`, or a `Process.Input` directly; `Process.Input.Inherit` pipes the parent process's stdin through, and `Process.Input.FromStream(is)` feeds a raw `InputStream`.
+`writeLines` and `appendLines` follow each line with the platform line separator including the last line. Use `write(lines.mkString(sep))` to control the trailing newline yourself. `truncate(size)` shrinks or pads a file to exactly `size` bytes. `setLastModified(epochMs)` sets the last-modified timestamp.
 
-> **Caution:** `Command(args...)` performs no shell interpretation. Pipes, globs, redirects, and variable expansion require an explicit shell: `Command("sh", "-c", "ls *.log | wc -l")`.
-
-`Process` is the running-process handle:
+`Stream[Byte, S].writeTo(path)`, `Stream[String, S].writeTo(path, charset)`, and `Stream[String, S].writeLinesTo(path, charset)` are stream sinks that acquire a write handle in a `Scope`. If the stream fails, the partially written file is deleted before the error is re-raised:
 
 ```scala
-val example: Unit < (Async & Sync & Scope & Abort[CommandException]) =
-    Command("long-running-thing").spawn.map { proc =>
-        proc.isAlive.map { alive =>
-            Log.info(s"alive: $alive").andThen {
-                proc.collectOutput.map { (out, err) =>
-                    Log.info(s"out: ${out.length} bytes, err: ${err.length} bytes")
-                }
-            }
-        }
+import kyo.*
+
+val sink: Unit < (Async & Scope & Sync & Abort[FileReadException | FileWriteException]) =
+    Path("var", "app.log")
+        .tail
+        .filter(_.contains("ERROR"))
+        .writeLinesTo(Path("var", "errors.log"))
+```
+
+### Directory operations
+
+Creating directories, listing children, and moving or deleting entries carry `Sync & Abort[FileStructureException]`. `mkDir` creates a directory and all missing parents. `mkFile` creates an empty file with missing parents. `list` returns direct children; `list(glob)` filters by a glob pattern supporting `*`, `**`, `?`, `[...]`, and `{a,b}` alternation. `walk` returns a Scope-managed stream of all entries in the tree:
+
+```scala
+import kyo.*
+
+val dir: Path = Path("var", "uploads")
+
+val mk: Unit < (Sync & Abort[FileStructureException]) =
+    dir.mkDir
+val all: Chunk[Path] < (Sync & Abort[FileStructureException]) =
+    dir.list
+val tree: Stream[Path, Sync & Scope & Abort[FileStructureException]] =
+    dir.walk
+```
+
+`move` and `copy` accept `Path.MoveOptions` and `Path.CopyOptions`. These named policy values make replacement, required atomicity, attribute copying, link following, and parent creation explicit. `remove` returns `true` when the path was deleted and `false` when it was absent. `removeExisting` raises `FileNotFoundException` when the path does not exist. `removeAll` recursively deletes a directory and all its contents:
+
+```scala
+import kyo.*
+
+val src: Path = Path("tmp") / "build-output"
+val dst: Path = Path("dist") / "release"
+
+val moved: Unit < (Sync & Abort[FileStructureException]) =
+    src.move(dst)
+val deleted: Boolean < (Sync & Abort[FileStructureException]) =
+    src.remove
+```
+
+## Error handling
+
+`FileSystemException` is a sealed abstract base. Marker traits partition the hierarchy by operation category:
+
+| Marker | Operations |
+|---|---|
+| `FileReadException` | Inspection and content reads |
+| `FileWriteException` | Content mutation and synchronization |
+| `FileStructureException` | Creation, removal, copying, and movement |
+
+Each concrete exception implements only the marker traits that apply to it, so a read recovers against `FileReadException` and never sees a structure failure:
+
+```scala
+import kyo.*
+
+val content: String < (Sync & Abort[FileReadException]) =
+    Abort.recover[FileNotFoundException] { _ =>
+        "# default config\n"
+    }(Path("etc", "app.toml").read)
+```
+
+To materialize the error as a `Result` and decide what to do at the call site:
+
+```scala
+import kyo.*
+
+val result: Result[FileSystemException, String] < Sync =
+    Abort.run[FileSystemException] {
+        Path("etc", "app.toml").read
     }
 ```
 
-`Process.stdout` and `Process.stderr` expose the output streams directly. `Process.waitFor`, `Process.waitFor(timeout)`, `Process.exitCode`, `Process.destroy`, `Process.destroyForcibly` cover lifecycle. Stdin is provided up front via the `Command` builder (`Command.stdin`), not read back off `Process`; the unsafe tier exposes `Process.unsafe.stdinJava` for callers that opened the pipe with `Command.pipeStdin`.
+`CommandException` is the sealed hierarchy for pre-launch failures:
+- `ProgramNotFoundException(command)`: raised when the executable is not found on `$PATH`
+- `PermissionDeniedException(command)`: raised when the caller lacks execute permission
+- `WorkingDirectoryNotFoundException(path)`: raised when the configured `cwd` does not exist
 
-> **Caution:** Reading `stdout` and `stderr` sequentially can deadlock when output exceeds the ~64KB pipe buffer (the producer blocks on the unread stream). Use `Process.collectOutput` to drain both concurrently.
+## Standard directories
 
-`CommandException` is the sealed hierarchy for launch failures, before a process exists. Callers usually recover by fixing setup: `ProgramNotFoundException` means choose another executable or repair `PATH`, `PermissionDeniedException` means fix execute permissions or select an allowed binary, and `WorkingDirectoryNotFoundException` means create or choose a valid `cwd`. Once a process starts, failed program execution is reported through the typed `Process.ExitCode` value.
-
-## `System`
+`Path.cwd` returns the current working directory. It reads at call time, so a `process.chdir` or fork with a different working directory takes effect on the next call:
 
 ```scala
-val maxRetries: Maybe[Int] < (Sync & Abort[NumberFormatException]) =
-    System.property[Int]("app.maxRetries")
+import kyo.*
 
-val homeDir: Maybe[String] < Sync =
-    System.env[String]("HOME")
+val cwd: Path < Sync =
+    Path.cwd
 ```
 
-`System.env(name)` and `System.property(name)` are parameterised by a `Parser[E, A]` typeclass. Built-in `Parser` instances exist for primitive types, `String`, `Duration`, `kyo.UUID`, `java.util.UUID` (the JVM type), `java.net.URI`, `java.net.URL`, and the standard `java.time` types. Parse failures raise `Abort[E]` per the parser.
-
-Canonical `kyo.UUID` values report malformed input as `UUID.InvalidUUID`:
+`Path.basePaths` and `Path.userPaths` are lazy vals that provide OS-appropriate paths without requiring an application identity. On Linux they follow the XDG Base Directory Specification; on macOS they use the `Library` hierarchy; on Windows they use `APPDATA` and `LOCALAPPDATA`:
 
 ```scala
-val serviceId: Maybe[UUID] < (Sync & Abort[UUID.InvalidUUID]) =
-    System.property[UUID]("service.id")
+import kyo.*
+
+val cacheDir: Path    = Path.basePaths.cache
+val configDir: Path   = Path.basePaths.config
+val homeDir: Path     = Path.userPaths.home
+val downloadDir: Path = Path.userPaths.download
+```
+
+`BasePaths` fields: `cache`, `config`, `data`, `dataLocal`, `executable`, `preference`, `runtime`, `tmp`. Three fields whose platform meanings are not immediately obvious:
+
+| Field | Linux | macOS | Windows |
+|---|---|---|---|
+| `dataLocal` | same as `data` (`$XDG_DATA_HOME`) | same as `data` (`~/Library/Application Support`) | `%LOCALAPPDATA%` (non-roaming; differs from `data` at `%APPDATA%`) |
+| `executable` | `~/.local/bin` (`$XDG_BIN_HOME`) | `~/Applications` | `%LOCALAPPDATA%` |
+| `runtime` | `$XDG_RUNTIME_DIR` or `~/.local/run` (session-scoped sockets and pipes) | `~/Library/Application Support` | `%LOCALAPPDATA%` |
+
+`UserPaths` fields: `home`, `audio`, `desktop`, `document`, `download`, `font`, `picture`, `public`, `template`, `video`.
+
+`Path.projectPaths(qualifier, organization, application)` derives per-application subdirectories under each base path:
+
+```scala
+import kyo.*
+
+val proj            = Path.projectPaths("com", "myorg", "myapp")
+val appConfig: Path = proj.config
+val appCache: Path  = proj.cache
+val appData: Path   = proj.data
+```
+
+`ProjectPaths` fields: `path`, `cache`, `config`, `data`, `dataLocal`, `preference`, `runtime`.
+
+`Path.tempDir(prefix)` creates a directory and registers its recursive removal for when the enclosing `Scope` closes:
+
+```scala
+import kyo.*
+
+val tmpDir: Path < (Sync & Scope & Abort[FileStructureException]) =
+    Path.tempDir("kyo-build-")
+```
+
+On JVM and Scala Native, `path.toJava: java.nio.file.Path` converts to the standard library type without a cast. It is not available on Scala.js.
+
+## Running commands
+
+When a deploy script, build tool, or health check needs to run an external program, `Command` builds an immutable process description and an execution method launches it. Each builder method returns a new `Command`; construction performs no I/O.
+
+Arguments are passed directly to the OS with no shell interpretation. Pipes, globs, and variable expansion require an explicit shell:
+
+```scala
+import kyo.*
+
+// Each string is one OS argument, no expansion
+val count: String < (Async & Abort[CommandException]) =
+    Command("grep", "-rc", "ERROR", "var/log").text
+
+// Shell required for pipe operators
+val piped: String < (Async & Abort[CommandException]) =
+    Command("sh", "-c", "grep ERROR var/log/app.log | wc -l").text
+```
+
+Builder methods compose in any order, each returning a new `Command`:
+
+```scala
+import kyo.*
+
+val build: ExitCode < (Async & Abort[CommandException]) =
+    Command("npm", "run", "build")
+        .cwd(Path("frontend"))
+        .envAppend(Map("NODE_ENV" -> "production"))
+        .redirectErrorStream(true)
+        .waitFor
+
+val pipeline: String < (Async & Abort[CommandException]) =
+    Command("cat", "app.log")
+        .andThen(Command("grep", "ERROR"))
+        .andThen(Command("head", "-20"))
+        .text
+```
+
+`andThen(that)` pipes stdout of one command into stdin of the next, equivalent to `|` in a shell.
+
+Environment configuration:
+- `envAppend(vars)` adds or overrides variables on top of the inherited environment
+- `envRemove(names)` removes named variables from the inherited environment
+- `envReplace(vars)` replaces the entire environment with the given map
+- `envClear` clears all variables; the process inherits nothing
+
+Stdin variants:
+- `stdin(s: String)`: a UTF-8 encoded string (charset overridable)
+- `stdin(bytes: Span[Byte])`: raw bytes
+- `stdin(stream: Stream[Byte, Sync])`: a pure byte stream, drained into the child at spawn time
+- `stdin(input: Process.Input)`: a `Process.Input` value; the three cases are `Process.Input.Inherit` (child reads from the parent's stdin), `Process.Input.FromStream(stream)` (a raw `InputStream` supplied by the caller), and `Process.Input.Pipe` (opens an unmanaged OS pipe, written via `proc.unsafe.stdinJava`)
+- `inheritStdin`: pipes the parent process's stdin through to the child
+- `pipeStdin`: opens an unmanaged pipe; the caller writes via `proc.unsafe.stdinJava`
+
+> **Caution:** `pipeStdin` exposes the unsafe tier. `proc.unsafe.stdinJava` is a raw `OutputStream` that requires `AllowUnsafe` and bypasses Kyo's effect tracking. Use it only when the caller controls the write loop directly (for example, a JSON-RPC over stdio protocol). Prefer `stdin(stream: Stream[Byte, Sync])` for all other cases: it pumps bytes into the child's stdin through a background fiber at spawn time without leaving the safe API.
+
+Output routing:
+- `inheritStdout` / `inheritStderr` / `inheritIO` inherit streams from the parent process
+- `stdoutToFile(path, append)` / `stderrToFile(path, append)` redirect output to a file
+- `redirectErrorStream(true)` merges stderr into stdout
+
+Execution methods:
+
+| Method | Return type | Description |
+|---|---|---|
+| `text` | `String < (Async & Abort[CommandException])` | stdout as a UTF-8 string |
+| `waitFor` | `ExitCode < (Async & Abort[CommandException])` | exit code as a value |
+| `waitForSuccess` | `Unit < (Async & Abort[CommandException \| ExitCode])` | fails on non-zero exit |
+| `textWithExitCode` | `(String, ExitCode) < (Async & Abort[CommandException])` | stdout and exit code together |
+| `stream` | `Stream[Byte, Async & Scope & Abort[CommandException]]` | stdout as a byte stream |
+| `spawn` | `Process < (Sync & Scope & Abort[CommandException])` | process handle, Scope-managed |
+| `spawnUnscoped` | `Process < (Sync & Abort[CommandException])` | process handle, caller owns lifetime |
+
+When you need the full stdout as a string and the process exits before returning, use `text`. When you need only the exit code, use `waitFor` or `waitForSuccess`. When stdout is large or arrives incrementally, use `stream` or `spawn` with `collectOutput`. When the process outlives the current scope or you manage lifetime explicitly, use `spawnUnscoped`.
+
+The built `Command` is readable without launching: `args` returns `Chunk[String]`, `workDir` returns `Maybe[Path]` (the configured working directory, or `Absent` when none was set), and `env` returns `Map[String, String]` (the current environment snapshot reflecting any `envAppend`/`envRemove`/`envReplace` calls).
+
+### Process handles
+
+After `spawn`, the returned `Process` handle exposes stdout and stderr streams, lifecycle controls, and concurrent output draining. `Command.spawn` registers the process with the enclosing `Scope`. When the scope closes before the process exits, the process is forcibly killed. `Command.spawnUnscoped` omits scope registration and is appropriate for long-lived workers whose lifetime is managed explicitly:
+
+```scala
+import kyo.*
+
+val example: Unit < (Async & Sync & Scope & Abort[CommandException]) =
+    for
+        proc  <- Command("my-server", "--port", "8080").spawn
+        _     <- Async.sleep(5.seconds)
+        alive <- proc.isAlive
+        _     <- Sync.defer(println(s"alive: $alive"))
+    yield ()
+    // proc is forcibly killed when the Scope closes
+```
+
+`spawnUnscoped` omits scope registration. The caller is responsible for calling `destroy` or `destroyForcibly` at the appropriate moment: after a timed run, on application shutdown, or when the work unit completes:
+
+```scala
+import kyo.*
+
+// The caller drives the process lifetime explicitly
+val worker: Unit < (Async & Sync & Abort[CommandException]) =
+    for
+        proc <- Command("background-worker", "--queue", "jobs").spawnUnscoped
+        _    <- Async.sleep(30.seconds)
+        _    <- proc.destroyForcibly
+    yield ()
+```
+
+`proc.stdout` and `proc.stderr` return `Stream[Byte, Sync & Scope]`; the underlying `InputStream` is closed when the enclosing `Scope` closes.
+
+> **Caution:** Reading `stdout` then `stderr` sequentially deadlocks when the process writes more than the OS pipe buffer (~64 KB) to both channels. The unread producer blocks the OS, which in turn blocks `waitFor`. Use `collectOutput` to drain both concurrently.
+
+```scala
+import kyo.*
+
+val capture: (Chunk[Byte], Chunk[Byte]) < (Async & Sync & Scope & Abort[CommandException]) =
+    for
+        proc       <- Command("build-tool", "--verbose").spawn
+        (out, err) <- proc.collectOutput
+    yield (out, err)
+```
+
+Other lifecycle operations on a `Process`:
+
+| Method | Return type | Description |
+|---|---|---|
+| `waitFor` | `ExitCode < Async` | Suspends the fiber until exit |
+| `waitFor(timeout)` | `Maybe[ExitCode] < Async` | Returns `Absent` on timeout |
+| `exitCode` | `Maybe[ExitCode] < Sync` | Non-blocking poll; `Absent` if still running |
+| `isAlive` | `Boolean < Sync` | Non-blocking liveness check |
+| `pid` | `Long < Sync` | OS process identifier |
+| `destroy` | `Unit < Sync` | Requests termination (SIGTERM or equivalent) |
+| `destroyForcibly` | `Unit < Sync` | Forces termination (SIGKILL or equivalent) |
+
+### Exit codes
+
+Once a process exits, interpret its status through `ExitCode`. `ExitCode` is a three-case enum. `ExitCode.Signaled(number)` follows the POSIX shell convention where the raw integer value equals 128 + signal number:
+
+- `ExitCode.Success`: raw value 0
+- `ExitCode.Failure(code)`: any non-zero value that does not encode a signal
+- `ExitCode.Signaled(number)`: the process was terminated by an OS signal; raw = 128 + number
+
+`ExitCode.apply(raw: Int)` constructs the appropriate case:
+
+```scala
+import kyo.*
+
+val ok: ExitCode     = ExitCode(0)   // Success
+val fail: ExitCode   = ExitCode(1)   // Failure(1)
+val killed: ExitCode = ExitCode(137) // Signaled(9), SIGKILL
+```
+
+Named constants are available for common POSIX signals: `ExitCode.SIGHUP`, `SIGINT`, `SIGQUIT`, `SIGKILL`, `SIGSEGV`, `SIGPIPE`, `SIGTERM`. Use them in pattern matches:
+
+```scala
+import kyo.*
+
+def describe(code: ExitCode): String = code match
+    case ExitCode.Success     => "succeeded"
+    case ExitCode.SIGTERM     => "terminated gracefully"
+    case ExitCode.SIGKILL     => "killed forcibly"
+    case ExitCode.Signaled(n) => s"killed by signal $n"
+    case ExitCode.Failure(n)  => s"failed with exit code $n"
+```
+
+`waitForSuccess` adds `ExitCode` to the abort channel on non-zero exits alongside `CommandException` for pre-launch failures. The union type distinguishes the two failure origins at the call site:
+
+```scala
+import kyo.*
+
+val strict: Unit < (Async & Abort[CommandException | ExitCode]) =
+    Command("sbt", "test").waitForSuccess
+
+val withCode: (String, ExitCode) < (Async & Abort[CommandException]) =
+    Command("make", "check").textWithExitCode
+```
+
+`ExitCode.toInt` converts a code back to its raw integer (0 for `Success`, the original code for `Failure(n)`, and 128 + n for `Signaled(n)`). `ExitCode.isSuccess` returns `true` when the code is `Success`. `ExitCode.signalName` returns `Present("SIGKILL")` and similar for the seven named POSIX signals, or `Absent` for `Success`, `Failure`, and any unrecognized signal number.
+
+## System environment
+
+`System.env[A](name)` and `System.property[A](name)` retrieve an environment variable or system property and parse it to type `A` using a `Parser[E, A]` typeclass instance. A missing variable returns `Absent`; a present but unparseable value fails with `Abort[E]`:
+
+```scala
+import kyo.*
+
+val home: Maybe[String] < Sync =
+    System.env[String]("HOME")
+
+val port: Maybe[Int] < (Abort[NumberFormatException] & Sync) =
+    System.property[Int]("server.port")
+```
+
+When the type parameter `A` has `E = Nothing` (such as `String`), the `Abort` disappears from the effect row. Each method also has a default-value variant: `System.env[A](name, default)` and `System.property[A](name, default)` return `A` and fall back to `default` when the variable is absent.
+
+Built-in `Parser` instances cover: `String`, `Int`, `Long`, `Float`, `Double`, `Boolean`, `Byte`, `Short`, `Char`, `Duration`, `java.util.UUID`, `java.net.URI`, `java.net.URL`, `java.time.LocalDate`, `java.time.LocalTime`, `java.time.LocalDateTime`, and `Seq[A]` (comma-split). Provide a `given Parser[E, A]` to support custom types.
+
+`System.lineSeparator` returns the platform line separator (`"\n"` on Linux and macOS, `"\r\n"` on Windows) as `String < Sync`. `System.userName` returns the OS user name as `String < Sync`. Both read from the host environment and carry `Sync`.
+
+`System.live` is the default ambient instance backed by the host environment. All `System.*` calls delegate to it when `System.let` has not been called.
+
+`System.let(system)(computation)` replaces the ambient `System` for the duration of the computation. Use it in tests to inject controlled values without touching the process environment:
+
+```scala
+import kyo.*
+
+val mock: System = System(new System.Unsafe:
+    def env(name: String)(using AllowUnsafe): Maybe[String] =
+        if name == "APP_ENV" then Present("staging") else Absent
+    def property(name: String)(using AllowUnsafe): Maybe[String] = Absent
+    def lineSeparator()(using AllowUnsafe): String               = "\n"
+    def userName()(using AllowUnsafe): String                    = "ci"
+    def operatingSystem()(using AllowUnsafe): System.OS          = System.OS.Linux
+    def architecture()(using AllowUnsafe): System.Arch           = System.Arch.X86_64
+    def availableProcessors()(using AllowUnsafe): Int            = 4)
+
+val result: Maybe[String] < Sync =
+    System.let(mock)(System.env[String]("APP_ENV"))
+```
+
+`System.operatingSystem` returns a `System.OS` value and `System.architecture` returns `System.Arch`. Both are available across all three platforms. `System.OS` cases: `Linux`, `MacOS`, `Windows`, `BSD`, `Solaris`, `IBMI`, `AIX`, `Unknown`. `System.Arch` cases: `X86`, `X86_64`, `Arm`, `Aarch64`, `Unknown`:
+
+```scala
+import kyo.*
+
+val adapted: String < Sync =
+    for
+        os   <- System.operatingSystem
+        arch <- System.architecture
+        cpus <- System.availableProcessors
+    yield s"$os / $arch, $cpus processors"
 ```

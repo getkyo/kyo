@@ -295,7 +295,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
             // Write a malformed PEM file to a temp path using kyo.Path (cross-platform).
             Path.temp(prefix = "kyo-sql-bad-cert-", suffix = ".pem").flatMap { tempPath =>
                 tempPath.writeBytes(Span.from("NOT A VALID PEM CERTIFICATE".getBytes(StandardCharsets.UTF_8))).flatMap { _ =>
-                    Scope.ensure(Abort.run[FileException](tempPath.remove).unit).andThen {
+                    Scope.ensure(Abort.run[FileSystemException](tempPath.remove).unit).andThen {
                         val badPath = tempPath.toString
                         val url =
                             s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca&sslrootcert=$badPath"
@@ -655,7 +655,10 @@ object SqlConfigTlsModeIntegrationTest:
       */
     private def initTlsContainer(using Frame): TlsCtx < (Async & Abort[ContainerException]) =
         Scope.run {
-            Abort.run[FileFsException](Path.tempDir(prefix = "kyo-sql-tls-mode-")).flatMap {
+            // tempDirUnscoped, not the `Scope`-managed Path.tempDir: the container this directory is
+            // bind-mounted into is a singleton that outlives this `Scope.run`, so a scope-registered
+            // removal would delete the certs while the server is still reading them.
+            Abort.run[FileStructureException](Path.tempDirUnscoped(prefix = "kyo-sql-tls-mode-")).flatMap {
                 case Result.Failure(e) =>
                     Abort.fail(ContainerBackendException(s"temp dir creation failed: ${e.getMessage}"))
                 case Result.Panic(t) =>
