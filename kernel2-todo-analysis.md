@@ -32,7 +32,8 @@ status. Work proceeds one issue at a time, validated with you between issues.
 | 21 | Safepoint follow-up TODOs (S1-S4) | IN DESIGN (track A agent) |
 
 ## 1. `Kyo.lift` is a bare cast, so explicit nesting is broken
-
+when I say "fix" just go ahead and fix
+fix :)
 - Files: `kyo-kernel2/shared/src/main/scala/kyo/kernel2/Kyo.scala`, `Pending.scala`
 - Status: APPROVED with your revision (keep the method, fix the body; superclass named
   `Implicits`). Not started.
@@ -67,7 +68,7 @@ Change.
   its definition), pairing with the nesting vocabulary.
 
 ## 2. Forwarding methods
-
+no need to report done stuff. This is about what needs my attention. This sould still surface if there's a relevant decision/info to me
 - Files: `Pending.scala`, `Effect.scala`, `Arrow.scala`, `ArrowEffect.scala`
 - Status: DONE. Full kyo-kernel2 JVM suite green. Commit `564dc4cc9f`.
 
@@ -80,7 +81,7 @@ What was removed:
 - `neverPreempt` is now the single val instead of a def forwarding a private val.
 
 ## 3. Erased handler machinery
-
+fix
 - Files: `internal/Handler.scala`, `ArrowEffect.scala`, `Pending.scala`
 - Status: APPROVED. Not started. Scheduled after the naming sweeps (#5, #6).
 
@@ -114,7 +115,7 @@ The unavoidable erased boundary concentrates at the dispatch tag match in
 measure with JMH: removes a per-handle closure allocation.
 
 ## 4. Handler kind naming
-
+fix
 - Files: `internal/Handler.scala`
 - Status: APPROVED. Lands together with #3.
 
@@ -124,7 +125,7 @@ note: "Is this ArrowHandler?"), and `Handler.Context` collides with `internal.Co
 Change. `Operation` becomes `ArrowHandler`; `Handler.Context` becomes `ContextBinding`.
 
 ## 5. Inconsistent type parameter names and missing variance
-
+fix
 - Files: `Kyo.scala`, `Arrow.scala`
 - Status: APPROVED. Next up.
 
@@ -149,7 +150,7 @@ private[kyo] def isEmpty[A, B, S](f: Arrow[A, B, S]): Boolean
 renamed too; proposal `Mid`.
 
 ## 6. drive / dispatch / eval verb mix
-
+fix
 - Files: `Pending.scala`
 - Status: APPROVED. Not started.
 
@@ -166,7 +167,7 @@ Problem. One kind of thing carries three verbs. Change, consolidating to eval:
 do not evaluate computations); both disappear anyway if #18's design lands.
 
 ## 7. Uninformative toString
-
+fix
 - Files: `Kyo.scala`
 - Status: APPROVED. Not started.
 
@@ -176,7 +177,7 @@ existing style of `Suspend`/`ContextRead`/`Transform`, e.g. `Nested(<value>)`,
 `Offset(<head>, <next>)`, `Continue` including its chain.
 
 ## 8. `(x: Any) match` widenings
-
+fix
 - Files: `Pending.scala` (map/flatMap/andThen/unit, Observe), `Effect.scala`
   (catching), `Loop.scala` (drivers), `Arrow.scala` (run sites)
 - Status: APPROVED. Not started.
@@ -196,7 +197,7 @@ crept in); direct matching against class patterns still compiles since the opaqu
 erases, with `@unchecked` carrying the justification. Each site verified individually.
 
 ## 9. Unexplained cast in `prepend`
-
+ok
 - Files: `Kyo.scala` (`Suspension.prepend` and siblings), `Effect.scala`, `Pending.scala`
 - Status: You asked for an elaborated design for approval before implementation. I will
   present it when we reach this item (after #12 in the order).
@@ -217,7 +218,7 @@ composition. The design will cover which classes implement it (`Catching`, `Obse
 `Defer`).
 
 ## 10. `discard` misleading name
-
+fix
 - Files: `Pending.scala`
 - Status: DECIDED by you: `finalizeBracket`. Not started.
 
@@ -227,7 +228,7 @@ someone could call it thinking that. Plain `finalize` is unusable: an extension 
 named `finalize` is permanently shadowed by `java.lang.Object#finalize`.
 
 ## 11. `observe` placement, then an effectful observer
-
+fix
 - Files: `Pending.scala` -> new `Observe.scala` (+ `ObserveTest.scala`)
 - Status: APPROVED, including the effectful follow-up. Not started.
 
@@ -246,7 +247,7 @@ computation must sit outside the re-armed observed region so observation does no
 observe itself.
 
 ## 12. `KyoException` name clash and the `Trace` stub
-
+ok
 - Files: `internal/KyoException.scala`, `internal/Trace.scala`, `Isolate.scala`
 - Status: APPROVED. Not started.
 
@@ -260,7 +261,7 @@ round (your ruling): the mechanism must then also work with kyo-data's `KyoExcep
 enriching those exceptions the same way.
 
 ## 13. Fork-boundary API shape
-
+launch an opus agent to explore
 - Files: `Isolate.scala` (`internal.runDetached`), future consumers kyo-core/IOTask
 - Status: IN DESIGN. Merged into track B (see #18) per your instruction to explore
   with an opus agent.
@@ -277,7 +278,7 @@ eliminates `ContextSnapshot`, where the snapshot comes from is part of that desi
 one agent designs both.
 
 ## 14. The `LastResort | Null` boundary carrier
-
+I'm not convinced of LastResort and you did not provide proper context.
 - Files: `Pending.scala`, `ArrowEffect.scala`
 - Status: APPROVED (after the why-it-exists explanation). Lands with #3.
 
@@ -300,7 +301,7 @@ Change: a typed node in the handler hierarchy (with #3's typing), threaded as
 `Maybe[...]`, no `null` anywhere.
 
 ## 15. Preemption not wired into the drives
-
+do you have a design for this yet? if needed launch an opus agent to work on it
 - Files: `Pending.scala`, `Arrow.scala`, `ArrowEffect.scala`, `internal/Safepoint.scala`
 - Status: IN DESIGN, track A opus agent running. Deliverable:
   `kernel2-preemption-design.md`, to be summarized for your review.
@@ -320,7 +321,7 @@ overridable through any API; drives poll `Safepoint.preempted` and consume with
 fiber's registered thread.
 
 ## 16. `defer` allocates twice
-
+I don't think this is safe. How about Defer extends from suspension and arrow?
 - Files: `Effect.scala`, `Kyo.scala`
 - Status: AWAITING YOUR RULING.
 
@@ -347,7 +348,7 @@ rescue and segment-boundary paths; composition (`map`/`prepend`) goes through a
 `Chained` subclass. JMH after (deepBind and suspension rows are Defer-sensitive).
 
 ## 17. Loop drivers slower than the old kernel
-
+ok
 - Files: `Loop.scala`
 - Status: APPROVED, benchmark first (your instruction). Not started.
 
@@ -373,7 +374,7 @@ Change: add loop JMH rows measuring old kernel vs kernel2 first, then port the o
 driver shape to every arity (apply 1-4, indexed 1-4, and the rest of the surface).
 
 ## 18. Context reads walk the continuation chain
-
+Confirm first: can we wire the context as a parameter instead of having these suspensions? see how the old kernel uses defer for this
 - Files: `Pending.scala` (`resolveContext`, `snapshotContext`), `Kyo.scala`
   (`ContextRead`, `ContextSnapshot`), `internal/Handler.scala`, `Arrow.scala`
   (`hasHandler`)
@@ -393,7 +394,7 @@ park/resume, what `ContextEffect.handle` does, whether `hasHandler` still pays f
 itself, and the fork-boundary snapshot (#13).
 
 ## 19. `Context` to `TypeMap`
-
+launch an opus agent to explore the performance aspect. Assume we can make imporvements to TypeMap if justified or even create a new datastructure. Ideally, the conext should be of a type that is user-facing like TypeMap
 - Files: `internal/Context.scala`, kyo-data `TypeMap`
 - Status: APPROVED as direction; perf-gated (your ruling: the challenge is
   performance, not code change). Sequenced after #18 settles what Context must support.
@@ -403,7 +404,7 @@ the `private[kyo]` operations it lacks (`inherit`-style filtering, flag-maintain
 `set`). Adoption gated on benchmarks of the context-heavy rows.
 
 ## 20. Overly public Arrow surface
-
+fix
 - Files: `Arrow.scala`
 - Status: AWAITING YOUR RULING.
 
@@ -413,7 +414,7 @@ public: it is the continuation type in the public handler model (`handleFirst`,
 `handlePartial` signatures).
 
 ## 21. Safepoint follow-up TODOs (S1-S4)
-
+you must always expand properly as their own items
 - Files: `internal/Safepoint.scala`
 - Status: IN DESIGN, folded into track A (#15).
 
