@@ -13,6 +13,8 @@ import org.openjdk.jmh.annotations.*
 sealed trait BenchEcho    extends ArrowEffect[Const[Int], Const[Int]]
 sealed trait BenchCounter extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
 sealed trait BenchEnv     extends ContextEffect[Int]
+sealed trait BenchStop    extends ArrowEffect[Const[Int], Const[Int]]
+sealed trait BenchFail    extends ArrowEffect[Const[Int], Const[Nothing]]
 
 /** Per-operation benchmarks for the kernel2 substrate and handler system.
   *
@@ -166,5 +168,67 @@ class KernelBench:
         }
         runEcho(v)
     end loopSuspend1k
+
+    val stopTag = Tag[BenchStop]
+    val failTag = Tag[BenchFail]
+
+    def stopOp(v: Int): Int < BenchStop =
+        ArrowEffect.suspend[Any](stopTag, v)
+
+    def failOp(v: Int): Nothing < BenchFail =
+        ArrowEffect.suspend[Any](using summon[kyo.Frame])[Const[Int], Const[Nothing], BenchFail](failTag, v)
+
+    @Benchmark
+    def deepStop1k: Int =
+        // a foreign resumption, one thousand frames, then the stop operation: the skip's headline row
+        def chain(v: Int): Int < (BenchStop & BenchEcho) =
+            var acc: Int < (BenchStop & BenchEcho) = v
+            var i                                  = 0
+            while i < 1000 do
+                acc = acc.map(_ + 1)
+                i += 1
+            acc.map(x => stopOp(x))
+        val program = echo(0).map(z => chain(z))
+        val stopped = ArrowEffect.handleStop(stopTag, program)([C] => in => in)
+        runEcho(stopped.asInstanceOf[Int < BenchEcho])
+    end deepStop1k
+
+    @Benchmark
+    def stopConstructed1k: Int =
+        // the same chain built before the handle call: construction that predates the handler is out of reach, the honesty row
+        var acc: Int < BenchStop = 0
+        var i                    = 0
+        while i < 1000 do
+            acc = acc.map(_ + 1)
+            i += 1
+        val program = acc.map(x => stopOp(x))
+        ArrowEffect.handleStop(stopTag, program)([C] => in => in).eval
+    end stopConstructed1k
+
+    @Benchmark
+    def neverResumes1k: Int =
+        // a never-resuming operation followed by a thousand construction maps: the static skip makes them free
+        var acc: Int < BenchFail = failOp(42).map[Int, Any]((n: Nothing) => n)
+        var i                    = 0
+        while i < 1000 do
+            acc = acc.map(_ + 1)
+            i += 1
+        ArrowEffect.handle(failTag, acc)([C] => (in, cont) => in).eval
+    end neverResumes1k
+
+    @Benchmark
+    def foreignBubbleUnderStop: Int =
+        // a foreign operation surfacing mid chain under a registered stop region: the resolve-miss regression vector
+        def chain(v: Int): Int < (BenchStop & BenchEcho) =
+            var acc: Int < (BenchStop & BenchEcho) = echo(v).map(x => x)
+            var i                                  = 0
+            while i < 100 do
+                acc = acc.map(_ + 1)
+                i += 1
+            acc
+        val program = echo(0).map(z => chain(z))
+        val stopped = ArrowEffect.handleStop(stopTag, program)([C] => in => in)
+        runEcho(stopped.asInstanceOf[Int < BenchEcho])
+    end foreignBubbleUnderStop
 
 end KernelBench

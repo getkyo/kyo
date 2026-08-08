@@ -182,30 +182,34 @@ object Arrow:
         // TODO Context and Handlers should not leak outside of the kernel. Arrow is meant to be user facing
         def apply[S2](v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
             // a separate method so the cold branch does not weigh down apply's inlined body
-            def dispatchLocal(s: Kyo.Suspend[?, ?, ?, ?, ?, ?]): B < (S & S2) =
-                handlers.resolve(s.erasedTag) match
-                    case Maybe.Present(r: Handlers.Entry.Resume) =>
-                        // answer in place and keep going forward
-                        self(ArrowEffect.answerNow(s, r, context, handlers).asInstanceOf[A < S2], context, handlers)
-                    case Maybe.Present(_: Handlers.Entry.Stop) =>
-                        // the skip: every frame from here to the handler is dead, the innermost
-                        // matching loop's matched arm answers on arrival
+            def dispatchLocal(kyo: Kyo[Any, Any]): B < (S & S2) =
+                kyo match
+                    case s: Kyo.NeverResumed[?, ?, ?, ?, ?, ?] =>
+                        // no handler can resume it: nothing after the operation can run
                         s.asInstanceOf[B < (S & S2)]
-                    case _ =>
-                        // Absent, or a shadow entry: structural travel
-                        s.asInstanceOf[Kyo[A, S2]].map(self)
+                    case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] if !handlers.isEmpty =>
+                        handlers.resolve(s.erasedTag) match
+                            case Maybe.Present(r: Handlers.Entry.Resume) =>
+                                // answer in place and keep going forward
+                                self(ArrowEffect.answerNow(s, r, context, handlers).asInstanceOf[A < S2], context, handlers)
+                            case Maybe.Present(_: Handlers.Entry.Stop) =>
+                                // the skip: every frame from here to the handler is dead, the innermost
+                                // matching loop's matched arm answers on arrival
+                                s.asInstanceOf[B < (S & S2)]
+                            case _ =>
+                                // Absent, or a shadow entry: structural travel
+                                s.asInstanceOf[Kyo[A, S2]].map(self)
+                    case kyo =>
+                        kyo.asInstanceOf[Kyo[A, S2]].map(self)
             if isEmpty(self) then
                 v.asInstanceOf[B < (S & S2)]
             else if v.isInstanceOf[Kyo[?, ?]] then
-                // the one place suspensions bubble: execution consults the threaded handlers
-                // here, so the operation dispatches at the point it surfaced
-                v.asInstanceOf[Kyo[Any, Any]] match
-                    case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                        if s.origin.isInstanceOf[Kyo.NeverResumed[?, ?, ?, ?, ?, ?]] then s.asInstanceOf[B < (S & S2)]
-                        else if handlers.isEmpty then s.asInstanceOf[Kyo[A, S2]].map(self)
-                        else dispatchLocal(s)
-                    case kyo =>
-                        kyo.asInstanceOf[Kyo[A, S2]].map(self)
+                // the one place suspensions bubble: execution dispatches the operation at the
+                // point it surfaced. The hot shape stays two checks; the dispatch is cold.
+                if handlers.isEmpty && !v.isInstanceOf[Kyo.NeverResumed[?, ?, ?, ?, ?, ?]] then
+                    v.asInstanceOf[Kyo[A, S2]].map(self)
+                else
+                    dispatchLocal(v.asInstanceOf[Kyo[Any, Any]])
             else
                 self match
                     case o: Step[Any, Any, Any, Any] @unchecked =>

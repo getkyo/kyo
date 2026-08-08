@@ -172,3 +172,23 @@ only known cost, recoverable via the erased-input re-add item.
   fast path returns before handlers are consulted. Known red pin in
   ArrowEffectTest until the encodings implementation lands the entry
   discipline.
+
+
+# Handler encodings round: closed
+
+The suspension-point dispatch landed end to end: Entry.Resume/Stop/Shadow in
+the threaded Handlers, the stop skip (bare pass-through), the resume
+registration for the loop's own resumptions, the shadow discipline for
+ctl/first/loop, and the NeverResumed static skip for Const[Nothing] outputs
+minted at suspend. The innermost-wins-across-a-park defect is fixed for all
+three formats. A second live defect fell out of the pins: the acquire
+pending-ness probe evaluated the by-name thunk twice; rebuilt brackets now
+carry a settled mark and the unsettled fold defers to the drive.
+
+Headline rows: neverResumes1k 16ns/64B, deepStop1k 2.77us/22.3KB. Known
+costs: state10 +16B per op (per-call shadow entry), contextRead100 alloc
++25-33% with time improved 15-25% (escape-analysis shape, flagged; the E2b
+array-backed carrier round owns the read path). Open items from the design:
+the miss-path mitigations gated on foreignBubbleUnderStop, entry-kind int
+dispatch, boundary stop entries for handlePartial, and the resume entry
+self-extension.
