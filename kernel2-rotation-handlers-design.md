@@ -7,9 +7,21 @@ might add a Handlers param like Context. Or Context can contain Handlers."
 
 Status: exploration and experiments COMPLETE (E1, E2, E2b, E3). The design below
 is ready for your validation. Nothing gets implemented until you approve it.
-The E3 executable model (`RotationProbeMain.scala`, temporary) reproduces the old
-kernel's semantics on all 11 reference programs, including the three known
-defect cases, so every mechanism described here is validated code, not sketch.
+
+THE REFERENCE ARTIFACT is the prototype at
+`kyo-kernel2/shared/src/main/scala/kyo/kernel2/proto` (reading order: Pending,
+Context, Handler, ArrowEffect, ContextEffect, Effect, Eval), validated against
+the OLD kernel on all 11 reference programs by
+`kyo-kernel2/jvm/src/test/scala/kyo/kernel2/proto/RotationProbeMain.scala`, both
+implementations in one process. The prototype carries the execution model's
+structure: the strict sync path (transformations on settled values run
+immediately, never entering the drive), continuations fused INTO nodes (a chain
+of transformations is one node; the drive bounces only at suspensions and
+region boundaries), the one threaded environment, and the three walks. What it
+deliberately does not carry, per its header: the inline + Arrow/Offset chain
+encoding (its fusion is function composition, the structure not the bytes),
+safepoints, and automatic lifting. Those live only in kernel2 proper and are
+untouched by this design.
 
 # 1. What the handler formats promise, and what today delivers
 
@@ -310,10 +322,17 @@ Two things the model's construction itself established:
    continuation's own function type), applies it twice, and never casts. The old
    kernel reference needs `var captured: Any` plus `asInstanceOf` for the same
    program.
-2. **A subtlety found and fixed while building**: running a guard's rescue
-   directly inside the drive's exception handler would let a THROWING rescue
-   escape its outer guards; the rescue must re-enter through the computation.
-   This is a real implementation trap the kernel2 port must carry.
+2. **Two implementation traps found and fixed while building**, both of which
+   the kernel2 port must carry:
+   1. Running a guard's rescue directly inside the drive's exception handler
+      would let a THROWING rescue escape its outer guards; the rescue must
+      re-enter through the computation.
+   2. With the strict path, applying a captured continuation runs its fused
+      pure segments immediately, so a crossed guard's re-wrap must DEFER the
+      inner application into the re-established guard (the old kernel does
+      exactly this with its try-wrapped continuation application in
+      KyoContinue); wrapping the applied value is not enough, and a post-resume
+      throw would otherwise bypass its guard (p5 catches this).
 
 # 5. The environment structure: one environment, and Context lives in it
 
