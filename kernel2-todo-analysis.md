@@ -41,7 +41,7 @@ Off the list as done: #2 forwarding methods (commit `564dc4cc9f`).
 | 24 | clearPreempt sufficiency | input to track A design |
 
 ## 1. `Kyo.lift` is a bare cast, so explicit nesting is broken
-
+move authorized fixes to the end. The focus of this doc is what you need from me. 
 - Files: `kyo-kernel2/shared/src/main/scala/kyo/kernel2/Kyo.scala`, `Pending.scala`
 - Status: AUTHORIZED (fix).
 
