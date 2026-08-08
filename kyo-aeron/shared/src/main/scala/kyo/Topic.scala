@@ -59,7 +59,7 @@ object Topic:
       */
     def run[A, S](v: A < (Topic & S))(using Frame): A < (Async & S) =
         Scope.run {
-            Abort.run[FileStructureException](Path.tempDir("kyo-aeron-embedded")).map {
+            Abort.run[FileSystemException](Path.run(Path.tempDir("kyo-aeron-embedded"))).map {
                 case Result.Success(dir) =>
                     AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
                         // The driver deletes its own directory on close, once its conductor has

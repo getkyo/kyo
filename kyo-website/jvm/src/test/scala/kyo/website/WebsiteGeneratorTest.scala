@@ -84,14 +84,14 @@ class WebsiteGeneratorTest extends WebsiteTest:
         WebsiteGenerator.emit(content, outDir, WebsiteGenerator.Config(repoRoot, bundleDir))
 
     private def readFile(path: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileReadException](path.read).map {
+        Abort.run[FileSystemException](Path.runReadOnly(path.read)).map {
             case Result.Success(s) => s
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
             case p: Result.Panic   => Abort.error(p)
         }
 
     private def fileExists(path: Path)(using Frame): Boolean < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileReadException](path.exists).map {
+        Abort.run[FileSystemException](Path.runReadOnly(path.exists)).map {
             case Result.Success(b) => b
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
             case p: Result.Panic   => Abort.error(p)
@@ -866,7 +866,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
             // and the /latest/ overview).
             latestSlugPages <-
                 val latestDir = out / "latest"
-                Abort.run[FileReadException | FileStructureException] {
+                Abort.run[FileSystemException](Path.runReadOnly {
                     latestDir.exists.map {
                         case false => 0
                         case true =>
@@ -874,7 +874,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
                                 Kyo.foreach(entries)(_.isDirectory).map(_.count(identity))
                             }
                     }
-                }.map {
+                }).map {
                     case Result.Success(n) => n
                     case Result.Failure(e) => Abort.fail(WebsiteEmitException(latestDir.toString, e))
                     case p: Result.Panic   => Abort.error(p)

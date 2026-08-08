@@ -69,14 +69,6 @@ private[kyo] trait PathDirectories:
         )
     end platformProjectPaths
 
-    /** Creates a temporary directory in the platform temporary location and registers its recursive
-      * removal with the enclosing `Scope`. There is no unscoped public temp-directory primitive.
-      */
-    def tempDir(prefix: String = "kyo")(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
-        tempDirUnscoped(prefix).map { dir =>
-            Scope.acquireRelease(dir)(created => Abort.run[FileStructureException](created.removeAll).unit)
-        }
-
     /** Creates a temporary file and registers it for deletion when the enclosing Scope closes. */
     private[kyo] def tempScoped(
         prefix: String = "kyo",
@@ -84,7 +76,7 @@ private[kyo] trait PathDirectories:
     )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
         temp(prefix, suffix).map { p =>
             Scope.acquireRelease(p) { q =>
-                Abort.run[FileStructureException](q.removeAll).unit
+                Abort.run[FileSystemException](Path.run(q.removeAll)).unit
             }
         }
 

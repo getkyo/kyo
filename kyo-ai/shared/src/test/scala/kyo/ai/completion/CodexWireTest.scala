@@ -84,14 +84,14 @@ class CodexWireTest extends kyo.test.Test[Any]:
         val resultSchema = Thought.internal.resultJson(Chunk.empty, Json.jsonSchema[CodexWireResultProbe])
         val specs        = CodexWire.dynamicToolSpecs(Tool.internal.resultToolDefinition.infos, resultSchema)
 
-        Path.tempDir("codex-wire-test").map { dir =>
+        Path.run(Path.tempDir("codex-wire-test").map { dir =>
             val params = CodexWire.threadStartParams(Config.Codex.gpt_5_5, ctx, dir, specs)
             assert(params.baseInstructions == "AMBIENT PROMPT", s"baseInstructions is the leading system alone: $params")
             assert(
                 params.dynamicTools.map(_.name) == List(Completion.resultToolName),
                 s"the registered tools ride thread/start.dynamicTools: ${params.dynamicTools}"
             )
-        }
+        })
     }
 
     "historyItems renders a non-leading system message IN PLACE as a system-reminder user item" in {

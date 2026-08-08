@@ -969,15 +969,15 @@ final private[kyo] class HttpContainerBackend(
         val containerFile = containerPath.name.getOrElse(containerPath.toString)
 
         Scope.run {
-            Abort.run[FileStructureException](Path.tempDir(s"kyo-copyto-$uniqueSuffix-")).map {
+            Abort.run[FileSystemException](Path.run(Path.tempDir(s"kyo-copyto-$uniqueSuffix-"))).map {
                 case Result.Failure(e) =>
                     Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
                 case Result.Panic(t) =>
                     Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
                 case Result.Success(tempDir) =>
                     val target = tempDir / containerFile
-                    Abort.run[FileStructureException](
-                        source.copy(target, Path.CopyOptions(replace = Path.Replace.Existing))
+                    Abort.run[FileSystemException](
+                        Path.run(source.copy(target, Path.CopyOptions(replace = Path.Replace.Existing)))
                     ).map {
                         case Result.Failure(e) =>
                             Abort.fail(ContainerOperationException(
@@ -2969,7 +2969,7 @@ private[kyo] object HttpContainerBackend:
                             xp.toList ++ Seq(defaultSocket) ++ hd.toList
                     // Filter to paths that exist on disk
                     Kyo.filter(candidates)(path =>
-                        Abort.recover[FileReadException](_ => false)(Path(path).exists)
+                        Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(path).exists))
                     ).map {
                         staticPaths =>
                             if staticPaths.nonEmpty then staticPaths

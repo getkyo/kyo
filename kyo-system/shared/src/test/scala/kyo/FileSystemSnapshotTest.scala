@@ -1,9 +1,12 @@
 package kyo
 
-/** Cross-platform behavioral assertions represented by the stable Path snapshots. */
-class PathSnapshotTest extends kyo.test.Test[Any]:
+/** Cross-platform behavioral assertions represented by the stable filesystem snapshots. */
+class FileSystemSnapshotTest extends kyo.test.Test[Any]:
 
     private given Frame = Frame.internal
+
+    private def hostTempDir(prefix: String): Path < (Sync & Scope & Abort[FileSystemException]) =
+        Scope.acquireRelease(FileSystem.host.tempDir(prefix))(h => Sync.Unsafe.defer(h.remove())).map(_.path)
 
     private def glob(value: String): Glob =
         Glob.parse(value) match
@@ -16,21 +19,22 @@ class PathSnapshotTest extends kyo.test.Test[Any]:
             s"**/*.txt|alpha.txt=${glob("**/*.txt").matches("alpha.txt", Glob.CaseSensitivity.Sensitive)}|nested/alpha.txt=${glob("**/*.txt").matches("nested/alpha.txt", Glob.CaseSensitivity.Sensitive)}",
             s"*.TXT|alpha.txt=${glob("*.TXT").matches("alpha.txt", Glob.CaseSensitivity.Sensitive)}|ALPHA.TXT=${glob("*.TXT").matches("ALPHA.TXT", Glob.CaseSensitivity.Sensitive)}"
         )
-        assert(rows.mkString("\n") == PathSnapshotValues.globMatrix)
+        assert(rows.mkString("\n") == FileSystemSnapshotValues.globMatrix)
     }
 
     "normalized tree snapshot represents backend contents" in {
-        Path.tempDir("kyo-snapshot-tree").map { dir =>
-            val root = dir / "root"
-            root.mkDir.andThen {
-                (root / "a.txt").write("a").andThen {
-                    (root / "nested" / "b.txt").write("b").andThen {
-                        root.list.map { top =>
-                            (root / "nested").list.map { nested =>
+        hostTempDir("kyo-snapshot-tree").map { dir =>
+            val fileSystem = FileSystem.host
+            val root       = dir / "root"
+            fileSystem.mkDir(root).andThen {
+                fileSystem.write(root / "a.txt", "a", Path.WriteOptions()).andThen {
+                    fileSystem.write(root / "nested" / "b.txt", "b", Path.WriteOptions()).andThen {
+                        fileSystem.list(root).map { top =>
+                            fileSystem.list(root / "nested").map { nested =>
                                 assert(top == Chunk(root / "a.txt", root / "nested"))
                                 assert(nested == Chunk(root / "nested" / "b.txt"))
                                 val normalized = Chunk("root/", "root/a.txt=a", "root/nested/", "root/nested/b.txt=b")
-                                assert(normalized.mkString("\n") == PathSnapshotValues.normalizedTree)
+                                assert(normalized.mkString("\n") == FileSystemSnapshotValues.normalizedTree)
                             }
                         }
                     }
@@ -47,15 +51,15 @@ class PathSnapshotTest extends kyo.test.Test[Any]:
         )
         assert(FileNotFoundException(Path("root", "missing.txt")).path == Path("root", "missing.txt"))
         assert(FileAlreadyExistsException(Path("root", "a.txt")).path == Path("root", "a.txt"))
-        assert(rows.mkString("\n") == PathSnapshotValues.normalizedErrors)
+        assert(rows.mkString("\n") == FileSystemSnapshotValues.normalizedErrors)
     }
 
-end PathSnapshotTest
+end FileSystemSnapshotTest
 
-private[kyo] object PathSnapshotValues:
+private[kyo] object FileSystemSnapshotValues:
     val globMatrix: String =
         "*.txt|alpha.txt=true|nested/alpha.txt=false\n**/*.txt|alpha.txt=true|nested/alpha.txt=true\n*.TXT|alpha.txt=false|ALPHA.TXT=true"
     val normalizedTree: String = "root/\nroot/a.txt=a\nroot/nested/\nroot/nested/b.txt=b"
     val normalizedErrors: String =
         "Read|root/missing.txt|FileNotFoundException\nWrite|root/missing/value.txt|FileNotFoundException\nCreate|root/a.txt|FileAlreadyExistsException"
-end PathSnapshotValues
+end FileSystemSnapshotValues

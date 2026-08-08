@@ -277,24 +277,24 @@ Both pipes accept `maxDepth`, `maxCollectionSize`, and the `ByteSize` parameter 
 Use `Jsonl.read` for a strict file stream and `Jsonl.readResults` for per-record outcomes. The file handle belongs to the enclosing `Scope`:
 
 ```scala
-def load(path: Path): Chunk[Event] < (Async & Abort[FileReadException | DecodeException]) =
+def load(path: Path): Chunk[Event] < (PathRead & Async & Abort[DecodeException]) =
     Scope.run(Jsonl.read[Event](path).run)
 
-def inspect(path: Path): Chunk[Result[DecodeException, Event]] < (Async & Abort[FileReadException]) =
+def inspect(path: Path): Chunk[Result[DecodeException, Event]] < (PathRead & Async) =
     Scope.run(Jsonl.readResults[Event](path).run)
 ```
 
-The exact inferred row for `load` is `Async & Abort[FileReadException | DecodeException]`: `Scope.run` closes the file, `Async` drives the scoped resource lifecycle, and the strict decoder adds its typed failure.
+The exact inferred row for `load` is `PathRead & Async & Abort[DecodeException]`: `PathRead` is the read authority the file needs, which a `Path.run` or `Path.runReadOnly` runner discharges into `Abort[FileSystemException]`; `Scope.run` closes the file, `Async` drives the scoped resource lifecycle, and the strict decoder adds its typed failure.
 
 ### Following live files
 
 Use `Jsonl.follow` to replay a file and continue waiting for appended records. The default `Path.Origin.Start` replays existing data; `Path.Origin.End` waits for new records; `Path.Origin.Offset` resumes from a recorded byte position. `followResults` keeps decode failures in the element type:
 
 ```scala
-def live(path: Path): Stream[Event, Scope & Async & Abort[FileReadException | DecodeException]] =
+def live(path: Path): Stream[Event, PathRead & Scope & Async & Abort[DecodeException]] =
     Jsonl.follow[Event](path, from = Path.Origin.End)
 
-def liveResults(path: Path): Stream[Result[DecodeException, Event], Scope & Async & Abort[FileReadException]] =
+def liveResults(path: Path): Stream[Result[DecodeException, Event], PathRead & Scope & Async] =
     Jsonl.followResults[Event](path)
 ```
 
@@ -325,10 +325,10 @@ Each value determines one record regardless of upstream chunking. An empty strea
 Use `Jsonl.write` to empty or create a file before writing. Use `Jsonl.append` to preserve existing bytes and add records at its current end:
 
 ```scala
-def replace(path: Path, events: Stream[Event, Any]): Unit < (Sync & Abort[FileWriteException]) =
+def replace(path: Path, events: Stream[Event, Any]): Unit < (PathWrite & Sync) =
     Jsonl.write(path, events)
 
-def extend(path: Path, events: Stream[Event, Any]): Unit < (Sync & Abort[FileWriteException]) =
+def extend(path: Path, events: Stream[Event, Any]): Unit < (PathWrite & Sync) =
     Jsonl.append(path, events)
 ```
 
@@ -339,7 +339,7 @@ Both methods write incrementally and preserve the successfully written prefix if
 The same strict read can be named for a higher-level workflow without widening its inferred effects:
 
 ```scala
-def archive(path: Path): Chunk[Event] < (Async & Abort[FileReadException | DecodeException]) =
+def archive(path: Path): Chunk[Event] < (PathRead & Async & Abort[DecodeException]) =
     Scope.run(Jsonl.read[Event](path).run)
 ```
 
