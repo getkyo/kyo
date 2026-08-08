@@ -18,11 +18,11 @@ class BrowserDownloadTest extends BrowserTest:
         label: String,
         samples: Int,
         period: Duration
-    )(using Frame): Unit < (Async & Abort[BrowserAssertionException]) =
+    )(using Frame): Unit < (Async & Abort[BrowserAssertionException | FileSystemException]) =
         Loop(0) { i =>
             if i >= samples then Loop.done(())
             else
-                Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(path.exists)).map {
+                Path.runReadOnly(path.exists).map {
                     case true =>
                         Abort.fail[BrowserAssertionException](
                             BrowserAssertionTimedOutException(
@@ -122,8 +122,8 @@ class BrowserDownloadTest extends BrowserTest:
                 // Inverse poll: loop exits cleanly iff file never landed; Abort.fail = file landed.
                 _ <- assertNeverLands(tempPath / fileName, s"denyDownloads-no-landing-at-$fileName", 10, 50.millis)
                 // Confirm the file is absent after the full poll window (the deny contract was upheld).
-                absent <- Abort.recover[FileSystemException](_ => false)(Path.runReadOnly((tempPath / fileName).exists))
-            yield assert(!absent, s"Expected file to remain absent after denyDownloads but it landed at ${tempPath / fileName}")
+                exists <- Path.runReadOnly((tempPath / fileName).exists)
+            yield assert(!exists, s"Expected file to remain absent after denyDownloads but it landed at ${tempPath / fileName}")
             end for
         }
     }
