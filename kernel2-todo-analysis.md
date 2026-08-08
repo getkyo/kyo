@@ -273,7 +273,7 @@ before/after call sites. It is briefed to assume #18's outcome (context threaded
 drive, no ContextSnapshot) as an interface, not to design it.
 
 ## 14. The `LastResort` boundary carrier
-
+explain the use of LastResort
 - Files: `Pending.scala`, `ArrowEffect.scala`
 - Status: OPEN DISCUSSION. You are not convinced; full context below for your read.
   No implementation until you rule. Track A's design also validates or replaces this
@@ -471,7 +471,7 @@ identically, forever. Candidate fix: hand overflow threads an unregistered `Acti
 design weighs alternatives.
 
 ## 24. Is clearing the preempt flag enough?
-
+do you need to launch opus for this?
 - Files: `internal/Safepoint.scala`
 - Status: input to track A's design (your TODO: "do we have cases where preempted
   clearing wouldn't be enough?").
