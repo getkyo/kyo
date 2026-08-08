@@ -41,24 +41,7 @@ object Effect:
     )(using _frame: Frame): B < (S & S2) =
         val rescue = f.asInstanceOf[Throwable => Any < Any]
         def loop(w: Any < Any, context: Context, handlers: Handlers): Any < Any =
-            def rotated(inner: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-                new ArrowEffect.Rotate(inner, null, null, null, rescue, loop, _frame)
-            w match
-                case c: Kyo.Continue[?, ?, ?] =>
-                    new Kyo.Continue[Any, Any, Any](c.suspend, rotated(c.cont.asInstanceOf[Arrow[Any, Any, Any]]))
-                case s: Kyo.Suspend[?, ?, ?, ?] =>
-                    new Kyo.Continue[Any, Any, Any](s, rotated(Arrow[Any]))
-                case d: Kyo.Defer[?, ?, ?] =>
-                    new Kyo.Defer[Any, Any, Any](d.value.asInstanceOf[Any < Any], rotated(d.cont.asInstanceOf[Arrow[Any, Any, Any]]))
-                case b: Kyo.Bracket[Any, Any, Any] @unchecked =>
-                    new Kyo.Bracket[Any, Any, Any]:
-                        def acquire         = loop(b.acquire, context, handlers)
-                        def release(r: Any) = loop(b.release(r), context, handlers).asInstanceOf[Unit < Any]
-                        def cont            = rotated(b.cont.asInstanceOf[Arrow[Any, Any, Any]])
-                        def frame           = b.frame
-                case w => w
-            end match
-        end loop
+            ArrowEffect.rewrap(w, ArrowEffect.Rotate.guard(_, rescue, loop, _frame), loop, context, handlers)
         try loop(v.asInstanceOf[Any < Any], Context.empty, Handlers.empty).asInstanceOf[B < (S & S2)]
         catch
             case ex if NonFatal(ex) =>

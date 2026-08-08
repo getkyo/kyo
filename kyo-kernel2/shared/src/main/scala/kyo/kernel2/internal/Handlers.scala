@@ -20,7 +20,7 @@ object Handlers:
       * scope, not the operation's, so reads inside it resolve against the bindings outside the handler.
       */
     final private[kyo] class Entry(
-        val handler: Handler.Resume[?, ?, ?, ?, ?, ?],
+        val handler: ResumeHandler[?, ?, ?, ?],
         val entryContext: Context,
         val entryHandlers: Handlers
     )
