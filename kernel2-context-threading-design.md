@@ -251,6 +251,53 @@ With bindings out of the `Handler` hierarchy, dispatch's delimiter search and
 `hasHandler` narrow to operation handlers only, and `Handler.ContextBinding` is
 deleted along with `evalSuspension`'s context arms and `resolveContext`.
 
+## 2.3a OPEN FINDING from the validation round: the flat chain loses binding scope
+
+One suite failure survives the implementation and it is structural, not a test
+detail. The scenario: a binding installed OUTSIDE an operation handler whose
+CLAUSE reads the context:
+
+```scala
+ContextEffect.handle(Tag[Env], 3) {
+    ArrowEffect.handleResume(Tag[CtxOp], program)([C] => _ => env.map(_ * 2))
+}
+```
+
+The old kernel resolves the clause's read to 3: the binding wrapper encloses the
+whole handler, and the clause's parked read resolves through it at the root drive.
+Under the interceptor-prepend encoding the read resolves against the drive's empty
+context and dies as a defect, because the binding interceptor sits mid-chain,
+never executed (the operation parks at the region head before any value flows
+through it), and dispatch grafts the clause result in FRONT of it.
+
+The deeper fact: no dispatch-side rule can repair this, because pure installation
+makes the two scoping cases produce byte-identical chains:
+
+```scala
+handle(Env, 3)(handleResume(...)(program))   // binding outside: clause sees 3
+handleResume(...)(handle(Env, 3)(program))   // binding inside: clause must not
+// both encode as: Continue(op, [binding, steps..., delimiter])
+```
+
+The old kernel distinguishes them by wrapper NESTING, which the flat chain erased.
+Value-flow semantics are correct in both cases; only clause scope needs the
+distinction. Candidate fixes:
+
+1. **Binding as a nesting-preserving node** (recommended): `Bound(inner, binding,
+   cont)`, the old kernel's wrapper made explicit in the node algebra. The drive
+   enters `inner` under the derived context (a nested drive scope with its own
+   context), parks re-wrap the node, dispatch passes through it (an operation
+   inside reaches delimiters in `cont`, and its clause runs under the context
+   OUTSIDE the node: exact old-kernel scoping), and captured continuations
+   re-enter through the node. Faithful; touches the drive and dispatch.
+2. **Entry-interceptor plus exit-marker pairs** in the chain, with a scope-depth
+   walk at dispatch. Keeps the flat chain but the pairing must survive every piece
+   of chain surgery dispatch performs; fragile.
+3. **Prefix-fold at dispatch** (fold ContextBindings found in the captured prefix
+   into the clause context): smallest change, fixes the failing case, but leaks
+   inside-installed bindings into clause scope, a documented divergence from the
+   old kernel in exactly the case the encodings cannot distinguish.
+
 ## 2.4 Drives: who supplies the parameter
 
 1. `evalLoop(v0, mode, context)`: the Defer arm passes it, dispatch closes it into
