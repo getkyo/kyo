@@ -94,24 +94,34 @@ The old kernel's `KyoContinue` re-wrap has an exact kernel2 counterpart already 
 the tree: the `Arrow.Interceptor` re-arm pattern `Effect.Catching` uses
 (`Effect.scala:64-67`: run the region step, and if the output parked, `prepend(this)`
 so later steps stay intercepted). `ContextBinding` becomes such an interceptor and
-stops being a `Handler`:
+stops being a `Handler`. It is fully typed, following the typed-handler rule already
+in force: state stored at the public API's types, `V` and `E` bound as class
+parameters, clauses kept at their real types, no erased `Tag[Any]` and no
+`Maybe[Any] => Any` lambda. `Context`'s accessors are typed against `Tag[E]`, so the
+body needs no casts:
 
 ```scala
-final private[kyo] class ContextBinding(
-    tag: Tag[Any],
-    transform: Maybe[Any] => Any,   // ifUndefined / ifDefined, as today
+final private[kyo] class ContextBinding[V, E <: ContextEffect[V]](
+    effectTag: Tag[E],
+    ifUndefined: () => V,
+    ifDefined: V => V,
     _frame: Frame
 ) extends Arrow.Interceptor:
     def frame = _frame
     def run[C, S2](v: Any, context: Context, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-        val updated =
-            if context.contains(tag) then context.set(tag, transform(Maybe(context.get(tag))))
-            else context.set(tag, transform(Maybe.Absent))
-        cont(Kyo.lift(v), updated) match
+        val value =
+            if context.contains(effectTag) then ifDefined(context.get(effectTag))
+            else ifUndefined()
+        cont(Kyo.lift(v), context.set(effectTag, value)) match
             case kyo: Kyo[?, ?] => kyo.prepend(this).asInstanceOf[C < (Any & S2)]
             case w              => w
 end ContextBinding
 ```
+
+The value positions (`v: Any`, the prepend result cast) are the `Interceptor`
+pass-through contract, identical to `Catching`: on values the arrow is
+identity-typed, which is what justifies `Interceptor.as`. Everything effect-typed
+stays at its real type.
 
 Installation stays pure and moves to the region's ENTRY:
 
