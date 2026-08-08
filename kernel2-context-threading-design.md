@@ -38,6 +38,24 @@ Four facts, cited from the frozen tree, define the shape being ported:
    how IOTask hands the fiber's context in per slice, and its Defer arm answers reads
    with it (`k((), context)`).
 
+5. **The context is re-derived from the root on every bounce, never carried.**
+   `eval`'s loop applies the parked computation with `Context.empty` on EVERY
+   iteration (`Pending.scala:411`), not just the first: the correct context is
+   reconstructed inward each time by the binding wrappers stacked inside the parked
+   value (fact 3). Structural loops thread the received context untouched
+   (`flatten`'s wrapper: `apply(v, context) = flattenLoop(kyo(v, context))`,
+   `Pending.scala:387-388`), and `ArrowEffect.handle`'s unmatched-suspension wrapper
+   refreshes its loop context from each incoming resumption
+   (`apply(v, context) = handleLoop(kyo(v, context), context)`,
+   `ArrowEffect.scala:140-141`). The `Context.empty` at a handle loop's start is
+   therefore only the pre-first-resumption state of an eagerly evaluated handle,
+   and it is safe for a structural reason: handles evaluate bottom-up at
+   construction time, so no outer binding can exist yet, and a read that needs one
+   parks and resolves later at a root drive, threaded through the wrappers
+   installed by then. `Context.empty` originates ONLY at true roots: the bare
+   `eval`, and the absence of a fiber. Everything else receives its context from
+   its caller.
+
 # 2. The mapping onto kernel2
 
 kernel2 executes fused chains (`Arrow.Transform.run` through `Offset.run`) under a
@@ -49,10 +67,9 @@ trampoline (`evalLoop`). The port threads the parameter through exactly those pa
 // Arrow.Transform
 def run[C, S2](v: Any, context: Context, cont: Arrow[B, C, S2]): C < (S & S2)
 
-// Arrow application: canonical form is internal; the public overload is the
-// cold boundary and supplies empty, like the old kernel's bare eval
+// Arrow application: one canonical internal form; the caller always supplies
+// the context it is executing under
 private[kyo] def apply[S2](v: A < S2, context: Context): B < (S & S2)
-def apply[S2](v: A < S2): B < (S & S2) = apply(v, Context.empty)
 ```
 
 `Offset.run`'s fused loop, `guardedRun`, `applySlow`, `empty`, and `segmentBoundary`
@@ -63,6 +80,40 @@ is one extra parameter in registers, the same cost the old kernel carries in eve
 
 The context is never stored in any node, matching the old kernel: it exists in
 flight, and section 2.3's re-arm is what lets updates survive trampoline bounces.
+
+## 2.1a Where the context originates, and why it is never lost
+
+The old kernel's fact 5 becomes the binding rule for every kernel2 site:
+
+1. **The consumers of the parameter are exactly three**: Defer reads (2.2), binding
+   interceptors (2.3), and dispatch resume closures (2.4). All three execute only
+   under a drive. Plain transforms are pure thread-through.
+2. **Every internal execution site passes the context it received.** The fused loop,
+   the trampoline arms, dispatch, and the bracket arms all thread the drive's
+   context. No internal execution path may fabricate `Context.empty`; the greppable
+   invariant is that `Context.empty` appears at the two root drives (`eval`,
+   `evalPartial`) and nowhere else in execution code.
+3. **A drive's context is a constant of the drive.** The old kernel's root loop
+   applies with the same root context on every bounce and lets the in-computation
+   wrappers re-derive the bindings inward; kernel2 is identical: a parked remainder
+   carries its re-armed binding interceptors at its front (2.3), so the drive's
+   plain re-application from its entry context reconstructs the in-scope bindings.
+   Nothing needs the in-flight updated context to survive a bounce, because every
+   bounced remainder re-derives it.
+4. **`handlePartial` never fabricates a context**: it takes one from its caller (the
+   old kernel's exact signature), and the future IOTask passes the fiber's context
+   per slice. A caller with no ambient context passes `Context.empty` because empty
+   IS its ambient, the same way the bare `eval` root does.
+5. **Construction-time (eager) application consumes no context.** The eager value
+   fast path (a `map` on a pure value) can only execute plain transforms: reads and
+   bindings are Kyo nodes or arrive via `prepend` on Kyo nodes, so they park rather
+   than run eagerly. The eager entry therefore passes the inert empty context under
+   the same structural justification as the old kernel's eager handle loops
+   (construction happens bottom-up before any outer binding can exist; anything
+   that needs one parks and resolves under a drive). Raw application of a captured
+   continuation arrow is `private[kyo]` surface with the caller-supplies-context
+   contract; there is no public context-free application that executes under a
+   drive.
 
 ## 2.2 Reads: plain Defers consuming the parameter
 
