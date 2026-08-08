@@ -11,6 +11,9 @@ Working rules (your rulings):
 - ALL changes are confined to kyo-kernel2. Nothing outside the module (kyo-data,
   kyo-kernel, kyo-core, build) is touched without your explicit instruction. Trace is
   deleted; no design or API resurrects it.
+- NEVER execute a command without its output going to a log AND actively watching
+  that log (streaming filter plus a Monitor); no blind runs, ever. A 30-minute
+  recurring reminder enforces this for the session.
 
 Done or closed so far: #2 forwarding methods (`564dc4cc9f`), #5 type parameter naming
 and variance (`9b47ace3af`), #6 eval verb consolidation (`04adb36022`),
@@ -158,6 +161,17 @@ implements with the queue (it slots naturally before #16, which reworks
 `Defer.prepend`).
 
 # Authorized fix queue (mine to execute, no stops)
+
+## 25. `Chunk` instead of `List` (your instruction, new item)
+- Files: `Pending.scala` (finalize family), with two recorded exemptions.
+- The finalize family's `List[Throwable]` results become `Chunk[Throwable]`.
+- Exemption 1, for your review: the chain-walk helpers (`evalOperation`,
+  `resolveContext`, `snapshotContext`) use `List` as transient LIFO stacks
+  (constant-time prepend plus head/tail destructuring, which `Chunk` does not offer);
+  they are internal walk state, not data, and #18 and #3 delete or rework all three.
+  Say "fix" if you want them forced to `Chunk` anyway.
+- Exemption 2: `Isolate.deriveImpl`'s `List[TypeRepr]` is compile-time macro code on
+  the macro API's own types.
 
 ## 7. toString sweep: implemented, suite running.
 ## 8. `(x: Any) match` widenings: next after #7.

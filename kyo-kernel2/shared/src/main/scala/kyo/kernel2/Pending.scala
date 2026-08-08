@@ -98,12 +98,11 @@ object `<`:
 
     extension [A, S](self: A < S)
 
-        // runtime machinery, not user surface: the abandon trigger for a parked computation,
-        // running the finalizers its brackets carry. The scheduler calls it when dropping a
-        // continuation that will never be resumed.
-        // TODO would finalize be more clear?
-        private[kyo] def discard: Unit =
-            discardValue(self) match
+        // runtime machinery, not user surface: runs the finalizers a parked computation's
+        // brackets carry. The scheduler calls it when dropping a continuation that will
+        // never be resumed.
+        private[kyo] def finalizeBracket: Unit =
+            finalizeValue(self) match
                 case Nil => ()
                 case t :: rest =>
                     rest.foreach(t.addSuppressed)
@@ -386,13 +385,13 @@ object `<`:
 
     private inline def BracketDepth = 512
 
-    private def discardValue[A, S](v: A < S): List[Throwable] =
+    private def finalizeValue[A, S](v: A < S): List[Throwable] =
         v match
-            case kyo: Kyo.Continue[?, ?, ?] => discardArrow(kyo.cont)
-            case kyo: Kyo.Defer[?, ?, ?]    => discardArrow(kyo.cont)
+            case kyo: Kyo.Continue[?, ?, ?] => finalizeArrow(kyo.cont)
+            case kyo: Kyo.Defer[?, ?, ?]    => finalizeArrow(kyo.cont)
             case _                          => Nil
 
-    private def discardArrow(arrow: Any): List[Throwable] =
+    private def finalizeArrow(arrow: Any): List[Throwable] =
         arrow match
             case finalize: Finalize[?, ?, ?] =>
                 try
@@ -403,19 +402,19 @@ object `<`:
                         KyoException.attach(t, "release", finalize.bracket.frame)
                         t :: Nil
             case o: Arrow.Offset[Any, Any, Any, Any] @unchecked =>
-                discardChain(o)
+                finalizeChain(o)
             case at: Arrow.AndThen[?, ?, ?, ?] =>
-                discardArrow(at.a) ++ discardArrow(at.b)
+                finalizeArrow(at.a) ++ finalizeArrow(at.b)
             case _ =>
                 Nil
 
-    private def discardChain(o: Arrow.Offset[Any, Any, Any, Any]): List[Throwable] =
+    private def finalizeChain(o: Arrow.Offset[Any, Any, Any, Any]): List[Throwable] =
         @tailrec def loop(cur: Any, errors: List[Throwable]): List[Throwable] =
             cur match
-                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(o.next, errors ++ discardArrow(o.head))
+                case o: Arrow.Offset[Any, Any, Any, Any] @unchecked => loop(o.next, errors ++ finalizeArrow(o.head))
                 case _                                              => errors
         loop(o, Nil)
-    end discardChain
+    end finalizeChain
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
         val lifted = liftSlow(v)
