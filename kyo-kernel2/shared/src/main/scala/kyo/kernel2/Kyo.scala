@@ -12,10 +12,12 @@ import scala.annotation.targetName
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
+// TODO this is meant as internal
 sealed abstract class Kyo[+A, -S]:
     private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
     private[kyo] def prepend(f: Arrow[Any, Any, Any]): A < S
 
+// TODO this should be in the kyo package
 object Kyo:
 
     /** Lifts a value into the effect context without suspension, including nested computations: a value that is itself a computation

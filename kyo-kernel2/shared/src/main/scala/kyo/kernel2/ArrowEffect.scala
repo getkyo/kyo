@@ -250,7 +250,7 @@ object ArrowEffect:
       * scheduler integration point: a task drives its computation handling the runtime's own effect here, parks on `Absent`, and re-enters
       * with the same clause on the next slice. Preemption polls on the same cadence as the plain drive.
       */
-    def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    private[kyo] def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](
         effectTag: Tag[E],
         v: A < (E & S),
         preempt: () => Boolean = `<`.neverPreempt,

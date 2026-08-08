@@ -24,8 +24,7 @@ object Arrow:
       * the caller's own bytecode, where the receiver profile is private to that site.
       * Mid is the intermediate type between head and next; callers never name it.
       */
-    // TODO why isn't this private[kyo]
-    sealed trait Step[-A, +B, -S]:
+    sealed private[kyo] trait Step[-A, +B, -S]:
         type Mid
         def head: Transform[A, Mid, S]
         def next: Arrow[Mid, B, S]
@@ -171,7 +170,7 @@ object Arrow:
           * decomposes by identity; a composition is optimized first; a lone
           * transform is wrapped in a fresh node.
           */
-        inline def step: Maybe[Step[A, B, S]] =
+        private[kyo] inline def step: Maybe[Step[A, B, S]] =
             self match
                 case o: Offset[Any, Any, Any, Any] @unchecked =>
                     Maybe(o.asInstanceOf[Step[A, B, S]])
