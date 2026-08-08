@@ -461,6 +461,67 @@ object Path extends PathPlatformSpecific:
         def remove()(using AllowUnsafe): Unit
     end TempDirHandle
 
+    /** A Scope-managed positioned read capability into an open file.
+      *
+      * Reads use absolute offsets and never advance an implicit cursor, so independent callers may
+      * safely choose their own positions. A read may return fewer bytes than requested at end of
+      * file. The capability intentionally has no mutation surface.
+      *
+      * The [[Scope]] active during acquisition owns the underlying resource. Operations after its
+      * exit fail through [[FileReadException]].
+      *
+      * @tparam S the backend's own effect
+      */
+    trait ReadChannel[S]:
+        /** Reads up to `length` bytes at absolute offset `position`. Tolerates short reads: the
+          * returned `Span`'s length is less than `length` when `position + length` exceeds the file's
+          * current size.
+          */
+        def readAt(position: Long, length: Int)(using Frame): Span[Byte] < (S & Abort[FileReadException])
+
+        /** Returns the channel's current view of length. */
+        def size(using Frame): Long < (S & Abort[FileReadException])
+    end ReadChannel
+
+    /** A Scope-managed positioned write capability into an open file.
+      *
+      * Writes use absolute offsets and zero-fill a gap beyond the current end. Truncation and
+      * explicit synchronization are available, while reads and size inspection are intentionally
+      * absent from this capability.
+      *
+      * The [[Scope]] active during acquisition owns the underlying resource. Operations after its
+      * exit fail through [[FileWriteException]].
+      *
+      * @tparam S the backend's own effect
+      */
+    trait WriteChannel[S]:
+        /** Writes `bytes` at absolute offset `position`. A gap between the channel's current length
+          * and `position` is zero-filled.
+          */
+        def writeAt(position: Long, bytes: Span[Byte])(using Frame): Unit < (S & Abort[FileWriteException])
+
+        /** Persists prior writes, optionally including file metadata. */
+        def sync(metadata: Boolean)(using Frame): Unit < (S & Abort[FileWriteException])
+
+        /** Truncates the channel's target to `size`, discarding trailing bytes when `size` is
+          * smaller than the current length.
+          */
+        def truncate(size: Long)(using Frame): Unit < (S & Abort[FileWriteException])
+    end WriteChannel
+
+    /** A Scope-managed channel combining positioned read and write capabilities.
+      *
+      * This is the capability for algorithms that need to inspect and mutate the same open file.
+      * It preserves the precise read and write failure rows of its two parent capabilities rather
+      * than widening every operation to a common filesystem error.
+      *
+      * The [[Scope]] active during acquisition owns the underlying resource. There is no explicit
+      * close operation on the public channel.
+      *
+      * @tparam S the backend's own effect
+      */
+    trait ReadWriteChannel[S] extends ReadChannel[S] with WriteChannel[S]
+
     // --- Safe extension methods ---
 
     extension (self: Path)
@@ -1288,6 +1349,18 @@ object Path extends PathPlatformSpecific:
         /** Opens a write handle for streaming byte or string output. The caller must close the handle via `Scope.acquireRelease`. */
         def openWrite(append: Boolean, options: WriteOptions)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle]
 
+        // --- Positioned channel (abstract -- platform provides the concrete channel) ---
+
+        private[kyo] def openReadChannelRaw()(using AllowUnsafe, Frame): Result[FileReadException, Path.RawChannel]
+        private[kyo] def openWriteChannelRaw(open: FileSystem.WriteOpen)(using
+            AllowUnsafe,
+            Frame
+        ): Result[FileWriteException | FileStructureException, Path.RawChannel]
+        private[kyo] def openReadWriteChannelRaw(open: FileSystem.WriteOpen)(using
+            AllowUnsafe,
+            Frame
+        ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel]
+
         /** Lifts this `Unsafe` value back into the safe `Path` opaque type. */
         def safe: Path = this
 
@@ -1422,5 +1495,39 @@ object Path extends PathPlatformSpecific:
         /** Closes the walker, releasing all OS resources. */
         def close()(using AllowUnsafe): Unit
     end WalkHandle
+
+    // --- Raw channel -- platform-provided positioned I/O backing typed channels ---
+
+    private[kyo] enum RawChannelAccess derives CanEqual:
+        case Read
+        case Write(open: FileSystem.WriteOpen)
+        case ReadWrite(open: FileSystem.WriteOpen)
+    end RawChannelAccess
+
+    /** A raw positioned-I/O channel returned by the private unsafe acquisition methods. Platform
+      * implementations provide the concrete class; `FileSystem` backends wrap it as the
+      * public typed channel capabilities.
+      */
+    abstract private[kyo] class RawChannel:
+        /** Reads up to `len` bytes at absolute offset `pos`. Returns fewer bytes than `len`
+          * on a short read.
+          */
+        def readAt(pos: Long, len: Int)(using AllowUnsafe, Frame): Result[FileReadException, Array[Byte]]
+
+        /** Writes `bytes` at absolute offset `pos`. */
+        def writeAt(pos: Long, bytes: Array[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+
+        /** Durably persists every prior `writeAt` call on this channel. */
+        def sync(metadata: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+
+        /** Truncates the channel's target to `size`. */
+        def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+
+        /** Returns the channel's current view of length. */
+        def size()(using AllowUnsafe, Frame): Result[FileReadException, Long]
+
+        /** Closes the channel, releasing all OS resources. */
+        def close()(using AllowUnsafe): Unit
+    end RawChannel
 
 end Path
