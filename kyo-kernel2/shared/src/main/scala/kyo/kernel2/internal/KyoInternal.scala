@@ -19,6 +19,12 @@ object Kyo:
             case n: Nested[?] => n.value
             case _            => v
 
+    /** Reads a value the caller has proven settled: dispatch already excluded the pending cases, so what remains is the value,
+      * possibly in its Nested box. The one cast is this seam; call sites stay cast free.
+      */
+    inline def settled[A, S](v: A < S): A =
+        unnest(v).asInstanceOf[A]
+
     // a case class so re-wrapping at pass-through positions preserves value equality
     final private[kyo] case class Nested[+A](value: A)
 

@@ -76,7 +76,7 @@ object Arrow:
         override def toString = internal.render(this, internal.RenderDepth)
     end Step
 
-    private val empty = new Transform[Any, Any, Any]:
+    @publicInBinary private[Arrow] val empty = new Transform[Any, Any, Any]:
         def frame = Frame.internal
         def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
             // the central lift, not a cast: a raw value that is itself a computation must
@@ -124,7 +124,7 @@ object Arrow:
                 Kyo.Defer(v, self)
     end applySlow
 
-    private[kyo] def stepSlow[A, B, S](self: Arrow[A, B, S]): Maybe[Step[A, ?, B, S]] =
+    @publicInBinary private[kyo] def stepSlow[A, B, S](self: Arrow[A, B, S]): Maybe[Step[A, ?, B, S]] =
         self match
             case at: AndThen[?, ?, ?, ?] =>
                 self.optimize.step

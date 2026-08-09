@@ -20,9 +20,9 @@ object Context:
     val empty: Context = Map.empty
 
     extension (self: Context)
-        def isEmpty = self eq empty
+        private[kyo] def isEmpty: Boolean = self eq empty
 
-        def contains[E <: (ContextEffect[?] | NoninheritableFlag)](tag: Tag[E]): Boolean =
+        private[kyo] def contains[E <: (ContextEffect[?] | NoninheritableFlag)](tag: Tag[E]): Boolean =
             self.contains(tag.erased)
 
         /** Creates a new context for crossing computational boundaries.
@@ -30,14 +30,14 @@ object Context:
           * Uses the NoninheritableFlag to efficiently determine if filtering is needed without scanning the entire context. Only filters
           * out noninheritable effects if the flag is present.
           */
-        def inherit: Context =
+        private[kyo] def inherit: Context =
             if !contains(Tag[NoninheritableFlag]) then self
             else
                 self.filterNot { (k, _) =>
                     k <:< Tag[NoninheritableFlag] || k <:< Tag[ContextEffect.Noninheritable]
                 }
 
-        inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
+        private[kyo] inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
             if !contains(tag) then default
             else self(tag.erased).asInstanceOf[B]
 

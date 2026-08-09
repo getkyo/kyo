@@ -64,7 +64,7 @@ abstract class Implicits private[kernel2] ():
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asString(value: APendingS): String = value match
             case sus: Kyo[?, ?] => sus.toString
-            case _              => s"Kyo(${ra.asString(Kyo.unnest(value).asInstanceOf[A])})"
+            case _              => s"Kyo(${ra.asString(Kyo.settled[A, S](value))})"
     end given
 
 end Implicits

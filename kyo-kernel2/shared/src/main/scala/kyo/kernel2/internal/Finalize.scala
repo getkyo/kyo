@@ -19,11 +19,11 @@ end Finalize
 private[kyo] object Finalize:
 
     private def yieldValue[A](v: A): Arrow[Unit, A, Any] =
-        val lifted = LiftMacro.defaultLift(v)
+        val lifted = LiftMacro.defaultLift[A, Any](v)
         new Arrow.Transform[Unit, A, Any]:
             def frame = Frame.internal
             def run[C, S2](x: Unit, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (Any & S2) =
-                cont(lifted.asInstanceOf[A < Any], context, handlers)
+                cont(lifted, context, handlers)
         end new
     end yieldValue
 
@@ -42,8 +42,10 @@ private[kyo] object Finalize:
                         def acquire         = r
                         def release(x: Any) = bracket.release(x)
                         def cont            = bracket.cont
-                        def frame =
-                            bracket.frame
+                        def frame           = bracket.frame
+                        // the resumption value is the resource: nothing left to fold
+                        override private[kyo] def settled =
+                            true
                     ,
                     context,
                     handlers

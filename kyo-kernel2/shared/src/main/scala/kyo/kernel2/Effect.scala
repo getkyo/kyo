@@ -97,6 +97,5 @@ object Effect:
             def release(r: R) = releaseF(r)
             def cont          = useArrow
             def frame         = _frame
-        .asInstanceOf[A < S]
 
 end Effect

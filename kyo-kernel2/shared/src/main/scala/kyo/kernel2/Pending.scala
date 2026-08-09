@@ -241,7 +241,7 @@ object `<` extends Implicits:
         private[kyo] inline def evalNow: Maybe[A] =
             self match
                 case _: Kyo[?, ?] => Maybe.empty
-                case v            => Maybe(Kyo.unnest(v).asInstanceOf[A])
+                case v            => Maybe(Kyo.settled(v))
 
     end extension
 
@@ -264,7 +264,7 @@ object `<` extends Implicits:
                 Eval.evalLoop(self.asInstanceOf[Any < Any], Eval.Masked, Context.empty, Handlers.empty) match
                     case pending: Kyo[?, ?] => kyo.bug.failTag(pending.asInstanceOf[Any < Any], Tag[Any])
                     case v                  => Kyo.unnest(v).asInstanceOf[A]
-            else Kyo.unnest(self).asInstanceOf[A]
+            else Kyo.settled(self)
 
         /** Evaluates until the computation completes or a preemption request is consumed, returning the remainder.
           *

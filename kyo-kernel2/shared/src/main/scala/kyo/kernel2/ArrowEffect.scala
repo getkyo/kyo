@@ -480,7 +480,7 @@ object ArrowEffect:
                         handlers
                     )
                 case v =>
-                    done(Kyo.unnest(v).asInstanceOf[A])
+                    done(Kyo.settled(v))
             end match
         end loop
         traced(frame)(loop(v, Context.empty, Handlers.empty, Handlers.empty))
@@ -583,7 +583,7 @@ object ArrowEffect:
                         handlers
                     )
                 case v =>
-                    done(state, Kyo.unnest(v).asInstanceOf[A])
+                    done(state, Kyo.settled(v))
             end match
         end loop
         traced(frame)(loop(state, v, Context.empty, Handlers.empty, Handlers.empty))

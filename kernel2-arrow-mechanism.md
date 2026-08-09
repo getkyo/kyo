@@ -3,9 +3,9 @@
 This document explains how `Arrow` works in kyo-kernel2: what the node kinds
 are, how composition builds trees, how `optimize` turns trees into executable
 chains, how application dispatches, and where `SmallLimit` and the segment
-boundaries fit. It ends with direct answers to the three questions currently
-annotated in the source (`respine` naming, the `optimize` strategy choice,
-and `Maybe(self)` in `step`).
+boundaries fit. It ends with the three questions that were annotated in the
+source and how each was resolved (the `respine` rename, the `optimize`
+strategy shape, and `Maybe(self)` in `step`).
 
 ## 1. The four shapes of an arrow
 
@@ -27,11 +27,11 @@ final private[kyo] class AndThen[-A, B, +C, -S](
     val b: Arrow[B, C, S]
 ) extends Arrow[A, C, S]
 
-// a pre-linked chain node: a Transform AND the Step handle for its own position
-final class Offset[-A, B, +C, -S] private[kyo] (
+// the pre-linked chain node and the decomposition handle in one
+final class Step[-A, B, +C, -S] private[kyo] (
     val head: Transform[A, B, S],
     val next: Arrow[B, C, S]
-) extends Transform[A, C, S], Step[A, C, S]
+) extends Transform[A, C, S]
 ```
 
 `Transform.run` takes the continuation as a parameter (`cont`) instead of
@@ -59,37 +59,41 @@ real is appended.
 
 ## 3. optimize: from tree to chain
 
-Execution wants a linked list of transforms, head first: `Offset(t1,
-Offset(t2, Offset(t3, empty)))`. `optimize` converts the `AndThen` tree into
+Execution wants a linked list of transforms, head first: `Step(t1,
+Step(t2, Step(t3, empty)))`. `optimize` converts the `AndThen` tree into
 exactly that, choosing between two strategies by size:
 
 ```scala
 self match
     case at: AndThen[?, ?, ?, ?] =>
-        if count(at, 0) > 0 then respine(at, empty)
+        if fits(at, 2 * internal.SmallLimit) >= 0 then linearize(at, empty)
         else unfold(at)
     case _ =>
         self
 ```
 
-`count` is a bounded scan: it walks the tree adding up leaves, and abandons
-with `-1` the moment the total or the depth passes `SmallLimit` (32). Its
-cost is therefore capped at about 32 nodes no matter how large the tree is.
+`fits` is a bounded scan with one number: the remaining node budget, or `-1`
+once exhausted. It decrements on every node, interior or leaf, so the walk
+and its recursion depth are bounded even on a deep left spine, where the
+first leaf appears only after the full descent. A chain of n transforms has
+2n-1 nodes, so the doubled limit keeps the leaf capacity at `SmallLimit`
+(32), and the scan's cost is capped no matter how large the tree is.
 
-**Small trees** go through `respine`: a direct recursion that rebuilds the
+**Small trees** go through `linearize`: a direct recursion that rebuilds the
 tree as a right-leaning chain.
 
 ```scala
-def respine(node: Arrow[?, ?, ?], rest: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+def linearize(node: Arrow[?, ?, ?], rest: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
     node match
         case at: AndThen[?, ?, ?, ?] =>
-            respine(at.a, respine(at.b, rest))
+            linearize(at.a, linearize(at.b, rest))
         case t =>
-            new Offset(t.asInstanceOf[Transform[Any, Any, Any]], rest)
+            new Step(t.asInstanceOf[Transform[Any, Any, Any]], rest)
 ```
 
-Recursion depth is bounded by the tree size, which `count` just proved is at
-most 32, so the stack is safe and no auxiliary structure is needed.
+Recursion depth is bounded by the tree size, which `fits` just proved is at
+most 32 transforms, so the stack is safe and no auxiliary structure is
+needed.
 
 **Large trees** go through `unfold`: an explicit thread-local buffer flattens
 the tree without recursion (the tree can be arbitrarily deep, so recursing
@@ -100,8 +104,8 @@ over it could overflow), and the chain is relinked back to front with a
 @tailrec def link(acc: Arrow[Any, Any, Any], n: Int): Arrow[Any, Any, Any] =
     if !it.hasNext then acc
     else if n == Safepoint.Period then
-        link(new Offset(segmentBoundary, acc), 0)
-    else link(new Offset(it.next().asInstanceOf[Transform[Any, Any, Any]], acc), n + 1)
+        link(new Step(segmentBoundary, acc), 0)
+    else link(new Step(it.next().asInstanceOf[Transform[Any, Any, Any]], acc), n + 1)
 ```
 
 The boundary is the stack-safety valve for long chains:
@@ -135,7 +139,7 @@ def apply[S2](v: A < S2, context: Context, handlers: Handlers): B < (S & S2) =
         ...
     else
         self match
-            case o: Offset[Any, Any, Any, Any] @unchecked =>
+            case o: Step[Any, Any, Any, Any] @unchecked =>
                 o.head.run(Kyo.unnest(v), context, handlers, o.next).asInstanceOf[B < (S & S2)]
             case t: Transform[A, B, S] @unchecked =>
                 guardedRun(t, v, context, handlers)
@@ -151,13 +155,13 @@ applied, so trees normalize exactly once, at first execution.
 
 ## 5. The fused interior
 
-`Offset.run` is where a chain executes as a loop. One stack frame drives the
+`Step.run` is where a chain executes as a loop. One stack frame drives the
 whole segment:
 
 ```scala
-@tailrec def loop(o: Offset[Any, Any, Any, Any], cur: Any): Any =
+@tailrec def loop(o: Step[Any, Any, Any, Any], cur: Any): Any =
     o.head match
-        case jump: Offset[Any, Any, Any, Any] @unchecked if isEmpty(o.next) =>
+        case jump: Step[Any, Any, Any, Any] @unchecked if isEmpty(o.next) =>
             loop(jump, cur)
         case t =>
             val w =
@@ -167,7 +171,7 @@ whole segment:
                 o.next.map(k)(w.asInstanceOf[Any < Any], context, handlers)
             else
                 o.next match
-                    case n: Offset[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unnest(w))
+                    case n: Step[Any, Any, Any, Any] @unchecked => loop(n, Kyo.unnest(w))
                     case _ => k(Kyo.unnest(w).asInstanceOf[Any < Any], context, handlers)
 ```
 
@@ -183,20 +187,17 @@ handed back to a pending position.
 ## 6. Step: decomposing instead of running
 
 Some callers do not want the arrow to run itself; they want to execute the
-first step in their own bytecode and keep the rest as a value. That is the
-`Step` view:
+first step in their own bytecode and keep the rest as a value. The `Step`
+node is that view of itself: `head` is the first executable transform,
+`next` the rest of the chain, and the middle type connecting them is the
+class's second type parameter, existential to the caller
+(`Maybe[Step[A, ?, B, S]]`).
 
-```scala
-sealed trait Step[-A, +B, -S]:
-    type Mid
-    def head: Transform[A, Mid, S]
-    def next: Arrow[Mid, B, S]
-```
-
-`step` produces it: an `Offset` is its own `Step` by identity, an `AndThen`
+`step` produces it: a `Step` is its own decomposition, an `AndThen`
 optimizes first, a lone transform gets wrapped once, and the identity has no
-step. This is the resume protocol used at the scheduler boundary: a parked
-continuation is re-entered by running `s.head.run(input, ..., s.next)`.
+step (`Absent`). This is the resume protocol used at the scheduler boundary:
+a parked continuation is re-entered by running
+`s.head.run(input, ..., s.next)`.
 
 ## 7. The guard
 
@@ -224,39 +225,39 @@ transform applications.
 ## 8. The two constants
 
 - `SmallLimit = 32`: the threshold between the recursive and the buffered
-  normalization strategies in `optimize`, and the cap on `count`'s work. A
-  chain at most this long cannot overflow the stack during `respine` and is
-  short enough that boundary splicing is unnecessary: depth is bounded by the
-  chain's own length.
+  normalization strategies in `optimize` (`fits` receives it doubled, since
+  its budget counts every node and a chain of n transforms has 2n-1). A
+  chain at most this long cannot overflow the stack during `linearize` and
+  is short enough that boundary splicing is unnecessary: depth is bounded by
+  the chain's own length.
 - `Safepoint.Period`: the boundary cadence in long chains. Every `Period`
   transforms, one boundary node returns to the trampoline. Between
   boundaries, zero checks.
 
 ## 9. Answers to the annotated questions
 
-**`respine` naming (`optimize`, first inner method).** It rebuilds the spine
-of the tree as a chain, which the name says, but it is a coined word.
-Candidate replacements, for you to pick from: `relink` (it produces the
-linked form), `chainOf` (it returns the chain of a tree), or folding it away
-by making `unfold` handle both sizes (see next answer). No rename applied;
-your call.
+**`respine` naming (`optimize`, first inner method).** Resolved: renamed to
+`linearize`, per the in-code request for a more intuitive name. It converts
+the composition tree into the linear executable chain, which is the standard
+word for exactly that.
 
 **"This logic seems quite complex, is it well optimized? should the count be
 discarded after the check? can't it optimize something later?" (`optimize`,
 strategy choice).** Three parts:
 
-- The complexity is real but each piece is load-bearing: `count` exists so
-  `respine` can recurse safely (its depth is proven bounded before it runs),
-  and `respine` exists because for the common case (short chains) it beats
-  `unfold`, which pays for a thread-local lookup, buffer traffic, and the
-  boundary bookkeeping that short chains do not need.
-- The count is discarded, and that is a real, small waste: the information
-  that could be reused is only the size, and the chain builders do not need
-  it. The alternative is giving `respine` a depth budget and letting it bail
-  out to `unfold` mid-recursion when it passes 32, which merges the two
-  passes (no separate count walk) at the price of possibly redoing up to 32
-  nodes on the bail path. That is a measurable micro-optimization for the
-  eagerMap-shaped rows; it is not implemented, listed as an open option.
+- The complexity is real but each piece is load-bearing: the bounded scan
+  exists so `linearize` can recurse safely (its depth is proven bounded
+  before it runs), and `linearize` exists because for the common case (short
+  chains) it beats `unfold`, which pays for a thread-local lookup, buffer
+  traffic, and the boundary bookkeeping that short chains do not need.
+- Resolved: the old `count` computed a full size and used only its sign; it
+  is now `fits`, a single remaining-budget number that is the bound itself,
+  so nothing is computed and discarded. One caution learned landing it: the
+  budget must decrement on every node, not only at leaves, because a deep
+  left spine descends fully before its first leaf; a leaf-only budget hung
+  the deep-resumed-continuation test until the walk itself was bounded.
+  Merging the scan into `linearize` as a bail-to-`unfold` mid-recursion
+  remains a possible micro-optimization, unimplemented.
 - "Can't it optimize something later": normalization is already deferred to
   first execution (`applySlow` calls `optimize` when an `AndThen` is first
   applied), and the result replaces nothing in place: an arrow held by two
