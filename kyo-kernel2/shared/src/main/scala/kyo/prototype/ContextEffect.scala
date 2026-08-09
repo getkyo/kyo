@@ -28,9 +28,9 @@ object ContextEffect:
                 case v =>
                     v.asInstanceOf[B < S]
         val sp    = Safepoint.get
-        val saved = sp.openDrive()
+        val saved = sp.save()
         try loop(v)
-        finally sp.closeDrive(saved)
+        finally sp.restore(saved)
     end handle
 
 end ContextEffect

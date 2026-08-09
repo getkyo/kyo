@@ -1,6 +1,7 @@
 package kyo.prototype
 
 import kyo.Frame
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 
@@ -15,44 +16,51 @@ object `<`:
 
     extension [A, S](self: A < S)
 
-        def map[B, S2](f: A => B < S2)(using frame: Frame): B < (S & S2) =
+        @nowarn("msg=anonymous")
+        inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+            val step =
+                new Arrow.Transform[A, B, S2]:
+                    def frame                                           = _frame
+                    def run(v: A, context: Context, handlers: Handlers) = f(v)
             self match
-                case kyo: Kyo[A, S] @unchecked => kyo.append(Arrow.lift(f))
-                case v                         => new Kyo.Defer(v.asInstanceOf[A < S], Arrow.lift(f))
+                case kyo: Kyo[A, S] @unchecked => kyo.append(step)
+                case v                         => new Kyo.Defer(v.asInstanceOf[A < S], step)
+            end match
+        end map
 
-        def flatMap[B, S2](f: A => B < S2)(using frame: Frame): B < (S & S2) =
+        inline def flatMap[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(f)
 
-        def andThen[B, S2](v: => B < S2)(using frame: Frame): B < (S & S2) =
-            map(_ => v)
+        inline def andThen[B, S2](inline next: => B < S2)(using inline frame: Frame): B < (S & S2) =
+            map(_ => next)
 
         def eval(using S =:= Any): A =
-            drive(self.asInstanceOf[A < Any], never) match
+            evalLoop(self.asInstanceOf[A < Any], never) match
                 case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
                 case v              => Kyo.unnest(v).asInstanceOf[A]
 
         def evalPartial(stop: () => Boolean): A < S =
-            drive(self.asInstanceOf[A < Any], stop).asInstanceOf[A < S]
+            evalLoop(self.asInstanceOf[A < Any], stop).asInstanceOf[A < S]
 
     end extension
 
     private val never: () => Boolean = () => false
 
-    private def drive[A](v: A < Any, stop: () => Boolean): A < Any =
+    private def evalLoop[A](v: A < Any, stop: () => Boolean): A < Any =
         val sp    = Safepoint.get
-        val saved = sp.openDrive()
-        try driveLoop(v, stop)
-        finally sp.closeDrive(saved)
-    end drive
+        val saved = sp.save()
+        try loop(v, stop)
+        finally sp.restore(saved)
+    end evalLoop
 
     @tailrec
-    private def driveLoop[A](v: A < Any, stop: () => Boolean): A < Any =
+    private def loop[A](v: A < Any, stop: () => Boolean): A < Any =
         if stop() then v
         else
             v match
                 case kyo: Kyo.Defer[?, ?, ?] =>
                     val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
-                    driveLoop(defer.cont(defer.value, Context.empty, Handlers.empty), stop)
+                    loop(defer.cont(defer.value, Context.empty, Handlers.empty), stop)
                 case v =>
                     v
 end `<`

@@ -12,13 +12,13 @@ final class Safepoint:
     def exit(): Unit =
         depth -= 1
 
-    private[prototype] def openDrive(): Int =
+    private[prototype] def save(): Int =
         val d = depth
         depth = 0
         d
-    end openDrive
+    end save
 
-    private[prototype] def closeDrive(saved: Int): Unit =
+    private[prototype] def restore(saved: Int): Unit =
         depth = saved
 end Safepoint
 
