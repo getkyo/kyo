@@ -313,3 +313,19 @@ pre-reorg commit through the same pipeline, so the reorg is exonerated. The
 bistable protocol list is now: contextRead100 {19,240 | 20,824 +- 32},
 stateMap10k {3,111,843 +- 16 | 3,591,883}, loopSuspend1k
 {150,008 | 163,960}, deepStop1k {22,232 | 22,248}.
+
+
+# Migration round, step 2: kyo-prelude compiles on the new kernel
+
+All nineteen prelude sources compile against the reorganized kernel2, on
+JVM, JS, and Native. The 345-error wall was package resolution; the real
+API deltas were exactly two, both known in advance: handleCatching gained
+the old kernel's accept input filter (deferred in the encodings round "to
+the effect that needs it", which is Abort: an operation the filter rejects
+crosses the handler structurally like a foreign effect, reaching outer
+handlers), and Debug.trace was rewritten from Safepoint interceptors onto
+Observe, the mechanism built for it. The dotty 3.8.4 scanner crash that
+masked the diagnostics (NPE in observeOutdented while rendering errors
+inside inlined code) disappeared with the errors themselves. Prelude's
+tests are structurally blocked like kernel2's, and the deterministic board
+is at reference after the change.

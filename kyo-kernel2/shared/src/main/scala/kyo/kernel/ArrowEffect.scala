@@ -620,9 +620,38 @@ object ArrowEffect:
     )(
         handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
         done: A => B < S3 = (v: A) => v,
+        accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true,
         recover: Throwable => B < (S & S2 & S3)
     )(using frame: Frame): B < (S & S2 & S3) =
-        Effect.catching(ArrowEffect.handle[I, O, E, A, S, S2](effectTag, v)(handle).map(done))(recover)
+        // the ctl loop with the accept input filter on the matched arm: an operation of E the
+        // filter rejects is not handled here, so it crosses this handler structurally through
+        // the rotation, exactly like a foreign effect, and outer handlers see it
+        def loop(v: A < (E & S & S2), context: Context, handlers: Handlers, masked: Handlers): A < (S & S2) =
+            v match
+                case s: Kyo.Suspend[I, O, E, x, A, E & S & S2] @unchecked if effectTag.erased <:< s.erasedTag && accept(s.input) =>
+                    val k      = s.cont
+                    val resume = (o: O[x]) => k(defaultLift(o), context, masked)
+                    loop(handle[x](s.input, resume), context, handlers, masked)
+                case k: Kyo[A, E & S & S2] @unchecked =>
+                    rotate(
+                        k,
+                        [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.masked(chain, effectTag.erased, loop, frame),
+                        (w, c, hs) =>
+                            loop(
+                                w,
+                                c,
+                                hs,
+                                if hs.resolve(effectTag.erased).isEmpty then hs else hs.add(new Handlers.Entry.Shadow(effectTag.erased))
+                            ),
+                        context,
+                        handlers
+                    )
+                case v =>
+                    v.asInstanceOf[A < (S & S2)]
+            end match
+        end loop
+        Effect.catching(loop(v, Context.empty, Handlers.empty, Handlers.empty).map(done))(recover)
+    end handleCatching
 
     /** Drives the computation, interpreting unmatched operations of `E` outside it (the runtime boundary).
       *

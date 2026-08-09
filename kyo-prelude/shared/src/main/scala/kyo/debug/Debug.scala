@@ -4,7 +4,7 @@ import kyo.*
 import kyo.Ansi.*
 import kyo.Result.Error
 import kyo.kernel.Effect
-import kyo.kernel.internal.Safepoint
+import kyo.kernel.Observe
 import scala.collection.mutable.LinkedHashMap
 import scala.language.implicitConversions
 import scala.quoted.*
@@ -46,31 +46,25 @@ object Debug:
       *   The original effect with tracing applied
       */
     def trace[A, S](v: => A < S)(using Frame): A < S =
-        val interceptor = new Safepoint.Interceptor:
-            var lastFrame = Frame.internal
-            var lastValue = Maybe.empty[Any]
-            def enter(frame: Frame, value: Any): Boolean =
+        var lastFrame = Frame.internal
+        var lastValue = Maybe.empty[Any]
+        val observed =
+            Observe { (frame, value) =>
                 if frame ne lastFrame then
                     lastValue.foreach(printValue)
                     println(frame.render)
                     lastFrame = frame
                 end if
                 lastValue = Present(value)
-                true
-            end enter
-            def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = ()
-            def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = ()
-
-        Safepoint.propagating(interceptor) {
-            Effect.catching {
-                v.map { value =>
-                    printValue(value)
-                    value
-                }
-            } { ex =>
-                printValue(ex)
-                throw ex
+            }(v)
+        Effect.catching {
+            observed.map { value =>
+                printValue(value)
+                value
             }
+        } { ex =>
+            printValue(ex)
+            throw ex
         }
     end trace
 
