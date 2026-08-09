@@ -192,3 +192,54 @@ array-backed carrier round owns the read path). Open items from the design:
 the miss-path mitigations gated on foreignBubbleUnderStop, entry-kind int
 dispatch, boundary stop entries for handlePartial, and the resume entry
 self-extension.
+
+
+# Regression round: closed
+
+The order was to fix every regression on the board. Outcome per row:
+
+- state10: fixed. The ctl/first/loop formats allocated their shadow entry
+  eagerly per handle call; Rotate.masked and the rewrap adapters now take the
+  tag and mint the entry only when an outer same-tag entry is visible. Back
+  to 1,040 B/op exactly, time flat (ac5dd6968b).
+- contextRead100: the encodings-era 24.0-25.6KB readings were a mode that no
+  longer exists. Cause: the encodings grew rotate past the JIT inlining
+  threshold with the bracket rebuild machinery, costing callers the escape
+  analysis of their per-rotation closures. Extracting the bracket arm into
+  rotateBracket (b3c8f610bb) removed that mode. What remains is a per-fork
+  bistability {19,240 | 20,824 B/op} that is byte-identical at the
+  pre-encoding commit (15/10 iteration split on both, five clean forks each):
+  inherited, not introduced.
+- stateMap10k: per-fork bistable {3,111,843+-16 | 3,591,883 B/op}, exactly
+  48 B/iteration between modes, and the pre-encoding commit shows the same
+  two modes. Sampled bias: baseline 10/15 forks good vs HEAD 6/16; Fisher
+  p > 0.1, not evidence of a shift. No demonstrated regression; the bad mode
+  predates the encodings.
+- loopSuspend1k +2.1ns/iter: the typed-Loop-inputs cost, on the erased
+  re-add list by prior ruling; untouched.
+
+Method notes, hard-won this round:
+
+- Shape-flip measurements are only valid on clean builds. Incremental
+  rebuilds across shape changes produced phantom readings in both directions
+  (a 19,240 "recovery" and a 3,591,884 "regression" that clean builds
+  overturned). Protocol: kyo-kernel2JVM/clean, tolerate the one-off
+  "No matching benchmarks" flake with a rerun, then measure.
+- The two rows above are per-fork bistable; single-fork numbers are samples,
+  not values. Protocol for them: -f 5 minimum and compare mode histograms
+  (grep the per-iteration gc.alloc.rate.norm lines), never single-fork
+  summaries. The deterministic rows (eagerMap5, deepBind10k, suspension,
+  suspensionStep, state10, resumeFused, loopPure10k, loopSuspend1k,
+  deepStop1k, stopConstructed1k, neverResumes1k, foreignBubbleUnderStop)
+  stay byte-stable across forks and keep the single-fork protocol.
+- neverResumes1k's true clean-build value is 48 B/op (the 64 in the
+  encodings record was a dirty-build sample).
+- A rotateSuspend extraction (the suspension arm out of line, mirroring
+  rotateBracket) measured fully neutral on clean builds and was dropped:
+  the smaller committed shape wins.
+- JFR observation suppresses the stateMap10k bad mode (four of four
+  profiled forks landed good): the profiler perturbs the inlining race, so
+  it cannot catch the 48 B/iteration delta in the act. Stabilizing the
+  bistability, if ever wanted, is an EA-currency question (the iteration's
+  minted transforms and resume closure), owned by the same kernel-wide
+  node-currency design as the two-node fusion residual.
