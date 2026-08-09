@@ -208,6 +208,32 @@ class SyncTest extends kyo.test.Test[Any]:
                 }
             }
 
+            "finalizer sees enclosing locals" in {
+                val local = Local.init(0)
+                var seen  = -1
+                local.let(42) {
+                    Sync.ensure(local.use(v => Sync.defer { seen = v }))(Sync.defer(1))
+                }.map { result =>
+                    assert(result == 1)
+                    assert(seen == 42)
+                }
+            }
+
+            "finalizer effects run in the ambient context on failure" in {
+                val local = Local.init(0)
+                var seen  = -1
+                Abort.run[String] {
+                    local.let(7) {
+                        Sync.ensure(local.use(v => Sync.defer { seen = v })) {
+                            Abort.fail("fail").map(_ => 42)
+                        }
+                    }
+                }.map { result =>
+                    assert(result == Result.fail("fail"))
+                    assert(seen == 7)
+                }
+            }
+
             "works without fiber context" in {
                 import AllowUnsafe.embrace.danger
                 var called = false

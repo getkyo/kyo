@@ -5,6 +5,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.Result
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
@@ -159,6 +160,16 @@ class EffectTest extends Test[Any]:
 
     def ask: Int < EffAsk =
         ArrowEffect.suspend[Any](Tag[EffAsk], ())
+
+    sealed trait Bubble extends ArrowEffect[Const[String], Const[Nothing]]
+
+    def bubble(msg: String): Nothing < Bubble =
+        ArrowEffect.suspend[Any](using summon[kyo.Frame])[Const[String], Const[Nothing], Bubble](Tag[Bubble], msg)
+
+    sealed trait Bail extends ArrowEffect[Const[Result.Error[String]], Const[Unit]]
+
+    def bail(e: String): Unit < Bail =
+        ArrowEffect.suspend[Any](Tag[Bail], Result.Failure(e))
 
     def park(v: Int < EffAsk): Int < EffAsk =
         ArrowEffect.handlePartial(Tag[EffAsk], v, Context.empty)(
@@ -482,6 +493,179 @@ class EffectTest extends Test[Any]:
         assert(log == List("acq"))
         assert(resume(parked, 100) == 102)
         assert(log == List("acq", "rel", "after"))
+    }
+
+    "an unresumable operation answered inside a region settles it: release runs, downstream skipped" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            bubble("boom").map(_ => r + 1)
+        }.map { x =>
+            log :+= "after"
+            x * 10
+        }
+        val handled = ArrowEffect.handle(Tag[Bubble], v)(
+            [C] =>
+                (input, cont) =>
+                    log :+= s"answer-$input"
+                    -1
+        )
+        assert(handled.eval == -1)
+        // the answer computes at the operation site; the settle then crosses the still-open
+        // region, releasing it, and the composed downstream is skipped
+        assert(log == List("acq", "answer-boom", "rel"))
+    }
+
+    "a stop answered inside a region settles it: release runs, downstream skipped" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            ask.map(a => a + r)
+        }.map { x =>
+            log :+= "after"
+            x * 10
+        }
+        val handled = ArrowEffect.handleStop(Tag[EffAsk], v)(
+            [C] =>
+                _ =>
+                    log :+= "answer"
+                    -1
+        )
+        assert(handled.eval == -1)
+        assert(log == List("acq", "answer", "rel"))
+    }
+
+    "catching over a bracket rescues a deferred throw in use and releases" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            Effect.defer((throw new RuntimeException("boom")): Int < Any)
+        }
+        val guarded = Effect.catching(v)(_ => -1)
+        assert(guarded.eval == -1)
+        assert(log == List("acq", "rel"))
+    }
+
+    "catching over a handled bracket rescues a deferred throw in use and releases" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            ask.map(a => Effect.defer((throw new RuntimeException("boom")): Int < Any))
+        }
+        val handled = ArrowEffect.handle(Tag[EffAsk], v)([C] => (_, cont) => cont(5))
+        val guarded = Effect.catching(handled)(_ => -1)
+        assert(guarded.eval == -1)
+        assert(log == List("acq", "rel"))
+    }
+
+    "handleCatching settles a bracket on its own operation and releases with the error" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-$outcome"
+            ()
+        } { r =>
+            bail("fail").map(_ => 42)
+        }.map(x => (Result.succeed[String, Int](x): Result[String, Int]))
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        assert(handled.eval == Result.Failure("fail"))
+        assert(log == List("acq", s"rel-${Maybe(Result.Failure("fail"))}"))
+    }
+
+    "handleCatching rescues a deferred throw inside a bracket and releases" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            Effect.defer((throw new RuntimeException("boom")): Result[String, Int] < Any)
+        }
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        val result = handled.eval
+        assert(result.isPanic)
+        assert(log == List("acq", "rel-true"))
+    }
+
+    "the nearest catching rescues a deferred throw inside a bracket under nested guards" in {
+        // regression: with two catching layers, the deferred thunk ran in the inner guard's
+        // re-entry, outside its try, so the region cleanup's rethrow skipped the inner
+        // rescue and escaped to the outer one
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            Effect.defer((throw new RuntimeException("boom")): Result[String, Int] < Any)
+        }
+        val inner = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        val outer  = Effect.catching(inner)(_ => Result.Failure("outer"))
+        val result = outer.eval
+        assert(result.isPanic)
+        assert(log == List("acq", "rel-true"))
     }
 
     "a composed inner bracket inside an outer use keeps both regions ordered" in {

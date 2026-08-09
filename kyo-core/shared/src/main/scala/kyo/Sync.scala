@@ -109,8 +109,10 @@ object Sync:
     ): A < (Sync & S) =
         // the kernel bracket owns the exactly-once guarantee and the outcome: Absent on
         // success, the error when the computation aborts or throws, and the boundary's own
-        // error when a parked remainder is discarded
-        Effect.bracket(())((_, outcome) => Sync.Unsafe.defer(discard(Sync.Unsafe.evalOrThrow(f(outcome).unit))))(_ => v)
+        // error when a parked remainder is discarded. The finalizer's effects run through the
+        // release row in the ambient context, so locals bound around the ensure reach it;
+        // only its Abort surfaces as a throw, preserving the panic semantics
+        Effect.bracket(())((_, outcome) => Abort.run[Throwable](f(outcome).unit).map(_.getOrThrow))(_ => v)
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

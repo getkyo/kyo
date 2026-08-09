@@ -25,6 +25,13 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     // (the scheduler reschedules now). Slice-local, reset at each run.
     private var parked = false
 
+    // The promise the join handler parked on, handed from eval to run within the slice. The
+    // wakeup callback is registered in run, AFTER the remainder is stored into curr: a
+    // completion landing between the handler's poll and that store would otherwise
+    // reschedule the task over the stale slice-start snapshot, replaying executed steps and
+    // letting the late store clobber the resumed state. Slice-local, reset at each run.
+    private var pendingJoin: IOPromise[?, ?] = null
+
     final override def onComplete() =
         doPreempt()
         // The promise just completed (value or interrupt): drop accumulated runtime so a
@@ -71,6 +78,11 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                         // before we read the promise's state (see Async.useResult).
                         val input = joinInput(this)
                         input.poll() match
+                            case null =>
+                                // a promise completed with a null-valued result polls as a raw null
+                                // through the opaque encodings: resume with it like any completion
+                                this.removeInterrupt(input)
+                                Maybe(cont(null.asInstanceOf[Result[Nothing, C]]))
                             case Present(r) =>
                                 // Promise was already complete when the thunk ran, so drop the
                                 // cascade link the thunk pre-registered so it doesn't accumulate.
@@ -79,14 +91,11 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                             case Absent =>
                                 // Park: handlePartial returns the remainder with the join still
                                 // pending, and the next slice re-enters this handler with a fresh
-                                // continuation and polls again, so the callback only reschedules.
-                                // The link registered above stays for the cascade while parked;
-                                // dropping it here balances the re-registration at re-entry.
+                                // continuation and polls again, so the wakeup only reschedules.
+                                // The wakeup is registered by run, after the remainder is stored;
+                                // the link registered above stays for the cascade while parked.
                                 parked = true
-                                input.onComplete { _ =>
-                                    this.removeInterrupt(input)
-                                    Scheduler.get.schedule(this)
-                                }
+                                pendingJoin = input
                                 Maybe.Absent
                         end match
             )
@@ -105,6 +114,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
             Task.Done
         else
             parked = false
+            pendingJoin = null
             val sp = Safepoint.beginSlice(deadline)
             running = sp
             val next =
@@ -133,7 +143,17 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                             finish(next)
                             Task.Done
                         else if parked then
+                            val join = pendingJoin
+                            pendingJoin = null
                             curr = next
+                            // The registration is the slice's last task-state action: once the
+                            // wakeup can fire, another worker may run the task concurrently with
+                            // this frame's return, so nothing after it writes task state. Dropping
+                            // the cascade link here balances the re-registration at re-entry.
+                            join.onComplete { _ =>
+                                this.removeInterrupt(join)
+                                Scheduler.get.schedule(this)
+                            }
                             Task.Done
                         else
                             curr = next
