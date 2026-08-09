@@ -746,7 +746,7 @@ lazy val `kyo-kernel2` =
 lazy val `kyo-prelude` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-kernel`)
+        .dependsOn(`kyo-kernel2`)
         .withKyoTest
         .in(file("kyo-prelude"))
         .settings(
