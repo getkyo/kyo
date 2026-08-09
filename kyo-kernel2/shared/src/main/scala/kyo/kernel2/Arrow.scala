@@ -263,25 +263,23 @@ object Arrow:
                 buffer.clear()
                 result
             end unfold
-            def count(node: Arrow[?, ?, ?], depth: Int): Int =
-                if depth > internal.SmallLimit then -1
+            // the remaining node budget, or -1 once exhausted: decremented on every node,
+            // interior or leaf, so the walk and its recursion depth stay bounded even on a
+            // deep left spine, where the first leaf appears only after the full descent. A
+            // chain of n transforms has 2n-1 nodes, so the doubled limit keeps the leaf
+            // capacity at SmallLimit
+            def fits(node: Arrow[?, ?, ?], budget: Int): Int =
+                if budget < 0 then -1
                 else
                     node match
-                        case at: AndThen[?, ?, ?, ?] =>
-                            val left = count(at.a, depth + 1)
-                            if left < 0 then -1
-                            else
-                                val right = count(at.b, depth + 1)
-                                if right < 0 || left + right > internal.SmallLimit then -1
-                                else left + right
-                            end if
-                        case _ =>
-                            1
-            end count
+                        case at: AndThen[?, ?, ?, ?] => fits(at.b, fits(at.a, budget - 1))
+                        case _                       => budget - 1
             self match
                 case at: AndThen[?, ?, ?, ?] =>
-                    // This logic seems quite complex, is it well optimized? should the count be discarded after the check? can't it optimize something later?
-                    if count(at, 0) > 0 then linearize(at, empty).asInstanceOf[Arrow[A, B, S]]
+                    // a small chain linearizes with plain recursion, skipping the working
+                    // buffer; segment boundaries only matter past Safepoint.Period, far above
+                    // SmallLimit, so the small path never needs them
+                    if fits(at, 2 * internal.SmallLimit) >= 0 then linearize(at, empty).asInstanceOf[Arrow[A, B, S]]
                     else unfold(at).asInstanceOf[Arrow[A, B, S]]
                 case _ =>
                     self

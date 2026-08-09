@@ -22,14 +22,17 @@ private[kyo] object Observe:
         def wrap(w: Any < Any): Any < Any =
             w match
                 case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                    s.continue(new Step(obs, s.cont.asInstanceOf[Arrow[Any, Any, Any]]))
+                    s.continue(new Segment(obs, s.cont.asInstanceOf[Arrow[Any, Any, Any]]))
                 case d: Kyo.Defer[?, ?, ?] =>
-                    new Kyo.Defer[Any, Any, Any](d.value.asInstanceOf[Any < Any], new Step(obs, d.cont.asInstanceOf[Arrow[Any, Any, Any]]))
+                    new Kyo.Defer[Any, Any, Any](
+                        d.value.asInstanceOf[Any < Any],
+                        new Segment(obs, d.cont.asInstanceOf[Arrow[Any, Any, Any]])
+                    )
                 case b: Kyo.Bracket[Any, Any, Any] @unchecked =>
                     new Kyo.Bracket[Any, Any, Any]:
                         def acquire         = wrap(b.acquire)
                         def release(r: Any) = wrap(b.release(r)).asInstanceOf[Unit < Any]
-                        def cont            = new Step(obs, b.cont.asInstanceOf[Arrow[Any, Any, Any]])
+                        def cont            = new Segment(obs, b.cont.asInstanceOf[Arrow[Any, Any, Any]])
                         def frame           = b.frame
                 case w => w
             end match
@@ -40,7 +43,7 @@ private[kyo] object Observe:
     /** The observed segment: contains the chain it observes and walks it one step at a time, sequencing the observer in front of each
       * step. On a suspension the remaining segment is wrapped again, so the observation travels with the computation.
       */
-    final private class Step(observer: (Frame, Any) => Any < Any, inner: Arrow[Any, Any, Any])
+    final private class Segment(observer: (Frame, Any) => Any < Any, inner: Arrow[Any, Any, Any])
         extends Arrow.Transform[Any, Any, Any]:
         def frame = Frame.internal
 
@@ -70,7 +73,7 @@ private[kyo] object Observe:
                     val next =
                         if w.isInstanceOf[Kyo[?, ?]] then
                             // the remaining observed segment wraps again across the park
-                            w.asInstanceOf[Kyo[Any, Any]].map(new Step(observer, o.next))
+                            w.asInstanceOf[Kyo[Any, Any]].map(new Segment(observer, o.next))
                         else
                             o.next match
                                 case n: Arrow.Step[Any, Any, Any, Any] @unchecked => step(n, Kyo.unnest(w), context, handlers)
@@ -79,5 +82,5 @@ private[kyo] object Observe:
                 end run
             afterObserver(observer(t.frame, cur), context, handlers)
         end step
-    end Step
+    end Segment
 end Observe

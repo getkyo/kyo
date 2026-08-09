@@ -46,7 +46,7 @@ object Kyo:
             Continue(origin, cont.map(f))
 
         /** This suspension with a different continuation. The input stays existential and the one cast re-anchors it at the
-          * operation's own types through `origin`: the callers hold the continuation at the operation's output type (rewrap) or at
+          * operation's own types through `origin`: the callers hold the continuation at the operation's output type (rotation) or at
           * the drive's currency (observation), and neither can name that type from outside.
           */
         final private[kyo] def continue[C, S2](cont2: Arrow[?, C, S2]): Kyo[C, S2] =

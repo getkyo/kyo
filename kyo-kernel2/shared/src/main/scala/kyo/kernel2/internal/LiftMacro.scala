@@ -9,28 +9,20 @@ object LiftMacro:
     def liftMacro[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
 
-        enum Mode derives CanEqual:
-            case Cast, Nested, DefaultLift
-
-        val sourceTpe = TypeRepr.of[A]
-        val tpe       = sourceTpe.dealias
-        val sym       = tpe.typeSymbol
+        val tpe = TypeRepr.of[A].dealias
+        val sym = tpe.typeSymbol
 
         def isNothing  = tpe =:= TypeRepr.of[Nothing]
         def isPending  = tpe <:< TypeRepr.of[Any < Nothing]
         def isConcrete = sym.isClassDef
         def isOpaque   = sym.flags.is(Flags.Opaque)
 
-        val mode =
-            if isNothing then Mode.Cast
-            else if isPending then Mode.Nested
-            else if isConcrete || isOpaque then Mode.Cast
-            else Mode.DefaultLift
-
-        mode match
-            case Mode.Cast                      => '{ $v.asInstanceOf[A < S] }
-            case Mode.Nested | Mode.DefaultLift => '{ defaultLift[A, S]($v) }
-        end match
+        // the pending check comes first: the pending type is opaque, so the concrete/opaque
+        // cast would otherwise claim a value that must enter as data (the unsafe.bypass route
+        // is the one way a statically-pending type reaches here)
+        if isNothing then '{ $v.asInstanceOf[A < S] }
+        else if isPending then '{ defaultLift[A, S]($v) }
+        else if isConcrete || isOpaque then '{ $v.asInstanceOf[A < S] } else '{ defaultLift[A, S]($v) }
     end liftMacro
 
     /** The pending type's runtime lift: a value that is a computation enters as data (a [[Kyo.Nested]] box), anything else casts. All

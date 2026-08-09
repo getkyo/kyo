@@ -5,12 +5,12 @@ import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S), or A is not a module from
-  * kyo (like Abort.type).
+/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S), and is not a kyo
+  * module object.
   *
   * This constraint helps:
   *   - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
-  *   - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
+  *   - prevent lifting a module object into a computation, which happens when a combinator is called on the module instead of a value.
   *
   * @tparam A
   *   The type to check for nested effects
