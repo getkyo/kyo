@@ -71,6 +71,8 @@ private[kyo] object Finalize:
         arrow match
             case finalize: Finalize[?, ?, ?] =>
                 try
+                    // the walk is structural, so the release row is existential here; running it
+                    // through eval demands the closed row the bracket's construction guaranteed
                     val _ = finalize.bracket.release(finalize.value).asInstanceOf[Unit < Any].eval
                     Chunk.empty
                 catch

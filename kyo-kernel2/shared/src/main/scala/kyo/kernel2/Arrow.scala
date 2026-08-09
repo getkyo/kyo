@@ -15,6 +15,12 @@ import scala.annotation.nowarn
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 
+/** A function from `A` to `B < S` that exists as data: the kernel's continuation currency.
+  *
+  * `map` composes arrows into trees at one allocation per composition, `optimize` normalizes a tree into the executable chain on
+  * its first application, and application is eager, running under the ambient parameters of the site where the result is
+  * embedded. [[Arrow.Transform]] is the one executable leaf; everything else is structure.
+  */
 sealed abstract class Arrow[-A, +B, -S]
 
 object Arrow:
@@ -22,13 +28,16 @@ object Arrow:
     // TODO write a doc explaning this mechanism using code snippets. Self-contained, direct, and clear. Then ask me to review
     // (delivered as kernel2-arrow-mechanism.md at the repo root, awaiting review)
 
+    /** The executable leaf of an arrow: one step of computation.
+      *
+      * `run` receives the input value, the execution ambient, and the continuation, and finishes by handing its result forward,
+      * which is what lets a chain of transforms execute as a loop instead of a nest of returns. Context and handlers are the
+      * ambient, threaded from the caller: plain transforms pass them through untouched, bindings pass an updated context
+      * downstream, handled scopes pass extended handlers downstream, reads and local operation dispatch consume them. Neither is
+      * ever stored; they exist only in flight.
+      */
     abstract class Transform[-A, +B, -S] extends Arrow[A, B, S]:
         def frame: Frame
-        // context and handlers are the execution ambient, threaded from the caller:
-        // plain transforms pass them through untouched, bindings pass an updated
-        // context downstream, handled scopes pass extended handlers downstream, reads
-        // and local operation dispatch consume them. Neither is ever stored; they
-        // exist only in flight.
         def run[C, S2](v: A, context: Context, handlers: Handlers, cont: Arrow[B, C, S2]): C < (S & S2)
         override def toString = "Transform(" + frame.position.show + ")"
     end Transform

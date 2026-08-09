@@ -243,3 +243,57 @@ Method notes, hard-won this round:
   bistability, if ever wanted, is an EA-currency question (the iteration's
   minted transforms and resume closure), owned by the same kernel-wide
   node-currency design as the two-node fusion residual.
+
+
+# Cleaning cycles round: closed
+
+The order was: resolve the in-code TODOs, then three quality passes
+(overengineering and leftovers, safety and cast removal, final coherence),
+perf-gated throughout. Six commits.
+
+TODO sweep (5fd0a61a36): the Context/Handlers de-leak landed via
+publicInBinary on a private[kyo] execution apply, bytecode-verified accessor
+free and measured clean on every row; respine renamed linearize per the
+annotated request; the Defer-field and Loop-currency questions answered in
+place with the measured findings (16B layouts round equal under compact
+headers; the suspension crossing's extra node is the kernel-wide two-node
+currency, not Loop-local).
+
+Cycle 1 (136651fa59): optimize's count replaced by a single node budget
+(fits); LiftMacro's three-mode enum collapsed; Observe.Step renamed Segment;
+doc drift removed. The first fits cut decremented only at leaves and hung
+the deep-resumed-continuation test (a deep left spine descends fully before
+its first leaf); the budget now decrements per node, which is what bounds
+the walk.
+
+Cycle 2 (8c47bc9366): sixteen casts removed (104 to 88): Loop's binders
+typed, Effect.bracket through fromKyo, yieldValue's lift row pinned, the
+settled-position reads centralized in one typed Kyo.settled reader,
+reacquire's rebuilt bracket marked settled, Context ops private[kyo],
+publicInBinary on Arrow.empty and stepSlow. The remaining 88 casts sit at
+the documented boundaries: tag-keyed dispatch, trampoline currency, opaque
+narrows, row discharge, contravariant row widenings, macro emission.
+
+Cycle 3 (this commit): scaladoc for the two bare central public types
+(the pending type and Arrow), Transform's comment promoted to scaladoc, a
+boundary comment on the finalization walk's release cast, and the
+arrow-mechanism doc synchronized with the landed shapes (Step, linearize,
+fits, the resolved annotated questions).
+
+Corrections to earlier records, learned at the gates:
+
+- loopSuspend1k is fork-bistable too: {150,008 | 163,960 B/op}. Cycle 2's
+  gate drew the low mode and the commit message credited publicInBinary
+  with an improvement; the final gate drew the high mode again, so that
+  attribution is withdrawn. The row moves to the histogram protocol.
+- contextRead100's high mode has a +32B sub-variant (20,856), seen once per
+  five-fork run twice; the mode set is {19,240 | 20,824 +- 32}.
+- Context.isEmpty was briefly removed as dead and restored: IsolateTest
+  asserts through it. The dead-code call had misread the grep hit's type.
+
+Final state: suite 635/635; deterministic rows at reference (deepBind10k
+160,336, loopPure10k 160,008, narrowIter 4,704, suspension and
+suspensionStep 616, state10 1,040, resumeFused 16, deepStop1k 22,232,
+stopConstructed1k 14,064, neverResumes1k 48, foreignBubbleUnderStop 5,992,
+eagerMap5 0); contextRead100 3 of 5 forks in the good mode (the baseline
+split), stateMap10k 5 of 5.

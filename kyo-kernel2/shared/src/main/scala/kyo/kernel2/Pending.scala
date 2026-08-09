@@ -11,6 +11,17 @@ import kyo.kernel2.internal.Kyo
 import language.implicitConversions
 import scala.annotation.nowarn
 
+/** A computation producing `A` with the effects in `S` pending.
+  *
+  * The type is a value most of the time: a settled computation is its result, unboxed, and only pending computations exist as
+  * nodes (a value that is statically a computation enters as data, in its Nested box, never re-run implicitly). Composition goes
+  * through `map`, which runs eagerly up to the first suspension and fuses everything after it into the suspension's continuation
+  * chain, so pure stretches execute at plain-code speed and suspended ones cost their nodes exactly once.
+  *
+  * Effects are declared by the row `S` and discharged by the handle methods on the effect companions; `eval` drives a computation
+  * whose row is fully handled. Values enter the type through the central lift: the implicit conversion for statically-plain
+  * values, [[Kyo.lift]] for the general case, including deliberate nesting.
+  */
 opaque type <[+A, -S] = A | Kyo[A, S] | Kyo.Nested[A]
 
 object `<` extends Implicits:
