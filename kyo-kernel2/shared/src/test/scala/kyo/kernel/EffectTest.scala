@@ -171,6 +171,8 @@ class EffectTest extends Test[Any]:
     def bail(e: String): Unit < Bail =
         ArrowEffect.suspend[Any](Tag[Bail], Result.Failure(e))
 
+    sealed trait Bubble2 extends ArrowEffect[Const[Result.Error[String]], Const[Unit]]
+
     def park(v: Int < EffAsk): Int < EffAsk =
         ArrowEffect.handlePartial(Tag[EffAsk], v, Context.empty)(
             [C] => (input, cont) => Maybe.Absent
@@ -733,6 +735,287 @@ class EffectTest extends Test[Any]:
         }.eval
         assert(result.isPanic)
         assert(log == List("acq", "rel-true", "after"))
+    }
+
+    "release runs before post-handler steps under an outer handler on a short-circuit" in {
+        // regression: the downstream sequenced after a rotated region lost its ordering when
+        // an outer handler rotated the composition again
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            bail("fail").map(_ => 42)
+        }.map(x => (Result.succeed[String, Int](x): Result[String, Int]))
+        val inner = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        ).map { r =>
+            log :+= "after"
+            r
+        }
+        val outer = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bubble2,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bubble2], inner)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        assert(outer.eval == Result.Failure("fail"))
+        assert(log == List("acq", "rel-true", "after"))
+    }
+
+    "release runs before post-handler steps under an outer handler on a rescued throw" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            Effect.defer((throw new RuntimeException("boom")): Result[String, Int] < Any)
+        }
+        val inner = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        ).map { r =>
+            log :+= "after"
+            r
+        }
+        val outer = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bubble2,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bubble2], inner)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        assert(outer.eval.isPanic)
+        assert(log == List("acq", "rel-true", "after"))
+    }
+
+    "a continuation stored across a short-circuit observes the region closed on later resume" in {
+        // a ctl handler may store the continuation and settle now: the region releases at
+        // the settle, exactly once, and the stored continuation resumed later runs with the
+        // region already closed rather than releasing again
+        var log         = List.empty[String]
+        var stored: Any = null
+        val v: Result[String, Int] < (Bail & EffAsk) = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            ask.map(a => bail("stop").map(_ => a + r))
+        }.map(x => (Result.succeed[String, Int](x): Result[String, Int]))
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            EffAsk,
+            EffAsk,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] =>
+                (input, cont) =>
+                    stored = cont
+                input
+            ,
+            recover = t => Result.Panic(t)
+        )
+        val settled = ArrowEffect.handle(Tag[EffAsk], handled)([C] => (_, cont) => cont(10))
+        assert(settled.eval == Result.Failure("stop"))
+        assert(log == List("acq", "rel-true"))
+        // resuming the stored continuation later must not release again
+        val resumed = stored.asInstanceOf[Unit => Result[String, Int] < (Bail & EffAsk)](())
+        val r2 = ArrowEffect.handle(
+            Tag[EffAsk],
+            ArrowEffect.handleCatching[
+                Const[Result.Error[String]],
+                Const[Unit],
+                Bail,
+                Result[String, Int],
+                Result[String, Int],
+                EffAsk,
+                EffAsk,
+                Any
+            ](Tag[Bail], resumed)(
+                handle = [C] => (input, _) => input,
+                recover = t => Result.Panic(t)
+            )
+        )([C] => (_, cont) => cont(10)).eval
+        assert(log == List("acq", "rel-true"))
+        discard(r2)
+    }
+
+    "a short-circuit after a park and resume still releases before the downstream" in {
+        var log = List.empty[String]
+        val v: Result[String, Int] < (Bail & EffAsk) = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            ask.map(a => bail("stop").map(_ => a + r))
+        }.map(x => (Result.succeed[String, Int](x): Result[String, Int]))
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            EffAsk,
+            EffAsk,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        ).map { r =>
+            log :+= "after"
+            r
+        }
+        // park on the ask crossing via the runtime boundary, then resume via a different entry
+        val parked = ArrowEffect.handlePartial(Tag[EffAsk], handled, Context.empty)(
+            [C] => (_, _) => Maybe.Absent
+        )
+        assert(log == List("acq"))
+        val result = ArrowEffect.handle(Tag[EffAsk], parked)([C] => (_, cont) => cont(10)).eval
+        assert(result == Result.Failure("stop"))
+        assert(log == List("acq", "rel-true", "after"))
+    }
+
+    "a region completing with an error-valued success reports a success outcome" in {
+        // the settled value IS a Result.Error, as a legitimate success of the use: the
+        // finalizer outcome channel must not misread it as the region's failure
+        var seen: Maybe[Result.Error[Any]]    = Maybe.Absent
+        val failureValue: Result[String, Int] = Result.Failure("value")
+        val v                                 = Effect.bracket(())((_, outcome) => seen = outcome)(_ => failureValue)
+        assert(v.eval == failureValue)
+        assert(seen == Maybe.Absent)
+    }
+
+    "a suspending release at a short-circuit still precedes the downstream" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            ask.map { a =>
+                log :+= s"rel-$a"
+                ()
+            }
+        } { r =>
+            bail("stop").map(_ => 42)
+        }.map(x => (Result.succeed[String, Int](x): Result[String, Int]))
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            EffAsk,
+            EffAsk,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        ).map { r =>
+            log :+= "after"
+            r
+        }
+        val result = ArrowEffect.handle(Tag[EffAsk], handled)([C] => (_, cont) => cont(7)).eval
+        assert(result == Result.Failure("stop"))
+        assert(log == List("acq", "rel-7", "after"))
+    }
+
+    "nested regions discarded at one short-circuit release innermost first" in {
+        var log = List.empty[String]
+        def mk(name: String)(use: Int => Result[String, Int] < Bail): Result[String, Int] < Bail =
+            Effect.bracket {
+                log :+= s"acq-$name"
+                1
+            } { (_, _) =>
+                log :+= s"rel-$name"
+                ()
+            }(use)
+        val v = mk("outer") { _ =>
+            mk("inner") { _ =>
+                bail("stop").map(_ => (Result.succeed[String, Int](42): Result[String, Int]))
+            }
+        }
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        assert(handled.eval == Result.Failure("stop"))
+        assert(log == List("acq-outer", "acq-inner", "rel-inner", "rel-outer"))
+    }
+
+    "a stateful handler short-circuit over an open region releases before the downstream" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            testEffect1(10).map(_ => 42)
+        }.map { x =>
+            log :+= "after"
+            x
+        }
+        val handled = ArrowEffect.handleLoop(Tag[TestEffect1], 0, v)(
+            [C] => (input, state, cont) => Loop.done[Int, Int < (TestEffect1 & Any), Int](-1)
+        )
+        assert(handled.eval == -1)
+        assert(log == List("acq", "rel-true"))
     }
 
     "a composed inner bracket inside an outer use keeps both regions ordered" in {
