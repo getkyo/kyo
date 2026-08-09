@@ -297,3 +297,19 @@ suspensionStep 616, state10 1,040, resumeFused 16, deepStop1k 22,232,
 stopConstructed1k 14,064, neverResumes1k 48, foreignBubbleUnderStop 5,992,
 eagerMap5 0); contextRead100 3 of 5 forks in the good mode (the baseline
 split), stateMap10k 5 of 5.
+
+
+# Migration round, step 1: the old kernel's organization
+
+kernel2 now compiles as package kyo.kernel with the old kernel's kyo-package
+surface (c20ae5c131); prelude points at it (c9dc7756a4). Structural interim
+state, all owned by the half-migrated stack: kernel2's tests and Jmh/run are
+blocked by the kyo-test runner classpath still carrying the old kernel
+through kyo-core (two kernels cannot share a classpath once both claim
+kyo.kernel), so benchmarks run through the direct pipeline documented in
+build.sbt. Board via that pipeline: all rows at reference; deepStop1k joins
+the fork-bistable class with modes {22,232 | 22,248 B/op}, both drawn at the
+pre-reorg commit through the same pipeline, so the reorg is exonerated. The
+bistable protocol list is now: contextRead100 {19,240 | 20,824 +- 32},
+stateMap10k {3,111,843 +- 16 | 3,591,883}, loopSuspend1k
+{150,008 | 163,960}, deepStop1k {22,232 | 22,248}.
