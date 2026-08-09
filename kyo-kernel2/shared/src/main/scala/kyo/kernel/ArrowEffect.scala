@@ -538,35 +538,45 @@ object ArrowEffect:
         def loop(state: State, v: A < (E & S), context: Context, handlers: Handlers, masked: Handlers): B < (S & S2) =
             val stateLoop: (A < (E & S), Context, Handlers, Handlers) => B < (S & S2) =
                 (w, ctx, hs, m) => loop(state, w, ctx, hs, m)
-            // interprets the outcome once it materializes; effects raised while it is computed pass through to outer handlers,
-            // unshadowed by design
-            def outcome(w: Loop.Outcome2[State, A < (E & S), B] < (S & S2), context: Context, handlers: Handlers): B < (S & S2) =
-                w match
-                    case kyo: Kyo[Loop.Outcome2[State, A < (E & S), B], S & S2] @unchecked =>
-                        kyo.map(
-                            new Arrow.Transform[Loop.Outcome2[State, A < (E & S), B], B, S & S2]:
-                                def frame = handleLoopFrame
-                                def run[C, S3](
-                                    v: Loop.Outcome2[State, A < (E & S), B],
-                                    context: Context,
-                                    handlers: Handlers,
-                                    cont: Arrow[B, C, S3]
-                                ): C < (S & S2 & S3) =
-                                    cont(outcome(defaultLift(v), context, handlers), context, handlers)
-                        )
-                    case out =>
-                        Kyo.unnest(out) match
+            // interprets a pending outcome once it materializes; effects raised while it is computed pass through to outer
+            // handlers, unshadowed by design. Settled outcomes are interpreted inline in the matched arm so the continue cycle
+            // stays a direct self-tail call, the same mechanism that keeps the plain ctl loop stack safe: the mutual hop through
+            // this transform exists only for pending outcomes, which return through the drive and cannot stack.
+            def pending(kyo: Kyo[Loop.Outcome2[State, A < (E & S), B], S & S2]): B < (S & S2) =
+                kyo.map(
+                    new Arrow.Transform[Loop.Outcome2[State, A < (E & S), B], B, S & S2]:
+                        def frame = handleLoopFrame
+                        def run[C, S3](
+                            v: Loop.Outcome2[State, A < (E & S), B],
+                            context: Context,
+                            handlers: Handlers,
+                            cont: Arrow[B, C, S3]
+                        ): C < (S & S2 & S3) =
+                            val next =
+                                Kyo.unnest(v) match
+                                    case next: Loop.Continue2[State, A < (E & S)] @unchecked =>
+                                        loop(next._1, next._2, context, handlers, masked)
+                                    case b =>
+                                        defaultLift(b.asInstanceOf[B])
+                            cont(next, context, handlers)
+                        end run
+                )
+            v match
+                case s: Kyo.Suspend[I, O, E, x, A, E & S] @unchecked if effectTag.erased <:< s.erasedTag =>
+                    val k      = s.cont
+                    val resume = (o: O[x]) => k(defaultLift(o), context, masked)
+                    val w      = handle[x](s.input, state, resume)
+                    if w.isInstanceOf[Kyo[?, ?]] then
+                        pending(w.asInstanceOf[Kyo[Loop.Outcome2[State, A < (E & S), B], S & S2]])
+                    else
+                        Kyo.unnest(w) match
                             case next: Loop.Continue2[State, A < (E & S)] @unchecked =>
                                 loop(next._1, next._2, context, handlers, masked)
                             case b =>
                                 // the outcome union's completion side: a raw B at the opaque boundary
                                 defaultLift(b.asInstanceOf[B])
-            end outcome
-            v match
-                case s: Kyo.Suspend[I, O, E, x, A, E & S] @unchecked if effectTag.erased <:< s.erasedTag =>
-                    val k      = s.cont
-                    val resume = (o: O[x]) => k(defaultLift(o), context, masked)
-                    outcome(handle[x](s.input, state, resume), context, handlers)
+                        end match
+                    end if
                 case k: Kyo[A, E & S] @unchecked =>
                     rotate(
                         k,

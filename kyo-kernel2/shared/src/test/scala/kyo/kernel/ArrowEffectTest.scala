@@ -107,6 +107,20 @@ class ArrowEffectTest extends Test[Any]:
             assert(result.eval == ("42", "44"))
         }
 
+        "deep stateful handling is stack safe" in {
+            // regression: the settled-outcome continue cycle overflowed the stack at depth (the
+            // outcome interpretation and the loop were mutually recursive with no self-tail call,
+            // surfaced by pipes filter with effects); the settled path must stay a direct jump
+            val n = 100000
+            def chain(i: Int): String < TestEffect1 =
+                if i == 0 then "done"
+                else testEffect1(i).map(_ => chain(i - 1))
+            val result = ArrowEffect.handleLoop(Tag[TestEffect1], 0, chain(n))(
+                [C] => (input, state, cont) => Loop.continue(state + 1, cont(input.toString))
+            )
+            assert(result.eval == "done")
+        }
+
         "execution is tail-recursive" in {
             var minDepth = Int.MaxValue
             var maxDepth = 0

@@ -134,13 +134,16 @@ class DebugTest extends kyo.test.Test[Any]:
 
     "trace" - {
         "simple computation" in
+            // pins the Observe-based trace: user-position boxes with their snippets, then the
+            // values selected at frame changes (coarser than the old interceptor's per-transform
+            // stream, which also saw handler-internal evaluation)
             testOutput(
                 "DebugTest.scala:28:44",
                 "Env.get[Int]",
+                "DebugTest.scala:31:32",
+                "Var.get[Int]",
                 "5",
                 "Var.update[Int]",
-                "5",
-                "Var.get[Int]",
                 "10"
             ) {
                 traceComputation.eval
@@ -149,20 +152,18 @@ class DebugTest extends kyo.test.Test[Any]:
         "with Memo effect" in
             testOutput(
                 "DebugTest.scala:37:57",
+                "memoizedFn(6)",
                 "10",
                 "DebugTest.scala:37:57",
-                "12",
-                "memoizedFn(6)",
                 "(10, 10, 12)"
             ) {
                 memoEffectComputation.eval
             }
 
         "with Stream JVM".onlyJvm in
+            // the stream pipeline evaluates inside its handlers, outside the observed chain,
+            // so the trace reports the region's final value
             testOutput(
-                "DebugTest.scala:53:36",
-                "()",
-                "DebugTest.scala:55:10",
                 "Seq(6)"
             ) {
                 streamComputation.eval
@@ -170,9 +171,6 @@ class DebugTest extends kyo.test.Test[Any]:
 
         "with Stream JS".onlyJs in
             testOutput(
-                "DebugTest.scala:52:28",
-                "undefined",
-                "DebugTest.scala:55:10",
                 "Seq(6)"
             ) {
                 streamComputation.eval
@@ -180,12 +178,7 @@ class DebugTest extends kyo.test.Test[Any]:
 
         "with Choice" in
             testOutput(
-                "DebugTest.scala:63:28",
-                "(4, 5, 6)",
-                "DebugTest.scala:63:28",
-                "6",
-                "DebugTest.scala:64:14",
-                "Seq(Seq(Seq(7)))"
+                "Seq(5, 6, 7, 6, 7, 8, 7, 8, 9)"
             ) {
                 choiceComputation.eval
             }
@@ -212,7 +205,7 @@ class DebugTest extends kyo.test.Test[Any]:
             testOutput(
                 "DebugTest.scala:71:77",
                 """"List(1, 2, 3)" -> List(1, 2, 3)""",
-                """"Env.get[Int]" -> Kyo("""
+                """"Env.get[Int]" -> Defer("""
             ) {
                 complexValuesComputation
             }

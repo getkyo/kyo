@@ -72,8 +72,17 @@ private[kyo] object Observe:
                     val w = t.run(cur, context, handlers, Arrow[Any])
                     val next =
                         if w.isInstanceOf[Kyo[?, ?]] then
-                            // the remaining observed segment wraps again across the park
-                            w.asInstanceOf[Kyo[Any, Any]].map(new Segment(observer, o.next))
+                            // the remaining observed segment wraps again across the park; an
+                            // operation crossing to its handler is a step of the observed
+                            // computation too, so the observer sees its frame and input, with
+                            // the observation sequenced in front, outside the observed chain
+                            val wrapped = w.asInstanceOf[Kyo[Any, Any]].map(new Segment(observer, o.next))
+                            w match
+                                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                                    observer(s.frame, s.input).map(_ => wrapped)(using s.frame)
+                                case _ =>
+                                    wrapped
+                            end match
                         else
                             o.next match
                                 case n: Arrow.Step[Any, Any, Any, Any] @unchecked => step(n, Kyo.unnest(w), context, handlers)

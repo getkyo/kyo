@@ -50,12 +50,14 @@ object Debug:
         var lastValue = Maybe.empty[Any]
         val observed =
             Observe { (frame, value) =>
-                if frame ne lastFrame then
-                    lastValue.foreach(printValue)
-                    println(frame.render)
-                    lastFrame = frame
+                if frame.position.show != Frame.internal.position.show then
+                    if frame ne lastFrame then
+                        lastValue.foreach(printValue)
+                        println(frame.render)
+                        lastFrame = frame
+                    end if
+                    lastValue = Present(value)
                 end if
-                lastValue = Present(value)
             }(v)
         Effect.catching {
             observed.map { value =>
