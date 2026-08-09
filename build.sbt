@@ -737,7 +737,20 @@ lazy val `kyo-kernel2` =
         .settings(
             `kyo-settings`
         )
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(
+            mimaCheck(false),
+            // Interim while the kernel swap migrates up the stack: Jmh extends Test, and the
+            // kyo-test runner classpath still carries the old kernel through kyo-core, which
+            // cannot share a classpath with this module's kyo.kernel packages. The bench only
+            // needs the main classes, so its classpath is rebuilt from Compile. Jmh/run still
+            // schedules Test/compile through bgRun's dynamic task graph, which these keys
+            // cannot reach: until the stack migrates, run benchmarks directly
+            // (Jmh/compile, then java -cp from 'export kyo-kernel2JVM/Jmh/fullClasspath'
+            // against org.openjdk.jmh.Main).
+            Jmh / unmanagedClasspath := Nil,
+            Jmh / internalDependencyClasspath := (Compile / internalDependencyClasspath).value :+ Attributed.blank((Compile / classDirectory).value),
+            Jmh / internalDependencyAsJars := (Compile / internalDependencyAsJars).value :+ Attributed.blank((Compile / packageBin).value)
+        )
         .jvmConfigure(_.enablePlugins(JmhPlugin))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
