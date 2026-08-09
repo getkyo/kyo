@@ -14,6 +14,30 @@ class PendingSchedulerTest extends Test[Any]:
     def ask: Int < SchedulerAsk =
         ArrowEffect.suspend[Any](Tag[SchedulerAsk], ())
 
+    "discarding a preempted region rebuild runs its release" in {
+        // regression: a preemption inside a region parks it as a rebuilt settled bracket
+        // node; the finalization walk skipped bracket nodes under the unstarted-region rule,
+        // but a settled node is an acquired region whose release is owed, so an interrupt
+        // landing while the fiber sat queued leaked the release
+        var log = List.empty[String]
+        val bracket = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { v =>
+            ask.map(_ + v)
+        }
+        val rebuilt = kyo.kernel.internal.Finalize.resumeRegion(
+            bracket.asInstanceOf[kyo.kernel.internal.Kyo.Bracket[Any, Any, Any]],
+            1,
+            ask.asInstanceOf[Any < Any]
+        )
+        (rebuilt: Any < Any).finalizeBracket(Maybe.Absent)
+        assert(log == List("rel-false"))
+    }
+
     "interrupting a parked fiber runs finalizers without resuming" in {
         var log = List.empty[String]
         def mk(name: String)(body: Int => Int < SchedulerAsk): Int < SchedulerAsk =

@@ -97,6 +97,17 @@ private[kyo] object Eval:
                                                     result
                                             end match
                                     end match
+                    case seq: Kyo.Sequenced[Any, Any, Any, Any] @unchecked =>
+                        recur(seq.bracket, depth + 1) match
+                            case suspended: Kyo[Any, Any] @unchecked =>
+                                // the region parked: the downstream applies after the resumed
+                                // region completes, so it fuses onto the remainder
+                                val wrapped = suspended.map(seq.after)
+                                if depth == 0 then loop(wrapped) else wrapped
+                            case settled =>
+                                // the region completed, release included: the downstream runs now
+                                val next = seq.after(settled.asInstanceOf[Any < Any], context, handlers)
+                                if depth == 0 then loop(next) else recur(next, depth + 1)
                     case defer: Kyo.Defer[Any, Any, Any] @unchecked =>
                         loop(defer.cont(defer.value, context, handlers))
                     case kyo: Kyo[Any, Any] @unchecked =>

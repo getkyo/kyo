@@ -230,18 +230,33 @@ object ArrowEffect:
                 // the deferred value's residual row after this handler is the loop's output row: the fold's premise, not provable
                 Kyo.Defer(d.value.asInstanceOf[a < S2], rotated(d.cont))
             case b: Kyo.Bracket[r, A, S] @unchecked =>
-                rotateBracket(b, rotated, loop, context, handlers)
+                rotateBracket(b, rotated, loop, loop, context, handlers)
+            case seq: Kyo.Sequenced[r, a, A, S] @unchecked =>
+                // the handler rotates into the region and through its downstream: chains the
+                // rotation wraps extend with `after` first, and the value fold re-sequences
+                // `after` onto rebuilt region values structurally. The release fold keeps the
+                // raw loop: its completion value is discarded and never meets `after`
+                rotateBracket[r, a, B, S, S2](
+                    seq.bracket,
+                    [X] => (chain: Arrow[X, a, S]) => rotated(chain.map(seq.after)),
+                    (w, c, hs) => loop(seq.after(w, c, hs), c, hs),
+                    (w, c, hs) => loop(w.asInstanceOf[A < S], c, hs),
+                    context,
+                    handlers
+                )
         end match
     end rotate
 
     /** The bracket arm of [[rotate]], out of line: brackets are rare at the traversal's call sites and the rebuild machinery is
       * large enough to push the traversal past the JIT's inlining threshold, costing its callers the escape analysis of their
-      * per-rotation closures.
+      * per-rotation closures. The release fold takes its own loop: release runs at its own currency and its completion value is
+      * discarded by the drive, so a caller sequencing a downstream through the value loop must not route release through it.
       */
     private def rotateBracket[R, A, B, S, S2](
         b: Kyo.Bracket[R, A, S],
         rotated: [X] => Arrow[X, A, S] => Arrow[X, B, S2],
         loop: (A < S, Context, Handlers) => B < S2,
+        releaseLoop: (A < S, Context, Handlers) => B < S2,
         context: Context,
         handlers: Handlers
     ): B < S2 =
@@ -252,10 +267,11 @@ object ArrowEffect:
                 // standing in for it stays contained; the casts mark that seam.
                 def acquire = b.acquire.asInstanceOf[R < S2]
                 def release(x: R, outcome: Maybe[Result.Error[Any]]) =
-                    loop(b.release(x, outcome).asInstanceOf[A < S], context, handlers).asInstanceOf[Unit < S2]
-                def cont                          = rotated(b.cont)
-                def frame                         = b.frame
-                override private[kyo] def settled = true
+                    releaseLoop(b.release(x, outcome).asInstanceOf[A < S], context, handlers).asInstanceOf[Unit < S2]
+                def cont                                 = rotated(b.cont)
+                def frame                                = b.frame
+                override private[kyo] def settled        = true
+                override private[kyo] def crossingBuried = true
         else
             // acquire is sequenced before the bracket: fold it as the head of the computation and rebuild the bracket
             // around the settled resource. The continuation an operation inside acquire presents therefore spans the

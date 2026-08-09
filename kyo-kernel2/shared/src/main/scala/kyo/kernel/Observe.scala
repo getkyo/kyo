@@ -35,9 +35,16 @@ private[kyo] object Observe:
                         def acquire = wrap(b.acquire)
                         def release(r: Any, outcome: Maybe[Result.Error[Any]]) =
                             wrap(b.release(r, outcome)).asInstanceOf[Unit < Any]
-                        def cont                          = new Segment(obs, b.cont.asInstanceOf[Arrow[Any, Any, Any]])
-                        def frame                         = b.frame
-                        override private[kyo] def settled = b.settled
+                        def cont                                 = new Segment(obs, b.cont.asInstanceOf[Arrow[Any, Any, Any]])
+                        def frame                                = b.frame
+                        override private[kyo] def settled        = b.settled
+                        override private[kyo] def crossingBuried = b.crossingBuried
+                case seq: Kyo.Sequenced[Any, Any, Any, Any] @unchecked =>
+                    wrap(seq.bracket) match
+                        case b: Kyo.Bracket[Any, Any, Any] @unchecked =>
+                            new Kyo.Sequenced[Any, Any, Any, Any](b, new Segment(obs, seq.after))
+                        case other =>
+                            other.asInstanceOf[Kyo[Any, Any]].map(new Segment(obs, seq.after))
                 case w => w
             end match
         end wrap

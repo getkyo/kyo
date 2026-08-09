@@ -16,11 +16,13 @@ final private[kyo] class Finalize[R, S](val bracket: Kyo.Bracket[R, ?, S], val v
     extends Arrow.Transform[Any, Any, S]:
     def frame = bracket.frame
     def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (S & S2) =
+        // the rest applies inside the rebuilt region: the Defer node keeps the application on
+        // the region arm's stack, under its cleanup, and stays walkable on discard
         cont(
             Finalize.resumeRegion(
                 bracket.asInstanceOf[Kyo.Bracket[Any, Any, Any]],
                 value,
-                rest(LiftMacro.defaultLift(v), context, handlers)
+                Kyo.Defer(LiftMacro.defaultLift[Any, Any](v), rest)
             ).asInstanceOf[Any < (S & S2)],
             context,
             handlers
@@ -33,26 +35,29 @@ end Finalize
 private[kyo] object Finalize:
 
     /** Rebuilds a region around an in-flight remainder: a settled bracket holding the resource whose use is the remainder
-      * itself, so the drive's arm re-establishes the release-on-throw and region-exit protocol when it re-enters. The
-      * remainder is by-name so a resumed continuation's application runs inside the rebuilt region.
+      * itself, so the drive's arm re-establishes the release-on-throw and region-exit protocol when it re-enters, and the
+      * finalization walk finds the remainder through the [[Constant]] continuation on discard.
       */
-    private[kyo] def resumeRegion(bracket: Kyo.Bracket[Any, Any, Any], resource: Any, remainder: => Any < Any): Kyo[Any, Any] =
+    private[kyo] def resumeRegion(bracket: Kyo.Bracket[Any, Any, Any], resource: Any, remainder: Any < Any): Kyo[Any, Any] =
         new Kyo.Bracket[Any, Any, Any]:
             def acquire                                            = LiftMacro.defaultLift(resource)
             def release(x: Any, outcome: Maybe[Result.Error[Any]]) = bracket.release(x, outcome)
-            def cont = new Arrow.Transform[Any, Any, Any]:
-                def frame = bracket.frame
-                def run[C, S2](r: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                    cont(remainder, context, handlers)
-            def frame                         = bracket.frame
-            override private[kyo] def settled = true
+            def cont                                               = new Constant(remainder)
+            def frame                                              = bracket.frame
+            override private[kyo] def settled                      = true
+            override private[kyo] def crossingBuried               = true
     end resumeRegion
 
-    private[kyo] def constant(v: Any < Any): Arrow[Any, Any, Any] =
-        new Arrow.Transform[Any, Any, Any]:
-            def frame = Frame.internal
-            def run[C, S2](x: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
-                cont(v, context, handlers)
+    /** Yields a fixed pending value, ignoring the input: the drive parks it where a remainder must survive a completed
+      * step, and the finalization walk reads the carried value through it on discard.
+      */
+    final private[kyo] class Constant(val value: Any < Any) extends Arrow.Transform[Any, Any, Any]:
+        def frame = Frame.internal
+        def run[C, S2](x: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+            cont(value, context, handlers)
+    end Constant
+
+    private[kyo] def constant(v: Any < Any): Arrow[Any, Any, Any] = new Constant(v)
 
     private[kyo] def reacquire(bracket: Kyo.Bracket[Any, Any, Any]): Arrow[Any, Any, Any] =
         new Arrow.Transform[Any, Any, Any]:
@@ -67,6 +72,8 @@ private[kyo] object Finalize:
                         // the resumption value is the resource: nothing left to fold
                         override private[kyo] def settled =
                             true
+                        override private[kyo] def crossingBuried =
+                            bracket.crossingBuried
                     ,
                     context,
                     handlers
@@ -84,9 +91,26 @@ private[kyo] object Finalize:
 
     private[kyo] def finalizeValue[A, S](v: A < S, outcome: Maybe[Result.Error[Any]]): Chunk[Throwable] =
         v match
-            case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] => finalizeArrow(kyo.cont, outcome)
-            case kyo: Kyo.Defer[?, ?, ?]            => finalizeArrow(kyo.cont, outcome)
-            case _                                  => Chunk.empty
+            case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?]                    => finalizeArrow(kyo.cont, outcome)
+            case kyo: Kyo.Defer[?, ?, ?]                               => finalizeArrow(kyo.cont, outcome)
+            case b: Kyo.Bracket[Any, Any, Any] @unchecked if b.settled =>
+                // a settled bracket is an acquired region parked as a rebuild (a preemption or a
+                // resumed park): its release is owed. Regions nested in the remainder finalize
+                // first through the continuation walk
+                val inner = finalizeArrow(b.cont, outcome)
+                try
+                    val _ = b.release(Kyo.settled(b.acquire), outcome).asInstanceOf[Unit < Any].eval
+                    inner
+                catch
+                    case t: Throwable =>
+                        EffectTrace.attach(t, "release", b.frame)
+                        inner.concat(Chunk(t))
+                end try
+            case seq: Kyo.Sequenced[?, ?, ?, ?] =>
+                // the downstream may carry parked regions fused after this one: they finalize
+                // after the region's own, preserving discard order
+                finalizeValue(seq.bracket, outcome).concat(finalizeArrow(seq.after, outcome))
+            case _ => Chunk.empty
 
     private def finalizeArrow(arrow: Any, outcome: Maybe[Result.Error[Any]]): Chunk[Throwable] =
         arrow match
@@ -104,6 +128,9 @@ private[kyo] object Finalize:
                         EffectTrace.attach(t, "release", finalize.bracket.frame)
                         inner.concat(Chunk(t))
                 end try
+            case c: Constant =>
+                // a parked remainder carried past a completed step: regions in it finalize too
+                finalizeValue(c.value, outcome)
             case r: ArrowEffect.Rotate[?, ?, ?] =>
                 // a rotate step contains its handler's remaining chain: finalizers in there run too
                 finalizeArrow(r.inner, outcome)

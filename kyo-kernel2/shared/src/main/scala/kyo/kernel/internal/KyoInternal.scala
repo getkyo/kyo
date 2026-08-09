@@ -112,23 +112,55 @@ object Kyo:
           */
         private[kyo] def settled: Boolean = false
 
+        /** Whether the exit crossing no longer ends this node's cont chain: rotations wrap the chain and region rebuilds carry
+          * the remainder behind a yield step, burying the crossing where plain extension cannot fuse onto it. Composition onto
+          * such a node sequences after it instead, so it still runs after the release on every path.
+          */
+        private[kyo] def crossingBuried: Boolean = false
+
         // composition extends the use continuation; the region's exit crossing sits at the end
         // of every use chain (installed at construction), so the extension fuses onto the
-        // crossing's continuation at drive time and runs outside the region, after the release
+        // crossing's continuation at drive time and runs outside the region, after the release.
+        // Once a rotation or rebuild buries the crossing, composition sequences after the node
+        // instead, applied by the drive when the region completes
         final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
-            val self = this.asInstanceOf[Bracket[R, A, S & S2]]
-            new Bracket[R, B, S & S2]:
-                def acquire                                          = self.acquire
-                def release(r: R, outcome: Maybe[Result.Error[Any]]) = self.release(r, outcome)
-                def cont                                             = self.cont.map(f.asInstanceOf[Arrow[A, B, S & S2]])
-                def frame                                            = self.frame
-                override private[kyo] def settled                    = self.settled
-            end new
+            if crossingBuried then
+                new Sequenced[R, A, B, S & S2](this.asInstanceOf[Bracket[R, A, S & S2]], f)
+            else
+                val self = this.asInstanceOf[Bracket[R, A, S & S2]]
+                new Bracket[R, B, S & S2]:
+                    def acquire                                          = self.acquire
+                    def release(r: R, outcome: Maybe[Result.Error[Any]]) = self.release(r, outcome)
+                    def cont                                             = self.cont.map(f.asInstanceOf[Arrow[A, B, S & S2]])
+                    def frame                                            = self.frame
+                    override private[kyo] def settled                    = self.settled
+                end new
         end map
 
         final override def toString = "Bracket(" + frame.position.show + ")"
 
     end Bracket
+
+    /** A region whose crossing is buried, with its downstream continuation: `after` carries the steps composed after the
+      * region (typically fused at drive time behind a handler that rotated it), and the drive applies it once the region node
+      * completes, so it runs after the release on the crossing path and the short-circuit path alike. Handlers rotate through
+      * `after` by composing it onto the chains they wrap; the release fold keeps its own loop, so its completion value never
+      * meets `after`.
+      */
+    final private[kyo] class Sequenced[R, A, B, S](
+        val bracket: Bracket[R, A, S],
+        val after: Arrow[A, B, S]
+    ) extends Kyo[B, S]:
+
+        private[kyo] def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
+            new Sequenced[R, A, C, S & S2](
+                bracket.asInstanceOf[Bracket[R, A, S & S2]],
+                after.asInstanceOf[Arrow[A, B, S & S2]].map(f)
+            )
+
+        override def toString = "Sequenced(" + bracket + ", " + after + ")"
+
+    end Sequenced
 
     /** The effect of a region-exit crossing: every bracket's use chain ends with one, installed at construction, carrying the
       * region's completed result as its input. Everything composed onto the bracket, at any point in its life, fuses onto the

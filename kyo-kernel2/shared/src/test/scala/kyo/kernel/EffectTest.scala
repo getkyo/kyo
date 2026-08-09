@@ -668,6 +668,73 @@ class EffectTest extends Test[Any]:
         assert(log == List("acq", "rel-true"))
     }
 
+    "release runs before steps mapped after the handler on a short-circuit" in {
+        // regression: a step mapped after the handler fused into the rotated region's chain
+        // outside the exit crossing, so a short-circuit settle ran it before the region
+        // arm's release; the release must precede everything downstream of the handler
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            bail("fail").map(_ => 42)
+        }.map(x => (Result.succeed[String, Int](x): Result[String, Int]))
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        val result = handled.map { r =>
+            log :+= "after"
+            r
+        }.eval
+        assert(result == Result.Failure("fail"))
+        assert(log == List("acq", "rel-true", "after"))
+    }
+
+    "release runs before steps mapped after the handler on a rescued throw" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { (_, outcome) =>
+            log :+= s"rel-${outcome.isDefined}"
+            ()
+        } { r =>
+            Effect.defer((throw new RuntimeException("boom")): Result[String, Int] < Any)
+        }
+        val handled = ArrowEffect.handleCatching[
+            Const[Result.Error[String]],
+            Const[Unit],
+            Bail,
+            Result[String, Int],
+            Result[String, Int],
+            Any,
+            Any,
+            Any
+        ](Tag[Bail], v)(
+            handle = [C] => (input, _) => input,
+            recover = t => Result.Panic(t)
+        )
+        val result = handled.map { r =>
+            log :+= "after"
+            r
+        }.eval
+        assert(result.isPanic)
+        assert(log == List("acq", "rel-true", "after"))
+    }
+
     "a composed inner bracket inside an outer use keeps both regions ordered" in {
         var log = List.empty[String]
         def mk(name: String, use: Int => Int < Any): Int < Any =
