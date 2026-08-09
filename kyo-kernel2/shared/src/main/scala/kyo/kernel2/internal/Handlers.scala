@@ -37,8 +37,9 @@ object Handlers:
           */
         final class Stop(tag0: Tag[Any]) extends Entry(tag0)
 
-        /** A structural-travel marker: one instance per ctl, first, or loop handle call, registered only when an outer entry of
-          * the same tag is visible, so the outer entry cannot act inside this handler's region.
+        /** A structural-travel marker for the ctl, first, and loop formats: minted and registered only when an outer entry of the
+          * same tag is visible, so the outer entry cannot act inside this handler's region and the common un-nested case allocates
+          * nothing.
           */
         final class Shadow(tag0: Tag[Any]) extends Entry(tag0)
 

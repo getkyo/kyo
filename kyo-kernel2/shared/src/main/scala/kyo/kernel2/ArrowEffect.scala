@@ -142,19 +142,20 @@ object ArrowEffect:
                     cont(loop(chain(defaultLift(v), context, handlers.add(entry)), context, handlers), context, handlers)
 
         /** Re-entry for a format whose operations travel structurally (ctl, first, loop): when an outer entry of the same tag is
-          * visible, the shared shadow entry masks it for the contained application, so innermost-wins holds across formats. The
-          * loop receives the masked parameter for the resumptions its region includes.
+          * visible, a shadow entry masks it for the contained application, so innermost-wins holds across formats. The entry is
+          * minted only when there is an outer entry to mask, so the common un-nested case allocates nothing. The loop receives the
+          * masked parameter for the resumptions its region includes.
           */
         def masked[X, M, S, A, S2](
             chain: Arrow[X, M, S],
-            shadow: Handlers.Entry.Shadow,
+            tag: Tag[Any],
             loop: (M < S, Context, Handlers, Handlers) => A < S2,
             _frame: Frame
         ): Rotate[X, A, S2] =
             new Rotate[X, A, S2](chain):
                 def frame = _frame
                 def run[C, S3](v: X, context: Context, handlers: Handlers, cont: Arrow[A, C, S3]): C < (S2 & S3) =
-                    val masked = if handlers.resolve(shadow.tag).isEmpty then handlers else handlers.add(shadow)
+                    val masked = if handlers.resolve(tag).isEmpty then handlers else handlers.add(new Handlers.Entry.Shadow(tag))
                     cont(loop(chain(defaultLift(v), context, masked), context, handlers, masked), context, handlers)
 
         /** Re-entry for a binding: this scope's context is derived from the incoming one around the contained application. */
@@ -327,7 +328,6 @@ object ArrowEffect:
     )(
         handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2)
     )(using frame: Frame): A < (S & S2) =
-        val shadow = new Handlers.Entry.Shadow(effectTag.erased)
         def loop(v: A < (E & S & S2), context: Context, handlers: Handlers, masked: Handlers): A < (S & S2) =
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S & S2] @unchecked if effectTag.erased <:< s.erasedTag =>
@@ -339,8 +339,14 @@ object ArrowEffect:
                 case k: Kyo[A, E & S & S2] @unchecked =>
                     rotate(
                         k,
-                        [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.masked(chain, shadow, loop, frame),
-                        (w, c, hs) => loop(w, c, hs, if hs.resolve(shadow.tag).isEmpty then hs else hs.add(shadow)),
+                        [X] => (chain: Arrow[X, A, E & S & S2]) => Rotate.masked(chain, effectTag.erased, loop, frame),
+                        (w, c, hs) =>
+                            loop(
+                                w,
+                                c,
+                                hs,
+                                if hs.resolve(effectTag.erased).isEmpty then hs else hs.add(new Handlers.Entry.Shadow(effectTag.erased))
+                            ),
                         context,
                         handlers
                     )
@@ -436,7 +442,6 @@ object ArrowEffect:
         handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
         done: A => B < S2
     )(using frame: Frame): B < (S & S2) =
-        val shadow = new Handlers.Entry.Shadow(effectTag.erased)
         def loop(v: A < (E & S), context: Context, handlers: Handlers, masked: Handlers): B < (S & S2) =
             v match
                 case s: Kyo.Suspend[I, O, E, x, A, E & S] @unchecked if effectTag.erased <:< s.erasedTag =>
@@ -448,8 +453,14 @@ object ArrowEffect:
                 case k: Kyo[A, E & S] @unchecked =>
                     rotate(
                         k,
-                        [X] => (chain: Arrow[X, A, E & S]) => Rotate.masked(chain, shadow, loop, frame),
-                        (w, c, hs) => loop(w, c, hs, if hs.resolve(shadow.tag).isEmpty then hs else hs.add(shadow)),
+                        [X] => (chain: Arrow[X, A, E & S]) => Rotate.masked(chain, effectTag.erased, loop, frame),
+                        (w, c, hs) =>
+                            loop(
+                                w,
+                                c,
+                                hs,
+                                if hs.resolve(effectTag.erased).isEmpty then hs else hs.add(new Handlers.Entry.Shadow(effectTag.erased))
+                            ),
                         context,
                         handlers
                     )
@@ -509,7 +520,6 @@ object ArrowEffect:
         handle: [C] => (I[C], State, O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), B] < S2,
         done: (State, A) => B < (S & S2)
     )(using frame: Frame): B < (S & S2) =
-        val shadow = new Handlers.Entry.Shadow(effectTag.erased)
         def loop(state: State, v: A < (E & S), context: Context, handlers: Handlers, masked: Handlers): B < (S & S2) =
             val stateLoop: (A < (E & S), Context, Handlers, Handlers) => B < (S & S2) =
                 (w, ctx, hs, m) => loop(state, w, ctx, hs, m)
@@ -545,8 +555,15 @@ object ArrowEffect:
                 case k: Kyo[A, E & S] @unchecked =>
                     rotate(
                         k,
-                        [X] => (chain: Arrow[X, A, E & S]) => Rotate.masked(chain, shadow, stateLoop, frame),
-                        (w, c, hs) => loop(state, w, c, hs, if hs.resolve(shadow.tag).isEmpty then hs else hs.add(shadow)),
+                        [X] => (chain: Arrow[X, A, E & S]) => Rotate.masked(chain, effectTag.erased, stateLoop, frame),
+                        (w, c, hs) =>
+                            loop(
+                                state,
+                                w,
+                                c,
+                                hs,
+                                if hs.resolve(effectTag.erased).isEmpty then hs else hs.add(new Handlers.Entry.Shadow(effectTag.erased))
+                            ),
                         context,
                         handlers
                     )
