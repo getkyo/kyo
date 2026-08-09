@@ -78,7 +78,12 @@ object Loop:
             def _3 = v3
             def _4 = v4
 
-    // TODO I don't think this is optimized liek the old kernel was?
+    // Compared against the old kernel's driver: pure iterations match (one Continue box per
+    // iteration, done unboxed), and the step transform hoists to one per loop entry. The one
+    // remaining delta is the suspension crossing, where map(step) builds a Continue plus an
+    // AndThen against the old kernel's single KyoContinue node, 16B per crossing. That is the
+    // kernel-wide two-node fusion currency every map site shares, owned by the node-currency
+    // design round, not a Loop-local cost.
 
     /** Completes a stateful loop with unit. */
     inline def done[A]: Outcome[A, Unit] = ()

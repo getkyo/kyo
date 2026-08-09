@@ -52,7 +52,10 @@ object ContextEffect:
     inline def suspend[V, E <: ContextEffect[V]](
         inline effectTag: Tag[E]
     )(using inline _frame: Frame): V < E =
-        // TODO how about Defer is an abstract class so we can override the value as () without creating a field?
+        // Considered: an abstract Defer overriding value as a def to drop the field. Under
+        // compact object headers a one-field and a two-field Defer both round to 16B, so the
+        // split buys nothing on the target JVM (8B only on legacy headers); the concrete node
+        // stays.
         Kyo.Defer(
             (),
             new Arrow.Transform[Unit, V, E]:
