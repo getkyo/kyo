@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import kyo.Chunk
+import kyo.Kyo
 import kyo.Maybe
 import kyo.test.Test
 

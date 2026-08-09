@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Result.Error
 import kyo.kernel.*
-import kyo.kernel.internal.Safepoint
 
 /** Pure suspension of side effects.
   *
@@ -40,8 +39,8 @@ object Sync:
       * @return
       *   The suspended computation wrapped in an Sync effect.
       */
-    inline def defer[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
-        Effect.deferInline(f)
+    inline def defer[A, S](inline f: => A < S)(using inline frame: Frame): A < (Sync & S) =
+        Effect.defer(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
       *
@@ -108,7 +107,26 @@ object Sync:
     inline def ensure[A, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
         inline frame: Frame
     ): A < (Sync & S) =
-        Unsafe.defer(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
+        Unsafe.defer {
+            // fires exactly once across the three completion paths: the use computation fires
+            // Absent on success and the panic on a throw, so a release that finds the flag
+            // unfired can only be the discard of a parked remainder, the interrupt path
+            val fired = new java.util.concurrent.atomic.AtomicBoolean(false)
+            def fire(outcome: Maybe[Error[Any]])(using AllowUnsafe): Unit =
+                if fired.compareAndSet(false, true) then
+                    val _ = Sync.Unsafe.evalOrThrow(f(outcome).unit)
+            Effect.bracket(())(_ => Sync.Unsafe.defer(fire(Present(Result.Panic(Interrupted(frame)))))) { _ =>
+                Effect.catching(v.map { a =>
+                    Sync.Unsafe.defer {
+                        fire(Absent)
+                        a
+                    }
+                }) { ex =>
+                    fire(Present(Result.Panic(ex)))(using AllowUnsafe.embrace.danger)
+                    throw ex
+                }
+            }
+        }
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *
@@ -134,7 +152,7 @@ object Sync:
     object Unsafe:
 
         inline def defer[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
-            Effect.deferInline {
+            Effect.defer {
                 f(using AllowUnsafe.embrace.danger)
             }
 

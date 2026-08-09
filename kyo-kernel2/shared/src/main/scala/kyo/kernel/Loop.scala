@@ -274,14 +274,15 @@ object Loop:
         @tailrec def loop(i: Int): Unit < S =
             if i >= n then ()
             else
-                run match
-                    case kyo: Kyo[Any, S] @unchecked =>
-                        val step = new Arrow.Transform[Any, Unit, S]:
-                            def frame = _frame
-                            def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[Unit, C, S2]): C < (S & S2) =
-                                cont(loop(i + 1), context, handlers)
-                        kyo.map(step)
-                    case _ => loop(i + 1)
+                val w = run
+                if w.isInstanceOf[Kyo[?, ?]] then
+                    val step = new Arrow.Transform[Any, Unit, S]:
+                        def frame = _frame
+                        def run[C, S2](o: Any, context: Context, handlers: Handlers, cont: Arrow[Unit, C, S2]): C < (S & S2) =
+                            cont(loop(i + 1), context, handlers)
+                    w.asInstanceOf[Kyo[Any, S]].map(step)
+                else loop(i + 1)
+                end if
         loop(0)
     end repeat
 

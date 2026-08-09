@@ -1,6 +1,8 @@
 package kyo.kernel
 
+import kyo.Const
 import kyo.Frame
+import kyo.Kyo
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present

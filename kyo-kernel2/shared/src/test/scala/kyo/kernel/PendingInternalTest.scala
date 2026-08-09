@@ -1,5 +1,7 @@
 package kyo.kernel
 
+import kyo.Const
+import kyo.Kyo
 import kyo.Maybe
 import kyo.Tag
 import kyo.test.Test

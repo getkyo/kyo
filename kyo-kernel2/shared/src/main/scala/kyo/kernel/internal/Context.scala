@@ -45,7 +45,7 @@ object Context:
             getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $self"))
 
         /** Sets a value, adding the NoninheritableFlag if the effect is noninheritable. */
-        private[kernel] def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
+        private[kyo] def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
             val newContext = self.updated(tag.erased, value.asInstanceOf[AnyRef])
             if tag <:< Tag[ContextEffect.Noninheritable] then
                 newContext.updated(Tag[NoninheritableFlag].erased, NoninheritableFlag)

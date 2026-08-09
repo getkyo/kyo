@@ -25,8 +25,9 @@ object Kyo:
     inline def settled[A, S](v: A < S): A =
         unnest(v).asInstanceOf[A]
 
-    // a case class so re-wrapping at pass-through positions preserves value equality
-    final private[kyo] case class Nested[+A](value: A)
+    // a case class so re-wrapping at pass-through positions preserves value equality; public
+    // like Defer because the central lift's runtime arm expands at user sites, outside kyo
+    final case class Nested[+A](value: A)
 
     /** A suspension: an arrow-effect operation with the fused continuation from its output.
       *

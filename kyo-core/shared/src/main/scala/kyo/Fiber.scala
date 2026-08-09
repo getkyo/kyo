@@ -4,9 +4,8 @@ import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.internal.Reducible
+import kyo.kernel.ContextEffect
 import kyo.kernel.internal.Context
-import kyo.kernel.internal.Safepoint
-import kyo.kernel.internal.Trace
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOPromiseBase
 import kyo.scheduler.IOTask
@@ -171,10 +170,10 @@ object Fiber:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
-        Isolate.internal.runDetached((trace, context) =>
+        ContextEffect.runDetached(context =>
             isolate.capture { state =>
                 val io = isolate.isolate(state, v).map(r => isolate.restore(r))
-                IOTask(io, trace, context).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
+                IOTask(io, context).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
             }
         )
 
@@ -415,7 +414,7 @@ object Fiber:
             // effectful (`A < (Async & Abort[E])`): Sync.defer deconstructs it so IOTask drives the
             // Async and Abort effects to completion inside the carrier, rather than leaving the
             // computation as an un-run suspension (a plain value infers `E = Nothing`, unchanged).
-            IOTask(Sync.defer(v), Trace.saved(), Context.empty)
+            IOTask(Sync.defer(v), Context.empty)
                 .asInstanceOf[Fiber.Unsafe[A, reduce.SReduced]]
         end init
 
@@ -747,12 +746,8 @@ object Fiber:
                                 result.foldError(_ => (), e => this.interruptDiscard(e))
                         end State
                         val state = new State
-                        Isolate.internal.runDetached { (trace, context) =>
-                            val safepoint = Safepoint.get
-                            val parent: Maybe[IOPromise[?, ?]] =
-                                safepoint.getInterceptor() match
-                                    case p: IOPromise[?, ?] => Present(p)
-                                    case _                  => Absent
+                        ContextEffect.runDetached { context =>
+                            val parent: Maybe[IOPromise[?, ?]] = IOTask.parentIn(context)
                             @tailrec def loop(i: Int): Unit =
                                 if i < numWorkers then
                                     def workerLoop(): Unit < (Abort[E] & Async) =
@@ -765,7 +760,7 @@ object Fiber:
                                             }
                                         end if
                                     end workerLoop
-                                    val fiber = IOTask(workerLoop(), safepoint.copyTrace(trace), context, parent)
+                                    val fiber = IOTask(workerLoop(), context, parent)
                                     state.interrupts(fiber)
                                     fiber.onComplete(state)
                                     loop(i + 1)
@@ -790,15 +785,11 @@ object Fiber:
             private inline def apply[E, A](state: Race[E, A], iterable: Iterable[A < (Abort[E] & Async)])(
                 using frame: Frame
             ): Fiber[A, Abort[E]] < Sync =
-                Isolate.internal.runDetached { (trace, context) =>
-                    val safepoint = Safepoint.get
+                ContextEffect.runDetached { context =>
                     // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
-                    val parent: Maybe[IOPromise[?, ?]] =
-                        safepoint.getInterceptor() match
-                            case p: IOPromise[?, ?] => Present(p)
-                            case _                  => Absent
+                    val parent: Maybe[IOPromise[?, ?]] = IOTask.parentIn(context)
                     foreach(iterable) { (_, v) =>
-                        val fiber = IOTask(v, safepoint.copyTrace(trace), context, parent = parent)
+                        val fiber = IOTask(v, context, parent = parent)
                         state.onComplete(_ => fiber.interruptDiscard(Result.Panic(Interrupted(frame))))
                         fiber.onComplete(state)
                     }
@@ -902,16 +893,12 @@ object Fiber:
                         end apply
                     end State
                     val state = new State
-                    Isolate.internal.runDetached { (trace, context) =>
-                        val safepoint             = Safepoint.get
+                    ContextEffect.runDetached { context =>
                         inline def interruptPanic = Result.Panic(Interrupted(frame))
                         // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
-                        val parent: Maybe[IOPromise[?, ?]] =
-                            safepoint.getInterceptor() match
-                                case p: IOPromise[?, ?] => Present(p)
-                                case _                  => Absent
+                        val parent: Maybe[IOPromise[?, ?]] = IOTask.parentIn(context)
                         foreach(iterable) { (idx, v) =>
-                            val fiber = IOTask(v, safepoint.copyTrace(trace), context, parent = parent)
+                            val fiber = IOTask(v, context, parent = parent)
                             state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
                             fiber.onComplete(state(idx, _))
                         }

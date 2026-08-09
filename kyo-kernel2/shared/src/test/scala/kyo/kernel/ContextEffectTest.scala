@@ -1,5 +1,6 @@
 package kyo.kernel
 
+import kyo.Const
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.Context

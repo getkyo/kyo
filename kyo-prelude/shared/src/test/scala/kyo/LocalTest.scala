@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.kernel.ContextEffect
 
 class LocalTest extends kyo.test.Test[Any]:
 
@@ -117,7 +118,7 @@ class LocalTest extends kyo.test.Test[Any]:
             val inheritableLocal    = Local.init("test")
 
             val context =
-                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate.internal.runDetached { (trace, context) =>
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(ContextEffect.runDetached { context =>
                     context
                 })).eval
 
@@ -135,10 +136,10 @@ class LocalTest extends kyo.test.Test[Any]:
             val context =
                 noninheritableLocal.let(20)(
                     inheritableLocal.let("outer")(
-                        Isolate.internal.runDetached { (outerTrace, outerContext) =>
+                        ContextEffect.runDetached { outerContext =>
                             noninheritableLocal.let(30)(
                                 inheritableLocal.let("inner")(
-                                    Isolate.internal.runDetached { (innerTrace, innerContext) => innerContext }
+                                    ContextEffect.runDetached { innerContext => innerContext }
                                 )
                             )
                         }
