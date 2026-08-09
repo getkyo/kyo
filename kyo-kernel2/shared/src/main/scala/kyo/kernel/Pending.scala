@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Frame
 import kyo.Maybe
+import kyo.Result
 import kyo.Tag
 import kyo.failTag
 import kyo.kernel.internal.Context
@@ -34,8 +35,8 @@ object `<` extends Implicits:
         // runtime machinery, not user surface: runs the finalizers a parked computation's
         // brackets carry. The scheduler calls it when dropping a continuation that will
         // never be resumed.
-        private[kyo] def finalizeBracket: Unit =
-            val errors = Finalize.finalizeValue(self)
+        private[kyo] def finalizeBracket(outcome: Maybe[Result.Error[Any]]): Unit =
+            val errors = Finalize.finalizeValue(self, outcome)
             errors.headMaybe match
                 case Maybe.Present(t) =>
                     errors.dropLeft(1).foreach(t.addSuppressed)

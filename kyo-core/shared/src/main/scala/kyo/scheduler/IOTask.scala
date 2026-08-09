@@ -162,7 +162,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     private def finish(remainder: A < (Ctx & Async & Abort[E])): Unit =
         if !isNull(remainder) && remainder.evalNow.isEmpty then
             ensureInterrupt(remainder)
-            remainder.finalizeBracket
+            remainder.finalizeBracket(pollError())
         curr = nullResult
     end finish
 

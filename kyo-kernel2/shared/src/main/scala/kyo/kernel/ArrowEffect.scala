@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Frame
 import kyo.Maybe
+import kyo.Result
 import kyo.Tag
 import kyo.kernel.internal.Context
 import kyo.kernel.internal.EffectTrace
@@ -249,8 +250,9 @@ object ArrowEffect:
                 // acquire is settled, so only release and the use continuation carry the handler. The release fold runs
                 // at the bracket's value types: its completion value is discarded by the drive, so the loop's currency
                 // standing in for it stays contained; the casts mark that seam.
-                def acquire                       = b.acquire.asInstanceOf[R < S2]
-                def release(x: R)                 = loop(b.release(x).asInstanceOf[A < S], context, handlers).asInstanceOf[Unit < S2]
+                def acquire = b.acquire.asInstanceOf[R < S2]
+                def release(x: R, outcome: Maybe[Result.Error[Any]]) =
+                    loop(b.release(x, outcome).asInstanceOf[A < S], context, handlers).asInstanceOf[Unit < S2]
                 def cont                          = rotated(b.cont)
                 def frame                         = b.frame
                 override private[kyo] def settled = true
@@ -266,11 +268,11 @@ object ArrowEffect:
                 def frame = b.frame
                 def run[C, S3](v: R, context: Context, handlers: Handlers, cont: Arrow[A, C, S3]): C < (S & S3) =
                     val rebuilt = new Kyo.Bracket[R, A, S]:
-                        def acquire                       = defaultLift(v)
-                        def release(x: R)                 = b.release(x)
-                        def cont                          = b.cont
-                        def frame                         = b.frame
-                        override private[kyo] def settled = true
+                        def acquire                                          = defaultLift(v)
+                        def release(x: R, outcome: Maybe[Result.Error[Any]]) = b.release(x, outcome)
+                        def cont                                             = b.cont
+                        def frame                                            = b.frame
+                        override private[kyo] def settled                    = true
                     cont(rebuilt, context, handlers)
                 end run
             Kyo.Defer(

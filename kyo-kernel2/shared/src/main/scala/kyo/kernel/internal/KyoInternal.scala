@@ -1,6 +1,8 @@
 package kyo.kernel.internal
 
 import kyo.Frame
+import kyo.Maybe
+import kyo.Result
 import kyo.Tag
 import kyo.kernel.*
 import language.implicitConversions
@@ -24,6 +26,14 @@ object Kyo:
       */
     inline def settled[A, S](v: A < S): A =
         unnest(v).asInstanceOf[A]
+
+    /** The bracket outcome a settled use value carries: a [[Result.Error]] is the currency a rotated error handler settles with,
+      * so the kernel reads it as the completion outcome; any other value is a success.
+      */
+    private[kyo] def outcomeOf(v: Any): Maybe[Result.Error[Any]] =
+        unnest(v) match
+            case e: Result.Error[Any] @unchecked => Maybe(e)
+            case _                               => Maybe.Absent
 
     // a case class so re-wrapping at pass-through positions preserves value equality; public
     // like Defer because the central lift's runtime arm expands at user sites, outside kyo
@@ -87,7 +97,12 @@ object Kyo:
     abstract class Bracket[R, A, S] extends Kyo[A, S]:
 
         def acquire: R < S
-        def release(r: R): Unit < S
+
+        /** Releases the resource with the use computation's outcome: Absent on success, the error when the settled value is a
+          * [[Result.Error]] (the currency a rotated error handler settles with) or the use computation threw, and the boundary's
+          * own error when a parked remainder is discarded. The kernel guarantees exactly one call per acquired resource.
+          */
+        def release(r: R, outcome: Maybe[Result.Error[Any]]): Unit < S
         def cont: Arrow[R, A, S]
         def frame: Frame
 
@@ -97,19 +112,56 @@ object Kyo:
           */
         private[kyo] def settled: Boolean = false
 
+        // composition extends the use continuation; the region's exit crossing sits at the end
+        // of every use chain (installed at construction), so the extension fuses onto the
+        // crossing's continuation at drive time and runs outside the region, after the release
         final private[kyo] def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
-            val outer = this
+            val self = this.asInstanceOf[Bracket[R, A, S & S2]]
             new Bracket[R, B, S & S2]:
-                def acquire       = outer.acquire
-                def release(r: R) = outer.release(r)
-                def cont          = outer.cont.map(f)
-                def frame         = outer.frame
+                def acquire                                          = self.acquire
+                def release(r: R, outcome: Maybe[Result.Error[Any]]) = self.release(r, outcome)
+                def cont                                             = self.cont.map(f.asInstanceOf[Arrow[A, B, S & S2]])
+                def frame                                            = self.frame
+                override private[kyo] def settled                    = self.settled
             end new
         end map
 
         final override def toString = "Bracket(" + frame.position.show + ")"
 
     end Bracket
+
+    /** The effect of a region-exit crossing: every bracket's use chain ends with one, installed at construction, carrying the
+      * region's completed result as its input. Everything composed onto the bracket, at any point in its life, fuses onto the
+      * crossing's continuation, so it runs outside the region, and each activation mints exactly one crossing, which is what
+      * lets the drive's region arm attribute any surfacing crossing to its nearest open region: there the release runs with the
+      * carried result and the continuation resumes outside. Every other traversal treats it as an ordinary foreign suspension,
+      * which is the point: a handler rotating across it covers the downstream with the state it reached at region exit, and
+      * finalization walks its continuation like any other remainder.
+      */
+    sealed private[kyo] trait RegionExit extends ArrowEffect[kyo.Id, kyo.Id]
+
+    private[kyo] val regionExitFullTag: Tag[RegionExit] = Tag[RegionExit]
+    private[kyo] val regionExitTag: Tag[Any]            = regionExitFullTag.erased
+
+    final private[kyo] class Exit[A](val payload: A) extends Suspend[kyo.Id, kyo.Id, RegionExit, A, A, RegionExit]:
+        def input               = payload
+        def tag                 = regionExitFullTag
+        def frame               = Frame.internal
+        def cont                = Arrow[A]
+        private[kyo] def origin = this
+    end Exit
+
+    private val erasedExitStep: Arrow.Transform[Any, Any, Any] =
+        new Arrow.Transform[Any, Any, Any]:
+            def frame = Frame.internal
+            def run[C, S2](v: Any, context: Context, handlers: Handlers, cont: Arrow[Any, C, S2]): C < (Any & S2) =
+                cont(new Exit(v).asInstanceOf[Any < Any], context, handlers)
+
+    /** Yields the region-exit crossing at the end of a use chain: the crossing carries the use result, and whatever follows in
+      * the chain fuses onto the crossing's suspension. The shared erased instance behind a typed view, like `Arrow[A]` over the
+      * empty arrow.
+      */
+    private[kyo] def exitStep[A, S]: Arrow[A, A, S] = erasedExitStep.asInstanceOf[Arrow[A, A, S]]
 
     // public because the inline trampoline's Defer arm expands at user sites.
     // value is a pending value, not a bare A: variance then types the public

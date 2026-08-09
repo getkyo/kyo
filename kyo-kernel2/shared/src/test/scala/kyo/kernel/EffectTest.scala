@@ -378,6 +378,211 @@ class EffectTest extends Test[Any]:
         assert(v.eval == 2)
     }
 
+    "a transform mapped after a bracket runs outside the region" in {
+        // regression: composing after a bracket must not extend the use continuation,
+        // or the release runs after the composed transforms
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            log :+= "use"
+            r + 1
+        }.map { x =>
+            log :+= "after1"
+            x + 1
+        }.map { x =>
+            log :+= "after2"
+            x * 10
+        }
+        assert(v.eval == 30)
+        assert(log == List("acq", "use", "rel", "after1", "after2"))
+    }
+
+    "release runs before a downstream transform under a handler" in {
+        // regression: the composed downstream crossed into the region under rotation,
+        // running before the release, and the release fold fed its completion value to
+        // the downstream transform
+        var log = List.empty[String]
+        val v = Effect.bracket(0) { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            ask.map { a =>
+                log :+= "use"
+                a + r
+            }
+        }.map { x =>
+            log :+= "after"
+            x + 1
+        }
+        val handled = ArrowEffect.handle(Tag[EffAsk], v)([C] => (_, cont) => cont(20))
+        assert(handled.eval == 21)
+        assert(log == List("use", "rel", "after"))
+    }
+
+    "downstream of a bracket sees the handler state reached at region exit" in {
+        var log = List.empty[String]
+        val v = Effect.bracket(0) { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            testEffect1(10).map { s =>
+                log :+= "use"
+                s.toInt
+            }
+        }.map { x =>
+            log :+= "after"
+            testEffect1(x).map(_.toInt)
+        }
+        val handled = ArrowEffect.handleLoop(Tag[TestEffect1], 100, v)(
+            [C] => (input, state, cont) => Loop.continue(state + 1, cont((input + state).toString))
+        )
+        assert(handled.eval == 211)
+        assert(log == List("use", "rel", "after"))
+    }
+
+    "a discarded continuation inside use skips the downstream but releases" in {
+        var log = List.empty[String]
+        val v = Effect.bracket(0) { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            ask.map { a =>
+                log :+= "use"
+                a + r
+            }
+        }.map { x =>
+            log :+= "after"
+            x + 1
+        }
+        val handled = ArrowEffect.handle(Tag[EffAsk], v)([C] => (_, _) => 42)
+        assert(handled.eval == 42)
+        assert(log == List("rel"))
+    }
+
+    "release runs before a downstream transform across a park" in {
+        var log = List.empty[String]
+        val v = Effect.bracket {
+            log :+= "acq"
+            1
+        } { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            ask.map(a => a + r)
+        }.map { x =>
+            log :+= "after"
+            x + 1
+        }
+        val parked = park(v)
+        assert(log == List("acq"))
+        assert(resume(parked, 100) == 102)
+        assert(log == List("acq", "rel", "after"))
+    }
+
+    "a composed inner bracket inside an outer use keeps both regions ordered" in {
+        var log = List.empty[String]
+        def mk(name: String, use: Int => Int < Any): Int < Any =
+            Effect.bracket {
+                log :+= s"acq-$name"
+                1
+            } { _ =>
+                log :+= s"rel-$name"
+                ()
+            }(use)
+        val v = mk(
+            "outer",
+            _ =>
+                mk("inner", r => r + 1).map { x =>
+                    log :+= "after-inner"
+                    x * 10
+                }
+        ).map { x =>
+            log :+= "after-outer"
+            x + 2
+        }
+        assert(v.eval == 22)
+        assert(log == List("acq-outer", "acq-inner", "rel-inner", "after-inner", "rel-outer", "after-outer"))
+    }
+
+    "a throw after a park and resume inside use still releases" in {
+        var log = List.empty[String]
+        val v: Int < EffAsk = Effect.bracket {
+            log :+= "acq"
+            42
+        } { _ =>
+            log :+= "rel"
+            ()
+        } { r =>
+            ask.map(a => (throw new RuntimeException("boom")): Int)
+        }
+        val parked = park(v)
+        assert(log == List("acq"))
+        val thrown =
+            try
+                val _ = resume(parked, 1)
+                false
+            catch case e: RuntimeException => e.getMessage == "boom"
+        assert(thrown)
+        assert(log == List("acq", "rel"))
+    }
+
+    "a composed bracket acquires and releases per drive" in {
+        var log = List.empty[String]
+        var n   = 0
+        val v = Effect.bracket {
+            n += 1
+            log :+= s"acq-$n"
+            n
+        } { r =>
+            log :+= s"rel-$r"
+            ()
+        }(r => r).map(_ * 10)
+        assert(v.eval == 10)
+        assert(v.eval == 20)
+        assert(log == List("acq-1", "rel-1", "acq-2", "rel-2"))
+    }
+
+    "discarding a parked remainder releases nested regions innermost first" in {
+        var log = List.empty[String]
+        def mk(name: String, use: Int => Int < EffAsk): Int < EffAsk =
+            Effect.bracket {
+                log :+= s"acq-$name"
+                1
+            } { _ =>
+                log :+= s"rel-$name"
+                ()
+            }(use)
+        val v      = mk("outer", _ => mk("inner", r => ask.map(_ + r)).map(_ + 1))
+        val parked = park(v)
+        assert(log == List("acq-outer", "acq-inner"))
+        parked.finalizeBracket(Maybe.Absent)
+        assert(log == List("acq-outer", "acq-inner", "rel-inner", "rel-outer"))
+    }
+
+    "an operation in release is handled after use and before the downstream" in {
+        var log = List.empty[String]
+        val v = Effect.bracket(0) { _ =>
+            ask.map { a =>
+                log :+= s"rel-$a"
+                ()
+            }
+        } { r =>
+            log :+= "use"
+            r + 1
+        }.map { x =>
+            log :+= "after"
+            x + 1
+        }
+        val handled = ArrowEffect.handle(Tag[EffAsk], v)([C] => (_, cont) => cont(5))
+        assert(handled.eval == 2)
+        assert(log == List("use", "rel-5", "after"))
+    }
+
     "catching intercepts an exception at construction" in {
         val v = Effect.catching[Int, Any, Int, Any] {
             throw new RuntimeException("boom")

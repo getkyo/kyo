@@ -46,15 +46,48 @@ private[kyo] object Eval:
                                                 Finalize.cleanup(bracket, resource, t)
                                                 throw t
                                     result match
-                                        case suspended: Kyo[Any, Any] @unchecked =>
-                                            val wrapped = suspended.map(new Finalize[Any, Any, Any](bracket, resource))
+                                        case exit: Kyo.Suspend[?, ?, ?, ?, ?, ?] if exit.erasedTag =:= Kyo.regionExitTag =>
+                                            // the use completed at its region-exit crossing: release with the carried
+                                            // result, then resume the crossing's continuation outside the region.
+                                            // release runs masked, mirroring the current kernel: neither a time slice
+                                            // nor an interrupt cuts a finalizer that is already running
+                                            val payload = exit.input
+                                            Safepoint.maskPreempt()
+                                            val released =
+                                                try recur(bracket.release(resource, Kyo.outcomeOf(payload)), depth + 1)
+                                                finally Safepoint.unmaskPreempt()
+                                            val remainder = new Kyo.Defer[Any, Any, Any](
+                                                LiftMacro.defaultLift(payload),
+                                                exit.cont.asInstanceOf[Arrow[Any, Any, Any]]
+                                            )
+                                            released match
+                                                case suspended: Kyo[Any, Any] @unchecked =>
+                                                    // finish the release, then run the downstream remainder
+                                                    val wrapped = suspended.map(Finalize.constant(remainder))
+                                                    if depth == 0 then loop(wrapped) else wrapped
+                                                case _ =>
+                                                    if depth == 0 then loop(remainder)
+                                                    else recur(remainder, depth + 1)
+                                            end match
+                                        case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                                            // the region parked on a foreign crossing: the release travels at the
+                                            // front of the remainder, rebuilding the region around the rest on
+                                            // resume, so a region-exit crossing in the rest still releases before
+                                            // its downstream
+                                            val wrapped =
+                                                s.continue(new Finalize(bracket, resource, s.cont.asInstanceOf[Arrow[Any, Any, Any]]))
+                                            if depth == 0 then loop(wrapped) else wrapped
+                                        case pending: Kyo[Any, Any] @unchecked =>
+                                            // a preempted remainder: rebuild the region around it, the re-drive
+                                            // re-enters this arm
+                                            val wrapped = Finalize.resumeRegion(bracket, resource, pending)
                                             if depth == 0 then loop(wrapped) else wrapped
                                         case _ =>
                                             // release runs masked, mirroring the current kernel: neither a time slice nor an
                                             // interrupt cuts a finalizer that is already running
                                             Safepoint.maskPreempt()
                                             val released =
-                                                try recur(bracket.release(resource), depth + 1)
+                                                try recur(bracket.release(resource, Kyo.outcomeOf(result)), depth + 1)
                                                 finally Safepoint.unmaskPreempt()
                                             released match
                                                 case suspended: Kyo[Any, Any] @unchecked =>
@@ -68,7 +101,8 @@ private[kyo] object Eval:
                         loop(defer.cont(defer.value, context, handlers))
                     case kyo: Kyo[Any, Any] @unchecked =>
                         // a suspension that reached the drive crossed every installed handler:
-                        // the remainder parks (handlePartial's boundary), or eval reports it
+                        // the remainder parks (handlePartial's boundary), or eval reports it. A
+                        // region-exit crossing parks here too, up to the arm driving its region
                         curr
                     case _ =>
                         curr

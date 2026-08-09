@@ -36,7 +36,7 @@ class PendingSchedulerTest extends Test[Any]:
             [C] => (input, cont) => Maybe.Absent
         )
         assert(log == List("acq-outer", "acq-inner"))
-        remainder.finalizeBracket
+        remainder.finalizeBracket(Maybe.Absent)
         assert(log == List("acq-outer", "acq-inner", "rel-inner", "rel-outer"))
     }
 
@@ -90,7 +90,7 @@ class PendingSchedulerTest extends Test[Any]:
         assert(log == List("acq"))
         val resumed = captured.asInstanceOf[Arrow[Int, Int, Ask]](10)
         assert(log == List("acq"))
-        resumed.finalizeBracket
+        resumed.finalizeBracket(Maybe.Absent)
         assert(log == List("acq", "rel"))
     }
 

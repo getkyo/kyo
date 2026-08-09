@@ -1,6 +1,8 @@
 package kyo.kernel
 
 import kyo.Frame
+import kyo.Maybe
+import kyo.Result
 import kyo.kernel.internal.Context
 import kyo.kernel.internal.Handlers
 import kyo.kernel.internal.Kyo
@@ -30,10 +32,12 @@ private[kyo] object Observe:
                     )
                 case b: Kyo.Bracket[Any, Any, Any] @unchecked =>
                     new Kyo.Bracket[Any, Any, Any]:
-                        def acquire         = wrap(b.acquire)
-                        def release(r: Any) = wrap(b.release(r)).asInstanceOf[Unit < Any]
-                        def cont            = new Segment(obs, b.cont.asInstanceOf[Arrow[Any, Any, Any]])
-                        def frame           = b.frame
+                        def acquire = wrap(b.acquire)
+                        def release(r: Any, outcome: Maybe[Result.Error[Any]]) =
+                            wrap(b.release(r, outcome)).asInstanceOf[Unit < Any]
+                        def cont                          = new Segment(obs, b.cont.asInstanceOf[Arrow[Any, Any, Any]])
+                        def frame                         = b.frame
+                        override private[kyo] def settled = b.settled
                 case w => w
             end match
         end wrap

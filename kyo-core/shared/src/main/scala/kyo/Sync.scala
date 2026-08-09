@@ -107,26 +107,10 @@ object Sync:
     inline def ensure[A, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
         inline frame: Frame
     ): A < (Sync & S) =
-        Unsafe.defer {
-            // fires exactly once across the three completion paths: the use computation fires
-            // Absent on success and the panic on a throw, so a release that finds the flag
-            // unfired can only be the discard of a parked remainder, the interrupt path
-            val fired = new java.util.concurrent.atomic.AtomicBoolean(false)
-            def fire(outcome: Maybe[Error[Any]])(using AllowUnsafe): Unit =
-                if fired.compareAndSet(false, true) then
-                    val _ = Sync.Unsafe.evalOrThrow(f(outcome).unit)
-            Effect.bracket(())(_ => Sync.Unsafe.defer(fire(Present(Result.Panic(Interrupted(frame)))))) { _ =>
-                Effect.catching(v.map { a =>
-                    Sync.Unsafe.defer {
-                        fire(Absent)
-                        a
-                    }
-                }) { ex =>
-                    fire(Present(Result.Panic(ex)))(using AllowUnsafe.embrace.danger)
-                    throw ex
-                }
-            }
-        }
+        // the kernel bracket owns the exactly-once guarantee and the outcome: Absent on
+        // success, the error when the computation aborts or throws, and the boundary's own
+        // error when a parked remainder is discarded
+        Effect.bracket(())((_, outcome) => Sync.Unsafe.defer(discard(Sync.Unsafe.evalOrThrow(f(outcome).unit))))(_ => v)
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

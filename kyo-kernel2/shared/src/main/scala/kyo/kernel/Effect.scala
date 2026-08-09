@@ -1,6 +1,8 @@
 package kyo.kernel
 
 import kyo.Frame
+import kyo.Maybe
+import kyo.Result
 import kyo.kernel.internal.Context
 import kyo.kernel.internal.EffectTrace
 import kyo.kernel.internal.Handlers
@@ -48,6 +50,18 @@ object Effect:
         end try
     end catching
 
+    /** Acquires a resource, uses it, and guarantees release, with the release ignoring the completion outcome. Delegates to the
+      * outcome-aware canonical form.
+      */
+    private[kyo] inline def bracket[R, A, S](
+        inline acquireF: => R < S
+    )(
+        inline releaseF: R => Unit < S
+    )(
+        inline useF: R => A < S
+    )(using inline _frame: Frame): A < S =
+        bracket(acquireF)((r, _) => releaseF(r))(useF)
+
     /** Suspends a computation so it runs when driven, not when constructed.
       *
       * The thunk is evaluated each time the resulting computation is driven past this point, on the driver's stack, inside the trampoline.
@@ -66,25 +80,31 @@ object Effect:
       *
       * `release` runs exactly once when `use` completes, fails with an exception, or when the computation is discarded after a park. If the
       * computation suspends while the resource is held, the release is carried in the parked continuation and runs when the resumed
-      * computation completes or is discarded.
+      * computation completes or is discarded. The release receives the outcome: Absent on success, the error when the use computation
+      * settled to a [[kyo.Result.Error]] under a rotated handler or threw, and the boundary's own error when a parked remainder is
+      * discarded.
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def bracket[R, A, S](
         inline acquireF: => R < S
     )(
-        inline releaseF: R => Unit < S
+        inline releaseF: (R, Maybe[Result.Error[Any]]) => Unit < S
     )(
         inline useF: R => A < S
     )(using inline _frame: Frame): A < S =
         new Kyo.Bracket[R, A, S]:
             val useArrow: Arrow[R, A, S] =
-                new Arrow.Transform[R, A, S]:
+                val use = new Arrow.Transform[R, A, S]:
                     def frame = _frame
                     def run[C, S2](v: R, context: Context, handlers: Handlers, cont: Arrow[A, C, S2]): C < (S & S2) =
                         cont(useF(v), context, handlers)
-            def acquire       = acquireF
-            def release(r: R) = releaseF(r)
-            def cont          = useArrow
-            def frame         = _frame
+                // the region-exit crossing ends every use chain: compositions fuse onto it and
+                // run outside the region, and the drive's region arm releases when it surfaces
+                use.map(Kyo.exitStep[A, S])
+            end useArrow
+            def acquire                                          = acquireF
+            def release(r: R, outcome: Maybe[Result.Error[Any]]) = releaseF(r, outcome)
+            def cont                                             = useArrow
+            def frame                                            = _frame
 
 end Effect
