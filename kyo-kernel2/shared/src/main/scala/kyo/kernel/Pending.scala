@@ -54,17 +54,8 @@ object `<`:
         inline def eval(using S =:= Any): A =
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)
-            @tailrec def evalLoop(v: A < Any): A < Any =
-                v match
-                    case kyo: Kyo.Defer[?, ?, ?] =>
-                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
-                        Safepoint.restore(slot, 0L)
-                        val step = defer.cont.step
-                        evalLoop(step.head(defer.value, step.tail))
-                    case v =>
-                        v
             val res =
-                try evalLoop(self.asInstanceOf[A < Any])
+                try Eval(self, Handlers.empty, slot)
                 finally Safepoint.restore(slot, saved)
             res match
                 case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")

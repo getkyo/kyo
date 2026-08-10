@@ -70,4 +70,12 @@ object Kyo:
             new Handled[I, O, E, A, C, S & S2](value, handler, cont.chain(f))
     end Handled
 
+    object Handled:
+        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](handler: Handler[I, O, E])(
+            value: A < (E & S),
+            cont: Arrow[A, B, S]
+        ): Handled[I, O, E, A, B, S] =
+            new Handled[I, O, E, A, B, S](value, handler, cont)
+    end Handled
+
 end Kyo

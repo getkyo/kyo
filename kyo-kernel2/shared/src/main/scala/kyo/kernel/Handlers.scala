@@ -17,15 +17,29 @@ object Handlers:
             self.append(handler)
 
         def find[E](tag: Tag[E]): Maybe[Handler[?, ?, ?]] =
-            @tailrec def loop(i: Int): Maybe[Handler[?, ?, ?]] =
-                if i < 0 then Maybe.Absent
-                else
-                    val handler = self(i)
-                    if tag.erased <:< handler.tag.erased then Maybe.Present(handler)
-                    else loop(i - 1)
-            loop(self.size - 1)
-        end find
+            val i = scan(self, tag)
+            if i < 0 then Maybe.Absent else Maybe.Present(self(i))
+
+        def indexOf[E](tag: Tag[E]): Int =
+            scan(self, tag)
+
+        def apply(i: Int): Handler[?, ?, ?] =
+            (self: Chunk[Handler[?, ?, ?]])(i)
+
+        def take(n: Int): Handlers =
+            (self: Chunk[Handler[?, ?, ?]]).take(n)
 
     end extension
+
+    // Chunk extends Seq, whose indexOf searches elements: inside this file the
+    // opaque is transparent, so unqualified sibling calls would resolve to the
+    // Seq member. Both lookups route through this helper instead.
+    private def scan[E](self: Chunk[Handler[?, ?, ?]], tag: Tag[E]): Int =
+        @tailrec def loop(i: Int): Int =
+            if i < 0 then i
+            else if tag.erased <:< self(i).tag.erased then i
+            else loop(i - 1)
+        loop(self.size - 1)
+    end scan
 
 end Handlers
