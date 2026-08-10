@@ -70,12 +70,11 @@ object Kyo:
             new Handled[I, O, E, A, C, S & S2](value, handler, cont.chain(f))
     end Handled
 
-    object Handled:
-        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](handler: Handler[I, O, E])(
-            value: A < (E & S),
-            cont: Arrow[A, B, S]
-        ): Handled[I, O, E, A, B, S] =
-            new Handled[I, O, E, A, B, S](value, handler, cont)
-    end Handled
+    final class Halt[I[_], O[_], E <: ArrowEffect[I, O], X](
+        val owner: Handler.Stop[I, O, E, ?, ?],
+        val input: I[X]
+    ) extends Kyo[Nothing, Any]:
+        def map[B, S2](f: Arrow[Nothing, B, S2]) = this
+    end Halt
 
 end Kyo

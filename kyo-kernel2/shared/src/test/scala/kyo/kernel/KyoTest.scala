@@ -78,11 +78,11 @@ class KyoTest extends AnyFreeSpec:
             end match
         }
 
-        "eval cannot drive a stop region yet" in {
-            val stopAsk =
-                new Handler.Stop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
-                    def apply[X](input: Unit): Int < (Ask & Any) = -1
-            val n = new Kyo.Handled(ask, stopAsk, Arrow[Int])
+        "eval cannot handle a cont region yet" in {
+            val contAsk =
+                new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+                    def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Int < (Ask & Any) = cont(1)
+            val n = new Kyo.Handled(ask, contAsk, Arrow[Int])
             intercept[IllegalStateException]((n: Int < Any).eval)
         }
     }

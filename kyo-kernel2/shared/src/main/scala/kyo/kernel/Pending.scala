@@ -52,33 +52,17 @@ object `<`:
             map(_ => next)
 
         inline def eval(using S =:= Any): A =
-            val slot  = Safepoint.get()
-            val saved = Safepoint.save(slot)
-            val res =
-                try Eval(self, Handlers.empty, slot)
-                finally Safepoint.restore(slot, saved)
-            res match
-                case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
-                case v              => Kyo.unnest(v.asInstanceOf[A < Any])
+            self match
+                case kyo: Kyo[?, ?] =>
+                    Eval(self) match
+                        case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
+                        case v              => Kyo.unnest(v.asInstanceOf[A < Any])
+                case v =>
+                    Kyo.unnest(v.asInstanceOf[A < Any])
         end eval
 
-        inline def evalPartial(inline stop: () => Boolean): A < S =
-            val slot  = Safepoint.get()
-            val saved = Safepoint.save(slot)
-            @tailrec def evalLoop(v: A < Any): A < Any =
-                if stop() then v
-                else
-                    v match
-                        case kyo: Kyo.Defer[?, ?, ?] =>
-                            val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
-                            Safepoint.restore(slot, 0L)
-                            val step = defer.cont.step
-                            evalLoop(step.head(defer.value, step.tail))
-                        case v =>
-                            v
-            try evalLoop(self.asInstanceOf[A < Any]).asInstanceOf[A < S]
-            finally Safepoint.restore(slot, saved)
-        end evalPartial
+        inline def evalPartial(stop: () => Boolean): A < S =
+            Eval.partial(self, stop)
 
     end extension
 end `<`
