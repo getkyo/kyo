@@ -732,24 +732,18 @@ lazy val `kyo-kernel2` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
-        .withKyoTest
         .in(file("kyo-kernel2"))
         .settings(
-            `kyo-settings`
+            `kyo-settings`,
+            // Interim while the kernel swap migrates up the stack: kyo-test and kyo-doctest
+            // depend on the stack above this module, which does not compile against the new
+            // kernel yet. Tests use scalatest directly, and the doctest jars that kyo-settings
+            // places on Test/unmanagedJars are dropped, until the migration reaches them.
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
+            Test / unmanagedJars := Seq.empty
         )
         .jvmSettings(
-            mimaCheck(false),
-            // Interim while the kernel swap migrates up the stack: Jmh extends Test, and the
-            // kyo-test runner classpath still carries the old kernel through kyo-core, which
-            // cannot share a classpath with this module's kyo.kernel packages. The bench only
-            // needs the main classes, so its classpath is rebuilt from Compile. Jmh/run still
-            // schedules Test/compile through bgRun's dynamic task graph, which these keys
-            // cannot reach: until the stack migrates, run benchmarks directly
-            // (Jmh/compile, then java -cp from 'export kyo-kernel2JVM/Jmh/fullClasspath'
-            // against org.openjdk.jmh.Main).
-            Jmh / unmanagedClasspath := Nil,
-            Jmh / internalDependencyClasspath := (Compile / internalDependencyClasspath).value :+ Attributed.blank((Compile / classDirectory).value),
-            Jmh / internalDependencyAsJars := (Compile / internalDependencyAsJars).value :+ Attributed.blank((Compile / packageBin).value)
+            mimaCheck(false)
         )
         .jvmConfigure(_.enablePlugins(JmhPlugin))
         .nativeSettings(`native-settings`)

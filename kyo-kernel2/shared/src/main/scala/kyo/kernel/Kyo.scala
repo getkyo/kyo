@@ -1,4 +1,4 @@
-package kyo.prototype
+package kyo.kernel
 
 import kyo.Frame
 import kyo.Tag
@@ -13,12 +13,12 @@ final case class Nested[+A](value: A) extends Boxed
 
 object Nested:
 
-    @static private[prototype] def lift[A, S](v: A): A < S =
+    @static private[kernel] def lift[A, S](v: A): A < S =
         v match
             case boxed: Boxed => Nested(boxed).asInstanceOf[A < S]
             case v            => v.asInstanceOf[A < S]
 
-    @static private[prototype] def unnest[A](v: Any): A =
+    @static private[kernel] def unnest[A](v: Any): A =
         v match
             case n: Nested[?] => n.value.asInstanceOf[A]
             case _            => v.asInstanceOf[A]
@@ -26,7 +26,7 @@ end Nested
 
 object Kyo:
 
-    private[prototype] inline def unnest[A, S](inline v: A < S): A =
+    private[kernel] inline def unnest[A, S](inline v: A < S): A =
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A]

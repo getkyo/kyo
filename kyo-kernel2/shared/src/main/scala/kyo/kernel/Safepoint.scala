@@ -1,4 +1,4 @@
-package kyo.prototype
+package kyo.kernel
 
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.discard
