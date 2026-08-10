@@ -232,6 +232,13 @@ single-site row. New rows deepStopHaltsWithoutContinuation (O(N) attachment
 collapse), stopPreBuiltChainUnchanged (honesty: construction before the
 handler cannot be helped), foreignBubbleUnderHandlers (scan-on-miss cost).
 
+Known cost notes, each optimized only against its gating row: the lookup
+scan indexes a Chunk whose Append spine makes each access O(depth), so a
+deep-collection scan is quadratic in handler depth (irrelevant at realistic
+depths, foreignBubbleUnderHandlers is the gate); one Append node per region
+entry and one Chunk view per pending clause answer (region-cycle cost, the
+one-op-region shape is the worst case).
+
 ## 5. Acceptance
 
 The 11 reference programs p1 through p11 with their old-kernel-validated
@@ -246,21 +253,40 @@ a stored computation answering under the later handler, subtype behavior on
 both paths (askSub), and 100k in-place
 recursion on JVM, JS, and Native.
 
-## 6. Steps
+## 6. Steps (the region model, superseding the trampoline-era sequencing)
 
-1. `Handler` and `Handlers`, standalone, unit-tested. No execution code
-   touched.
-2. Thread the parameter, passing empty everywhere. No behavior change;
-   fused-ladder A/B at parity.
-3. Registration: the region-installing trampolines add; rotation re-entries
-   re-arm. Still no lookup; behavior unchanged; handler-row A/B at parity.
-4. Resume in place: the outlined dispatch, settled answers plus the
-   pending-clause wrapper. Acceptance tests and the headline rows.
-5. Stop as Halt: the class, the dispatch arm, pass-through arms, eval
-   defect arm, invariant 3 at the two storage points. Stop programs and
-   rows.
-6. Sweep: remaining expressible reference programs, cross-kind pins, docs
-   to implemented state.
+The model shifted after the compositional probe validated it end to end
+(HandlersProbe.scala, committed as a dev artifact): handler methods become
+the sync path plus one Handled region value; eval is the single drive
+holding all handlers; rotation exists only where a continuation is
+captured or escapes. The probe's numbers: drive-lookup 9.9ns/40B per
+suspension vs trampoline 11.4ns/40B at 10k operations; worst-case one-op
+region cycle 31.1ns/104B vs 13.8ns/40B, amortizing at scale.
+
+1. DONE (f1331be32a, a4f43104a4, 4ce6b408d6): typed Handler hierarchy
+   (Cont, Resume, Stop, Loop; partial has no kind), Handlers as an opaque
+   Chunk with find.
+2. DONE (97f6fbfaa5): Kyo.Handled, the region as a value; map chains
+   outside the region. Nothing constructs it publicly.
+3. DONE (52f52f9000): Eval.scala, the drive core: regions entered by
+   recursion, Resume answering, clause scope as the prefix argument of a
+   recursive call. Handlers gains indexOf, apply, take, and a curried
+   Handled factory (inference cannot split the E and S intersection before
+   the handler pins E). Found and pinned: inside Handlers.scala the opaque
+   is transparent and Chunk extends Seq, so an unqualified sibling call to
+   indexOf resolved to Seq's element search; both lookups now route
+   through one private helper.
+4. Stop: the escape value climbing by returns, owner matched by identity;
+   the Handled arm processes escapes addressed to its handler. Probe P
+   result to reproduce as tests: stop discards without running the rest.
+5. Cont and Loop: capture as the crossed-region re-wrap on the way out
+   (the probe's resumeThen and per-level wrap), multi-shot and state
+   forking as pinned by P4 and P4b.
+6. The switch: handle, resume, stop, loop become sync-path constructors;
+   the five trampolines and wrap-rotation arms are deleted; the eager pins
+   are rewritten per the maintainer's ruling; JMH board.
+7. Rows and record; then, numbers-gated, answering at the suspension site
+   (the mapLoop lookup) for the no-continuation property.
 
 ## 7. Rulings needed
 
