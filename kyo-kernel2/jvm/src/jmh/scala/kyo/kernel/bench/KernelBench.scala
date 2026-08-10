@@ -247,6 +247,20 @@ class KernelBench:
         ArrowEffect.loop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => (state + 1, cont(1))).eval._2
     end stateOps
 
+    /** Issue 531's shape: a for comprehension leaves a trailing map after each recursive effect
+      * step, so the pending chain grows by one transform per level and re-attaches on every
+      * answer. Expect linear cost, about 75ns and 250 bytes per level (the level's suspension,
+      * the trailing attach, the answer-time re-attach of the accumulated remainder, and the
+      * one-time end flatten); any superlinear re-walk of the chain blows this row up.
+      */
+    @Benchmark
+    def trailingMapOps: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a)).map(x => x)
+        ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
+    end trailingMapOps
+
     /** Rotation: two effects alternate, so every outer operation crosses the inner handler and
       * re-attaches it. Expect effectOps rate for the handled operations plus a Suspend wrapper,
       * chain node, and arrow per crossing.
