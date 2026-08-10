@@ -226,4 +226,71 @@ class ArrowEffectTest extends Test[Any]:
             ask.asInstanceOf[Int < Any].eval
         }
     }
+
+    "contracts" - {
+        "a continuation is a value: invoking it twice runs the rest twice" in {
+            var runs = 0
+            val v = ask.map { a =>
+                runs += 1
+                a * 10
+            }
+            val r = ArrowEffect.handle(Tag[Ask], v)(
+                [X] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b))
+            )
+            assert(r.eval == 30)
+            assert(runs == 2)
+        }
+
+        "a handler may run another handle inside its answer" in {
+            val inner: Int < Say = say("s").map(_ => 5)
+            val r = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
+                [X] =>
+                    (_, cont) =>
+                        val answered = ArrowEffect.handle(Tag[Say], inner)([Y] => (_, c) => c(()))
+                        answered.map(cont)
+            )
+            assert(ArrowEffect.handle(Tag[Say], r)([X] => (_, cont) => cont(())).eval == 6)
+        }
+
+        "a computation held as a value passes through a handler untouched" in {
+            val payload: Int < Any   = (1: Int < Any).map(_ + 1)
+            val v: (Int < Any) < Ask = ask.map(_ => payload)
+            val r                    = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(0))
+            assert(r.eval.eval == 2)
+        }
+
+        "partial parks and resume finishes the remainder" in {
+            val v      = ask.map(a => ask.map(b => a + b))
+            val parked = ArrowEffect.partial(Tag[Ask], v)([X] => (_, _) => kyo.Maybe.Absent)
+            val r      = ArrowEffect.resume(Tag[Ask], parked)([X] => _ => 21)
+            assert(r.eval == 42)
+        }
+
+        "the innermost stop wins under nested same-tag handlers" in {
+            var outerReached = false
+            val inner        = ArrowEffect.stop(Tag[Ask], ask.map(_ + 1))([X] => _ => -1)
+            val outer = ArrowEffect.stop(Tag[Ask], inner.asInstanceOf[Int < Ask])(
+                [X] =>
+                    _ =>
+                        outerReached = true
+                        -2
+            )
+            assert(outer.eval == -1)
+            assert(!outerReached)
+        }
+
+        "a throw in the handler surfaces at the handle call" in {
+            interceptThrown[RuntimeException] {
+                val _ = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
+                    [X] => (_, _) => (throw new RuntimeException("boom")): Int < Ask
+                )
+            }
+        }
+
+        "a throw in a map surfaces at construction on the settled path" in {
+            interceptThrown[RuntimeException] {
+                val _ = (1: Int < Any).map(_ => (throw new RuntimeException("boom")): Int)
+            }
+        }
+    }
 end ArrowEffectTest
