@@ -37,39 +37,35 @@ execution signatures; user code never sees it.
 
 ### 2.1 Handlers: a collection of handlers
 
-Two handler kinds exist, because only two behaviors exist at a suspension
-site: answer here, or halt to the boundary.
+Every handler method has a typed form saving exactly its method's clause at
+its public types, named after the method (implemented, step 1):
 
     sealed abstract class Handler[I[_], O[_], E <: ArrowEffect[I, O]](val tag: Tag[E])
 
     object Handler:
-        abstract class Resume[I[_], O[_], E <: ArrowEffect[I, O], S](tag: Tag[E])
-            extends Handler[I, O, E](tag):
+        abstract class Handle[..., A, S](tag):
+            def apply[X](input: I[X], cont: O[X] => A < (E & S)): A < (E & S)
+        abstract class Resume[..., S](tag):
             def apply[X](input: I[X]): O[X] < S
+        abstract class Stop[..., A, S](tag):
+            def apply[X](input: I[X]): A < (E & S)
+        abstract class Loop[..., A, S, State](tag):
+            def apply[X](input: I[X], state: State, cont: O[X] => A < (E & S)): (State, A < (E & S))
+        abstract class Partial[..., A, S](tag):
+            def apply[X](input: I[X], cont: O[X] => A < (E & S)): Maybe[A < (E & S)]
 
-        final class Stop[I[_], O[_], E <: ArrowEffect[I, O]](tag: Tag[E])
-            extends Handler[I, O, E](tag)
+Clauses are invoked at their declared types. The one erased boundary is the
+tag-keyed recovery at the lookup site, justified by the tag match, the same
+documented cast the trampolines' matched arms carry today. Each handler
+method mints one handler value per call. Halt ownership compares the Stop
+value by eq.
 
-- Resume saves exactly what must survive to the suspension site: the clause,
-  at its public types, invoked at those types. One allocation per
-  `ArrowEffect.resume` call. The one erased boundary is the tag-keyed
-  recovery at the lookup site, justified by the tag match, the same
-  documented cast the trampolines' matched arms carry today.
-- Stop saves nothing but tag and identity: its clause runs at the boundary
-  inside the stop trampoline, which already holds it at its types. Halt
-  ownership compares the Stop value by eq. One per `ArrowEffect.stop` call.
-
-`Handlers` is one final array-backed class over `Handler` values plus an
-empty singleton: innermost-last scan whose match relation is the
-trampolines' matched-arm guard (suspension tag `<:<` handler tag), and
-copy-on-add. Later steps add, with their own justification and tests:
-removal of handlers whose tag is related to a given tag (either direction
-of `<:<`, the conservative overlap rule), and a prefix view up to a given
-handler (same backing array, shorter length, no copy). The scan reads `tag`
-as a val on the sealed base: one monomorphic field load.
-
-There is no third handler kind and no marker entries. Innermost-wins across
-kinds is achieved by subtraction, not masking (2.6).
+`Handlers` is an opaque type over `Chunk[Handler[?, ?, ?]]` (implemented,
+step 1): `empty`, `add`, and an innermost-last `find` whose match relation
+is the trampolines' matched-arm guard (suspension tag `<:<` handler tag).
+A later step adds, with its own tests, a prefix view up to a given handler
+for the clause scope rule. The scan reads `tag` as a val on the sealed
+base: one monomorphic field load.
 
 ### 2.2 The parameter
 
@@ -81,12 +77,12 @@ kinds is achieved by subtraction, not masking (2.6).
   the initial call at a `.map`/mint expression passes empty (with a pending
   self they attach; with a settled self the result returns to a caller that
   holds the parameter, so nothing is lost).
-- The five trampolines take the parameter and derive what flows inward once
-  per invocation: resume and stop add their handler; handle and loop remove
-  related-tag handlers; partial passes it through. Interior walks
-  (matched-arm continuations, Defer steps, rotation re-entry bodies) run
-  under the inward collection; the settled arm exits under what the
-  trampoline received.
+- The five trampolines take the parameter; each region-installing one
+  (handle, resume, stop, loop) adds its own handler once per invocation;
+  partial adds nothing (it installs no region and nothing executes under
+  it). Interior walks (matched-arm continuations, Defer steps, rotation
+  re-entry bodies) run under the extended collection; the settled arm exits
+  under what the trampoline received.
 - `eval`/`evalPartial` step Defers with empty. Fork boundaries fall out: a
   fiber inherits nothing; structure (the wrap-rotations in the chain)
   re-arms everything.
@@ -117,6 +113,9 @@ handler matching the suspension's tag:
   see the handler after the continuation is resumed".
 - Resume: apply the clause in place (2.4).
 - Stop: return a Halt (2.5); `arrow` is dropped, which is the point.
+- Handle or Loop: `kyo.map(arrow)`, the structural path; these need the
+  built continuation, and their presence in the collection is what makes an
+  inner handle correctly shadow an outer resume of the same tag.
 - Defer and Halt inputs fall through to `kyo.map(arrow)` (for Halt that is
   itself, zero work).
 
@@ -171,32 +170,30 @@ positional (a Halt needs the owner's live frame). Therefore Stop handlers
 are only ever passed, never stored: the two places the collection is stored
 into a value (the pending-clause wrapper of 2.4, and handle's continuation
 closure if it ever carries the parameter) keep Resume handlers only, using
-the same removal operation the collection already has. A stored walk that
+a filter at the storage point. A stored walk that
 raises a stop-handled operation travels structurally and reaches the live
 stop trampoline by enclosure, today's semantics.
 
-### 2.6 Who adds and removes what
+### 2.6 Who adds what
 
-| method  | inward collection                     | at the lookup     | continuation built |
-|---------|---------------------------------------|-------------------|--------------------|
-| resume  | received plus its Handler.Resume      | answered in place | never              |
-| stop    | received plus its Handler.Stop        | Halt to boundary  | never              |
-| handle  | received minus related-tag handlers   | structural travel | yes, by design     |
-| loop    | received minus related-tag handlers   | structural travel | yes, by design     |
-| partial | received unchanged                    | none              | n/a                |
+| method  | adds              | at the lookup     | continuation built |
+|---------|-------------------|-------------------|--------------------|
+| handle  | Handler.Handle    | structural travel | yes, by design     |
+| resume  | Handler.Resume    | answered in place | never              |
+| stop    | Handler.Stop      | Halt to boundary  | never              |
+| loop    | Handler.Loop      | structural travel | yes, by design     |
+| partial | nothing           | none              | n/a                |
 
-handle and loop subtract instead of masking: an operation of their tag
-raised inside their region finds no handler in the collection and travels
-structurally to the innermost trampoline, which is theirs by enclosure.
-Nothing inside a handle region should ever resolve that tag to an outer
-handler, so removal is exact, and it needs no third handler kind. Removal
-copies only when a related-tag handler is present; the common un-nested
-case passes the received collection through untouched.
+Registration is uniform: every region-installing method adds its own typed
+handler, so innermost-wins is scan order for every kind and no masking or
+removal mechanism exists. A Handle or Loop hit takes the structural path
+because those kinds need the built continuation; the hit still shadows any
+outer same-tag handler, which is the correctness requirement.
 
 loop stays on the trampoline path because its state forks per continuation
 invocation (pinned); a mutable cell in a handler would share state across
 replays, a semantics change. partial installs no region (no rotation,
-result keeps E), so it neither adds nor removes.
+result keeps E) and nothing executes under it, so it adds nothing.
 
 ## 3. Invariants
 
@@ -243,7 +240,7 @@ shadowing in both orders, Halt crossing foreign trampolines, the
 stop-replacement-resuspends variant raised deep in a walk, the parked-clause
 programs, a stored walk raising a stop-handled operation (invariant 3),
 a stored computation answering under the later handler, subtype behavior on
-both paths (askSub, including the removal relation), and 100k in-place
+both paths (askSub), and 100k in-place
 recursion on JVM, JS, and Native.
 
 ## 6. Steps
@@ -252,7 +249,7 @@ recursion on JVM, JS, and Native.
    touched.
 2. Thread the parameter, passing empty everywhere. No behavior change;
    fused-ladder A/B at parity.
-3. Registration: the five trampolines add and remove; rotation re-entries
+3. Registration: the region-installing trampolines add; rotation re-entries
    re-arm. Still no lookup; behavior unchanged; handler-row A/B at parity.
 4. Resume in place: the outlined dispatch, settled answers plus the
    pending-clause wrapper. Acceptance tests and the headline rows.
@@ -272,7 +269,7 @@ recursion on JVM, JS, and Native.
    liveness tracking.
 3. loop stays trampoline-only (state-forks-per-invocation is semantics).
    Recommendation: keep; revisit only on profile evidence.
-4. partial neither adds nor removes. Recommendation: confirm.
+4. partial adds nothing. Recommendation: confirm.
 5. Names: `Handlers`, `Handler.Resume`, `Handler.Stop`, `Halt`, the
    parameter named `handlers`. Recommendation: as stated.
 6. Row naming for the new benchmark rows. Recommendation: as listed in

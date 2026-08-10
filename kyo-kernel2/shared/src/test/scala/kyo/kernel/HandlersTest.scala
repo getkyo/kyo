@@ -16,6 +16,10 @@ class HandlersTest extends AnyFreeSpec:
         new Handler.Resume[Const[Unit], Const[Int], Ask, Any](Tag[Ask]):
             def apply[X](input: Unit): Int < Any = value
 
+    def stopWith(value: Int): Handler.Stop[Const[Unit], Const[Int], Ask, Int, Any] =
+        new Handler.Stop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            def apply[X](input: Unit): Int < (Ask & Any) = value
+
     "empty finds nothing" in {
         assert(Handlers.empty.find(Tag[Ask]).isEmpty)
     }
@@ -37,8 +41,9 @@ class HandlersTest extends AnyFreeSpec:
     }
 
     "handlers of distinct tags resolve independently of order" in {
-        val ask      = resumeWith(42)
-        val say      = new Handler.Stop[Const[String], Const[Unit], Say](Tag[Say])
+        val ask = resumeWith(42)
+        val say = new Handler.Stop[Const[String], Const[Unit], Say, Unit, Any](Tag[Say]):
+            def apply[X](input: String): Unit < (Say & Any) = ()
         val handlers = Handlers.empty.add(ask).add(say)
         assert(handlers.find(Tag[Ask]).exists(_ eq ask))
         assert(handlers.find(Tag[Say]).exists(_ eq say))
@@ -70,10 +75,39 @@ class HandlersTest extends AnyFreeSpec:
     }
 
     "Stop handlers compare by identity" in {
-        val a = new Handler.Stop[Const[Unit], Const[Int], Ask](Tag[Ask])
-        val b = new Handler.Stop[Const[Unit], Const[Int], Ask](Tag[Ask])
+        val a = stopWith(-1)
+        val b = stopWith(-1)
         assert(Handlers.empty.add(a).find(Tag[Ask]).exists(_ eq a))
         assert(!Handlers.empty.add(a).find(Tag[Ask]).exists(_ eq b))
+    }
+
+    "a Stop clause is invoked at its declared types" in {
+        val h = stopWith(-1)
+        assert(h[Any](()).asInstanceOf[Int < Any].eval == -1)
+    }
+
+    "a Handle clause receives the continuation at its declared types" in {
+        val h = new Handler.Handle[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Int < (Ask & Any) = cont(41)
+        val result = h[Any]((), o => o + 1)
+        assert(result.asInstanceOf[Int < Any].eval == 42)
+    }
+
+    "a Loop clause threads state at its declared types" in {
+        val h = new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any, Int](Tag[Ask]):
+            def apply[X](input: Unit, state: Int, cont: Int => Int < (Ask & Any)): (Int, Int < (Ask & Any)) =
+                (state + 1, cont(state))
+        val (state, result) = h[Any]((), 10, o => o * 2)
+        assert(state == 11)
+        assert(result.asInstanceOf[Int < Any].eval == 20)
+    }
+
+    "a Partial clause chooses whether to act at its declared types" in {
+        val h = new Handler.Partial[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Maybe[Int < (Ask & Any)] =
+                Maybe.Present(cont(42))
+        val result = h[Any]((), o => o)
+        assert(result.map(_.asInstanceOf[Int < Any].eval).contains(42))
     }
 
 end HandlersTest
