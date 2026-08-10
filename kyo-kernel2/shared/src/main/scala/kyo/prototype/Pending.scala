@@ -10,9 +10,13 @@ opaque type <[+A, -S] >: Kyo[A, S] = A | Kyo[A, S]
 object `<`:
 
     implicit inline def lift[A, S](v: A): A < S =
-        v match
-            case boxed: Kyo.Boxed => Kyo.Nested(boxed).asInstanceOf[A < S]
-            case v                => v
+        inline scala.compiletime.erasedValue[A] match
+            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
+                v.asInstanceOf[A < S]
+            case _ =>
+                v match
+                    case boxed: Kyo.Boxed => Kyo.Nested(boxed).asInstanceOf[A < S]
+                    case v                => v
 
     extension [A, S](self: A < S)
 
