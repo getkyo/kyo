@@ -32,14 +32,14 @@ object `<`:
                     case kyo: Kyo[A, S3] @unchecked =>
                         kyo.map(arrow)
                     case v =>
-                        val res       = Kyo.unnest(v)
-                        val safepoint = Safepoint.get
-                        if !safepoint.enter() then
+                        val res  = Kyo.unnest(v)
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
                             Kyo.Defer(v, arrow)
                         else
                             val step = next.step
                             try step.head(f(res), step.tail)
-                            finally safepoint.exit()
+                            finally Safepoint.exit(slot)
                         end if
                 end match
             end mapLoop
@@ -61,11 +61,11 @@ object `<`:
                         evalLoop(step.head(defer.value, step.tail))
                     case v =>
                         v
-            val safepoint = Safepoint.get
-            val saved     = safepoint.save()
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
             val res =
                 try evalLoop(self.asInstanceOf[A < Any])
-                finally safepoint.restore(saved)
+                finally Safepoint.restore(slot, saved)
             res match
                 case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
                 case v              => Kyo.unnest(v.asInstanceOf[A < Any])
@@ -82,10 +82,10 @@ object `<`:
                             evalLoop(step.head(defer.value, step.tail))
                         case v =>
                             v
-            val safepoint = Safepoint.get
-            val saved     = safepoint.save()
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
             try evalLoop(self.asInstanceOf[A < Any]).asInstanceOf[A < S]
-            finally safepoint.restore(saved)
+            finally Safepoint.restore(slot, saved)
         end evalPartial
 
     end extension

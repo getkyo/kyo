@@ -2,35 +2,37 @@ package kyo.prototype
 
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.discard
+import scala.annotation.static
 import scala.annotation.tailrec
 
-opaque type Safepoint = Int
+class Safepoint
 
 object Safepoint:
 
+    opaque type Slot = Int
+
     inline def Period = 512
 
-    private inline def Slots = 1024
+    @static val depths: Array[Long] = new Array[Long](1024)
 
-    private[prototype] val depths = new Array[Long](Slots)
-    private[prototype] val owners = new AtomicReferenceArray[Thread](Slots)
+    @static val owners: AtomicReferenceArray[Thread] = new AtomicReferenceArray[Thread](1024)
 
-    def get: Safepoint =
+    @static def get(): Slot =
         val thread = Thread.currentThread()
-        val idx    = java.lang.System.identityHashCode(thread) & (Slots - 1)
+        val idx    = java.lang.System.identityHashCode(thread) & 1023
         if owners.get(idx) eq thread then idx
         else find(thread, idx)
     end get
 
-    private def find(thread: Thread, from: Int): Int =
+    @static def find(thread: Thread, from: Int): Slot =
         @tailrec def loop(i: Int, probes: Int, compacted: Boolean): Int =
-            if probes == Slots then
+            if probes == 1024 then
                 if compacted then throw new IllegalStateException("Safepoint slots exhausted")
                 else
                     compact()
                     loop(from, 0, true)
             else
-                val idx   = i & (Slots - 1)
+                val idx   = i & 1023
                 val owner = owners.get(idx)
                 if owner eq thread then idx
                 else if (owner eq null) && owners.compareAndSet(idx, null, thread) then
@@ -42,9 +44,9 @@ object Safepoint:
         loop(from, 0, false)
     end find
 
-    private def compact(): Unit =
+    @static def compact(): Unit =
         @tailrec def loop(i: Int): Unit =
-            if i < Slots then
+            if i < 1024 then
                 val owner = owners.get(i)
                 if (owner ne null) && !owner.isAlive() then
                     discard(owners.compareAndSet(i, owner, null))
@@ -52,29 +54,25 @@ object Safepoint:
         loop(0)
     end compact
 
-    extension (self: Safepoint)
+    @static def enter(slot: Slot): Boolean =
+        val d = depths(slot)
+        if d < Period then
+            depths(slot) = d + 1
+            true
+        else false
+        end if
+    end enter
 
-        def enter(): Boolean =
-            val d = depths(self)
-            if d < Period then
-                depths(self) = d + 1
-                true
-            else false
-            end if
-        end enter
+    @static def exit(slot: Slot): Unit =
+        depths(slot) -= 1
 
-        def exit(): Unit =
-            depths(self) -= 1
+    @static def save(slot: Slot): Long =
+        val d = depths(slot)
+        depths(slot) = 0L
+        d
+    end save
 
-        private[prototype] def save(): Long =
-            val d = depths(self)
-            depths(self) = 0L
-            d
-        end save
-
-        private[prototype] def restore(saved: Long): Unit =
-            depths(self) = saved
-
-    end extension
+    @static def restore(slot: Slot, saved: Long): Unit =
+        depths(slot) = saved
 
 end Safepoint
