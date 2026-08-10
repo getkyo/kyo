@@ -38,7 +38,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.0
+      - uses: coursier/setup-action@v3.0.2
         with:
           jvm: corretto:25
           apps: sbt
@@ -98,7 +98,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.0
+      - uses: coursier/setup-action@v3.0.2
         with:
           jvm: corretto:25
           apps: sbt
@@ -164,7 +164,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.0
+      - uses: coursier/setup-action@v3.0.2
         with:
           jvm: corretto:25
           apps: sbt
