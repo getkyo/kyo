@@ -37,22 +37,48 @@ signatures; user code never sees it.
 
 ### 2.1 The collection
 
-`Handlers`: one final array-backed class plus an empty singleton.
-Innermost-last linear scan, reference-first tag comparison with the
-structural `<:<` fallback off the fast path (the relation must match the
-trampolines' subtype guard). Copy-on-add at handler entry. Entry is ONE
-final class, not a hierarchy, for monomorphic reads:
+`Handlers` is a collection of handlers, nothing else: one final array-backed
+class plus an empty singleton. Innermost-last linear scan, reference-first
+tag comparison with the structural `<:<` fallback off the fast path (the
+relation must match the trampolines' subtype guard). Copy-on-add at region
+entry. The elements are the handlers themselves, typed:
 
-    final class Entry(
-        val tag: Tag[Any],
-        val kind: Int,          // RESUME, STOP, BARRIER
-        val clause: AnyRef,     // erased poly function; null for stop/barrier
-        val scope: Handlers     // evidence at entry, resume only; null otherwise
-    )
+    sealed abstract class Handler[I[_], O[_], E <: ArrowEffect[I, O]](val tag: Tag[E])
 
-Stop and barrier entries allocate once per handle call and are reused
-(stable identity). Resume entries allocate per region entry and per rotation
-re-entry, because their captured scope differs each time.
+    object Handler:
+        abstract class Resume[I[_], O[_], E <: ArrowEffect[I, O], S](
+            tag: Tag[E],
+            val scope: Handlers
+        ) extends Handler[I, O, E](tag):
+            def apply[X](input: I[X]): O[X] < S
+
+        final class Stop[I[_], O[_], E <: ArrowEffect[I, O]](tag: Tag[E])
+            extends Handler[I, O, E](tag)
+
+        final class Shadow[I[_], O[_], E <: ArrowEffect[I, O]](tag: Tag[E])
+            extends Handler[I, O, E](tag)
+
+- Resume stores its clause at its public types as the typed `apply`;
+  `ArrowEffect.resume` mints one per region entry and per rotation re-entry
+  (the captured scope differs each time). The clause is invoked at its own
+  types. The one erased boundary is the tag-keyed recovery at the dispatch
+  site, justified by the tag match, the same documented cast the
+  trampolines' matched arms carry today.
+- Stop carries no clause: the clause runs at the boundary inside the stop
+  trampoline, which already holds it at its types. The Stop value is the
+  region's identity token (Halt ownership compares it by eq) plus the tag
+  for the scan. One per stop call, reused by its re-entries.
+- Shadow is the tag-only barrier for handle and loop regions. One per call.
+- The scan reads `tag` as a val on the sealed base: one monomorphic field
+  load regardless of which kinds populate the array; the kind dispatch after
+  a hit is two class checks on a sealed hierarchy. Typing costs the scan
+  nothing.
+
+Rejected alternative: one final erased record (tag as `Tag[Any]`, an int
+kind, the clause as `AnyRef`, nullable fields). It buys the scan nothing the
+base-class val does not already give, and it violates the typing discipline
+this kernel inherits from the previous round: clauses at public types,
+invoked at their types, erasure only at documented tag-keyed boundaries.
 
 ### 2.2 The parameter
 
@@ -65,7 +91,7 @@ re-entry, because their captured scope differs each time.
   self they attach; with a settled self the result returns to an
   evidence-holding caller, so nothing is lost).
 - The five trampolines take an ambient parameter, compute
-  `extended = ambient.add(entry)` once per invocation, run interior walks
+  `extended = ambient.add(handler)` once per invocation, run interior walks
   (matched-arm continuations, Defer steps, rotation re-entry bodies) under
   extended, and exit their settled arm under ambient.
 - `eval`/`evalPartial` step Defers with empty evidence. Fork boundaries fall
@@ -90,14 +116,14 @@ pins it). The arm becomes:
 `dispatch` is a static outlined helper so the inline mapLoop body grows by
 one eq branch and one static call, protecting the 325-byte inline budget the
 continuation entries already exceed. Inside dispatch, by the innermost
-matching entry for the suspension's tag:
+matching handler for the suspension's tag:
 
 - absent: `kyo.map(arrow)`, byte for byte today's path.
-- BARRIER: same structural path; the built continuation reaches the
-  trampoline that needs it. Barriers are what make innermost-wins structural
+- Shadow: same structural path; the built continuation reaches the
+  trampoline that needs it. Shadows are what make innermost-wins structural
   across kinds.
-- RESUME: apply the clause in place (2.4).
-- STOP: return a Halt (2.5); `arrow` is dropped, which is the point.
+- Resume: apply the clause in place (2.4).
+- Stop: return a Halt (2.5); `arrow` is dropped, which is the point.
 - Defer and Halt inputs fall through to `kyo.map(arrow)` (for Halt that is
   itself, zero work).
 
@@ -105,10 +131,10 @@ matching entry for the suspension's tag:
 
 Clause scope rule (inherited, validated by the old round's p1/p2/p9): a
 clause runs OUTSIDE its own region, under the evidence captured at region
-entry, extended with the region itself (deep semantics). `e.scope` stores
-the array at push, excluding the entry; use sites add it back.
+entry, extended with the region itself (deep semantics). `h.scope` stores
+the collection at push, excluding the handler; use sites add it back.
 
-On a RESUME hit: `w = clause(input)` under `e.scope.add(e)`.
+On a Resume hit: `w = h(input)` under `h.scope.add(h)`.
 
 - w settled: feed it through the suspension's own continuation, then the
   site remainder, all under the flowing site evidence. Wrap rotation makes
@@ -116,7 +142,7 @@ On a RESUME hit: `w = clause(input)` under `e.scope.add(e)`.
   regions, its cont begins with their re-entries.
 - w pending (effectful answer, clause parked): one bracket, which is just a
   rotation-style re-entry whose region is the clause and whose evidence is
-  `e.scope.add(e)` with stops downgraded (2.5). Allocated only on this
+  `h.scope.add(h)` with stops downgraded (2.5). Allocated only on this
   shape, never on settled answers.
 
 Stack safety: in-place answering nests real frames, bounded by the Safepoint
@@ -125,16 +151,16 @@ a flat stack. Pinned at depth well past Period on all three platforms.
 
 ### 2.5 Stop as Halt
 
-    final private[kernel] class Halt(
-        val entry: Handlers.Entry,  // owner, compared by eq
-        val input: Any,
+    final private[kernel] class Halt[I[_], X](
+        val owner: Handler.Stop[I, ?, ?],  // compared by eq
+        val input: I[X],
         val frame: Frame
     ) extends Kyo[Nothing, Any]:
         def map[B, S2](f: Arrow[Nothing, B, S2]): B < S2 = this
 
 `map` returning itself makes every attachment site discard pending work by
 construction: the unwind allocates nothing after the one Halt. The owning
-stop trampoline matches on entry identity and applies its clause AT the
+stop trampoline matches on owner identity and applies its clause AT the
 boundary (so the clause's scope is trivially the boundary's own, and a
 clause that raises the same effect again is re-dispatched by the same loop,
 as the suite already pins). Every trampoline gets a pass-through arm before
@@ -142,11 +168,11 @@ its settled arm; eval treats an unowned Halt as a defect.
 
 Soundness rests on the enclosure invariant (2.6). The one violation class is
 snapshots: evidence captured into values that outlive the capturing frames
-(handle's continuation closure, a resume entry's scope). The rule that
+(handle's continuation closure, a resume handler's scope). The rule that
 closes it: flowing evidence may carry stop entries; snapshotted evidence
-downgrades STOP to BARRIER at capture. A downgraded stop falls back to
+replaces Stop handlers with Shadow at capture. A downgraded stop falls back to
 structural travel, today's semantics for an escaped continuation.
-`downgradeStops` copies only when a stop entry is present.
+`downgradeStops` copies only when a Stop handler is present.
 
 Alternative considered: the old kernel round chose bare pass-through (return
 the suspension unchanged, no new node) and rejected propagating an applied
@@ -159,29 +185,30 @@ sound downgrade under Halt.
 
 ### 2.6 Registration and shadowing
 
-| kind    | entry                       | at first-touch     | continuation built |
-|---------|-----------------------------|--------------------|--------------------|
-| resume  | RESUME, per entry/re-entry  | answered in place  | never              |
-| stop    | STOP, one per call          | Halt to boundary   | never              |
-| handle  | BARRIER, one per call       | structural travel  | yes, by design     |
-| loop    | BARRIER, one per call       | structural travel  | yes, by design     |
-| partial | none                        | none               | n/a                |
+| method  | handler pushed                    | at first-touch     | continuation built |
+|---------|-----------------------------------|--------------------|--------------------|
+| resume  | Handler.Resume, per entry/re-entry | answered in place | never              |
+| stop    | Handler.Stop, one per call        | Halt to boundary   | never              |
+| handle  | Handler.Shadow, one per call      | structural travel  | yes, by design     |
+| loop    | Handler.Shadow, one per call      | structural travel  | yes, by design     |
+| partial | none                              | none               | n/a                |
 
 loop stays on the trampoline path because its state forks per continuation
-invocation (pinned); a mutable cell in an entry would share state across
+invocation (pinned); a mutable cell in a handler would share state across
 replays, a semantics change. partial installs no region (no rotation, result
 keeps E), so there is no scope for an entry to describe.
 
 ## 3. Invariants
 
-1. Scope: a clause runs outside its own region under entry evidence plus
-   itself; the remainder after an answer runs under site evidence.
-2. Enclosure: an entry is in flowing evidence iff its trampoline frame
+1. Scope: a clause runs outside its own region under the evidence captured
+   at region entry plus itself; the remainder after an answer runs under
+   site evidence.
+2. Enclosure: a handler is in flowing evidence iff its trampoline frame
    encloses the current walk. Halt therefore always unwinds through its
    owner; rotation must stay wrap-style.
-3. Snapshot: flowing evidence may carry stop entries; snapshots downgrade
-   them to barrier.
-4. Shadowing: the innermost matching entry decides; barriers make every
+3. Snapshot: flowing evidence may carry Stop handlers; snapshots replace
+   them with Shadow.
+4. Shadowing: the innermost matching handler decides; shadows make every
    region visible to the decision.
 5. Fallback: a miss is exactly today's structural suspension; evidence and
    trampoline paths agree on every program.
@@ -228,7 +255,8 @@ in-place recursion on JVM, JS, and Native.
 3. loop stays trampoline-only (state-forks-per-invocation is semantics).
    Recommendation: keep; revisit only on profile evidence.
 4. partial registers nothing. Recommendation: confirm.
-5. Names: `Handlers` for the collection, `Halt` for the stop value, both
+5. Names: `Handlers` for the collection, `Handler` with `Resume`, `Stop`,
+   and `Shadow` for the hierarchy, `Halt` for the stop value, all
    `private[kernel]`. Recommendation: as stated.
 6. Row naming for the new benchmark rows. Recommendation: as listed in
    section 4.
