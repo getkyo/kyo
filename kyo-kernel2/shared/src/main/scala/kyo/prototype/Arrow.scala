@@ -38,7 +38,7 @@ object Arrow:
         def tail = identity.asInstanceOf[Step[B, B, S]]
 
         def apply(v: A) =
-            apply(v, Arrow[B].step)
+            apply(v, Arrow[B])
 
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
     end Transform
