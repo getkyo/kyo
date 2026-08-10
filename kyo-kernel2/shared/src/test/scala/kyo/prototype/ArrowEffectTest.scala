@@ -339,4 +339,93 @@ class ArrowEffectTest extends Test[Any]:
             else (0: Int < Any).map(_ => nest(n - 1))
         assert(nest(Safepoint.Period).eval == 42)
     }
+
+    "coverage" - {
+        "loop forks state per continuation invocation" in {
+            val v = ask.map(a => a * 10)
+            val r = ArrowEffect.loop(Tag[Ask], 0, v)(
+                [X] =>
+                    (_, state, cont) =>
+                        val (s1, v1) = (state + 1, cont(1))
+                        (s1, v1.map(a => cont(2).map(b => a + b)))
+            )
+            assert(r.eval == (1, 30))
+        }
+
+        "the innermost handle wins under nested same-tag handlers" in {
+            var outerCount = 0
+            val inner      = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(10))
+            val outer = ArrowEffect.handle(Tag[Ask], inner.asInstanceOf[Int < Ask])(
+                [X] =>
+                    (_, cont) =>
+                        outerCount += 1
+                        cont(100)
+            )
+            assert(outer.eval == 11)
+            assert(outerCount == 0)
+        }
+
+        "settled inputs pass through handle, resume, and partial" in {
+            val v: Int < Ask = 42
+            assert(ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(0)).eval == 42)
+            assert(ArrowEffect.resume(Tag[Ask], v)([X] => _ => 0).eval == 42)
+            assert(ArrowEffect.partial(Tag[Ask], v)([X] => (_, cont) => kyo.Maybe(cont(0))).asInstanceOf[Int < Any].eval == 42)
+        }
+
+        "a map chained after a parked handler runs after the handler completes" in {
+            var order                = List.empty[String]
+            val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
+            val handled = ArrowEffect.handle(Tag[Ask], v)(
+                [X] =>
+                    (_, cont) =>
+                        order :+= "answer"
+                        cont(41)
+            )
+            val chained = handled.map { r =>
+                order :+= "after"
+                r
+            }
+            val r = ArrowEffect.handle(Tag[Say], chained)([X] => (_, cont) => cont(()))
+            assert(r.eval == 42)
+            assert(order == List("answer", "after"))
+        }
+
+        "a stop replacement may suspend on the same effect and stops again" in {
+            var calls = 0
+            val r = ArrowEffect.stop(Tag[Ask], ask.map(_ + 1))(
+                [X] =>
+                    _ =>
+                        calls += 1
+                        if calls == 1 then ask.map(_ + 100) else -1
+            )
+            assert(r.eval == -1)
+            assert(calls == 2)
+        }
+
+        "an operation after a foreign crossing is not answered by an earlier partial call" in {
+            var answered             = 0
+            val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
+            val first = ArrowEffect.partial(Tag[Ask], v)(
+                [X] =>
+                    (_, cont) =>
+                        answered += 1
+                        kyo.Maybe(cont(21))
+            )
+            assert(answered == 1)
+            val handledSay = ArrowEffect.handle(Tag[Say], first)([X] => (_, cont) => cont(()))
+            val r          = ArrowEffect.handle(Tag[Ask], handledSay)([X] => (_, cont) => cont(21))
+            assert(r.eval == 42)
+            assert(answered == 1)
+        }
+
+        "evaluation recovers after a thrown handler" in {
+            interceptThrown[RuntimeException] {
+                val _ = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
+                    [X] => (_, _) => (throw new RuntimeException("boom")): Int < Ask
+                )
+            }
+            val r = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41))
+            assert(r.eval == 42)
+        }
+    }
 end ArrowEffectTest

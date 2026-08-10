@@ -70,6 +70,7 @@ class PendingTest extends Test[Any]:
         val v      = loop(Safepoint.Period * 4)
         val paused = v.evalPartial(stop)
         assert(calls >= 2)
+        assert(paused.isInstanceOf[Kyo[?, ?]])
         assert(paused.eval == 0)
     }
 end PendingTest
