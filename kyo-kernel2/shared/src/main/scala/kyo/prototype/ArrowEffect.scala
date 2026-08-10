@@ -44,10 +44,9 @@ object ArrowEffect:
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
-                            try
-                                val step = defer.cont.step
-                                step.head(defer.value, step.tail)
-                            finally Safepoint.exit(slot)
+                            val step = defer.cont.step
+                            step.head(defer.value, step.tail)
+                        Safepoint.exit(slot)
                         handleLoop(w, next)
                     end if
                 case v =>
@@ -83,10 +82,9 @@ object ArrowEffect:
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
-                            try
-                                val step = defer.cont.step
-                                step.head(defer.value, step.tail)
-                            finally Safepoint.exit(slot)
+                            val step = defer.cont.step
+                            step.head(defer.value, step.tail)
+                        Safepoint.exit(slot)
                         resumeLoop(w, next)
                     end if
                 case v =>
@@ -121,10 +119,9 @@ object ArrowEffect:
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, B, E & S]]
                         val w =
-                            try
-                                val step = defer.cont.step
-                                step.head(defer.value, step.tail)
-                            finally Safepoint.exit(slot)
+                            val step = defer.cont.step
+                            step.head(defer.value, step.tail)
+                        Safepoint.exit(slot)
                         stopLoop(w, next)
                     end if
                 case v =>
@@ -160,10 +157,9 @@ object ArrowEffect:
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
-                            try
-                                val step = defer.cont.step
-                                step.head(defer.value, step.tail)
-                            finally Safepoint.exit(slot)
+                            val step = defer.cont.step
+                            step.head(defer.value, step.tail)
+                        Safepoint.exit(slot)
                         loopLoop(state, w, next)
                     end if
                 case v =>
@@ -191,10 +187,9 @@ object ArrowEffect:
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
-                            try
-                                val step = defer.cont.step
-                                step.head(defer.value, step.tail)
-                            finally Safepoint.exit(slot)
+                            val step = defer.cont.step
+                            step.head(defer.value, step.tail)
+                        Safepoint.exit(slot)
                         partialLoop(w)
                     end if
                 case v =>

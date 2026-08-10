@@ -70,6 +70,26 @@ class PendingTest extends Test[Any]:
         assert(v.eval == 1000000)
     }
 
+    "depth leaked by throwing maps resets at the eval loop" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
+        def leaky(): Unit =
+            try
+                val _ = (1: Int < Any).map(_ => (throw new IllegalStateException("leak")): Int)
+                ()
+            catch
+                case _: IllegalStateException => ()
+        val v =
+            loop(Safepoint.Period * 2).map { z =>
+                var i = 0
+                while i < Safepoint.Period * 2 do
+                    leaky()
+                    i += 1
+                z
+            }.map(_ + 1)
+        assert(v.eval == 1)
+    }
+
     "evalPartial pauses at the stop check and the remainder resumes" in {
         def loop(n: Int): Int < Any =
             if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))

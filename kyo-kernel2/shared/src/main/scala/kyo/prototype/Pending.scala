@@ -38,8 +38,9 @@ object `<`:
                             Kyo.Defer(v, arrow)
                         else
                             val step = next.step
-                            try step.head(f(res), step.tail)
-                            finally Safepoint.exit(slot)
+                            val out  = step.head(f(res), step.tail)
+                            Safepoint.exit(slot)
+                            out
                         end if
                 end match
             end mapLoop
@@ -53,16 +54,17 @@ object `<`:
             map(_ => next)
 
         inline def eval(using S =:= Any): A =
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
             @tailrec def evalLoop(v: A < Any): A < Any =
                 v match
                     case kyo: Kyo.Defer[?, ?, ?] =>
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
-                        val step  = defer.cont.step
+                        Safepoint.restore(slot, 0L)
+                        val step = defer.cont.step
                         evalLoop(step.head(defer.value, step.tail))
                     case v =>
                         v
-            val slot  = Safepoint.get()
-            val saved = Safepoint.save(slot)
             val res =
                 try evalLoop(self.asInstanceOf[A < Any])
                 finally Safepoint.restore(slot, saved)
@@ -72,18 +74,19 @@ object `<`:
         end eval
 
         inline def evalPartial(inline stop: () => Boolean): A < S =
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
             @tailrec def evalLoop(v: A < Any): A < Any =
                 if stop() then v
                 else
                     v match
                         case kyo: Kyo.Defer[?, ?, ?] =>
                             val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
-                            val step  = defer.cont.step
+                            Safepoint.restore(slot, 0L)
+                            val step = defer.cont.step
                             evalLoop(step.head(defer.value, step.tail))
                         case v =>
                             v
-            val slot  = Safepoint.get()
-            val saved = Safepoint.save(slot)
             try evalLoop(self.asInstanceOf[A < Any]).asInstanceOf[A < S]
             finally Safepoint.restore(slot, saved)
         end evalPartial
