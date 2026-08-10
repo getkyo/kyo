@@ -54,7 +54,7 @@ object Safepoint:
 
     extension (self: Safepoint)
 
-        inline def enter(): Boolean =
+        def enter(): Boolean =
             val d = depths(self)
             if d < Period then
                 depths(self) = d + 1
@@ -63,16 +63,16 @@ object Safepoint:
             end if
         end enter
 
-        inline def exit(): Unit =
+        def exit(): Unit =
             depths(self) -= 1
 
-        private[prototype] inline def save(): Long =
+        private[prototype] def save(): Long =
             val d = depths(self)
             depths(self) = 0L
             d
         end save
 
-        private[prototype] inline def restore(saved: Long): Unit =
+        private[prototype] def restore(saved: Long): Unit =
             depths(self) = saved
 
     end extension
