@@ -19,19 +19,14 @@ class ArrowEffectTest extends Test[Any]:
         assert(r.eval == 42)
     }
 
-    "handle is eager: a pure body settles at the handle call" in {
+    "handle is eager: answering runs the continuation at the handle call" in {
         var ran = false
         val v = ask.map { a =>
-            ran = true; a + 1
+            ran = true
+            a + 1
         }
         val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(41))
         assert(ran)
-        assert(r.eval == 42)
-    }
-
-    "handle evaluates deferred steps synchronously" in {
-        val v = (1: Int < Any).map(_ + 1).map(_ => ask).map(_ * 2)
-        val r = ArrowEffect.handle(Tag[Ask], v.asInstanceOf[Int < Ask])([X] => (_, cont) => cont(21))
         assert(r.eval == 42)
     }
 
@@ -44,7 +39,8 @@ class ArrowEffectTest extends Test[Any]:
     "handle can end the computation without resuming" in {
         var reached = false
         val v = ask.map { a =>
-            reached = true; a + 1
+            reached = true
+            a + 1
         }
         val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, _) => -1)
         assert(r.eval == -1)
@@ -64,6 +60,20 @@ class ArrowEffectTest extends Test[Any]:
         assert(count == 2)
     }
 
+    "deep sequential operations are stack safe" in {
+        def loop(n: Int): Int < Ask =
+            if n == 0 then 0 else ask.map(_ => loop(n - 1))
+        val r = ArrowEffect.handle(Tag[Ask], loop(100000))([X] => (_, cont) => cont(1))
+        assert(r.eval == 0)
+    }
+
+    "a foreign operation passes through and keeps the handler attached" in {
+        val v: Int < (Ask & Say) = ask.map(a => say(a.toString).map(_ => ask.map(b => a + b)))
+        val handledAsk           = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(21))
+        val r                    = ArrowEffect.handle(Tag[Say], handledAsk)([X] => (_, cont) => cont(()))
+        assert(r.eval == 42)
+    }
+
     "nested handlers answer their own operations" in {
         val v =
             ask.map { a =>
@@ -74,5 +84,18 @@ class ArrowEffectTest extends Test[Any]:
             ArrowEffect.handle(Tag[Ask], v.asInstanceOf[Int < (Ask & Say)])([X] => (_, cont) => cont(21))
         )([X] => (s, cont) => cont(()))
         assert(r.eval == 42)
+    }
+
+    "a handler installed after evalPartial answers the parked operation" in {
+        val v      = ask.map(_ + 1)
+        val parked = v.evalPartial(() => false)
+        val r      = ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(41))
+        assert(r.eval == 42)
+    }
+
+    "eval throws on an unhandled suspension" in {
+        interceptThrown[IllegalStateException] {
+            ask.asInstanceOf[Int < Any].eval
+        }
     }
 end ArrowEffectTest

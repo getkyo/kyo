@@ -11,7 +11,7 @@ object Kyo:
     final case class Nested[+A](value: A)
 
     private[prototype] inline def unnest[A, S](v: A < S): A =
-        v match
+        (v: @unchecked) match
             case n: Nested[?] => n.value.asInstanceOf[A]
             case _            => v.asInstanceOf[A]
 

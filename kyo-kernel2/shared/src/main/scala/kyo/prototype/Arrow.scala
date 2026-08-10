@@ -14,8 +14,8 @@ sealed abstract class Arrow[-A, +B, -S]:
     def step: Arrow.Step[A, B, S]
 
     def chain[C, S2](next: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-        if self eq identity then next.asInstanceOf[Arrow[A, C, S & S2]]
-        else if next eq identity then self.asInstanceOf[Arrow[A, C, S & S2]]
+        if self eq Arrow.identity then next.asInstanceOf[Arrow[A, C, S & S2]]
+        else if next eq Arrow.identity then self.asInstanceOf[Arrow[A, C, S & S2]]
         else
             new Arrow.AndThen[A, B, C, S & S2]:
                 def a = self
