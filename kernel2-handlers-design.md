@@ -43,7 +43,7 @@ its public types, named after the method (implemented, step 1):
     sealed abstract class Handler[I[_], O[_], E <: ArrowEffect[I, O]](val tag: Tag[E])
 
     object Handler:
-        abstract class Handle[..., A, S](tag):
+        abstract class Cont[..., A, S](tag):
             def apply[X](input: I[X], cont: O[X] => A < (E & S)): A < (E & S)
         abstract class Resume[..., S](tag):
             def apply[X](input: I[X]): O[X] < S
@@ -51,8 +51,10 @@ its public types, named after the method (implemented, step 1):
             def apply[X](input: I[X]): A < (E & S)
         abstract class Loop[..., A, S, State](tag):
             def apply[X](input: I[X], state: State, cont: O[X] => A < (E & S)): (State, A < (E & S))
-        abstract class Partial[..., A, S](tag):
-            def apply[X](input: I[X], cont: O[X] => A < (E & S)): Maybe[A < (E & S)]
+
+partial has no handler kind: it installs no region and nothing executes
+under it; its role is an eval-loop concern, redesigned with the fiber
+integration (IOTask).
 
 Clauses are invoked at their declared types. The one erased boundary is the
 tag-keyed recovery at the lookup site, justified by the tag match, the same
@@ -113,7 +115,7 @@ handler matching the suspension's tag:
   see the handler after the continuation is resumed".
 - Resume: apply the clause in place (2.4).
 - Stop: return a Halt (2.5); `arrow` is dropped, which is the point.
-- Handle or Loop: `kyo.map(arrow)`, the structural path; these need the
+- Cont or Loop: `kyo.map(arrow)`, the structural path; these need the
   built continuation, and their presence in the collection is what makes an
   inner handle correctly shadow an outer resume of the same tag.
 - Defer and Halt inputs fall through to `kyo.map(arrow)` (for Halt that is
@@ -178,7 +180,7 @@ stop trampoline by enclosure, today's semantics.
 
 | method  | adds              | at the lookup     | continuation built |
 |---------|-------------------|-------------------|--------------------|
-| handle  | Handler.Handle    | structural travel | yes, by design     |
+| handle  | Handler.Cont      | structural travel | yes, by design     |
 | resume  | Handler.Resume    | answered in place | never              |
 | stop    | Handler.Stop      | Halt to boundary  | never              |
 | loop    | Handler.Loop      | structural travel | yes, by design     |
@@ -186,14 +188,15 @@ stop trampoline by enclosure, today's semantics.
 
 Registration is uniform: every region-installing method adds its own typed
 handler, so innermost-wins is scan order for every kind and no masking or
-removal mechanism exists. A Handle or Loop hit takes the structural path
+removal mechanism exists. A Cont or Loop hit takes the structural path
 because those kinds need the built continuation; the hit still shadows any
 outer same-tag handler, which is the correctness requirement.
 
 loop stays on the trampoline path because its state forks per continuation
 invocation (pinned); a mutable cell in a handler would share state across
 replays, a semantics change. partial installs no region (no rotation,
-result keeps E) and nothing executes under it, so it adds nothing.
+result keeps E) and nothing executes under it; it has no handler kind and
+adds nothing, pending its redesign with the fiber integration.
 
 ## 3. Invariants
 
@@ -270,7 +273,8 @@ recursion on JVM, JS, and Native.
 3. loop stays trampoline-only (state-forks-per-invocation is semantics).
    Recommendation: keep; revisit only on profile evidence.
 4. partial adds nothing. Recommendation: confirm.
-5. Names: `Handlers`, `Handler.Resume`, `Handler.Stop`, `Halt`, the
-   parameter named `handlers`. Recommendation: as stated.
+5. Names: `Handlers`, `Handler.Cont`, `Handler.Resume`, `Handler.Stop`,
+   `Handler.Loop`, `Kyo.Handled`, the parameter named `handlers`.
+   Recommendation: as stated (Cont and Handled ruled).
 6. Row naming for the new benchmark rows. Recommendation: as listed in
    section 4.

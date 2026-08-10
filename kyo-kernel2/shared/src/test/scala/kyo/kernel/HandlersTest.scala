@@ -86,8 +86,8 @@ class HandlersTest extends AnyFreeSpec:
         assert(h[Any](()).asInstanceOf[Int < Any].eval == -1)
     }
 
-    "a Handle clause receives the continuation at its declared types" in {
-        val h = new Handler.Handle[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+    "a Cont clause receives the continuation at its declared types" in {
+        val h = new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
             def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Int < (Ask & Any) = cont(41)
         val result = h[Any]((), o => o + 1)
         assert(result.asInstanceOf[Int < Any].eval == 42)
@@ -100,14 +100,6 @@ class HandlersTest extends AnyFreeSpec:
         val (state, result) = h[Any]((), 10, o => o * 2)
         assert(state == 11)
         assert(result.asInstanceOf[Int < Any].eval == 20)
-    }
-
-    "a Partial clause chooses whether to act at its declared types" in {
-        val h = new Handler.Partial[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
-            def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Maybe[Int < (Ask & Any)] =
-                Maybe.Present(cont(42))
-        val result = h[Any]((), o => o)
-        assert(result.map(_.asInstanceOf[Int < Any].eval).contains(42))
     }
 
 end HandlersTest

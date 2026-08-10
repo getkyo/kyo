@@ -179,7 +179,7 @@ object HandlersProbe2:
     type ESuspend = Kyo.Suspend[Const[Any], Const[Any], Nothing, Any, Any, Any]
     type EResume  = Handler.Resume[Const[Any], Const[Any], Nothing, Any]
     type EStop    = Handler.Stop[Const[Any], Const[Any], Nothing, Any, Any]
-    type EHandle  = Handler.Handle[Const[Any], Const[Any], Nothing, Any, Any]
+    type ECont    = Handler.Cont[Const[Any], Const[Any], Nothing, Any, Any]
     type ELoop    = Handler.Loop[Const[Any], Const[Any], Nothing, Any, Any, Any]
 
     // stand-in for the future Kyo.Handled
@@ -268,9 +268,9 @@ object HandlersProbe2:
                     result = run(halt.owner.asInstanceOf[EStop][Any](halt.input), handlers.append(r.handler))
                 case park: PPark if park.owner eq r.handler =>
                     r.handler match
-                        case hh: Handler.Handle[?, ?, ?, ?, ?] =>
+                        case hh: Handler.Cont[?, ?, ?, ?, ?] =>
                             val cont: Any => Any < Any = o => `<`.lift[Any, Any](park.resume(o))
-                            result = run(hh.asInstanceOf[EHandle][Any](park.input, cont), handlers.append(r.handler))
+                            result = run(hh.asInstanceOf[ECont][Any](park.input, cont), handlers.append(r.handler))
                         case hl: Handler.Loop[?, ?, ?, ?, ?, ?] =>
                             val cont: Any => Any < Any = o => `<`.lift[Any, Any](park.resume(o))
                             val (st2, v2)              = hl.asInstanceOf[ELoop][Any](park.input, state, cont)
@@ -357,7 +357,7 @@ object HandlersProbe2:
 
         // P3b: a clause parks to an outer capture handler; the site remainder survives
         val handleSay: Handler[?, ?, ?] =
-            new Handler.Handle[Const[String], Const[Unit], Say, Any, Any](Tag[Say]):
+            new Handler.Cont[Const[String], Const[Unit], Say, Any, Any](Tag[Say]):
                 def apply[X](input: String, cont: Unit => Any < (Say & Any)): Any < (Say & Any) = cont(())
         val p3b = driveAll(
             Array(reg(handleSay), reg(askClauseSays)),
@@ -368,7 +368,7 @@ object HandlersProbe2:
         // P4: handle capture, multi-shot, crossed region re-entered per replay
         var crossedExits = 0
         val handleAsk: Handler[?, ?, ?] =
-            new Handler.Handle[Const[Unit], Const[Int], Ask, Any, Any](Tag[Ask]):
+            new Handler.Cont[Const[Unit], Const[Int], Ask, Any, Any](Tag[Ask]):
                 def apply[X](input: Unit, cont: Int => Any < (Ask & Any)): Any < (Ask & Any) =
                     cont(10).map(a => cont(20).map(b => a.asInstanceOf[Int] + b.asInstanceOf[Int]))
         val log4 = scala.collection.mutable.ListBuffer[String]()
@@ -391,7 +391,7 @@ object HandlersProbe2:
                 def apply[X](input: String, state: Any, cont: Unit => Any < (Say & Any)): (Any, Any < (Say & Any)) =
                     (state.asInstanceOf[Int] + 1, cont(()))
         val pairAsk: Handler[?, ?, ?] =
-            new Handler.Handle[Const[Unit], Const[Int], Ask, Any, Any](Tag[Ask]):
+            new Handler.Cont[Const[Unit], Const[Int], Ask, Any, Any](Tag[Ask]):
                 def apply[X](input: Unit, cont: Int => Any < (Ask & Any)): Any < (Ask & Any) =
                     cont(10).map(a => cont(20).map(b => (a, b)))
         val p4b = driveAll(
