@@ -133,58 +133,62 @@ private[mysql] object HandshakeExchange:
                 case Maybe.Absent =>
                     channel
             tlsUpgradeEffect.flatMap { activeChannel =>
-                // Compute auth response based on plugin.
-                val scramble   = handshake.authPluginData
-                val pluginName = handshake.authPluginName
-                computeAuthResponse(pluginName, password, scramble, tlsActive).flatMap { authResponse =>
+                // Second bracket over the post-upgrade connection: a mid-handshake TLS upgrade makes the raw socket's
+                // close a no-op, so a failure below closes activeChannel's connection, not the raw one.
+                kyo.db.Connection.closingOnFailure(activeChannel.conn) {
+                    // Compute auth response based on plugin.
+                    val scramble   = handshake.authPluginData
+                    val pluginName = handshake.authPluginName
+                    computeAuthResponse(pluginName, password, scramble, tlsActive).flatMap { authResponse =>
 
-                    // Step 3: Send full HandshakeResponse41 (over TLS if upgraded).
-                    val response = HandshakeResponse41(
-                        capabilities = clientCaps,
-                        maxPacket = MaxPacketSize,
-                        charset = Charset,
-                        username = user,
-                        authResponse = authResponse,
-                        database = db,
-                        authPlugin = Maybe.Present(pluginName)
-                    )
-                    activeChannel.send(response)(using activeChannel.marshallers.handshakeResponse41).flatMap { _ =>
-                        // Step 4: read the server's reply, which is OK, ERR, or an AuthMoreData/AuthSwitchRequest continuation handled below.
-                        activeChannel.receive(inAuthContext = true).flatMap {
-                            case ok: OkPacket =>
-                                HandshakeResult(
-                                    handshake.threadId,
-                                    handshake.serverVersion,
-                                    clientCaps,
-                                    handshake.charset,
-                                    handshake.statusFlags,
-                                    activeChannel
-                                )
+                        // Step 3: Send full HandshakeResponse41 (over TLS if upgraded).
+                        val response = HandshakeResponse41(
+                            capabilities = clientCaps,
+                            maxPacket = MaxPacketSize,
+                            charset = Charset,
+                            username = user,
+                            authResponse = authResponse,
+                            database = db,
+                            authPlugin = Maybe.Present(pluginName)
+                        )
+                        activeChannel.send(response)(using activeChannel.marshallers.handshakeResponse41).flatMap { _ =>
+                            // Step 4: read the server's reply, which is OK, ERR, or an AuthMoreData/AuthSwitchRequest continuation handled below.
+                            activeChannel.receive(inAuthContext = true).flatMap {
+                                case ok: OkPacket =>
+                                    HandshakeResult(
+                                        handshake.threadId,
+                                        handshake.serverVersion,
+                                        clientCaps,
+                                        handshake.charset,
+                                        handshake.statusFlags,
+                                        activeChannel
+                                    )
 
-                            case err: ErrPacket =>
-                                Abort.fail(mkAuthError(err))
+                                case err: ErrPacket =>
+                                    Abort.fail(mkAuthError(err))
 
-                            case AuthMoreData(data) if pluginName == "caching_sha2_password" =>
-                                // caching_sha2_password multi-round auth.
-                                handleCachingSha2MoreData(activeChannel, data, password, scramble, handshake, clientCaps, tlsActive)
+                                case AuthMoreData(data) if pluginName == "caching_sha2_password" =>
+                                    // caching_sha2_password multi-round auth.
+                                    handleCachingSha2MoreData(activeChannel, data, password, scramble, handshake, clientCaps, tlsActive)
 
-                            case AuthMoreData(data) if pluginName == "sha256_password" =>
-                                // sha256_password: server sent AuthMoreData (PEM public key), XOR with scramble, encrypt, send.
-                                handleSha256MoreData(activeChannel, data, password, scramble, handshake, clientCaps)
+                                case AuthMoreData(data) if pluginName == "sha256_password" =>
+                                    // sha256_password: server sent AuthMoreData (PEM public key), XOR with scramble, encrypt, send.
+                                    handleSha256MoreData(activeChannel, data, password, scramble, handshake, clientCaps)
 
-                            case AuthSwitchRequest(newPlugin, newScramble) =>
-                                // Step 5: Auth plugin switch.
-                                handleAuthSwitch(activeChannel, newPlugin, newScramble, password, handshake, clientCaps, tlsActive)
+                                case AuthSwitchRequest(newPlugin, newScramble) =>
+                                    // Step 5: Auth plugin switch.
+                                    handleAuthSwitch(activeChannel, newPlugin, newScramble, password, handshake, clientCaps, tlsActive)
 
-                            case other =>
-                                Abort.fail(SqlConnectionUnexpectedMessageException(
-                                    "HandshakeResponse41",
-                                    "AuthMoreData / AuthSwitchRequest / OK / ERR",
-                                    other.toString
-                                ))
+                                case other =>
+                                    Abort.fail(SqlConnectionUnexpectedMessageException(
+                                        "HandshakeResponse41",
+                                        "AuthMoreData / AuthSwitchRequest / OK / ERR",
+                                        other.toString
+                                    ))
+                            }
                         }
-                    }
-                } // end computeAuthResponse.flatMap
+                    } // end computeAuthResponse.flatMap
+                }     // end closingOnFailure over the post-upgrade connection
             }
         }
     end run

@@ -212,39 +212,30 @@ end Connection
   */
 object Connection:
 
-    /** One lease's connection custody, threaded from the pool's acquire path down to the [[Factory]] so a freshly-opened connection is owned by
-      * a finalizer from the instant it exists.
+    /** One lease's connection custody, so a connection is owned by a finalizer from the instant it exists.
       *
-      * The factory calls [[claim]] the moment it has constructed the connection (see [[openSocket]]); the acquire path calls [[take]] as it
-      * registers the lease's own exit finalizer; and the pool's orphan finalizer, registered BEFORE the acquire, disposes a connection that was
-      * claimed but never taken. That last case is a connection the interrupt-drop lost: an interrupt landing after the factory produced the
-      * connection but before the acquire's continuation registered the exit finalizer drops that continuation, so without this the connection is
-      * neither reclaimed nor closed and outlives the run (the processSharedTransport fd-leak). `take` and `orphan` both read `taken`, so exactly
-      * one of the lease's exit and the orphan close ever fires.
+      * The producer calls [[claim]] the moment the connection is built ([[openSocket]] for a fresh connect, the ring poll for a pooled one) with
+      * the close for the fd owner it holds; the acquire calls [[take]] as it registers the lease's own exit finalizer; the pool's orphan finalizer
+      * closes a connection [[claim]]ed but never [[take]]n, one an interrupt dropped between the two (the processSharedTransport fd-leak). [[take]]
+      * and [[orphan]] read one flag, so exactly one of the lease's exit and the orphan close fires.
       */
-    /** How the orphan finalizer closes a dropped connection. A thunk rather than a typed connection because the thing that must be closed
-      * differs by path: a fresh connect owns a raw [[kyo.net.Connection]] before the engine wraps it into a [[Connection]], while a ring poll
-      * hands over the [[Connection]] itself. Each claimer supplies its own close, `isOpen`-guarded, so the orphan just runs it.
-      */
-    type CustodyClose = () => Unit < (Async & Abort[Throwable])
-
     final class Custody(using AllowUnsafe):
-        private val ref   = AtomicRef.Unsafe.init(Maybe.empty[CustodyClose])
+        private val ref   = AtomicRef.Unsafe.init(Maybe.empty[() => Unit < (Async & Abort[Throwable])])
         private val taken = AtomicBoolean.Unsafe.init(false)
 
-        /** The factory delivered a live connection into this lease's custody, with `close` the way to dispose it. */
-        def claim(close: CustodyClose)(using AllowUnsafe): Unit = ref.set(Maybe(close))
+        /** Records the close for a connection just delivered into this custody. Idempotent, so it composes with the lease's own close. */
+        def claim(close: () => Unit < (Async & Abort[Throwable]))(using AllowUnsafe): Unit = ref.set(Maybe(close))
 
-        /** The lease registered its own exit finalizer, so the orphan finalizer must defer to it. */
+        /** Marks the lease's own exit finalizer as registered, so [[orphan]] stands down. */
         def take()(using AllowUnsafe): Unit = taken.set(true)
 
-        /** The close of a connection claimed but never taken, i.e. one the acquire-to-lease handover dropped; [[Absent]] otherwise. */
-        def orphan()(using AllowUnsafe): Maybe[CustodyClose] = if taken.get() then Absent else ref.get()
+        /** The close for a connection claimed but never taken (the handover dropped it), else [[Absent]]. */
+        def orphan()(using AllowUnsafe): Maybe[() => Unit < (Async & Abort[Throwable])] =
+            if taken.get() then Absent else ref.get()
     end Custody
 
-    /** The current lease's [[Custody]], set by the pool's acquire path across the connect and made visible to the [[Factory]], which claims into
-      * it the instant it constructs the connection. Inheritable, so it reaches the factory even when the connect budget runs it in a
-      * `timeoutWithError` child fiber.
+    /** The current lease's [[Custody]], bound by the acquire across the connect so the [[Factory]] claims into it. Inheritable, so it reaches a
+      * factory the connect budget runs in a `timeoutWithError` child fiber.
       */
     val custodyLocal: Local[Maybe[Custody]] = Local.init(Maybe.empty)
 
@@ -384,27 +375,24 @@ object Connection:
       * and names the factory, MySQL wraps the throwable directly), so it is the one parameter. Without the bracket the handshake sockets
       * accumulate until GC and the end-of-run FD leak check trips.
       */
-    private[kyo] def openSocket[A](host: String, port: Int, onPanic: Throwable => SqlConnectionException < Sync)(
+    private[kyo] def openSocket[A](
+        host: String,
+        port: Int,
+        onPanic: Throwable => SqlConnectionException < Sync,
+        ownerClose: A => Unit < (Async & Abort[Throwable])
+    )(
         body: kyo.net.Connection => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
-        // Chain of custody across the connect join. `transport.connect` starts the connection (its read pump is
-        // already running before the connect promise completes) and hands it back through this fiber's `get`. An
-        // interrupt landing after the promise completes but before this fiber's next slice drops the delivered
-        // connection together with the continuation that would have registered its close: a live socket with a
-        // standing armed read that nothing ever reclaims or closes (the processSharedTransport fd-leak). Registering
-        // a finalizer on the connect fiber BEFORE the join keeps the connection reachable on every edge: if the
-        // connect is still in flight the interrupt reaches it (the transport's checked complete closes it); if it has
-        // already produced a connection the onComplete closes it. On the success edge the finalizer sees no error and
-        // does nothing, leaving the connection to the body's own closingOnFailure and, above this, the lease's
-        // decideExit; the isOpen guard makes every close idempotent against those.
+        // Owns the connection across the connect join and the acquire->lease handover above this call. A finalizer on
+        // the connect fiber closes a connection an interrupt drops before `body` runs. Once `body` has built the engine
+        // connection it is claimed into the lease's `custodyLocal` custody, whose orphan finalizer closes it if the
+        // handover above openSocket is dropped (the processSharedTransport fd-leak). The claim closes the engine
+        // connection `a`, the current fd owner: a TLS upgrade leaves the raw socket in a state whose close is a no-op,
+        // so claiming the raw socket would leak the upgraded fd. On the success edge the value owns the socket.
         Scope.run {
             Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe).flatMap { connFiber =>
                 Scope.ensure { error =>
                     if error.isDefined then
-                        // Interrupt reaches a still-in-flight connect (transport's checked complete closes it); if the
-                        // connect already produced a connection, getResult returns it here and we close it. Either way
-                        // the delivered-then-dropped connection is closed. isOpen makes it idempotent with the success
-                        // path's own close.
                         connFiber.interrupt.andThen(connFiber.getResult).map {
                             case Result.Success(rawConn) => Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
                             case _                       => ()
@@ -418,19 +406,9 @@ object Connection:
                             onPanic(t).flatMap(Abort.fail(_))
                         case Result.Success(rawConn) =>
                             closingOnFailure(rawConn)(body(rawConn).flatMap { a =>
-                                // Claim the raw socket into the lease's custody, if the pool set one, so a drop of the delivery
-                                // ABOVE openSocket (the connect budget's timeoutWithError, the connect->onLease handover) still
-                                // leaves the socket owned by the pool's orphan finalizer, which closes it. The raw socket rather
-                                // than `a` because `a` is the engine's own connection type, not necessarily a Connection, and it
-                                // is closing the socket that undoes the fd-leak. Runs on the body's own success continuation, so
-                                // closingOnFailure and the connect guard above still cover the window before the claim; the
-                                // isOpen guard keeps it a no-op once the lease's own close has run.
                                 custodyLocal.use {
-                                    case Present(custody) =>
-                                        Sync.Unsafe.defer(custody.claim(() =>
-                                            Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
-                                        ))
-                                    case Absent => ()
+                                    case Present(custody) => Sync.Unsafe.defer(custody.claim(() => ownerClose(a)))
+                                    case Absent           => ()
                                 }.andThen(a)
                             })
                     }
