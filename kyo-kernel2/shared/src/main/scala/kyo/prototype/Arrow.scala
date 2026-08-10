@@ -17,10 +17,19 @@ sealed abstract class Arrow[-A, +B, -S]:
         if self eq Arrow.identity then next.asInstanceOf[Arrow[A, C, S & S2]]
         else if next eq Arrow.identity then self.asInstanceOf[Arrow[A, C, S & S2]]
         else
-            // TODO let's evaluate optimizing this to generate Arrow.Step directly if self is Transform
-            new Arrow.AndThen[A, B, C, S & S2]:
-                def a = self
-                def b = next
+            self match
+                case t: Arrow.Transform[?, ?, ?] =>
+                    next match
+                        case s: Arrow.Step[?, ?, ?] =>
+                            new Arrow.Step[A, C, S & S2]:
+                                type X = B
+                                val head        = t.asInstanceOf[Arrow.Transform[A, B, S & S2]]
+                                val tail        = s.asInstanceOf[Arrow.Step[B, C, S & S2]]
+                                def apply(v: A) = head(v, tail)
+                        case _ =>
+                            new Arrow.AndThen[A, B, C, S & S2](self, next)
+                case _ =>
+                    new Arrow.AndThen[A, B, C, S & S2](self, next)
 end Arrow
 
 object Arrow:
@@ -74,10 +83,7 @@ object Arrow:
     private val scratch = new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
         override def initialValue() = new ArrayDeque
 
-    // TODO evaluate perf with this as a final class with two fields
-    abstract private[Arrow] class AndThen[-A, B, +C, -S] extends Arrow[A, C, S]:
-        def a: Arrow[A, B, S]
-        def b: Arrow[B, C, S]
+    final private[Arrow] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
         def apply(v: A) =
             this.step(v)
