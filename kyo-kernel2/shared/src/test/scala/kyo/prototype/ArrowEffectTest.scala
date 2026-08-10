@@ -3,6 +3,7 @@ package kyo.prototype
 import kyo.Maybe
 import kyo.Tag
 import kyo.test.Test
+import scala.annotation.tailrec
 
 class ArrowEffectTest extends Test[Any]:
 
@@ -33,6 +34,14 @@ class ArrowEffectTest extends Test[Any]:
             val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(41))
             assert(ran)
             assert(r.eval == 42)
+        }
+
+        "a long map tower on a pending suspension handles in bounded stack" in {
+            @tailrec def tower(v: Int < Ask, n: Int): Int < Ask =
+                if n == 0 then v else tower(v.map(_ + 1), n - 1)
+            val v = tower(ask, 1000000)
+            val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(0))
+            assert(r.eval == 1000000)
         }
 
         "stays in force across resumptions" in {

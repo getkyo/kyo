@@ -1,6 +1,7 @@
 package kyo.prototype
 
 import kyo.test.Test
+import scala.annotation.tailrec
 
 class PendingTest extends Test[Any]:
 
@@ -58,6 +59,15 @@ class PendingTest extends Test[Any]:
             if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
         val v = loop(Safepoint.Period * 4)
         assert(v.eval == 0)
+    }
+
+    "a long map tower on a rescued computation evaluates in bounded stack" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
+        @tailrec def tower(v: Int < Any, n: Int): Int < Any =
+            if n == 0 then v else tower(v.map(_ + 1), n - 1)
+        val v = tower(loop(Safepoint.Period * 4), 1000000)
+        assert(v.eval == 1000000)
     }
 
     "evalPartial pauses at the stop check and the remainder resumes" in {
