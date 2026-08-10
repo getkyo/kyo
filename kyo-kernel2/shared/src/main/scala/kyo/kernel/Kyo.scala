@@ -56,23 +56,9 @@ object Kyo:
         end map
     end Suspend
 
-    abstract class Defer[A, +B, -S] extends Kyo[B, S]:
-        self =>
-
-        def value: A < S
-        def cont: Arrow[A, B, S]
-
-        final def map[C, S2](f: Arrow[B, C, S2]) =
-            new Defer[A, C, S & S2]:
-                val value = self.value
-                val cont  = self.cont.chain(f)
-    end Defer
-
-    object Defer:
-        @static def apply[A, B, S](v: A < S, next: Arrow[A, B, S]): Defer[A, B, S] =
-            new Defer[A, B, S]:
-                def value = v
-                def cont  = next
+    final class Defer[A, +B, -S](val value: A < S, val cont: Arrow[A, B, S]) extends Kyo[B, S]:
+        def map[C, S2](f: Arrow[B, C, S2]) =
+            new Defer[A, C, S & S2](value, cont.chain(f))
     end Defer
 
 end Kyo

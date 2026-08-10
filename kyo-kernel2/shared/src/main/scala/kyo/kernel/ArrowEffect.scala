@@ -38,7 +38,7 @@ object ArrowEffect:
                     val res  = Kyo.unnest(v)
                     val slot = Safepoint.get()
                     if !Safepoint.enter(slot) then
-                        Kyo.Defer(v, arrow)
+                        new Kyo.Defer(v, arrow)
                     else
                         val step = next.step
                         val out  = step.head(f(res), step.tail)
