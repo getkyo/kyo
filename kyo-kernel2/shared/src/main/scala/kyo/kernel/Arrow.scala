@@ -18,7 +18,11 @@ sealed abstract class Arrow[-A, +B, -S]:
         else
             self match
                 case t: Arrow.Transform[A, B, S] @unchecked =>
-                    new Arrow.Optimized[A, B, C, S & S2](t, next)
+                    new Arrow.Step[A, C, S & S2]:
+                        type X = B
+                        val head        = t
+                        val tail        = next
+                        def apply(v: A) = head(v, tail)
                 case _ =>
                     new Arrow.AndThen[A, B, C, S & S2](self, next)
 end Arrow
@@ -53,11 +57,6 @@ object Arrow:
                     val step = next.step
                     step.head(v, step.tail)
 
-    final class Optimized[-A, B, +C, -S](val head: Transform[A, B, S], val tail: Arrow[B, C, S]) extends Step[A, C, S]:
-        type X = B
-        def apply(v: A) = head(v, tail)
-    end Optimized
-
     @static private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
         new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
             override def initialValue() = new ArrayDeque
@@ -88,7 +87,15 @@ object Arrow:
 
             @tailrec def link(acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
                 if buffer.isEmpty then acc
-                else link(new Optimized[Any, Any, Any, Any](buffer.removeLast().asInstanceOf[Transform[Any, Any, Any]], acc))
+                else
+                    val h = buffer.removeLast().asInstanceOf[Transform[Any, Any, Any]]
+                    link(
+                        new Step[Any, Any, Any]:
+                            type X = Any
+                            val head          = h
+                            val tail          = acc
+                            def apply(v: Any) = head(v, tail)
+                    )
 
             buffer.prepend(this)
             loop(1)
