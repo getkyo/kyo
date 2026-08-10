@@ -40,6 +40,20 @@ class KernelBench:
     end narrowBindMap
 
     @Benchmark
+    def fusedBindMap: Int =
+        def loop(i: Int): Int < Any =
+            if i > FusedDepth then 0
+            else
+                ((i & 63): Int < Any)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        loop(0).eval
+    end fusedBindMap
+
+    @Benchmark
     def cachedBindMap: Int =
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then 0
@@ -101,6 +115,7 @@ object KernelBench:
 
     inline def Depth       = 10000
     inline def NarrowDepth = 1000
+    inline def FusedDepth  = 32
 
     final case class Box(value: Int)
 
