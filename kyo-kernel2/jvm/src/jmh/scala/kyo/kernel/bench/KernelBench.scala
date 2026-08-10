@@ -208,6 +208,17 @@ class KernelBench:
         ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
     end effectOps
 
+    /** suspendWith: the suspension is its own continuation, one object per operation. Expect
+      * effectOps semantics at roughly a third of the allocation.
+      */
+    @Benchmark
+    def suspendWithOps: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else askWith(a => loop(i + a))
+        ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
+    end suspendWithOps
+
     /** Idle handler: the cachedBindMap chain under a handler whose effect never occurs. Expect
       * cachedBindMap numbers; the handler only relays the budget rescues.
       */
@@ -290,6 +301,9 @@ object KernelBench:
     sealed trait Ask2 extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
 
     def ask(using Frame): Int < Ask = ArrowEffect.suspend[[B] =>> Unit, [B] =>> Int, Ask, Any](Tag[Ask], ())
+
+    inline def askWith[B](inline f: Int => B < Ask)(using inline frame: Frame): B < Ask =
+        ArrowEffect.suspendWith[[B2] =>> Unit, [B2] =>> Int, Ask, Any, B, Ask](Tag[Ask], ())(f)
 
     def ask2(using Frame): Int < Ask2 = ArrowEffect.suspend[[B] =>> Unit, [B] =>> Int, Ask2, Any](Tag[Ask2], ())
 

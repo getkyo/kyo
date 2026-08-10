@@ -21,6 +21,43 @@ object ArrowEffect:
             def cont  = Arrow[O[X]]
 
     @nowarn("msg=anonymous")
+    inline def suspendWith[I[_], O[_], E <: ArrowEffect[I, O], V, B, S](
+        inline _tag: Tag[E],
+        inline _input: I[V]
+    )(inline f: O[V] => B < (E & S))(using inline _frame: Frame): B < (E & S) =
+        @nowarn("msg=anonymous") def mapLoop[C, S3](v: O[V] < S3, next: Arrow[B, C, S3]): C < (E & S & S3) =
+            def arrow =
+                new Arrow.Transform[O[V], C, E & S & S3]:
+                    def frame = _frame
+                    def apply[D, S4](v: O[V] < S4, next2: Arrow[C, D, S4]) =
+                        mapLoop(v, next.chain(next2))
+            v match
+                case kyo: Kyo[O[V], S3] @unchecked =>
+                    kyo.map(arrow)
+                case v =>
+                    val res  = Kyo.unnest(v)
+                    val slot = Safepoint.get()
+                    if !Safepoint.enter(slot) then
+                        Kyo.Defer(v, arrow)
+                    else
+                        val step = next.step
+                        val out  = step.head(f(res), step.tail)
+                        Safepoint.exit(slot)
+                        out
+                    end if
+            end match
+        end mapLoop
+        new Arrow.Transform[O[V], B, E & S] with Kyo.Suspend[I, O, E, V, B, E & S]:
+            def tag   = _tag
+            def input = _input
+            def frame = _frame
+            def cont  = this
+            def apply[C, S2](v: O[V] < S2, next2: Arrow[B, C, S2]) =
+                mapLoop(v, next2)
+        end new
+    end suspendWith
+
+    @nowarn("msg=anonymous")
     def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
         f: [X] => (I[X], O[X] => A < (E & S)) => A < (E & S)
     )(using _frame: Frame): A < S =

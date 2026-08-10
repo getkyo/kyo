@@ -6,7 +6,7 @@ import scala.annotation.static
 
 sealed trait Boxed
 
-sealed abstract class Kyo[+A, -S] extends Boxed:
+sealed trait Kyo[+A, -S] extends Boxed:
     def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
 
 final case class Nested[+A](value: A) extends Boxed
@@ -33,7 +33,7 @@ object Kyo:
             case _ =>
                 Nested.unnest(v)
 
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
+    trait Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
         self =>
 
         def tag: Tag[E]

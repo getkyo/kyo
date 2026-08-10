@@ -743,7 +743,11 @@ lazy val `kyo-kernel2` =
             Test / unmanagedJars := Seq.empty
         )
         .jvmSettings(
-            mimaCheck(false)
+            mimaCheck(false),
+            // Benchmarks run on default JVM flags: Jmh extends Test, which carries
+            // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
+            // flag must not be baked into the canonical numbers.
+            Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders")
         )
         .jvmConfigure(_.enablePlugins(JmhPlugin))
         .nativeSettings(`native-settings`)

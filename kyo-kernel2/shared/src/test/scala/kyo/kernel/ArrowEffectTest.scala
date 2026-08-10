@@ -114,6 +114,49 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "suspendWith" - {
+        "suspends and maps in one node" in {
+            val v = ArrowEffect.suspendWith[Const[Unit], Const[Int], Ask, Any, Int, Any](Tag[Ask], ())(_ + 1)
+            val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(41))
+            assert(r.eval == 42)
+        }
+
+        "the node is its own continuation" in {
+            val v = ArrowEffect.suspendWith[Const[Unit], Const[Int], Ask, Any, Int, Any](Tag[Ask], ())(_ + 1)
+            v match
+                case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] => assert(kyo.cont eq kyo)
+                case _                                  => fail("expected a suspension")
+        }
+
+        "deep recursion is stack safe" in {
+            def loop(i: Int): Int < Ask =
+                if i > 100000 then i
+                else ArrowEffect.suspendWith[Const[Unit], Const[Int], Ask, Any, Int, Ask](Tag[Ask], ())(a => loop(i + a))
+            val r = ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1))
+            assert(r.eval == 100001)
+        }
+
+        "maps chain onto the node" in {
+            val v = ArrowEffect.suspendWith[Const[Unit], Const[Int], Ask, Any, Int, Any](Tag[Ask], ())(_ + 1).map(_ * 2)
+            val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(20))
+            assert(r.eval == 42)
+        }
+
+        "an effectful continuation suspends again" in {
+            val v = ArrowEffect.suspendWith[Const[Unit], Const[Int], Ask, Any, Int, Ask](Tag[Ask], ())(a => ask.map(b => a + b))
+            val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(21))
+            assert(r.eval == 42)
+        }
+
+        "a long map tower on the node evaluates in bounded stack" in {
+            @tailrec def tower(v: Int < Ask, n: Int): Int < Ask =
+                if n == 0 then v else tower(v.map(_ + 1), n - 1)
+            val v = tower(ArrowEffect.suspendWith[Const[Unit], Const[Int], Ask, Any, Int, Any](Tag[Ask], ())(_ + 1), 1000000)
+            val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(0))
+            assert(r.eval == 1000001)
+        }
+    }
+
     "resume" - {
         "answers every operation and resumes" in {
             val v = ask.map(a => ask.map(b => a + b))
