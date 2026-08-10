@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import kyo.Frame
+import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
@@ -18,35 +19,12 @@ sealed abstract class Arrow[-A, +B, -S]:
         else
             self match
                 case t: Arrow.Transform[A, B, S] @unchecked =>
-                    new Arrow.Step[A, C, S & S2]:
-                        type X = B
-                        val head        = t
-                        val tail        = next
-                        def apply(v: A) = head(v, tail)
+                    Arrow.Step(t, next)
                 case _ =>
                     new Arrow.AndThen[A, B, C, S & S2](self, next)
 end Arrow
 
 object Arrow:
-
-    abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
-        type X
-        def head: Transform[A, X, S]
-        def tail: Arrow[X, B, S]
-        final def step = this
-    end Step
-
-    abstract class Transform[-A, B, -S] extends Step[A, B, S]:
-        type X = B
-        def frame: Frame
-        final def head = this
-        final def tail = identity.asInstanceOf[Step[B, B, S]]
-
-        final def apply(v: A) =
-            apply(v, Arrow[B])
-
-        def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
-    end Transform
 
     @static private val identity: Transform[Any, Any, Any] =
         new Transform[Any, Any, Any]:
@@ -60,6 +38,35 @@ object Arrow:
     @static private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
         new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
             override def initialValue() = new ArrayDeque
+
+    abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
+        type X
+        def head: Transform[A, X, S]
+        def tail: Arrow[X, B, S]
+        final def step = this
+    end Step
+
+    object Step:
+        @nowarn("msg=anonymous")
+        private[Arrow] def apply[A, B, C, S](h: Transform[A, B, S], t: Arrow[B, C, S]): Step[A, C, S] =
+            new Step[A, C, S]:
+                type X = B
+                val head        = h
+                val tail        = t
+                def apply(v: A) = head(v, tail)
+    end Step
+
+    abstract class Transform[-A, B, -S] extends Step[A, B, S]:
+        type X = B
+        def frame: Frame
+        final def head = this
+        final def tail = identity.asInstanceOf[Step[B, B, S]]
+
+        final def apply(v: A) =
+            apply(v, Arrow[B])
+
+        def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
+    end Transform
 
     final private[Arrow] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
@@ -87,15 +94,7 @@ object Arrow:
 
             @tailrec def link(acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
                 if buffer.isEmpty then acc
-                else
-                    val h = buffer.removeLast().asInstanceOf[Transform[Any, Any, Any]]
-                    link(
-                        new Step[Any, Any, Any]:
-                            type X = Any
-                            val head          = h
-                            val tail          = acc
-                            def apply(v: Any) = head(v, tail)
-                    )
+                else link(Step(buffer.removeLast().asInstanceOf[Transform[Any, Any, Any]], acc))
 
             buffer.prepend(this)
             loop(1)
