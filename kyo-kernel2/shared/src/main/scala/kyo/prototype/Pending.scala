@@ -48,34 +48,41 @@ object `<`:
         inline def andThen[B, S2](inline next: => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(_ => next)
 
-        def eval(using S =:= Any): A =
-            evalLoop(self.asInstanceOf[A < Any], never) match
+        inline def eval(using S =:= Any): A =
+            @tailrec def evalLoop(v: A < Any): A < Any =
+                v match
+                    case kyo: Kyo.Defer[?, ?, ?] =>
+                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
+                        val step  = defer.cont.step
+                        evalLoop(step.head(defer.value, step.tail))
+                    case v =>
+                        v
+            val safepoint = Safepoint.get
+            val saved     = safepoint.save()
+            val res =
+                try evalLoop(self.asInstanceOf[A < Any])
+                finally safepoint.restore(saved)
+            res match
                 case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
                 case v              => Kyo.unnest(v.asInstanceOf[A < Any])
+        end eval
 
-        def evalPartial(stop: () => Boolean): A < S =
-            evalLoop(self.asInstanceOf[A < Any], stop).asInstanceOf[A < S]
+        inline def evalPartial(inline stop: () => Boolean): A < S =
+            @tailrec def evalLoop(v: A < Any): A < Any =
+                if stop() then v
+                else
+                    v match
+                        case kyo: Kyo.Defer[?, ?, ?] =>
+                            val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
+                            val step  = defer.cont.step
+                            evalLoop(step.head(defer.value, step.tail))
+                        case v =>
+                            v
+            val safepoint = Safepoint.get
+            val saved     = safepoint.save()
+            try evalLoop(self.asInstanceOf[A < Any]).asInstanceOf[A < S]
+            finally safepoint.restore(saved)
+        end evalPartial
 
     end extension
-
-    private val never: () => Boolean = () => false
-
-    private def evalLoop[A](v: A < Any, stop: () => Boolean): A < Any =
-        val safepoint = Safepoint.get
-        val saved     = safepoint.save()
-        try loop(v, stop)
-        finally safepoint.restore(saved)
-    end evalLoop
-
-    @tailrec
-    private def loop[A](v: A < Any, stop: () => Boolean): A < Any =
-        if stop() then v
-        else
-            v match
-                case kyo: Kyo.Defer[?, ?, ?] =>
-                    val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
-                    val step  = defer.cont.step
-                    loop(step.head(defer.value, step.tail), stop)
-                case v =>
-                    v
 end `<`

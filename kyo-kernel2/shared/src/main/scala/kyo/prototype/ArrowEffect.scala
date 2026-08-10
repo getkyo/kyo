@@ -11,7 +11,9 @@ abstract class ArrowEffect[I[_], O[_]]
 object ArrowEffect:
 
     @nowarn("msg=anonymous")
-    def suspend[I[_], O[_], E <: ArrowEffect[I, O], X](_tag: Tag[E], _input: I[X])(using _frame: Frame): O[X] < E =
+    inline def suspend[I[_], O[_], E <: ArrowEffect[I, O], X](inline _tag: Tag[E], inline _input: I[X])(using
+        inline _frame: Frame
+    ): O[X] < E =
         new Kyo.Suspend[I, O, E, X, O[X], E]:
             def tag   = _tag
             def input = _input
