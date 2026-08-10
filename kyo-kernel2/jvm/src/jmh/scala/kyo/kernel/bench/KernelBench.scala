@@ -23,6 +23,26 @@ class KernelBench:
 
     private var seed = 1
 
+    private val accumulatedChain: Int < Ask =
+        ask.map(a => a & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+            .map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+
     /** The fixed floor: one settled map and one eval. Expect a few nanoseconds (slot lookup,
       * save, restore, one fused step) and zero allocation.
       */
@@ -153,7 +173,7 @@ class KernelBench:
       * suspension-machinery allocation only; the inner ten maps contribute nothing.
       */
     @Benchmark
-    def fusionResumesInsideContinuations: Int =
+    def continuationBodiesFuse: Int =
         def loop(i: Int): Int < Ask =
             if i > NarrowDepth then i
             else
@@ -166,13 +186,27 @@ class KernelBench:
                         .map(_ => loop(i + 1))
                 }
         ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
-    end fusionResumesInsideContinuations
+    end continuationBodiesFuse
 
-    /** Reification limit: maps attached to a pending suspension cannot fuse. Expect a Suspend
-      * wrapper, a chain node, and the arrow per attach, and step dispatch on resume.
+    /** Fusion after suspension, execution only: a suspension with fifty transformations chained
+      * after it is built once outside the timed region, so the op measures answering the
+      * suspension and running the stored chain, nothing else. Expect zero allocation and a
+      * per-step time near the fused rate: each stored transformation calls the next through a
+      * call site that only ever sees one target, so the JIT can fuse the answered chain the
+      * same way it fuses eager execution.
       */
     @Benchmark
-    def mapsOnPendingReify: Int =
+    def fusionAfterSuspensionRunOnly: Int =
+        ArrowEffect.handle(Tag[Ask], accumulatedChain)([X] => (_, cont) => cont(1)).eval
+
+    /** Fusion after suspension, whole cycle: a suspension with ten transformations chained
+      * after it, answered by the handler, built and run per iteration. Storing each
+      * transformation on the unanswered suspension allocates (there is no value to run against
+      * yet); once answered, the chain's execution is expected to fuse. The run-only row
+      * isolates that execution.
+      */
+    @Benchmark
+    def fusionAfterSuspension: Int =
         def loop(i: Int): Int < Ask =
             if i > NarrowDepth then i
             else
@@ -183,7 +217,7 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
         ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
-    end mapsOnPendingReify
+    end fusionAfterSuspension
 
     /** Trampolined recursion through settled unit maps. Expect rescue pairs only, 760 bytes
       * per ten thousand binds.
