@@ -62,6 +62,32 @@ object PerfCheck:
         ArrowEffect.handle(askTag, loop(0))([X] => (_, cont) => cont(1)).eval
     end effectOpsProto
 
+    object OldKernel:
+        import kyo.kernel.*
+        given kyo.Frame = kyo.Frame.internal
+
+        sealed trait AskOld extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
+        val askOldTag: Tag[AskOld] = Tag[AskOld]
+
+        def effectOps(depth: Int): Int =
+            def loop(i: Int): Int < AskOld =
+                if i > depth then i
+                else ArrowEffect.suspend[Any](askOldTag, ()).map(a => loop(i + a))
+            ArrowEffect.handle(askOldTag, loop(0))([C] => (_, cont) => cont(1)).eval
+        end effectOps
+
+        def narrowBindMap(depth: Int): Int =
+            def loop(i: Int): Int < Any =
+                if i > depth then i
+                else
+                    ((i + 11): Int < Any)
+                        .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                        .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                        .map(loop)
+            loop(0).eval
+        end narrowBindMap
+    end OldKernel
+
     def deepBindOld(depth: Int): Int =
         import kyo.kernel.<
         import kyo.kernel.Effect
@@ -80,6 +106,8 @@ object PerfCheck:
         measure("proto deepBind      ", 300)(deepBindProto(depth))
         measure("old   deepBind      ", 300)(deepBindOld(depth))
         measure("proto narrowBindMap ", 300)(narrowBindMapProto(1000))
+        measure("old   narrowBindMap ", 300)(OldKernel.narrowBindMap(1000))
         measure("proto effectOps     ", 300)(effectOpsProto(depth))
+        measure("old   effectOps     ", 300)(OldKernel.effectOps(depth))
     end main
 end PerfCheck
