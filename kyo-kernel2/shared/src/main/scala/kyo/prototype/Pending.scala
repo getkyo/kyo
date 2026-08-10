@@ -1,6 +1,7 @@
 package kyo.prototype
 
 import kyo.Frame
+import kyo.prototype as ArrowStep
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -18,14 +19,28 @@ object `<`:
 
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            val step =
-                new Arrow.Transform[A, B, S2]:
-                    def frame                                           = _frame
-                    def run(v: A, context: Context, handlers: Handlers) = f(v)
-            self match
-                case kyo: Kyo[A, S] @unchecked => kyo.append(step)
-                case v                         => new Kyo.Defer(v.asInstanceOf[A < S], step)
-            end match
+            @nowarn("msg=anonymous") def mapLoop[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
+                def arrow =
+                    new Arrow.Transform[A, C, S & S2 & S3]:
+                        def frame = _frame
+                        def apply[D, S4](v: A < S4, next2: Arrow[C, D, S4]) =
+                            mapLoop(v, next.chain(next2))
+                v match
+                    case kyo: Kyo[A, S] @unchecked =>
+                        kyo.map(arrow)
+                    case v =>
+                        val res       = Kyo.unnest(v)
+                        val safepoint = Safepoint.get
+                        if !safepoint.enter() then
+                            Kyo.Defer(res, arrow)
+                        else
+                            val step = next.step
+                            try step.head(f(res), step.tail)
+                            finally safepoint.exit()
+                        end if
+                end match
+            end mapLoop
+            mapLoop(self, Arrow[B])
         end map
 
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
@@ -34,33 +49,33 @@ object `<`:
         inline def andThen[B, S2](inline next: => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(_ => next)
 
-        def eval(using S =:= Any): A =
-            evalLoop(self.asInstanceOf[A < Any], never) match
-                case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
-                case v              => Kyo.unnest(v).asInstanceOf[A]
+        // def eval(using S =:= Any): A =
+        //     evalLoop(self.asInstanceOf[A < Any], never) match
+        //         case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
+        //         case v              => Kyo.unnest(v).asInstanceOf[A]
 
-        def evalPartial(stop: () => Boolean): A < S =
-            evalLoop(self.asInstanceOf[A < Any], stop).asInstanceOf[A < S]
+        // def evalPartial(stop: () => Boolean): A < S =
+        //     evalLoop(self.asInstanceOf[A < Any], stop).asInstanceOf[A < S]
 
     end extension
 
-    private val never: () => Boolean = () => false
+    // private val never: () => Boolean = () => false
 
-    private def evalLoop[A](v: A < Any, stop: () => Boolean): A < Any =
-        val sp    = Safepoint.get
-        val saved = sp.save()
-        try loop(v, stop)
-        finally sp.restore(saved)
-    end evalLoop
+    // private def evalLoop[A](v: A < Any, stop: () => Boolean): A < Any =
+    //     val sp    = Safepoint.get
+    //     val saved = sp.save()
+    //     try loop(v, stop)
+    //     finally sp.restore(saved)
+    // end evalLoop
 
-    @tailrec
-    private def loop[A](v: A < Any, stop: () => Boolean): A < Any =
-        if stop() then v
-        else
-            v match
-                case kyo: Kyo.Defer[?, ?, ?] =>
-                    val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
-                    loop(defer.cont(defer.value, Context.empty, Handlers.empty), stop)
-                case v =>
-                    v
+    // @tailrec
+    // private def loop[A](v: A < Any, stop: () => Boolean): A < Any =
+    //     if stop() then v
+    //     else
+    //         v match
+    //             case kyo: Kyo.Defer[?, ?, ?] =>
+    //                 val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, Any]]
+    //                 loop(defer.cont(defer.value, Context.empty, Handlers.empty), stop)
+    //             case v =>
+    //                 v
 end `<`

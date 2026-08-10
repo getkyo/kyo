@@ -4,39 +4,50 @@ import kyo.Frame
 import kyo.Tag
 
 sealed abstract class Kyo[+A, -S]:
-    private[prototype] def append[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
+    def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
 
 object Kyo:
 
     final case class Nested[+A](value: A)
 
-    private[prototype] inline def unnest(v: Any): Any =
+    private[prototype] inline def unnest[A, S](v: A < S): A =
         v match
-            case n: Nested[?] => n.value
-            case _            => v
+            case n: Nested[?] => n.value.asInstanceOf[A]
+            case _            => v.asInstanceOf[A]
 
-    final class Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S](
-        val tag: Tag[E],
-        val input: I[X],
-        val frame: Frame,
-        val cont: Arrow[O[X], A, S]
-    ) extends Kyo[A, S]:
+    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
+        self =>
 
-        private[prototype] def append[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
-            new Suspend(tag, input, frame, cont.andThen(f))
+        def tag: Tag[E]
+        def input: I[X]
+        def frame: Frame
+        def cont: Arrow[O[X], A, S]
 
-        override def toString = s"Suspend(${tag.show}, ${frame.position.show})"
+        def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
+            new Suspend[I, O, E, X, B, S & S2]:
+                def tag   = self.tag
+                def input = self.input
+                def frame = self.frame
+                def cont  = self.cont.chain(f)
     end Suspend
 
-    final class Defer[X, +A, -S](
-        val value: X < S,
-        val cont: Arrow[X, A, S]
-    ) extends Kyo[A, S]:
+    abstract class Defer[A, +B, -S] extends Kyo[B, S]:
+        self =>
 
-        private[prototype] def append[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
-            new Defer(value, cont.andThen(f))
+        def value: A < S
+        def cont: Arrow[A, B, S]
 
-        override def toString = s"Defer($cont)"
+        def map[C, S2](f: Arrow[B, C, S2]) =
+            new Defer[A, C, S & S2]:
+                def value = self.value
+                def cont  = self.cont.chain(f)
+    end Defer
+
+    object Defer:
+        def apply[A, B, S](v: A < S, next: Arrow[A, B, S]): Defer[A, B, S] =
+            new Defer[A, B, S]:
+                def value = v
+                def cont  = next
     end Defer
 
 end Kyo
