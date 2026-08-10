@@ -41,12 +41,19 @@ object Kyo:
         def frame: Frame
         def cont: Arrow[O[X], A, S]
 
+        private[kernel] def root: Suspend[I, O, E, X, ?, ?] = this
+
         final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
+            val r = root
+            val c = cont.chain(f)
             new Suspend[I, O, E, X, B, S & S2]:
-                val tag   = self.tag
-                val input = self.input
-                val frame = self.frame
-                val cont  = self.cont.chain(f)
+                override val root = r
+                def tag           = root.tag
+                def input         = root.input
+                def frame         = root.frame
+                val cont          = c
+            end new
+        end map
     end Suspend
 
     abstract class Defer[A, +B, -S] extends Kyo[B, S]:
