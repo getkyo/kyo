@@ -13,7 +13,7 @@ sealed abstract class Arrow[-A, +B, -S]:
 
     def step: Arrow.Step[A, B, S]
 
-    def chain[C, S2](next: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
+    final def chain[C, S2](next: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
         if self eq Arrow.identity then next.asInstanceOf[Arrow[A, C, S & S2]]
         else if next eq Arrow.identity then self.asInstanceOf[Arrow[A, C, S & S2]]
         else
@@ -34,16 +34,16 @@ object Arrow:
         type X
         def head: Transform[A, X, S]
         def tail: Arrow[X, B, S]
-        def step = this
+        final def step = this
     end Step
 
     abstract class Transform[-A, B, -S] extends Step[A, B, S]:
         type X = B
         def frame: Frame
-        def head = this
-        def tail = identity.asInstanceOf[Step[B, B, S]]
+        final def head = this
+        final def tail = identity.asInstanceOf[Step[B, B, S]]
 
-        def apply(v: A) =
+        final def apply(v: A) =
             apply(v, Arrow[B])
 
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
@@ -65,9 +65,9 @@ object Arrow:
         def span: Span[Transform[?, ?, ?]]
         def offset: Int
 
-        def apply(v: A) = head(v, tail)
-        def head        = span(offset).asInstanceOf[Transform[A, X, S]]
-        def tail =
+        final def apply(v: A) = head(v, tail)
+        final def head        = span(offset).asInstanceOf[Transform[A, X, S]]
+        final def tail =
             if offset == span.size - 1 then
                 identity.asInstanceOf[Step[X, B, S]]
             else

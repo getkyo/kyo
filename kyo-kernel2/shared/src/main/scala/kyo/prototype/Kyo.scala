@@ -12,14 +12,19 @@ object Kyo:
 
     final case class Nested[+A](value: A) extends Boxed
 
+    object Nested:
+        private[prototype] def unnest[A](v: Any): A =
+            v match
+                case n: Nested[?] => n.value.asInstanceOf[A]
+                case _            => v.asInstanceOf[A]
+    end Nested
+
     private[prototype] inline def unnest[A, S](inline v: A < S): A =
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A]
             case _ =>
-                (v: @unchecked) match
-                    case n: Nested[?] => n.value.asInstanceOf[A]
-                    case _            => v.asInstanceOf[A]
+                Nested.unnest(v)
 
     abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
         self =>
