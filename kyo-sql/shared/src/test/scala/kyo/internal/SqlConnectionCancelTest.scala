@@ -775,50 +775,62 @@ class SqlConnectionCancelTest extends kyo.Test:
         }
     }
 
-    "a lease interrupted at the connect handover closes the connection, never leaks it" in {
-        // The processSharedTransport fd-leak, at the pool boundary rather than the io_uring driver: `open` produces a
-        // live connection and hands it back across an async join (connect -> onLease, and the connect budget's
-        // timeoutWithError). An interrupt landing after `open` completes but before the exit finalizer registers drops
-        // the delivered connection with the continuation that would have owned it, so it is never reclaimed and never
-        // closed. Reproduced here without a driver by gating `open`'s completion on a latch and interrupting the lease
-        // fiber back-to-back with the release, so the interrupt races the delivery; looped so the race is hit. Every
-        // probe carries a socketOpen flag its close lowers; after closing the pool, any probe still open is a
-        // connection the pool leaked. A finite acquireTimeout keeps connect wrapping `open` in timeoutWithError, so the
-        // budget's own handover join is exercised too. Interrupts are not `leftSessionIdle`, so a reclaim destroys
-        // rather than pools, the pool stays empty, and every iteration takes the connect path.
-        val config = baseConfig("handover").copy(acquireTimeout = 30.seconds)
+    /** Reproduces the processSharedTransport fd-leak at the pool boundary rather than the io_uring driver: `open` produces
+      * a live connection and hands it back across an async join (connect -> the lease's exit finalizer, and the connect
+      * budget's timeoutWithError). An interrupt landing after `open` completes but before the exit finalizer registers
+      * drops the delivered connection with the continuation that would have owned it, so without a custody it is never
+      * reclaimed and never closed.
+      *
+      * Driven without a driver by gating `open`'s completion on a latch and interrupting the lease fiber back-to-back with
+      * the release, so the interrupt races the delivery; looped so the race is hit. Every probe carries a socketOpen flag
+      * its close lowers; after closing the pool, any probe still open is a connection the pool leaked. A finite
+      * acquireTimeout keeps connect wrapping `open` in timeoutWithError, so the budget's own handover join is exercised.
+      * The probe's drain reports non-reusable, so a post-take interrupt destroys rather than pools: the pool stays empty
+      * and every iteration takes the connect path (a reusable drain would pool the probe, the next iteration would re-poll
+      * it without re-entering the factory, and the gate handshake would deadlock).
+      *
+      * `hold` is how the leaf takes and holds a lease, a statement lease or a stream lease, so both acquire paths get the
+      * same handover-drop test.
+      */
+    private def handoverLeakTest(scope: String)(
+        hold: (SqlConnectionPool[Probe], SqlConfig) => Any < (Async & Abort[SqlException])
+    )(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[SqlException]) =
+        val config = baseConfig(scope).copy(acquireTimeout = 30.seconds)
         Channel.initUnscoped[String](1024).flatMap { events =>
             AtomicLong.init(0).flatMap { ids =>
                 Sync.Unsafe.defer(new java.util.concurrent.ConcurrentLinkedQueue[AtomicBoolean.Unsafe]()).flatMap { probes =>
                     AtomicRef.init(Maybe.empty[Latch]).flatMap { gateRef =>
                         AtomicRef.init(Maybe.empty[Latch]).flatMap { enteredRef =>
-                            // The probe is constructed and claimed into the lease's custody in one synchronous step AFTER the
-                            // gate, mirroring how openSocket claims the connection it builds: so a drop of the delivery above
-                            // `open` finds the connection already owned by the pool's orphan finalizer. Constructing it before
-                            // the gate instead would leave a probe orphaned if the post-gate continuation were the one dropped.
+                            // Construct, claim, and track the probe in one synchronous step, so no interrupt can land
+                            // between the probe existing and the custody owning it. The probe stands in for the connection
+                            // openSocket builds, which openSocket owns from birth (closingOnFailure over it); tracking it
+                            // before the claim would count a probe the pool never received, a window the real factory has
+                            // no equivalent of.
                             def createAndClaim(id: Long)(using Frame): Probe < (Async & Abort[SqlException]) =
-                                Sync.Unsafe.defer {
-                                    val socketOpen = AtomicBoolean.Unsafe.init(true)
-                                    probes.add(socketOpen)
-                                    new Probe(
-                                        id,
-                                        events,
-                                        Script(),
-                                        AtomicBoolean.Unsafe.init(false),
-                                        AtomicBoolean.Unsafe.init(false),
-                                        socketOpen
-                                    )
-                                }.flatMap { probe =>
-                                    Connection.custodyLocal.use {
-                                        case Present(custody) =>
-                                            Sync.Unsafe.defer(custody.claim(() =>
-                                                probe.isOpen.flatMap {
-                                                    case true  => Sync.Unsafe.defer(probe.closeNow)
-                                                    case false => ()
-                                                }
-                                            ))
-                                        case Absent => ()
-                                    }.andThen(probe)
+                                Connection.custodyLocal.use { maybeCustody =>
+                                    Sync.Unsafe.defer {
+                                        val socketOpen = AtomicBoolean.Unsafe.init(true)
+                                        val probe = new Probe(
+                                            id,
+                                            events,
+                                            Script(drainReusable = false),
+                                            AtomicBoolean.Unsafe.init(false),
+                                            AtomicBoolean.Unsafe.init(false),
+                                            socketOpen
+                                        )
+                                        maybeCustody match
+                                            case Present(custody) =>
+                                                custody.claim(() =>
+                                                    probe.isOpen.map {
+                                                        case true  => Sync.Unsafe.defer(probe.closeNow)
+                                                        case false => ()
+                                                    }
+                                                )
+                                            case Absent => ()
+                                        end match
+                                        probes.add(socketOpen)
+                                        probe
+                                    }
                                 }
                             val factory = new Connection.Factory[Probe]:
                                 def open(a: SqlConfig.Address, password: Maybe[String], c: SqlConfig)(using
@@ -842,11 +854,7 @@ class SqlConnectionCancelTest extends kyo.Test:
                                             Latch.init(1).flatMap { entered =>
                                                 gateRef.set(Present(gate)).andThen(enteredRef.set(Present(entered))).andThen {
                                                     Fiber.initUnscoped(
-                                                        Abort.run[SqlException](pool.leaseStatement(
-                                                            address,
-                                                            Absent,
-                                                            config
-                                                        )(_.simpleQuery(Sql.hang)))
+                                                        Abort.run[SqlException](hold(pool, config))
                                                     ).flatMap { fiber =>
                                                         entered.await
                                                             .andThen(gate.release)
@@ -878,6 +886,20 @@ class SqlConnectionCancelTest extends kyo.Test:
                 }
             }
         }
+    end handoverLeakTest
+
+    "a statement lease interrupted at the connect handover closes the connection, never leaks it" in {
+        handoverLeakTest("handover")((pool, config) =>
+            pool.leaseStatement(address, Absent, config)(_.simpleQuery(Sql.hang))
+        )
+    }
+
+    "a stream lease interrupted at the connect handover closes the connection, never leaks it" in {
+        // The stream path (leaseScoped -> acquireScoped) owns the handover through the same withCustody the statement
+        // path uses; before that fix this path leaked while the statement path did not.
+        handoverLeakTest("handover-stream")((pool, config) =>
+            Scope.run(pool.leaseScoped(address, Absent, config).andThen(Async.never))
+        )
     }
 
 end SqlConnectionCancelTest
