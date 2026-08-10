@@ -16,10 +16,14 @@ Logs and parser: session scratchpad `jit/` and `jit-parse.py` (regenerable:
 
 ## Headline
 
-**Zero hot megamorphic call sites in the entire suite.** Every virtual call with a
-hot profile (peak count >= 1000) is either monomorphic (one receiver class, inlined)
-or bimorphic (two receiver classes, both guard-inlined). Every inline failure in hot
-kernel code is size- or depth-based, never dispatch-based.
+**Zero hot megamorphic call sites in the original 8 rows; the megamorphic handler
+exposure is real and measured at 2.8x in the added sharedHandlerPaysDispatch row.**
+In the 8 single-site rows, every virtual call with a hot profile (peak count >= 1000)
+is either monomorphic (one receiver class, inlined) or bimorphic (two receiver
+classes, both guard-inlined), and every inline failure in hot kernel code is size- or
+depth-based, never dispatch-based. Megamorphic is classified as receiver-profile
+overflow: recorded receiver counts far below the site's total call count, or no
+profile at a hot virtual site.
 
 This is also the explanation for the head/tail unification measuring parity: there
 was no megamorphic penalty in the suite to recover. The suite's per-site inline
@@ -75,11 +79,37 @@ trailingMapsStayLinear's 18 `virtual call` failures (vs 2 elsewhere) are all the
 `count=-1` cold-arm kind, in the rescue paths of its mapLoop and in AndThen.apply's
 cold branch. No hot-loop cost.
 
-## What the suite cannot show (structural bounds vs measured facts)
+## The shared-handler limit, demonstrated (sharedHandlerPaysDispatch)
 
-The rows are intentionally narrow: one effect, one or few Transform classes per
-profiled site. Measured monomorphism at a site is therefore not a guarantee. The
-guarantees and exposures, by construction:
+The 8 rows above run one effect from one suspension site, so handler-loop sites
+profile mono. To verify the structural prediction that they degrade in real
+programs, the suite gained a row: 16 distinct askWith sites (16 mint classes)
+resolving through one handler, against suspensionFusesContinuation (identical
+shape, 1 site) as control.
+
+Measured (3 forks, -prof gc):
+
+| row | time | alloc |
+|---|---|---|
+| suspensionFusesContinuation (1 site) | 53.32 +- 0.24 us | 240,040 B/op |
+| sharedHandlerPaysDispatch (16 sites) | 148.58 +- 1.05 us | 240,401 B/op |
+
+2.79x the time at identical allocation (24 B per suspension in both): the delta is
+pure dispatch. The compilation log shows why: in handle/handleLoop, the
+`Suspend::tag`, `Suspend::input`, `Suspend::cont`, `Arrow::apply`, and
+`Transform::apply` sites all overflow the width-2 receiver profile (e.g. the tag
+site records 62,462 calls but its two profiled receivers only account for 7,808;
+the other 87% spreads over the remaining 14 classes) and every one fails inlining
+with `virtual call`. 21 hot megamorphic sites total, all in the handler path. In
+the same program, the per-site mapLoops stay mono and inlined: user-code sites are
+shielded by per-site bytecode; only the shared handler loop degrades. This is the
+measured case for the deferred per-call-site handler work.
+
+## What the single-site rows cannot show (structural bounds vs measured facts)
+
+The 8 original rows are intentionally narrow: one effect, one or few Transform
+classes per profiled site. Measured monomorphism at a site is therefore not a
+guarantee. The guarantees and exposures, by construction:
 
 1. **`Step::head`/`tail`: at most 2 implementations exist** (the factory mint's vals,
    Transform's finals). But C2 bimorphic inlining keys on receiver classes, not
@@ -92,9 +122,10 @@ guarantees and exposures, by construction:
 
 2. **`Suspend` accessors: one implementation per suspendWith mint site.** In a
    program with many suspension sites flowing through one handler, handleLoop's
-   `tag`/`input`/`cont` sites see one receiver class per site and will exceed
-   profile width. This is the known biggest exposure and is the deferred handler
-   work (per-call-site handler loops via inlining handle/resume).
+   `tag`/`input`/`cont` sites see one receiver class per site and exceed profile
+   width. No longer just a prediction: measured at 2.79x by
+   sharedHandlerPaysDispatch above. The fix direction is the deferred handler work
+   (per-call-site handler loops via inlining handle/resume).
 
 3. **`Transform::apply(v, next)` at shared walkers**: irreducibly polymorphic where
    many transform bodies pass through one bytecode site; this is interpreter-style

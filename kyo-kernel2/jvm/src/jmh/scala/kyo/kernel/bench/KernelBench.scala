@@ -253,6 +253,31 @@ class KernelBench:
         ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
     end suspensionFusesContinuation
 
+    /** Shared handler limit: 16 distinct askWith sites resolve through one handler loop, so its
+      * tag, input, and cont sites overflow the receiver profile and stay virtual calls. Expect
+      * suspensionFusesContinuation allocation at roughly 2.8x the time, all of it dispatch.
+      */
+    @Benchmark
+    def sharedHandlerPaysDispatch: Int =
+        def s0(i: Int): Int < Ask  = if i > Depth then i else askWith(a => s1(i + a))
+        def s1(i: Int): Int < Ask  = askWith(a => s2(i + a))
+        def s2(i: Int): Int < Ask  = askWith(a => s3(i + a))
+        def s3(i: Int): Int < Ask  = askWith(a => s4(i + a))
+        def s4(i: Int): Int < Ask  = askWith(a => s5(i + a))
+        def s5(i: Int): Int < Ask  = askWith(a => s6(i + a))
+        def s6(i: Int): Int < Ask  = askWith(a => s7(i + a))
+        def s7(i: Int): Int < Ask  = askWith(a => s8(i + a))
+        def s8(i: Int): Int < Ask  = askWith(a => s9(i + a))
+        def s9(i: Int): Int < Ask  = askWith(a => s10(i + a))
+        def s10(i: Int): Int < Ask = askWith(a => s11(i + a))
+        def s11(i: Int): Int < Ask = askWith(a => s12(i + a))
+        def s12(i: Int): Int < Ask = askWith(a => s13(i + a))
+        def s13(i: Int): Int < Ask = askWith(a => s14(i + a))
+        def s14(i: Int): Int < Ask = askWith(a => s15(i + a))
+        def s15(i: Int): Int < Ask = askWith(a => s0(i + a))
+        ArrowEffect.handle(Tag[Ask], s0(0))([X] => (_, cont) => cont(1)).eval
+    end sharedHandlerPaysDispatch
+
     /** Idle handler: the fusionPastBudgetPaysRescuesOnly chain under a handler whose effect never occurs. Expect
       * fusionPastBudgetPaysRescuesOnly numbers; the handler only relays the budget rescues.
       */
