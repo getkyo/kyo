@@ -58,7 +58,16 @@ object Kyo:
 
     final class Defer[A, +B, -S](val value: A < S, val cont: Arrow[A, B, S]) extends Kyo[B, S]:
         def map[C, S2](f: Arrow[B, C, S2]) =
-            new Defer[A, C, S & S2](value, cont.chain(f))
+            new Defer(value, cont.chain(f))
     end Defer
+
+    final class Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
+        val value: A < (E & S),
+        val handler: Handler[I, O, E],
+        val cont: Arrow[A, B, S]
+    ) extends Kyo[B, S]:
+        def map[C, S2](f: Arrow[B, C, S2]) =
+            new Handled[I, O, E, A, C, S & S2](value, handler, cont.chain(f))
+    end Handled
 
 end Kyo
