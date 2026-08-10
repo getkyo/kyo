@@ -219,7 +219,7 @@ object Connection:
       * closes a connection [[claim]]ed but never [[take]]n, one an interrupt dropped between the two (the processSharedTransport fd-leak). [[take]]
       * and [[orphan]] read one flag, so exactly one of the lease's exit and the orphan close fires.
       */
-    final class Custody(using AllowUnsafe):
+    final private[kyo] class Custody(using AllowUnsafe):
         private val ref   = AtomicRef.Unsafe.init(Maybe.empty[() => Unit < (Async & Abort[Throwable])])
         private val taken = AtomicBoolean.Unsafe.init(false)
 
@@ -237,7 +237,7 @@ object Connection:
     /** The current lease's [[Custody]], bound by the acquire across the connect so the [[Factory]] claims into it. Inheritable, so it reaches a
       * factory the connect budget runs in a `timeoutWithError` child fiber.
       */
-    val custodyLocal: Local[Maybe[Custody]] = Local.init(Maybe.empty)
+    private[kyo] val custodyLocal: Local[Maybe[Custody]] = Local.init(Maybe.empty)
 
     /** How the pool opens one session, and the only thing it is given that knows which engine is behind it.
       *
