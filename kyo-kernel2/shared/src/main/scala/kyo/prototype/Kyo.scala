@@ -12,7 +12,7 @@ object Kyo:
 
     final case class Nested[+A](value: A) extends Boxed
 
-    private[prototype] inline def unnest[A, S](v: A < S): A =
+    private[prototype] inline def unnest[A, S](inline v: A < S): A =
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A]

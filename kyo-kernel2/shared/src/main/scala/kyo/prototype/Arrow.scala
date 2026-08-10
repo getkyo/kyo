@@ -18,11 +18,11 @@ sealed abstract class Arrow[-A, +B, -S]:
         else if next eq Arrow.identity then self.asInstanceOf[Arrow[A, C, S & S2]]
         else
             self match
-                case t: Arrow.Transform[?, ?, ?] =>
+                case t: Arrow.Transform[A, B, S] @unchecked =>
                     new Arrow.Step[A, C, S & S2]:
                         type X = B
-                        val head        = t.asInstanceOf[Arrow.Transform[A, B, S & S2]]
-                        val tail        = next.asInstanceOf[Arrow[B, C, S & S2]]
+                        val head        = t
+                        val tail        = next
                         def apply(v: A) = head(v, tail)
                 case _ =>
                     new Arrow.AndThen[A, B, C, S & S2](self, next)
