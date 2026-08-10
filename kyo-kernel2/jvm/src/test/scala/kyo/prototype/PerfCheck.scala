@@ -7,6 +7,8 @@ object PerfCheck:
 
     given Frame = Frame.internal
 
+    val threadMx = java.lang.management.ManagementFactory.getThreadMXBean.asInstanceOf[com.sun.management.ThreadMXBean]
+
     inline def measure(name: String, iterations: Int)(inline body: => Any): Unit =
         var i = 0
         while i < 3 do
@@ -17,19 +19,23 @@ object PerfCheck:
             i += 1
         end while
         java.lang.System.gc()
-        val runs = new Array[Long](5)
-        var r    = 0
+        val runs   = new Array[Long](5)
+        val allocs = new Array[Long](5)
+        var r      = 0
         while r < 5 do
-            val start = java.lang.System.nanoTime()
-            var j     = 0
+            val allocStart = threadMx.getCurrentThreadAllocatedBytes
+            val start      = java.lang.System.nanoTime()
+            var j          = 0
             while j < iterations do
                 val _ = body
                 j += 1
             runs(r) = (java.lang.System.nanoTime() - start) / iterations
+            allocs(r) = (threadMx.getCurrentThreadAllocatedBytes - allocStart) / iterations
             r += 1
         end while
         java.util.Arrays.sort(runs)
-        println(s"$name: ${runs(2)} ns/op (min ${runs(0)}, max ${runs(4)})")
+        java.util.Arrays.sort(allocs)
+        println(s"$name: ${runs(2)} ns/op (min ${runs(0)}, max ${runs(4)}), ${allocs(2)} bytes/op")
     end measure
 
     sealed trait Ask extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
@@ -106,15 +112,25 @@ object PerfCheck:
                 i += 1
             return
         end if
-        val depth = 10000
-        println(
-            s"depth = $depth, results: proto deepBind=${deepBindProto(depth)} narrow=${narrowBindMapProto(1000)} ops=${effectOpsProto(depth)} old deepBind=${deepBindOld(depth)}"
-        )
-        measure("proto deepBind      ", 300)(deepBindProto(depth))
-        measure("old   deepBind      ", 300)(deepBindOld(depth))
-        measure("proto narrowBindMap ", 300)(narrowBindMapProto(1000))
-        measure("old   narrowBindMap ", 300)(OldKernel.narrowBindMap(1000))
-        measure("proto effectOps     ", 300)(effectOpsProto(depth))
-        measure("old   effectOps     ", 300)(OldKernel.effectOps(depth))
+        val depth   = 10000
+        val suite   = if args.isEmpty then "all" else args(0)
+        val proto   = suite == "all" || suite == "proto"
+        val kernel2 = suite == "all" || suite == "kernel2"
+        if proto then
+            println(
+                s"depth = $depth, results: proto deepBind=${deepBindProto(depth)} narrow=${narrowBindMapProto(1000)} ops=${effectOpsProto(depth)}"
+            )
+            measure("proto   deepBind      ", 300)(deepBindProto(depth))
+            measure("proto   narrowBindMap ", 300)(narrowBindMapProto(1000))
+            measure("proto   effectOps     ", 300)(effectOpsProto(depth))
+        end if
+        if kernel2 then
+            println(
+                s"depth = $depth, results: kernel2 deepBind=${deepBindOld(depth)} narrow=${OldKernel.narrowBindMap(1000)} ops=${OldKernel.effectOps(depth)}"
+            )
+            measure("kernel2 deepBind      ", 300)(deepBindOld(depth))
+            measure("kernel2 narrowBindMap ", 300)(OldKernel.narrowBindMap(1000))
+            measure("kernel2 effectOps     ", 300)(OldKernel.effectOps(depth))
+        end if
     end main
 end PerfCheck
