@@ -61,11 +61,36 @@ object ArrowEffect:
     def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
         f: [X] => (I[X], O[X] => A < (E & S)) => A < (E & S)
     )(using _frame: Frame): A < S =
-        def rotated[C, S2](next: Arrow[A, C, S2]): Arrow.Transform[A, C, S & S2] =
-            new Arrow.Transform[A, C, S & S2]:
-                def frame = _frame
-                def apply[D, S3](v: A < S3, next2: Arrow[C, D, S3]) =
-                    handleLoop(v.asInstanceOf[A < (E & S)], next.chain(next2)).asInstanceOf[D < (S & S2 & S3)]
+        def rotatedSuspend[C, S2](kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?], next: Arrow[A, C, S2]): C < (S & S2) =
+            val k = kyo.asInstanceOf[Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, A, E & S]]
+            new Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, C, S & S2]:
+                override val root = k.root
+                def tag           = root.tag
+                def input         = root.input
+                def frame         = root.frame
+                val cont = new Arrow.Transform[Any, C, S & S2]:
+                    def frame = _frame
+                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
+                        val step = k.cont.step
+                        handleLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3)]
+                    end apply
+            end new
+        end rotatedSuspend
+
+        def rotatedDefer[C, S2](kyo: Kyo.Defer[?, ?, ?], next: Arrow[A, C, S2]): C < (S & S2) =
+            val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+            new Kyo.Defer[Any, C, S & S2](
+                defer.value.asInstanceOf[Any < (S & S2)],
+                new Arrow.Transform[Any, C, S & S2]:
+                    def frame = _frame
+                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
+                        val step = defer.cont.step
+                        handleLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3)]
+                    end apply
+            )
+        end rotatedDefer
 
         @tailrec def handleLoop[C, S2](v: A < (E & S), next: Arrow[A, C, S2]): C < (S & S2) =
             v match
@@ -73,11 +98,11 @@ object ArrowEffect:
                     val anchored = kyo.asInstanceOf[Kyo.Suspend[I, O, E, Any, A, E & S]]
                     handleLoop(f[Any](anchored.input, o => anchored.cont(o)), next)
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                    kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
+                    rotatedSuspend(kyo, next)
                 case kyo: Kyo.Defer[?, ?, ?] =>
                     val slot = Safepoint.get()
                     if !Safepoint.enter(slot) then
-                        kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
+                        rotatedDefer(kyo, next)
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
@@ -98,11 +123,36 @@ object ArrowEffect:
     def resume[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](tag: Tag[E], v: A < (E & S))(
         f: [X] => I[X] => O[X] < (S & S2)
     )(using _frame: Frame): A < (S & S2) =
-        def rotated[C, S3](next: Arrow[A, C, S3]): Arrow.Transform[A, C, S & S2 & S3] =
-            new Arrow.Transform[A, C, S & S2 & S3]:
-                def frame = _frame
-                def apply[D, S4](v: A < S4, next2: Arrow[C, D, S4]) =
-                    resumeLoop(v.asInstanceOf[A < (E & S)], next.chain(next2)).asInstanceOf[D < (S & S2 & S3 & S4)]
+        def rotatedSuspend[C, S3](kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?], next: Arrow[A, C, S3]): C < (S & S2 & S3) =
+            val k = kyo.asInstanceOf[Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, A, E & S]]
+            new Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, C, S & S2 & S3]:
+                override val root = k.root
+                def tag           = root.tag
+                def input         = root.input
+                def frame         = root.frame
+                val cont = new Arrow.Transform[Any, C, S & S2 & S3]:
+                    def frame = _frame
+                    def apply[D, S4](v: Any < S4, next2: Arrow[C, D, S4]) =
+                        val step = k.cont.step
+                        resumeLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3 & S4)]
+                    end apply
+            end new
+        end rotatedSuspend
+
+        def rotatedDefer[C, S3](kyo: Kyo.Defer[?, ?, ?], next: Arrow[A, C, S3]): C < (S & S2 & S3) =
+            val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+            new Kyo.Defer[Any, C, S & S2 & S3](
+                defer.value.asInstanceOf[Any < (S & S2 & S3)],
+                new Arrow.Transform[Any, C, S & S2 & S3]:
+                    def frame = _frame
+                    def apply[D, S4](v: Any < S4, next2: Arrow[C, D, S4]) =
+                        val step = defer.cont.step
+                        resumeLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3 & S4)]
+                    end apply
+            )
+        end rotatedDefer
 
         @tailrec def resumeLoop[C, S3](v: A < (E & S), next: Arrow[A, C, S3]): C < (S & S2 & S3) =
             v match
@@ -111,11 +161,11 @@ object ArrowEffect:
                     val step     = anchored.cont.step
                     resumeLoop(step.head(f[Any](anchored.input).asInstanceOf[O[Any] < (E & S)], step.tail), next)
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                    kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2 & S3)]
+                    rotatedSuspend(kyo, next)
                 case kyo: Kyo.Defer[?, ?, ?] =>
                     val slot = Safepoint.get()
                     if !Safepoint.enter(slot) then
-                        kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2 & S3)]
+                        rotatedDefer(kyo, next)
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
@@ -136,11 +186,36 @@ object ArrowEffect:
     def stop[I[_], O[_], E <: ArrowEffect[I, O], A, S, B >: A](tag: Tag[E], v: A < (E & S))(
         f: [X] => I[X] => B < (E & S)
     )(using _frame: Frame): B < S =
-        def rotated[C, S2](next: Arrow[B, C, S2]): Arrow.Transform[B, C, S & S2] =
-            new Arrow.Transform[B, C, S & S2]:
-                def frame = _frame
-                def apply[D, S3](v: B < S3, next2: Arrow[C, D, S3]) =
-                    stopLoop(v.asInstanceOf[B < (E & S)], next.chain(next2)).asInstanceOf[D < (S & S2 & S3)]
+        def rotatedSuspend[C, S2](kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?], next: Arrow[B, C, S2]): C < (S & S2) =
+            val k = kyo.asInstanceOf[Kyo.Suspend[[B2] =>> Any, [B2] =>> Any, Nothing, Any, B, E & S]]
+            new Kyo.Suspend[[B2] =>> Any, [B2] =>> Any, Nothing, Any, C, S & S2]:
+                override val root = k.root
+                def tag           = root.tag
+                def input         = root.input
+                def frame         = root.frame
+                val cont = new Arrow.Transform[Any, C, S & S2]:
+                    def frame = _frame
+                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
+                        val step = k.cont.step
+                        stopLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3)]
+                    end apply
+            end new
+        end rotatedSuspend
+
+        def rotatedDefer[C, S2](kyo: Kyo.Defer[?, ?, ?], next: Arrow[B, C, S2]): C < (S & S2) =
+            val defer = kyo.asInstanceOf[Kyo.Defer[Any, B, E & S]]
+            new Kyo.Defer[Any, C, S & S2](
+                defer.value.asInstanceOf[Any < (S & S2)],
+                new Arrow.Transform[Any, C, S & S2]:
+                    def frame = _frame
+                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
+                        val step = defer.cont.step
+                        stopLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3)]
+                    end apply
+            )
+        end rotatedDefer
 
         @tailrec def stopLoop[C, S2](v: B < (E & S), next: Arrow[B, C, S2]): C < (S & S2) =
             v match
@@ -148,11 +223,11 @@ object ArrowEffect:
                     val anchored = kyo.asInstanceOf[Kyo.Suspend[I, O, E, Any, B, E & S]]
                     stopLoop(f[Any](anchored.input), next)
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                    kyo.asInstanceOf[Kyo[B, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
+                    rotatedSuspend(kyo, next)
                 case kyo: Kyo.Defer[?, ?, ?] =>
                     val slot = Safepoint.get()
                     if !Safepoint.enter(slot) then
-                        kyo.asInstanceOf[Kyo[B, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
+                        rotatedDefer(kyo, next)
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, B, E & S]]
                         val w =
@@ -173,11 +248,36 @@ object ArrowEffect:
     def loop[I[_], O[_], E <: ArrowEffect[I, O], A, S, State](tag: Tag[E], state: State, v: A < (E & S))(
         f: [X] => (I[X], State, O[X] => A < (E & S)) => (State, A < (E & S))
     )(using _frame: Frame): (State, A) < S =
-        def rotated[C, S2](state: State, next: Arrow[(State, A), C, S2]): Arrow.Transform[A, C, S & S2] =
-            new Arrow.Transform[A, C, S & S2]:
-                def frame = _frame
-                def apply[D, S3](v: A < S3, next2: Arrow[C, D, S3]) =
-                    loopLoop(state, v.asInstanceOf[A < (E & S)], next.chain(next2)).asInstanceOf[D < (S & S2 & S3)]
+        def rotatedSuspend[C, S2](state: State, kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?], next: Arrow[(State, A), C, S2]): C < (S & S2) =
+            val k = kyo.asInstanceOf[Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, A, E & S]]
+            new Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, C, S & S2]:
+                override val root = k.root
+                def tag           = root.tag
+                def input         = root.input
+                def frame         = root.frame
+                val cont = new Arrow.Transform[Any, C, S & S2]:
+                    def frame = _frame
+                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
+                        val step = k.cont.step
+                        loopLoop(state, step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3)]
+                    end apply
+            end new
+        end rotatedSuspend
+
+        def rotatedDefer[C, S2](state: State, kyo: Kyo.Defer[?, ?, ?], next: Arrow[(State, A), C, S2]): C < (S & S2) =
+            val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+            new Kyo.Defer[Any, C, S & S2](
+                defer.value.asInstanceOf[Any < (S & S2)],
+                new Arrow.Transform[Any, C, S & S2]:
+                    def frame = _frame
+                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
+                        val step = defer.cont.step
+                        loopLoop(state, step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
+                            .asInstanceOf[D < (S & S2 & S3)]
+                    end apply
+            )
+        end rotatedDefer
 
         @tailrec def loopLoop[C, S2](state: State, v: A < (E & S), next: Arrow[(State, A), C, S2]): C < (S & S2) =
             v match
@@ -186,11 +286,11 @@ object ArrowEffect:
                     val (state2, v2) = f[Any](anchored.input, state, o => anchored.cont(o))
                     loopLoop(state2, v2, next)
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                    kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(state, next)).asInstanceOf[C < (S & S2)]
+                    rotatedSuspend(state, kyo, next)
                 case kyo: Kyo.Defer[?, ?, ?] =>
                     val slot = Safepoint.get()
                     if !Safepoint.enter(slot) then
-                        kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(state, next)).asInstanceOf[C < (S & S2)]
+                        rotatedDefer(state, kyo, next)
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =

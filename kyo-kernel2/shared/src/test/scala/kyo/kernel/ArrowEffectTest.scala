@@ -50,6 +50,24 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(r.eval == 42)
         }
 
+        "stays in force across a foreign crossing with a trailing transform" in {
+            val v: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
+            val r = ArrowEffect.handle(
+                Tag[Say],
+                ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(41))
+            )([X] => (_, cont) => cont(()))
+            assert(r.eval == 42)
+        }
+
+        "stays in force across a budget bounce with a trailing transform" in {
+            def burn(n: Int): Int < Any =
+                if n == 0 then
+                    val v: Int < Ask = (0: Int < Any).map(_ => ask).map(_ + 1)
+                    ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(41))
+                else ((): Unit < Any).map(_ => burn(n - 1))
+            assert(burn(512).eval == 42)
+        }
+
         "can end the computation without resuming" in {
             var reached = false
             val v = ask.map { a =>
@@ -197,6 +215,13 @@ class ArrowEffectTest extends AnyFreeSpec:
                 if n == 0 then 0 else ask.map(_ => loop(n - 1))
             assert(ArrowEffect.resume(Tag[Ask], loop(100000))([X] => _ => 1).eval == 0)
         }
+
+        "stays in force across a foreign crossing with a trailing transform" in {
+            val v: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
+            val resumed              = ArrowEffect.resume(Tag[Ask], v)([X] => _ => 41)
+            val r                    = ArrowEffect.handle(Tag[Say], resumed)([X] => (_, cont) => cont(()))
+            assert(r.eval == 42)
+        }
     }
 
     "stop" - {
@@ -218,6 +243,13 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "remains installed across a foreign crossing" in {
             val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
+            val stopped              = ArrowEffect.stop(Tag[Ask], v)([X] => _ => -1)
+            val r                    = ArrowEffect.handle(Tag[Say], stopped)([X] => (_, cont) => cont(()))
+            assert(r.eval == -1)
+        }
+
+        "remains installed across a foreign crossing with a trailing transform" in {
+            val v: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
             val stopped              = ArrowEffect.stop(Tag[Ask], v)([X] => _ => -1)
             val r                    = ArrowEffect.handle(Tag[Say], stopped)([X] => (_, cont) => cont(()))
             assert(r.eval == -1)
@@ -246,6 +278,15 @@ class ArrowEffectTest extends AnyFreeSpec:
             val v: Int < Ask = 42
             val r            = ArrowEffect.loop(Tag[Ask], 7, v)([X] => (_, state, cont) => (state, cont(0)))
             assert(r.eval == (7, 42))
+        }
+
+        "keeps state across a foreign crossing with a trailing transform" in {
+            val v: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
+            val looped = ArrowEffect.loop(Tag[Ask], 10, v)(
+                [X] => (_, state, cont) => (state + 1, cont(state))
+            )
+            val r = ArrowEffect.handle(Tag[Say], looped)([X] => (_, cont) => cont(()))
+            assert(r.eval == (11, 11))
         }
     }
 
