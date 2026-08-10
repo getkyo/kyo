@@ -14,9 +14,7 @@ object `<`:
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A < S]
             case _ =>
-                v match
-                    case boxed: Kyo.Boxed => Kyo.Nested(boxed).asInstanceOf[A < S]
-                    case v                => v
+                Nested.lift(v)
 
     extension [A, S](self: A < S)
 

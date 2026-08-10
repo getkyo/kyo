@@ -3,6 +3,7 @@ package kyo.prototype
 import kyo.Frame
 import kyo.Span
 import kyo.discard
+import scala.annotation.static
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 
@@ -49,7 +50,7 @@ object Arrow:
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
     end Transform
 
-    private val identity =
+    @static private val identity: Transform[Any, Any, Any] =
         new Transform[Any, Any, Any]:
             def frame = Frame.internal
             def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
@@ -76,8 +77,9 @@ object Arrow:
                     val offset = self.offset + 1
     end Flat
 
-    private val scratch = new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
-        override def initialValue() = new ArrayDeque
+    @static private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
+        new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
+            override def initialValue() = new ArrayDeque
 
     final private[Arrow] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
