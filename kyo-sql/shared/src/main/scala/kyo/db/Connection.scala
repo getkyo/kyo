@@ -390,7 +390,7 @@ object Connection:
         // connection `a`, the current fd owner: a TLS upgrade leaves the raw socket in a state whose close is a no-op,
         // so claiming the raw socket would leak the upgraded fd. On the success edge the value owns the socket.
         Scope.run {
-            Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe).flatMap { connFiber =>
+            Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe).map { connFiber =>
                 Scope.ensure { error =>
                     if error.isDefined then
                         connFiber.interrupt.andThen(connFiber.getResult).map {
@@ -399,13 +399,13 @@ object Connection:
                         }
                     else ()
                 }.andThen {
-                    Abort.run[kyo.net.NetException](connFiber.get).flatMap {
+                    Abort.run[kyo.net.NetException](connFiber.get).map {
                         case Result.Failure(_) =>
                             Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
                         case Result.Panic(t) =>
-                            onPanic(t).flatMap(Abort.fail(_))
+                            onPanic(t).map(Abort.fail(_))
                         case Result.Success(rawConn) =>
-                            closingOnFailure(rawConn)(body(rawConn).flatMap { a =>
+                            closingOnFailure(rawConn)(body(rawConn).map { a =>
                                 custodyLocal.use {
                                     case Present(custody) => Sync.Unsafe.defer(custody.claim(() => ownerClose(a)))
                                     case Absent           => ()

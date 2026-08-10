@@ -150,22 +150,31 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         if n <= 0 then ()
         else
             val netKey = SqlConnectionPool.Endpoint(address, config)
+            // Each child owns its connection through a custody across the connect->release handover and releases it to
+            // the ring in its own continuation, so an interrupt of the fill join cannot strand a completed child's
+            // connection: it is in the ring (the pool's init error-edge closeAll owns it) or its interrupted connect
+            // closed it. A child failure still fails the whole warm-up, and that same error edge closes the ring.
             Async.fill(n, concurrency = n) {
-                Abort.run[SqlException](connect(address, password, config))
-            }.flatMap { results =>
-                val successes = results.collect { case Result.Success(conn) => conn }
-                val firstFailure = results.collectFirst {
+                Scope.run {
+                    withCustody { custody =>
+                        Abort.run[SqlException](connect(address, password, config)).map {
+                            case Result.Success(conn) =>
+                                // Unsafe: custody.take and pool.release require AllowUnsafe.
+                                Sync.Unsafe.defer {
+                                    custody.take()
+                                    pool.release(netKey, conn)
+                                }.andThen(Result.succeed(()): Result[SqlException, Unit])
+                            case failure => (failure.map(_ => ()): Result[SqlException, Unit])
+                        }
+                    }
+                }
+            }.map { results =>
+                results.collectFirst {
                     case Result.Failure(e: SqlException) => e
                     case Result.Panic(t)                 => SqlConnectionWarmupPanicException(t)
-                }
-                firstFailure match
-                    case None =>
-                        // Unsafe: pool.release requires AllowUnsafe.
-                        Sync.Unsafe.defer(successes.foreach(conn => pool.release(netKey, conn)))
-                    case Some(e) =>
-                        // Unsafe: closeNow is the non-suspending close; this runs on the failure path where
-                        // the only remaining job is to not leak the descriptors already opened.
-                        Sync.Unsafe.defer(successes.foreach(_.closeNow)).andThen(Abort.fail(e))
+                } match
+                    case None    => ()
+                    case Some(e) => Abort.fail(e)
                 end match
             }
 
@@ -393,10 +402,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     private def withCustody[A, S](
         body: Connection.Custody => A < (S & Async & Abort[SqlException] & Scope)
     )(using Frame): A < (S & Async & Abort[SqlException] & Scope) =
-        Sync.Unsafe.defer(new Connection.Custody).flatMap { custody =>
+        Sync.Unsafe.defer(new Connection.Custody).map { custody =>
             // Unsafe: custody.orphan is a plain flag/ref read; the claimer's close it returns is idempotent.
             Scope.ensure { _ =>
-                Sync.Unsafe.defer(custody.orphan()).flatMap {
+                Sync.Unsafe.defer(custody.orphan()).map {
                     case Present(close) => close()
                     case Absent         => ()
                 }
@@ -412,7 +421,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         val netKey = SqlConnectionPool.Endpoint(address, config)
         Scope.run {
             withCustody { custody =>
-                acquireOrReserve(netKey, config).flatMap {
+                acquireOrReserve(netKey, config).map {
                     case Present(conn) =>
                         onLease(netKey, conn, config) {
                             Sync.Unsafe.defer(custody.take())
@@ -828,7 +837,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             def held(using Frame): Unit < Async =
                 metrics.recordAcquire.andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
             withCustody { custody =>
-                acquireOrReserve(netKey, config).flatMap {
+                acquireOrReserve(netKey, config).map {
                     case Present(conn) =>
                         Scope.ensure(error => decideExit(netKey, conn, config, logger, error))
                             .andThen(Sync.Unsafe.defer(custody.take()))
@@ -840,7 +849,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                         // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation.
                         resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
                             connect(address, password, config)
-                        ).flatMap { conn =>
+                        ).map { conn =>
                             Scope.ensure(error => decideExit(netKey, conn, config, logger, error))
                                 .andThen(Sync.Unsafe.defer(custody.take()))
                                 .andThen(Log.debug(

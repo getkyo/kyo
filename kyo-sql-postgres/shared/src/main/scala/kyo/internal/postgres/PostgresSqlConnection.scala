@@ -462,18 +462,32 @@ private[kyo] object PostgresSqlConnection:
         Stream[PostgresClient.Notification, Async & Abort[SqlException] & Scope](
             if nulAt >= 0 then Abort.fail(SqlRequestNotificationChannelNulException(nulAt))
             else
-                pool.openDedicated(address, password, config).flatMap { adapter =>
-                    Scope.ensure(adapter.close).andThen {
-                        val conn = adapter.underlying
-                        conn.disableReadTimeout.andThen {
-                            AtomicRef.init(Maybe.empty[SqlException]).flatMap { pumpCause =>
-                                // Postgres identifier quoting: each `"` inside the name is doubled so a channel called
-                                // `foo"; DROP TABLE users; --` cannot break out of the quoted identifier and smuggle in
-                                // a second simple-query statement.
-                                val quoted = channel.replace("\"", "\"\"")
-                                conn.simpleExecute(s"""LISTEN "$quoted"""").andThen {
-                                    Fiber.init(pump(conn, pumpCause)).flatMap { pumpFiber =>
-                                        Scope.ensure(pumpFiber.interrupt.unit).andThen(emit(conn, pumpCause).emit)
+                // Own the dedicated connection across the openDedicated->Scope.ensure handover: a custody whose orphan
+                // finalizer closes a listener an interrupt drops before the exit finalizer registers (openDedicated
+                // claims into it via custodyLocal). take() hands ownership to Scope.ensure(adapter.close) on success.
+                Sync.Unsafe.defer(new kyo.db.Connection.Custody).map { custody =>
+                    Scope.ensure { _ =>
+                        Sync.Unsafe.defer(custody.orphan()).map {
+                            case Present(close) => close()
+                            case Absent         => ()
+                        }
+                    }.andThen {
+                        kyo.db.Connection.custodyLocal.let(Present(custody)) {
+                            pool.openDedicated(address, password, config)
+                        }.map { adapter =>
+                            Scope.ensure(adapter.close).andThen(Sync.Unsafe.defer(custody.take())).andThen {
+                                val conn = adapter.underlying
+                                conn.disableReadTimeout.andThen {
+                                    AtomicRef.init(Maybe.empty[SqlException]).flatMap { pumpCause =>
+                                        // Postgres identifier quoting: each `"` inside the name is doubled so a channel called
+                                        // `foo"; DROP TABLE users; --` cannot break out of the quoted identifier and smuggle in
+                                        // a second simple-query statement.
+                                        val quoted = channel.replace("\"", "\"\"")
+                                        conn.simpleExecute(s"""LISTEN "$quoted"""").andThen {
+                                            Fiber.init(pump(conn, pumpCause)).flatMap { pumpFiber =>
+                                                Scope.ensure(pumpFiber.interrupt.unit).andThen(emit(conn, pumpCause).emit)
+                                            }
+                                        }
                                     }
                                 }
                             }
