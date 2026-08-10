@@ -19,15 +19,11 @@ sealed abstract class Arrow[-A, +B, -S]:
         else
             self match
                 case t: Arrow.Transform[?, ?, ?] =>
-                    next match
-                        case s: Arrow.Step[?, ?, ?] =>
-                            new Arrow.Step[A, C, S & S2]:
-                                type X = B
-                                val head        = t.asInstanceOf[Arrow.Transform[A, B, S & S2]]
-                                val tail        = s.asInstanceOf[Arrow.Step[B, C, S & S2]]
-                                def apply(v: A) = head(v, tail)
-                        case _ =>
-                            new Arrow.AndThen[A, B, C, S & S2](self, next)
+                    new Arrow.Step[A, C, S & S2]:
+                        type X = B
+                        val head        = t.asInstanceOf[Arrow.Transform[A, B, S & S2]]
+                        val tail        = next.asInstanceOf[Arrow[B, C, S & S2]]
+                        def apply(v: A) = head(v, tail)
                 case _ =>
                     new Arrow.AndThen[A, B, C, S & S2](self, next)
 end Arrow
@@ -37,7 +33,7 @@ object Arrow:
     abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
         type X
         def head: Transform[A, X, S]
-        def tail: Arrow.Step[X, B, S]
+        def tail: Arrow[X, B, S]
         def step = this
     end Step
 
