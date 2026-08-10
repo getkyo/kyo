@@ -82,6 +82,7 @@ object Arrow:
 
         def step =
             val buffer = scratch.get
+            buffer.clear()
 
             @tailrec def copy(span: Span[Transform[?, ?, ?]], i: Int): Unit =
                 if i < span.size then

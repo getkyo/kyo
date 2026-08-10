@@ -11,8 +11,8 @@ object `<`:
 
     implicit inline def lift[A, S](v: A): A < S =
         v match
-            case kyo: Kyo[?, ?] => Kyo.Nested(kyo).asInstanceOf[A < S]
-            case v              => v
+            case boxed: Kyo.Boxed => Kyo.Nested(boxed).asInstanceOf[A < S]
+            case v                => v
 
     extension [A, S](self: A < S)
 

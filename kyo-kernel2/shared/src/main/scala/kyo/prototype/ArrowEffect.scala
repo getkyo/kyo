@@ -36,9 +36,18 @@ object ArrowEffect:
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
                     kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
                 case kyo: Kyo.Defer[?, ?, ?] =>
-                    val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
-                    val step  = defer.cont.step
-                    handleLoop(step.head(defer.value, step.tail), next)
+                    val safepoint = Safepoint.get
+                    if !safepoint.enter() then
+                        kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
+                    else
+                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+                        val w =
+                            try
+                                val step = defer.cont.step
+                                step.head(defer.value, step.tail)
+                            finally safepoint.exit()
+                        handleLoop(w, next)
+                    end if
                 case v =>
                     val step = next.step
                     step.head(v.asInstanceOf[A < S2], step.tail).asInstanceOf[C < (S & S2)]
@@ -66,9 +75,18 @@ object ArrowEffect:
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
                     kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2 & S3)]
                 case kyo: Kyo.Defer[?, ?, ?] =>
-                    val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
-                    val step  = defer.cont.step
-                    resumeLoop(step.head(defer.value, step.tail), next)
+                    val safepoint = Safepoint.get
+                    if !safepoint.enter() then
+                        kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2 & S3)]
+                    else
+                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+                        val w =
+                            try
+                                val step = defer.cont.step
+                                step.head(defer.value, step.tail)
+                            finally safepoint.exit()
+                        resumeLoop(w, next)
+                    end if
                 case v =>
                     val step = next.step
                     step.head(v.asInstanceOf[A < S3], step.tail).asInstanceOf[C < (S & S2 & S3)]
@@ -95,9 +113,18 @@ object ArrowEffect:
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
                     kyo.asInstanceOf[Kyo[B, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
                 case kyo: Kyo.Defer[?, ?, ?] =>
-                    val defer = kyo.asInstanceOf[Kyo.Defer[Any, B, E & S]]
-                    val step  = defer.cont.step
-                    stopLoop(step.head(defer.value, step.tail), next)
+                    val safepoint = Safepoint.get
+                    if !safepoint.enter() then
+                        kyo.asInstanceOf[Kyo[B, E & S]].map(rotated(next)).asInstanceOf[C < (S & S2)]
+                    else
+                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, B, E & S]]
+                        val w =
+                            try
+                                val step = defer.cont.step
+                                step.head(defer.value, step.tail)
+                            finally safepoint.exit()
+                        stopLoop(w, next)
+                    end if
                 case v =>
                     val step = next.step
                     step.head(v.asInstanceOf[B < S2], step.tail).asInstanceOf[C < (S & S2)]
@@ -125,9 +152,18 @@ object ArrowEffect:
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
                     kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(state, next)).asInstanceOf[C < (S & S2)]
                 case kyo: Kyo.Defer[?, ?, ?] =>
-                    val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
-                    val step  = defer.cont.step
-                    loopLoop(state, step.head(defer.value, step.tail), next)
+                    val safepoint = Safepoint.get
+                    if !safepoint.enter() then
+                        kyo.asInstanceOf[Kyo[A, E & S]].map(rotated(state, next)).asInstanceOf[C < (S & S2)]
+                    else
+                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+                        val w =
+                            try
+                                val step = defer.cont.step
+                                step.head(defer.value, step.tail)
+                            finally safepoint.exit()
+                        loopLoop(state, w, next)
+                    end if
                 case v =>
                     val step = next.step
                     val a    = Kyo.unnest(v.asInstanceOf[A < Any])
@@ -148,9 +184,17 @@ object ArrowEffect:
                         case Maybe.Present(v2) => partialLoop(v2)
                         case Maybe.Absent      => v
                 case kyo: Kyo.Defer[?, ?, ?] =>
-                    val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
-                    val step  = defer.cont.step
-                    partialLoop(step.head(defer.value, step.tail))
+                    val safepoint = Safepoint.get
+                    if !safepoint.enter() then v
+                    else
+                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+                        val w =
+                            try
+                                val step = defer.cont.step
+                                step.head(defer.value, step.tail)
+                            finally safepoint.exit()
+                        partialLoop(w)
+                    end if
                 case v =>
                     v
         end partialLoop

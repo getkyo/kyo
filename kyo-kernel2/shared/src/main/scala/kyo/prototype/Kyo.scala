@@ -3,12 +3,14 @@ package kyo.prototype
 import kyo.Frame
 import kyo.Tag
 
-sealed abstract class Kyo[+A, -S]:
+sealed abstract class Kyo[+A, -S] extends Kyo.Boxed:
     def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
 
 object Kyo:
 
-    final case class Nested[+A](value: A)
+    sealed trait Boxed
+
+    final case class Nested[+A](value: A) extends Boxed
 
     private[prototype] inline def unnest[A, S](v: A < S): A =
         (v: @unchecked) match

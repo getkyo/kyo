@@ -293,4 +293,50 @@ class ArrowEffectTest extends Test[Any]:
             }
         }
     }
+
+    "nested box" - {
+        "a pending computation held as a value double-boxes and unboxes one level per eval" in {
+            val inner: Int < Say                 = say("x").map(_ => 1)
+            val once: (Int < Say) < Any          = inner
+            val twice: ((Int < Say) < Any) < Any = once
+            val back: (Int < Say) < Any          = twice.eval
+            val r                                = ArrowEffect.handle(Tag[Say], back.eval)([X] => (_, cont) => cont(()))
+            assert(r.eval == 1)
+        }
+
+        "mapping over a double-boxed computation sees the once-boxed value" in {
+            val inner: Int < Say                 = say("x").map(_ => 1)
+            val twice: ((Int < Say) < Any) < Any = (inner: (Int < Say) < Any)
+            def widen[A, S](v: A < S): A < S     = v
+            val unbox = (once: (Int < Say) < Any) =>
+                ArrowEffect.handle(Tag[Say], once.eval)([X] => (_, cont) => cont(())).eval
+            val r = widen(twice).map(once => unbox(once))
+            assert(r.eval == 1)
+        }
+
+        "a pending computation held as a value crosses a handler boxed" in {
+            val payload: Int < Say         = say("p").map(_ => 7)
+            val v: (Int < Say) < Ask       = ask.map(_ => payload)
+            val handled: (Int < Say) < Any = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(0))
+            val r                          = ArrowEffect.handle(Tag[Say], handled.eval)([X] => (_, cont) => cont(()))
+            assert(r.eval == 7)
+        }
+
+        "loop returns a pending computation value intact in its tuple" in {
+            val payload: Int < Say   = say("p").map(_ => 7)
+            val v: (Int < Say) < Ask = ask.map(_ => payload)
+            val r                    = ArrowEffect.loop(Tag[Ask], 0, v)([X] => (_, state, cont) => (state + 1, cont(0)))
+            val (state, boxed)       = r.eval
+            assert(state == 1)
+            assert(ArrowEffect.handle(Tag[Say], boxed)([X] => (_, cont) => cont(())).eval == 7)
+        }
+    }
+
+    "a handler stepping a rescue at the exact budget boundary floats it outward" in {
+        def nest(n: Int): Int < Any =
+            if n == 0 then
+                ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41))
+            else (0: Int < Any).map(_ => nest(n - 1))
+        assert(nest(Safepoint.Period).eval == 42)
+    }
 end ArrowEffectTest
