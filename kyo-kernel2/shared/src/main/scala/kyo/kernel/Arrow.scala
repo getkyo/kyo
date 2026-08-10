@@ -1,8 +1,6 @@
 package kyo.kernel
 
 import kyo.Frame
-import kyo.Span
-import kyo.discard
 import scala.annotation.static
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
@@ -20,11 +18,7 @@ sealed abstract class Arrow[-A, +B, -S]:
         else
             self match
                 case t: Arrow.Transform[A, B, S] @unchecked =>
-                    new Arrow.Step[A, C, S & S2]:
-                        type X = B
-                        val head        = t
-                        val tail        = next
-                        def apply(v: A) = head(v, tail)
+                    new Arrow.Optimized[A, B, C, S & S2](t, next)
                 case _ =>
                     new Arrow.AndThen[A, B, C, S & S2](self, next)
 end Arrow
@@ -59,23 +53,10 @@ object Arrow:
                     val step = next.step
                     step.head(v, step.tail)
 
-    abstract class Flat[-A, +B, -S] extends Step[A, B, S]:
-        self =>
-
-        type X = Any
-        def span: Span[Transform[?, ?, ?]]
-        def offset: Int
-
-        final def apply(v: A) = head(v, tail)
-        final def head        = span(offset).asInstanceOf[Transform[A, X, S]]
-        final def tail =
-            if offset == span.size - 1 then
-                identity.asInstanceOf[Step[X, B, S]]
-            else
-                new Flat[X, B, S]:
-                    val span   = self.span
-                    val offset = self.offset + 1
-    end Flat
+    final class Optimized[-A, B, +C, -S](val head: Transform[A, B, S], val tail: Arrow[B, C, S]) extends Step[A, C, S]:
+        type X = B
+        def apply(v: A) = head(v, tail)
+    end Optimized
 
     @static private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
         new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
@@ -90,11 +71,6 @@ object Arrow:
             val buffer = scratch.get
             buffer.clear()
 
-            @tailrec def copy(span: Span[Transform[?, ?, ?]], i: Int): Unit =
-                if i < span.size then
-                    buffer.append(span(i))
-                    copy(span, i + 1)
-
             @tailrec def loop(pending: Int): Unit =
                 if pending > 0 then
                     buffer.removeHead() match
@@ -102,9 +78,6 @@ object Arrow:
                             buffer.prepend(at.b)
                             buffer.prepend(at.a)
                             loop(pending + 1)
-                        case flat: Flat[?, ?, ?] =>
-                            copy(flat.span, flat.offset)
-                            loop(pending - 1)
                         case t: Transform[?, ?, ?] =>
                             if t ne identity then buffer.append(t)
                             loop(pending - 1)
@@ -113,14 +86,13 @@ object Arrow:
                             buffer.prepend(s.tail)
                             loop(pending)
 
+            @tailrec def link(acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                if buffer.isEmpty then acc
+                else link(new Optimized[Any, Any, Any, Any](buffer.removeLast().asInstanceOf[Transform[Any, Any, Any]], acc))
+
             buffer.prepend(this)
             loop(1)
-            val array = new Array[Transform[?, ?, ?]](buffer.size)
-            discard(buffer.copyToArray(array.asInstanceOf[Array[Arrow[?, ?, ?]]]))
-            buffer.clear()
-            new Flat[A, C, S]:
-                def span   = Span.fromUnsafe(array)
-                def offset = 0
+            link(identity).asInstanceOf[Step[A, C, S]]
         end step
     end AndThen
 
