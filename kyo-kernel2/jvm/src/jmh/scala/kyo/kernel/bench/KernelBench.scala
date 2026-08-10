@@ -40,6 +40,20 @@ class KernelBench:
     end narrowBindMap
 
     @Benchmark
+    def cachedBindMap: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then 0
+            else
+                ((i & 63): Int < Any)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        loop(0).eval
+    end cachedBindMap
+
+    @Benchmark
     def wideBindMap: Int =
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then i
