@@ -21,6 +21,15 @@ class KernelBench:
 
     import KernelBench.*
 
+    private var seed = 1
+
+    /** The fixed floor: one settled map and one eval. Expect a few nanoseconds (slot lookup,
+      * save, restore, one fused step) and zero allocation.
+      */
+    @Benchmark
+    def singleMap: Int =
+        ((seed: Int < Any).map(_ + 1)).eval
+
     /** Pure fusion: 396 cache-resident steps inside one safepoint window. Expect zero
       * allocation and every mapLoop site inlined hot into one C2 region.
       */
@@ -199,6 +208,58 @@ class KernelBench:
         ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
     end effectOps
 
+    /** Idle handler: the cachedBindMap chain under a handler whose effect never occurs. Expect
+      * cachedBindMap numbers; the handler only relays the budget rescues.
+      */
+    @Benchmark
+    def handledBindMap: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then 0
+            else
+                ((i & 63): Int < Any)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        ArrowEffect.handle(Tag[Ask], loop(0): Int < Ask)([X] => (_, cont) => cont(1)).eval
+    end handledBindMap
+
+    /** Context provision: resume answers every operation in place. Expect effectOps numbers;
+      * the answer closure handle builds does not survive escape analysis, so the two match.
+      */
+    @Benchmark
+    def contextOps: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        ArrowEffect.resume(Tag[Ask], loop(0))([X] => _ => 1).eval
+    end contextOps
+
+    /** State threading: loop carries state through every answer. Expect effectOps plus a tuple
+      * per operation.
+      */
+    @Benchmark
+    def stateOps: Int =
+        def loop0(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop0(i + a))
+        ArrowEffect.loop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => (state + 1, cont(1))).eval._2
+    end stateOps
+
+    /** Rotation: two effects alternate, so every outer operation crosses the inner handler and
+      * re-attaches it. Expect effectOps rate for the handled operations plus a Suspend wrapper,
+      * chain node, and arrow per crossing.
+      */
+    @Benchmark
+    def crossedOps: Int =
+        def loop(i: Int): Int < (Ask & Ask2) =
+            if i > Depth then i
+            else ask.map(a => ask2.map(t => loop(i + a + t)))
+        val inner = ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1))
+        ArrowEffect.handle(Tag[Ask2], inner)([X] => (_, cont) => cont(0)).eval
+    end crossedOps
+
 end KernelBench
 
 object KernelBench:
@@ -212,6 +273,10 @@ object KernelBench:
 
     sealed trait Ask extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
 
+    sealed trait Ask2 extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
+
     def ask(using Frame): Int < Ask = ArrowEffect.suspend[[B] =>> Unit, [B] =>> Int, Ask, Any](Tag[Ask], ())
+
+    def ask2(using Frame): Int < Ask2 = ArrowEffect.suspend[[B] =>> Unit, [B] =>> Int, Ask2, Any](Tag[Ask2], ())
 
 end KernelBench
