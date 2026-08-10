@@ -99,6 +99,13 @@ object PerfCheck:
     end deepBindOld
 
     def main(args: Array[String]): Unit =
+        if args.nonEmpty && args(0) == "ops" then
+            var i = 0
+            while i < 100000 do
+                val _ = effectOpsProto(10000)
+                i += 1
+            return
+        end if
         val depth = 10000
         println(
             s"depth = $depth, results: proto deepBind=${deepBindProto(depth)} narrow=${narrowBindMapProto(1000)} ops=${effectOpsProto(depth)} old deepBind=${deepBindOld(depth)}"
