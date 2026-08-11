@@ -20,7 +20,7 @@ Public, under `kyo/kernel`:
 Internal, under `kyo/kernel/internal`:
 
 - `KyoInternal.scala`: the three node shapes (`Suspend`, `Defer`, `Handled`, each with a diagnostic `toString`), the `Defaulted` mixin, and the `Nested` box that keeps boxed data distinguishable from computations.
-- `Handler.scala` / `Handlers.scala`: the three handler kinds as traits with an abstract `apply` (`Cont`, `Loop`, `LoopState`, with `LoopState` carrying its state and building successors via `withState`, delegating to the original so updates never stack) and the Chunk-backed collection `Eval` scans, flattened adaptively when a handler scan walks deep.
+- `Handler.scala` / `Handlers.scala`: the three handler kinds as traits with an abstract `apply` (`Cont`, `Loop`, `LoopState`, all pure logic; a region's state lives in its node and its cell, never in the handler) and the spine, the stack of entered regions: one immutable generic cell per region (`Node` for stateless with the Cont-or-Loop union, `StateNode` carrying the region's current state), linked through `prev` with `Empty` as the empty stack.
 - `Eval.scala`: the evaluator. One flat loop over the erased `Any < Nothing` currency; `Eval.partial` is the scheduler entry that yields residuals instead of throwing or spinning, driven only by the thread's `Safepoint.stop` signal.
 - `Safepoint.scala`: the per-thread depth budget (`Period = 512`, 8192 line-strided slots with overflow degradation) that bounds fused execution, and the `Stop` wrapper in `owners` through which `Safepoint.stop(thread)` requests preemption, read only at entry and on the budget's slow path.
 - `CanLift.scala`: the soft constraint that rejects lifting an already pending computation or a kyo module object, with the module check on a singleton-gated macro path so ordinary lifts never suspend compilation.
@@ -48,33 +48,25 @@ case halt: Kyo.Halt[?] if halt.owner eq hsExit(hsExit.size - 1) => // consumed f
 
 Four mechanisms: Java-stack recursion per scope entry, a `Kyo.Halt` climber with positional ownership, a `settle` sub-evaluation for pending clause computations, and a pair-returning `evalLoop` so state updates could travel back out of a frame. Every one of them existed to keep one property true, and every one was wrong at least once. Three defect classes, five red reproductions (committed red at `b0c7859937`): a `done` fired while an inner clause outcome settled was delivered to the wrong scope and leaked the raw `Halt` as a user value (a `ClassCastException` far from the cause); 1M nested scopes overflowed the stack; 1M chained re-raised answers overflowed the stack. The pair returns cost a measured +24 B on every benchmark row that entered `Eval.apply`. Positional ownership is the purest specimen: it was itself a fix for a mechanism, added because a `LoopState` successor replaces its entry and breaks the naive identity check.
 
-The current evaluator (commits `5b0a910b4c`, `b8ad9309e8`) replaces all four with one representation: the value travels with its layers, a layer being a handler and that scope's exit continuation, held at the same index in two parallel chunks. Entry appends; exit pops; `done` feeds the exit sitting at its own handler's index:
+The current evaluator (commits `5b0a910b4c`, `b8ad9309e8`, and the spine at `a9a0791beb`) replaces all four with one representation: the value travels with its regions, one immutable cell per region holding the handler, that scope's exit continuation, and a stateful handler's current state, linked through `prev`. Entry is one cell; exit is `prev`; `done` feeds the exit sitting on its own handler's cell:
 
 ```scala
-case kyo: Kyo.Handled[?, ?, ?, ?, ?, ?] @unchecked =>
-    loop(
-        kyo.value.asInstanceOf[A < S],
-        hs.add(kyo.handler),
-        exits.append(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]])
-    )
+case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+    loop(kyo.value, new Node(kyo.handler, kyo.cont, hs))
 ```
 
 ```scala
 case done =>
-    loop(
-        walk(exits(idx), Nested.lift(done)).asInstanceOf[A < S],
-        hs.take(idx),
-        exits.take(idx)
-    )
+    loop(walk(node.exit, Nested.lift(done)), node.prev)
 ```
 
-(`Eval.scala:48-53`, `Eval.scala:92-97`.) What each mechanism enforced, the shape now implies:
+What each mechanism enforced, the shape now implies:
 
-| property | step-1 Eval: enforcement site | merged layers: why it holds |
+| property | step-1 Eval: enforcement site | merged regions: why it holds |
 |---|---|---|
-| a `done` reaches its own scope | `Kyo.Halt` plus an ownership check at every scope exit | the owning exit is at the handler's own index; no climber exists to misroute |
-| a clause runs outside its own scope | `settle` sub-call under a prefix, merged back by arithmetic | the loop continues under `take(idx)`; there is no second evaluator to disagree with the first |
-| state survives an inner scope's exit | `(A < S, Handlers)` returned out of every frame | layers travel with the value; there is no "back" for state to travel |
+| a `done` reaches its own scope | `Kyo.Halt` plus an ownership check at every scope exit | the owning exit is on the handler's own cell; no climber exists to misroute |
+| a clause runs outside its own scope | `settle` sub-call under a prefix, merged back by arithmetic | the loop continues at `node.prev`; there is no second evaluator to disagree with the first |
+| state survives an inner scope's exit | `(A < S, Handlers)` returned out of every frame | the state rides the cell, and captures rebuild it into the region node; there is no "back" for state to travel |
 | stack safety of scope nesting | nothing; the Java stack | nothing recurses, so nothing can overflow |
 | answering allocates nothing | branch duplication to dodge tuples | the loop has no per-bracket structure to allocate |
 
@@ -86,63 +78,39 @@ After this section you should be able to predict what `Eval` does with any node.
 
 **Currency.** `A < S` is `A | Kyo[A, S]` (`Pending.scala:8`): a settled value and a computation share one runtime channel, which is what makes the hot paths allocation-free. Three node shapes in `Kyo.scala`: `Suspend` (an operation carrying its tag, input, and continuation; `map` chains onto the continuation, delegating tag, input, and frame to the `root`), `Defer` (a budget rescue holding a value and the rest of the chain), and `Handled` (a computation under a handler, as a value: the computation with its effect still in the row, the typed handler, and the continuation outside the region, where `map` chains, `Kyo.scala:69-70`).
 
-**The four handling variants.** `ArrowEffect.handle` (a `Handler.Cont`) and the two `ArrowEffect.handleLoop` overloads (`Handler.Loop` and `Handler.LoopState`) build `Kyo.Handled` region nodes and run nothing: handling is a value, and answering happens at `eval`, with a settled input passing through strictly with no node (pinned by `ArrowEffectTest` "lazy: the handled computation is a value and answers at eval" and "settled inputs pass through strictly"). The handler kinds are traits with an abstract `apply`, so the inline handle variants generate one anonymous instance per region with the handling logic compiled into its body and no function value is allocated, and the With variants mix the handler kind with `Arrow.Transform` so one object is both the handler and the region's exit arrow; `LoopState` carries its state and builds successors through `withState`, which delegates to the original instance so state updates never stack delegation. `handlePartial` is the fourth variant and the one eager driver: it answers matching operations while the clause returns a present continuation and parks at the first refusal, foreign suspension, pending `Safepoint.stop` request, budget exhaustion, or region node, returning the computation as it stands. It does not rotate; the wrap-not-append re-entry invariant survives in `Effect.catching`'s guard, whose append encoding once agreed with every existing test and still lost the handler behind one trailing transform (commit `727e8e6742`; the pins are the `ArrowEffectTest` "stays in force across a foreign crossing with a trailing transform" family).
+**The four handling variants.** `ArrowEffect.handle` (a `Handler.Cont`) and the two `ArrowEffect.handleLoop` overloads (`Handler.Loop` and `Handler.LoopState`) build region nodes and run nothing: handling is a value, and answering happens at `eval`, with a settled input passing through strictly with no node (pinned by `ArrowEffectTest` "lazy: the handled computation is a value and answers at eval" and "settled inputs pass through strictly"). The region node splits by handler kind: `Kyo.Handled` for the stateless kinds, its handler field typed as the Cont-or-Loop union so a stateless region cannot carry a stateful handler, and `Kyo.HandledState` whose `state` field is the value this entry of the region starts from, the initial state at construction and the current state on a rebuilt node, so re-entering resumes rather than resetting; absence of state is node shape, not a sentinel. The handler kinds are traits with an abstract `apply`, so the inline handle variants generate one anonymous instance per region with the handling logic compiled into its body and no function value is allocated, and the With variants mix the handler kind with `Arrow.Transform` so one object is both the handler and the region's exit arrow. `handlePartial` is the fourth variant and the one eager driver: it answers matching operations while the clause returns a present continuation and parks at the first refusal, foreign suspension, pending `Safepoint.stop` request, budget exhaustion, or region node, returning the computation as it stands. It does not rotate; the wrap-not-append re-entry invariant survives in `Effect.catching`'s guard, whose append encoding once agreed with every existing test and still lost the handler behind one trailing transform (commit `727e8e6742`; the pins are the `ArrowEffectTest` "stays in force across a foreign crossing with a trailing transform" family).
 
-**The loop.** `evalLoop` (`Eval.scala:45-172`) is one flat `@tailrec` loop over the value with two parallel chunks, `hs: Handlers` and `exits: Chunk[Arrow[Any, Any, Any]]`. A layer is the pair at one index. Behavior by behavior:
+**The loop.** `evalLoop` is one flat `@tailrec` loop over the value and the spine, `hs: Handlers`: the stack of entered regions, one immutable cell per region. Behavior by behavior:
 
-1. **Entering a region appends a layer.** No call, no frame (the entry arm quoted above).
-2. **A settled value pops the innermost exit.** Exit order is entry order reversed, because the exits sit in entry order (`Eval.scala:167-170`):
+1. **Entering a region is one cell.** No call, no frame: `loop(kyo.value, new Node(kyo.handler, kyo.cont, hs))`, and a `HandledState` node seeds its cell's state from the node, so a rebuilt region resumes where it left off.
+2. **A settled value pops through the top cell's exit.** Exit order is entry order reversed because popping is following `prev`:
 
 ```scala
 case v =>
-    val n = hs.size
-    if n == 0 then v
-    else loop(walk(exits(n - 1), v.asInstanceOf[Any < Any]).asInstanceOf[A < S], hs.take(n - 1), exits.take(n - 1))
+    hs match
+        case Empty                  => v
+        case n: Node[?, ?, ?, ?, ?] => loop(walk(n.exit, v), n.prev)
+        ...
 ```
 
-3. **An operation resolves to the innermost matching handler.** `Handlers.indexOf` scans from the innermost end with a `<:<` tag test, so innermost-wins is scan order and a subtype tag resolves a supertype handler. On a miss, a `Defaulted` suspension (resolved through its `root`, so the property survives maps) resumes with its fallback; otherwise `eval` throws `IllegalStateException("unhandled suspension: ...")` and `Eval.partial` returns the standing computation reified with its remaining layers, resumable by evaluating it again. `Eval.partial` also yields that residual when a `Safepoint.stop` request is pending on the thread's slot, which is the whole preemption mechanism: dispatch is only through the thread's slot, detection is a volatile read at entry and on the budget's slow path, and the residual is ordinary data. `Eval.partial` stays alongside `handlePartial` because the eager driver parks at region nodes by design, so evaluating regions without throwing on a miss needs the evaluator entry.
-4. **A settled `Loop.continue(answer)` feeds the suspension's own continuation and touches nothing else.** This is the hot path; it allocates nothing beyond the clause's outcome box (`Eval.scala:85-91`):
+3. **An operation resolves to the innermost matching cell.** `Handlers.find` walks `prev` with a `<:<` tag test, so innermost-wins is walk order and a subtype tag resolves a supertype handler. On a miss, a `Defaulted` suspension (resolved through its `root`, so the property survives maps) resumes with its fallback; otherwise `eval` throws `IllegalStateException("unhandled suspension: ...")` and `Eval.partial` returns the standing computation reified with its remaining regions, resumable by evaluating it again. `Eval.partial` also yields that residual when a `Safepoint.stop` request is pending on the thread's slot, which is the whole preemption mechanism: dispatch is only through the thread's slot, detection is a volatile read at entry and on the budget's slow path, and the residual is ordinary data. `Eval.partial` stays alongside `handlePartial` because the eager driver parks at region nodes by design, so evaluating regions without throwing on a miss needs the evaluator entry.
+4. **A settled `Loop.continue(answer)` feeds the suspension's own continuation and touches nothing else.** This is the hot path; it allocates nothing beyond the clause's outcome box: `loop(walk(kyo.cont, answer), hs)`.
+5. **`done` feeds its own cell's exit and continues at `node.prev`.** The discarded cells' exits never run, which is exactly the semantics that `done` skips the inner scopes' remainders.
+6. **A clause that suspends before deciding is chained, not evaluated in a sub-call.** The pending computation becomes the current value with the decision chained after it, running at `node.prev`: outside the clause's own scope, because a clause runs outside its own region by construction. The closure captures the spine by reference (the cells are immutable and shared, so capture costs nothing) and the crossed cells are rebuilt around the resumption when the outcome settles.
+7. **A continue whose answer is itself pending runs at `node`**: inside the handler's own cell, so a re-raise of the scope's effect is answered by the same handler. Note the asymmetry with 6: a pending clause *outcome* runs outside its own region, a pending *answer* runs inside it. This mirrors the old kernel's `handleLoop` semantics and is what lets a handler express "raise the scope's effect again".
+8. **State is a cell replacement.** The clause continues with the next state; the top-cell case is `node.withState(c._1)`, one cell with the handler object untouched, and an interior cell (a stateful handler answering under unrelated inner regions) path-copies the cells above it through `replace`. The reference check is a pure optimization: a false negative rebuilds an identical cell.
 
 ```scala
-case answer =>
-    val step = kyo.cont.step
-    loop(
-        step.head(answer.asInstanceOf[o[x] < Any], step.tail).asInstanceOf[A < S],
-        hs,
-        exits
-    )
+val updated =
+    if c._1.asInstanceOf[AnyRef] eq node.state.asInstanceOf[AnyRef] then node
+    else node.withState(c._1)
+val hs2 = if updated eq node then hs else replace(hs, node, updated)
 ```
 
-5. **`done` feeds its own layer's exit and truncates** (the arm quoted above). The discarded layers' exits never run, which is exactly the semantics that `done` skips the inner scopes' remainders.
-6. **A clause that suspends before deciding is chained, not evaluated in a sub-call.** The pending computation becomes the current value with the decision chained after it, running under `take(idx)`: the layers outside the clause's own scope, because a clause runs outside its own region by construction. The layers the operation crossed are rebuilt around the resumption from a snapshot (`Eval.scala:62-72`):
+9. **A `Cont` clause receives the continuation as a function that rebuilds the crossed cells per call.** Every call builds a fresh value, so capture is multi-shot by construction; the clause body runs at `node`, so its re-raises are answered by this handler and its exit applies when the body settles.
+10. **A `Defer` resets the budget and steps.**
 
-```scala
-case pending: Kyo[?, ?] =>
-    val hsAll = hs
-    val exAll = exits
-    val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-    val chained = pending.asInstanceOf[Kyo[Any, Any]].map(transform {
-        case c: Loop.Continue[?] =>
-            rebuildFrom(idx, walk(kCont, c._1.asInstanceOf[Any < Any]), hsAll, exAll)
-        case done =>
-            walk(exAll(idx), Nested.lift(done))
-    })
-    loop(chained.asInstanceOf[A < S], hs.take(idx), exits.take(idx))
-```
-
-7. **A continue whose answer is itself pending runs under `take(idx + 1)`**: inside the handler's own layer, so a re-raise of the scope's effect is answered by the same handler (`Eval.scala:76-84`). Note the index asymmetry with 6: a pending clause *outcome* runs outside its own layer, a pending *answer* runs inside it. This mirrors the old kernel's `handleLoop` semantics and is what lets a handler express "raise the scope's effect again".
-8. **State is an index update.** The clause continues with the next state value; `Eval` builds the successor handler around it and replaces the layer in place, with a reference check as a pure optimization (a false negative only rebuilds an identical successor):
-
-```scala
-val hs2 =
-    if c._1.asInstanceOf[AnyRef] eq h.state.asInstanceOf[AnyRef] then hs
-    else hs.updated(idx, new Handler.LoopState[i, o, Nothing, Any, Any, Any](h.tag, c._1, h.clause))
-```
-
-9. **A `Cont` clause receives the continuation as a function that rebuilds the crossed layers per call.** Every call builds a fresh value, so capture is multi-shot by construction; the clause body runs under `take(idx + 1)`, so its re-raises are answered by this handler and its exit applies when the body settles (`Eval.scala:149-161`).
-10. **A `Defer` resets the budget and steps** (`Eval.scala:163-166`).
-
-Two helpers, both cold. `rebuildFrom` (`Eval.scala:214-227`) restores crossed layers as plain `Kyo.Handled` nodes around a resumption; it is bounded by the number of layers the operation crossed, and what it produces the next loop iterations simply re-append. Data in, data out. `transform` (`Eval.scala:181-209`) is one arrow step over erased currency in the `suspendWith` shape, so a pending input re-suspends and the budget defers deep chains.
+Two helpers, both cold. `rebuild` walks the spine from a top cell down to a stop cell, wrapping one region node per cell with states included; it serves clause resumptions, `Cont` continuations, and residuals, and what it produces the next loop iterations simply re-enter. Data in, data out. `replace` swaps one cell, path-copying the cells above an interior update iteratively so pathological depths never reach the Java stack.
 
 ## Every recursion names its stack-safe carrier
 
@@ -202,7 +170,7 @@ The gate: any change to `Eval.scala`, the node shapes in `Kyo.scala`, or `Arrow.
 ## Terminology, naming, and typing
 
 - **The evaluator is `eval`. Names in the kernel are maintainer-approved; introduce no new terminology in code, comments, or docs without a ruling.** This is not stylistic. Machine vocabulary arrives with machine designs, and it arrives first: `drive`, `exitCondition`, `downgradeStops`, `shadow`, and `Entry` were each rejected on sight or renamed away, and commit `6160c23c3b` exists solely to rename `drive` to `eval`. If a new noun seems necessary to describe what the evaluator is doing, first check whether the noun is naming a compensation.
-- **Properly typed code, with casts only at documented boundaries.** The sanctioned boundaries are: tag-keyed handler recovery after `Handlers.indexOf` (the scan proves the tag, the type system cannot), the erased currency inside `evalLoop`, the effect slot pinned to `Nothing` where a pattern-bound effect type loses its GADT bound, and the lift-avoidance casts of the currency discipline. Each site carries a comment naming its boundary. A cast that fits none of these categories is a design smell to resolve, not a typing convenience.
+- **Properly typed code, with casts only at documented boundaries.** The sanctioned boundaries are: the erased cell patterns after `Handlers.find` (the walk proves the tag, the type system cannot), the erased currency inside `evalLoop`, the effect slot pinned to `Nothing` where a pattern-bound effect type loses its GADT bound, and the lift-avoidance casts of the currency discipline. Each site carries a comment naming its boundary. A cast that fits none of these categories is a design smell to resolve, not a typing convenience.
 - **No explicit type parameters unless inference genuinely fails, and then the site says so.** The current examples: `rebuildFrom`'s erased `Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any]` construction under its lift comment, and `Eval`'s successor construction in the `LoopState` arm.
 - **No implicits for internal plumbing.** Handlers are threaded explicitly through `Eval`; they are never implicit parameters. This was ruled before it could be built, and it stays ruled.
 

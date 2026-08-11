@@ -89,3 +89,41 @@ Reading:
 The review session re-measured this board on the same frozen classfiles and revised the stateful finding: the night's 340us reading does not reproduce, the stable cost is 165.8us and 1,278KB against the old trampoline's 98.8us and 798KB, so the true regression is 1.68x time and 1.6x allocation, still the per-answer successor (`withState` object, `updated` chain node, `Continue2` box, state box) against the old loop-variable threading. The layer storage landed as Chunk with adaptive compaction (`08dc668847`, ruled interactively): entry and settle are chain nodes again, a deep handler scan flattens the storage once past a threshold, and `Chunk.updated` became a real kyo-data override.
 
 The session also introduced and then caught a fresh regression with the allocation profiler: `rebuildFrom` briefly flattened its layer stack unconditionally, which runs on every answered operation's continuation path; two thirds of all allocation on the suspension rows sat under its `toIndexed` and `suspensionFusesContinuation` read 6.7x. Fixed by flattening only past the compaction threshold (`84e930cca6`). With the fix, the suspension rows land at or better than the old kernel: `suspensionFusesContinuation` 35.8us vs the old 56.3 (the single-transform `suspendWith` and the fused handler-plus-exit objects showing through), `continuationBodiesFuse` 27.1 vs 33.6, `suspensionBaseline` 96.4 vs 103.0, `sharedHandlerPaysDispatch` 173.1 vs 184.6, all at byte-identical allocation. The full three-fork post-fix board and the stateful-row optimization are the open items.
+
+## The immutable spine (stateful-row close-out)
+
+The stateful-row optimization landed as a representation change, not an evaluator mutation: `Handlers` is now an immutable cons spine of typed cells (`Empty`, `Node`, `StateNode`), replacing the Chunk storage, the index arithmetic, and the adaptive compaction wholesale. Region entry allocates one cell; settling pops by the cell's `prev` pointer with zero allocation; a stateful answer replaces one cell via `withState`, leaving the handler object untouched so its dispatch stays monomorphic; a residual capture shares the spine by reference. `Handler.LoopState` is pure logic again (its `state`, `withState`, and `origin` members are deleted); state lives in the region node (`Kyo.HandledState`, the sibling of the now stateless `Kyo.Handled`) or in the live cell, and absence of state is node shape, with no sentinel and no `Maybe`. Commits: `e245571a43` (node split), `a9a0791beb` (spine), `90128e3697` (state-custody regression pins).
+
+Full three-fork board on frozen classfile snapshots, gc profiler, idle machine. Columns: the old trampoline kernel, the parity-night build, the pre-spine review HEAD (Chunk plus compaction), and the spine. Ratios are spine over old.
+
+| row | old us | night us | review us | spine us | t s/o | old B | review B | spine B | a s/o |
+|---|---|---|---|---|---|---|---|---|---|
+| continuationBodiesFuse | 33.59 | 33.53 | 27.46 | 26.32 | 0.78 | 64,176 | 64,168 | 64,144 | 1.00 |
+| deepRecursionPaysRescuesOnly | 52.72 | 53.19 | 50.48 | 50.87 | 0.96 | 912 | 912 | 912 | 1.00 |
+| evalFixedOverhead | 0.00 | 0.00 | 0.00 | 0.00 | 1.00 | 0 | 0 | 0 | - |
+| foreignCrossingsPayRotation | 583.67 | 497.81 | 508.13 | 340.69 | 0.58 | 2,720,484 | 2,720,468 | 2,160,362 | 0.79 |
+| fusionAfterSuspension | 246.72 | 251.27 | 284.19 | 268.56 | 1.09 | 1,081,194 | 1,081,186 | 1,073,154 | 0.99 |
+| fusionAfterSuspensionRunOnly | 1.23 | 1.00 | 0.98 | 0.82 | 0.66 | 1,320 | 1,312 | 1,288 | 0.98 |
+| fusionAllocatesNothing | 0.74 | 0.75 | 0.57 | 0.57 | 0.77 | 0 | 0 | 0 | - |
+| fusionPastBudgetPaysRescuesOnly | 32.87 | 33.07 | 31.73 | 31.84 | 0.97 | 1,032 | 1,032 | 1,032 | 1.00 |
+| handleLoopAnswersInPlace | 81.56 | 90.21 | 82.96 | 82.79 | 1.02 | 640,081 | 640,169 | 640,145 | 1.00 |
+| idleHandlerAddsNothing | 32.89 | 32.95 | 31.97 | 31.97 | 0.97 | 1,128 | 1,120 | 1,096 | 0.97 |
+| inlineLimitCostsTimeNotAllocation | 231.47 | 251.00 | 245.36 | 245.44 | 1.06 | 743,346 | 743,346 | 743,346 | 1.00 |
+| inlineLimitKeepsZeroAllocation | 1.71 | 1.52 | 1.29 | 1.29 | 0.76 | 0 | 0 | 0 | - |
+| sharedHandlerPaysDispatch | 184.61 | 187.80 | 178.72 | 169.88 | 0.92 | 240,497 | 240,489 | 240,465 | 1.00 |
+| statefulAnswersPaySuccessor | 98.83 | 165.83 | 178.78 | 110.04 | 1.11 | 798,089 | 1,596,201 | 1,118,177 | 1.40 |
+| suspensionBaseline | 103.04 | 105.89 | 96.71 | 85.10 | 0.83 | 640,177 | 640,169 | 640,145 | 1.00 |
+| suspensionFusesContinuation | 56.25 | 56.70 | 35.71 | 29.93 | 0.53 | 240,136 | 240,128 | 240,104 | 1.00 |
+| trailingMapsStayLinear | 873.59 | 889.91 | 991.97 | 747.86 | 0.86 | 3,281,214 | 3,281,204 | 3,041,165 | 0.93 |
+| uncachedValuesPayBoxingOnly | 35.14 | 35.29 | 34.09 | 34.71 | 0.99 | 155,752 | 155,752 | 155,752 | 1.00 |
+| userTypesSkipKernelWrapping | 35.27 | 34.43 | 33.09 | 33.41 | 0.95 | 177,224 | 177,224 | 177,224 | 1.00 |
+
+Reading:
+
+- **The stateful row dropped from 178.8us and 1,596KB to 110.0us and 1,118KB**, within 11% of the old trampoline's time. The remaining allocation gap over old is exactly one 32-byte `StateNode` per answered operation (798KB vs 1,118KB over 10,000 operations): the `withState` cell replacement, which is the irreducible price of state that a residual or a multi-shot continuation can capture, versus the old kernel's loop-variable threading that captured nothing. The successor `LoopState`, the `updated` chain node, and the compaction scan are all gone from the per-answer path.
+- **The crossing rows are the largest structural win.** `foreignCrossingsPayRotation` fell to 0.58x of the old kernel's time and 0.79x of its allocation (capture is now a reference copy of the spine instead of a rebuild), and `trailingMapsStayLinear` recovered from its 992us review-HEAD regression to 747.9us, 0.86x of old.
+- The suspension family holds or extends its wins: `suspensionFusesContinuation` 0.53x, `continuationBodiesFuse` 0.78x, `suspensionBaseline` 0.83x, `sharedHandlerPaysDispatch` 0.92x, all at byte-parity allocation.
+- No row regressed against the pre-spine review HEAD. Above the old kernel there remain: the stateful row (1.11x time, 1.40x alloc, explained above), `fusionAfterSuspension` at 1.09x (down from 1.15x pre-spine, allocation 0.99x), `inlineLimitCostsTimeNotAllocation` at 1.06x with byte-identical allocation (the JIT-layout-sensitive row flagged on the parity night, still watch), and `handleLoopAnswersInPlace` at 1.02x, noise-level.
+- The 1M-nested-scopes canary runs in 97ms on the spine, versus 317ms on the Chunk build and the 6m14s quadratic that started this line of work.
+
+Verdict: the bottleneck identified at the start of the perf pass (the stateful successor churn) is resolved to within one unavoidable cell allocation per answer, and the spine removed the compaction machinery rather than tuning it. The board now beats or matches the old kernel on 15 of 19 rows, with the four exceptions enumerated and understood.
