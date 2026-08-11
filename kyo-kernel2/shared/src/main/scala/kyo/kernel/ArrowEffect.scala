@@ -90,4 +90,32 @@ object ArrowEffect:
                 // strictly with no region node; the cast only shrinks the row
                 v.asInstanceOf[A < (S & S2)]
 
+    def partial[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
+        f: [X] => (I[X], O[X] => A < (E & S)) => Maybe[A < (E & S)]
+    )(using _frame: Frame): A < (E & S) =
+        @tailrec def partialLoop(v: A < (E & S)): A < (E & S) =
+            v match
+                case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] if kyo.tag.erased <:< tag.erased =>
+                    val anchored = kyo.asInstanceOf[Kyo.Suspend[I, O, E, Any, A, E & S]]
+                    f[Any](anchored.input, o => anchored.cont(o)) match
+                        case Maybe.Present(v2) => partialLoop(v2)
+                        case Maybe.Absent      => v
+                case kyo: Kyo.Defer[?, ?, ?] =>
+                    val slot = Safepoint.get()
+                    if !Safepoint.enter(slot) then v
+                    else
+                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
+                        val w =
+                            val step = defer.cont.step
+                            step.head(defer.value, step.tail)
+                        Safepoint.exit(slot)
+                        partialLoop(w)
+                    end if
+                case v =>
+                    v
+        end partialLoop
+
+        partialLoop(v)
+    end partial
+
 end ArrowEffect

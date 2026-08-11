@@ -322,6 +322,60 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "partial" - {
+        "answers operations while the check allows" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val r = ArrowEffect.partial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(21)))
+            assert(ArrowEffect.handle(Tag[Ask], r)([X] => (_, cont) => cont(0)).eval == 42)
+        }
+
+        "parks at the first refused operation and re-enters" in {
+            var answered = 0
+            val v        = ask.map(a => ask.map(b => a + b))
+            val first = ArrowEffect.partial(Tag[Ask], v)(
+                [X] =>
+                    (_, cont) =>
+                        if answered == 0 then
+                            answered += 1
+                            Maybe(cont(21))
+                        else Maybe.Absent
+            )
+            val second = ArrowEffect.partial(Tag[Ask], first)([X] => (_, cont) => Maybe(cont(21)))
+            assert(second.asInstanceOf[Int < Any].eval == 42)
+            assert(answered == 1)
+        }
+
+        "parks and an answering handler finishes the remainder" in {
+            val v      = ask.map(a => ask.map(b => a + b))
+            val parked = ArrowEffect.partial(Tag[Ask], v)([X] => (_, _) => Maybe.Absent)
+            val r      = ArrowEffect.handleLoop(Tag[Ask], parked)([X] => _ => Loop.continue(21))
+            assert(r.eval == 42)
+        }
+
+        "an operation after a foreign crossing is not answered by an earlier partial call" in {
+            var answered             = 0
+            val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
+            val first = ArrowEffect.partial(Tag[Ask], v)(
+                [X] =>
+                    (_, cont) =>
+                        answered += 1
+                        Maybe(cont(21))
+            )
+            assert(answered == 1)
+            val handledSay = ArrowEffect.handle(Tag[Say], first)([X] => (_, cont) => cont(()))
+            val r          = ArrowEffect.handle(Tag[Ask], handledSay)([X] => (_, cont) => cont(21))
+            assert(r.eval == 42)
+            assert(answered == 1)
+        }
+
+        "parks at a region node without evaluating it" in {
+            val region = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([X] => _ => Loop.continue(41))
+            val parked = ArrowEffect.partial(Tag[Ask], region.asInstanceOf[Int < Ask])([X] => (_, cont) => Maybe(cont(0)))
+            assert(parked.asInstanceOf[AnyRef] eq region.asInstanceOf[AnyRef])
+            assert(parked.asInstanceOf[Int < Any].eval == 42)
+        }
+    }
+
     "eval throws on an unhandled suspension" in {
         intercept[IllegalStateException] {
             ask.asInstanceOf[Int < Any].eval
