@@ -31,15 +31,23 @@ object Safepoint:
     // instead of failing earlier
     private inline def LineStride = 8
 
+    // the overflow slot, claimed by every thread past capacity: its budget
+    // counter is shared and racy, so stack-safety budgeting degrades to best
+    // effort there, and its owners entry stays null, so stop requests cannot
+    // target overflow threads. Both beat failing the evaluation
+    private inline def Overflow = Slots
+
     // a slot entry is the owning thread, or the thread wrapped in Stop when a
     // stop has been requested and not yet consumed; the wrapper rides the
     // existing volatile array so the running evaluation only pays a read on
     // its slow path
     final private class Stop(val thread: Thread)
 
-    @static val depths: Array[Long] = new Array[Long](Slots)
+    @static val depths: Array[Long] = new Array[Long](Slots + 1)
 
-    @static val owners: AtomicReferenceArray[AnyRef] = new AtomicReferenceArray[AnyRef](Slots)
+    @static val owners: AtomicReferenceArray[AnyRef] = new AtomicReferenceArray[AnyRef](Slots + 1)
+
+    @static private val overflowReported = new java.util.concurrent.atomic.AtomicBoolean
 
     @static private def threadOf(entry: AnyRef): Thread =
         entry match
@@ -62,11 +70,16 @@ object Safepoint:
             if probes == Slots then
                 // a full scan found no slot: every entry is owned by another
                 // live thread, which takes more live evaluating threads than
-                // slots. Compaction retries reclaim recently died owners
+                // slots. Compaction retries reclaim recently died owners and
+                // past them evaluation degrades to the overflow slot
                 if compactions == 3 then
-                    throw new IllegalStateException(
-                        s"Safepoint slots exhausted: more than $Slots live threads are evaluating concurrently"
-                    )
+                    if overflowReported.compareAndSet(false, true) then
+                        java.lang.System.err.println(
+                            s"kyo: Safepoint slots exhausted, more than $Slots live threads are evaluating concurrently; " +
+                                "stack-safety budgeting and preemption degrade to best effort for the threads past capacity"
+                        )
+                    end if
+                    Overflow
                 else
                     compact()
                     loop(from, 0, compactions + 1)
