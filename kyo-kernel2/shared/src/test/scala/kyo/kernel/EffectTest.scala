@@ -13,7 +13,7 @@ class EffectTest extends AnyFreeSpec:
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
 
     def testEffect1(i: Int): String < TestEffect1 =
-        ArrowEffect.suspend[Const[Int], Const[String], TestEffect1, Any](Tag[TestEffect1], i)
+        ArrowEffect.suspend[Any](Tag[TestEffect1], i)
 
     "catching" - {
         "match" in {

@@ -4,7 +4,6 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Render
 import kyo.kernel.internal.CanLift
-import kyo.kernel.internal.LiftMacro
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -13,11 +12,18 @@ opaque type <[+A, -S] >: Kyo[A, S] = A | Kyo[A, S]
 
 object `<`:
 
-    implicit inline def lift[A: CanLift, S](v: A): A < S = ${ LiftMacro.liftMacro[A, S]('v) }
+    implicit inline def lift[A, S](v: A)(using inline flat: CanLift[A]): A < S =
+        inline scala.compiletime.erasedValue[A] match
+            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
+                v.asInstanceOf[A < S]
+            case _ =>
+                Nested.lift(v)
 
     implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
 
     implicit inline def liftUnit[S](inline v: Unit): Unit < S = v.asInstanceOf[Unit < S]
+
+    private val unitValue: Unit < Any = ()
 
     /** Converts a pure single-argument function to an effectful computation. */
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
@@ -91,7 +97,7 @@ object `<`:
             map(_ => next)
 
         inline def unit(using inline frame: Frame): Unit < S =
-            map(_ => ())
+            map(_ => `<`.unitValue)
 
         inline def eval(using S =:= Any): A =
             self match
@@ -229,8 +235,12 @@ object `<`:
     extension [A, S, S2](self: A < S < S2)
         /** Flattens a nested pending computation into a single computation. */
         inline def flatten(using inline frame: Frame): A < (S & S2) =
-            self.map(v => v)
+            self.map(flattenFn[A, S])
     end extension
+
+    // typed in this file so the inline expansion of map keeps the opaque view
+    // of the returned computation
+    private def flattenFn[A, S]: (A < S) => A < S = v => v
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asString(value: APendingS): String = value match

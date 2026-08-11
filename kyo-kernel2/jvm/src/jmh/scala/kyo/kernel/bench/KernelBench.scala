@@ -359,11 +359,11 @@ object KernelBench:
 
     sealed trait Ask2 extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
 
-    def ask(using Frame): Int < Ask = ArrowEffect.suspend[[B] =>> Unit, [B] =>> Int, Ask, Any](Tag[Ask], ())
+    def ask(using Frame): Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     inline def askWith[B](inline f: Int => B < Ask)(using inline frame: Frame): B < Ask =
-        ArrowEffect.suspendWith[[B2] =>> Unit, [B2] =>> Int, Ask, Any, B, Ask](Tag[Ask], ())(f)
+        ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
 
-    def ask2(using Frame): Int < Ask2 = ArrowEffect.suspend[[B] =>> Unit, [B] =>> Int, Ask2, Any](Tag[Ask2], ())
+    def ask2(using Frame): Int < Ask2 = ArrowEffect.suspend[Any](Tag[Ask2], ())
 
 end KernelBench

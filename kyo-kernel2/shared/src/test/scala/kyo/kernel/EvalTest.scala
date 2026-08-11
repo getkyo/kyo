@@ -15,9 +15,9 @@ class EvalTest extends AnyFreeSpec:
     sealed trait Say  extends ArrowEffect[Const[String], Const[Unit]]
     sealed trait VarE extends ArrowEffect[Const[Int => Int], Const[Int]]
 
-    def ask: Int < Ask                   = ArrowEffect.suspend[Const[Unit], Const[Int], Ask, Any](Tag[Ask], ())
-    def say(s: String): Unit < Say       = ArrowEffect.suspend[Const[String], Const[Unit], Say, Any](Tag[Say], s)
-    def varOp(f: Int => Int): Int < VarE = ArrowEffect.suspend[Const[Int => Int], Const[Int], VarE, Any](Tag[VarE], f)
+    def ask: Int < Ask                   = ArrowEffect.suspend[Any](Tag[Ask], ())
+    def say(s: String): Unit < Say       = ArrowEffect.suspend[Any](Tag[Say], s)
+    def varOp(f: Int => Int): Int < VarE = ArrowEffect.suspend[Any](Tag[VarE], f)
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
         ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.continue(value))

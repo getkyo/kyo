@@ -11,8 +11,11 @@ abstract class ArrowEffect[I[_], O[_]] extends Effect
 object ArrowEffect:
 
     @nowarn("msg=anonymous")
-    inline def suspend[I[_], O[_], E <: ArrowEffect[I, O], X](inline _tag: Tag[E], inline _input: I[X])(using
-        inline _frame: Frame
+    inline def suspend[X](
+        using inline _frame: Frame
+    )[I[_], O[_], E <: ArrowEffect[I, O]](
+        inline _tag: Tag[E],
+        inline _input: I[X]
     ): O[X] < E =
         new Kyo.Suspend[I, O, E, X, O[X], E]:
             def tag   = _tag
@@ -21,10 +24,12 @@ object ArrowEffect:
             def cont  = Arrow[O[X]]
 
     @nowarn("msg=anonymous")
-    inline def suspendWith[I[_], O[_], E <: ArrowEffect[I, O], V, B, S](
+    inline def suspendWith[V](
+        using inline _frame: Frame
+    )[I[_], O[_], E <: ArrowEffect[I, O], B, S](
         inline _tag: Tag[E],
         inline _input: I[V]
-    )(inline f: O[V] => B < (E & S))(using inline _frame: Frame): B < (E & S) =
+    )(inline f: O[V] => B < (E & S)): B < (E & S) =
         @nowarn("msg=anonymous") def mapLoop[C, S3](v: O[V] < S3, next: Arrow[B, C, S3]): C < (E & S & S3) =
             def arrow =
                 new Arrow.Transform[O[V], C, E & S & S3]:

@@ -2,15 +2,12 @@ package kyo.kernel.internal
 
 import kyo.kernel.<
 import scala.annotation.implicitNotFound
-import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S), or A is not a module from
-  * kyo (like Abort.type).
+/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S).
   *
-  * This constraint helps:
-  *   - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
-  *   - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
+  * This constraint helps prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all
+  * generic contexts.
   *
   * @tparam A
   *   The type to check for nested effects
@@ -38,25 +35,9 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
-object CanLiftMacro:
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = ${ liftImpl[A] }
-
-    private[internal] def liftImpl[A: Type](using Quotes): Expr[CanLift[A]] =
-        import quotes.reflect.*
-        val tpe = TypeRepr.of[A]
-        val sym = tpe.typeSymbol
-
-        if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
-            report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
-
-        '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
-    end liftImpl
-
-end CanLiftMacro
-
 object CanLift:
 
-    export CanLiftMacro.derived
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
 
     inline given CanLift[Nothing] = CanLift.unsafe.bypass
 

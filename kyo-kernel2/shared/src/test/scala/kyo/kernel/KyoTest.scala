@@ -11,7 +11,7 @@ class KyoTest extends AnyFreeSpec:
     type Const[A] = [B] =>> A
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
-    def ask: Int < Ask = ArrowEffect.suspend[Const[Unit], Const[Int], Ask, Any](Tag[Ask], ())
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     type AskHandled = Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any]
 
