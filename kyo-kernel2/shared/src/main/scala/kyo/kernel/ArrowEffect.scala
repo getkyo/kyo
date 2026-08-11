@@ -32,35 +32,27 @@ object ArrowEffect:
         inline _tag: Tag[E],
         inline _input: I[V]
     )(inline f: O[V] => B < (E & S)): B < (E & S) =
-        @nowarn("msg=anonymous") def mapLoop[C, S3](v: O[V] < S3, next: Arrow[B, C, S3]): C < (E & S & S3) =
-            def arrow =
-                new Arrow.Transform[
-                    O[V],
-                    C,
-                    E & S & S3
-                ]: // TODO isn't this the same as the obhect we allocate at the end? can't we allocate it first and reuse?
-                    def frame = _frame
-                    def apply[D, S4](v: O[V] < S4, next2: Arrow[C, D, S4]) =
-                        mapLoop(v, next.chain(next2))
-            v match
-                case kyo: Kyo[O[V], S3] @unchecked =>
-                    kyo.map(arrow)
-                case v =>
-                    // no budget check: f either suspends, returning the node
-                    // flat, or settles into the chained arrows, whose strict
-                    // segments carry their own checks in map
-                    val res  = Kyo.unnest(v)
-                    val step = next.step
-                    step.head(f(res), step.tail)
-            end match
-        end mapLoop
         new Arrow.Transform[O[V], B, E & S] with Kyo.Suspend[I, O, E, V, B, E & S]:
+            self =>
             def tag   = _tag
             def input = _input
             def frame = _frame
             def cont  = this
-            def apply[C, S2](v: O[V] < S2, next2: Arrow[B, C, S2]) =
-                mapLoop(v, next2)
+            def apply[C, S2](v: O[V] < S2, next: Arrow[B, C, S2]) =
+                v match
+                    case kyo: Kyo[O[V], S2] @unchecked =>
+                        // a pending input re-suspends through this same
+                        // transform with the remaining steps chained after it
+                        kyo.map(self.chain(next))
+                    case v =>
+                        // no budget check: f either suspends, returning the node
+                        // flat, or settles into the chained arrows, whose strict
+                        // segments carry their own checks in map
+                        val res  = Kyo.unnest(v)
+                        val step = next.step
+                        step.head(f(res), step.tail)
+                end match
+            end apply
         end new
     end suspendWith
 
@@ -85,21 +77,6 @@ object ArrowEffect:
     inline def handleWith[I[_], O[_], E <: ArrowEffect[I, O], A, S, B, S2](inline tag: Tag[E], v: A < (E & S))(
         inline f: [X] => (I[X], O[X] => A < (E & S)) => A < (E & S)
     )(inline cont: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-        @nowarn("msg=anonymous") def mapLoop[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S2 & S3) =
-            def arrow =
-                new Arrow.Transform[A, C, S2 & S3]:
-                    def frame = _frame
-                    def apply[D, S4](v2: A < S4, next2: Arrow[C, D, S4]) =
-                        mapLoop(v2, next.chain(next2))
-            v match
-                case kyo: Kyo[A, S3] @unchecked =>
-                    kyo.map(arrow)
-                case v =>
-                    val res  = Kyo.unnest(v)
-                    val step = next.step
-                    step.head(cont(res), step.tail)
-            end match
-        end mapLoop
         v match
             case kyo: Kyo[?, ?] =>
                 val handler =
@@ -107,9 +84,16 @@ object ArrowEffect:
                         def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
                 val exit =
                     new Arrow.Transform[A, B, S2]:
+                        self =>
                         def frame = _frame
-                        def apply[C, S3](v2: A < S3, next2: Arrow[B, C, S3]) =
-                            mapLoop(v2, next2)
+                        def apply[C, S3](v2: A < S3, next: Arrow[B, C, S3]) =
+                            v2 match
+                                case kyo: Kyo[A, S3] @unchecked =>
+                                    kyo.map(self.chain(next))
+                                case v2 =>
+                                    val res  = Kyo.unnest(v2)
+                                    val step = next.step
+                                    step.head(cont(res), step.tail)
                 new Kyo.Handled[I, O, E, A, B, S & S2](v, handler, exit)
             case v =>
                 // settled: the effect cannot occur, so the continuation
@@ -139,21 +123,6 @@ object ArrowEffect:
     inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, B, S3](inline tag: Tag[E], v: A < (E & S))(
         inline f: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), A] < S2
     )(inline cont: A => B < S3)(using inline _frame: Frame): B < (S & S2 & S3) =
-        @nowarn("msg=anonymous") def mapLoop[C, S4](v: A < S4, next: Arrow[B, C, S4]): C < (S3 & S4) =
-            def arrow =
-                new Arrow.Transform[A, C, S3 & S4]:
-                    def frame = _frame
-                    def apply[D, S5](v2: A < S5, next2: Arrow[C, D, S5]) =
-                        mapLoop(v2, next.chain(next2))
-            v match
-                case kyo: Kyo[A, S4] @unchecked =>
-                    kyo.map(arrow)
-                case v =>
-                    val res  = Kyo.unnest(v)
-                    val step = next.step
-                    step.head(cont(res), step.tail)
-            end match
-        end mapLoop
         v match
             case kyo: Kyo[?, ?] =>
                 val handler =
@@ -161,9 +130,16 @@ object ArrowEffect:
                         def apply[X](input: I[X]) = f(input)
                 val exit =
                     new Arrow.Transform[A, B, S3]:
+                        self =>
                         def frame = _frame
-                        def apply[C, S4](v2: A < S4, next2: Arrow[B, C, S4]) =
-                            mapLoop(v2, next2)
+                        def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
+                            v2 match
+                                case kyo: Kyo[A, S4] @unchecked =>
+                                    kyo.map(self.chain(next))
+                                case v2 =>
+                                    val res  = Kyo.unnest(v2)
+                                    val step = next.step
+                                    step.head(cont(res), step.tail)
                 new Kyo.Handled[I, O, E, A, B, S & S2 & S3](v, handler, exit)
             case v =>
                 // settled: the effect cannot occur, so the continuation
@@ -193,21 +169,6 @@ object ArrowEffect:
     inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State, B, S3](inline tag: Tag[E], state: State, v: A < (E & S))(
         inline f: [X] => (I[X], State) => Loop.Outcome2[State, O[X] < (E & S & S2), A] < S2
     )(inline cont: A => B < S3)(using inline _frame: Frame): B < (S & S2 & S3) =
-        @nowarn("msg=anonymous") def mapLoop[C, S4](v: A < S4, next: Arrow[B, C, S4]): C < (S3 & S4) =
-            def arrow =
-                new Arrow.Transform[A, C, S3 & S4]:
-                    def frame = _frame
-                    def apply[D, S5](v2: A < S5, next2: Arrow[C, D, S5]) =
-                        mapLoop(v2, next.chain(next2))
-            v match
-                case kyo: Kyo[A, S4] @unchecked =>
-                    kyo.map(arrow)
-                case v =>
-                    val res  = Kyo.unnest(v)
-                    val step = next.step
-                    step.head(cont(res), step.tail)
-            end match
-        end mapLoop
         v match
             case kyo: Kyo[?, ?] =>
                 val handler =
@@ -215,9 +176,16 @@ object ArrowEffect:
                         def apply[X](input: I[X], state: State) = f(input, state)
                 val exit =
                     new Arrow.Transform[A, B, S3]:
+                        self =>
                         def frame = _frame
-                        def apply[C, S4](v2: A < S4, next2: Arrow[B, C, S4]) =
-                            mapLoop(v2, next2)
+                        def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
+                            v2 match
+                                case kyo: Kyo[A, S4] @unchecked =>
+                                    kyo.map(self.chain(next))
+                                case v2 =>
+                                    val res  = Kyo.unnest(v2)
+                                    val step = next.step
+                                    step.head(cont(res), step.tail)
                 new Kyo.Handled[I, O, E, A, B, S & S2 & S3](v, handler, exit)
             case v =>
                 // settled: the effect cannot occur, so the continuation
