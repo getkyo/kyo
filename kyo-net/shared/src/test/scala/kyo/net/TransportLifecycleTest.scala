@@ -31,30 +31,34 @@ class TransportLifecycleTest extends Test:
                 transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get.map { listener =>
                     val port = listener.port
                     listener.close()
-                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map { outcome =>
-                        val next: Unit < (Async & Abort[NetException | Closed]) =
-                            outcome match
-                                case Result.Success(conn) =>
-                                    // The port was reused by a concurrently-running suite's listener: close the connection and retry a fresh port.
-                                    // Past the retry budget, surface it as a failure (a product that hands back a live connection for an unbound port).
-                                    conn.close()
-                                    if remaining > 0 then attempt(remaining - 1)
-                                    else
-                                        Sync.defer(assert(
-                                            false,
-                                            s"connecting to an unbound port kept succeeding (port $port); product returned a live connection"
-                                        ))
-                                    end if
-                                case _ =>
-                                    // A Failure (the contract: refused) or a Panic both end the retry; assert the refusal.
+                    // A connect to the just-closed port must be refused. The `listener.close()` is not observed
+                    // instantly on every OS (Windows in particular keeps the closing listener briefly reachable), so a
+                    // connect can still land on it and succeed for a short window. Poll the SAME port with a backoff to
+                    // let the close finalize before concluding: a genuinely-unbound port refuses within the settle
+                    // budget. If it keeps succeeding past the budget the port was rebound by another parallel suite, so
+                    // retry a fresh one; a real bug (a live connection to an unbound port) exhausts both budgets.
+                    def settle(tries: Int): Unit < (Async & Abort[NetException | Closed]) =
+                        Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map {
+                            case Result.Success(conn) =>
+                                conn.close()
+                                if tries > 0 then Async.sleep(20.millis).andThen(settle(tries - 1))
+                                else if remaining > 0 then attempt(remaining - 1)
+                                else
                                     Sync.defer(assert(
-                                        outcome.isFailure,
-                                        s"expected Closed connecting to a port with no listener (port $port), got $outcome"
+                                        false,
+                                        s"connecting to an unbound port kept succeeding (port $port); product returned a live connection"
                                     ))
-                        next
-                    }
+                                end if
+                            case outcome =>
+                                // A Failure (the contract: refused) or a Panic both end the retry; assert the refusal.
+                                Sync.defer(assert(
+                                    outcome.isFailure,
+                                    s"expected Closed connecting to a port with no listener (port $port), got $outcome"
+                                ))
+                        }
+                    settle(tries = 100)
                 }
-            attempt(remaining = 16)
+            attempt(remaining = 8)
         }
 
         "closing one end surfaces Closed on the peer connection" in {
