@@ -99,8 +99,11 @@ object ArrowEffect:
                 // strictly with no region node; the cast only shrinks the row
                 v.asInstanceOf[A < (S & S2)]
 
-    // TODO this shuld be named handlePartial
-    def partial[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
+    // the eager driver: answers operations of the tag while the clause
+    // returns a present continuation and parks at a refusal, a foreign
+    // suspension, a region node, a pending Safepoint.stop request, or
+    // budget exhaustion, returning the computation as it stands
+    def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
         f: [X] => (I[X], O[X] => A < (E & S)) => Maybe[A < (E & S)]
     )(using _frame: Frame): A < (E & S) =
         @tailrec def partialLoop(v: A < (E & S)): A < (E & S) =
@@ -113,7 +116,7 @@ object ArrowEffect:
                         case Maybe.Absent      => v
                 case kyo: Kyo.Defer[?, ?, ?] =>
                     val slot = Safepoint.get()
-                    if !Safepoint.enter(slot) then v
+                    if Safepoint.stopped(slot) || !Safepoint.enter(slot) then v
                     else
                         val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
@@ -127,6 +130,6 @@ object ArrowEffect:
         end partialLoop
 
         partialLoop(v)
-    end partial
+    end handlePartial
 
 end ArrowEffect

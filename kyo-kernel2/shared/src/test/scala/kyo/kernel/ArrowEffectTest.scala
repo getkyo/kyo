@@ -133,7 +133,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "installed after a partial evaluation answers the parked operation" in {
             val v      = ask.map(_ + 1)
-            val parked = Eval.partial(v, () => false)
+            val parked = Eval.partial(v)
             val r      = ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(41))
             assert(r.eval == 42)
         }
@@ -328,17 +328,17 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
-    "partial" - {
-        "answers operations while the check allows" in {
+    "handlePartial" - {
+        "answers operations while the clause allows" in {
             val v = ask.map(a => ask.map(b => a + b))
-            val r = ArrowEffect.partial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(21)))
+            val r = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(21)))
             assert(ArrowEffect.handle(Tag[Ask], r)([X] => (_, cont) => cont(0)).eval == 42)
         }
 
         "parks at the first refused operation and re-enters" in {
             var answered = 0
             val v        = ask.map(a => ask.map(b => a + b))
-            val first = ArrowEffect.partial(Tag[Ask], v)(
+            val first = ArrowEffect.handlePartial(Tag[Ask], v)(
                 [X] =>
                     (_, cont) =>
                         if answered == 0 then
@@ -346,22 +346,22 @@ class ArrowEffectTest extends AnyFreeSpec:
                             Maybe(cont(21))
                         else Maybe.Absent
             )
-            val second = ArrowEffect.partial(Tag[Ask], first)([X] => (_, cont) => Maybe(cont(21)))
-            assert(second.asInstanceOf[Int < Any].eval == 42)
+            val second = ArrowEffect.handlePartial(Tag[Ask], first)([X] => (_, cont) => Maybe(cont(21)))
+            assert(ArrowEffect.handle(Tag[Ask], second)([X] => (_, cont) => cont(0)).eval == 42)
             assert(answered == 1)
         }
 
         "parks and an answering handler finishes the remainder" in {
             val v      = ask.map(a => ask.map(b => a + b))
-            val parked = ArrowEffect.partial(Tag[Ask], v)([X] => (_, _) => Maybe.Absent)
+            val parked = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, _) => Maybe.Absent)
             val r      = ArrowEffect.handleLoop(Tag[Ask], parked)([X] => _ => Loop.continue(21))
             assert(r.eval == 42)
         }
 
-        "an operation after a foreign crossing is not answered by an earlier partial call" in {
+        "an operation after a foreign crossing is not answered by an earlier handlePartial call" in {
             var answered             = 0
             val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
-            val first = ArrowEffect.partial(Tag[Ask], v)(
+            val first = ArrowEffect.handlePartial(Tag[Ask], v)(
                 [X] =>
                     (_, cont) =>
                         answered += 1
@@ -376,9 +376,25 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "parks at a region node without evaluating it" in {
             val region = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([X] => _ => Loop.continue(41))
-            val parked = ArrowEffect.partial(Tag[Ask], region.asInstanceOf[Int < Ask])([X] => (_, cont) => Maybe(cont(0)))
-            assert(parked.asInstanceOf[AnyRef] eq region.asInstanceOf[AnyRef])
-            assert(parked.asInstanceOf[Int < Any].eval == 42)
+            val parked = ArrowEffect.handlePartial(Tag[Ask], region)([X] => (_, cont) => Maybe(cont(0)))
+            assert(parked.evalNow.isEmpty)
+            assert(ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(0)).eval == 42)
+        }
+
+        "parks at a pending stop request without answering" in {
+            var answered = 0
+            def burn(n: Int): Int < Any =
+                if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+            val v = burn(Safepoint.Period * 2).map(_ => ask)
+            assert(Safepoint.stop(Thread.currentThread()))
+            val parked = ArrowEffect.handlePartial(Tag[Ask], v)(
+                [X] =>
+                    (_, cont) =>
+                        answered += 1
+                        Maybe(cont(21))
+            )
+            assert(answered == 0)
+            assert(ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(21)).eval == 21)
         }
     }
 

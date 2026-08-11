@@ -211,69 +211,44 @@ class EvalTest extends AnyFreeSpec:
         def loop(n: Int): Int < Any =
             if n == 0 then 0
             else (0: Int < Any).map(_ => loop(n - 1))
-        assert(Eval.partial(loop(100000), () => false).evalNow == Maybe(0))
+        assert(Eval.partial(loop(100000)).evalNow == Maybe(0))
     }
 
-    "Eval.partial with an immediate stop returns the computation unchanged" in {
+    "a pending stop request parks the evaluation before it starts" in {
         def loop(n: Int): Int < Any =
             if n == 0 then 0
             else (0: Int < Any).map(_ => loop(n - 1))
         val v = loop(100000)
-        assert(Eval.partial(v, () => true).asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
+        assert(Safepoint.stop(Thread.currentThread()))
+        val parked = Eval.partial(v)
+        assert(parked.evalNow.isEmpty)
+        assert(Eval.partial(parked).evalNow == Maybe(0))
     }
 
-    "Eval.partial stops between defers leaving the rest evaluable" in {
-        def loop(n: Int): Int < Any =
-            if n == 0 then 0
-            else (0: Int < Any).map(_ => loop(n - 1))
-        var checks = 0
-        val out = Eval.partial(
-            loop(100000),
-            () =>
-                checks += 1
-                checks > 3
-        )
+    "a stop request arriving mid-evaluation parks between defers" in {
+        def burn(n: Int): Int < Any =
+            if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+        val v = burn(Safepoint.Period * 2).map { _ =>
+            assert(Safepoint.stop(Thread.currentThread()))
+            burn(Safepoint.Period * 4)
+        }
+        val out = Eval.partial(v)
         assert(out.evalNow.isEmpty)
         assert(out.eval == 0)
     }
 
-    "Eval.partial pauses at the stop check and the remainder resumes" in {
-        def loop(n: Int): Int < Any =
-            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
-        var calls = 0
-        val stop = () =>
-            calls += 1
-            calls > 1
-        val paused = Eval.partial(loop(Safepoint.Period * 4), stop)
-        assert(calls >= 2)
-        assert(paused.evalNow.isEmpty)
-        assert(paused.eval == 0)
-    }
-
     "Eval.partial evaluates scopes" in {
         val r = answerAsk(41)(ask.map(_ + 1))
-        assert(Eval.partial(r, () => false).evalNow == Maybe(42))
+        assert(Eval.partial(r).evalNow == Maybe(42))
     }
 
     "Eval.partial parks at an unhandled suspension with a resumable residual" in {
         val program: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
         val r                          = answerAsk(41)(program)
-        val residual                   = Eval.partial(r.asInstanceOf[Int < Any], () => false)
+        val residual                   = Eval.partial(r)
         assert(residual.evalNow.isEmpty)
-        val finished = ArrowEffect.handle(Tag[Say], residual.asInstanceOf[Int < Say])([X] => (_, cont) => cont(()))
+        val finished = ArrowEffect.handle(Tag[Say], residual)([X] => (_, cont) => cont(()))
         assert(finished.eval == 42)
-    }
-
-    "a Safepoint.stop request parks the evaluation with a resumable residual" in {
-        def burn(n: Int): Int < Any =
-            if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
-        val slot = Safepoint.get()
-        assert(Safepoint.stop(Thread.currentThread()))
-        val residual = Eval.partial(burn(Safepoint.Period * 4), () => false)
-        assert(residual.evalNow.isEmpty)
-        assert(residual.eval == 0)
-        val second = Eval.partial(burn(Safepoint.Period * 4), () => false)
-        assert(second.evalNow == Maybe(0))
     }
 
     "a settled computation passes through a handler strictly" in {

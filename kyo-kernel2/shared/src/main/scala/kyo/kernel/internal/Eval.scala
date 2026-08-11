@@ -18,25 +18,28 @@ object Eval:
     def apply[A, S](v: A < S): A < S =
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
-        val res   = evalLoop(v, slot, null)
+        val res   = evalLoop(v, slot, partial = false)
         Safepoint.restore(slot, saved)
         res
     end apply
 
     // the scheduler entry: evaluates like apply but yields instead of
     // throwing or spinning. It returns the standing computation reified with
-    // its remaining layers when the stop check answers true, when a
-    // Safepoint.stop request is pending on this thread's slot, or when a
-    // suspension has no handler; the result resumes by evaluating it again
-    // TODO if we'll dispatcg interruption/preemption via the thread, I think we can remove the stop function here? In fact, we don't need this method and ArrowEffect.handlePartial is enough?
-    def partial[A, S](v: A < S, stop: () => Boolean): A < S =
-        if stop() then v
+    // its remaining layers when a Safepoint.stop request is pending on this
+    // thread's slot or when a suspension has no handler; the result resumes
+    // by evaluating it again. Preemption is dispatched only through the
+    // thread's slot, and ArrowEffect.handlePartial cannot take this role: it
+    // parks at region nodes by design, so evaluating regions without
+    // throwing on a miss needs this entry
+    def partial[A, S](v: A < S): A < S =
+        val slot = Safepoint.get()
+        if Safepoint.stopped(slot) then v
         else
-            val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)
-            val res   = evalLoop(v, slot, stop)
+            val res   = evalLoop(v, slot, partial = true)
             Safepoint.restore(slot, saved)
             res
+        end if
     end partial
 
     // One flat loop carries the value with its region layers, a layer being a
@@ -49,8 +52,7 @@ object Eval:
     // stack, and answering allocates nothing. Layer entry and settle are
     // constant-time chain nodes; a suspension whose handler scan walks deep
     // flattens the storage once and later reads stay flat.
-    // TODO remove the stop function?
-    private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, stop: () => Boolean): A < S =
+    private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, partial: Boolean): A < S =
         @tailrec def loop(v: A < S, hs: Handlers, exits: Chunk[Arrow[Any, Any, Any]], flatBelow: Int): A < S =
             (v: @unchecked) match
                 case kyo: Kyo.Handled[?, ?, ?, ?, ?, ?] @unchecked =>
@@ -78,12 +80,13 @@ object Eval:
                                     flatBelow
                                 )
                             case _ =>
-                                if stop == null then throw new IllegalStateException(s"unhandled suspension: $kyo")
+                                if !partial then throw new IllegalStateException(s"unhandled suspension: $kyo")
                                 else rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
                     else
                         hs(idx) match
                             case h: Handler.Loop[?, ?, ?, ?, ?] =>
-                                val outcome = h.asInstanceOf[Handler.Loop[i, o, Nothing, Any, Any]].clause[x](kyo.input)
+                                val outcome =
+                                    h.asInstanceOf[Handler.Loop[i, o, Nothing, Any, Any]].clause[x](kyo.input) // TODO convert pattern match + cast to just the pattern match with the exepected type + @unchecked. Clean the entire module of this issue please.
                                 (outcome: Any) match
                                     case pending: Kyo[?, ?] =>
                                         val hsAll = hs
@@ -210,7 +213,7 @@ object Eval:
                                 loop(body.asInstanceOf[A < S], hs.take(idx + 1), exits.take(idx + 1), Math.min(flatBelow, idx + 1))
                     end if
                 case kyo: Kyo.Defer[?, ?, ?] =>
-                    if (stop != null) && (Safepoint.stopped(slot) || stop()) then
+                    if partial && Safepoint.stopped(slot) then
                         rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
                     else
                         Safepoint.restore(slot, 0L)

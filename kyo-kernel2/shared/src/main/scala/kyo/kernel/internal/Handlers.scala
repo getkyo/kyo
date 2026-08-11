@@ -22,7 +22,7 @@ object Handlers:
         def indexOf[E](tag: Tag[E]): Int =
             @tailrec def loop(i: Int): Int =
                 if i < 0 then i
-                else if tag.erased <:< self(i).tag.erased then i
+                else if tag <:< self(i).tag then i
                 else loop(i - 1)
             loop(self.length - 1)
         end indexOf
@@ -33,16 +33,8 @@ object Handlers:
         def take(n: Int): Handlers =
             self.take(n)
 
-        // replaces one layer without touching the storage below it: dropping
-        // the layers above unwinds their chain nodes and the replacement is
-        // appended, so replacing the innermost layer stays constant time. The
-        // layers above, present only when an outer handler answers under
-        // unrelated inner ones, are re-linked through one flat copy
         def updated(i: Int, handler: Handler[?, ?, ?, ?, ?]): Handlers =
-            val prefix = self.take(i).append(handler)
-            if i == self.length - 1 then prefix
-            else prefix.concat(self.drop(i + 1))
-        end updated
+            self.updated(i, handler)
 
         def size: Int =
             self.length
