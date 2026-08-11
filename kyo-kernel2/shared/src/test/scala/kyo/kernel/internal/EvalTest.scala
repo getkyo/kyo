@@ -332,6 +332,37 @@ class EvalTest extends AnyFreeSpec:
         assert(log.toList == List("s"))
     }
 
+    "a suspended clause's effectful answer re-raising the effect is answered by the successor" in {
+        val log = scala.collection.mutable.ListBuffer[String]()
+        val r = ArrowEffect.handleLoop(Tag[Ask], 0, ask.map(_ + 1))(
+            [X] =>
+                (_, phase) =>
+                    say("s").map { _ =>
+                        if phase == 0 then Loop.continue(1, ask.map(_ + 100))
+                        else Loop.done(-2)
+                }
+        )
+        assert(recordSay("s", log)(r).eval == -2)
+        assert(log.toList == List("s", "s"))
+    }
+
+    "a done from an outer region discards multiple inner scopes" in {
+        var reached = false
+        val log     = scala.collection.mutable.ListBuffer[String]()
+        val program: Int < (Ask & Say & VarE) = say("pre").map(_ => varOp(_ + 1)).map(_ => ask).map { a =>
+            reached = true
+            a
+        }
+        val varScope: Int < (Ask & Say) = runVar(0)(program)
+        val sayScope: Int < Ask         = recordSay("s", log)(varScope)
+        val askScope: Int < Any = ArrowEffect.handleLoop(Tag[Ask], 5, sayScope)(
+            [X] => (_, state) => Loop.done(state * 10)
+        )
+        assert(askScope.eval == 50)
+        assert(!reached)
+        assert(log.toList == List("s"))
+    }
+
     "nested same-tag stateful regions keep independent states" in {
         val innerBody: Int < Ask = ask.map(a1 => ask.map(a2 => a1 * 100 + a2))
         val inner: Int < Any =
