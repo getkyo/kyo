@@ -1,6 +1,7 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.Tag
+import kyo.kernel.*
 
 sealed abstract class Handler[I[_], O[_], E <: ArrowEffect[I, O], A, -S](val tag: Tag[E])
 

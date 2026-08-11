@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Frame
 import kyo.Tag
+import kyo.kernel.internal.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTest extends AnyFreeSpec:

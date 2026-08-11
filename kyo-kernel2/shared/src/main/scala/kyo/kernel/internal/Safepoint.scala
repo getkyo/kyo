@@ -1,7 +1,8 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.discard
+import kyo.kernel.*
 import scala.annotation.static
 import scala.annotation.tailrec
 

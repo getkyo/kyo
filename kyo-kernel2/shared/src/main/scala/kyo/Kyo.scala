@@ -2,6 +2,7 @@ package kyo
 
 import kyo.kernel.<
 import kyo.kernel.Loop
+import kyo.kernel.internal.*
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableOps

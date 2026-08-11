@@ -1,7 +1,8 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.Frame
 import kyo.Tag
+import kyo.kernel.*
 import scala.annotation.static
 
 sealed trait Boxed

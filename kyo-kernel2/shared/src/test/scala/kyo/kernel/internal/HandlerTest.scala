@@ -1,6 +1,7 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.Tag
+import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class HandlerTest extends AnyFreeSpec:

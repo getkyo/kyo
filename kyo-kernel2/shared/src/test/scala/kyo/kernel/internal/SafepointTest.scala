@@ -1,5 +1,6 @@
-package kyo.kernel
+package kyo.kernel.internal
 
+import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class SafepointTest extends AnyFreeSpec:

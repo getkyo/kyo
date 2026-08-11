@@ -1,7 +1,8 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.Chunk
 import kyo.Tag
+import kyo.kernel.*
 import scala.annotation.tailrec
 
 opaque type Handlers = Chunk[Handler[?, ?, ?, ?, ?]]

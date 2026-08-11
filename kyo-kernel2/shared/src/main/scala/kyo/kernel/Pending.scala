@@ -3,6 +3,7 @@ package kyo.kernel
 import kyo.Frame
 import kyo.Maybe
 import kyo.Render
+import kyo.kernel.internal.*
 import kyo.kernel.internal.CanLift
 import scala.annotation.nowarn
 import scala.annotation.tailrec

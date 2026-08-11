@@ -1,10 +1,14 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.Chunk
 import kyo.Frame
+import kyo.kernel.*
 import scala.annotation.tailrec
 
-private[kyo] object Eval:
+// visibility is the internal package itself: referenced from public inline
+// bodies, so a private modifier would force an inline accessor that
+// materializes the package prefix as a runtime value
+object Eval:
 
     private type Exits = Chunk[Arrow[Any, Any, Any]]
 

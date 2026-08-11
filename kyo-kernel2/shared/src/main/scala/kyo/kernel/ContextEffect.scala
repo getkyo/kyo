@@ -3,6 +3,7 @@ package kyo.kernel
 import kyo.Const
 import kyo.Frame
 import kyo.Tag
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 
 /** Represents the requirement for a value that will be provided later by a handler.

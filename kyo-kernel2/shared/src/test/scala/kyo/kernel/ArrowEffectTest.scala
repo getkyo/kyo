@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Maybe
 import kyo.Tag
+import kyo.kernel.internal.*
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 

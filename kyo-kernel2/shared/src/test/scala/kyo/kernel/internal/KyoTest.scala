@@ -1,7 +1,8 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.Frame
 import kyo.Tag
+import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class KyoTest extends AnyFreeSpec:

@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Tag
 import kyo.discard
+import kyo.kernel.internal.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class ContextEffectTest extends AnyFreeSpec:

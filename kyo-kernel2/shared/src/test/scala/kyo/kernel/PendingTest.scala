@@ -1,5 +1,6 @@
 package kyo.kernel
 
+import kyo.kernel.internal.*
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
