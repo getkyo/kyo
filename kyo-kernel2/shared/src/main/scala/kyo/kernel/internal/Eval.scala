@@ -1,7 +1,7 @@
 package kyo.kernel.internal
 
-import kyo.Chunk
 import kyo.Frame
+import kyo.Span
 import kyo.kernel.*
 import scala.annotation.tailrec
 
@@ -9,8 +9,6 @@ import scala.annotation.tailrec
 // bodies, so a private modifier would force an inline accessor that
 // materializes the package prefix as a runtime value
 object Eval:
-
-    private type Exits = Chunk[Arrow[Any, Any, Any]]
 
     def apply[A, S](v: A < S): A < S =
         val slot  = Safepoint.get()
@@ -25,6 +23,7 @@ object Eval:
     // its remaining layers when the stop check answers true, when a
     // Safepoint.stop request is pending on this thread's slot, or when a
     // suspension has no handler; the result resumes by evaluating it again
+    // TODO if we'll dispatcg interruption/preemption via the thread, I think we can remove the stop function here? In fact, we don't need this method and ArrowEffect.handlePartial is enough?
     def partial[A, S](v: A < S, stop: () => Boolean): A < S =
         if stop() then v
         else
@@ -43,8 +42,9 @@ object Eval:
     // the layers outside its own, with the crossed layers rebuilt around the
     // resumption. Nothing recurses, so scope depth never reaches the Java
     // stack, and answering allocates nothing.
+    // TODO remove the stop function?
     private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, stop: () => Boolean): A < S =
-        @tailrec def loop(v: A < S, hs: Handlers, exits: Exits): A < S =
+        @tailrec def loop(v: A < S, hs: Handlers, exits: Span[Arrow[Any, Any, Any]]): A < S =
             (v: @unchecked) match
                 case kyo: Kyo.Handled[?, ?, ?, ?, ?, ?] @unchecked =>
                     loop(
@@ -191,7 +191,7 @@ object Eval:
                     val n = hs.size
                     if n == 0 then v
                     else loop(walk(exits(n - 1), v.asInstanceOf[Any < Any]).asInstanceOf[A < S], hs.take(n - 1), exits.take(n - 1))
-        loop(v0, Handlers.empty, Chunk.empty)
+        loop(v0, Handlers.empty, Span.empty[Arrow[Any, Any, Any]])
     end evalLoop
 
     private def walk(cont: Arrow[Any, Any, Any], v: Any < Any): Any < Any =
@@ -234,7 +234,7 @@ object Eval:
     // the crossed layers are restored as plain region nodes around the
     // resumed computation; the casts keep the erased construction out of the
     // implicit lift, which would nest the computation as data
-    private def rebuildFrom(from: Int, value: Any < Any, hs: Handlers, exits: Exits): Any < Any =
+    private def rebuildFrom(from: Int, value: Any < Any, hs: Handlers, exits: Span[Arrow[Any, Any, Any]]): Any < Any =
         @tailrec def wrap(i: Int, acc: Any < Any): Any < Any =
             if i < from then acc
             else

@@ -13,6 +13,10 @@ opaque type <[+A, -S] >: Kyo[A, S] = A | Kyo[A, S]
 
 object `<`:
 
+    // TODO let's move implicit evidences here to a new Implicits.scala file and extend in the < companion
+
+    // TODO double check we're not missing apis from the old <
+
     implicit inline def lift[A, S](v: A)(using inline flat: CanLift[A]): A < S =
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>

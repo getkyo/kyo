@@ -36,6 +36,7 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
+// TODO I do not think this provides the same functionality as the macro. Prove or port the macro. The issue with macros you mentioned was you getting confused, there's no limitation to have the can lift macro in the same module as you can see in kyo-kernel
 object CanLift:
 
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null

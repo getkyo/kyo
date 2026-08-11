@@ -1,5 +1,5 @@
 package kyo.kernel.internal
-
+// TODO I think the file is named KyoInternal in the old kernel? please keep the same organization as the old kernel where possible
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.*
@@ -37,6 +37,7 @@ object Kyo:
     // a suspension carrying a fallback: evaluation resolves it through a
     // matching handler like any suspension, and the miss path resumes with
     // the default instead of failing, which is how optional context works
+    // TODO no, this is not acceptable, we need to fully review
     private[kyo] trait Defaulted:
         self: Suspend[?, ?, ?, ?, ?, ?] =>
         def default: Any
@@ -51,7 +52,7 @@ object Kyo:
 
         private[kernel] def root: Suspend[I, O, E, X, ?, ?] = this
 
-        final override def toString =
+        final override def toString = // TODO let's make sure we have proper to string for other classes that represent computaitons as well
             s"Kyo(${tag.show}, Input($input), ${frame.position.show}, ${frame.snippetShort})"
 
         final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =

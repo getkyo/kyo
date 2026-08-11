@@ -41,6 +41,7 @@ object ArrowEffect:
                 case kyo: Kyo[O[V], S3] @unchecked =>
                     kyo.map(arrow)
                 case v =>
+                    // TODO I don't think we need to check the safepoint here? suspensions will unfold the stack naturally
                     val res  = Kyo.unnest(v)
                     val slot = Safepoint.get()
                     if !Safepoint.enter(slot) then
@@ -62,6 +63,8 @@ object ArrowEffect:
                 mapLoop(v, next2)
         end new
     end suspendWith
+
+    // TODO let's have versions of these methods like handleWith that takes the continuation that'll go in the palce of Arrow[A]. Using the *With suffix in kyo indicates the method takes a continuation after the operation
 
     def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
         f: [X] => (I[X], O[X] => A < (E & S)) => A < (E & S)
@@ -96,13 +99,15 @@ object ArrowEffect:
                 // strictly with no region node; the cast only shrinks the row
                 v.asInstanceOf[A < (S & S2)]
 
+    // TODO this shuld be named handlePartial
     def partial[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
         f: [X] => (I[X], O[X] => A < (E & S)) => Maybe[A < (E & S)]
     )(using _frame: Frame): A < (E & S) =
         @tailrec def partialLoop(v: A < (E & S)): A < (E & S) =
             v match
                 case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] if kyo.tag.erased <:< tag.erased =>
-                    val anchored = kyo.asInstanceOf[Kyo.Suspend[I, O, E, Any, A, E & S]]
+                    val anchored =
+                        kyo.asInstanceOf[Kyo.Suspend[I, O, E, Any, A, E & S]] // TODO in the ENTIRE MODULE, prefer to simply declare the exected types in the matching and use @unchecked instead of using casts
                     f[Any](anchored.input, o => anchored.cont(o)) match
                         case Maybe.Present(v2) => partialLoop(v2)
                         case Maybe.Absent      => v

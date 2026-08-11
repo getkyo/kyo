@@ -1,15 +1,24 @@
 package kyo.kernel.internal
 
-import kyo.Chunk
+import kyo.Span
 import kyo.Tag
-import kyo.kernel.*
 import scala.annotation.tailrec
 
-opaque type Handlers = Chunk[Handler[?, ?, ?, ?, ?]]
+// flat storage: the layer stack is tiny, read per operation, and point
+// updated per stateful operation, so Span's copy-per-write immutable array
+// fits it exactly
+opaque type Handlers = Span[Handler[?, ?, ?, ?, ?]]
+
+// resolves Span's element read outside object Handlers, where the sibling
+// extension names would shadow it; Span.apply cannot be called through the
+// companion because the factory overloads match first
+// TODO not ever use hacks like this. Use Span.apply(span)(i)
+private def read(span: Span[Handler[?, ?, ?, ?, ?]], i: Int): Handler[?, ?, ?, ?, ?] =
+    span(i)
 
 object Handlers:
 
-    val empty: Handlers = Chunk.empty
+    val empty: Handlers = Span.empty[Handler[?, ?, ?, ?, ?]]
 
     extension (self: Handlers)
 
@@ -17,31 +26,25 @@ object Handlers:
             self.append(handler)
 
         def indexOf[E](tag: Tag[E]): Int =
-            scan(self, tag)
+            @tailrec def loop(i: Int): Int =
+                if i < 0 then i
+                else if tag.erased <:< read(self, i).tag.erased then i
+                else loop(i - 1)
+            loop(Span.size(self) - 1)
+        end indexOf
 
         def apply(i: Int): Handler[?, ?, ?, ?, ?] =
-            (self: Chunk[Handler[?, ?, ?, ?, ?]])(i)
+            read(self, i)
 
         def take(n: Int): Handlers =
-            (self: Chunk[Handler[?, ?, ?, ?, ?]]).take(n)
+            Span.take(self)(n)
 
         def updated(i: Int, handler: Handler[?, ?, ?, ?, ?]): Handlers =
-            (self: Chunk[Handler[?, ?, ?, ?, ?]]).updated(i, handler)
+            Span.updated(self)(i, handler)
 
         def size: Int =
-            (self: Chunk[Handler[?, ?, ?, ?, ?]]).length
+            Span.size(self)
 
     end extension
-
-    // Chunk extends Seq, whose indexOf searches elements: inside this file the
-    // opaque is transparent, so an unqualified sibling call would resolve to
-    // the Seq member. The lookup routes through this helper instead.
-    private def scan[E](self: Chunk[Handler[?, ?, ?, ?, ?]], tag: Tag[E]): Int =
-        @tailrec def loop(i: Int): Int =
-            if i < 0 then i
-            else if tag.erased <:< self(i).tag.erased then i
-            else loop(i - 1)
-        loop(self.size - 1)
-    end scan
 
 end Handlers

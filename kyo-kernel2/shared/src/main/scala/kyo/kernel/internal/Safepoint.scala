@@ -8,6 +8,8 @@ import scala.annotation.tailrec
 
 class Safepoint
 
+// TODO do we have proper concurrency tests for this?
+// TODO can this be private[kernel]? do a sweep of what's public in the internal package and if we can reduce visbility to the kernel
 object Safepoint:
 
     opaque type Slot = Int

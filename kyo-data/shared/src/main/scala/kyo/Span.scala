@@ -965,6 +965,25 @@ object Span:
             r
         end append
 
+        /** Returns a new Span with the element at the specified index replaced.
+          *
+          * @param idx
+          *   the index of the element to replace
+          * @param x
+          *   the replacement element
+          * @return
+          *   a new Span with the element at idx replaced
+          * @throws IndexOutOfBoundsException
+          *   if the index is out of bounds
+          */
+        inline def updated(idx: Int, x: A)(using ClassTag[A]): Span[A] =
+            val size = self.length
+            val r    = new Array[A](size)
+            System.arraycopy(self, 0, r, 0, size)
+            r(idx) = x
+            r
+        end updated
+
         /** Alias for append.
           *
           * @param x
