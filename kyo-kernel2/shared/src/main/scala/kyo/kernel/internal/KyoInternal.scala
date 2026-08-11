@@ -1,4 +1,6 @@
 package kyo.kernel.internal
+
+import kyo.Arrow
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.*

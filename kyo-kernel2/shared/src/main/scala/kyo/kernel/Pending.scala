@@ -1,13 +1,19 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Frame
 import kyo.Maybe
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
+import scala.language.implicitConversions
 
-opaque type <[+A, -S] >: Kyo[A, S] = A | Kyo[A, S]
+opaque type <[+A, -S] = A | Kyo[A, S]
 
 object `<` extends Implicits:
+
+    // the representation stays sealed: nodes convert privately instead of
+    // publishing Kyo as a subtype of < through a lower bound
+    implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
 
     private val unitValue: Unit < Any = ()
 

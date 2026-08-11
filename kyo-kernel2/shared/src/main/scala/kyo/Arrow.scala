@@ -1,13 +1,11 @@
-package kyo.kernel.internal
+package kyo
 
-import kyo.Frame
 import kyo.kernel.*
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 
-// TODO this is meant as a user-facing API in the kyo.* package. Move there
 sealed abstract class Arrow[-A, +B, -S]:
     self =>
 
@@ -48,6 +46,11 @@ object Arrow:
         def head: Transform[A, X, S]
         def tail: Arrow[X, B, S]
         final def step = this
+
+        // renders only the first transform's frame: composed chains can be
+        // arbitrarily large and walking them from toString has broken tools
+        // that stringify values, like kyo-test
+        override def toString: String = head.toString
     end Step
 
     object Step:
@@ -70,12 +73,26 @@ object Arrow:
             apply(v, Arrow[B])
 
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
+
+        override def toString: String =
+            if this eq identity then "Arrow(identity)"
+            else s"Arrow(${frame.position.show}, ${frame.snippetShort})"
     end Transform
 
     final private[Arrow] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
         def apply(v: A) =
             this.step(v)
+
+        // same as Step: only the first transform's frame, never the chain
+        override def toString: String =
+            @tailrec def first(arrow: Arrow[?, ?, ?]): String =
+                arrow match
+                    case at: AndThen[?, ?, ?, ?] => first(at.a)
+                    case t: Transform[?, ?, ?]   => t.toString
+                    case s: Step[?, ?, ?]        => s.head.toString
+            first(a)
+        end toString
 
         def step =
             val buffer = scratch.get

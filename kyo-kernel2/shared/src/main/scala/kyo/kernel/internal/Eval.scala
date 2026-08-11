@@ -1,5 +1,6 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Chunk
 import kyo.Frame
 import kyo.kernel.*
