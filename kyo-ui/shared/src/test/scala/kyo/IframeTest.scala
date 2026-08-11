@@ -3,6 +3,9 @@ package kyo
 import kyo.Browser.*
 import kyo.UI.*
 
+// Non-blank iframe srcs here are fast-refused loopback URLs, not reachable external domains. An unreachable external
+// src stays pending while the harness page loads and blocks the window `load` event, which times out withUI's
+// navigation settle on slow-DNS CI (observed on Windows). Loopback port 1 refuses instantly, so the load event fires.
 class IframeTest extends UITest:
 
     "iframe renders as an iframe element" in {
@@ -13,8 +16,8 @@ class IframeTest extends UITest:
     }
 
     "iframe src attribute" in {
-        withUI(UI.div(UI.iframe("https://a.test/page").id("f"))) {
-            Browser.assertAttributeSatisfies(Selector.id("f"), "src", "ignore")(_.contains("a.test/page")).unit
+        withUI(UI.div(UI.iframe("http://127.0.0.1:1/page").id("f"))) {
+            Browser.assertAttributeSatisfies(Selector.id("f"), "src", "ignore")(_.contains("127.0.0.1:1/page")).unit
         }
     }
 
@@ -26,9 +29,9 @@ class IframeTest extends UITest:
 
     "iframe reactive src updates" in {
         val app: UI < Async =
-            for sig <- Signal.initRef("https://a.test/old")
+            for sig <- Signal.initRef("http://127.0.0.1:1/old")
             yield UI.div(
-                UI.button("Go").id("b").onClick(sig.set("https://a.test/new")),
+                UI.button("Go").id("b").onClick(sig.set("http://127.0.0.1:1/new")),
                 sig.map(s => UI.iframe(s).id("f"))
             )
         withUI(app) {

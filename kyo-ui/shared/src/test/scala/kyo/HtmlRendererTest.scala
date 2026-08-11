@@ -757,12 +757,14 @@ class HtmlRendererTest extends UITest:
     }
 
     "ImgSrc.Absolute renders full URL" in {
-        withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("https://a.test/logo.png").getOrThrow), "logo").id("i"))) {
+        // Fast-refused loopback URL, not a reachable external domain: an unreachable external img src stays pending
+        // while the harness page loads and blocks the window `load` event, timing out withUI's settle on slow-DNS CI.
+        withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("http://127.0.0.1:1/logo.png").getOrThrow), "logo").id("i"))) {
             Browser.assertAttributeSatisfies(
                 Selector.id("i"),
                 "src",
                 "ignore"
-            )(s => s.contains("a.test") && s.contains("logo.png")).unit
+            )(s => s.contains("127.0.0.1") && s.contains("logo.png")).unit
         }
     }
 
