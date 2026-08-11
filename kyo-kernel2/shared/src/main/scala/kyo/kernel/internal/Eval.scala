@@ -239,7 +239,6 @@ object Eval:
 
     // one arrow step over erased currency applying f to the settled value,
     // in the suspendWith shape: a pending input re-suspends the step via map
-    // and the budget defers deep chains
 
     // TODO isn't this <.map? let's avoid having this code if possible
     private def transform(f: Any => Any < Any): Arrow.Transform[Any, Any, Any] =
@@ -253,16 +252,12 @@ object Eval:
                 case kyo: Kyo[?, ?] =>
                     kyo.asInstanceOf[Kyo[Any, S3]].map(arrow).asInstanceOf[C < S3]
                 case v =>
+                    // no budget check: f either suspends, returning the node
+                    // flat, or settles into the chained arrows, whose strict
+                    // segments carry their own checks in map
                     val res  = Nested.unnest[Any](v)
-                    val slot = Safepoint.get()
-                    if !Safepoint.enter(slot) then
-                        new Kyo.Defer(v, arrow)
-                    else
-                        val step = next.step
-                        val out  = step.head(f(res).asInstanceOf[Any < S3], step.tail)
-                        Safepoint.exit(slot)
-                        out
-                    end if
+                    val step = next.step
+                    step.head(f(res).asInstanceOf[Any < S3], step.tail)
             end match
         end mapLoop
         new Arrow.Transform[Any, Any, Any]:

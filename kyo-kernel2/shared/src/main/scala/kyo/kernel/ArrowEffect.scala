@@ -41,17 +41,12 @@ object ArrowEffect:
                 case kyo: Kyo[O[V], S3] @unchecked =>
                     kyo.map(arrow)
                 case v =>
-                    // TODO I don't think we need to check the safepoint here? suspensions will unfold the stack naturally
+                    // no budget check: f either suspends, returning the node
+                    // flat, or settles into the chained arrows, whose strict
+                    // segments carry their own checks in map
                     val res  = Kyo.unnest(v)
-                    val slot = Safepoint.get()
-                    if !Safepoint.enter(slot) then
-                        new Kyo.Defer(v, arrow)
-                    else
-                        val step = next.step
-                        val out  = step.head(f(res), step.tail)
-                        Safepoint.exit(slot)
-                        out
-                    end if
+                    val step = next.step
+                    step.head(f(res), step.tail)
             end match
         end mapLoop
         new Arrow.Transform[O[V], B, E & S] with Kyo.Suspend[I, O, E, V, B, E & S]:
