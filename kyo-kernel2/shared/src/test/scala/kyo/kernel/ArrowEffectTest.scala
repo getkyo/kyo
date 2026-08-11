@@ -328,6 +328,50 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "handleWith" - {
+        "fuses the continuation into the region" in {
+            val v = ask.map(_ + 1)
+            val r = ArrowEffect.handleWith(Tag[Ask], v)([X] => (_, cont) => cont(41))(_ * 10)
+            assert(r.eval == 420)
+        }
+
+        "the continuation runs outside the scope" in {
+            val v     = ask.map(_ + 1)
+            val r     = ArrowEffect.handleWith(Tag[Ask], v)([X] => (_, cont) => cont(41))(a => ask.map(_ + a))
+            val outer = ArrowEffect.handle(Tag[Ask], r)([X] => (_, cont) => cont(1000))
+            assert(outer.eval == 1042)
+        }
+
+        "a settled input applies the continuation strictly" in {
+            var ran = false
+            val r = ArrowEffect.handleWith(Tag[Ask], box(42))([X] => (_, cont) => cont(0)) { a =>
+                ran = true
+                a + 1
+            }
+            assert(ran)
+            assert(r.eval == 43)
+        }
+    }
+
+    "handleLoopWith" - {
+        "fuses the continuation into the region" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val r = ArrowEffect.handleLoopWith(Tag[Ask], v)([X] => _ => Loop.continue(21))(_ + 1)
+            assert(r.eval == 43)
+        }
+
+        "stateful: the continuation sees the final answer" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val r = ArrowEffect.handleLoopWith(Tag[Ask], 10, v)([X] => (_, s) => Loop.continue(s + 1, s))(_ * 2)
+            assert(r.eval == 42)
+        }
+
+        "a settled input applies the continuation strictly" in {
+            val r = ArrowEffect.handleLoopWith(Tag[Ask], box(41))([X] => _ => Loop.continue(0))(_ + 1)
+            assert(r.eval == 42)
+        }
+    }
+
     "handlePartial" - {
         "answers operations while the clause allows" in {
             val v = ask.map(a => ask.map(b => a + b))

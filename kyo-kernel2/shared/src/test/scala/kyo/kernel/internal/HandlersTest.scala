@@ -13,10 +13,12 @@ class HandlersTest extends AnyFreeSpec:
     sealed trait Say    extends ArrowEffect[Const[String], Const[Unit]]
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any] =
-        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask], [X] => (_: Unit) => Loop.continue(value))
+        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            def apply[X](input: Unit) = Loop.continue(value)
 
     def loopSay: Handler.Loop[Const[String], Const[Unit], Say, Unit, Any] =
-        new Handler.Loop[Const[String], Const[Unit], Say, Unit, Any](Tag[Say], [X] => (_: String) => Loop.continue(()))
+        new Handler.Loop[Const[String], Const[Unit], Say, Unit, Any](Tag[Say]):
+            def apply[X](input: String) = Loop.continue(())
 
     "empty resolves nothing" in {
         assert(Handlers.empty.indexOf(Tag[Ask]) == -1)
@@ -56,7 +58,9 @@ class HandlersTest extends AnyFreeSpec:
     }
 
     "a supertype suspension tag does not resolve a subtype handler" in {
-        val h = new Handler.Loop[Const[Unit], Const[Int], AskSub, Int, Any](Tag[AskSub], [X] => (_: Unit) => Loop.continue(1))
+        val h =
+            new Handler.Loop[Const[Unit], Const[Int], AskSub, Int, Any](Tag[AskSub]):
+                def apply[X](input: Unit) = Loop.continue(1)
         assert(Handlers.empty.add(h).indexOf(Tag[Ask]) == -1)
     }
 

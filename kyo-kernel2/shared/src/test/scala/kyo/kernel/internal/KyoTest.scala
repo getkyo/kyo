@@ -17,7 +17,8 @@ class KyoTest extends AnyFreeSpec:
     type AskHandled = Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any]
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any] =
-        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask], [X] => (_: Unit) => Loop.continue(value))
+        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            def apply[X](input: Unit) = Loop.continue(value)
 
     def node(h: Handler[Const[Unit], Const[Int], Ask, Int, Any]): AskHandled =
         new Kyo.Handled(ask, h, Arrow[Int])
@@ -78,9 +79,10 @@ class KyoTest extends AnyFreeSpec:
             end match
         }
 
-        "eval answers a cont region through its clause" in {
+        "eval answers a cont region through its handler" in {
             val contAsk =
-                new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask], [X] => (_, cont) => cont(1))
+                new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+                    def apply[X](input: Unit, cont: Int => Int < Ask) = cont(1)
             val n = new Kyo.Handled(ask, contAsk, Arrow[Int])
             assert((n: Int < Any).eval == 1)
         }

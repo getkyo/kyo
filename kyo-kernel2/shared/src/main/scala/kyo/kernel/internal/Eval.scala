@@ -84,9 +84,8 @@ object Eval:
                                 else rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
                     else
                         hs(idx) match
-                            case h: Handler.Loop[?, ?, ?, ?, ?] =>
-                                val outcome =
-                                    h.asInstanceOf[Handler.Loop[i, o, Nothing, Any, Any]].clause[x](kyo.input) // TODO convert pattern match + cast to just the pattern match with the exepected type + @unchecked. Clean the entire module of this issue please.
+                            case h: Handler.Loop[[B] =>> Any, [B] =>> Any, Nothing, Any, Any] @unchecked =>
+                                val outcome = h[Any](kyo.input)
                                 (outcome: Any) match
                                     case pending: Kyo[?, ?] =>
                                         val hsAll = hs
@@ -132,9 +131,8 @@ object Eval:
                                                     Math.min(flatBelow, idx)
                                                 )
                                 end match
-                            case h0: Handler.LoopState[?, ?, ?, ?, ?, ?] =>
-                                val h       = h0.asInstanceOf[Handler.LoopState[i, o, Nothing, Any, Any, Any]]
-                                val outcome = h.clause[x](kyo.input, h.state)
+                            case h: Handler.LoopState[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                val outcome = h[Any](kyo.input, h.state)
                                 (outcome: Any) match
                                     case pending: Kyo[?, ?] =>
                                         val hsAll = hs
@@ -145,10 +143,7 @@ object Eval:
                                                 rebuildFrom(
                                                     idx,
                                                     walk(kCont, c._2.asInstanceOf[Any < Any]),
-                                                    hsAll.updated(
-                                                        idx,
-                                                        new Handler.LoopState[i, o, Nothing, Any, Any, Any](h.tag, c._1, h.clause)
-                                                    ),
+                                                    hsAll.updated(idx, h.withState(c._1)),
                                                     exAll
                                                 )
                                             case done =>
@@ -162,11 +157,7 @@ object Eval:
                                                 // false negative rebuilds an identical successor
                                                 val hs2 =
                                                     if c._1.asInstanceOf[AnyRef] eq h.state.asInstanceOf[AnyRef] then hs
-                                                    else
-                                                        hs.updated(
-                                                            idx,
-                                                            new Handler.LoopState[i, o, Nothing, Any, Any, Any](h.tag, c._1, h.clause)
-                                                        )
+                                                    else hs.updated(idx, h.withState(c._1))
                                                 (c._2: Any) match
                                                     case p: Kyo[?, ?] =>
                                                         val hsAll = hs2
@@ -198,7 +189,7 @@ object Eval:
                                                     Math.min(flatBelow, idx)
                                                 )
                                 end match
-                            case h: Handler.Cont[?, ?, ?, ?, ?] =>
+                            case h: Handler.Cont[[B] =>> Any, [B] =>> Any, Nothing, Any, Any] @unchecked =>
                                 val hsAll = hs
                                 val exAll = exits
                                 val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
@@ -209,7 +200,7 @@ object Eval:
                                 // answered by this handler and its exit applies on settle
                                 val cont: Any => Any < Any =
                                     o => rebuildFrom(idx + 1, walk(kCont, Nested.lift(o)), hsAll, exAll)
-                                val body = h.asInstanceOf[Handler.Cont[i, o, Nothing, Any, Any]].clause[x](kyo.input, cont)
+                                val body = h[Any](kyo.input, cont)
                                 loop(body.asInstanceOf[A < S], hs.take(idx + 1), exits.take(idx + 1), Math.min(flatBelow, idx + 1))
                     end if
                 case kyo: Kyo.Defer[?, ?, ?] =>
