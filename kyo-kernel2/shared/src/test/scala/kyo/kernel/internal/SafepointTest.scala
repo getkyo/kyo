@@ -5,27 +5,29 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class SafepointTest extends AnyFreeSpec:
 
+    private val Period = 512
+
     "stop wraps the slot and stopped consumes it once" in {
         val slot = Safepoint.get()
-        assert(!Safepoint.stopped(slot))
+        assert(!Safepoint.consumeStopped(slot))
         assert(Safepoint.stop(Thread.currentThread()))
-        assert(Safepoint.stopped(slot))
-        assert(!Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        assert(!Safepoint.consumeStopped(slot))
     }
 
     "a second stop while one is pending is idempotent" in {
         val slot = Safepoint.get()
         assert(Safepoint.stop(Thread.currentThread()))
         assert(Safepoint.stop(Thread.currentThread()))
-        assert(Safepoint.stopped(slot))
-        assert(!Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        assert(!Safepoint.consumeStopped(slot))
     }
 
     "get resolves the owning slot while a stop is pending" in {
         val slot = Safepoint.get()
         assert(Safepoint.stop(Thread.currentThread()))
         val slot2 = Safepoint.get()
-        assert(Safepoint.stopped(slot2))
+        assert(Safepoint.consumeStopped(slot2))
     }
 
     "stop misses a thread that never evaluated" in {
@@ -39,7 +41,7 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.exit(slot)
         var entered = 0
         while Safepoint.enter(slot) do entered += 1
-        assert(entered == Safepoint.Period)
+        assert(entered == Period)
         Safepoint.restore(slot, 0L)
         assert(Safepoint.enter(slot))
         Safepoint.exit(slot)

@@ -21,6 +21,13 @@ class EffectTest extends AnyFreeSpec:
     def testEffect2(s: String): Unit < TestEffect2 =
         ArrowEffect.suspend[Any](Tag[TestEffect2], s)
 
+    def box[A](v: A): A < Any = v
+
+    private val Period = 512
+
+    def burn(n: Int): Int < Any =
+        if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+
     "catching" - {
         "match" in {
             val effect = Effect.catching {
@@ -109,6 +116,40 @@ class EffectTest extends AnyFreeSpec:
                 [C] => (input, cont) => cont(input.toString)
             )
             assert(result.eval == "caught")
+        }
+
+        "catching catches past the budget rescue" in {
+            val effect = Effect.catching {
+                burn(Period * 2).map(_ => (throw new RuntimeException("Test exception")): Int)
+            } {
+                case _: RuntimeException => -1
+            }
+            assert(effect.eval == -1)
+        }
+
+        "catching catches past the budget inside a stateful region" in {
+            val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
+            val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, body)(
+                [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)
+            )
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            assert(effect.eval == "caught")
+        }
+
+        "catching does not reach into a boxed computation" in {
+            val fallback: String < TestEffect1 = "caught"
+            val boxed = Effect.catching {
+                box(testEffect1(1).map(s => (throw new RuntimeException("Test exception")): String))
+            } {
+                case _: RuntimeException => box(fallback)
+            }
+            val inner   = boxed.eval
+            val handled = ArrowEffect.handle(Tag[TestEffect1], inner)([C] => (input, cont) => cont(input.toString))
+            intercept[RuntimeException](handled.eval)
         }
 
         "catching guards a stateful region across a park" in {

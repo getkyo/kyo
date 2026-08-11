@@ -6,6 +6,8 @@ import scala.annotation.tailrec
 
 class PendingTest extends AnyFreeSpec:
 
+    private val Period = 512
+
     "a settled value lifts and evaluates" in {
         val v: Int < Any = 42
         assert(v.eval == 42)
@@ -78,7 +80,7 @@ class PendingTest extends AnyFreeSpec:
     "construction past the safepoint budget rescues instead of overflowing" in {
         def loop(n: Int): Int < Any =
             if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
-        val v = loop(Safepoint.Period * 4)
+        val v = loop(Period * 4)
         assert(v.eval == 0)
     }
 
@@ -87,7 +89,7 @@ class PendingTest extends AnyFreeSpec:
             if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
         @tailrec def tower(v: Int < Any, n: Int): Int < Any =
             if n == 0 then v else tower(v.map(_ + 1), n - 1)
-        val v = tower(loop(Safepoint.Period * 4), 1000000)
+        val v = tower(loop(Period * 4), 1000000)
         assert(v.eval == 1000000)
     }
 
@@ -101,9 +103,9 @@ class PendingTest extends AnyFreeSpec:
             catch
                 case _: IllegalStateException => ()
         val v =
-            loop(Safepoint.Period * 2).map { z =>
+            loop(Period * 2).map { z =>
                 var i = 0
-                while i < Safepoint.Period * 2 do
+                while i < Period * 2 do
                     leaky()
                     i += 1
                 z

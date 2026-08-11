@@ -24,6 +24,8 @@ class ArrowEffectTest extends AnyFreeSpec:
     // rejected by the lift discipline
     def box[A](v: A): A < Any = v
 
+    private val Period = 512
+
     "handle" - {
         "answers a single operation" in {
             val v = ask.map(_ + 1)
@@ -455,11 +457,19 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(0)).eval == 30506)
         }
 
+        "passes a boxed computation through intact" in {
+            val payload: Int < Say   = say("p").map(_ => 7)
+            val v: (Int < Say) < Ask = ask.map(_ => box(payload))
+            val r                    = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(0)))
+            val boxed                = ArrowEffect.handle(Tag[Ask], r)([X] => (_, cont) => cont(0)).eval
+            assert(ArrowEffect.handle(Tag[Say], boxed)([X] => (_, cont) => cont(())).eval == 7)
+        }
+
         "parks at a pending stop request without answering" in {
             var answered = 0
             def burn(n: Int): Int < Any =
                 if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
-            val v = burn(Safepoint.Period * 2).map(_ => ask)
+            val v = burn(Period * 2).map(_ => ask)
             assert(Safepoint.stop(Thread.currentThread()))
             val parked = ArrowEffect.handlePartial(Tag[Ask], v)(
                 [X] =>
@@ -479,6 +489,14 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
 
     "contracts" - {
+        "a clause raising a foreign effect is answered by the outer handler across the region" in {
+            val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
+            val sayHandled: Int < Ask =
+                ArrowEffect.handle(Tag[Say], v)([X] => (_, cont) => ask.map(extra => cont(()).map(_ + extra)))
+            val r = ArrowEffect.handle(Tag[Ask], sayHandled)([X] => (_, cont) => cont(10))
+            assert(r.eval == 30)
+        }
+
         "a continuation is a value: invoking it twice runs the rest twice" in {
             var runs = 0
             val v = ask.map { a =>
@@ -568,7 +586,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             if n == 0 then
                 ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41))
             else (0: Int < Any).map(_ => nest(n - 1))
-        assert(nest(Safepoint.Period).eval == 42)
+        assert(nest(Period).eval == 42)
     }
 
     "coverage" - {

@@ -67,10 +67,13 @@ object ArrowEffect:
                     new Handler.Cont[I, O, E, A, S]:
                         def tag                                              = _tag
                         def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
-                new Kyo.Handled[I, O, E, A, A, S, Any](v, handler, Arrow[A])
+                new Kyo.Handled[I, O, E, A, A, S, Any](
+                    v,
+                    handler,
+                    Arrow[A]
+                ) // TODO explore merging Handler.Cont with Kyo.Handled by making one of them a trait but make sure no perf regrssion
             case v =>
-                // settled: the effect cannot occur, so the value passes through
-                // strictly with no region node; the cast only shrinks the row
+                // TODO do we need Kyo.unnest here? why does handleWith use it? just check and report
                 v.asInstanceOf[A < S]
         end match
     end handle
@@ -81,8 +84,6 @@ object ArrowEffect:
     )(inline cont: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
         v match
             case kyo: Kyo[?, ?] =>
-                // one allocation: the object is the handler and the region's
-                // exit arrow
                 val handler =
                     new Arrow.Transform[A, B, S2] with Handler.Cont[I, O, E, A, S]:
                         self =>
@@ -97,10 +98,8 @@ object ArrowEffect:
                                     val res  = Kyo.unnest(v2)
                                     val step = next.step
                                     step.head(cont(res), step.tail)
-                new Kyo.Handled[I, O, E, A, B, S, S2](v, handler, handler)
+                new Kyo.Handled[I, O, E, A, B, S, S2](v, handler, handler) // TODO explore merging into the handler allocation as well
             case v =>
-                // settled: the effect cannot occur, so the continuation
-                // applies strictly with no region node
                 cont(Kyo.unnest(v))
         end match
     end handleWith
@@ -118,8 +117,7 @@ object ArrowEffect:
                         def apply[X](input: I[X]) = f(input)
                 new Kyo.Handled[I, O, E, A, A, S & S2, Any](v, handler, Arrow[A])
             case v =>
-                // settled: the effect cannot occur, so the value passes through
-                // strictly with no region node; the cast only shrinks the row
+                // TODO review nesting as well
                 v.asInstanceOf[A < (S & S2)]
         end match
     end handleLoop
@@ -185,8 +183,6 @@ object ArrowEffect:
         v match
             case kyo: Kyo[?, ?] =>
                 val state0 = state
-                // one allocation: the object is the handler and the region's
-                // exit arrow
                 val handler =
                     new Arrow.Transform[A, B, S3] with Handler.LoopState[I, O, E, A, S & S2, State]:
                         self =>
@@ -203,16 +199,10 @@ object ArrowEffect:
                                     step.head(cont(res), step.tail)
                 new Kyo.HandledState[I, O, E, A, B, S & S2, S3, State](v, handler, handler, state0)
             case v =>
-                // settled: the effect cannot occur, so the continuation
-                // applies strictly with no region node
                 cont(Kyo.unnest(v))
         end match
     end handleLoopWith
 
-    // the eager driver: answers operations of the tag while the clause
-    // returns a present continuation and parks at a refusal, a foreign
-    // suspension, a region node, a pending Safepoint.stop request, or
-    // budget exhaustion, returning the computation as it stands
     inline def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](inline _tag: Tag[E], v: A < (E & S))(
         inline f: [X] => (I[X], O[X] => A < (E & S)) => Maybe[A < (E & S)]
     )(using inline _frame: Frame): A < (E & S) =
@@ -224,7 +214,7 @@ object ArrowEffect:
                         case Maybe.Absent      => v
                 case kyo: Kyo.Defer[Any, A, E & S] @unchecked =>
                     val slot = Safepoint.get()
-                    if Safepoint.stopped(slot) || !Safepoint.enter(slot) then v
+                    if Safepoint.consumeStopped(slot) || !Safepoint.enter(slot) then v
                     else
                         val w =
                             val step = kyo.cont.step

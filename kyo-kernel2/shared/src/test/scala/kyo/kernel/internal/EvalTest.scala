@@ -6,6 +6,7 @@ import kyo.Tag
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
+import scala.collection.mutable.ListBuffer
 
 class EvalTest extends AnyFreeSpec:
 
@@ -24,7 +25,7 @@ class EvalTest extends AnyFreeSpec:
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
         ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.continue(value))
 
-    def recordSay[A, S](name: String, log: scala.collection.mutable.ListBuffer[String])(v: A < (Say & S)): A < S =
+    def recordSay[A, S](name: String, log: ListBuffer[String])(v: A < (Say & S)): A < S =
         ArrowEffect.handleLoop(Tag[Say], v)(
             [X] =>
                 _ =>
@@ -42,12 +43,14 @@ class EvalTest extends AnyFreeSpec:
 
     def box[A](v: A): A < Any = v
 
+    private val Period = 512
+
     "a scope answers through its handler" in {
         assert(answerAsk(41)(ask.map(_ + 1)).eval == 42)
     }
 
     "scope exits run innermost first" in {
-        val log   = scala.collection.mutable.ListBuffer[String]()
+        val log   = ListBuffer[String]()
         val inner = answerAsk(41)(ask.map(_ + 1)).map(_ * 10)
         val outer = recordSay("s", log)(inner).map(_ + 1000)
         assert(outer.eval == 1420)
@@ -59,7 +62,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "an effectful answer resolves through the outer scope" in {
-        val log = scala.collection.mutable.ListBuffer[String]()
+        val log = ListBuffer[String]()
         val askScope =
             ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([X] => _ => Loop.continue(say("c").map(_ => 41)))
         assert(recordSay("s", log)(askScope).eval == 42)
@@ -67,7 +70,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a clause runs outside its own scope" in {
-        val log                        = scala.collection.mutable.ListBuffer[String]()
+        val log                        = ListBuffer[String]()
         val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
         val sayInner                   = recordSay("inner", log)(program)
         val askScope =
@@ -95,7 +98,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a done climbs past an inner scope without running its remainder" in {
-        val log                        = scala.collection.mutable.ListBuffer[String]()
+        val log                        = ListBuffer[String]()
         var innerExit                  = false
         val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
         val mapped = recordSay("s", log)(program).map { v =>
@@ -124,7 +127,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "state updates survive an inner scope's exit" in {
-        val log                       = scala.collection.mutable.ListBuffer[String]()
+        val log                       = ListBuffer[String]()
         val inner: Int < (VarE & Say) = varOp(_ => 7).map(_ => say("x")).map(_ => 1)
         val innerScope                = recordSay("s", log)(inner)
         val program                   = innerScope.map(_ => varOp(identity))
@@ -151,7 +154,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a clause may suspend before producing its outcome" in {
-        val log = scala.collection.mutable.ListBuffer[String]()
+        val log = ListBuffer[String]()
         val askScope =
             ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([X] => _ => say("pre").map(_ => Loop.continue(41)))
         assert(recordSay("s", log)(askScope).eval == 42)
@@ -160,7 +163,7 @@ class EvalTest extends AnyFreeSpec:
 
     "a clause may suspend before producing a done" in {
         var reached = false
-        val log     = scala.collection.mutable.ListBuffer[String]()
+        val log     = ListBuffer[String]()
         val program: Int < Ask = ask.map { a =>
             reached = true
             a + 1
@@ -200,7 +203,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a clause does not see handlers inside its own scope" in {
-        val log                        = scala.collection.mutable.ListBuffer[String]()
+        val log                        = ListBuffer[String]()
         val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
         val sayInner                   = recordSay("inner", log)(program)
         val askScope =
@@ -230,9 +233,9 @@ class EvalTest extends AnyFreeSpec:
     "a stop request arriving mid-evaluation parks between defers" in {
         def burn(n: Int): Int < Any =
             if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
-        val v = burn(Safepoint.Period * 2).map { _ =>
+        val v = burn(Period * 2).map { _ =>
             assert(Safepoint.stop(Thread.currentThread()))
-            burn(Safepoint.Period * 4)
+            burn(Period * 4)
         }
         val out = Eval.partial(v)
         assert(out.evalNow.isEmpty)
@@ -303,7 +306,7 @@ class EvalTest extends AnyFreeSpec:
         val program: Int < VarE =
             varOp(_ + 7).map { _ =>
                 assert(Safepoint.stop(Thread.currentThread()))
-                burn(Safepoint.Period * 4).map(_ => varOp(_ + 1))
+                burn(Period * 4).map(_ => varOp(_ + 1))
             }
         val parked = Eval.partial(runVar(50)(program))
         assert(parked.evalNow.isEmpty)
@@ -319,7 +322,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a stateful clause that suspends before a done discards the inner scope" in {
-        val log     = scala.collection.mutable.ListBuffer[String]()
+        val log     = ListBuffer[String]()
         var reached = false
         val program: Int < (Ask & Say) = say("pre").map(_ => ask).map { a =>
             reached = true
@@ -364,7 +367,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a suspended clause's effectful answer re-raising the effect is answered by the successor" in {
-        val log = scala.collection.mutable.ListBuffer[String]()
+        val log = ListBuffer[String]()
         val r = ArrowEffect.handleLoop(Tag[Ask], 0, ask.map(_ + 1))(
             [X] =>
                 (_, phase) =>
@@ -379,7 +382,7 @@ class EvalTest extends AnyFreeSpec:
 
     "a done from an outer region discards multiple inner scopes" in {
         var reached = false
-        val log     = scala.collection.mutable.ListBuffer[String]()
+        val log     = ListBuffer[String]()
         val program: Int < (Ask & Say & VarE) = say("pre").map(_ => varOp(_ + 1)).map(_ => ask).map { a =>
             reached = true
             a

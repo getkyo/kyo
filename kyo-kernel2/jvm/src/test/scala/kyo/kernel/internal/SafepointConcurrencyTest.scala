@@ -1,14 +1,17 @@
 package kyo.kernel.internal
 
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.discard
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class SafepointConcurrencyTest extends AnyFreeSpec:
 
+    private val Period = 512
+
     def spinUntil(deadlineMs: Long = 10000)(condition: => Boolean): Boolean =
-        val deadline = java.lang.System.currentTimeMillis() + deadlineMs
-        while !condition && java.lang.System.currentTimeMillis() < deadline do Thread.onSpinWait()
+        val deadline = System.currentTimeMillis() + deadlineMs
+        while !condition && System.currentTimeMillis() < deadline do Thread.onSpinWait()
         condition
     end spinUntil
 
@@ -21,8 +24,8 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             val slot = Safepoint.get()
             ready = true
             while !stopDelivered do Thread.onSpinWait()
-            first = Safepoint.stopped(slot)
-            second = Safepoint.stopped(slot)
+            first = Safepoint.consumeStopped(slot)
+            second = Safepoint.consumeStopped(slot)
         )
         t.start()
         assert(spinUntil()(ready))
@@ -34,17 +37,17 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
     }
 
     "racing stop requests never lose the slot ownership" in {
-        val consumed          = new java.util.concurrent.atomic.AtomicInteger
-        val requests          = new java.util.concurrent.atomic.AtomicInteger
+        val consumed          = new AtomicInteger
+        val requests          = new AtomicInteger
         @volatile var ready   = false
         @volatile var running = true
         val target = new Thread(() =>
             val slot = Safepoint.get()
             ready = true
             while running do
-                if Safepoint.stopped(slot) then discard(consumed.incrementAndGet())
+                if Safepoint.consumeStopped(slot) then discard(consumed.incrementAndGet())
                 Thread.onSpinWait()
-            if Safepoint.stopped(slot) then discard(consumed.incrementAndGet())
+            if Safepoint.consumeStopped(slot) then discard(consumed.incrementAndGet())
         )
         target.start()
         assert(spinUntil()(ready))
@@ -64,9 +67,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         assert(requests.get > 0)
         assert(consumed.get > 0)
         assert(consumed.get <= requests.get)
-        // the entry survived the races: the dead thread is still the owner
-        // until compaction, so a probe still resolves it
-        assert(Safepoint.stop(target))
+        assert(!Safepoint.stop(target))
     }
 
     "an evaluation yields to a stop requested from another thread" in {
@@ -80,7 +81,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             ready = true
             var attempts = 0
             while !yielded && attempts < 100000 do
-                val out = Eval.partial(burn(Safepoint.Period * 16))
+                val out = Eval.partial(burn(Period * 16))
                 if out.evalNow.isEmpty then yielded = true
                 attempts += 1
             end while
@@ -88,24 +89,23 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         )
         target.start()
         assert(spinUntil()(ready))
-        val deadline = java.lang.System.currentTimeMillis() + 10000
-        while !done && java.lang.System.currentTimeMillis() < deadline do
+        val deadline = System.currentTimeMillis() + 10000
+        while !done && System.currentTimeMillis() < deadline do
             discard(Safepoint.stop(target))
             Thread.onSpinWait()
         target.join(10000)
         assert(yielded)
     }
 
-    "compaction reclaims the slot of a dead thread" in {
+    "a dead thread is not stoppable" in {
         val t = new Thread(() => discard(Safepoint.get()))
         t.start()
         t.join(10000)
-        Safepoint.compact()
         assert(!Safepoint.stop(t))
     }
 
     "threads claim stable slots under concurrent lookups" in {
-        val failures = new java.util.concurrent.atomic.AtomicInteger
+        val failures = new AtomicInteger
         val threads =
             (1 to 32).map { _ =>
                 new Thread(() =>
