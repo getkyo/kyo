@@ -25,15 +25,16 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(r.eval == 42)
         }
 
-        "eager: answering runs the continuation at the handle call" in {
+        "lazy: the handled computation is a value and answers at eval" in {
             var ran = false
             val v = ask.map { a =>
                 ran = true
                 a + 1
             }
             val r = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(41))
-            assert(ran)
+            assert(!ran)
             assert(r.eval == 42)
+            assert(ran)
         }
 
         "a long map tower on a pending suspension handles in bounded stack" in {
@@ -129,6 +130,125 @@ class ArrowEffectTest extends AnyFreeSpec:
             val parked = v.evalPartial(() => false)
             val r      = ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(41))
             assert(r.eval == 42)
+        }
+    }
+
+    "handleLoop" - {
+        "answers operations" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val r = ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.continue(21))
+            assert(r.eval == 42)
+        }
+
+        "done ends the computation at the operation" in {
+            var reached = false
+            val v = ask.map { a =>
+                reached = true
+                a + 1
+            }
+            val r = ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.done(-1))
+            assert(r.eval == -1)
+            assert(!reached)
+        }
+
+        "an effectful answer resolves through an outer handler" in {
+            val v: Int < Ask = ask.map(_ + 1)
+            val looped       = ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.continue(say("fetch").map(_ => 41)))
+            val r            = ArrowEffect.handle(Tag[Say], looped)([X] => (_, cont) => cont(()))
+            assert(r.eval == 42)
+        }
+
+        "a clause may suspend before producing its outcome" in {
+            var logged = 0
+            val looped = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
+                [X] =>
+                    _ =>
+                        say("pre").map { _ =>
+                            logged += 1
+                            Loop.continue(41)
+                    }
+            )
+            val r = ArrowEffect.handle(Tag[Say], looped)([X] => (_, cont) => cont(()))
+            assert(r.eval == 42)
+            assert(logged == 1)
+        }
+
+        "done climbs past an inner handler without running its remainder" in {
+            var innerExit = false
+            var reached   = false
+            val program: Int < (Ask & Say) = say("m").map(_ => ask).map { a =>
+                reached = true
+                a + 1
+            }
+            val sayHandled = ArrowEffect.handle(Tag[Say], program)([X] => (_, cont) => cont(())).map { v =>
+                innerExit = true
+                v
+            }
+            val r = ArrowEffect.handleLoop(Tag[Ask], sayHandled)([X] => _ => Loop.done(-1))
+            assert(r.eval == -1)
+            assert(!reached)
+            assert(!innerExit)
+        }
+
+        "the innermost handleLoop wins under nested same-tag handlers" in {
+            val inner = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([X] => _ => Loop.continue(1))
+            val outer = ArrowEffect.handleLoop(Tag[Ask], inner.asInstanceOf[Int < Ask])([X] => _ => Loop.continue(41))
+            assert(outer.eval == 2)
+        }
+
+        "threads state through operations" in {
+            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val r = ArrowEffect.handleLoop(Tag[Ask], 1, v)([X] => (_, state) => Loop.continue(state + 1, state))
+            assert(r.eval == 12)
+        }
+
+        "state composes with done" in {
+            def go(n: Int): Int < Ask =
+                if n == 0 then 0 else ask.map(_ => go(n - 1))
+            val r = ArrowEffect.handleLoop(Tag[Ask], 3, go(5))(
+                [X] => (_, remaining) => if remaining > 0 then Loop.continue(remaining - 1, 1) else Loop.done(-1)
+            )
+            assert(r.eval == -1)
+        }
+
+        "a stateful clause may suspend before producing its outcome" in {
+            var logged = 0
+            val v      = ask.map(a => ask.map(b => a * 10 + b))
+            val looped = ArrowEffect.handleLoop(Tag[Ask], 1, v)(
+                [X] =>
+                    (_, state) =>
+                        say("pre").map { _ =>
+                            logged += 1
+                            Loop.continue(state + 1, state)
+                    }
+            )
+            val r = ArrowEffect.handle(Tag[Say], looped)([X] => (_, cont) => cont(()))
+            assert(r.eval == 12)
+            assert(logged == 2)
+        }
+
+        "state survives an inner handler's exit" in {
+            val program: Int < (Ask & Say) = ask.map(a => say("x").map(_ => a))
+            val sayHandled                 = ArrowEffect.handle(Tag[Say], program)([X] => (_, cont) => cont(()))
+            val v                          = sayHandled.map(a => ask.map(b => a * 10 + b))
+            val r = ArrowEffect.handleLoop(Tag[Ask], 1, v.asInstanceOf[Int < Ask])(
+                [X] => (_, state) => Loop.continue(state + 1, state)
+            )
+            assert(r.eval == 12)
+        }
+
+        "deep sequential operations are stack safe" in {
+            def loop(n: Int): Int < Ask =
+                if n == 0 then 0 else ask.map(_ => loop(n - 1))
+            val r = ArrowEffect.handleLoop(Tag[Ask], loop(100000))([X] => _ => Loop.continue(1))
+            assert(r.eval == 0)
+        }
+
+        "handles nested per recursion step in bounded stack" in {
+            def go(n: Int): Int < Any =
+                if n == 0 then 0
+                else ArrowEffect.handleLoop(Tag[Ask], ask.map(_ => go(n - 1)))([X] => _ => Loop.continue(1))
+            assert(go(100000).eval == 0)
         }
     }
 
@@ -372,11 +492,12 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(!outerReached)
         }
 
-        "a throw in the handler surfaces at the handle call" in {
+        "a throw in the handler surfaces at eval" in {
+            val r = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
+                [X] => (_, _) => (throw new RuntimeException("boom")): Int < Ask
+            )
             intercept[RuntimeException] {
-                val _ = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
-                    [X] => (_, _) => (throw new RuntimeException("boom")): Int < Ask
-                )
+                val _ = r.eval
             }
         }
 
@@ -515,7 +636,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             intercept[RuntimeException] {
                 val _ = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))(
                     [X] => (_, _) => (throw new RuntimeException("boom")): Int < Ask
-                )
+                ).eval
             }
             val r = ArrowEffect.handle(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41))
             assert(r.eval == 42)

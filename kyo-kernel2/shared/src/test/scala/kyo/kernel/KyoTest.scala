@@ -78,12 +78,12 @@ class KyoTest extends AnyFreeSpec:
             end match
         }
 
-        "eval cannot handle a cont region yet" in {
+        "eval answers a cont region through its clause" in {
             val contAsk =
                 new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
                     def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Int < (Ask & Any) = cont(1)
             val n = new Kyo.Handled(ask, contAsk, Arrow[Int])
-            intercept[IllegalStateException]((n: Int < Any).eval)
+            assert((n: Int < Any).eval == 1)
         }
     }
 

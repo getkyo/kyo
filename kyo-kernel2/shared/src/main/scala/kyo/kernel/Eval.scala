@@ -146,8 +146,19 @@ private[kernel] object Eval:
                                                     exits.take(idx)
                                                 )
                                 end match
-                            case other =>
-                                throw new IllegalStateException(s"cannot handle: $other")
+                            case h: Handler.Cont[?, ?, ?, ?, ?] =>
+                                val hsAll = hs
+                                val exAll = exits
+                                val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
+                                // the continuation rebuilds the crossed layers around the
+                                // resumption; each call builds a fresh value, so capture
+                                // is multi-shot by construction. The clause runs under
+                                // its own layer and the outer ones, so its re-raises are
+                                // answered by this handler and its exit applies on settle
+                                val cont: Any => Any < Any =
+                                    o => rebuildFrom(idx + 1, walk(kCont, Nested.lift(o)), hsAll, exAll)
+                                val body = h.asInstanceOf[Handler.Cont[i, o, Nothing, Any, Any]][x](kyo.input, cont)
+                                loop(body.asInstanceOf[A < S], hs.take(idx + 1), exits.take(idx + 1))
                     end if
                 case kyo: Kyo.Defer[?, ?, ?] =>
                     Safepoint.restore(slot, 0L)

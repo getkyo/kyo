@@ -61,63 +61,44 @@ object ArrowEffect:
     def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](tag: Tag[E], v: A < (E & S))(
         f: [X] => (I[X], O[X] => A < (E & S)) => A < (E & S)
     )(using _frame: Frame): A < S =
-        def rotatedSuspend[C, S2](kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?], next: Arrow[A, C, S2]): C < (S & S2) =
-            val k = kyo.asInstanceOf[Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, A, E & S]]
-            new Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, C, S & S2]:
-                override val root = k.root
-                def tag           = root.tag
-                def input         = root.input
-                def frame         = root.frame
-                val cont = new Arrow.Transform[Any, C, S & S2]:
-                    def frame = _frame
-                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
-                        val step = k.cont.step
-                        handleLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
-                            .asInstanceOf[D < (S & S2 & S3)]
-                    end apply
-            end new
-        end rotatedSuspend
+        new Kyo.Handled[I, O, E, A, A, S](
+            v,
+            new Handler.Cont[I, O, E, A, S](tag):
+                def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
+            ,
+            Arrow[A]
+        )
 
-        def rotatedDefer[C, S2](kyo: Kyo.Defer[?, ?, ?], next: Arrow[A, C, S2]): C < (S & S2) =
-            val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
-            new Kyo.Defer[Any, C, S & S2](
-                defer.value.asInstanceOf[Any < (S & S2)],
-                new Arrow.Transform[Any, C, S & S2]:
-                    def frame = _frame
-                    def apply[D, S3](v: Any < S3, next2: Arrow[C, D, S3]) =
-                        val step = defer.cont.step
-                        handleLoop(step.head(v.asInstanceOf[Any < (E & S)], step.tail), next.chain(next2))
-                            .asInstanceOf[D < (S & S2 & S3)]
-                    end apply
-            )
-        end rotatedDefer
+    @nowarn("msg=anonymous")
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](tag: Tag[E], v: A < (E & S))(
+        f: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), A] < S2
+    )(using _frame: Frame): A < (S & S2) =
+        new Kyo.Handled[I, O, E, A, A, S & S2](
+            v,
+            new Handler.Loop[I, O, E, A, S & S2](tag):
+                def apply[X](input: I[X]) = f(input)
+            ,
+            Arrow[A]
+        )
 
-        @tailrec def handleLoop[C, S2](v: A < (E & S), next: Arrow[A, C, S2]): C < (S & S2) =
-            v match
-                case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] if kyo.tag.erased <:< tag.erased =>
-                    val anchored = kyo.asInstanceOf[Kyo.Suspend[I, O, E, Any, A, E & S]]
-                    handleLoop(f[Any](anchored.input, o => anchored.cont(o)), next)
-                case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                    rotatedSuspend(kyo, next)
-                case kyo: Kyo.Defer[?, ?, ?] =>
-                    val slot = Safepoint.get()
-                    if !Safepoint.enter(slot) then
-                        rotatedDefer(kyo, next)
-                    else
-                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
-                        val w =
-                            val step = defer.cont.step
-                            step.head(defer.value, step.tail)
-                        Safepoint.exit(slot)
-                        handleLoop(w, next)
-                    end if
-                case v =>
-                    val step = next.step
-                    step.head(v.asInstanceOf[A < S2], step.tail).asInstanceOf[C < (S & S2)]
-        end handleLoop
-
-        handleLoop(v, Arrow[A])
-    end handle
+    @nowarn("msg=anonymous")
+    def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](tag: Tag[E], state: State, v: A < (E & S))(
+        f: [X] => (I[X], State) => Loop.Outcome2[State, O[X] < (E & S & S2), A] < S2
+    )(using _frame: Frame): A < (S & S2) =
+        final class StateHandler(state: State) extends Handler.LoopState[I, O, E, A, S & S2](tag):
+            def apply[X](input: I[X]) =
+                f(input, state).map { out =>
+                    (out: Any) match
+                        case c: Loop.Continue2[State, O[X] < (E & S & S2)] @unchecked =>
+                            Loop.continue(new StateHandler(c._1), c._2)
+                        case done =>
+                            // the unions share one encoding; only the successor slot's
+                            // static type changes
+                            done.asInstanceOf[Loop.Outcome2[Handler.LoopState[I, O, E, A, S & S2], O[X] < (E & S & S2), A] < (S & S2)]
+                }
+        end StateHandler
+        new Kyo.Handled[I, O, E, A, A, S & S2](v, new StateHandler(state), Arrow[A])
+    end handleLoop
 
     @nowarn("msg=anonymous")
     def resume[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](tag: Tag[E], v: A < (E & S))(
