@@ -49,6 +49,10 @@ class PendingTest extends AnyFreeSpec:
         assertTypeError("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")
     }
 
+    "a kyo module does not lift into a computation" in {
+        assertTypeError("val x: ArrowEffect.type < Any = ArrowEffect")
+    }
+
     "deep map chains evaluate" in {
         def chain(n: Int, v: Int < Any): Int < Any =
             if n == 0 then v else chain(n - 1, v.map(_ + 1))

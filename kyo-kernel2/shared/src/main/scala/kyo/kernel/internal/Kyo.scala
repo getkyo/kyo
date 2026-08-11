@@ -7,9 +7,6 @@ import scala.annotation.static
 
 sealed trait Boxed
 
-sealed trait Kyo[+A, -S] extends Boxed:
-    def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
-
 final case class Nested[+A](value: A) extends Boxed
 
 object Nested:
@@ -25,6 +22,9 @@ object Nested:
             case _            => v.asInstanceOf[A]
 end Nested
 
+sealed trait Kyo[+A, -S] extends Boxed:
+    def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2)
+
 object Kyo:
 
     private[kernel] inline def unnest[A, S](inline v: A < S): A =
@@ -37,7 +37,7 @@ object Kyo:
     // a suspension carrying a fallback: evaluation resolves it through a
     // matching handler like any suspension, and the miss path resumes with
     // the default instead of failing, which is how optional context works
-    // TODO no, this is not acceptable, we need to fully review
+    // TODO no, this is not acceptable, we need to fully review. Let's discuss
     private[kyo] trait Defaulted:
         self: Suspend[?, ?, ?, ?, ?, ?] =>
         def default: Any

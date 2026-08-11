@@ -3,12 +3,15 @@ package kyo.kernel.internal
 import kyo.kernel.*
 import kyo.kernel.<
 import scala.annotation.implicitNotFound
+import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S).
+/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S), or A is not a module from
+  * kyo (like Abort.type).
   *
-  * This constraint helps prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all
-  * generic contexts.
+  * This constraint helps:
+  *   - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
+  *   - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
   *
   * @tparam A
   *   The type to check for nested effects
@@ -36,10 +39,41 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
-// TODO I do not think this provides the same functionality as the macro. Prove or port the macro. The issue with macros you mentioned was you getting confused, there's no limitation to have the can lift macro in the same module as you can see in kyo-kernel
+object CanLiftMacro:
+
+    inline def checkSingleton[A]: CanLift[A] = ${ checkImpl[A] }
+
+    private[internal] def checkImpl[A: Type](using Quotes): Expr[CanLift[A]] =
+        import quotes.reflect.*
+        val tpe = TypeRepr.of[A]
+        val sym = tpe.typeSymbol
+
+        if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
+            report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
+
+        if tpe <:< TypeRepr.of[Any < Nothing] then
+            report.errorAndAbort(s"Type '${tpe.show}' may contain a nested effect computation.", Position.ofMacroExpansion)
+
+        '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
+    end checkImpl
+
+end CanLiftMacro
+
 object CanLift:
 
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
+
+    // case objects are products, so data constructors like Absent lift
+    // without touching the macro and never suspend units of this module
+    inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
+
+    // the remaining singleton types are module objects and rare non-case
+    // singletons; they resolve through the macro, which rejects lifting kyo
+    // module objects and nested computations and passes everything else.
+    // Keeping the macro on this narrow path means ordinary lifts never
+    // expand a macro, so units of this module do not suspend compilation
+    // waiting for the macro classes
+    inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
     inline given CanLift[Nothing] = CanLift.unsafe.bypass
 

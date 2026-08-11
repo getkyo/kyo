@@ -2,69 +2,14 @@ package kyo.kernel
 
 import kyo.Frame
 import kyo.Maybe
-import kyo.Render
 import kyo.kernel.internal.*
-import kyo.kernel.internal.CanLift
 import scala.annotation.nowarn
-import scala.annotation.tailrec
-import scala.language.implicitConversions
 
 opaque type <[+A, -S] >: Kyo[A, S] = A | Kyo[A, S]
 
-object `<`:
-
-    // TODO let's move implicit evidences here to a new Implicits.scala file and extend in the < companion
-
-    // TODO double check we're not missing apis from the old <
-
-    implicit inline def lift[A, S](v: A)(using inline flat: CanLift[A]): A < S =
-        inline scala.compiletime.erasedValue[A] match
-            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
-                v.asInstanceOf[A < S]
-            case _ =>
-                Nested.lift(v)
-
-    implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
-
-    implicit inline def liftUnit[S](inline v: Unit): Unit < S = v.asInstanceOf[Unit < S]
+object `<` extends Implicits:
 
     private val unitValue: Unit < Any = ()
-
-    /** Converts a pure single-argument function to an effectful computation. */
-    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
-        using inline flat: CanLift[B]
-    ): A1 => B < Any =
-        a1 => lift(f(a1))
-
-    /** Converts a pure two-argument function to an effectful computation. */
-    implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2) => B < Any =
-        (a1, a2) => lift(f(a1, a2))
-
-    /** Converts a pure three-argument function to an effectful computation. */
-    implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3) => B < Any =
-        (a1, a2, a3) => lift(f(a1, a2, a3))
-
-    /** Converts a pure four-argument function to an effectful computation. */
-    implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4) => B < Any =
-        (a1, a2, a3, a4) => lift(f(a1, a2, a3, a4))
-
-    /** Converts a pure five-argument function to an effectful computation. */
-    implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B](inline f: (A1, A2, A3, A4, A5) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5) => B < Any =
-        (a1, a2, a3, a4, a5) => lift(f(a1, a2, a3, a4, a5))
-
-    /** Converts a pure six-argument function to an effectful computation. */
-    implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B](inline f: (A1, A2, A3, A4, A5, A6) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5, A6) => B < Any =
-        (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
 
     extension [A, S](self: A < S)
 
@@ -98,8 +43,8 @@ object `<`:
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(f)
 
-        inline def andThen[B, S2](inline next: => B < S2)(using inline frame: Frame): B < (S & S2) =
-            map(_ => next)
+        inline def andThen[B, S2](inline f: => B < S2)(using inline frame: Frame): B < (S & S2) =
+            map(_ => f)
 
         inline def unit(using inline frame: Frame): Unit < S =
             map(_ => `<`.unitValue)
@@ -114,7 +59,7 @@ object `<`:
                     Kyo.unnest(v.asInstanceOf[A < Any])
         end eval
 
-        inline def evalNow: Maybe[A] =
+        private[kyo] inline def evalNow: Maybe[A] =
             self match
                 case kyo: Kyo[?, ?] => Maybe.Absent
                 case v              => Maybe(Kyo.unnest(v.asInstanceOf[A < Any]))
@@ -246,11 +191,5 @@ object `<`:
     // typed in this file so the inline expansion of map keeps the opaque view
     // of the returned computation
     private def flattenFn[A, S]: (A < S) => A < S = v => v
-
-    given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        def asString(value: APendingS): String = value match
-            case sus: Kyo[?, ?] => sus.toString
-            case a              => s"Kyo(${ra.asString(Nested.unnest[A](a))})"
-    end given
 
 end `<`

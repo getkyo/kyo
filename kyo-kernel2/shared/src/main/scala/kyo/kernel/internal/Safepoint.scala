@@ -16,7 +16,8 @@ object Safepoint:
 
     inline def Period = 512
 
-    private inline def Slots = 1024
+    private inline def Slots =
+        1024 // TODO what is an arbitrarily large number we could use that is still reasonable. I worry about hitting the limit or threads contending in cpu cache slots
 
     // a slot entry is the owning thread, or the thread wrapped in Stop when a
     // stop has been requested and not yet consumed; the wrapper rides the
@@ -36,14 +37,15 @@ object Safepoint:
     @static def get(): Slot =
         val thread = Thread.currentThread()
         val idx    = java.lang.System.identityHashCode(thread) & (Slots - 1)
-        if owners.get(idx) eq thread then idx
+        if owners.get(idx) eq thread then idx // TODO do we need to consider Stop here? ot is that better for the slow path in find?
         else find(thread, idx)
     end get
 
     @static def find(thread: Thread, from: Int): Slot =
         @tailrec def loop(i: Int, probes: Int, compacted: Boolean): Int =
             if probes == Slots then
-                if compacted then throw new IllegalStateException("Safepoint slots exhausted")
+                if compacted then
+                    throw new IllegalStateException("Safepoint slots exhausted") // TODO this is very drastic, report to me when it can happen, if we can provide better degradation (disabling stack safety could even be a better option than fail), and consider if we should have a retry budget
                 else
                     compact()
                     loop(from, 0, true)
@@ -70,6 +72,7 @@ object Safepoint:
         loop(0)
     end compact
 
+    // TODO a double check: the old kernel had a sanity check to ensure the safepoint was actually owned by the current thread. The reason was the implicit propagation eventually leaking a safepoint storing it in some computation but I think this new kernel doens't have this fragility?
     @static def enter(slot: Slot): Boolean =
         val d = depths(slot)
         if d < Period then
@@ -96,7 +99,8 @@ object Safepoint:
     // slow path, so the running evaluation pays nothing on its hot path and
     // detection latency is bounded by one budget period
     @static def stop(thread: Thread): Boolean =
-        val idx  = java.lang.System.identityHashCode(thread) & (Slots - 1)
+        val idx =
+            java.lang.System.identityHashCode(thread) & (Slots - 1) // TODO I think identity hashcode is more expensive than thread id?
         val slot = probe(thread, idx)
         @tailrec def attempt(): Boolean =
             owners.get(slot) match
