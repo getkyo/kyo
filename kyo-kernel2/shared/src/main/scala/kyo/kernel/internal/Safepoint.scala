@@ -31,8 +31,8 @@ object Safepoint:
 
     @static private def threadOf(entry: AnyRef): Thread =
         entry match
-            case stop: Stop => stop.thread
-            case thread     => thread.asInstanceOf[Thread]
+            case stop: Stop     => stop.thread
+            case thread: Thread => thread
 
     @static def get(): Slot =
         val thread = Thread.currentThread()

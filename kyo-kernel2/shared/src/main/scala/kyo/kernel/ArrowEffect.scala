@@ -235,20 +235,17 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (E & S) =
         @tailrec def partialLoop(v: A < (E & S)): A < (E & S) =
             v match
-                case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] if kyo.tag.erased <:< tag.erased =>
-                    val anchored =
-                        kyo.asInstanceOf[Kyo.Suspend[I, O, E, Any, A, E & S]] // TODO in the ENTIRE MODULE, prefer to simply declare the exected types in the matching and use @unchecked instead of using casts
-                    f[Any](anchored.input, o => anchored.cont(o)) match
+                case kyo: Kyo.Suspend[I, O, E, Any, A, E & S] @unchecked if kyo.tag <:< tag =>
+                    f[Any](kyo.input, o => kyo.cont(o)) match
                         case Maybe.Present(v2) => partialLoop(v2)
                         case Maybe.Absent      => v
-                case kyo: Kyo.Defer[?, ?, ?] =>
+                case kyo: Kyo.Defer[Any, A, E & S] @unchecked =>
                     val slot = Safepoint.get()
                     if Safepoint.stopped(slot) || !Safepoint.enter(slot) then v
                     else
-                        val defer = kyo.asInstanceOf[Kyo.Defer[Any, A, E & S]]
                         val w =
-                            val step = defer.cont.step
-                            step.head(defer.value, step.tail)
+                            val step = kyo.cont.step
+                            step.head(kyo.value, step.tail)
                         Safepoint.exit(slot)
                         partialLoop(w)
                     end if

@@ -40,16 +40,15 @@ object Effect:
                         catch
                             case ex: Throwable if NonFatal(ex) => f(ex)
                     (w: @unchecked) match
-                        case kyo: Kyo[?, ?] =>
-                            kyo.asInstanceOf[Kyo[B, S]].map(next.asInstanceOf[Arrow[B, C, S]]).asInstanceOf[C < S3]
+                        case kyo: Kyo[B, S] @unchecked =>
+                            kyo.map(next.asInstanceOf[Arrow[B, C, S]]).asInstanceOf[C < S3]
                         case w =>
                             val step = next.step
                             step.head(w.asInstanceOf[B < S3], step.tail)
                     end match
                 end apply
         (v: @unchecked) match
-            case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
-                val k = kyo.asInstanceOf[Kyo.Suspend[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S]]
+            case k: Kyo.Suspend[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S] @unchecked =>
                 new Kyo.Suspend[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S]:
                     override val root = k.root
                     def tag           = root.tag
@@ -57,11 +56,10 @@ object Effect:
                     def frame         = root.frame
                     val cont          = guard(k.cont)
                 end new
-            case kyo: Kyo.Defer[?, ?, ?] =>
-                val defer = kyo.asInstanceOf[Kyo.Defer[Any, B, S]]
-                new Kyo.Defer[Any, B, S](defer.value, guard(defer.cont))
-            case kyo: Kyo.Handled[?, ?, ?, ?, ?, ?] =>
-                kyo.asInstanceOf[Kyo[B, S]].map(guard(Arrow[B]))
+            case kyo: Kyo.Defer[Any, B, S] @unchecked =>
+                new Kyo.Defer[Any, B, S](kyo.value, guard(kyo.cont))
+            case kyo: Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S] @unchecked =>
+                kyo.map(guard(Arrow[B]))
             case v =>
                 v
         end match

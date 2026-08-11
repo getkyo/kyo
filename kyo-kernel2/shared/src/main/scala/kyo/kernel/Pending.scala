@@ -68,7 +68,7 @@ object `<` extends Implicits:
         private[kyo] inline def evalNow: Maybe[A] =
             self match
                 case kyo: Kyo[?, ?] => Maybe.Absent
-                case v              => Maybe(Kyo.unnest(v.asInstanceOf[A < Any]))
+                case v              => Maybe(Kyo.unnest(v))
 
         /** Applies a transformation to this computation, allowing a fluent
           * style for effect handling: `computation.handle(Abort.run, Env.run(1))`

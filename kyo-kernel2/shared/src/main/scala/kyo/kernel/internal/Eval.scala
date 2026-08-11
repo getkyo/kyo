@@ -54,17 +54,21 @@ object Eval:
     // stack, and answering allocates nothing. Layer entry and settle are
     // constant-time chain nodes; a suspension whose handler scan walks deep
     // flattens the storage once and later reads stay flat.
+    // the loop's currency is Any < Nothing, the top of every pending type by
+    // variance, so values, walked continuations, and rebuilt regions flow
+    // without casts; the erased boundaries left are the existential
+    // continuation arrows and the one result cast at the end
     private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, partial: Boolean): A < S =
-        @tailrec def loop(v: A < S, hs: Handlers, exits: Chunk[Arrow[Any, Any, Any]], flatBelow: Int): A < S =
+        @tailrec def loop(v: Any < Nothing, hs: Handlers, exits: Chunk[Arrow[Any, Any, Any]], flatBelow: Int): Any < Nothing =
             (v: @unchecked) match
-                case kyo: Kyo.Handled[?, ?, ?, ?, ?, ?] @unchecked =>
+                case kyo: Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     loop(
-                        kyo.value.asInstanceOf[A < S],
+                        kyo.value,
                         hs.add(kyo.handler),
-                        exits.append(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]),
+                        exits.append(kyo.cont),
                         flatBelow
                     )
-                case kyo: Kyo.Suspend[i, o, e, x, ?, ?] @unchecked =>
+                case kyo: Kyo.Suspend[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     val idx = hs.indexOf(kyo.tag)
                     // a scan that walked deep over chain-y storage flattens it and
                     // re-dispatches; layers below flatBelow already read as a flat
@@ -75,59 +79,53 @@ object Eval:
                     else if idx < 0 then
                         kyo.root match
                             case d: Kyo.Defaulted =>
-                                loop(
-                                    walk(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]], Nested.lift(d.default)).asInstanceOf[A < S],
-                                    hs,
-                                    exits,
-                                    flatBelow
-                                )
+                                loop(walk(kyo.cont, Nested.lift(d.default)), hs, exits, flatBelow)
                             case _ =>
                                 if !partial then throw new IllegalStateException(s"unhandled suspension: $kyo")
-                                else rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
+                                else rebuildFrom(0, v, hs, exits)
                     else
                         hs(idx) match
                             case h: Handler.Loop[[B] =>> Any, [B] =>> Any, Nothing, Any, Any] @unchecked =>
                                 val outcome = h[Any](kyo.input)
                                 (outcome: Any) match
-                                    case pending: Kyo[?, ?] =>
+                                    case pending: Kyo[Any, Any] @unchecked =>
                                         val hsAll = hs
                                         val exAll = exits
-                                        val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                        val chained = pending.asInstanceOf[Any < Any].map {
-                                            case c: Loop.Continue[?] =>
-                                                rebuildFrom(idx, walk(kCont, c._1.asInstanceOf[Any < Any]), hsAll, exAll)
+                                        val kCont = kyo.cont
+                                        val chained = (pending: Any < Any).map {
+                                            case c: Loop.Continue[Any < Nothing] @unchecked =>
+                                                rebuildFrom(idx, walk(kCont, c._1), hsAll, exAll)
                                             case done =>
                                                 walk(exAll(idx), Nested.lift(done))
                                         }(using Frame.internal)
-                                        loop(chained.asInstanceOf[A < S], hs.take(idx), exits.take(idx), Math.min(flatBelow, idx))
+                                        loop(chained, hs.take(idx), exits.take(idx), Math.min(flatBelow, idx))
                                     case outcome =>
                                         Nested.unnest[Any](outcome) match
-                                            case c: Loop.Continue[?] =>
+                                            case c: Loop.Continue[Any < Nothing] @unchecked =>
                                                 (c._1: Any) match
-                                                    case p: Kyo[?, ?] =>
+                                                    case p: Kyo[Any, Any] @unchecked =>
                                                         val hsAll = hs
                                                         val exAll = exits
-                                                        val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                                        val chained = p.asInstanceOf[Any < Any].map { a =>
+                                                        val kCont = kyo.cont
+                                                        val chained = (p: Any < Any).map { a =>
                                                             rebuildFrom(idx + 1, walk(kCont, Nested.lift(a)), hsAll, exAll)
                                                         }(using Frame.internal)
                                                         loop(
-                                                            chained.asInstanceOf[A < S],
+                                                            chained,
                                                             hs.take(idx + 1),
                                                             exits.take(idx + 1),
                                                             Math.min(flatBelow, idx + 1)
                                                         )
                                                     case answer =>
-                                                        val step = kyo.cont.step
                                                         loop(
-                                                            step.head(answer.asInstanceOf[o[x] < Any], step.tail).asInstanceOf[A < S],
+                                                            walk(kyo.cont, answer.asInstanceOf[Any < Nothing]),
                                                             hs,
                                                             exits,
                                                             flatBelow
                                                         )
                                             case done =>
                                                 loop(
-                                                    walk(exits(idx), Nested.lift(done)).asInstanceOf[A < S],
+                                                    walk(exits(idx), Nested.lift(done)),
                                                     hs.take(idx),
                                                     exits.take(idx),
                                                     Math.min(flatBelow, idx)
@@ -136,48 +134,47 @@ object Eval:
                             case h: Handler.LoopState[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                                 val outcome = h[Any](kyo.input, h.state)
                                 (outcome: Any) match
-                                    case pending: Kyo[?, ?] =>
+                                    case pending: Kyo[Any, Any] @unchecked =>
                                         val hsAll = hs
                                         val exAll = exits
-                                        val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                        val chained = pending.asInstanceOf[Any < Any].map {
-                                            case c: Loop.Continue2[?, ?] =>
+                                        val kCont = kyo.cont
+                                        val chained = (pending: Any < Any).map {
+                                            case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
                                                 rebuildFrom(
                                                     idx,
-                                                    walk(kCont, c._2.asInstanceOf[Any < Any]),
+                                                    walk(kCont, c._2),
                                                     hsAll.updated(idx, h.withState(c._1)),
                                                     exAll
                                                 )
                                             case done =>
                                                 walk(exAll(idx), Nested.lift(done))
                                         }(using Frame.internal)
-                                        loop(chained.asInstanceOf[A < S], hs.take(idx), exits.take(idx), Math.min(flatBelow, idx))
+                                        loop(chained, hs.take(idx), exits.take(idx), Math.min(flatBelow, idx))
                                     case outcome =>
                                         Nested.unnest[Any](outcome) match
-                                            case c: Loop.Continue2[?, ?] =>
+                                            case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
                                                 // the reference check is only an optimization: a
                                                 // false negative rebuilds an identical successor
                                                 val hs2 =
                                                     if c._1.asInstanceOf[AnyRef] eq h.state.asInstanceOf[AnyRef] then hs
                                                     else hs.updated(idx, h.withState(c._1))
                                                 (c._2: Any) match
-                                                    case p: Kyo[?, ?] =>
+                                                    case p: Kyo[Any, Any] @unchecked =>
                                                         val hsAll = hs2
                                                         val exAll = exits
-                                                        val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                                        val chained = p.asInstanceOf[Any < Any].map { a =>
+                                                        val kCont = kyo.cont
+                                                        val chained = (p: Any < Any).map { a =>
                                                             rebuildFrom(idx + 1, walk(kCont, Nested.lift(a)), hsAll, exAll)
                                                         }(using Frame.internal)
                                                         loop(
-                                                            chained.asInstanceOf[A < S],
+                                                            chained,
                                                             hs2.take(idx + 1),
                                                             exits.take(idx + 1),
                                                             Math.min(flatBelow, idx + 1)
                                                         )
                                                     case answer =>
-                                                        val step = kyo.cont.step
                                                         loop(
-                                                            step.head(answer.asInstanceOf[o[x] < Any], step.tail).asInstanceOf[A < S],
+                                                            walk(kyo.cont, answer.asInstanceOf[Any < Nothing]),
                                                             hs2,
                                                             exits,
                                                             Math.min(flatBelow, idx)
@@ -185,7 +182,7 @@ object Eval:
                                                 end match
                                             case done =>
                                                 loop(
-                                                    walk(exits(idx), Nested.lift(done)).asInstanceOf[A < S],
+                                                    walk(exits(idx), Nested.lift(done)),
                                                     hs.take(idx),
                                                     exits.take(idx),
                                                     Math.min(flatBelow, idx)
@@ -194,39 +191,38 @@ object Eval:
                             case h: Handler.Cont[[B] =>> Any, [B] =>> Any, Nothing, Any, Any] @unchecked =>
                                 val hsAll = hs
                                 val exAll = exits
-                                val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
+                                val kCont = kyo.cont
                                 // the continuation rebuilds the crossed layers around the
                                 // resumption; each call builds a fresh value, so capture
                                 // is multi-shot by construction. The clause runs under
                                 // its own layer and the outer ones, so its re-raises are
                                 // answered by this handler and its exit applies on settle
-                                val cont: Any => Any < Any =
+                                val cont: Any => Any < Nothing =
                                     o => rebuildFrom(idx + 1, walk(kCont, Nested.lift(o)), hsAll, exAll)
                                 val body = h[Any](kyo.input, cont)
-                                loop(body.asInstanceOf[A < S], hs.take(idx + 1), exits.take(idx + 1), Math.min(flatBelow, idx + 1))
+                                loop(body, hs.take(idx + 1), exits.take(idx + 1), Math.min(flatBelow, idx + 1))
                     end if
-                case kyo: Kyo.Defer[?, ?, ?] =>
+                case kyo: Kyo.Defer[Any, Any, Any] @unchecked =>
                     if partial && Safepoint.stopped(slot) then
-                        rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
+                        rebuildFrom(0, v, hs, exits)
                     else
                         Safepoint.restore(slot, 0L)
-                        val step = kyo.cont.step
-                        loop(step.head(kyo.value, step.tail).asInstanceOf[A < S], hs, exits, flatBelow)
+                        loop(walk(kyo.cont, kyo.value), hs, exits, flatBelow)
                 case v =>
                     val n = hs.size
                     if n == 0 then v
                     else
                         loop(
-                            walk(exits(n - 1), v.asInstanceOf[Any < Any]).asInstanceOf[A < S],
+                            walk(exits(n - 1), v),
                             hs.take(n - 1),
                             exits.take(n - 1),
                             Math.min(flatBelow, n - 1)
                         )
                     end if
-        loop(v0, Handlers.empty, Chunk.empty, 0)
+        loop(v0, Handlers.empty, Chunk.empty, 0).asInstanceOf[A < S]
     end evalLoop
 
-    private def walk(cont: Arrow[Any, Any, Any], v: Any < Any): Any < Any =
+    private def walk(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
         val step = cont.step
         step.head(v, step.tail)
 
@@ -239,21 +235,19 @@ object Eval:
     // evaluation yielding a residual. The loop wraps the value back into one
     // Handled region node per layer, innermost first, so evaluating the
     // result re-enters the same layers with the same exits: a residual is
-    // ordinary data and resumes by evaluation alone. The casts keep the
-    // erased construction out of the implicit lift, which would nest the
-    // computation as data
-    private def rebuildFrom(from: Int, value: Any < Any, hs0: Handlers, exits0: Chunk[Arrow[Any, Any, Any]]): Any < Any =
+    // ordinary data and resumes by evaluation alone
+    private def rebuildFrom(from: Int, value: Any < Nothing, hs0: Handlers, exits0: Chunk[Arrow[Any, Any, Any]]): Any < Nothing =
         // reads every layer once, so chain-y storage flattens first; a no-op
         // when the storage is already flat
         val hs    = hs0.compact
         val exits = exits0.toIndexed
-        @tailrec def wrap(i: Int, acc: Any < Any): Any < Any =
+        @tailrec def wrap(i: Int, acc: Any < Nothing): Any < Nothing =
             if i < from then acc
             else
                 wrap(
                     i - 1,
                     new Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any](
-                        acc.asInstanceOf[Any < Nothing],
+                        acc,
                         hs(i).asInstanceOf[Handler[[B] =>> Any, [B] =>> Any, Nothing, Any, Any]],
                         exits(i)
                     )
