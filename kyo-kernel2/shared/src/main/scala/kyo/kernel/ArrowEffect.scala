@@ -6,7 +6,7 @@ import kyo.Tag
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
-abstract class ArrowEffect[I[_], O[_]]
+abstract class ArrowEffect[I[_], O[_]] extends Effect
 
 object ArrowEffect:
 

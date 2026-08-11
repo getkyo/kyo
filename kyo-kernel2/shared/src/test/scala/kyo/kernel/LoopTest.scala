@@ -8,10 +8,9 @@ class LoopTest extends AnyFreeSpec:
     given Frame = Frame.internal
 
     // produces the value behind a deferred step so the loop's pending arm is
-    // exercised; internal node construction is test scaffolding until the
-    // kernel exposes a public defer
+    // exercised
     def defer[A, S](v: => A < S): A < S =
-        (new Kyo.Defer((), Arrow[Unit]): Unit < Any).map(_ => v)
+        Effect.defer(v)
 
     "apply" - {
         "with a single iteration" in {
