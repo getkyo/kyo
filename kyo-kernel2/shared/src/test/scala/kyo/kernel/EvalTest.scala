@@ -248,9 +248,30 @@ class EvalTest extends AnyFreeSpec:
         assert(paused.eval == 0)
     }
 
-    "Eval.partial does not evaluate scopes" in {
+    "Eval.partial evaluates scopes" in {
         val r = answerAsk(41)(ask.map(_ + 1))
-        assert(Eval.partial(r, () => false).asInstanceOf[AnyRef] eq r.asInstanceOf[AnyRef])
+        assert(Eval.partial(r, () => false).evalNow == Maybe(42))
+    }
+
+    "Eval.partial parks at an unhandled suspension with a resumable residual" in {
+        val program: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
+        val r                          = answerAsk(41)(program)
+        val residual                   = Eval.partial(r.asInstanceOf[Int < Any], () => false)
+        assert(residual.evalNow.isEmpty)
+        val finished = ArrowEffect.handle(Tag[Say], residual.asInstanceOf[Int < Say])([X] => (_, cont) => cont(()))
+        assert(finished.eval == 42)
+    }
+
+    "a Safepoint.stop request parks the evaluation with a resumable residual" in {
+        def burn(n: Int): Int < Any =
+            if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+        val slot = Safepoint.get()
+        assert(Safepoint.stop(Thread.currentThread()))
+        val residual = Eval.partial(burn(Safepoint.Period * 4), () => false)
+        assert(residual.evalNow.isEmpty)
+        assert(residual.eval == 0)
+        val second = Eval.partial(burn(Safepoint.Period * 4), () => false)
+        assert(second.evalNow == Maybe(0))
     }
 
     "a settled computation passes through a handler strictly" in {

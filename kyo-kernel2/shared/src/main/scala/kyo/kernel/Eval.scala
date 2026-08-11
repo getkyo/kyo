@@ -11,27 +11,24 @@ private[kyo] object Eval:
     def apply[A, S](v: A < S): A < S =
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
-        val res   = evalLoop(v, slot)
+        val res   = evalLoop(v, slot, null)
         Safepoint.restore(slot, saved)
         res
     end apply
 
+    // the scheduler entry: evaluates like apply but yields instead of
+    // throwing or spinning. It returns the standing computation reified with
+    // its remaining layers when the stop check answers true, when a
+    // Safepoint.stop request is pending on this thread's slot, or when a
+    // suspension has no handler; the result resumes by evaluating it again
     def partial[A, S](v: A < S, stop: () => Boolean): A < S =
-        val slot  = Safepoint.get()
-        val saved = Safepoint.save(slot)
-        @tailrec def loop(v: A < S): A < S =
-            if stop() then v
-            else
-                (v: @unchecked) match
-                    case kyo: Kyo.Defer[?, ?, ?] =>
-                        Safepoint.restore(slot, 0L)
-                        val step = kyo.cont.step
-                        loop(step.head(kyo.value, step.tail).asInstanceOf[A < S])
-                    case v =>
-                        v
-        val res = loop(v)
-        Safepoint.restore(slot, saved)
-        res
+        if stop() then v
+        else
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
+            val res   = evalLoop(v, slot, stop)
+            Safepoint.restore(slot, saved)
+            res
     end partial
 
     // One flat loop carries the value with its region layers, a layer being a
@@ -42,7 +39,7 @@ private[kyo] object Eval:
     // the layers outside its own, with the crossed layers rebuilt around the
     // resumption. Nothing recurses, so scope depth never reaches the Java
     // stack, and answering allocates nothing.
-    private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot): A < S =
+    private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, stop: () => Boolean): A < S =
         @tailrec def loop(v: A < S, hs: Handlers, exits: Exits): A < S =
             (v: @unchecked) match
                 case kyo: Kyo.Handled[?, ?, ?, ?, ?, ?] @unchecked =>
@@ -53,7 +50,9 @@ private[kyo] object Eval:
                     )
                 case kyo: Kyo.Suspend[i, o, e, x, ?, ?] @unchecked =>
                     val idx = hs.indexOf(kyo.tag)
-                    if idx < 0 then throw new IllegalStateException(s"unhandled suspension: $kyo")
+                    if idx < 0 then
+                        if stop == null then throw new IllegalStateException(s"unhandled suspension: $kyo")
+                        else rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
                     else
                         hs(idx) match
                             case h: Handler.Loop[?, ?, ?, ?, ?] =>
@@ -170,9 +169,12 @@ private[kyo] object Eval:
                                 loop(body.asInstanceOf[A < S], hs.take(idx + 1), exits.take(idx + 1))
                     end if
                 case kyo: Kyo.Defer[?, ?, ?] =>
-                    Safepoint.restore(slot, 0L)
-                    val step = kyo.cont.step
-                    loop(step.head(kyo.value, step.tail).asInstanceOf[A < S], hs, exits)
+                    if (stop != null) && (Safepoint.stopped(slot) || stop()) then
+                        rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
+                    else
+                        Safepoint.restore(slot, 0L)
+                        val step = kyo.cont.step
+                        loop(step.head(kyo.value, step.tail).asInstanceOf[A < S], hs, exits)
                 case v =>
                     val n = hs.size
                     if n == 0 then v
