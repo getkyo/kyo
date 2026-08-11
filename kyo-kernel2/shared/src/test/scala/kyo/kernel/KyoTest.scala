@@ -15,11 +15,10 @@ class KyoTest extends AnyFreeSpec:
 
     type AskHandled = Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any]
 
-    def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
-        new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
-            def apply[X](input: Unit) = Loop.continue(value)
+    def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any] =
+        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask], [X] => (_: Unit) => Loop.continue(value))
 
-    def node(h: Handler[Const[Unit], Const[Int], Ask]): AskHandled =
+    def node(h: Handler[Const[Unit], Const[Int], Ask, Int, Any]): AskHandled =
         new Kyo.Handled(ask, h, Arrow[Int])
 
     def sameRef(a: Any, b: Any): Boolean =
@@ -80,8 +79,7 @@ class KyoTest extends AnyFreeSpec:
 
         "eval answers a cont region through its clause" in {
             val contAsk =
-                new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
-                    def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Int < (Ask & Any) = cont(1)
+                new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask], [X] => (_, cont) => cont(1))
             val n = new Kyo.Handled(ask, contAsk, Arrow[Int])
             assert((n: Int < Any).eval == 1)
         }

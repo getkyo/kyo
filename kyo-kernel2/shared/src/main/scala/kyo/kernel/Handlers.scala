@@ -4,7 +4,7 @@ import kyo.Chunk
 import kyo.Tag
 import scala.annotation.tailrec
 
-opaque type Handlers = Chunk[Handler[?, ?, ?]]
+opaque type Handlers = Chunk[Handler[?, ?, ?, ?, ?]]
 
 object Handlers:
 
@@ -12,30 +12,30 @@ object Handlers:
 
     extension (self: Handlers)
 
-        def add(handler: Handler[?, ?, ?]): Handlers =
+        def add(handler: Handler[?, ?, ?, ?, ?]): Handlers =
             self.append(handler)
 
         def indexOf[E](tag: Tag[E]): Int =
             scan(self, tag)
 
-        def apply(i: Int): Handler[?, ?, ?] =
-            (self: Chunk[Handler[?, ?, ?]])(i)
+        def apply(i: Int): Handler[?, ?, ?, ?, ?] =
+            (self: Chunk[Handler[?, ?, ?, ?, ?]])(i)
 
         def take(n: Int): Handlers =
-            (self: Chunk[Handler[?, ?, ?]]).take(n)
+            (self: Chunk[Handler[?, ?, ?, ?, ?]]).take(n)
 
-        def updated(i: Int, handler: Handler[?, ?, ?]): Handlers =
-            (self: Chunk[Handler[?, ?, ?]]).updated(i, handler)
+        def updated(i: Int, handler: Handler[?, ?, ?, ?, ?]): Handlers =
+            (self: Chunk[Handler[?, ?, ?, ?, ?]]).updated(i, handler)
 
         def size: Int =
-            (self: Chunk[Handler[?, ?, ?]]).length
+            (self: Chunk[Handler[?, ?, ?, ?, ?]]).length
 
     end extension
 
     // Chunk extends Seq, whose indexOf searches elements: inside this file the
     // opaque is transparent, so an unqualified sibling call would resolve to
     // the Seq member. The lookup routes through this helper instead.
-    private def scan[E](self: Chunk[Handler[?, ?, ?]], tag: Tag[E]): Int =
+    private def scan[E](self: Chunk[Handler[?, ?, ?, ?, ?]], tag: Tag[E]): Int =
         @tailrec def loop(i: Int): Int =
             if i < 0 then i
             else if tag.erased <:< self(i).tag.erased then i

@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import kyo.Frame
+import kyo.Maybe
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -61,9 +62,10 @@ object `<`:
                     Kyo.unnest(v.asInstanceOf[A < Any])
         end eval
 
-        // TODO Let's remove the extension method and keep Eval.partial private[kyo], the only use will be IOTask
-        inline def evalPartial(stop: () => Boolean): A < S =
-            Eval.partial(self, stop)
+        inline def evalNow: Maybe[A] =
+            self match
+                case kyo: Kyo[?, ?] => Maybe.Absent
+                case v              => Maybe(Kyo.unnest(v.asInstanceOf[A < Any]))
 
     end extension
 end `<`

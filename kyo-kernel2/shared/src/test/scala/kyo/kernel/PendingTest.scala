@@ -90,17 +90,4 @@ class PendingTest extends AnyFreeSpec:
         assert(v.eval == 1)
     }
 
-    "evalPartial pauses at the stop check and the remainder resumes" in {
-        def loop(n: Int): Int < Any =
-            if n == 0 then 0 else (n: Int < Any).map(_ => loop(n - 1))
-        var calls = 0
-        val stop = () =>
-            calls += 1
-            calls > 1
-        val v      = loop(Safepoint.Period * 4)
-        val paused = v.evalPartial(stop)
-        assert(calls >= 2)
-        assert(paused.isInstanceOf[Kyo[?, ?]])
-        assert(paused.eval == 0)
-    }
 end PendingTest

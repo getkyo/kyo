@@ -295,27 +295,27 @@ class KernelBench:
         ArrowEffect.handle(Tag[Ask], loop(0): Int < Ask)([X] => (_, cont) => cont(1)).eval
     end idleHandlerAddsNothing
 
-    /** Context provision: resume answers every operation in place. Expect suspensionBaseline numbers;
-      * the answer closure handle builds does not survive escape analysis, so the two match.
+    /** Context provision: an answering handler resolves every operation in place. Expect
+      * suspensionBaseline numbers plus the outcome box per answer.
       */
     @Benchmark
-    def resumeAnswersInPlace: Int =
+    def handleLoopAnswersInPlace: Int =
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        ArrowEffect.resume(Tag[Ask], loop(0))([X] => _ => 1).eval
-    end resumeAnswersInPlace
+        ArrowEffect.handleLoop(Tag[Ask], loop(0))([X] => _ => Loop.continue(1)).eval
+    end handleLoopAnswersInPlace
 
-    /** State threading: loop carries state through every answer. Expect suspensionBaseline plus a tuple
-      * per operation.
+    /** State threading: the handler advances state through every answer. Expect
+      * handleLoopAnswersInPlace plus a successor handler per state change.
       */
     @Benchmark
-    def statefulAnswersPayOneTuple: Int =
+    def statefulAnswersPaySuccessor: Int =
         def loop0(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop0(i + a))
-        ArrowEffect.loop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => (state + 1, cont(1))).eval._2
-    end statefulAnswersPayOneTuple
+        ArrowEffect.handleLoop(Tag[Ask], 0, loop0(0))([X] => (_, state) => Loop.continue(state + 1, 1)).eval
+    end statefulAnswersPaySuccessor
 
     /** Issue 531's shape: a for comprehension leaves a trailing map after each recursive effect
       * step, so the pending chain grows by one transform per level and re-attaches on every

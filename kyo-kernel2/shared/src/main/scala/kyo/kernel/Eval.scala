@@ -4,7 +4,7 @@ import kyo.Chunk
 import kyo.Frame
 import scala.annotation.tailrec
 
-private[kernel] object Eval:
+private[kyo] object Eval:
 
     private type Exits = Chunk[Arrow[Any, Any, Any]]
 
@@ -57,7 +57,7 @@ private[kernel] object Eval:
                     else
                         hs(idx) match
                             case h: Handler.Loop[?, ?, ?, ?, ?] =>
-                                val outcome = h.asInstanceOf[Handler.Loop[i, o, Nothing, Any, Any]][x](kyo.input)
+                                val outcome = h.asInstanceOf[Handler.Loop[i, o, Nothing, Any, Any]].clause[x](kyo.input)
                                 (outcome: Any) match
                                     case pending: Kyo[?, ?] =>
                                         val hsAll = hs
@@ -96,8 +96,9 @@ private[kernel] object Eval:
                                                     exits.take(idx)
                                                 )
                                 end match
-                            case h: Handler.LoopState[?, ?, ?, ?, ?] =>
-                                val outcome = h.asInstanceOf[Handler.LoopState[i, o, Nothing, Any, Any]][x](kyo.input)
+                            case h0: Handler.LoopState[?, ?, ?, ?, ?, ?] =>
+                                val h       = h0.asInstanceOf[Handler.LoopState[i, o, Nothing, Any, Any, Any]]
+                                val outcome = h.clause[x](kyo.input, h.state)
                                 (outcome: Any) match
                                     case pending: Kyo[?, ?] =>
                                         val hsAll = hs
@@ -108,7 +109,10 @@ private[kernel] object Eval:
                                                 rebuildFrom(
                                                     idx,
                                                     walk(kCont, c._2.asInstanceOf[Any < Any]),
-                                                    hsAll.updated(idx, c._1.asInstanceOf[Handler[?, ?, ?]]),
+                                                    hsAll.updated(
+                                                        idx,
+                                                        new Handler.LoopState[i, o, Nothing, Any, Any, Any](h.tag, c._1, h.clause)
+                                                    ),
                                                     exAll
                                                 )
                                             case done =>
@@ -118,10 +122,15 @@ private[kernel] object Eval:
                                     case outcome =>
                                         Nested.unnest[Any](outcome) match
                                             case c: Loop.Continue2[?, ?] =>
+                                                // the reference check is only an optimization: a
+                                                // false negative rebuilds an identical successor
                                                 val hs2 =
-                                                    c._1.asInstanceOf[Handler[?, ?, ?]] match
-                                                        case next if next eq h => hs
-                                                        case next              => hs.updated(idx, next)
+                                                    if c._1.asInstanceOf[AnyRef] eq h.state.asInstanceOf[AnyRef] then hs
+                                                    else
+                                                        hs.updated(
+                                                            idx,
+                                                            new Handler.LoopState[i, o, Nothing, Any, Any, Any](h.tag, c._1, h.clause)
+                                                        )
                                                 (c._2: Any) match
                                                     case p: Kyo[?, ?] =>
                                                         val hsAll = hs2
@@ -157,7 +166,7 @@ private[kernel] object Eval:
                                 // answered by this handler and its exit applies on settle
                                 val cont: Any => Any < Any =
                                     o => rebuildFrom(idx + 1, walk(kCont, Nested.lift(o)), hsAll, exAll)
-                                val body = h.asInstanceOf[Handler.Cont[i, o, Nothing, Any, Any]][x](kyo.input, cont)
+                                val body = h.asInstanceOf[Handler.Cont[i, o, Nothing, Any, Any]].clause[x](kyo.input, cont)
                                 loop(body.asInstanceOf[A < S], hs.take(idx + 1), exits.take(idx + 1))
                     end if
                 case kyo: Kyo.Defer[?, ?, ?] =>
@@ -219,7 +228,7 @@ private[kernel] object Eval:
                     i - 1,
                     new Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any](
                         acc.asInstanceOf[Any < Nothing],
-                        hs(i).asInstanceOf[Handler[[B] =>> Any, [B] =>> Any, Nothing]],
+                        hs(i).asInstanceOf[Handler[[B] =>> Any, [B] =>> Any, Nothing, Any, Any]],
                         exits(i)
                     )
                 )

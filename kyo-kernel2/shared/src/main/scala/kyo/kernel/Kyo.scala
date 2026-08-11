@@ -63,7 +63,7 @@ object Kyo:
 
     final class Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
         val value: A < (E & S),
-        val handler: Handler[I, O, E],
+        val handler: Handler[I, O, E, A, S],
         val cont: Arrow[A, B, S]
     ) extends Kyo[B, S]:
         def map[C, S2](f: Arrow[B, C, S2]) =
