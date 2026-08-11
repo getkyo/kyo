@@ -351,6 +351,7 @@ lazy val kyoJVM: Project = project
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
         `kyo-compiler`.jvm,
+        `kyo-workers`.jvm,
         `kyo-schema`.jvm,
         `kyo-schema-json`.jvm,
         `kyo-schema-protobuf`.jvm,
@@ -462,6 +463,7 @@ lazy val kyoJS = project
         `kyo-website`.js,
         `kyo-website-bundle`.js,
         `kyo-pod`.js,
+        `kyo-workers`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
         `kyo-compat-zio`.js,
@@ -531,6 +533,7 @@ lazy val kyoNative = project
         `kyo-markdown`.native,
         `kyo-i18n`.native,
         `kyo-pod`.native,
+        `kyo-workers`.native,
         `kyo-compat-future`.native,
         `kyo-compat-kyo`.native,
         `kyo-compat-zio`.native,
@@ -594,6 +597,7 @@ lazy val kyoWasm = project
         `kyo-mcp`.wasm,
         `kyo-lsp`.wasm,
         `kyo-pod`.wasm,
+        `kyo-workers`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
         `kyo-ui`.wasm,
@@ -2228,6 +2232,21 @@ lazy val `kyo-aeron` =
                 }
             }).value
         )
+
+lazy val `kyo-workers` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-workers"))
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-aeron`, `kyo-schema`, `kyo-pod`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            fork := true
+        )
+        .jvmSettings(mimaCheck(false))
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
+        .nativeSettings(`native-settings`)
+        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-compiler` =
     crossProject(JVMPlatform)
