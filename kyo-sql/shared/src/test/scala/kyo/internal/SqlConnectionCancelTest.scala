@@ -859,6 +859,12 @@ class SqlConnectionCancelTest extends kyo.Test:
                                                         entered.await
                                                             .andThen(gate.release)
                                                             .andThen(fiber.interrupt)
+                                                            // Wait for the lease fiber to finish unwinding so its exit
+                                                            // finalizer has run. untilCancelsSettled gates the statement
+                                                            // path's detached reclaim; the stream path closes inline via
+                                                            // decideExit/orphan and has no reclaim to wait on, so without
+                                                            // this the loop and closeAll can race a still-unwinding lease.
+                                                            .andThen(fiber.getResult)
                                                             .andThen(untilCancelsSettled(pool))
                                                             .andThen(Loop.continue(i + 1))
                                                     }
