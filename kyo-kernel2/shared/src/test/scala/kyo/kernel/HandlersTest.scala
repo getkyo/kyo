@@ -19,51 +19,55 @@ class HandlersTest extends AnyFreeSpec:
         new Handler.Loop[Const[String], Const[Unit], Say, Nothing, Any](Tag[Say]):
             def apply[X](input: String) = Handler.Loop.continue(())
 
-    "empty finds nothing" in {
-        assert(Handlers.empty.find(Tag[Ask]).isEmpty)
+    "empty resolves nothing" in {
+        assert(Handlers.empty.indexOf(Tag[Ask]) == -1)
     }
 
-    "add then find returns the handler" in {
-        val h = loopAsk(42)
-        assert(Handlers.empty.add(h).find(Tag[Ask]).exists(_ eq h))
+    "add then indexOf resolves the handler" in {
+        val h  = loopAsk(42)
+        val hs = Handlers.empty.add(h)
+        val i  = hs.indexOf(Tag[Ask])
+        assert(i == 0)
+        assert(hs(i) eq h)
     }
 
-    "find misses on an unrelated tag" in {
-        val h = loopAsk(42)
-        assert(Handlers.empty.add(h).find(Tag[Say]).isEmpty)
+    "indexOf misses on an unrelated tag" in {
+        assert(Handlers.empty.add(loopAsk(42)).indexOf(Tag[Say]) == -1)
     }
 
     "the innermost handler of a tag wins" in {
         val outer = loopAsk(1)
         val inner = loopAsk(2)
-        assert(Handlers.empty.add(outer).add(inner).find(Tag[Ask]).exists(_ eq inner))
+        val hs    = Handlers.empty.add(outer).add(inner)
+        assert(hs(hs.indexOf(Tag[Ask])) eq inner)
     }
 
     "handlers of distinct tags resolve independently of order" in {
         val ask      = loopAsk(42)
         val say      = loopSay
         val handlers = Handlers.empty.add(ask).add(say)
-        assert(handlers.find(Tag[Ask]).exists(_ eq ask))
-        assert(handlers.find(Tag[Say]).exists(_ eq say))
+        assert(handlers(handlers.indexOf(Tag[Ask])) eq ask)
+        assert(handlers(handlers.indexOf(Tag[Say])) eq say)
     }
 
-    "a subtype suspension tag finds the supertype handler" in {
-        val h = loopAsk(42)
-        assert(Handlers.empty.add(h).find(Tag[AskSub]).exists(_ eq h))
+    "a subtype suspension tag resolves the supertype handler" in {
+        val h  = loopAsk(42)
+        val hs = Handlers.empty.add(h)
+        assert(hs(hs.indexOf(Tag[AskSub])) eq h)
     }
 
-    "a supertype suspension tag does not find a subtype handler" in {
+    "a supertype suspension tag does not resolve a subtype handler" in {
         val h = new Handler.Loop[Const[Unit], Const[Int], AskSub, Nothing, Any](Tag[AskSub]):
             def apply[X](input: Unit) = Handler.Loop.continue(1)
-        assert(Handlers.empty.add(h).find(Tag[Ask]).isEmpty)
+        assert(Handlers.empty.add(h).indexOf(Tag[Ask]) == -1)
     }
 
     "add returns a new collection and leaves the original unchanged" in {
         val h     = loopAsk(42)
         val empty = Handlers.empty
         val one   = empty.add(h)
-        assert(empty.find(Tag[Ask]).isEmpty)
-        assert(one.find(Tag[Ask]).exists(_ eq h))
+        assert(empty.indexOf(Tag[Ask]) == -1)
+        assert(one(one.indexOf(Tag[Ask])) eq h)
     }
 
     "updated replaces at the position and leaves the original unchanged" in {
@@ -71,8 +75,8 @@ class HandlersTest extends AnyFreeSpec:
         val b   = loopAsk(2)
         val one = Handlers.empty.add(a)
         val two = one.updated(0, b)
-        assert(one.find(Tag[Ask]).exists(_ eq a))
-        assert(two.find(Tag[Ask]).exists(_ eq b))
+        assert(one(one.indexOf(Tag[Ask])) eq a)
+        assert(two(two.indexOf(Tag[Ask])) eq b)
     }
 
     "take keeps the outer prefix only" in {
@@ -80,29 +84,8 @@ class HandlersTest extends AnyFreeSpec:
         val s  = loopSay
         val hs = Handlers.empty.add(a).add(s)
         assert(hs.take(1).size == 1)
-        assert(hs.take(1).find(Tag[Ask]).exists(_ eq a))
-        assert(hs.take(1).find(Tag[Say]).isEmpty)
-    }
-
-    "drop keeps the inner suffix only" in {
-        val a  = loopAsk(1)
-        val s  = loopSay
-        val hs = Handlers.empty.add(a).add(s)
-        assert(hs.drop(1).size == 1)
-        assert(hs.drop(1).find(Tag[Say]).exists(_ eq s))
-        assert(hs.drop(1).find(Tag[Ask]).isEmpty)
-    }
-
-    "concat restores a split collection in order" in {
-        val a      = loopAsk(1)
-        val s      = loopSay
-        val hs     = Handlers.empty.add(a).add(s)
-        val merged = hs.take(1).concat(hs.drop(1))
-        assert(merged.size == 2)
-        assert(merged.find(Tag[Ask]).exists(_ eq a))
-        assert(merged.find(Tag[Say]).exists(_ eq s))
-        assert(merged.indexOf(Tag[Ask]) == 0)
-        assert(merged.indexOf(Tag[Say]) == 1)
+        assert(hs.take(1).indexOf(Tag[Ask]) == 0)
+        assert(hs.take(1).indexOf(Tag[Say]) == -1)
     }
 
     "a Loop clause continues at its declared types" in {

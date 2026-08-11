@@ -95,6 +95,7 @@ private[kernel] object Eval:
                                                     hs.take(idx),
                                                     exits.take(idx)
                                                 )
+                                end match
                             case h: Handler.LoopState[?, ?, ?, ?, ?] =>
                                 val outcome = h.asInstanceOf[Handler.LoopState[i, o, Nothing, Any, Any]][x](kyo.input)
                                 (outcome: Any) match
@@ -137,12 +138,14 @@ private[kernel] object Eval:
                                                             hs2,
                                                             exits
                                                         )
+                                                end match
                                             case done =>
                                                 loop(
                                                     walk(exits(idx), Nested.lift(done)).asInstanceOf[A < S],
                                                     hs.take(idx),
                                                     exits.take(idx)
                                                 )
+                                end match
                             case other =>
                                 throw new IllegalStateException(s"cannot handle: $other")
                     end if
@@ -191,6 +194,7 @@ private[kernel] object Eval:
             def frame = Frame.internal
             def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]) =
                 mapLoop(v, next)
+        end new
     end transform
 
     // the crossed layers are restored as plain region nodes around the

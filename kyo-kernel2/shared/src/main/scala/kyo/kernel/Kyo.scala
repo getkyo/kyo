@@ -70,11 +70,4 @@ object Kyo:
             new Handled[I, O, E, A, C, S & S2](value, handler, cont.chain(f))
     end Handled
 
-    final class Halt[A](
-        val owner: Handler[?, ?, ?],
-        val outcome: A
-    ) extends Kyo[Nothing, Any]:
-        def map[B, S2](f: Arrow[Nothing, B, S2]) = this
-    end Halt
-
 end Kyo
