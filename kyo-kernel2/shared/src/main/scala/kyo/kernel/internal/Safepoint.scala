@@ -20,9 +20,13 @@ object Safepoint:
 
     @static private val Slots      = slotCount()
     @static private val Overflowed = Slots
-    @static private val depths     = new Array[State](Slots)
-    @static private val slots      = new AtomicReferenceArray[Thread | Stop](Slots)
-    @static private val local      = new ThreadLocal[Integer]
+    @static private val depths =
+        val a = new Array[State](Slots + 1)
+        a(Slots) = State.overflowMark
+        a
+    end depths
+    @static private val slots = new AtomicReferenceArray[Thread | Stop](Slots)
+    @static private val local = new ThreadLocal[Integer]
 
     private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0x7fff)))
 
@@ -48,12 +52,20 @@ object Safepoint:
         private val Initial: State    = StepsGuard | (preemptionInterval() << 16) | DepthGuard | period()
         private val DepthLimit: State = (Initial & ~0xffff) | DepthGuard
 
-        private[Safepoint] def init: State = Initial
+        private[Safepoint] def init: State         = Initial
+        private[Safepoint] def overflowMark: State = DepthGuard
 
         extension (self: State)
-            private[Safepoint] inline def incrementDepth: State  = self - ((1 << 16) | 1)
+            private[Safepoint] inline def enterInto(slot: Int): Boolean =
+                val s2 = self - ((1 << 16) | 1)
+                if (s2 & Guards) == Guards then
+                    depths(slot) = s2
+                    true
+                else enterSlow(slot, self, s2)
+                end if
+            end enterInto
+
             private[Safepoint] inline def decrementDepth: State  = self + 1
-            private[Safepoint] inline def withinLimits: Boolean  = (self & Guards) == Guards
             private[Safepoint] inline def depthExceeded: Boolean = (self & DepthGuard) == 0
             private[Safepoint] inline def atDepthLimit: State    = DepthLimit
             private[Safepoint] inline def restartInterval: State = (Initial & ~0xffff) | (self & 0xffff)
@@ -103,18 +115,11 @@ object Safepoint:
     end resolve
 
     @static def enter(slot: Slot): Boolean =
-        if slot != Overflowed then
-            val s  = depths(slot)
-            val s2 = s.incrementDepth
-            if s2.withinLimits then
-                depths(slot) = s2
-                true
-            else enterSlow(slot, s, s2)
-            end if
-        else true
+        depths(slot).enterInto(slot)
 
     @static private def enterSlow(slot: Slot, s: State, s2: State): Boolean =
-        if s2.depthExceeded then
+        if slot == Overflowed then true
+        else if s2.depthExceeded then
             depths(slot) = s2.atDepthLimit
             false
         else if !slots.get(slot).isInstanceOf[Stop] then
