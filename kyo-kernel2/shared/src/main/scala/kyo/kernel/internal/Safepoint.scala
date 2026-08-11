@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import java.util.concurrent.atomic.AtomicReferenceArray
+import kyo.StaticFlag
 import kyo.kernel.*
 import scala.annotation.static
 import scala.annotation.tailrec
@@ -11,16 +12,25 @@ object Safepoint:
 
     opaque type Slot = Int
 
-    private inline def Period     = 512
-    private inline def Slots      = 65536
     private inline def LineStride = 8
-    private inline def Overflowed = Slots
 
     final private class Stop(val thread: Thread)
 
-    @static private val depths = new Array[Long](Slots)
-    @static private val slots  = new AtomicReferenceArray[Thread | Stop](Slots)
-    @static private val local  = new ThreadLocal[Integer]
+    @static private val Period     = period().toLong
+    @static private val Slots      = slotCount()
+    @static private val Overflowed = Slots
+    @static private val depths     = new Array[Long](Slots)
+    @static private val slots      = new AtomicReferenceArray[Thread | Stop](Slots)
+    @static private val local      = new ThreadLocal[Integer]
+
+    private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.max(1, n)))
+
+    private[kyo] object slotCount extends StaticFlag[Int](
+            65536,
+            n =>
+                if Integer.bitCount(n) == 1 then Right(n)
+                else Left(new IllegalArgumentException(s"slotCount must be a power of two, got $n"))
+        )
 
     @static private def home(thread: Thread): Int =
         ((thread.threadId() * LineStride) & (Slots - 1)).toInt

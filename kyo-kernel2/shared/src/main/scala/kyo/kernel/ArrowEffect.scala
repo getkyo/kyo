@@ -213,15 +213,10 @@ object ArrowEffect:
                         case Maybe.Present(v2) => partialLoop(v2)
                         case Maybe.Absent      => v
                 case kyo: Kyo.Defer[Any, A, E & S] @unchecked =>
-                    val slot = Safepoint.get()
-                    if Safepoint.consumeStopped(slot) || !Safepoint.enter(slot) then v
+                    if Safepoint.consumeStopped(Safepoint.get()) then v
                     else
-                        val w =
-                            val step = kyo.cont.step
-                            step.head(kyo.value, step.tail)
-                        Safepoint.exit(slot)
-                        partialLoop(w)
-                    end if
+                        val step = kyo.cont.step
+                        partialLoop(step.head(kyo.value, step.tail))
                 case v =>
                     v
         end partialLoop
