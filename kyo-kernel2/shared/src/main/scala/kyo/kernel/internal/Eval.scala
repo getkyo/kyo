@@ -23,7 +23,8 @@ object Eval:
         if Safepoint.consumeStopped(slot) then v
         else
             val saved = Safepoint.save(slot)
-            val res   = evalLoop(v, slot, partial = true)
+            Safepoint.arm(slot)
+            val res = evalLoop(v, slot, partial = true)
             Safepoint.restore(slot, saved)
             res
         end if

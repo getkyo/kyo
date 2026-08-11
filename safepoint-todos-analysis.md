@@ -1,22 +1,90 @@
-# Safepoint design: settled state and open decisions
+# Safepoint: PrintAssembly findings and the depth-only redesign
 
-This file previously analyzed the original probing-plus-compaction design's TODOs. That design went through three measured iterations in review (chained per-home entry lines, pure ThreadLocal state, and the final shape) and this refresh records where things landed.
+Refreshed after the JIT investigation. The prior open decision (SWAR vs naive vs no check) is
+resolved by evidence from the compiled machine code, not by picking among the measured variants:
+all three encodings were paying for the same structural mistake, and removing it recovers the
+no-check baseline while keeping preemption.
 
-## Settled design (committed)
+## What PrintAssembly showed
 
-- Probing slot table, 65536 cells. The home-hit fast path is one array read and a reference compare, byte-identical to the original design.
-- A thread claims exactly once; the claimed index is cached in a ThreadLocal consulted only on home miss. This structurally fixes the slot-instability bug found in review (a displaced thread could re-claim a nearer cell after a neighbor died, leaking cells and losing preemption).
-- Dead cells are reclaimed in place during claim walks. There is no compaction sweep.
-- Probe exhaustion returns a stable Overflowed sentinel: enter is true without counting, exit and restore are inert, save returns 0, consumeStopped is false, and stop misses. Reached past 64k concurrently live evaluating threads.
-- stop is false for dead threads; preemption delivery uses the Stop wrapper on the target's unique cell.
-- Period and Slots are StaticFlags (kyo.kernel.internal.Safepoint.period, kyo.kernel.internal.Safepoint.slotCount, power-of-two validated) mirrored once into @static finals. Measured: the mirror is load-bearing, direct flag reads cost 27 percent on the enter/exit micro row (1.705 vs 1.344) because the JVM does not constant-fold final instance fields; no StaticFlag-side change can help since only static finals fold.
-- handlePartial's Defer arm checks only consumeStopped; the budget enter/exit pair was removed as redundant (every thunk is budget-guarded at its map application site).
+Setup: hsdis was already installed in the JDK (`$JAVA_HOME/lib/hsdis-aarch64.dylib`), so
+`-XX:CompileCommand=print` emits real aarch64 assembly. Non-forked JMH runs
+(`-f 0`) reproduce the forked numbers (1.19 vs 0.56) and allow flag control; the C2 nmethod for
+`KernelBench::loop$1` is the fully-inlined fusion loop in every build.
 
-## Coverage
+Per map application, in the straight-line hot region between recursive calls:
 
-SafepointConcurrencyTest pins: displaced threads keep slot and budget after nearby cells free (24576 parked virtual threads, red on the original design), claims reuse dead cells, the overflowed no-op contract at a full table, stop delivery and consumption races, dead threads not stoppable. SafepointTest pins the budget arithmetic against the 512 default.
+| build | depths loads | depths stores | ldar (acquire) | nmethod size | fusion row |
+|---|---|---|---|---|---|
+| spine baseline (depth-only) | 1 | 0 | 1 | 6168 B | 0.574 |
+| SWAR steps+depth (committed) | 2 | 2 | 1 | 9592 B | 1.219 |
+| SWAR + inline restart arm | 2 | 2 | 1 | 12088 B | 1.187 |
+| depth-only + delivery via get() | 1 | 0 | 1 | 6152 B | 0.566 |
 
-## Open decisions
+Three mechanisms, all read directly from the disassembly:
 
-1. The original design printed a one-shot stderr warning when the table exhausted; the current design degrades silently. Restore a one-shot report on the first Overflowed claim, or keep silence?
-2. inlineLimitKeepsZeroAllocation history for the record: 1.29 (spine board, 8192 slots, inline constants), 1.71 (65536 inline constants), 1.344 (65536 via static-final mirrors). The mirror shape recovered most of the regression; the remaining 4 percent vs the board best is unattributed.
+1. **The spine baseline was fast because C2 deleted the accounting.** Its bytecode stores on both
+   enter (`d+1`) and exit (`d-1`), but the compiled fast path is one load and one compare: the
+   slow arm of enter returns constant false, so `enter == true` implies the single fast path,
+   store-to-load forwarding gives exit the entered value, the write-back of `d` becomes a store of
+   the just-loaded value and is removed, and the then-dead enter store follows. The counter never
+   moves in flat chains. That is the same fact as the preemption bug: cancelling accounting is
+   exactly accounting a flat chain never advances.
+
+2. **The steps counter made the stores non-cancelling and the slow path made them non-optimizable.**
+   Net progress per map (the steps half) means C2 must keep the stores. Worse, `enterSlow` can
+   return true (interval restart, overflow), so the true-arm of the caller merges the fast-path
+   store with the memory state of an out-of-line call; the merge blocks both the forwarding and
+   the dead-store elimination, leaving load+store+load+store on the same word per map. The
+   measured 1.63ns/map delta (about 5 cycles) is those two store-to-load forwarding hops plus the
+   SWAR arithmetic. Inlining the restart arm does not help: C2 does not forward a load through a
+   memory phi, so any control merge before exit is enough to keep the reload (verified: the
+   inline-restart build still shows 2 stores per map and benches 1.187).
+
+3. **Encapsulation and scalac inline clutter cost nothing.** The 63-byte fused `enterInto` inlines
+   hot at every hot site, and the dead `MODULE$` loads visible in javap do not survive C2: the
+   compiled hot loop contains no trace of them. The 71-byte and 63-byte encapsulated builds bench
+   identically. The earlier framing (raw ops vs accepting an inlining cliff) was wrong.
+
+## The redesign: delivery rides the load the fast path already pays
+
+The step counter existed to bound the distance between reads of the preemption flag. But the fast
+path already reads the flag every map: `Safepoint.get()` does an acquire load of `slots(home)` and
+compares it to the current thread. When a `Stop` wrapper lands, that comparison fails on the very
+next map application. The steps counter was duplicating a signal get() already observes and throws
+away.
+
+Design now in the tree:
+
+- `State` is a single guarded down-counter: `Initial = DepthGuard | period()`. enter decrements
+  and tests the guard bit; exit refunds. The pair cancels in flat chains and C2 deletes it
+  (verified in the new build's assembly: 2 stores per 22 maps, both from the genuinely nested
+  recursion map). The SWAR packing, `preemptionInterval` flag, and interval-restart arm are gone.
+- The slow path (`enterPark`) stores the drained state and always returns false, restoring the
+  property optimization needs.
+- Stop delivery: `resolve`'s cached branch (which a pending Stop forces every map, since the owner
+  compare fails) probes the cached cell and drains the budget, so the next enter parks and the
+  Defer reaches the evaluator. Delivery latency is one map application, versus 1024 steps before.
+- Armed bit (`1 << 30`): only partial evaluators can park, so only they receive delivery.
+  `Eval.partial` arms its scope after save; restore un-arms. Without the gate, a pending stop
+  aimed at a full eval (which cannot park and does not consume) would turn every map into a
+  Defer/reset round-trip for the eval's whole duration.
+- Overflow: `slots` and `depths` are sized `Slots + 1`; the sentinel cell at index `Slots` is a
+  normal shared budget cell whose `slots` entry stays null forever. Every guard
+  (`slot != Overflowed`) is deleted: exhaustion on the shared cell parks and the rescue resets it
+  (self-healing), giving overflow threads an approximate stack bound they previously lacked. Stop
+  delivery still cannot reach them (null is never a Stop): unchanged.
+
+## Contract changes needing a ruling
+
+1. The pinned "overflowed slot ignores budget operations" behavior became "overflow threads share
+   the sentinel budget cell": enter can return false at collective exhaustion, save returns real
+   state. Behavioral asserts in the pin still hold (see test run), but the pinned intent changed.
+2. `handlePartial` consumes stops at its Defer arm but does not arm delivery; standalone
+   handlePartial (outside `Eval.partial`) sees a stop only when a Defer reaches it naturally.
+   Arming there needs a scoped disarm (and a stance on exception paths), left open.
+3. Preemption latency for pure `Loop.apply` runner bodies is unchanged (they never call enter or
+   get): still the known boundary.
+4. `LineStride` is 8 ints = 32 bytes now that State is Int, so neighboring home cells share a
+   cache line. Flat chains no longer write depths, which softens this, but nested-heavy workloads
+   write per map; stride 16 would trade home count (4096) for isolation.
