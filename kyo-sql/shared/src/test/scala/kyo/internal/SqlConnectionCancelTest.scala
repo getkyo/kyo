@@ -801,11 +801,13 @@ class SqlConnectionCancelTest extends kyo.Test:
                 Sync.Unsafe.defer(new java.util.concurrent.ConcurrentLinkedQueue[AtomicBoolean.Unsafe]()).flatMap { probes =>
                     AtomicRef.init(Maybe.empty[Latch]).flatMap { gateRef =>
                         AtomicRef.init(Maybe.empty[Latch]).flatMap { enteredRef =>
-                            // Construct, claim, and track the probe in one synchronous step, so no interrupt can land
-                            // between the probe existing and the custody owning it. The probe stands in for the connection
-                            // openSocket builds, which openSocket owns from birth (closingOnFailure over it); tracking it
-                            // before the claim would count a probe the pool never received, a window the real factory has
-                            // no equivalent of.
+                            def closeProbe(p: Probe)(using Frame): Unit < Sync =
+                                p.isOpen.map {
+                                    case true  => Sync.Unsafe.defer(p.closeNow)
+                                    case false => ()
+                                }
+                            // Construct, claim, and track the probe in one synchronous step: the probe stands in for the
+                            // connection openSocket builds and claims into the lease's custody the instant it exists.
                             def createAndClaim(id: Long)(using Frame): Probe < (Async & Abort[SqlException]) =
                                 Connection.custodyLocal.use { maybeCustody =>
                                     Sync.Unsafe.defer {
@@ -819,15 +821,8 @@ class SqlConnectionCancelTest extends kyo.Test:
                                             socketOpen
                                         )
                                         maybeCustody match
-                                            case Present(custody) =>
-                                                custody.claim(() =>
-                                                    probe.isOpen.map {
-                                                        case true  => Sync.Unsafe.defer(probe.closeNow)
-                                                        case false => ()
-                                                    }
-                                                )
-                                            case Absent => ()
-                                        end match
+                                            case Present(custody) => custody.claim(() => closeProbe(probe))
+                                            case Absent           => ()
                                         probes.add(socketOpen)
                                         probe
                                     }
@@ -836,14 +831,21 @@ class SqlConnectionCancelTest extends kyo.Test:
                                 def open(a: SqlConfig.Address, password: Maybe[String], c: SqlConfig)(using
                                     Frame
                                 ): Probe < (Async & Abort[SqlException]) =
+                                    // Gate AFTER the probe is built and claimed, then signal and block, so the leaf's
+                                    // interrupt lands at the connect->onLease handover with the claim already done, the way
+                                    // a real connect finishes its suspending handshake before the handover. Gating before
+                                    // the claim instead would race the parent's custody orphan against this synchronous
+                                    // claim, a race a real slow handshake never produces.
                                     ids.incrementAndGet.flatMap { id =>
-                                        gateRef.get.flatMap {
-                                            case Present(gate) =>
-                                                enteredRef.get.flatMap {
-                                                    case Present(entered) => entered.release
-                                                    case Absent           => ()
-                                                }.andThen(gate.await).andThen(createAndClaim(id))
-                                            case Absent => createAndClaim(id)
+                                        createAndClaim(id).flatMap { probe =>
+                                            gateRef.get.flatMap {
+                                                case Present(gate) =>
+                                                    enteredRef.get.flatMap {
+                                                        case Present(entered) => entered.release
+                                                        case Absent           => ()
+                                                    }.andThen(gate.await).andThen(probe)
+                                                case Absent => probe
+                                            }
                                         }
                                     }
                             Sync.Unsafe.defer(SqlConnectionPool.init(config, factory, Absent, summon[Frame])).flatMap { pool =>
@@ -875,14 +877,27 @@ class SqlConnectionCancelTest extends kyo.Test:
                                     // Stop gating so the close path is not held, then close the pool: every reclaimed or
                                     // pooled connection is closed here, so a probe still open afterwards was leaked.
                                     gateRef.set(Absent).andThen(pool.closeAll(1.second)).andThen {
-                                        Sync.Unsafe.defer {
-                                            var leaked = 0
-                                            val it     = probes.iterator()
-                                            while it.hasNext do if it.next().get() then leaked += 1
-                                            assert(
-                                                leaked == 0,
-                                                s"$leaked connection(s) leaked at the connect handover: opened, never reclaimed, never closed"
-                                            )
+                                        // Poll until every probe is closed, up to a generous budget. An interrupted lease
+                                        // closes its connection on its own unwind (orphan or decideExit) and, for a
+                                        // statement, on a detached reclaim, so a connection can still be closing when the
+                                        // loop ends under load. A real leak never settles and trips the assertion.
+                                        Loop(0) { attempt =>
+                                            Sync.Unsafe.defer {
+                                                var leaked = 0
+                                                val it     = probes.iterator()
+                                                while it.hasNext do if it.next().get() then leaked += 1
+                                                leaked
+                                            }.flatMap { leaked =>
+                                                if leaked == 0 || attempt >= 500 then Loop.done(leaked)
+                                                else Async.sleep(10.millis).andThen(Loop.continue(attempt + 1))
+                                            }
+                                        }.flatMap { leaked =>
+                                            Sync.Unsafe.defer {
+                                                assert(
+                                                    leaked == 0,
+                                                    s"$leaked connection(s) leaked at the connect handover: opened, never reclaimed, never closed"
+                                                )
+                                            }
                                         }
                                     }
                                 }
