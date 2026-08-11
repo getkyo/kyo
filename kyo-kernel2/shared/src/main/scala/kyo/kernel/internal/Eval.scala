@@ -237,10 +237,12 @@ object Eval:
     // result re-enters the same layers with the same exits: a residual is
     // ordinary data and resumes by evaluation alone
     private def rebuildFrom(from: Int, value: Any < Nothing, hs0: Handlers, exits0: Chunk[Arrow[Any, Any, Any]]): Any < Nothing =
-        // reads every layer once, so chain-y storage flattens first; a no-op
-        // when the storage is already flat
-        val hs    = hs0.compact
-        val exits = exits0.toIndexed
+        // flattening pays an array copy per call and this runs per answered
+        // operation on continuation paths, so only a deep stack takes it;
+        // the common rebuild reads one or two chain nodes directly
+        val deep  = hs0.size > CompactThreshold
+        val hs    = if deep then hs0.compact else hs0
+        val exits = if deep then exits0.toIndexed else exits0
         @tailrec def wrap(i: Int, acc: Any < Nothing): Any < Nothing =
             if i < from then acc
             else
