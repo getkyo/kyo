@@ -196,7 +196,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         try
             assert(ready.await(60, TimeUnit.SECONDS))
             @volatile var enterFirst    = false
-            @volatile var savedAfter    = -1L
+            @volatile var enterAfter    = false
             @volatile var stoppedResult = true
             @volatile var evalResult    = -1
             val probeReady              = new CountDownLatch(1)
@@ -207,9 +207,9 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                 val slot = Safepoint.get()
                 enterFirst = Safepoint.enter(slot)
                 Safepoint.exit(slot)
-                discard(Safepoint.enter(slot))
-                Safepoint.restore(slot, 123L)
-                savedAfter = Safepoint.save(slot)
+                Safepoint.restore(slot, Safepoint.save(slot))
+                enterAfter = Safepoint.enter(slot)
+                Safepoint.exit(slot)
                 stoppedResult = Safepoint.consumeStopped(slot)
                 evalResult = Eval(burn(Period * 4)).eval
                 probeReady.countDown()
@@ -217,7 +217,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             )
             assert(probeReady.await(60, TimeUnit.SECONDS))
             assert(enterFirst)
-            assert(savedAfter == 0L)
+            assert(enterAfter)
             assert(!stoppedResult)
             assert(evalResult == 0)
             assert(!Safepoint.stop(probe))

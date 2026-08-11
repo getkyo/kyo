@@ -12,21 +12,26 @@ object Safepoint:
 
     opaque type Slot = Int
 
-    private inline def LineStride   = 8
-    private inline def DepthMask    = 0xffffL
-    private inline def StepAndDepth = (1L << 16) | 1L
+    opaque type State = Int
+
+    private inline def LineStride = 8
 
     final private class Stop(val thread: Thread)
 
-    @static private val Period     = period().toLong
     @static private val Slots      = slotCount()
     @static private val Overflowed = Slots
-    @static private val StepMask   = (preemptionInterval().toLong - 1L) << 16
-    @static private val depths     = new Array[Long](Slots)
+    @static private val depths     = new Array[State](Slots)
     @static private val slots      = new AtomicReferenceArray[Thread | Stop](Slots)
     @static private val local      = new ThreadLocal[Integer]
 
-    private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0xffff)))
+    private[kyo] object period extends StaticFlag[Int](512, n => Right(Math.min(Math.max(1, n), 0x7fff)))
+
+    private[kyo] object preemptionInterval extends StaticFlag[Int](
+            1024,
+            n =>
+                if Integer.bitCount(n) == 1 && n <= 16384 then Right(n)
+                else Left(new IllegalArgumentException(s"preemptionInterval must be a power of two up to 16384, got $n"))
+        )
 
     private[kyo] object slotCount extends StaticFlag[Int](
             65536,
@@ -35,12 +40,28 @@ object Safepoint:
                 else Left(new IllegalArgumentException(s"slotCount must be a power of two, got $n"))
         )
 
-    private[kyo] object preemptionInterval extends StaticFlag[Int](
-            1024,
-            n =>
-                if Integer.bitCount(n) == 1 then Right(n)
-                else Left(new IllegalArgumentException(s"preemptionInterval must be a power of two, got $n"))
-        )
+    object State:
+        private inline def DepthGuard = 1 << 15
+        private inline def StepsGuard = 1 << 31
+        private inline def Guards     = StepsGuard | DepthGuard
+
+        private val Initial: State    = StepsGuard | (preemptionInterval() << 16) | DepthGuard | period()
+        private val DepthLimit: State = (Initial & ~0xffff) | DepthGuard
+
+        private[Safepoint] def init: State = Initial
+
+        extension (self: State)
+            private[Safepoint] inline def incrementDepth: State  = self - ((1 << 16) | 1)
+            private[Safepoint] inline def decrementDepth: State  = self + 1
+            private[Safepoint] inline def withinLimits: Boolean  = (self & Guards) == Guards
+            private[Safepoint] inline def depthExceeded: Boolean = (self & DepthGuard) == 0
+            private[Safepoint] inline def atDepthLimit: State    = DepthLimit
+            private[Safepoint] inline def restartInterval: State = (Initial & ~0xffff) | (self & 0xffff)
+            private[Safepoint] inline def reset: State           = Initial
+        end extension
+    end State
+
+    import State.*
 
     @static private def home(thread: Thread): Int =
         ((thread.threadId() * LineStride) & (Slots - 1)).toInt
@@ -66,7 +87,7 @@ object Safepoint:
                     }
                 if !free then claim(i + 1, probes + 1)
                 else if slots.compareAndSet(idx, entry, thread) then
-                    depths(idx) = 0L
+                    depths(idx) = depths(idx).reset
                     idx
                 else claim(i, probes)
                 end if
@@ -83,37 +104,42 @@ object Safepoint:
 
     @static def enter(slot: Slot): Boolean =
         if slot != Overflowed then
-            val s = depths(slot)
-            if (s & DepthMask) < Period then
-                val s2 = s + StepAndDepth
-                if ((s2 & StepMask) != 0) || !stopPending(slot) then
-                    depths(slot) = s2
-                    true
-                else
-                    depths(slot) = s & DepthMask
-                    false
-                end if
-            else
-                depths(slot) = s & DepthMask
-                false
+            val s  = depths(slot)
+            val s2 = s.incrementDepth
+            if s2.withinLimits then
+                depths(slot) = s2
+                true
+            else enterSlow(slot, s, s2)
             end if
         else true
 
-    @static private def stopPending(slot: Slot): Boolean =
-        slots.get(slot).isInstanceOf[Stop]
+    @static private def enterSlow(slot: Slot, s: State, s2: State): Boolean =
+        if s2.depthExceeded then
+            depths(slot) = s2.atDepthLimit
+            false
+        else if !slots.get(slot).isInstanceOf[Stop] then
+            depths(slot) = s2.restartInterval
+            true
+        else
+            depths(slot) = s.restartInterval
+            false
+    end enterSlow
 
     @static def exit(slot: Slot): Unit =
-        if slot != Overflowed then depths(slot) -= 1
+        if slot != Overflowed then depths(slot) = depths(slot).decrementDepth
 
-    @static def save(slot: Slot): Long =
+    @static def save(slot: Slot): State =
         if slot != Overflowed then
             val d = depths(slot)
-            depths(slot) = 0L
+            depths(slot) = d.reset
             d
-        else 0L
+        else State.init
 
-    @static def restore(slot: Slot, saved: Long): Unit =
+    @static def restore(slot: Slot, saved: State): Unit =
         if slot != Overflowed then depths(slot) = saved
+
+    @static def reset(slot: Slot): Unit =
+        if slot != Overflowed then depths(slot) = depths(slot).reset
 
     @static def stop(thread: Thread): Boolean =
         @tailrec def loop(i: Int, probes: Int): Boolean =

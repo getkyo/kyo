@@ -122,7 +122,7 @@ object Eval:
                     if partial && Safepoint.consumeStopped(slot) then
                         rebuild(hs, Empty, v)
                     else
-                        Safepoint.restore(slot, 0L)
+                        Safepoint.reset(slot)
                         loop(walk(kyo.cont, kyo.value), hs)
                 case v =>
                     hs match

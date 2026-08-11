@@ -42,7 +42,7 @@ class SafepointTest extends AnyFreeSpec:
         var entered = 0
         while Safepoint.enter(slot) do entered += 1
         assert(entered == Period)
-        Safepoint.restore(slot, 0L)
+        Safepoint.reset(slot)
         assert(Safepoint.enter(slot))
         Safepoint.exit(slot)
         Safepoint.restore(slot, saved)
