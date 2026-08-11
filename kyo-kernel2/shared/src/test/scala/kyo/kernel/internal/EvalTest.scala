@@ -255,6 +255,46 @@ class EvalTest extends AnyFreeSpec:
         assert(answerAsk(41)(42: Int < Ask).evalNow == Maybe(42))
     }
 
+    "a residual parked with a non-initial state resumes from it" in {
+        // the counter reaches 57 before the foreign suspension parks the
+        // evaluation; the residual must carry 57, not the initial 50
+        val program: Int < (VarE & Say) =
+            varOp(_ + 7).map(_ => say("park")).map(_ => varOp(_ + 1))
+        val residual = Eval.partial(runVar(50)(program))
+        assert(residual.evalNow.isEmpty)
+        val finished = ArrowEffect.handle(Tag[Say], residual)([X] => (_, cont) => cont(()))
+        assert(finished.eval == 58)
+    }
+
+    "each shot of a multi-shot continuation resumes from the capture-time state" in {
+        // the Ask suspension crosses the counter region at state 2; both
+        // shots must resume the counter from 2, so a leak from the first
+        // shot into the second would surface as 8 instead of 5
+        val program: Int < (VarE & Ask) =
+            varOp(_ + 2).map(_ => ask).map(b => varOp(_ + 3).map(s => s * 10 + b))
+        val v = ArrowEffect.handle(Tag[Ask], runVar(0)(program))(
+            [X] => (_, cont) => cont(0).map(r1 => cont(1).map(r2 => r1 * 1000 + r2))
+        )
+        assert(v.eval == 50051)
+    }
+
+    "a clause that suspends threads its new state into the resumed region" in {
+        val v: (Int, Int) < (Say & Any) =
+            ArrowEffect.handleLoop(Tag[Ask], 0, ask.map(a => ask.map(b => (a, b))))(
+                [X] => (_, state) => say("s").map(_ => Loop.continue(state + 1, state))
+            )
+        val r = ArrowEffect.handle(Tag[Say], v)([X] => (_, cont) => cont(()))
+        assert(r.eval == (0, 1))
+    }
+
+    "a stateful handler answering under an unrelated inner region threads state" in {
+        val inner: Int < VarE =
+            ArrowEffect.handleLoop(Tag[Say], varOp(_ + 1).map(_ => say("x")).map(_ => varOp(_ + 1)))(
+                [X] => _ => Loop.continue(())
+            )
+        assert(runVar(10)(inner).eval == 12)
+    }
+
     "answers across a deep stack of unrelated scopes" in {
         val depth = 32
         val program: Int < (Ask & Say) =
