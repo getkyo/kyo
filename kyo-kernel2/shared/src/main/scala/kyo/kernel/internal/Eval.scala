@@ -61,10 +61,19 @@ object Eval:
     private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, partial: Boolean): A < S =
         @tailrec def loop(v: Any < Nothing, hs: Handlers, exits: Chunk[Arrow[Any, Any, Any]], flatBelow: Int): Any < Nothing =
             (v: @unchecked) match
-                case kyo: Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                case kyo: Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                     loop(
                         kyo.value,
                         hs.add(kyo.handler),
+                        exits.append(kyo.cont),
+                        flatBelow
+                    )
+                case kyo: Kyo.HandledState[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                    // interim bridge until the spine storage lands: the node's
+                    // state seeds a successor so the chunk world stays as is
+                    loop(
+                        kyo.value,
+                        hs.add(kyo.handler.withState(kyo.state)),
                         exits.append(kyo.cont),
                         flatBelow
                     )
@@ -246,14 +255,15 @@ object Eval:
         @tailrec def wrap(i: Int, acc: Any < Nothing): Any < Nothing =
             if i < from then acc
             else
-                wrap(
-                    i - 1,
-                    new Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any](
-                        acc,
-                        hs(i).asInstanceOf[Handler[[B] =>> Any, [B] =>> Any, Nothing, Any, Any]],
-                        exits(i)
-                    )
-                )
+                val node =
+                    hs(i) match
+                        case h: Handler.LoopState[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                            new Kyo.HandledState[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any, Any, Any](acc, h, exits(i), h.state)
+                        case h: Handler.Cont[[B] =>> Any, [B] =>> Any, Nothing, Any, Any] @unchecked =>
+                            new Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any, Any](acc, h, exits(i))
+                        case h: Handler.Loop[[B] =>> Any, [B] =>> Any, Nothing, Any, Any] @unchecked =>
+                            new Kyo.Handled[[B] =>> Any, [B] =>> Any, Nothing, Any, Any, Any, Any](acc, h, exits(i))
+                wrap(i - 1, node)
         wrap(hs.size - 1, value)
     end rebuildFrom
 

@@ -76,15 +76,36 @@ object Kyo:
         override def toString = s"Kyo(Defer($value))"
     end Defer
 
-    final class Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
+    // the region node of a stateless handler; the handler field's union
+    // makes carrying a stateful handler in a stateless region a type error.
+    // The rows are split because the handler kinds are invariant in their
+    // row (their clauses use it in result position): S is the handler's row
+    // and S2 the extra row the exit continuation contributes
+    final class Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2](
         val value: A < (E & S),
-        val handler: Handler[I, O, E, A, S],
-        val cont: Arrow[A, B, S]
-    ) extends Kyo[B, S]:
-        def map[C, S2](f: Arrow[B, C, S2]) =
-            new Handled[I, O, E, A, C, S & S2](value, handler, cont.chain(f))
+        val handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S],
+        val cont: Arrow[A, B, S & S2]
+    ) extends Kyo[B, S & S2]:
+        def map[C, S3](f: Arrow[B, C, S3]) =
+            new Handled[I, O, E, A, C, S, S2 & S3](value, handler, cont.chain(f))
 
         override def toString = s"Kyo(Handled(${handler.tag.show}, $value))"
     end Handled
+
+    // the region node of a stateful handler. state is the value this entry
+    // of the region starts from: the initial state at construction, and the
+    // state the region had when a residual or a captured continuation
+    // rebuilt the node, so re-entering resumes rather than resetting
+    final class HandledState[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State](
+        val value: A < (E & S),
+        val handler: Handler.LoopState[I, O, E, A, S, State],
+        val cont: Arrow[A, B, S & S2],
+        val state: State
+    ) extends Kyo[B, S & S2]:
+        def map[C, S3](f: Arrow[B, C, S3]) =
+            new HandledState[I, O, E, A, C, S, S2 & S3, State](value, handler, cont.chain(f), state)
+
+        override def toString = s"Kyo(HandledState(${handler.tag.show}, $state, $value))"
+    end HandledState
 
 end Kyo

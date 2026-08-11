@@ -16,7 +16,7 @@ class KyoInternalTest extends AnyFreeSpec:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    type AskHandled = Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any]
+    type AskHandled = Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any, Any]
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any] =
         new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any]:
@@ -24,7 +24,8 @@ class KyoInternalTest extends AnyFreeSpec:
             @targetName("applyInput")
             def apply[X](input: Unit) = Loop.continue(value)
 
-    def node(h: Handler[Const[Unit], Const[Int], Ask, Int, Any]): AskHandled =
+    def node(h: Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any] | Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any])
+        : AskHandled =
         new Kyo.Handled(ask, h, Arrow[Int])
 
     def sameRef(a: Any, b: Any): Boolean =
@@ -90,6 +91,50 @@ class KyoInternalTest extends AnyFreeSpec:
                     def apply[X](input: Unit, cont: Int => Int < Ask) = cont(1)
             val n = new Kyo.Handled(ask, contAsk, Arrow[Int])
             assert((n: Int < Any).eval == 1)
+        }
+    }
+
+    "HandledState" - {
+        "saves the region parts including the state" in {
+            val h =
+                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                    def tag                               = Tag[Ask]
+                    def state                             = 7
+                    def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+            val n = new Kyo.HandledState(ask, h, Arrow[Int], 7)
+            assert(n.handler eq h)
+            assert(n.state == 7)
+            assert(n.cont eq Arrow[Int])
+        }
+
+        "map lands outside the region and keeps the state" in {
+            val h =
+                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                    def tag                               = Tag[Ask]
+                    def state                             = 7
+                    def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+            val n      = new Kyo.HandledState(ask, h, Arrow[Int], 7)
+            val mapped = (n: Int < Any).map(_ + 1)
+            (mapped: Any) match
+                case m: Kyo.HandledState[Const[Unit], Const[Int], Ask, Int, Int, Any, Any, Int] @unchecked =>
+                    assert(m.handler eq h)
+                    assert(m.state == 7)
+                    assert(m.cont(41).eval == 42)
+                case other =>
+                    fail(s"expected a HandledState, got $other")
+            end match
+        }
+
+        "eval seeds the region from the node's state" in {
+            val h =
+                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                    def tag                               = Tag[Ask]
+                    def state                             = 0
+                    def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+            // the node carries 41, not the handler's initial 0: the region
+            // must resume from the node
+            val n = new Kyo.HandledState(ask.map(_ + 1), h, Arrow[Int], 41)
+            assert((n: Int < Any).eval == 42)
         }
     }
 

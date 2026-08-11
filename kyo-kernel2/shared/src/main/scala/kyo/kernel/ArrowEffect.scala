@@ -67,7 +67,7 @@ object ArrowEffect:
                     new Handler.Cont[I, O, E, A, S]:
                         def tag                                              = _tag
                         def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
-                new Kyo.Handled[I, O, E, A, A, S](v, handler, Arrow[A])
+                new Kyo.Handled[I, O, E, A, A, S, Any](v, handler, Arrow[A])
             case v =>
                 // settled: the effect cannot occur, so the value passes through
                 // strictly with no region node; the cast only shrinks the row
@@ -97,7 +97,7 @@ object ArrowEffect:
                                     val res  = Kyo.unnest(v2)
                                     val step = next.step
                                     step.head(cont(res), step.tail)
-                new Kyo.Handled[I, O, E, A, B, S & S2](v, handler, handler)
+                new Kyo.Handled[I, O, E, A, B, S, S2](v, handler, handler)
             case v =>
                 // settled: the effect cannot occur, so the continuation
                 // applies strictly with no region node
@@ -116,7 +116,7 @@ object ArrowEffect:
                         def tag = _tag
                         @targetName("applyInput")
                         def apply[X](input: I[X]) = f(input)
-                new Kyo.Handled[I, O, E, A, A, S & S2](v, handler, Arrow[A])
+                new Kyo.Handled[I, O, E, A, A, S & S2, Any](v, handler, Arrow[A])
             case v =>
                 // settled: the effect cannot occur, so the value passes through
                 // strictly with no region node; the cast only shrinks the row
@@ -147,7 +147,7 @@ object ArrowEffect:
                                     val res  = Kyo.unnest(v2)
                                     val step = next.step
                                     step.head(cont(res), step.tail)
-                new Kyo.Handled[I, O, E, A, B, S & S2 & S3](v, handler, handler)
+                new Kyo.Handled[I, O, E, A, B, S & S2, S3](v, handler, handler)
             case v =>
                 // settled: the effect cannot occur, so the continuation
                 // applies strictly with no region node
@@ -167,7 +167,7 @@ object ArrowEffect:
                         def tag                                 = _tag
                         def state                               = state0
                         def apply[X](input: I[X], state: State) = f(input, state)
-                new Kyo.Handled[I, O, E, A, A, S & S2](v, handler, Arrow[A])
+                new Kyo.HandledState[I, O, E, A, A, S & S2, Any, State](v, handler, Arrow[A], state0)
             case v =>
                 // settled: the effect cannot occur, so the value passes through
                 // strictly with no region node; the cast only shrinks the row
@@ -203,7 +203,7 @@ object ArrowEffect:
                                     val res  = Kyo.unnest(v2)
                                     val step = next.step
                                     step.head(cont(res), step.tail)
-                new Kyo.Handled[I, O, E, A, B, S & S2 & S3](v, handler, handler)
+                new Kyo.HandledState[I, O, E, A, B, S & S2, S3, State](v, handler, handler, state0)
             case v =>
                 // settled: the effect cannot occur, so the continuation
                 // applies strictly with no region node
