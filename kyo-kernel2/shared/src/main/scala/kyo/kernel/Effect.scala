@@ -59,9 +59,14 @@ object Effect:
             case kyo: Kyo.Defer[Any, B, S] @unchecked =>
                 new Kyo.Defer[Any, B, S](kyo.value, guard(kyo.cont))
             case kyo: Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any] @unchecked =>
-                kyo.map(guard(Arrow[B]))
+                new Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any](kyo.value, kyo.handler, guard(kyo.cont))
             case kyo: Kyo.HandledState[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any, Any] @unchecked =>
-                kyo.map(guard(Arrow[B]))
+                new Kyo.HandledState[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any, Any](
+                    kyo.value,
+                    kyo.handler,
+                    guard(kyo.cont),
+                    kyo.state
+                )
             case v =>
                 v
         end match
