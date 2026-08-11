@@ -17,7 +17,7 @@ class KyoTest extends AnyFreeSpec:
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
         new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
-            def apply[X](input: Unit) = Handler.Loop.continue(value)
+            def apply[X](input: Unit) = Loop.continue(value)
 
     def node(h: Handler[Const[Unit], Const[Int], Ask]): AskHandled =
         new Kyo.Handled(ask, h, Arrow[Int])

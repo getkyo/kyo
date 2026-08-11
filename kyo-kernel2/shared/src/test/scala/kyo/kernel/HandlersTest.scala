@@ -13,11 +13,11 @@ class HandlersTest extends AnyFreeSpec:
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
         new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
-            def apply[X](input: Unit) = Handler.Loop.continue(value)
+            def apply[X](input: Unit) = Loop.continue(value)
 
     def loopSay: Handler.Loop[Const[String], Const[Unit], Say, Nothing, Any] =
         new Handler.Loop[Const[String], Const[Unit], Say, Nothing, Any](Tag[Say]):
-            def apply[X](input: String) = Handler.Loop.continue(())
+            def apply[X](input: String) = Loop.continue(())
 
     "empty resolves nothing" in {
         assert(Handlers.empty.indexOf(Tag[Ask]) == -1)
@@ -58,7 +58,7 @@ class HandlersTest extends AnyFreeSpec:
 
     "a supertype suspension tag does not resolve a subtype handler" in {
         val h = new Handler.Loop[Const[Unit], Const[Int], AskSub, Nothing, Any](Tag[AskSub]):
-            def apply[X](input: Unit) = Handler.Loop.continue(1)
+            def apply[X](input: Unit) = Loop.continue(1)
         assert(Handlers.empty.add(h).indexOf(Tag[Ask]) == -1)
     }
 
@@ -91,27 +91,27 @@ class HandlersTest extends AnyFreeSpec:
     "a Loop clause continues at its declared types" in {
         val outcome = loopAsk(42)[Any](())
         (outcome: Any) match
-            case c: Handler.Loop.Continue[?] => assert(c._1.asInstanceOf[Int < Any].eval == 42)
-            case other                       => fail(s"expected a continue, got $other")
+            case c: Loop.Continue[?] => assert(c._1.asInstanceOf[Int < Any].eval == 42)
+            case other               => fail(s"expected a continue, got $other")
     }
 
     "a Loop clause dones with the bare value" in {
         val h = new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
-            def apply[X](input: Unit) = Handler.Loop.done(-1)
+            def apply[X](input: Unit) = Loop.done(-1)
         val outcome = h[Any](())
         (outcome: Any) match
-            case c: Handler.Loop.Continue[?] => fail(s"expected a done, got $c")
-            case done                        => assert(done.asInstanceOf[Int] == -1)
+            case c: Loop.Continue[?] => fail(s"expected a done, got $c")
+            case done                => assert(done.asInstanceOf[Int] == -1)
     }
 
     "a LoopState clause carries its successor" in {
         final class Counter(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
-            def apply[X](input: Unit) = Handler.Loop.continue(new Counter(n + 1), n)
+            def apply[X](input: Unit) = Loop.continue(new Counter(n + 1), n)
         val outcome = new Counter(7)[Any](())
         (outcome: Any) match
-            case c: Handler.Loop.Continue2[?, ?] =>
+            case c: Loop.Continue2[?, ?] =>
                 assert(c._2.asInstanceOf[Int < Any].eval == 7)
-                assert(c._1.asInstanceOf[Counter][Any](()).asInstanceOf[Handler.Loop.Continue2[?, ?]]._2.asInstanceOf[Int < Any].eval == 8)
+                assert(c._1.asInstanceOf[Counter][Any](()).asInstanceOf[Loop.Continue2[?, ?]]._2.asInstanceOf[Int < Any].eval == 8)
             case other =>
                 fail(s"expected a continue, got $other")
         end match

@@ -20,7 +20,7 @@ class EvalTest extends AnyFreeSpec:
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
         new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
-            def apply[X](input: Unit) = Handler.Loop.continue(value)
+            def apply[X](input: Unit) = Loop.continue(value)
 
     def loopSay(
         name: String,
@@ -29,12 +29,12 @@ class EvalTest extends AnyFreeSpec:
         new Handler.Loop[Const[String], Const[Unit], Say, Nothing, Any](Tag[Say]):
             def apply[X](input: String) =
                 log += name
-                Handler.Loop.continue(())
+                Loop.continue(())
 
     final class VarHandler(value: Int) extends Handler.LoopState[Const[Int => Int], Const[Int], VarE, Nothing, Any](Tag[VarE]):
         def apply[X](f: Int => Int) =
             val v2 = f(value)
-            Handler.Loop.continue(if v2 == value then this else new VarHandler(v2), v2)
+            Loop.continue(if v2 == value then this else new VarHandler(v2), v2)
     end VarHandler
 
     "a scope answers through its handler" in {
@@ -59,7 +59,7 @@ class EvalTest extends AnyFreeSpec:
         val log = scala.collection.mutable.ListBuffer[String]()
         val askClauseSays =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-                def apply[X](input: Unit) = Handler.Loop.continue(say("c").map(_ => 41))
+                def apply[X](input: Unit) = Loop.continue(say("c").map(_ => 41))
         val askScope = new Kyo.Handled(ask.map(_ + 1), askClauseSays, Arrow[Int])
         val sayScope = new Kyo.Handled(askScope, loopSay("s", log), Arrow[Int])
         assert((sayScope: Int < Any).eval == 42)
@@ -70,7 +70,7 @@ class EvalTest extends AnyFreeSpec:
         val log = scala.collection.mutable.ListBuffer[String]()
         val askClauseSays =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-                def apply[X](input: Unit) = Handler.Loop.continue(say("c").map(_ => 41))
+                def apply[X](input: Unit) = Loop.continue(say("c").map(_ => 41))
         val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
         val sayInner =
             new Kyo.Handled[Const[String], Const[Unit], Say, Int, Int, Ask](program, loopSay("inner", log), Arrow[Int])
@@ -91,7 +91,7 @@ class EvalTest extends AnyFreeSpec:
         var reached = false
         val failAsk =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
-                def apply[X](input: Unit) = Handler.Loop.done(-1)
+                def apply[X](input: Unit) = Loop.done(-1)
         val program: Int < Ask = ask.map { a =>
             reached = true
             a + 1
@@ -106,7 +106,7 @@ class EvalTest extends AnyFreeSpec:
         var innerExit = false
         val failAsk =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
-                def apply[X](input: Unit) = Handler.Loop.done(-1)
+                def apply[X](input: Unit) = Loop.done(-1)
         val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
         val sayInner =
             new Kyo.Handled[Const[String], Const[Unit], Say, Int, Int, Ask](program, loopSay("s", log), Arrow[Int])
@@ -123,8 +123,8 @@ class EvalTest extends AnyFreeSpec:
     "a continue answer raising the effect is answered by the successor, which may done" in {
         final class TwoPhase(phase: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
             def apply[X](input: Unit) =
-                if phase == 0 then Handler.Loop.continue(new TwoPhase(1), ask.map(_ + 100))
-                else Handler.Loop.done(-2)
+                if phase == 0 then Loop.continue(new TwoPhase(1), ask.map(_ + 100))
+                else Loop.done(-2)
         end TwoPhase
         val r = new Kyo.Handled(ask.map(_ + 1), new TwoPhase(0), Arrow[Int])
         assert((r: Int < Any).eval == -2)
@@ -150,8 +150,8 @@ class EvalTest extends AnyFreeSpec:
     "a stateful handler composes state and done" in {
         final class Budget(remaining: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
             def apply[X](input: Unit) =
-                if remaining > 0 then Handler.Loop.continue(new Budget(remaining - 1), 1)
-                else Handler.Loop.done(-1)
+                if remaining > 0 then Loop.continue(new Budget(remaining - 1), 1)
+                else Loop.done(-1)
         end Budget
         def go(n: Int): Int < Ask =
             if n == 0 then 0 else ask.map(_ => go(n - 1))
@@ -170,7 +170,7 @@ class EvalTest extends AnyFreeSpec:
         val log = scala.collection.mutable.ListBuffer[String]()
         val askClause =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-                def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(41))
+                def apply[X](input: Unit) = say("pre").map(_ => Loop.continue(41))
         val askScope = new Kyo.Handled(ask.map(_ + 1), askClause, Arrow[Int])
         val sayScope = new Kyo.Handled(askScope, loopSay("s", log), Arrow[Int])
         assert((sayScope: Int < Any).eval == 42)
@@ -182,7 +182,7 @@ class EvalTest extends AnyFreeSpec:
         val log     = scala.collection.mutable.ListBuffer[String]()
         val askClause =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Say](Tag[Ask]):
-                def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.done(-1))
+                def apply[X](input: Unit) = say("pre").map(_ => Loop.done(-1))
         val program: Int < Ask = ask.map { a =>
             reached = true
             a + 1
@@ -198,10 +198,10 @@ class EvalTest extends AnyFreeSpec:
         var reached = false
         val failSay =
             new Handler.Loop[Const[String], Const[Unit], Say, Int, Any](Tag[Say]):
-                def apply[X](input: String) = Handler.Loop.done(-9)
+                def apply[X](input: String) = Loop.done(-9)
         val askClause =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-                def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(41))
+                def apply[X](input: Unit) = say("pre").map(_ => Loop.continue(41))
         val program: Int < Ask = ask.map { a =>
             reached = true
             a + 1
@@ -215,7 +215,7 @@ class EvalTest extends AnyFreeSpec:
     "a stateful clause may suspend before producing its outcome" in {
         val log = scala.collection.mutable.ListBuffer[String]()
         final class Counter(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-            def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(new Counter(n + 1), n))
+            def apply[X](input: Unit) = say("pre").map(_ => Loop.continue(new Counter(n + 1), n))
         val program: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
         val askScope           = new Kyo.Handled(program, new Counter(1), Arrow[Int])
         val sayScope           = new Kyo.Handled(askScope, loopSay("s", log), Arrow[Int])
@@ -227,9 +227,9 @@ class EvalTest extends AnyFreeSpec:
         var reached = false
         val failSay =
             new Handler.Loop[Const[String], Const[Unit], Say, Int, Any](Tag[Say]):
-                def apply[X](input: String) = Handler.Loop.done(-9)
+                def apply[X](input: String) = Loop.done(-9)
         final class Pre(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-            def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(new Pre(n + 1), n))
+            def apply[X](input: Unit) = say("pre").map(_ => Loop.continue(new Pre(n + 1), n))
         val program: Int < Ask = ask.map { a =>
             reached = true
             a + 1
@@ -244,7 +244,7 @@ class EvalTest extends AnyFreeSpec:
         val log = scala.collection.mutable.ListBuffer[String]()
         val askClauseSays =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-                def apply[X](input: Unit) = Handler.Loop.continue(say("c").map(_ => 41))
+                def apply[X](input: Unit) = Loop.continue(say("c").map(_ => 41))
         val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
         val sayInner =
             new Kyo.Handled[Const[String], Const[Unit], Say, Int, Int, Ask](program, loopSay("inner", log), Arrow[Int])
@@ -308,8 +308,8 @@ class EvalTest extends AnyFreeSpec:
         val depth = 1000000
         final class Chain(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
             def apply[X](input: Unit) =
-                if n == 0 then Handler.Loop.continue(this, 0)
-                else Handler.Loop.continue(new Chain(n - 1), ask.map(_ + 1))
+                if n == 0 then Loop.continue(this, 0)
+                else Loop.continue(new Chain(n - 1), ask.map(_ + 1))
         end Chain
         val r = new Kyo.Handled(ask, new Chain(depth), Arrow[Int])
         try assert((r: Int < Any).eval == depth)

@@ -76,7 +76,7 @@ object HandlersProbe:
                         handlers(idx) match
                             case h: Handler.Loop[?, ?, ?, ?, ?] =>
                                 (h.asInstanceOf[ELoop][Any](k.input): Any) match
-                                    case c: Handler.Loop.Continue[?] =>
+                                    case c: Loop.Continue[?] =>
                                         (c._1: Any) match
                                             case pending: Kyo[?, ?] =>
                                                 run(pending.asInstanceOf[Any < Any], handlers.take(idx + 1)) match
@@ -142,7 +142,7 @@ object HandlersProbe:
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
         new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
-            def apply[X](input: Unit) = Handler.Loop.continue(value)
+            def apply[X](input: Unit) = Loop.continue(value)
 
     def loopSayRecord(
         name: String,
@@ -151,7 +151,7 @@ object HandlersProbe:
         new Handler.Loop[Const[String], Const[Unit], Say, Nothing, Any](Tag[Say]):
             def apply[X](input: String) =
                 log += name
-                Handler.Loop.continue(())
+                Loop.continue(())
 
     val threadMx = ManagementFactory.getThreadMXBean().asInstanceOf[com.sun.management.ThreadMXBean]
 
@@ -189,7 +189,7 @@ object HandlersProbe:
                 def apply[X](input: String, cont: Unit => Int < (Say & Any)): Int < (Say & Any) = cont(())
         val askClauseSays =
             new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
-                def apply[X](input: Unit) = Handler.Loop.continue(say("c").map(_ => 41))
+                def apply[X](input: Unit) = Loop.continue(say("c").map(_ => 41))
         val p1inner =
             new Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Say](ask.map(_ + 1), askClauseSays, Arrow[Int])
         val p1 = eval(new Kyo.Handled[Const[String], Const[Unit], Say, Int, Int, Any](p1inner, contSay, Arrow[Int]): Int < Any)

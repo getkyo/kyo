@@ -61,6 +61,7 @@ object `<`:
                     Kyo.unnest(v.asInstanceOf[A < Any])
         end eval
 
+        // TODO Let's remove the extension method and keep Eval.partial private[kyo], the only use will be IOTask
         inline def evalPartial(stop: () => Boolean): A < S =
             Eval.partial(self, stop)
 

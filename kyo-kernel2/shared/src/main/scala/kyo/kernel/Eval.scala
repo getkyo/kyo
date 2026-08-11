@@ -64,7 +64,7 @@ private[kernel] object Eval:
                                         val exAll = exits
                                         val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
                                         val chained = pending.asInstanceOf[Kyo[Any, Any]].map(transform {
-                                            case c: Handler.Loop.Continue[?] =>
+                                            case c: Loop.Continue[?] =>
                                                 rebuildFrom(idx, walk(kCont, c._1.asInstanceOf[Any < Any]), hsAll, exAll)
                                             case done =>
                                                 walk(exAll(idx), Nested.lift(done))
@@ -72,7 +72,7 @@ private[kernel] object Eval:
                                         loop(chained.asInstanceOf[A < S], hs.take(idx), exits.take(idx))
                                     case outcome =>
                                         Nested.unnest[Any](outcome) match
-                                            case c: Handler.Loop.Continue[?] =>
+                                            case c: Loop.Continue[?] =>
                                                 (c._1: Any) match
                                                     case p: Kyo[?, ?] =>
                                                         val hsAll = hs
@@ -104,7 +104,7 @@ private[kernel] object Eval:
                                         val exAll = exits
                                         val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
                                         val chained = pending.asInstanceOf[Kyo[Any, Any]].map(transform {
-                                            case c: Handler.Loop.Continue2[?, ?] =>
+                                            case c: Loop.Continue2[?, ?] =>
                                                 rebuildFrom(
                                                     idx,
                                                     walk(kCont, c._2.asInstanceOf[Any < Any]),
@@ -117,7 +117,7 @@ private[kernel] object Eval:
                                         loop(chained.asInstanceOf[A < S], hs.take(idx), exits.take(idx))
                                     case outcome =>
                                         Nested.unnest[Any](outcome) match
-                                            case c: Handler.Loop.Continue2[?, ?] =>
+                                            case c: Loop.Continue2[?, ?] =>
                                                 val hs2 =
                                                     c._1.asInstanceOf[Handler[?, ?, ?]] match
                                                         case next if next eq h => hs
