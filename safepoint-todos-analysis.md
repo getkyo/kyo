@@ -75,6 +75,20 @@ Design now in the tree:
   (self-healing), giving overflow threads an approximate stack bound they previously lacked. Stop
   delivery still cannot reach them (null is never a Stop): unchanged.
 
+## Gate results (3 forks, clean run)
+
+| row | spine board (no check) | SWAR steps+depth | depth-only |
+|---|---|---|---|
+| fusionAllocatesNothing | 0.574 | 1.219 | 0.575 ± 0.004 |
+| inlineLimitKeepsZeroAllocation | 1.344 | 1.798 | 1.381 ± 0.007 |
+| suspensionBaseline | 84.2 | 86.9 | 84.27 ± 1.47 |
+| fusionPastBudgetPaysRescuesOnly | 32.87 | not measured | 33.68 ± 0.19 |
+| deepRecursionPaysRescuesOnly | 52.72 | not measured | 51.58 ± 1.97 |
+
+Allocation profiles are unchanged on every row (fusion rows stay at zero). The one delta outside
+error bars is fusionPastBudget at +2.5 percent against a board number recorded in a different JVM
+session; unattributed. kyo-kernel2JVM/test 547/547 green; JS and Native test-compile green.
+
 ## Contract changes needing a ruling
 
 1. The pinned "overflowed slot ignores budget operations" behavior became "overflow threads share
