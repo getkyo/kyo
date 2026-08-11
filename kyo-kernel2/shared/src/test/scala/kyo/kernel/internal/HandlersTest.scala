@@ -3,6 +3,7 @@ package kyo.kernel.internal
 import kyo.Tag
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
+import scala.annotation.targetName
 
 class HandlersTest extends AnyFreeSpec:
 
@@ -13,11 +14,15 @@ class HandlersTest extends AnyFreeSpec:
     sealed trait Say    extends ArrowEffect[Const[String], Const[Unit]]
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any] =
-        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any]:
+            def tag = Tag[Ask]
+            @targetName("applyInput")
             def apply[X](input: Unit) = Loop.continue(value)
 
     def loopSay: Handler.Loop[Const[String], Const[Unit], Say, Unit, Any] =
-        new Handler.Loop[Const[String], Const[Unit], Say, Unit, Any](Tag[Say]):
+        new Handler.Loop[Const[String], Const[Unit], Say, Unit, Any]:
+            def tag = Tag[Say]
+            @targetName("applyInput")
             def apply[X](input: String) = Loop.continue(())
 
     "empty resolves nothing" in {
@@ -59,7 +64,9 @@ class HandlersTest extends AnyFreeSpec:
 
     "a supertype suspension tag does not resolve a subtype handler" in {
         val h =
-            new Handler.Loop[Const[Unit], Const[Int], AskSub, Int, Any](Tag[AskSub]):
+            new Handler.Loop[Const[Unit], Const[Int], AskSub, Int, Any]:
+                def tag = Tag[AskSub]
+                @targetName("applyInput")
                 def apply[X](input: Unit) = Loop.continue(1)
         assert(Handlers.empty.add(h).indexOf(Tag[Ask]) == -1)
     }

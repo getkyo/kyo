@@ -5,6 +5,7 @@ import kyo.Frame
 import kyo.Tag
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
+import scala.annotation.targetName
 
 class KyoInternalTest extends AnyFreeSpec:
 
@@ -18,7 +19,9 @@ class KyoInternalTest extends AnyFreeSpec:
     type AskHandled = Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any]
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any] =
-        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+        new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any]:
+            def tag = Tag[Ask]
+            @targetName("applyInput")
             def apply[X](input: Unit) = Loop.continue(value)
 
     def node(h: Handler[Const[Unit], Const[Int], Ask, Int, Any]): AskHandled =
@@ -82,7 +85,8 @@ class KyoInternalTest extends AnyFreeSpec:
 
         "eval answers a cont region through its handler" in {
             val contAsk =
-                new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+                new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any]:
+                    def tag                                           = Tag[Ask]
                     def apply[X](input: Unit, cont: Int => Int < Ask) = cont(1)
             val n = new Kyo.Handled(ask, contAsk, Arrow[Int])
             assert((n: Int < Any).eval == 1)

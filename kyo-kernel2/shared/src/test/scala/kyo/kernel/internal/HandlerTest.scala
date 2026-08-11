@@ -3,6 +3,7 @@ package kyo.kernel.internal
 import kyo.Tag
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
+import scala.annotation.targetName
 
 class HandlerTest extends AnyFreeSpec:
 
@@ -12,7 +13,9 @@ class HandlerTest extends AnyFreeSpec:
 
     "a Loop handler continues at its declared types" in {
         val h =
-            new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any]:
+                def tag = Tag[Ask]
+                @targetName("applyInput")
                 def apply[X](input: Unit) = Loop.continue(42)
         val outcome = h[Any](())
         (outcome: Any) match
@@ -22,7 +25,9 @@ class HandlerTest extends AnyFreeSpec:
 
     "a Loop handler dones with the bare value" in {
         val h =
-            new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any]:
+                def tag = Tag[Ask]
+                @targetName("applyInput")
                 def apply[X](input: Unit) = Loop.done(-1)
         val outcome = h[Any](())
         (outcome: Any) match
@@ -32,7 +37,9 @@ class HandlerTest extends AnyFreeSpec:
 
     "a LoopState handler continues with the next state and the answer" in {
         val h =
-            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int](Tag[Ask], 7):
+            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                def tag                               = Tag[Ask]
+                def state                             = 7
                 def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
         val outcome = h[Any]((), h.state)
         (outcome: Any) match
@@ -46,7 +53,9 @@ class HandlerTest extends AnyFreeSpec:
 
     "a LoopState successor carries the new state and the original logic" in {
         val h =
-            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int](Tag[Ask], 7):
+            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                def tag                               = Tag[Ask]
+                def state                             = 7
                 def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
         val h2 = h.withState(10)
         assert(h2.state == 10)
@@ -63,7 +72,9 @@ class HandlerTest extends AnyFreeSpec:
 
     "a successor of a successor still answers with the original logic" in {
         val h =
-            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int](Tag[Ask], 0):
+            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                def tag                               = Tag[Ask]
+                def state                             = 0
                 def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
         val h3 = h.withState(1).withState(2)
         assert(h3.state == 2)
@@ -79,7 +90,8 @@ class HandlerTest extends AnyFreeSpec:
 
     "a Cont handler receives the continuation at its declared types" in {
         val h =
-            new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any]:
+                def tag                                                   = Tag[Ask]
                 def apply[X](input: Unit, cont: Int => Int < (Ask & Any)) = cont(41)
         val result = h[Any]((), o => o + 1)
         assert(result.asInstanceOf[Int < Any].eval == 42)
