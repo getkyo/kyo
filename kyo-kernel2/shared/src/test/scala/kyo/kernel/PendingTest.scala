@@ -45,6 +45,16 @@ class PendingTest extends AnyFreeSpec:
         assert(v.eval == 20)
     }
 
+    "the extension surface applies to a val of nested type" in {
+        def box[A](v: A): A < Any     = v
+        val nested: (Int < Any) < Any = box(box(41))
+        assert(nested.map(c => c).eval == 41)
+        assert(nested.map(c => c.map(_ + 1)).eval == 42)
+        assert(nested.flatten.eval == 41)
+        assert(nested.unit.eval == ())
+        assert(nested.evalNow.isDefined)
+    }
+
     "a pending value does not lift into a nested computation implicitly" in {
         assertTypeError("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")
     }

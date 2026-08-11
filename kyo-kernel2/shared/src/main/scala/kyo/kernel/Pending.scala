@@ -17,7 +17,7 @@ object `<` extends Implicits:
 
     private val unitValue: Unit < Any = ()
 
-    extension [A, S](self: A < S)
+    extension [A, S](inline self: A < S)
 
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
@@ -43,7 +43,7 @@ object `<` extends Implicits:
                         end if
                 end match
             end mapLoop
-            mapLoop(self, Arrow[B])
+            mapLoop(self: A < S, Arrow[B])
         end map
 
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
@@ -56,17 +56,19 @@ object `<` extends Implicits:
             map(_ => `<`.unitValue)
 
         inline def eval(using S =:= Any): A =
-            self match
+            val v0: A < S = self
+            v0 match
                 case kyo: Kyo[?, ?] =>
-                    Eval(self) match
+                    Eval(v0) match
                         case kyo: Kyo[?, ?] => throw new IllegalStateException(s"unhandled suspension: $kyo")
                         case v              => Kyo.unnest(v.asInstanceOf[A < Any])
                 case v =>
                     Kyo.unnest(v.asInstanceOf[A < Any])
+            end match
         end eval
 
         private[kyo] inline def evalNow: Maybe[A] =
-            self match
+            (self: A < S) match
                 case kyo: Kyo[?, ?] => Maybe.Absent
                 case v              => Maybe(Kyo.unnest(v))
 
@@ -75,7 +77,7 @@ object `<` extends Implicits:
           * instead of `Env.run(1)(Abort.run(computation))`.
           */
         inline def handle[B](inline f: (=> A < S) => B): B =
-            def handle1 = self
+            val handle1: A < S = self
             f(handle1)
 
         inline def handle[B, C](
@@ -188,10 +190,10 @@ object `<` extends Implicits:
 
     end extension
 
-    extension [A, S, S2](self: A < S < S2)
+    extension [A, S, S2](inline self: A < S < S2)
         /** Flattens a nested pending computation into a single computation. */
         inline def flatten(using inline frame: Frame): A < (S & S2) =
-            self.map(flattenFn[A, S])
+            (self: A < S < S2).map(flattenFn[A, S])
     end extension
 
     // typed in this file so the inline expansion of map keeps the opaque view

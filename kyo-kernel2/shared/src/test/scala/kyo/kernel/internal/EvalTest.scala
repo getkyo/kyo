@@ -40,6 +40,8 @@ class EvalTest extends AnyFreeSpec:
                     Loop.continue(v2, v2)
         )
 
+    def box[A](v: A): A < Any = v
+
     "a scope answers through its handler" in {
         assert(answerAsk(41)(ask.map(_ + 1)).eval == 42)
     }
@@ -330,6 +332,35 @@ class EvalTest extends AnyFreeSpec:
         assert(runVar(5)(askScope).eval == -100)
         assert(!reached)
         assert(log.toList == List("s"))
+    }
+
+    "a boxed stateful computation reads the state at its evaluation point" in {
+        val stateTrack: (Int, Int) < VarE =
+            varOp(identity).map { start =>
+                box(varOp(_ => start + 1).map(_ => varOp(identity))).map { boxed =>
+                    boxed.map(inner => (start, inner))
+                }
+            }
+        assert(runVar(5)(stateTrack).eval == (5, 6))
+    }
+
+    "a boxed stateful computation passes through its region and evaluates under a later one" in {
+        val escaped: (Int < VarE) < Any = runVar(5)(box(varOp(_ + 1)))
+        assert(runVar(100)(escaped.map(c => c)).eval == 101)
+    }
+
+    "state updates thread in order through boxed layers" in {
+        val v: Int < VarE =
+            box(varOp(_ * 2).map(_ => varOp(_ - 1))).map(inner => inner.map(_ => varOp(identity)))
+        assert(runVar(4)(varOp(_ + 1).map(_ => v)).eval == 9)
+    }
+
+    "deeply nested same-tag stateful regions answer at the innermost" in {
+        val depth = 32
+        def build(level: Int): Int < Any =
+            val inner: Int < Ask = if level == depth then ask else build(level + 1).asInstanceOf[Int < Ask]
+            ArrowEffect.handleLoop(Tag[Ask], level, inner)([X] => (_, s) => Loop.continue(s + 1, s))
+        assert(build(1).eval == depth)
     }
 
     "a suspended clause's effectful answer re-raising the effect is answered by the successor" in {
