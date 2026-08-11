@@ -230,6 +230,18 @@ class EvalTest extends AnyFreeSpec:
         assert(Eval.partial(parked).evalNow == Maybe(0))
     }
 
+    "a stop request parks a strict map chain between applications" in {
+        @tailrec def flat(v: Int < Any, n: Int): Int < Any =
+            if n == 0 then v else flat(v.map(_ + 1), n - 1)
+        val v = Effect.defer {
+            assert(Safepoint.stop(Thread.currentThread()))
+            flat(0, 5000)
+        }
+        val out = Eval.partial(v)
+        assert(out.evalNow.isEmpty)
+        assert(out.eval == 5000)
+    }
+
     "a stop request arriving mid-evaluation parks between defers" in {
         def burn(n: Int): Int < Any =
             if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))

@@ -125,7 +125,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             val probeCount  = 8
             val probesReady = new CountDownLatch(probeCount)
             val holdersDead = new CountDownLatch(1)
-            val saved       = new Array[Long](probeCount)
+            val remaining   = new Array[Int](probeCount)
             val consumed    = new Array[Boolean](probeCount)
             val probes =
                 (0 until probeCount).map { i =>
@@ -136,8 +136,10 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                         discard(Safepoint.enter(slot))
                         probesReady.countDown()
                         discard(holdersDead.await(60, TimeUnit.SECONDS))
-                        saved(i) = Safepoint.save(Safepoint.get())
                         consumed(i) = Safepoint.consumeStopped(Safepoint.get())
+                        var extra = 0
+                        while Safepoint.enter(Safepoint.get()) do extra += 1
+                        remaining(i) = extra
                     )
                 }
             assert(probesReady.await(60, TimeUnit.SECONDS))
@@ -147,8 +149,8 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             holdersDead.countDown()
             probes.foreach(_.join(60000))
             (0 until probeCount).foreach { i =>
-                assert(saved(i) == 3L)
                 assert(consumed(i))
+                assert(remaining(i) == Period - 3)
             }
         finally
             release.countDown()
@@ -239,10 +241,10 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                         Safepoint.exit(slot)
                         i += 1
                     end while
-                    // the same thread resolves the same budget state through get
                     val saved = Safepoint.save(Safepoint.get())
-                    if saved != 0L then discard(failures.incrementAndGet())
                     Safepoint.restore(slot, saved)
+                    if !Safepoint.enter(slot) then discard(failures.incrementAndGet())
+                    Safepoint.exit(slot)
                 )
             }
         threads.foreach(_.start())

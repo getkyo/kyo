@@ -253,6 +253,18 @@ class KernelBench:
         ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
     end suspensionFusesContinuation
 
+    /** suspensionBaseline driven through Eval.partial, the scheduler entry: measures the partial
+      * mode's cost including the periodic preemption check on the budget path.
+      */
+    @Benchmark
+    def partialSuspensionBaseline: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        val handled = ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1))
+        kyo.kernel.internal.Eval.partial(handled).eval
+    end partialSuspensionBaseline
+
     /** Shared handler limit: 16 distinct askWith sites resolve through one handler loop, so its
       * tag, input, and cont sites overflow the receiver profile and stay virtual calls. Expect
       * suspensionFusesContinuation allocation at roughly 2.8x the time, all of it dispatch.
