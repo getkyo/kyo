@@ -124,7 +124,7 @@ object HandlersProbe:
             case other =>
                 throw new IllegalStateException(s"park addressed to $other")
 
-    def drive[A](v: A < Any): A =
+    def eval[A](v: A < Any): A =
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
         val out =
@@ -138,7 +138,7 @@ object HandlersProbe:
             case v =>
                 Kyo.unnest(v.asInstanceOf[A < Any])
         end match
-    end drive
+    end eval
 
     def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
         new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
@@ -192,7 +192,7 @@ object HandlersProbe:
                 def apply[X](input: Unit) = Handler.Loop.continue(say("c").map(_ => 41))
         val p1inner =
             new Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Say](ask.map(_ + 1), askClauseSays, Arrow[Int])
-        val p1 = drive(new Kyo.Handled[Const[String], Const[Unit], Say, Int, Int, Any](p1inner, contSay, Arrow[Int]): Int < Any)
+        val p1 = eval(new Kyo.Handled[Const[String], Const[Unit], Say, Int, Int, Any](p1inner, contSay, Arrow[Int]): Int < Any)
         println(s"P1 clause-parks = $p1 (expect 42)")
 
         // capture is multi-shot and re-enters crossed scopes per replay
@@ -209,7 +209,7 @@ object HandlersProbe:
             crossedExits += 1
             v
         }
-        val p2 = drive(new Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any](p2say, contAsk, Arrow[Int]): Int < Any)
+        val p2 = eval(new Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any](p2say, contAsk, Arrow[Int]): Int < Any)
         println(s"P2 multi-shot = $p2 crossedExits=$crossedExits says=${log2.size} (expect 32 2 1)")
 
         // scope cycle cost: real eval on a loop scope vs the trampoline
