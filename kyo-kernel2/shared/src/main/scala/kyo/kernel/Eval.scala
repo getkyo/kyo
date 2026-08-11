@@ -51,8 +51,16 @@ private[kyo] object Eval:
                 case kyo: Kyo.Suspend[i, o, e, x, ?, ?] @unchecked =>
                     val idx = hs.indexOf(kyo.tag)
                     if idx < 0 then
-                        if stop == null then throw new IllegalStateException(s"unhandled suspension: $kyo")
-                        else rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
+                        kyo.root match
+                            case d: Kyo.Defaulted =>
+                                loop(
+                                    walk(kyo.cont.asInstanceOf[Arrow[Any, Any, Any]], Nested.lift(d.default)).asInstanceOf[A < S],
+                                    hs,
+                                    exits
+                                )
+                            case _ =>
+                                if stop == null then throw new IllegalStateException(s"unhandled suspension: $kyo")
+                                else rebuildFrom(0, v.asInstanceOf[Any < Any], hs, exits).asInstanceOf[A < S]
                     else
                         hs(idx) match
                             case h: Handler.Loop[?, ?, ?, ?, ?] =>

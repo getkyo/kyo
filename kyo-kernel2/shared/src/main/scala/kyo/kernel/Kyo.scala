@@ -33,6 +33,13 @@ object Kyo:
             case _ =>
                 Nested.unnest(v)
 
+    // a suspension carrying a fallback: evaluation resolves it through a
+    // matching handler like any suspension, and the miss path resumes with
+    // the default instead of failing, which is how optional context works
+    private[kyo] trait Defaulted:
+        self: Suspend[?, ?, ?, ?, ?, ?] =>
+        def default: Any
+
     trait Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
         self =>
 
