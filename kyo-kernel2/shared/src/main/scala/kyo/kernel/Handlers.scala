@@ -29,6 +29,18 @@ object Handlers:
         def take(n: Int): Handlers =
             (self: Chunk[Handler[?, ?, ?]]).take(n)
 
+        def updated(i: Int, handler: Handler[?, ?, ?]): Handlers =
+            (self: Chunk[Handler[?, ?, ?]]).updated(i, handler)
+
+        def size: Int =
+            (self: Chunk[Handler[?, ?, ?]]).length
+
+        def drop(n: Int): Handlers =
+            (self: Chunk[Handler[?, ?, ?]]).drop(n)
+
+        def concat(other: Handlers): Handlers =
+            (self: Chunk[Handler[?, ?, ?]]).concat(other)
+
     end extension
 
     // Chunk extends Seq, whose indexOf searches elements: inside this file the

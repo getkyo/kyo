@@ -15,9 +15,9 @@ class KyoTest extends AnyFreeSpec:
 
     type AskHandled = Kyo.Handled[Const[Unit], Const[Int], Ask, Int, Int, Any]
 
-    def resumeAsk(value: Int): Handler.Resume[Const[Unit], Const[Int], Ask, Any] =
-        new Handler.Resume[Const[Unit], Const[Int], Ask, Any](Tag[Ask]):
-            def apply[X](input: Unit): Int < Any = value
+    def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
+        new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
+            def apply[X](input: Unit) = Handler.Loop.continue(value)
 
     def node(h: Handler[Const[Unit], Const[Int], Ask]): AskHandled =
         new Kyo.Handled(ask, h, Arrow[Int])
@@ -30,14 +30,14 @@ class KyoTest extends AnyFreeSpec:
     "Handled" - {
 
         "saves the region parts" in {
-            val h = resumeAsk(1)
+            val h = loopAsk(1)
             val n = node(h)
             assert(n.handler eq h)
             assert(n.cont eq Arrow[Int])
         }
 
         "map lands outside the region" in {
-            val h      = resumeAsk(1)
+            val h      = loopAsk(1)
             val n      = node(h)
             val mapped = (n: Int < Any).map(_ + 1)
             (mapped: Any) match
@@ -51,7 +51,7 @@ class KyoTest extends AnyFreeSpec:
         }
 
         "chained maps accumulate in order outside the region" in {
-            val h      = resumeAsk(1)
+            val h      = loopAsk(1)
             val n      = node(h)
             val mapped = (n: Int < Any).map(_ + 1).map(_ * 10)
             (mapped: Any) match
@@ -63,8 +63,8 @@ class KyoTest extends AnyFreeSpec:
         }
 
         "mapping an outer region leaves a nested inner region untouched" in {
-            val hInner = resumeAsk(1)
-            val hOuter = resumeAsk(2)
+            val hInner = loopAsk(1)
+            val hOuter = loopAsk(2)
             val inner  = node(hInner)
             val outer  = new Kyo.Handled(inner, hOuter, Arrow[Int])
             val mapped = (outer: Int < Any).map(_ + 1)

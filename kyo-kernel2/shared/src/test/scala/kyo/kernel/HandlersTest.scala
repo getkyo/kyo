@@ -1,6 +1,5 @@
 package kyo.kernel
 
-import kyo.Maybe
 import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -12,78 +11,97 @@ class HandlersTest extends AnyFreeSpec:
     sealed trait AskSub extends Ask
     sealed trait Say    extends ArrowEffect[Const[String], Const[Unit]]
 
-    def resumeWith(value: Int): Handler.Resume[Const[Unit], Const[Int], Ask, Any] =
-        new Handler.Resume[Const[Unit], Const[Int], Ask, Any](Tag[Ask]):
-            def apply[X](input: Unit): Int < Any = value
+    def loopAsk(value: Int): Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any] =
+        new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
+            def apply[X](input: Unit) = Handler.Loop.continue(value)
 
-    def stopWith(value: Int): Handler.Stop[Const[Unit], Const[Int], Ask, Int, Any] =
-        new Handler.Stop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
-            def apply[X](input: Unit): Int < (Ask & Any) = value
+    def loopSay: Handler.Loop[Const[String], Const[Unit], Say, Nothing, Any] =
+        new Handler.Loop[Const[String], Const[Unit], Say, Nothing, Any](Tag[Say]):
+            def apply[X](input: String) = Handler.Loop.continue(())
 
     "empty finds nothing" in {
         assert(Handlers.empty.find(Tag[Ask]).isEmpty)
     }
 
     "add then find returns the handler" in {
-        val h = resumeWith(42)
+        val h = loopAsk(42)
         assert(Handlers.empty.add(h).find(Tag[Ask]).exists(_ eq h))
     }
 
     "find misses on an unrelated tag" in {
-        val h = resumeWith(42)
+        val h = loopAsk(42)
         assert(Handlers.empty.add(h).find(Tag[Say]).isEmpty)
     }
 
     "the innermost handler of a tag wins" in {
-        val outer = resumeWith(1)
-        val inner = resumeWith(2)
+        val outer = loopAsk(1)
+        val inner = loopAsk(2)
         assert(Handlers.empty.add(outer).add(inner).find(Tag[Ask]).exists(_ eq inner))
     }
 
     "handlers of distinct tags resolve independently of order" in {
-        val ask = resumeWith(42)
-        val say = new Handler.Stop[Const[String], Const[Unit], Say, Unit, Any](Tag[Say]):
-            def apply[X](input: String): Unit < (Say & Any) = ()
+        val ask      = loopAsk(42)
+        val say      = loopSay
         val handlers = Handlers.empty.add(ask).add(say)
         assert(handlers.find(Tag[Ask]).exists(_ eq ask))
         assert(handlers.find(Tag[Say]).exists(_ eq say))
     }
 
     "a subtype suspension tag finds the supertype handler" in {
-        val h = resumeWith(42)
+        val h = loopAsk(42)
         assert(Handlers.empty.add(h).find(Tag[AskSub]).exists(_ eq h))
     }
 
     "a supertype suspension tag does not find a subtype handler" in {
-        val h = new Handler.Resume[Const[Unit], Const[Int], AskSub, Any](Tag[AskSub]):
-            def apply[X](input: Unit): Int < Any = 1
+        val h = new Handler.Loop[Const[Unit], Const[Int], AskSub, Nothing, Any](Tag[AskSub]):
+            def apply[X](input: Unit) = Handler.Loop.continue(1)
         assert(Handlers.empty.add(h).find(Tag[Ask]).isEmpty)
     }
 
     "add returns a new collection and leaves the original unchanged" in {
-        val h     = resumeWith(42)
+        val h     = loopAsk(42)
         val empty = Handlers.empty
         val one   = empty.add(h)
         assert(empty.find(Tag[Ask]).isEmpty)
         assert(one.find(Tag[Ask]).exists(_ eq h))
     }
 
-    "a Resume clause is invoked at its declared types" in {
-        val h      = resumeWith(42)
-        val answer = h[Any](())
-        assert(answer.eval == 42)
+    "updated replaces at the position and leaves the original unchanged" in {
+        val a   = loopAsk(1)
+        val b   = loopAsk(2)
+        val one = Handlers.empty.add(a)
+        val two = one.updated(0, b)
+        assert(one.find(Tag[Ask]).exists(_ eq a))
+        assert(two.find(Tag[Ask]).exists(_ eq b))
     }
 
-    "Stop handlers compare by identity" in {
-        val a = stopWith(-1)
-        val b = stopWith(-1)
-        assert(Handlers.empty.add(a).find(Tag[Ask]).exists(_ eq a))
-        assert(!Handlers.empty.add(a).find(Tag[Ask]).exists(_ eq b))
+    "a Loop clause continues at its declared types" in {
+        val outcome = loopAsk(42)[Any](())
+        (outcome: Any) match
+            case c: Handler.Loop.Continue[?] => assert(c._1.asInstanceOf[Int < Any].eval == 42)
+            case other                       => fail(s"expected a continue, got $other")
     }
 
-    "a Stop clause is invoked at its declared types" in {
-        val h = stopWith(-1)
-        assert(h[Any](()).asInstanceOf[Int < Any].eval == -1)
+    "a Loop clause dones with the bare value" in {
+        val h = new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any](Tag[Ask]):
+            def apply[X](input: Unit) = Handler.Loop.done(-1)
+        val outcome = h[Any](())
+        (outcome: Any) match
+            case c: Handler.Loop.Continue[?] => fail(s"expected a done, got $c")
+            case done                        => assert(done.asInstanceOf[Int] == -1)
+    }
+
+    "a LoopState clause carries its successor" in {
+        final class Counter(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
+            def apply[X](input: Unit) = Handler.Loop.continue(new Counter(n + 1), n)
+        val outcome = new Counter(7)[Any](())
+        (outcome: Any) match
+            case c: Handler.Loop.Continue2[?, ?] =>
+                assert(c._2.asInstanceOf[Int < Any].eval == 7)
+                assert(c._1.asInstanceOf[Counter][Any](()).asInstanceOf[Handler.Loop.Continue2[?, ?]]._2.asInstanceOf[Int < Any].eval == 8)
+            case other =>
+                fail(s"expected a continue, got $other")
+        end match
     }
 
     "a Cont clause receives the continuation at its declared types" in {
@@ -91,15 +109,6 @@ class HandlersTest extends AnyFreeSpec:
             def apply[X](input: Unit, cont: Int => Int < (Ask & Any)): Int < (Ask & Any) = cont(41)
         val result = h[Any]((), o => o + 1)
         assert(result.asInstanceOf[Int < Any].eval == 42)
-    }
-
-    "a Loop clause threads state at its declared types" in {
-        val h = new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any, Int](Tag[Ask]):
-            def apply[X](input: Unit, state: Int, cont: Int => Int < (Ask & Any)): (Int, Int < (Ask & Any)) =
-                (state + 1, cont(state))
-        val (state, result) = h[Any]((), 10, o => o * 2)
-        assert(state == 11)
-        assert(result.asInstanceOf[Int < Any].eval == 20)
     }
 
 end HandlersTest
