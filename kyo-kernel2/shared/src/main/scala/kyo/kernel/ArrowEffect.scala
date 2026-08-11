@@ -165,7 +165,6 @@ object ArrowEffect:
                 val handler =
                     new Handler.LoopState[I, O, E, A, S & S2, State]:
                         def tag                                 = _tag
-                        def state                               = state0
                         def apply[X](input: I[X], state: State) = f(input, state)
                 new Kyo.HandledState[I, O, E, A, A, S & S2, Any, State](v, handler, Arrow[A], state0)
             case v =>
@@ -193,7 +192,6 @@ object ArrowEffect:
                         self =>
                         def tag                                 = _tag
                         def frame                               = _frame
-                        def state                               = state0
                         def apply[X](input: I[X], state: State) = f(input, state)
                         def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
                             v2 match

@@ -1,47 +1,59 @@
 package kyo.kernel.internal
 
-import kyo.Chunk
+import kyo.Arrow
 import kyo.Tag
+import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 
-// the layer stack is a Chunk: entering a scope appends a chain node and
-// settling pops one, both in constant time, and closures capture the value
-// as is. Reads walk the chain, so the eval loop adopts flat storage via
-// compact when a scan walks deep; compact is a no-op on flat storage
-opaque type Handlers = Chunk[Handler[?, ?, ?, ?, ?]]
+// The stack of entered regions. A value of this type is the stack itself:
+// the top cell links to the enclosing region through prev and Empty is the
+// empty stack, so entry is one cell allocation, settling is a pointer step,
+// and a stateful update replaces one cell while the handler object stays
+// the same. Cells are immutable and structurally shared, which is what
+// makes captured continuations and residuals hold them safely. The cells
+// are generic and constructed from the typed region nodes; the evaluator
+// reads them back through its erased patterns
+sealed trait Handlers derives CanEqual
 
 object Handlers:
 
-    val empty: Handlers = Chunk.empty
+    case object Empty extends Handlers
+
+    // the cell of a stateless region; the handler union makes storing a
+    // stateful handler without its state a type error
+    final class Node[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        val handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S],
+        val exit: Arrow[Any, Any, Any],
+        val prev: Handlers
+    ) extends Handlers:
+        def withPrev(prev: Handlers): Node[I, O, E, A, S] =
+            new Node(handler, exit, prev)
+    end Node
+
+    // the cell of a stateful region: state is the region's current state
+    final class StateNode[I[_], O[_], E <: ArrowEffect[I, O], A, S, State](
+        val handler: Handler.LoopState[I, O, E, A, S, State],
+        val exit: Arrow[Any, Any, Any],
+        val state: State,
+        val prev: Handlers
+    ) extends Handlers:
+        def withState(state: State): StateNode[I, O, E, A, S, State] =
+            new StateNode(handler, exit, state, prev)
+
+        def withPrev(prev: Handlers): StateNode[I, O, E, A, S, State] =
+            new StateNode(handler, exit, state, prev)
+    end StateNode
 
     extension (self: Handlers)
-
-        def add(handler: Handler[?, ?, ?, ?, ?]): Handlers =
-            self.append(handler)
-
-        def indexOf[E](tag: Tag[E]): Int =
-            @tailrec def loop(i: Int): Int =
-                if i < 0 then i
-                else if tag <:< self(i).tag then i
-                else loop(i - 1)
-            loop(self.length - 1)
-        end indexOf
-
-        def apply(i: Int): Handler[?, ?, ?, ?, ?] =
-            self(i)
-
-        def take(n: Int): Handlers =
-            self.take(n)
-
-        def updated(i: Int, handler: Handler[?, ?, ?, ?, ?]): Handlers =
-            self.updated(i, handler)
-
-        def size: Int =
-            self.length
-
-        def compact: Handlers =
-            self.toIndexed
-
+        // the innermost cell whose handler answers the tag, or Empty
+        def find[E2](tag: Tag[E2]): Handlers =
+            @tailrec def loop(l: Handlers): Handlers =
+                l match
+                    case Empty                          => Empty
+                    case l: Node[?, ?, ?, ?, ?]         => if tag <:< l.handler.tag then l else loop(l.prev)
+                    case l: StateNode[?, ?, ?, ?, ?, ?] => if tag <:< l.handler.tag then l else loop(l.prev)
+            loop(self)
+        end find
     end extension
 
 end Handlers

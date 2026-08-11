@@ -39,9 +39,8 @@ class HandlerTest extends AnyFreeSpec:
         val h =
             new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
                 def tag                               = Tag[Ask]
-                def state                             = 7
                 def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
-        val outcome = h[Any]((), h.state)
+        val outcome = h[Any]((), 7)
         (outcome: Any) match
             case c: Loop.Continue2[?, ?] =>
                 assert(c._1.asInstanceOf[Int] == 8)
@@ -51,40 +50,19 @@ class HandlerTest extends AnyFreeSpec:
         end match
     }
 
-    "a LoopState successor carries the new state and the original logic" in {
+    "a LoopState handler is pure logic: distinct states through one instance" in {
         val h =
             new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
                 def tag                               = Tag[Ask]
-                def state                             = 7
                 def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
-        val h2 = h.withState(10)
-        assert(h2.state == 10)
-        assert(h2.tag =:= h.tag)
-        val outcome = h2[Any]((), h2.state)
-        (outcome: Any) match
-            case c: Loop.Continue2[?, ?] =>
-                assert(c._1.asInstanceOf[Int] == 11)
-                assert(c._2.asInstanceOf[Int < Any].eval == 10)
+        val first  = h[Any]((), 0)
+        val second = h[Any]((), 100)
+        (first: Any, second: Any) match
+            case (a: Loop.Continue2[?, ?], b: Loop.Continue2[?, ?]) =>
+                assert(a._1.asInstanceOf[Int] == 1)
+                assert(b._1.asInstanceOf[Int] == 101)
             case other =>
-                fail(s"expected a continue, got $other")
-        end match
-    }
-
-    "a successor of a successor still answers with the original logic" in {
-        val h =
-            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
-                def tag                               = Tag[Ask]
-                def state                             = 0
-                def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
-        val h3 = h.withState(1).withState(2)
-        assert(h3.state == 2)
-        val outcome = h3[Any]((), h3.state)
-        (outcome: Any) match
-            case c: Loop.Continue2[?, ?] =>
-                assert(c._1.asInstanceOf[Int] == 3)
-                assert(c._2.asInstanceOf[Int < Any].eval == 2)
-            case other =>
-                fail(s"expected a continue, got $other")
+                fail(s"expected two continues, got $other")
         end match
     }
 

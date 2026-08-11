@@ -99,7 +99,6 @@ class KyoInternalTest extends AnyFreeSpec:
             val h =
                 new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
                     def tag                               = Tag[Ask]
-                    def state                             = 7
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
             val n = new Kyo.HandledState(ask, h, Arrow[Int], 7)
             assert(n.handler eq h)
@@ -111,7 +110,6 @@ class KyoInternalTest extends AnyFreeSpec:
             val h =
                 new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
                     def tag                               = Tag[Ask]
-                    def state                             = 7
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
             val n      = new Kyo.HandledState(ask, h, Arrow[Int], 7)
             val mapped = (n: Int < Any).map(_ + 1)
@@ -129,10 +127,8 @@ class KyoInternalTest extends AnyFreeSpec:
             val h =
                 new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
                     def tag                               = Tag[Ask]
-                    def state                             = 0
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
-            // the node carries 41, not the handler's initial 0: the region
-            // must resume from the node
+            // the node carries 41: the region resumes from the node's state
             val n = new Kyo.HandledState(ask.map(_ + 1), h, Arrow[Int], 41)
             assert((n: Int < Any).eval == 42)
         }

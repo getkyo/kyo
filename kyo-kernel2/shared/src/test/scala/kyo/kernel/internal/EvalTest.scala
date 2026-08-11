@@ -255,7 +255,7 @@ class EvalTest extends AnyFreeSpec:
         assert(answerAsk(41)(42: Int < Ask).evalNow == Maybe(42))
     }
 
-    "answers across a deep stack of unrelated scopes, adopting flat storage" in {
+    "answers across a deep stack of unrelated scopes" in {
         val depth = 32
         val program: Int < (Ask & Say) =
             ask.map(a => ask.map(b => ask.map(c => say("done").map(_ => a + b + c))))

@@ -1,7 +1,11 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Tag
 import kyo.kernel.*
+import kyo.kernel.internal.Handlers.Empty
+import kyo.kernel.internal.Handlers.Node
+import kyo.kernel.internal.Handlers.StateNode
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.targetName
 
@@ -25,113 +29,80 @@ class HandlersTest extends AnyFreeSpec:
             @targetName("applyInput")
             def apply[X](input: String) = Loop.continue(())
 
-    "empty resolves nothing" in {
-        assert(Handlers.empty.indexOf(Tag[Ask]) == -1)
+    def stateAsk: Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int] =
+        new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+            def tag                               = Tag[Ask]
+            def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+
+    def askCell(prev: Handlers): Node[Const[Unit], Const[Int], Ask, Int, Any] =
+        new Node(loopAsk(1), Arrow[Any], prev)
+
+    def sayCell(prev: Handlers): Node[Const[String], Const[Unit], Say, Unit, Any] =
+        new Node(loopSay, Arrow[Any], prev)
+
+    "Empty resolves nothing" in {
+        assert((Empty: Handlers).find(Tag[Ask]) eq Empty)
     }
 
-    "add then indexOf resolves the handler" in {
-        val h  = loopAsk(42)
-        val hs = Handlers.empty.add(h)
-        val i  = hs.indexOf(Tag[Ask])
-        assert(i == 0)
-        assert(hs(i) eq h)
+    "a pushed cell is found by its tag" in {
+        val cell = askCell(Empty)
+        assert((cell: Handlers).find(Tag[Ask]) eq cell)
     }
 
-    "indexOf misses on an unrelated tag" in {
-        assert(Handlers.empty.add(loopAsk(42)).indexOf(Tag[Say]) == -1)
+    "find misses on an unrelated tag" in {
+        val cell = askCell(Empty)
+        assert((cell: Handlers).find(Tag[Say]) eq Empty)
     }
 
-    "the innermost handler of a tag wins" in {
-        val outer = loopAsk(1)
-        val inner = loopAsk(2)
-        val hs    = Handlers.empty.add(outer).add(inner)
-        assert(hs(hs.indexOf(Tag[Ask])) eq inner)
+    "the innermost cell of a tag wins" in {
+        val outer = askCell(Empty)
+        val inner = askCell(outer)
+        assert((inner: Handlers).find(Tag[Ask]) eq inner)
     }
 
-    "handlers of distinct tags resolve independently of order" in {
-        val ask      = loopAsk(42)
-        val say      = loopSay
-        val handlers = Handlers.empty.add(ask).add(say)
-        assert(handlers(handlers.indexOf(Tag[Ask])) eq ask)
-        assert(handlers(handlers.indexOf(Tag[Say])) eq say)
+    "cells of distinct tags resolve independently of order" in {
+        val ask = askCell(Empty)
+        val say = sayCell(ask)
+        assert((say: Handlers).find(Tag[Ask]) eq ask)
+        assert((say: Handlers).find(Tag[Say]) eq say)
     }
 
-    "a subtype suspension tag resolves the supertype handler" in {
-        val h  = loopAsk(42)
-        val hs = Handlers.empty.add(h)
-        assert(hs(hs.indexOf(Tag[AskSub])) eq h)
+    "a subtype suspension tag resolves the supertype cell" in {
+        val cell = askCell(Empty)
+        assert((cell: Handlers).find(Tag[AskSub]) eq cell)
     }
 
-    "a supertype suspension tag does not resolve a subtype handler" in {
+    "a supertype suspension tag does not resolve a subtype cell" in {
         val h =
             new Handler.Loop[Const[Unit], Const[Int], AskSub, Int, Any]:
                 def tag = Tag[AskSub]
                 @targetName("applyInput")
                 def apply[X](input: Unit) = Loop.continue(1)
-        assert(Handlers.empty.add(h).indexOf(Tag[Ask]) == -1)
+        val cell = new Node(h, Arrow[Any], Empty)
+        assert((cell: Handlers).find(Tag[Ask]) eq Empty)
     }
 
-    "add returns a new collection and leaves the original unchanged" in {
-        val h     = loopAsk(42)
-        val empty = Handlers.empty
-        val one   = empty.add(h)
-        assert(empty.indexOf(Tag[Ask]) == -1)
-        assert(one(one.indexOf(Tag[Ask])) eq h)
+    "prev pops without touching the enclosing cells" in {
+        val bottom = askCell(Empty)
+        val top    = sayCell(bottom)
+        assert(top.prev eq bottom)
+        assert(bottom.prev eq Empty)
     }
 
-    "updated replaces at the position and leaves the original unchanged" in {
-        val a   = loopAsk(1)
-        val b   = loopAsk(2)
-        val one = Handlers.empty.add(a)
-        val two = one.updated(0, b)
-        assert(one(one.indexOf(Tag[Ask])) eq a)
-        assert(two(two.indexOf(Tag[Ask])) eq b)
+    "a stateful cell is found by its tag" in {
+        val cell = new StateNode(stateAsk, Arrow[Any], 1, Empty)
+        assert((cell: Handlers).find(Tag[Ask]) eq cell)
+        assert((cell: Handlers).find(Tag[Say]) eq Empty)
     }
 
-    "take keeps the outer prefix only" in {
-        val a  = loopAsk(1)
-        val s  = loopSay
-        val hs = Handlers.empty.add(a).add(s)
-        assert(hs.take(1).size == 1)
-        assert(hs.take(1).indexOf(Tag[Ask]) == 0)
-        assert(hs.take(1).indexOf(Tag[Say]) == -1)
-    }
-
-    "updated below the innermost keeps the layers above and below" in {
-        val bottom = loopAsk(1)
-        val middle = loopSay
-        val top    = loopAsk(2)
-        val next   = loopSay
-        val hs     = Handlers.empty.add(bottom).add(middle).add(top)
-        val r      = hs.updated(1, next)
-        assert(r.size == 3)
-        assert(r(0) eq bottom)
-        assert(r(1) eq next)
-        assert(r(2) eq top)
-    }
-
-    "compact preserves the layers and their order" in {
-        val a  = loopAsk(1)
-        val s  = loopSay
-        val b  = loopAsk(2)
-        val hs = Handlers.empty.add(a).add(s).add(b).compact
-        assert(hs.size == 3)
-        assert(hs(0) eq a)
-        assert(hs(1) eq s)
-        assert(hs(2) eq b)
-        assert(hs.indexOf(Tag[Ask]) == 2)
-        assert(hs.indexOf(Tag[Say]) == 1)
-    }
-
-    "operations continue on compacted storage" in {
-        val a  = loopAsk(1)
-        val h2 = loopAsk(2)
-        val h3 = loopAsk(3)
-        val hs = Handlers.empty.add(a).add(loopSay).compact
-        val r  = hs.take(1).add(h2).updated(1, h3)
-        assert(r.size == 2)
-        assert(r(0) eq a)
-        assert(r(1) eq h3)
+    "withState replaces the state and shares everything else" in {
+        val cell = new StateNode(stateAsk, Arrow[Any], 1, Empty)
+        val next = cell.withState(2)
+        assert(next.state == 2)
+        assert(cell.state == 1)
+        assert(next.handler eq cell.handler)
+        assert(next.exit eq cell.exit)
+        assert(next.prev eq cell.prev)
     }
 
 end HandlersTest

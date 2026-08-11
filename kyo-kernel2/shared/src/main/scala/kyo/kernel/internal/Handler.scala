@@ -23,27 +23,10 @@ object Handler:
         def apply[X](input: I[X]): Outcome[O[X] < (E & S), A] < S
     end Loop
 
+    // pure logic: the region's state lives in its node and its cell, so the
+    // handler object is allocated once per handling call site and never
+    // copied across state updates
     trait LoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, State] extends Handler[I, O, E, A, S]:
-
-        def state: State
-
         def apply[X](input: I[X], state: State): Outcome2[State, O[X] < (E & S), A] < S
-
-        // the handling logic lives in the original instance and successors
-        // delegate to it directly, so state updates never stack delegation
-        private[kyo] def origin: LoopState[I, O, E, A, S, State] = this
-
-        final def withState(state: State): LoopState[I, O, E, A, S, State] =
-            val o = origin
-            val s = state
-            new LoopState[I, O, E, A, S, State]:
-                def tag                                 = o.tag
-                def state                               = s
-                override private[kyo] def origin        = o
-                def apply[X](input: I[X], state: State) = o(input, state)
-            end new
-        end withState
-
-    end LoopState
 
 end Handler
