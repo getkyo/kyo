@@ -8,16 +8,28 @@ import scala.annotation.tailrec
 
 class Safepoint
 
-// TODO do we have proper concurrency tests for this?
-// TODO can this be private[kernel]? do a sweep of what's public in the internal package and if we can reduce visbility to the kernel
+// public: referenced from public inline bodies (map, suspendWith), so any
+// private qualifier would make the compiler emit inline accessors that
+// materialize the package prefix as a runtime value, failing with
+// NoClassDefFoundError: kyo/kernel/internal, reproduced on Eval. The
+// internal package carries the visibility intent
 object Safepoint:
 
     opaque type Slot = Int
 
     inline def Period = 512
 
-    private inline def Slots =
-        1024 // TODO what is an arbitrarily large number we could use that is still reasonable. I worry about hitting the limit or threads contending in cpu cache slots
+    // 8192 slots: exhaustion needs that many live threads evaluating at the
+    // same time, an order of magnitude past large worker pools, and compact
+    // reclaims the slots of dead threads. The arrays cost 128KB
+    private inline def Slots = 8192
+
+    // initial placement only: threads land one cache line apart, so with a
+    // sparse population the budget counters, written by enter and exit on
+    // the hottest path, never false-share a line. Under crowding the linear
+    // probe packs the indices in between, trading locality for capacity
+    // instead of failing earlier
+    private inline def LineStride = 8
 
     // a slot entry is the owning thread, or the thread wrapped in Stop when a
     // stop has been requested and not yet consumed; the wrapper rides the
@@ -34,21 +46,30 @@ object Safepoint:
             case stop: Stop     => stop.thread
             case thread: Thread => thread
 
+    // the fast path does not see through Stop: a wrapped entry pays the find
+    // probe only while a stop request is pending, which the next safepoint
+    // consumes, and a type test here would tax every evaluation entry for
+    // that transient state
     @static def get(): Slot =
         val thread = Thread.currentThread()
-        val idx    = java.lang.System.identityHashCode(thread) & (Slots - 1)
-        if owners.get(idx) eq thread then idx // TODO do we need to consider Stop here? ot is that better for the slow path in find?
+        val idx    = ((thread.threadId() * LineStride) & (Slots - 1)).toInt
+        if owners.get(idx) eq thread then idx
         else find(thread, idx)
     end get
 
     @static def find(thread: Thread, from: Int): Slot =
-        @tailrec def loop(i: Int, probes: Int, compacted: Boolean): Int =
+        @tailrec def loop(i: Int, probes: Int, compactions: Int): Int =
             if probes == Slots then
-                if compacted then
-                    throw new IllegalStateException("Safepoint slots exhausted") // TODO this is very drastic, report to me when it can happen, if we can provide better degradation (disabling stack safety could even be a better option than fail), and consider if we should have a retry budget
+                // a full scan found no slot: every entry is owned by another
+                // live thread, which takes more live evaluating threads than
+                // slots. Compaction retries reclaim recently died owners
+                if compactions == 3 then
+                    throw new IllegalStateException(
+                        s"Safepoint slots exhausted: more than $Slots live threads are evaluating concurrently"
+                    )
                 else
                     compact()
-                    loop(from, 0, true)
+                    loop(from, 0, compactions + 1)
             else
                 val idx   = i & (Slots - 1)
                 val owner = owners.get(idx)
@@ -56,10 +77,10 @@ object Safepoint:
                 else if (owner eq null) && owners.compareAndSet(idx, null, thread) then
                     depths(idx) = 0L
                     idx
-                else loop(i + 1, probes + 1, compacted)
+                else loop(i + 1, probes + 1, compactions)
                 end if
         end loop
-        loop(from, 0, false)
+        loop(from, 0, 0)
     end find
 
     @static def compact(): Unit =
@@ -72,7 +93,11 @@ object Safepoint:
         loop(0)
     end compact
 
-    // TODO a double check: the old kernel had a sanity check to ensure the safepoint was actually owned by the current thread. The reason was the implicit propagation eventually leaking a safepoint storing it in some computation but I think this new kernel doens't have this fragility?
+    // no ownership sanity check: unlike the old kernel's implicit Safepoint
+    // values, which user code could capture inside computations and resume
+    // on another thread, a Slot is obtained at each evaluation entry from
+    // the current thread and only ever lives on that evaluation's stack, so
+    // there is no path for it to leak across threads
     @static def enter(slot: Slot): Boolean =
         val d = depths(slot)
         if d < Period then
@@ -99,8 +124,7 @@ object Safepoint:
     // slow path, so the running evaluation pays nothing on its hot path and
     // detection latency is bounded by one budget period
     @static def stop(thread: Thread): Boolean =
-        val idx =
-            java.lang.System.identityHashCode(thread) & (Slots - 1) // TODO I think identity hashcode is more expensive than thread id?
+        val idx  = ((thread.threadId() * LineStride) & (Slots - 1)).toInt
         val slot = probe(thread, idx)
         @tailrec def attempt(): Boolean =
             owners.get(slot) match
