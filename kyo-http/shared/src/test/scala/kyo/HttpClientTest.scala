@@ -75,13 +75,26 @@ class HttpClientTest extends BaseHttpTest:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
-            Scope.run {
-                Scope.ensure(client.closeNow(conn)).andThen {
-                    client.sendWith(conn, route, request)(identity)
+        def once: HttpResponse[Out] < (Async & Abort[HttpException]) =
+            client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                Scope.run {
+                    Scope.ensure(client.closeNow(conn)).andThen {
+                        client.sendWith(conn, route, request)(identity)
+                    }
                 }
             }
-        }
+        // Retry a transient connect failure. On Windows/Node a connect to the test's own localhost server can fail
+        // intermittently (loopback IPv4/IPv6 resolution race, transient refused) while the server is up and other
+        // requests to it succeed. Only the connect is retried: a HttpConnectException means the request never went
+        // out, so a genuine request-level failure is re-raised unchanged.
+        def retrying(remaining: Int): HttpResponse[Out] < (Async & Abort[HttpException]) =
+            Abort.run[HttpException](once).map {
+                case Result.Success(resp)                                     => resp
+                case Result.Failure(_: HttpConnectException) if remaining > 0 => Async.sleep(50.millis).andThen(retrying(remaining - 1))
+                case other                                                    => Abort.get(other)
+            }
+        retrying(remaining = 8)
+    end send
 
     def withClient[A, S](f: HttpClient => A < (S & Async & Abort[HttpException]))(using
         Frame,
