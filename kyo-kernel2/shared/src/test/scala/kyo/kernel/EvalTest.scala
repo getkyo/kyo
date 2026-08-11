@@ -166,4 +166,154 @@ class EvalTest extends AnyFreeSpec:
         intercept[IllegalStateException]((r: Int < Say).asInstanceOf[Int < Any].eval)
     }
 
+    "a clause may suspend before producing its outcome" in {
+        val log = scala.collection.mutable.ListBuffer[String]()
+        val askClause =
+            new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
+                def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(41))
+        val askScope = new Kyo.Handled(ask.map(_ + 1), askClause, Arrow[Int])
+        val sayScope = new Kyo.Handled(askScope, loopSay("s", log), Arrow[Int])
+        assert((sayScope: Int < Any).eval == 42)
+        assert(log.toList == List("s"))
+    }
+
+    "a clause may suspend before producing a done" in {
+        var reached = false
+        val log     = scala.collection.mutable.ListBuffer[String]()
+        val askClause =
+            new Handler.Loop[Const[Unit], Const[Int], Ask, Int, Say](Tag[Ask]):
+                def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.done(-1))
+        val program: Int < Ask = ask.map { a =>
+            reached = true
+            a + 1
+        }
+        val askScope = new Kyo.Handled(program, askClause, Arrow[Int])
+        val sayScope = new Kyo.Handled(askScope, loopSay("s", log), Arrow[Int])
+        assert((sayScope: Int < Any).eval == -1)
+        assert(!reached)
+        assert(log.toList == List("s"))
+    }
+
+    "a done fired while a clause outcome settles climbs to its own scope" in {
+        var reached = false
+        val failSay =
+            new Handler.Loop[Const[String], Const[Unit], Say, Int, Any](Tag[Say]):
+                def apply[X](input: String) = Handler.Loop.done(-9)
+        val askClause =
+            new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
+                def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(41))
+        val program: Int < Ask = ask.map { a =>
+            reached = true
+            a + 1
+        }
+        val askScope = new Kyo.Handled(program, askClause, Arrow[Int])
+        val r        = new Kyo.Handled(askScope, failSay, Arrow[Int])
+        assert((r: Int < Any).eval == -9)
+        assert(!reached)
+    }
+
+    "a stateful clause may suspend before producing its outcome" in {
+        val log = scala.collection.mutable.ListBuffer[String]()
+        final class Counter(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
+            def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(new Counter(n + 1), n))
+        val program: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
+        val askScope           = new Kyo.Handled(program, new Counter(1), Arrow[Int])
+        val sayScope           = new Kyo.Handled(askScope, loopSay("s", log), Arrow[Int])
+        assert((sayScope: Int < Any).eval == 12)
+        assert(log.toList == List("s", "s"))
+    }
+
+    "a done fired while a stateful clause outcome settles climbs to its own scope" in {
+        var reached = false
+        val failSay =
+            new Handler.Loop[Const[String], Const[Unit], Say, Int, Any](Tag[Say]):
+                def apply[X](input: String) = Handler.Loop.done(-9)
+        final class Pre(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
+            def apply[X](input: Unit) = say("pre").map(_ => Handler.Loop.continue(new Pre(n + 1), n))
+        val program: Int < Ask = ask.map { a =>
+            reached = true
+            a + 1
+        }
+        val askScope = new Kyo.Handled(program, new Pre(0), Arrow[Int])
+        val r        = new Kyo.Handled(askScope, failSay, Arrow[Int])
+        assert((r: Int < Any).eval == -9)
+        assert(!reached)
+    }
+
+    "a clause does not see handlers inside its own scope" in {
+        val log = scala.collection.mutable.ListBuffer[String]()
+        val askClauseSays =
+            new Handler.Loop[Const[Unit], Const[Int], Ask, Nothing, Say](Tag[Ask]):
+                def apply[X](input: Unit) = Handler.Loop.continue(say("c").map(_ => 41))
+        val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
+        val sayInner =
+            new Kyo.Handled[Const[String], Const[Unit], Say, Int, Int, Ask](program, loopSay("inner", log), Arrow[Int])
+        val askScope = new Kyo.Handled(sayInner, askClauseSays, Arrow[Int])
+        intercept[IllegalStateException]((askScope: Int < Any).eval)
+        assert(log.toList == List("inner"))
+    }
+
+    "evalPartial settles a deferred computation" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0
+            else (0: Int < Any).map(_ => loop(n - 1))
+        assert(loop(100000).evalPartial(() => false).asInstanceOf[Int] == 0)
+    }
+
+    "evalPartial with an immediate stop returns the computation unchanged" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0
+            else (0: Int < Any).map(_ => loop(n - 1))
+        val v = loop(100000)
+        assert(v.evalPartial(() => true).asInstanceOf[AnyRef] eq v.asInstanceOf[AnyRef])
+    }
+
+    "evalPartial stops between defers leaving the rest evaluable" in {
+        def loop(n: Int): Int < Any =
+            if n == 0 then 0
+            else (0: Int < Any).map(_ => loop(n - 1))
+        var checks = 0
+        val out = loop(100000).evalPartial { () =>
+            checks += 1
+            checks > 3
+        }
+        assert(out.asInstanceOf[Any].isInstanceOf[Kyo.Defer[?, ?, ?]])
+        assert(out.eval == 0)
+    }
+
+    "evalPartial does not evaluate scopes" in {
+        val r = new Kyo.Handled(ask.map(_ + 1), loopAsk(41), Arrow[Int])
+        assert((r: Int < Any).evalPartial(() => false).asInstanceOf[AnyRef] eq r)
+    }
+
+    "enters deeply nested scopes in bounded stack" in {
+        val depth = 1000000
+        val nested = (1 to depth).foldLeft(0: Int < Any) { (acc, _) =>
+            new Kyo.Handled(acc, loopAsk(1), Arrow[Int])
+        }
+        try assert(nested.eval == 0)
+        catch case e: StackOverflowError => fail(s"stack overflow entering $depth nested scopes")
+    }
+
+    "opens a scope per recursion step in bounded stack" in {
+        val depth = 1000000
+        def go(n: Int): Int < Any =
+            if n == 0 then 0
+            else new Kyo.Handled(ask.map(_ => go(n - 1)), loopAsk(1), Arrow[Int])
+        try assert(go(depth).eval == 0)
+        catch case e: StackOverflowError => fail(s"stack overflow opening a scope per step at depth $depth")
+    }
+
+    "settles chained re-raised answers in bounded stack" in {
+        val depth = 1000000
+        final class Chain(n: Int) extends Handler.LoopState[Const[Unit], Const[Int], Ask, Nothing, Any](Tag[Ask]):
+            def apply[X](input: Unit) =
+                if n == 0 then Handler.Loop.continue(this, 0)
+                else Handler.Loop.continue(new Chain(n - 1), ask.map(_ + 1))
+        end Chain
+        val r = new Kyo.Handled(ask, new Chain(depth), Arrow[Int])
+        try assert((r: Int < Any).eval == depth)
+        catch case e: StackOverflowError => fail(s"stack overflow settling $depth chained re-raised answers")
+    }
+
 end EvalTest

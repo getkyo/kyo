@@ -75,6 +75,36 @@ class HandlersTest extends AnyFreeSpec:
         assert(two.find(Tag[Ask]).exists(_ eq b))
     }
 
+    "take keeps the outer prefix only" in {
+        val a  = loopAsk(1)
+        val s  = loopSay
+        val hs = Handlers.empty.add(a).add(s)
+        assert(hs.take(1).size == 1)
+        assert(hs.take(1).find(Tag[Ask]).exists(_ eq a))
+        assert(hs.take(1).find(Tag[Say]).isEmpty)
+    }
+
+    "drop keeps the inner suffix only" in {
+        val a  = loopAsk(1)
+        val s  = loopSay
+        val hs = Handlers.empty.add(a).add(s)
+        assert(hs.drop(1).size == 1)
+        assert(hs.drop(1).find(Tag[Say]).exists(_ eq s))
+        assert(hs.drop(1).find(Tag[Ask]).isEmpty)
+    }
+
+    "concat restores a split collection in order" in {
+        val a      = loopAsk(1)
+        val s      = loopSay
+        val hs     = Handlers.empty.add(a).add(s)
+        val merged = hs.take(1).concat(hs.drop(1))
+        assert(merged.size == 2)
+        assert(merged.find(Tag[Ask]).exists(_ eq a))
+        assert(merged.find(Tag[Say]).exists(_ eq s))
+        assert(merged.indexOf(Tag[Ask]) == 0)
+        assert(merged.indexOf(Tag[Say]) == 1)
+    }
+
     "a Loop clause continues at its declared types" in {
         val outcome = loopAsk(42)[Any](())
         (outcome: Any) match
