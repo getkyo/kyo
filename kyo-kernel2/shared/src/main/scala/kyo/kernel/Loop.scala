@@ -137,7 +137,7 @@ object Loop:
       * @return
       *   An Outcome indicating continuation with Unit state
       */
-    inline def continue[A, S]: Outcome[Unit, A] < S = `<`.lift(_continueUnit)
+    inline def continue[A, S]: Outcome[Unit, A] < S = Nested.lift(_continueUnit)
 
     /** Creates an outcome signaling continuation with a single state value.
       *
@@ -146,7 +146,7 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, O, S](inline v: A): Outcome[A, O] < S =
-        `<`.lift(
+        Nested.lift(
             new Continue[A]:
                 def _1 = v
         )
@@ -160,7 +160,7 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, B, O, S](inline v1: A, inline v2: B): Outcome2[A, B, O] < S =
-        `<`.lift(
+        Nested.lift(
             new Continue2[A, B]:
                 def _1 = v1
                 def _2 = v2
@@ -177,7 +177,7 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, B, C, O, S](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < S =
-        `<`.lift(
+        Nested.lift(
             new Continue3[A, B, C]:
                 def _1 = v1
                 def _2 = v2
@@ -197,7 +197,7 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, B, C, D, O, S](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] < S =
-        `<`.lift(
+        Nested.lift(
             new Continue4[A, B, C, D]:
                 def _1 = v1
                 def _2 = v2
@@ -207,7 +207,7 @@ object Loop:
 
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
-    inline def done[A, S]: Outcome[A, Unit] < S = `<`.lift(())
+    inline def done[A, S]: Outcome[A, Unit] < S = Nested.lift(())
 
     /** Creates an outcome signaling completion with a final value.
       *
@@ -215,7 +215,7 @@ object Loop:
       *   The final value
       */
     @targetName("done1")
-    inline def done[A, O, S](inline v: O): Outcome[A, O] < S = `<`.lift(v)
+    inline def done[A, O, S](inline v: O): Outcome[A, O] < S = Nested.lift(v)
 
     /** Creates an outcome signaling completion with a final value for a two-state loop.
       *
@@ -223,7 +223,7 @@ object Loop:
       *   The final value
       */
     @targetName("done2")
-    inline def done[A, B, O, S](inline v: O): Outcome2[A, B, O] < S = `<`.lift(v)
+    inline def done[A, B, O, S](inline v: O): Outcome2[A, B, O] < S = Nested.lift(v)
 
     /** Creates an outcome signaling completion with a final value for a three-state loop.
       *
@@ -231,7 +231,7 @@ object Loop:
       *   The final value
       */
     @targetName("done3")
-    inline def done[A, B, C, O, S](inline v: O): Outcome3[A, B, C, O] < S = `<`.lift(v)
+    inline def done[A, B, C, O, S](inline v: O): Outcome3[A, B, C, O] < S = Nested.lift(v)
 
     /** Creates an outcome signaling completion with a final value for a four-state loop.
       *
@@ -239,7 +239,7 @@ object Loop:
       *   The final value
       */
     @targetName("done4")
-    inline def done[A, B, C, D, O, S](inline v: O): Outcome4[A, B, C, D, O] < S = `<`.lift(v)
+    inline def done[A, B, C, D, O, S](inline v: O): Outcome4[A, B, C, D, O] < S = Nested.lift(v)
 
     /** Executes a loop with a single state value.
       *

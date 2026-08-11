@@ -31,15 +31,25 @@ class PendingTest extends AnyFreeSpec:
     }
 
     "a computation as a value round-trips through the nested box" in {
+        def box[A](v: A): A < Any    = v
         val inner: Int < Any         = (1: Int < Any).map(_ + 1)
-        val outer: (Int < Any) < Any = inner
+        val outer: (Int < Any) < Any = box(inner)
         assert(outer.eval.eval == 2)
     }
 
     "a computation as a value survives mapping" in {
-        val inner: Int < Any = (1: Int < Any).map(_ + 1)
-        val v: Int < Any     = (inner: (Int < Any) < Any).map(c => c.map(_ * 10))
+        def box[A](v: A): A < Any = v
+        val inner: Int < Any      = (1: Int < Any).map(_ + 1)
+        val v: Int < Any          = box(inner).map(c => c.map(_ * 10))
         assert(v.eval == 20)
+    }
+
+    "a pending value does not lift into a nested computation implicitly" in {
+        assertTypeError("val x: (Int < Any) < Any = (1: Int < Any).map(_ + 1)")
+    }
+
+    "a kyo module does not lift into a computation" in {
+        assertTypeError("val x: Loop.type < Any = Loop")
     }
 
     "deep map chains evaluate" in {

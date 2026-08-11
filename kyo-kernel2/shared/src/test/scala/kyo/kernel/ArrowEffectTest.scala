@@ -18,6 +18,11 @@ class ArrowEffectTest extends AnyFreeSpec:
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Const[String], Const[Unit], Say, Any](Tag[Say], s)
 
+    // holds a computation as a value: the generic parameter routes through
+    // the runtime lift, which boxes pending values; the direct ascription is
+    // rejected by the lift discipline
+    def box[A](v: A): A < Any = v
+
     "handle" - {
         "answers a single operation" in {
             val v = ask.map(_ + 1)
@@ -409,7 +414,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a computation held as a value passes through a handler untouched" in {
             val payload: Int < Any   = (1: Int < Any).map(_ + 1)
-            val v: (Int < Any) < Ask = ask.map(_ => payload)
+            val v: (Int < Any) < Ask = ask.map(_ => box(payload))
             val r                    = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(0))
             assert(r.eval.eval == 2)
         }
@@ -433,8 +438,8 @@ class ArrowEffectTest extends AnyFreeSpec:
     "nested box" - {
         "a pending computation held as a value double-boxes and unboxes one level per eval" in {
             val inner: Int < Say                 = say("x").map(_ => 1)
-            val once: (Int < Say) < Any          = inner
-            val twice: ((Int < Say) < Any) < Any = once
+            val once: (Int < Say) < Any          = box(inner)
+            val twice: ((Int < Say) < Any) < Any = box(once)
             val back: (Int < Say) < Any          = twice.eval
             val r                                = ArrowEffect.handle(Tag[Say], back.eval)([X] => (_, cont) => cont(()))
             assert(r.eval == 1)
@@ -442,7 +447,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "mapping over a double-boxed computation sees the once-boxed value" in {
             val inner: Int < Say                 = say("x").map(_ => 1)
-            val twice: ((Int < Say) < Any) < Any = (inner: (Int < Say) < Any)
+            val twice: ((Int < Say) < Any) < Any = box(box(inner))
             def widen[A, S](v: A < S): A < S     = v
             val unbox = (once: (Int < Say) < Any) =>
                 ArrowEffect.handle(Tag[Say], once.eval)([X] => (_, cont) => cont(())).eval
@@ -452,7 +457,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a pending computation held as a value crosses a handler boxed" in {
             val payload: Int < Say         = say("p").map(_ => 7)
-            val v: (Int < Say) < Ask       = ask.map(_ => payload)
+            val v: (Int < Say) < Ask       = ask.map(_ => box(payload))
             val handled: (Int < Say) < Any = ArrowEffect.handle(Tag[Ask], v)([X] => (_, cont) => cont(0))
             val r                          = ArrowEffect.handle(Tag[Say], handled.eval)([X] => (_, cont) => cont(()))
             assert(r.eval == 7)
@@ -460,7 +465,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a stateful handler passes a pending computation value through intact" in {
             val payload: Int < Say   = say("p").map(_ => 7)
-            val v: (Int < Say) < Ask = ask.map(_ => payload)
+            val v: (Int < Say) < Ask = ask.map(_ => box(payload))
             val r                    = ArrowEffect.handleLoop(Tag[Ask], 0, v)([X] => (_, state) => Loop.continue(state + 1, 0))
             val boxed                = r.eval
             assert(ArrowEffect.handle(Tag[Say], boxed)([X] => (_, cont) => cont(())).eval == 7)
