@@ -295,6 +295,40 @@ class EvalTest extends AnyFreeSpec:
         assert(runVar(10)(inner).eval == 12)
     }
 
+    "a stop request parks a stateful region with its advanced state" in {
+        def burn(n: Int): Int < Any =
+            if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+        val program: Int < VarE =
+            varOp(_ + 7).map { _ =>
+                assert(Safepoint.stop(Thread.currentThread()))
+                burn(Safepoint.Period * 4).map(_ => varOp(_ + 1))
+            }
+        val parked = Eval.partial(runVar(50)(program))
+        assert(parked.evalNow.isEmpty)
+        assert(parked.eval == 58)
+    }
+
+    "an interior stateful answer preserves the state of a stateful region above it" in {
+        val inner: Int < VarE =
+            ArrowEffect.handleLoop(Tag[Ask], 30, ask.map(a1 => varOp(_ + 5).map(v1 => ask.map(a2 => a1 * 10000 + v1 * 100 + a2))))(
+                [X] => (_, state) => Loop.continue(state + 1, state)
+            )
+        assert(runVar(10)(inner).eval == 301531)
+    }
+
+    "a capture rebuilds two stateful regions with their capture-time states" in {
+        val body: Int < (Ask & VarE & Say) =
+            varOp(_ + 2).map(_ => ask).map(_ => say("s")).map(_ => varOp(_ + 3)).map(v2 => ask.map(a2 => v2 * 100 + a2))
+        val inner: Int < (VarE & Say) =
+            ArrowEffect.handleLoop(Tag[Ask], 40, body)(
+                [X] => (_, state) => Loop.continue(state + 1, state)
+            )
+        val v = ArrowEffect.handle(Tag[Say], runVar(0)(inner))(
+            [X] => (_, cont) => cont(()).map(r1 => cont(()).map(r2 => r1 * 1000 + r2))
+        )
+        assert(v.eval == 541541)
+    }
+
     "answers across a deep stack of unrelated scopes" in {
         val depth = 32
         val program: Int < (Ask & Say) =

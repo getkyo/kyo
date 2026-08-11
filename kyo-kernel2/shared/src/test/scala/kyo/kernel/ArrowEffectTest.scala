@@ -425,6 +425,27 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(0)).eval == 42)
         }
 
+        "parks at a stateful region node without evaluating it" in {
+            val region =
+                ArrowEffect.handleLoop(Tag[Ask], 10, ask.map(a => ask.map(b => a * 100 + b)))(
+                    [X] => (_, state) => Loop.continue(state + 1, state)
+                )
+            val parked = ArrowEffect.handlePartial(Tag[Ask], region)([X] => (_, cont) => Maybe(cont(0)))
+            assert(parked.evalNow.isEmpty)
+            assert(ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(0)).eval == 1011)
+        }
+
+        "answers operations leading into a stateful region and leaves it intact" in {
+            val v: Int < Ask = ask.map { outer =>
+                ArrowEffect.handleLoop(Tag[Ask], 5, ask.map(a => ask.map(b => outer * 10000 + a * 100 + b)))(
+                    [X] => (_, state) => Loop.continue(state + 1, state)
+                )
+            }
+            val parked = ArrowEffect.handlePartial(Tag[Ask], v)([X] => (_, cont) => Maybe(cont(3)))
+            assert(parked.evalNow.isEmpty)
+            assert(ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(0)).eval == 30506)
+        }
+
         "parks at a pending stop request without answering" in {
             var answered = 0
             def burn(n: Int): Int < Any =
