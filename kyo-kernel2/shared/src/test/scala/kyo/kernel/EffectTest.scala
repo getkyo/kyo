@@ -16,6 +16,11 @@ class EffectTest extends AnyFreeSpec:
     def testEffect1(i: Int): String < TestEffect1 =
         ArrowEffect.suspend[Any](Tag[TestEffect1], i)
 
+    sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Unit]]
+
+    def testEffect2(s: String): Unit < TestEffect2 =
+        ArrowEffect.suspend[Any](Tag[TestEffect2], s)
+
     "catching" - {
         "match" in {
             val effect = Effect.catching {
@@ -104,6 +109,21 @@ class EffectTest extends AnyFreeSpec:
                 [C] => (input, cont) => cont(input.toString)
             )
             assert(result.eval == "caught")
+        }
+
+        "catching guards a stateful region across a park" in {
+            val body = testEffect1(1).map(a => testEffect2("park").map(_ => testEffect1(2).map(b => a + b)))
+            val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, body)(
+                [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)
+            )
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            val parked = Eval.partial(effect)
+            assert(parked.evalNow.isEmpty)
+            assert(ArrowEffect.handle(Tag[TestEffect2], parked)([C] => (_, cont) => cont(())).eval == "caught")
         }
 
         "a stateful region threads state under catching" in {

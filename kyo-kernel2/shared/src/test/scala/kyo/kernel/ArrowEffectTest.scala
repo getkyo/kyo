@@ -370,6 +370,15 @@ class ArrowEffectTest extends AnyFreeSpec:
             val r = ArrowEffect.handleLoopWith(Tag[Ask], box(41))([X] => _ => Loop.continue(0))(_ + 1)
             assert(r.eval == 42)
         }
+
+        "a parked stateful region resumes with its state and fused exit" in {
+            val v: Int < (Ask & Say) = ask.map(_ => say("x")).map(_ => ask)
+            val fused =
+                ArrowEffect.handleLoopWith(Tag[Ask], 10, v)([X] => (_, s) => Loop.continue(s + 1, s))(_ * 2)
+            val parked = Eval.partial(fused)
+            assert(parked.evalNow.isEmpty)
+            assert(ArrowEffect.handle(Tag[Say], parked)([X] => (_, cont) => cont(())).eval == 22)
+        }
     }
 
     "handlePartial" - {

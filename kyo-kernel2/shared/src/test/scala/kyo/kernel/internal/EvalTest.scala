@@ -316,6 +316,42 @@ class EvalTest extends AnyFreeSpec:
         assert(runVar(10)(inner).eval == 301531)
     }
 
+    "a stateful clause that suspends before a done discards the inner scope" in {
+        val log     = scala.collection.mutable.ListBuffer[String]()
+        var reached = false
+        val program: Int < (Ask & Say) = say("pre").map(_ => ask).map { a =>
+            reached = true
+            say("post").map(_ => a + 1)
+        }
+        val sayScope: Int < Ask = recordSay("s", log)(program)
+        val askScope: Int < VarE = ArrowEffect.handleLoop(Tag[Ask], 0, sayScope)(
+            [X] => (_, state) => varOp(_ + 1).map(_ => Loop.done(state - 100))
+        )
+        assert(runVar(5)(askScope).eval == -100)
+        assert(!reached)
+        assert(log.toList == List("s"))
+    }
+
+    "nested same-tag stateful regions keep independent states" in {
+        val innerBody: Int < Ask = ask.map(a1 => ask.map(a2 => a1 * 100 + a2))
+        val inner: Int < Any =
+            ArrowEffect.handleLoop(Tag[Ask], 10, innerBody)([X] => (_, state) => Loop.continue(state + 1, state))
+        val outerBody: Int < Ask = ask.map(o1 => inner.map(r => ask.map(o2 => o1 * 1000000 + r * 100 + o2)))
+        val outer: Int < Any =
+            ArrowEffect.handleLoop(Tag[Ask], 50, outerBody)([X] => (_, state) => Loop.continue(state + 1, state))
+        assert(outer.eval == 50101151)
+    }
+
+    "state advances across repeated parks" in {
+        val program: Int < (VarE & Say & Ask) =
+            varOp(_ + 1).map(_ => say("s")).map(_ => varOp(_ + 1)).map(_ => ask).map(a => varOp(_ + a))
+        val first = Eval.partial(runVar(0)(program))
+        assert(first.evalNow.isEmpty)
+        val second = Eval.partial(ArrowEffect.handle(Tag[Say], first)([X] => (_, cont) => cont(())))
+        assert(second.evalNow.isEmpty)
+        assert(ArrowEffect.handle(Tag[Ask], second)([X] => (_, cont) => cont(5)).eval == 7)
+    }
+
     "a capture rebuilds two stateful regions with their capture-time states" in {
         val body: Int < (Ask & VarE & Say) =
             varOp(_ + 2).map(_ => ask).map(_ => say("s")).map(_ => varOp(_ + 3)).map(v2 => ask.map(a2 => v2 * 100 + a2))
