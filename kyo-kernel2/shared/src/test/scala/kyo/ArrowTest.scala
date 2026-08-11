@@ -5,11 +5,9 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class ArrowTest extends AnyFreeSpec:
 
-    given Frame = Frame.internal
-
-    def inc: Arrow.Transform[Int, Int, Any] =
+    def inc(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
         new Arrow.Transform[Int, Int, Any]:
-            def frame = Frame.internal
+            def frame = _frame
             def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) =
                 v.map(i => next(i + 1))
 
@@ -22,9 +20,9 @@ class ArrowTest extends AnyFreeSpec:
     }
 
     "chain composes in order" in {
-        val double =
+        def double(using _frame: Frame) =
             new Arrow.Transform[Int, Int, Any]:
-                def frame = Frame.internal
+                def frame = _frame
                 def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) =
                     v.map(i => next(i * 2))
         assert(inc.chain(double)(20).eval == 42)
@@ -48,12 +46,16 @@ class ArrowTest extends AnyFreeSpec:
     "toString renders identity and transform frames" in {
         assert(Arrow[Int].toString == "Arrow(identity)")
         assert(inc.toString.startsWith("Arrow("))
+        assert(inc.toString.contains("ArrowTest.scala"))
     }
 
-    "a composed arrow renders only its first transform" in {
-        val first  = inc
-        val second = inc
-        assert(first.chain(second).toString == first.toString)
+    "a composed arrow renders its shape and frame info" in {
+        val step = inc.chain(inc)
+        assert(step.toString.startsWith("Arrow.Step("))
+        assert(step.toString.contains("ArrowTest.scala"))
+        val andThen = inc.chain(inc).chain(inc)
+        assert(andThen.toString.startsWith("Arrow.AndThen("))
+        assert(andThen.toString.contains("Arrow.Step("))
     }
 
 end ArrowTest
