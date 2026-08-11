@@ -1,24 +1,18 @@
 package kyo.kernel.internal
 
-import kyo.Span
+import kyo.Chunk
 import kyo.Tag
 import scala.annotation.tailrec
 
-// flat storage: the layer stack is tiny, read per operation, and point
-// updated per stateful operation, so Span's copy-per-write immutable array
-// fits it exactly
-opaque type Handlers = Span[Handler[?, ?, ?, ?, ?]]
-
-// resolves Span's element read outside object Handlers, where the sibling
-// extension names would shadow it; Span.apply cannot be called through the
-// companion because the factory overloads match first
-// TODO not ever use hacks like this. Use Span.apply(span)(i)
-private def read(span: Span[Handler[?, ?, ?, ?, ?]], i: Int): Handler[?, ?, ?, ?, ?] =
-    span(i)
+// the layer stack is a Chunk: entering a scope appends a chain node and
+// settling pops one, both in constant time, and closures capture the value
+// as is. Reads walk the chain, so the eval loop adopts flat storage via
+// compact when a scan walks deep; compact is a no-op on flat storage
+opaque type Handlers = Chunk[Handler[?, ?, ?, ?, ?]]
 
 object Handlers:
 
-    val empty: Handlers = Span.empty[Handler[?, ?, ?, ?, ?]]
+    val empty: Handlers = Chunk.empty
 
     extension (self: Handlers)
 
@@ -28,22 +22,33 @@ object Handlers:
         def indexOf[E](tag: Tag[E]): Int =
             @tailrec def loop(i: Int): Int =
                 if i < 0 then i
-                else if tag.erased <:< read(self, i).tag.erased then i
+                else if tag.erased <:< self(i).tag.erased then i
                 else loop(i - 1)
-            loop(Span.size(self) - 1)
+            loop(self.length - 1)
         end indexOf
 
         def apply(i: Int): Handler[?, ?, ?, ?, ?] =
-            read(self, i)
+            self(i)
 
         def take(n: Int): Handlers =
-            Span.take(self)(n)
+            self.take(n)
 
+        // replaces one layer without touching the storage below it: dropping
+        // the layers above unwinds their chain nodes and the replacement is
+        // appended, so replacing the innermost layer stays constant time. The
+        // layers above, present only when an outer handler answers under
+        // unrelated inner ones, are re-linked through one flat copy
         def updated(i: Int, handler: Handler[?, ?, ?, ?, ?]): Handlers =
-            Span.updated(self)(i, handler)
+            val prefix = self.take(i).append(handler)
+            if i == self.length - 1 then prefix
+            else prefix.concat(self.drop(i + 1))
+        end updated
 
         def size: Int =
-            Span.size(self)
+            self.length
+
+        def compact: Handlers =
+            self.toIndexed
 
     end extension
 

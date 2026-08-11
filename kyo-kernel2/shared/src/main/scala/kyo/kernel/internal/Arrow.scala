@@ -7,6 +7,7 @@ import scala.annotation.static
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 
+// TODO this is meant as a user-facing API in the kyo.* package. Move there
 sealed abstract class Arrow[-A, +B, -S]:
     self =>
 
@@ -26,6 +27,8 @@ sealed abstract class Arrow[-A, +B, -S]:
 end Arrow
 
 object Arrow:
+
+    def apply[A]: Arrow.Step[A, A, Any] = identity.asInstanceOf[Arrow.Step[A, A, Any]]
 
     @static private val identity: Transform[Any, Any, Any] =
         new Transform[Any, Any, Any]:
@@ -102,7 +105,5 @@ object Arrow:
             link(identity).asInstanceOf[Step[A, C, S]]
         end step
     end AndThen
-
-    def apply[A]: Arrow.Step[A, A, Any] = identity.asInstanceOf[Arrow.Step[A, A, Any]]
 
 end Arrow

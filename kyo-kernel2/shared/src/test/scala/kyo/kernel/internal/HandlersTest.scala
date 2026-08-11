@@ -86,4 +86,41 @@ class HandlersTest extends AnyFreeSpec:
         assert(hs.take(1).indexOf(Tag[Say]) == -1)
     }
 
+    "updated below the innermost keeps the layers above and below" in {
+        val bottom = loopAsk(1)
+        val middle = loopSay
+        val top    = loopAsk(2)
+        val next   = loopSay
+        val hs     = Handlers.empty.add(bottom).add(middle).add(top)
+        val r      = hs.updated(1, next)
+        assert(r.size == 3)
+        assert(r(0) eq bottom)
+        assert(r(1) eq next)
+        assert(r(2) eq top)
+    }
+
+    "compact preserves the layers and their order" in {
+        val a  = loopAsk(1)
+        val s  = loopSay
+        val b  = loopAsk(2)
+        val hs = Handlers.empty.add(a).add(s).add(b).compact
+        assert(hs.size == 3)
+        assert(hs(0) eq a)
+        assert(hs(1) eq s)
+        assert(hs(2) eq b)
+        assert(hs.indexOf(Tag[Ask]) == 2)
+        assert(hs.indexOf(Tag[Say]) == 1)
+    }
+
+    "operations continue on compacted storage" in {
+        val a  = loopAsk(1)
+        val h2 = loopAsk(2)
+        val h3 = loopAsk(3)
+        val hs = Handlers.empty.add(a).add(loopSay).compact
+        val r  = hs.take(1).add(h2).updated(1, h3)
+        assert(r.size == 2)
+        assert(r(0) eq a)
+        assert(r(1) eq h3)
+    }
+
 end HandlersTest

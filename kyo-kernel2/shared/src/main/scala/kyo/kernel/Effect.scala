@@ -66,6 +66,7 @@ object Effect:
         end match
     end guarded
 
+    // TODO not sure why you changed this but it makes no sense to use map here. Suspend with the proper arrow direclty
     private[kyo] inline def defer[A, S](inline f: => A < S)(using inline frame: Frame): A < S =
         (new Kyo.Defer((), Arrow[Unit]): Unit < Any).map(_ => f)
 

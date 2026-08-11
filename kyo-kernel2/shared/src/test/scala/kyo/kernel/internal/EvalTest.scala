@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
+import scala.annotation.tailrec
 
 class EvalTest extends AnyFreeSpec:
 
@@ -279,12 +280,24 @@ class EvalTest extends AnyFreeSpec:
         assert(answerAsk(41)(42: Int < Ask).evalNow == Maybe(42))
     }
 
+    "answers across a deep stack of unrelated scopes, adopting flat storage" in {
+        val depth = 32
+        val program: Int < (Ask & Say) =
+            ask.map(a => ask.map(b => ask.map(c => say("done").map(_ => a + b + c))))
+        def wrapSay(n: Int, v: Int < (Ask & Say)): Int < (Ask & Say) =
+            if n == 0 then v
+            else wrapSay(n - 1, ArrowEffect.handleLoop(Tag[Say], v)([X] => _ => Loop.continue(())))
+        val handled: Int < Say = answerAsk(14)(wrapSay(depth, program))
+        assert(ArrowEffect.handleLoop(Tag[Say], handled)([X] => _ => Loop.continue(())).eval == 42)
+    }
+
     "enters deeply nested scopes in bounded stack" in {
         val depth = 1000000
-        val nested = (1 to depth).foldLeft(ask.map(_ => 0): Int < Ask) { (acc, _) =>
-            answerAsk(1)(acc).asInstanceOf[Int < Ask]
-        }
-        try assert(nested.asInstanceOf[Int < Any].eval == 0)
+        @tailrec def wrap(n: Int, v: Int < Ask): Int < Ask =
+            if n == 0 then v
+            else wrap(n - 1, answerAsk(1)(v))
+        val nested = wrap(depth, ask.map(_ => 0))
+        try assert(answerAsk(1)(nested).eval == 0)
         catch case e: StackOverflowError => fail(s"stack overflow entering $depth nested scopes")
     }
 
