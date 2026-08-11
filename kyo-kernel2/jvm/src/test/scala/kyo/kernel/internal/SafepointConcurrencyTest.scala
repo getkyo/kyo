@@ -1,5 +1,7 @@
 package kyo.kernel.internal
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.discard
 import kyo.kernel.*
@@ -8,6 +10,8 @@ import org.scalatest.freespec.AnyFreeSpec
 class SafepointConcurrencyTest extends AnyFreeSpec:
 
     private val Period = 512
+    private val Slots  = 65536
+    private val Homes  = 8192
 
     def spinUntil(deadlineMs: Long = 10000)(condition: => Boolean): Boolean =
         val deadline = System.currentTimeMillis() + deadlineMs
@@ -102,6 +106,125 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         t.start()
         t.join(10000)
         assert(!Safepoint.stop(t))
+    }
+
+    "a displaced thread keeps its slot and its budget after nearby cells free" in {
+        val holderCount = Homes * 3
+        val ready       = new CountDownLatch(holderCount)
+        val release     = new CountDownLatch(1)
+        val holders =
+            (1 to holderCount).map { _ =>
+                Thread.ofVirtual().start(() =>
+                    discard(Safepoint.get())
+                    ready.countDown()
+                    discard(release.await(60, TimeUnit.SECONDS))
+                )
+            }
+        try
+            assert(ready.await(60, TimeUnit.SECONDS))
+            val probeCount  = 8
+            val probesReady = new CountDownLatch(probeCount)
+            val holdersDead = new CountDownLatch(1)
+            val saved       = new Array[Long](probeCount)
+            val consumed    = new Array[Boolean](probeCount)
+            val probes =
+                (0 until probeCount).map { i =>
+                    Thread.ofVirtual().start(() =>
+                        val slot = Safepoint.get()
+                        discard(Safepoint.enter(slot))
+                        discard(Safepoint.enter(slot))
+                        discard(Safepoint.enter(slot))
+                        probesReady.countDown()
+                        discard(holdersDead.await(60, TimeUnit.SECONDS))
+                        saved(i) = Safepoint.save(Safepoint.get())
+                        consumed(i) = Safepoint.consumeStopped(Safepoint.get())
+                    )
+                }
+            assert(probesReady.await(60, TimeUnit.SECONDS))
+            probes.foreach(p => assert(Safepoint.stop(p)))
+            release.countDown()
+            holders.foreach(_.join(60000))
+            holdersDead.countDown()
+            probes.foreach(_.join(60000))
+            (0 until probeCount).foreach { i =>
+                assert(saved(i) == 3L)
+                assert(consumed(i))
+            }
+        finally
+            release.countDown()
+        end try
+    }
+
+    "claims reuse the cells of dead threads" in {
+        var i = 0
+        while i < Slots do
+            val batch = (1 to 4096).map(_ => Thread.ofVirtual().start(() => discard(Safepoint.get())))
+            batch.foreach(_.join(30000))
+            i += 4096
+        end while
+        @volatile var entered = false
+        val ready             = new CountDownLatch(1)
+        val done              = new CountDownLatch(1)
+        val v = Thread.ofVirtual().start(() =>
+            entered = Safepoint.enter(Safepoint.get())
+            ready.countDown()
+            discard(done.await(30, TimeUnit.SECONDS))
+        )
+        try
+            assert(ready.await(30, TimeUnit.SECONDS))
+            assert(entered)
+            assert(Safepoint.stop(v))
+        finally
+            done.countDown()
+            v.join(30000)
+        end try
+    }
+
+    "the overflowed slot ignores budget operations and misses preemption" in {
+        val ready   = new CountDownLatch(Slots)
+        val release = new CountDownLatch(1)
+        val holders =
+            (1 to Slots).map { _ =>
+                Thread.ofVirtual().start(() =>
+                    discard(Safepoint.get())
+                    ready.countDown()
+                    discard(release.await(60, TimeUnit.SECONDS))
+                )
+            }
+        try
+            assert(ready.await(60, TimeUnit.SECONDS))
+            @volatile var enterFirst    = false
+            @volatile var savedAfter    = -1L
+            @volatile var stoppedResult = true
+            @volatile var evalResult    = -1
+            val probeReady              = new CountDownLatch(1)
+            val checked                 = new CountDownLatch(1)
+            val probe = Thread.ofVirtual().start(() =>
+                def burn(n: Int): Int < Any =
+                    if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+                val slot = Safepoint.get()
+                enterFirst = Safepoint.enter(slot)
+                Safepoint.exit(slot)
+                discard(Safepoint.enter(slot))
+                Safepoint.restore(slot, 123L)
+                savedAfter = Safepoint.save(slot)
+                stoppedResult = Safepoint.consumeStopped(slot)
+                evalResult = Eval(burn(Period * 4)).eval
+                probeReady.countDown()
+                discard(checked.await(60, TimeUnit.SECONDS))
+            )
+            assert(probeReady.await(60, TimeUnit.SECONDS))
+            assert(enterFirst)
+            assert(savedAfter == 0L)
+            assert(!stoppedResult)
+            assert(evalResult == 0)
+            assert(!Safepoint.stop(probe))
+            checked.countDown()
+            probe.join(60000)
+        finally
+            release.countDown()
+            holders.foreach(_.join(60000))
+        end try
     }
 
     "threads claim stable slots under concurrent lookups" in {

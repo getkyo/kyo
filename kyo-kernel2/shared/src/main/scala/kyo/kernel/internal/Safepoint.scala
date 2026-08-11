@@ -33,17 +33,7 @@ object Safepoint:
     end get
 
     @static private def resolve(thread: Thread, h: Int): Slot =
-        val cached = local.get()
-        if cached ne null then cached.intValue()
-        else
-            val slot = claim(thread, h)
-            local.set(Integer.valueOf(slot))
-            slot
-        end if
-    end resolve
-
-    @static private def claim(thread: Thread, from: Int): Int =
-        @tailrec def loop(i: Int, probes: Int): Int =
+        @tailrec def claim(i: Int, probes: Int): Int =
             if probes == Slots then Overflowed
             else
                 val idx   = i & (Slots - 1)
@@ -54,15 +44,22 @@ object Safepoint:
                             case owner: Thread => !owner.isAlive()
                             case pending: Stop => !pending.thread.isAlive()
                     }
-                if !free then loop(i + 1, probes + 1)
+                if !free then claim(i + 1, probes + 1)
                 else if slots.compareAndSet(idx, entry, thread) then
                     depths(idx) = 0L
                     idx
-                else loop(i, probes)
+                else claim(i, probes)
                 end if
-        end loop
-        loop(from, 0)
-    end claim
+        end claim
+
+        val cached = local.get()
+        if cached ne null then cached.intValue()
+        else
+            val slot = claim(h, 0)
+            local.set(Integer.valueOf(slot))
+            slot
+        end if
+    end resolve
 
     @static def enter(slot: Slot): Boolean =
         if slot != Overflowed then
