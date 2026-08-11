@@ -53,7 +53,7 @@ object Kyo:
 
         private[kernel] def root: Suspend[I, O, E, X, ?, ?] = this
 
-        final override def toString = // TODO let's make sure we have proper to string for other classes that represent computaitons as well
+        final override def toString =
             s"Kyo(${tag.show}, Input($input), ${frame.position.show}, ${frame.snippetShort})"
 
         final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
