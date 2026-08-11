@@ -5,7 +5,7 @@ import kyo.Tag
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
-class KyoTest extends AnyFreeSpec:
+class KyoInternalTest extends AnyFreeSpec:
 
     given Frame = Frame.internal
 
@@ -88,4 +88,11 @@ class KyoTest extends AnyFreeSpec:
         }
     }
 
-end KyoTest
+    "Defer and Handled render diagnostically" in {
+        assert(Effect.defer(42).toString.startsWith("Kyo(Defer("))
+        val n = node(loopAsk(1))
+        assert(n.toString.startsWith("Kyo(Handled("))
+        assert(n.toString.contains("Ask"))
+    }
+
+end KyoInternalTest

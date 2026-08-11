@@ -66,8 +66,19 @@ object Effect:
         end match
     end guarded
 
-    // TODO not sure why you changed this but it makes no sense to use map here. Suspend with the proper arrow direclty
-    private[kyo] inline def defer[A, S](inline f: => A < S)(using inline frame: Frame): A < S =
-        (new Kyo.Defer((), Arrow[Unit]): Unit < Any).map(_ => f)
+    @nowarn("msg=anonymous")
+    private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
+        new Kyo.Defer[Unit, A, S](
+            (),
+            new Arrow.Transform[Unit, A, S]:
+                def frame = _frame
+                def apply[C, S2](v: Unit < S2, next: Arrow[A, C, S2]) =
+                    f match
+                        case kyo: Kyo[A, S] @unchecked =>
+                            kyo.map(next)
+                        case a =>
+                            val step = next.step
+                            step.head(a.asInstanceOf[A < S2], step.tail)
+        )
 
 end Effect

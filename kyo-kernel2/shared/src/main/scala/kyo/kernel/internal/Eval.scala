@@ -5,10 +5,11 @@ import kyo.Frame
 import kyo.kernel.*
 import scala.annotation.tailrec
 
-// visibility is the internal package itself: referenced from public inline
-// bodies, so a private modifier would force an inline accessor that
-// materializes the package prefix as a runtime value
-// TODO private[kyo] becomes public in the bytecode. Qualified privates are just public at the bytecode level
+// public: the internal package carries the visibility intent. Any private
+// qualifier, including private[kyo] that is public in bytecode, makes the
+// compiler emit inline accessors for references from public inline bodies,
+// and those materialize the package prefix as a runtime value, failing with
+// NoClassDefFoundError: kyo/kernel/internal at every eval call site
 object Eval:
 
     // a suspension whose scan walked deeper than this over chain-y layer
@@ -91,12 +92,12 @@ object Eval:
                                         val hsAll = hs
                                         val exAll = exits
                                         val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                        val chained = pending.asInstanceOf[Kyo[Any, Any]].map(transform {
+                                        val chained = pending.asInstanceOf[Any < Any].map {
                                             case c: Loop.Continue[?] =>
                                                 rebuildFrom(idx, walk(kCont, c._1.asInstanceOf[Any < Any]), hsAll, exAll)
                                             case done =>
                                                 walk(exAll(idx), Nested.lift(done))
-                                        })
+                                        }(using Frame.internal)
                                         loop(chained.asInstanceOf[A < S], hs.take(idx), exits.take(idx), Math.min(flatBelow, idx))
                                     case outcome =>
                                         Nested.unnest[Any](outcome) match
@@ -106,9 +107,9 @@ object Eval:
                                                         val hsAll = hs
                                                         val exAll = exits
                                                         val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                                        val chained = p.asInstanceOf[Kyo[Any, Any]].map(transform { a =>
+                                                        val chained = p.asInstanceOf[Any < Any].map { a =>
                                                             rebuildFrom(idx + 1, walk(kCont, Nested.lift(a)), hsAll, exAll)
-                                                        })
+                                                        }(using Frame.internal)
                                                         loop(
                                                             chained.asInstanceOf[A < S],
                                                             hs.take(idx + 1),
@@ -138,7 +139,7 @@ object Eval:
                                         val hsAll = hs
                                         val exAll = exits
                                         val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                        val chained = pending.asInstanceOf[Kyo[Any, Any]].map(transform {
+                                        val chained = pending.asInstanceOf[Any < Any].map {
                                             case c: Loop.Continue2[?, ?] =>
                                                 rebuildFrom(
                                                     idx,
@@ -148,7 +149,7 @@ object Eval:
                                                 )
                                             case done =>
                                                 walk(exAll(idx), Nested.lift(done))
-                                        })
+                                        }(using Frame.internal)
                                         loop(chained.asInstanceOf[A < S], hs.take(idx), exits.take(idx), Math.min(flatBelow, idx))
                                     case outcome =>
                                         Nested.unnest[Any](outcome) match
@@ -163,9 +164,9 @@ object Eval:
                                                         val hsAll = hs2
                                                         val exAll = exits
                                                         val kCont = kyo.cont.asInstanceOf[Arrow[Any, Any, Any]]
-                                                        val chained = p.asInstanceOf[Kyo[Any, Any]].map(transform { a =>
+                                                        val chained = p.asInstanceOf[Any < Any].map { a =>
                                                             rebuildFrom(idx + 1, walk(kCont, Nested.lift(a)), hsAll, exAll)
-                                                        })
+                                                        }(using Frame.internal)
                                                         loop(
                                                             chained.asInstanceOf[A < S],
                                                             hs2.take(idx + 1),
@@ -228,40 +229,18 @@ object Eval:
         val step = cont.step
         step.head(v, step.tail)
 
-    // one arrow step over erased currency applying f to the settled value,
-    // in the suspendWith shape: a pending input re-suspends the step via map
-
-    // TODO isn't this <.map? let's avoid having this code if possible
-    private def transform(f: Any => Any < Any): Arrow.Transform[Any, Any, Any] =
-        def mapLoop[C, S3](v: Any < S3, next: Arrow[Any, C, S3]): C < S3 =
-            def arrow: Arrow.Transform[Any, C, S3] =
-                new Arrow.Transform[Any, C, S3]:
-                    def frame = Frame.internal
-                    def apply[D, S4](v2: Any < S4, next2: Arrow[C, D, S4]) =
-                        mapLoop(v2, next.chain(next2))
-            v match
-                case kyo: Kyo[?, ?] =>
-                    kyo.asInstanceOf[Kyo[Any, S3]].map(arrow).asInstanceOf[C < S3]
-                case v =>
-                    // no budget check: f either suspends, returning the node
-                    // flat, or settles into the chained arrows, whose strict
-                    // segments carry their own checks in map
-                    val res  = Nested.unnest[Any](v)
-                    val step = next.step
-                    step.head(f(res).asInstanceOf[Any < S3], step.tail)
-            end match
-        end mapLoop
-        new Arrow.Transform[Any, Any, Any]:
-            def frame = Frame.internal
-            def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]) =
-                mapLoop(v, next)
-        end new
-    end transform
-
-    // the crossed layers are restored as plain region nodes around the
-    // resumed computation; the casts keep the erased construction out of the
-    // implicit lift, which would nest the computation as data
-    // TODO not sure I understand the need for this nor why it loops
+    // When a computation leaves the evaluated region structure as a plain
+    // value, the layers it sat under must travel with it or their handlers
+    // and exits would be lost. This happens in three places: a clause that
+    // suspends before producing its outcome (the resumed outcome must still
+    // run under the layers outside its own scope), a Cont handler's captured
+    // continuation (each call re-enters the crossed layers), and a partial
+    // evaluation yielding a residual. The loop wraps the value back into one
+    // Handled region node per layer, innermost first, so evaluating the
+    // result re-enters the same layers with the same exits: a residual is
+    // ordinary data and resumes by evaluation alone. The casts keep the
+    // erased construction out of the implicit lift, which would nest the
+    // computation as data
     private def rebuildFrom(from: Int, value: Any < Any, hs0: Handlers, exits0: Chunk[Arrow[Any, Any, Any]]): Any < Any =
         // reads every layer once, so chain-y storage flattens first; a no-op
         // when the storage is already flat

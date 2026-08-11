@@ -1,5 +1,4 @@
 package kyo.kernel.internal
-// TODO I think the file is named KyoInternal in the old kernel? please keep the same organization as the old kernel where possible
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.*
@@ -71,6 +70,8 @@ object Kyo:
     final class Defer[A, +B, -S](val value: A < S, val cont: Arrow[A, B, S]) extends Kyo[B, S]:
         def map[C, S2](f: Arrow[B, C, S2]) =
             new Defer(value, cont.chain(f))
+
+        override def toString = s"Kyo(Defer($value))"
     end Defer
 
     final class Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, -S](
@@ -80,6 +81,8 @@ object Kyo:
     ) extends Kyo[B, S]:
         def map[C, S2](f: Arrow[B, C, S2]) =
             new Handled[I, O, E, A, C, S & S2](value, handler, cont.chain(f))
+
+        override def toString = s"Kyo(Handled(${handler.tag.show}, $value))"
     end Handled
 
 end Kyo
