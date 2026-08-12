@@ -206,6 +206,42 @@ writes in one expression: at 6 generators the cost is invisible, at 25 it is
 separate defs or vals resets the depth: the same 100 map sites split across
 20 methods compile ~18x faster than in one method.
 
+## Experiment: the Transform-outside-map redesign (built, measured, rejected)
+
+The natural fix attempt: move the whole drive logic into the per-site
+Transform (its apply becomes mapLoop, recursion through `this.chain(next)`,
+the suspendWith `cont = this` pattern) and shrink map to inline wiring
+`Transform.derive(f)(self, Arrow[B])`, so the per-level expansion is one
+self-contained unit instead of machinery wrapped around the receiver. A
+non-inline `map(f: Transform)` variant with an implicit conversion was ruled
+out first: argument-position conversions do not propagate parameter types
+into untyped lambdas, so `.map(_ + 1)` stops compiling, and `into`-style
+conversions cannot carry an inline f, which fusion requires.
+
+The wiring variant compiled and passed the full suite (587/587), and the
+call-site bytecode collapsed from 140 bytes across three lifted methods to
+28 bytes in one. The compile fixtures rejected it:
+
+| fixture | mapLoop design | Transform-outside | delta |
+|---|---|---|---|
+| MapChainDeep100 | 9,485 ms | 8,057 ms | -15% |
+| MapChainDeep200 | 52,643 ms | 43,491 ms | -17% |
+| ForCompDeep25 | 2,280 ms | 2,783 ms | +22% |
+| ForCompDeep50 | 10,768 ms | 16,729 ms | +55% |
+| ForComp100 | 100,379 ms | 161,607 ms | +61% |
+| ForComprehensions | ~1,450 ms | 1,531 ms | +6% |
+
+The mechanism: in this design f, carrying the entire nested rest, sits
+INSIDE the anonymous class definition. TreeTypeMap over a tree containing a
+class def clones the class symbol and its members, so nesting the rest
+class-in-class k deep makes every level's re-map clone the whole nested
+class tree. The mapLoop design keeps f in a LOCAL DEF, cheap to re-map, and
+its per-site class contains only a one-line call; receiver chains improved
+because the prefix rides in a sibling binding outside the new class def, but
+that is the rarer shape. Reverted; the rule it leaves behind: keep deeply
+nested user code out of class definitions inside inline expansions, local
+defs re-map an order of magnitude cheaper.
+
 ## Implications
 
 Kernel-side (task #66): the cost driver is per-site expansion size times
