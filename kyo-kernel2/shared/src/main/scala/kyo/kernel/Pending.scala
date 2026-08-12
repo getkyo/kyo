@@ -57,23 +57,26 @@ object `<` extends Implicits:
                 new Arrow.Transform[A, B, S & S2]:
                     def frame = _frame
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
-                        v match
-                            case kyo: Kyo[A, S3] @unchecked =>
-                                kyo.map(this.chain(next))
-                            case v =>
-                                val res  = Kyo.unnest(v)
-                                val slot = Safepoint.get()
-                                if !Safepoint.enter(slot) then
-                                    Kyo.Defer(v, this.chain(next))
-                                else
-                                    val step = next.step
-                                    val out  = step.head(f(res), step.tail)
-                                    Safepoint.exit(slot)
-                                    out
-                                end if
-                        end match
+                        run(v, next)
                     end apply
-            arrow(self: A < S, Arrow[B])
+            def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
+                v match
+                    case kyo: Kyo[A, S3] @unchecked =>
+                        kyo.map(arrow.chain(next))
+                    case v =>
+                        val res  = Kyo.unnest(v)
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Kyo.Defer(v, arrow.chain(next))
+                        else
+                            val step = next.step
+                            val out  = step.head(f(res), step.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
+                end match
+            end run
+            run(self: A < S, Arrow[B])
         end flatMap
 
         @nowarn("msg=anonymous")

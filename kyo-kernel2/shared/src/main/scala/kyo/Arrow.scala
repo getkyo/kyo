@@ -100,7 +100,7 @@ object Arrow:
     //                     out
     //                 end if
     //         end match
-    //     def run[C, S2](v: A, next: Arrow[B, C, S2]): C < (S & S2) = 
+    //     def run[C, S2](v: A, next: Arrow[B, C, S2]): C < (S & S2) =
 
     private[kyo] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
