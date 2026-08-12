@@ -58,7 +58,7 @@ object Eval:
                                             val hs2 = if updated eq node then hs else replace(hs, node, updated)
                                             (c._2: Any) match
                                                 case p: Kyo[Any, Any] @unchecked =>
-                                                    loop(stateContinue(p, updated, hs2, kyo.cont), updated)
+                                                    loop(continuePending(p, updated, hs2, kyo.cont), updated)
                                                 case answer =>
                                                     loop(resume(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs2)
                                             end match
@@ -76,7 +76,7 @@ object Eval:
                                                 case c: Loop.Continue[Any < Nothing] @unchecked =>
                                                     (c._1: Any) match
                                                         case p: Kyo[Any, Any] @unchecked =>
-                                                            loop(loopContinue(p, node, hs, kyo.cont), node)
+                                                            loop(continuePending(p, node, hs, kyo.cont), node)
                                                         case answer =>
                                                             loop(resume(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs)
                                                 case done =>
@@ -137,14 +137,15 @@ object Eval:
                 resume(node.exit, Nested.lift(done))
         }(using Frame.internal)
 
-    private def stateContinue(
+    // shared by the stateless and stateful regions: rebuild only walks cells
+    private def continuePending(
         p: Any < Any,
-        updated: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
-        hs2: Handlers,
+        node: Handlers,
+        hsAll: Handlers,
         kCont: Arrow[Any, Any, Any]
     ): Any < Nothing =
         p.map { a =>
-            rebuild(hs2, updated, resume(kCont, Nested.lift(a)))
+            rebuild(hsAll, node, resume(kCont, Nested.lift(a)))
         }(using Frame.internal)
 
     private def loopPending(
@@ -158,16 +159,6 @@ object Eval:
                 rebuild(hsAll, node.prev, walk(kCont, c._1))
             case done =>
                 resume(node.exit, Nested.lift(done))
-        }(using Frame.internal)
-
-    private def loopContinue(
-        p: Any < Any,
-        node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any],
-        hsAll: Handlers,
-        kCont: Arrow[Any, Any, Any]
-    ): Any < Nothing =
-        p.map { a =>
-            rebuild(hsAll, node, resume(kCont, Nested.lift(a)))
         }(using Frame.internal)
 
     // a suspension travelling up the chain walk: the unfinished right sides compose into
