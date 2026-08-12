@@ -6,7 +6,11 @@ import kyo.kernel.*
 import kyo.kernel.internal.Handlers.Empty
 import kyo.kernel.internal.Handlers.Node
 import kyo.kernel.internal.Handlers.StateNode
+import scala.annotation.static
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayDeque
+
+class Eval
 
 object Eval:
 
@@ -133,8 +137,78 @@ object Eval:
         loop(v0, Empty).asInstanceOf[A < S]
     end evalLoop
 
+    final private class Scratch:
+        val pending        = new ArrayDeque[Arrow[Any, Any, Any]]
+        private var region = new Array[Arrow[Any, Any, Any]](256)
+        var top            = 0
+        def push(u: Arrow[Any, Any, Any]): Unit =
+            if top == region.length then region = java.util.Arrays.copyOf(region, top * 2)
+            region(top) = u
+            top += 1
+        end push
+        def apply(i: Int): Arrow[Any, Any, Any] = region(i)
+    end Scratch
+
+    @static private val scratch: ThreadLocal[Scratch] =
+        new ThreadLocal[Scratch]:
+            override def initialValue() = new Scratch
+
     private def walk(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
-        cont.applyTo(v)
+        cont match
+            case cont: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
+                v match
+                    case kyo: Kyo[Any, Nothing] @unchecked => kyo.map(cont)
+                    case _                                 => evalChain(cont, v)
+            case cont =>
+                val step = cont.step
+                step.head(v, step.tail)
+
+    private def evalChain(root: Arrow.AndThen[Any, Any, Any, Any], v0: Any < Nothing): Any < Nothing =
+        val s    = scratch.get
+        val mark = s.top
+        unroll(root, s)
+        val end = s.top
+        @tailrec def loop(i: Int, v: Any < Nothing): Any < Nothing =
+            if i == end then v
+            else
+                val step = s(i).step
+                step.head(v, step.tail) match
+                    case kyo: Kyo[Any, Nothing] @unchecked =>
+                        remainder(s, i + 1, end) match
+                            case rest if rest eq Arrow[Any] => kyo
+                            case rest                       => kyo.map(rest)
+                    case r =>
+                        loop(i + 1, r)
+                end match
+        try loop(mark, v0)
+        finally s.top = mark
+    end evalChain
+
+    // composition nodes unroll; pre-linked Step chains stay opaque whole so their fused
+    // head(v, tail) execution attaches its own remainder through the arrow captures,
+    // and a minted chain is never re-expanded or re-minted
+    private def unroll(root: Arrow.AndThen[Any, Any, Any, Any], s: Scratch): Unit =
+        val pending = s.pending
+        @tailrec def loop(n: Int): Unit =
+            if n > 0 then
+                pending.removeHead() match
+                    case at: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
+                        pending.prepend(at.b)
+                        pending.prepend(at.a)
+                        loop(n + 1)
+                    case u =>
+                        if u ne Arrow[Any] then s.push(u)
+                        loop(n - 1)
+        pending.prepend(root)
+        loop(1)
+    end unroll
+
+    private def remainder(s: Scratch, from: Int, end: Int): Arrow[Any, Any, Any] =
+        @tailrec def link(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+            if j < from then acc
+            else link(j - 1, s(j).chain(acc))
+        link(end - 1, Arrow[Any])
+    end remainder
 
     @tailrec private def rebuild(top: Handlers, stop: Handlers, acc: Any < Nothing): Any < Nothing =
         if top eq stop then acc
