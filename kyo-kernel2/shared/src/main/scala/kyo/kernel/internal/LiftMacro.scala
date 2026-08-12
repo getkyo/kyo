@@ -11,23 +11,22 @@ object LiftMacro:
       */
     inline def expand[A, S](v: A): A < S = ${ liftMacro[A, S]('v) }
 
-    /** Emits the lift of a pure value into a computation, specialized by what the type can
-      * prove statically: a bare cast when a value of the type can never need the nesting box
-      * (Nothing, primitives and value classes, String, and final classes that are not Boxed,
-      * since a final class admits no Boxed subtype), a direct Nested wrapper when the type is
-      * statically pending (reachable through CanLift.unsafe.bypass, which exists to nest
-      * deliberately), and the runtime Boxed test for everything else. Traits, abstract and
-      * non-final classes, opaques, and the top types all stay on the runtime test: a trait
-      * value can be a Nested (which implements Product), an Arrow-typed value can be a fused
-      * suspension, and an opaque's underlying can admit computations (Loop.Outcome carries
-      * them). The nesting discipline itself lives in CanLift; this macro only chooses the
-      * emission.
+    /** The whole lift decision for the non-trivial shapes, gate and emission in one place.
+      *
+      * Rejections: a statically pending type aborts with the flatten guidance (implicit
+      * nesting is always a mistake; deliberate nesting goes through Kyo.lift, which uses the
+      * ungated internal path), and a kyo module singleton aborts with the module message.
+      *
+      * Emission: a bare cast when a value of the type can never need the nesting box
+      * (Nothing, value types, String, non-module singletons, and final classes that are not
+      * Boxed, since a final class admits no Boxed subtype), and the runtime Boxed test for
+      * everything else. Traits, abstract and non-final classes, opaques, and the top types
+      * all stay on the runtime test: a trait value can be a Nested (which implements
+      * Product), an Arrow-typed value can be a fused suspension, and an opaque's underlying
+      * can admit computations (Loop.Outcome carries them).
       */
     def liftMacro[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
-
-        enum Mode derives CanEqual:
-            case Cast, Nested, DefaultLift
 
         val tpe  = TypeRepr.of[A].dealias
         val wide = tpe.widen.dealias
@@ -35,22 +34,26 @@ object LiftMacro:
 
         def isNothing = tpe =:= TypeRepr.of[Nothing]
         def isPending = tpe <:< TypeRepr.of[Any < Nothing]
+        def isModule  = sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case)
         def isValue   = wide <:< TypeRepr.of[AnyVal] || wide <:< TypeRepr.of[String]
         def isSafeFinalClass =
             sym.isClassDef && sym.flags.is(Flags.Final) && !sym.flags.is(Flags.Trait) &&
                 !(wide <:< TypeRepr.of[Boxed])
 
-        val mode =
-            if isNothing then Mode.Cast
-            else if isPending then Mode.Nested
-            else if isValue || isSafeFinalClass then Mode.Cast
-            else Mode.DefaultLift
-
-        mode match
-            case Mode.Cast        => '{ $v.asInstanceOf[A < S] }
-            case Mode.Nested      => '{ Nested($v).asInstanceOf[A < S] }
-            case Mode.DefaultLift => '{ defaultLift[A, S]($v) }
-        end match
+        if isNothing then '{ $v.asInstanceOf[A < S] }
+        else if isPending then
+            report.errorAndAbort(
+                s"""Type '${tpe.show}' may contain a nested effect computation.
+                   |This usually means a value of type `X < S1 < S2` where a plain `X < S` is expected,
+                   |typically from type inference nesting effect computations instead of merging them.
+                   |Call `.flatten` to merge the nested effects, or split the expression into
+                   |smaller statements so the effect rows unify.""".stripMargin,
+                Position.ofMacroExpansion
+            )
+        else if isModule then
+            report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
+        else if isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ defaultLift[A, S]($v) }
+        end if
     end liftMacro
 
     final def defaultLift[A, S](v: A): A < S =
