@@ -274,3 +274,67 @@ java -Xss32m -XX:StartFlightRecording=filename=deep100.jfr,settings=profile \
   kyo-compile-bench/fixtures/MapChainDeep100.scala
 jfr print --events jdk.ExecutionSample deep100.jfr
 ```
+
+## The local-run shape: user redesign, validated (commits 4b2eab8441, 9e9f725727, 1982c8c4cc)
+
+The shipped resolution of the self-contained-candidate violations. The
+per-site expansion defines a local `run` def carrying the whole evaluation
+step (kyo attach, budget check, `step.head(f(res), step.tail)`); the
+anonymous Transform's apply is a one-line delegation to `run`, and the
+entry path calls `run` directly. Consequences, each verified:
+
+- The user's `f` no longer nests inside a class definition, so the
+  TreeTypeMap class-def cloning that made lambda-nested shapes ~10x worse
+  no longer multiplies per level.
+- The eager path never touches `def arrow`, so it allocates no Transform
+  by construction again (not escape-analysis-dependent), which closes both
+  candidate violations.
+- The suspend and defer arms mint the Transform lazily inside `run`
+  (`arrow.chain(next)`), preserving the candidate's node-count.
+
+Alongside it, `Safepoint.enter()` fuses slot resolution and budget entry
+into one call returning the slot, with a negative sentinel when denied
+(Slot is an opaque Int, so the sentinel stays unboxed; every other Slot
+API fails fast on a negative index). The evaluator keeps the two-step
+get/enter for its get-once, enter-per-step loop.
+
+### Compile fixtures, in-session A/B (JMH, 8 warmup, 5 measure)
+
+| fixture | old kernel | new kernel | ratio |
+|---|---|---|---|
+| ForCompDeep25 | 1,849 ms | 1,577 ms | 0.85x |
+| ForComprehensions | 735 ms | 630 ms | 0.86x |
+| MapChainDeep100 | 20,032 ms | 7,791 ms | 0.39x |
+
+The for-comp family flips from the fatal shape to the biggest winner
+(mapLoop design measured 2,280 ms on ForCompDeep25; the rejected
+Transform-outside 2,783 ms).
+
+### Runtime guard rows, in-session A/B (-f 1 -wi 8 -i 5 -prof gc)
+
+| row | old kernel | new kernel | time | alloc |
+|---|---|---|---|---|
+| uncachedValuesPayBoxingOnly | 74.2 us / 141,777 B | 51.7 us / 155,160 B | 0.70x | 1.09x |
+| inlineLimitKeepsZeroAllocation | 2.17 us / 0 B (prior board) | 1.45 us / 0.010 B | 0.67x | zero holds |
+| inlineLimitCostsTimeNotAllocation | 344.3 us / 724,386 B | 266.8 us / 735,642 B | 0.78x | 1.02x |
+| suspensionBaseline | 129.8 us / 560,089 B | 81.9 us / 640,121 B | 0.63x | 1.14x |
+| suspensionFusesContinuation | 78.8 us / 240,041 B | 25.3 us / 240,080 B | 0.32x | 1.00x |
+| fusionPastBudgetPaysRescuesOnly | 48.2 us / 1,128 B | 47.9 us / 448 B | 0.99x | 0.40x |
+| deepRecursionPaysRescuesOnly | 54.9 us / 2,128 B | 57.7 us / 912 B | 1.05x | 0.43x |
+| fusionAfterSuspension | 85.8 us / 408,431 B | 157.5 us / 472,505 B | 1.84x | 1.16x |
+| fusionAllocatesNothing | zero row | 0.588 us / 0.004 B | | holds |
+
+Both candidate violations closed: uncachedValuesPayBoxingOnly allocation
+back from 331K to 155K B/op (1.09x old, the pre-candidate status quo) and
+inlineLimitKeepsZeroAllocation back from 4,968 to ~0 B/op.
+
+Open items after this board:
+
+1. deepRecursionPaysRescuesOnly 1.05x time (57.7 vs 54.9 us, error bars
+   disjoint) against a 0.43x allocation win on the same row. The rescue
+   family's time moved with the candidate design (fusionPastBudget 32.8
+   to 47.9 us vs our own mapLoop-era board while staying at old-kernel
+   parity), so the rescue/resume path is the next optimization target.
+2. fusionAfterSuspension 1.84x time / 1.16x alloc: the standing
+   two-objects-vs-one map-on-suspension structural fork, unchanged by
+   this work, still awaiting a ruling.
