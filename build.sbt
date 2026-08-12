@@ -762,6 +762,9 @@ lazy val `kyo-compile-bench` =
             // No tests or doctests here; keep the doctest driver jars (built from the stack
             // above the kernel, mid-migration) off the Test classpath that Jmh extends.
             Test / unmanagedJars := Seq.empty,
+            // the deep-inline fixtures recurse far in dotty's inliner; forked JMH JVMs
+            // need the same stack headroom the build's own JVM runs with
+            Jmh / javaOptions ++= Seq("-Xss32m", "-Xmx4g"),
             libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
         )
 
