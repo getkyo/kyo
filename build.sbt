@@ -746,6 +746,22 @@ lazy val `kyo-kernel-bench` =
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders")
         )
 
+// Compile-time benchmark: a warmed in-process dotc compiles fixture files against each
+// kernel's classes, one fixture per cost driver. The project depends only on kyo-data (for
+// the corpus classpath) and the compiler; the kernels enter as -classpath entries, so the
+// harness stays green regardless of the stack migration state.
+lazy val `kyo-compile-bench` =
+    project
+        .in(file("kyo-compile-bench"))
+        .dependsOn(`kyo-data`.jvm)
+        .disablePlugins(MimaPlugin)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            run / fork     := true,
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
+        )
+
 lazy val `kyo-kernel2` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
