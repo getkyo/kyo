@@ -84,30 +84,10 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                             val leaked = results.flatMap(m => Chunk.from(m.toList))
                             if leaked.isEmpty then Kyo.unit
                             else
-                                Kyo.foreach(leaked) { s =>
-                                    Abort.run[ContainerException](backend.inspect(s.id)).map { insp =>
-                                        val detail = insp match
-                                            case Result.Success(i) =>
-                                                s"state=${i.state} exit=${i.exitCode} restarts=${i.restartCount} pid=${i.pid} " +
-                                                    s"created=${i.createdAt} started=${i.startedAt} finished=${i.finishedAt} health=${i.healthStatus}"
-                                            case other => s"inspect=$other"
-                                        Abort.run[ContainerException](backend.remove(s.id, force = true, removeVolumes = true)).map { rr =>
-                                            Abort.run[ContainerException](backend.state(s.id)).map { after =>
-                                                val rrStr = rr match
-                                                    case Result.Success(_) => "ok"
-                                                    case Result.Failure(e) => s"FAIL:${e.getClass.getSimpleName}:${e.getMessage}"
-                                                    case Result.Panic(e)   => s"PANIC:${e.getMessage}"
-                                                val afterStr = after match
-                                                    case Result.Failure(_: ContainerMissingException) => "GONE"
-                                                    case Result.Success(st)                           => s"still=$st"
-                                                    case o                                            => s"$o"
-                                                s"${s.id.value.take(12)}: $detail | reRemove=$rrStr -> $afterStr"
-                                            }
-                                        }
-                                    }
-                                }.map { lines =>
-                                    fail(s"leaf leaked ${leaked.size} container(s) not freed before exit:\n" + lines.mkString("\n"))
-                                }
+                                fail(
+                                    s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
+                                        leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
+                                )
                             end if
                         }
                     }
