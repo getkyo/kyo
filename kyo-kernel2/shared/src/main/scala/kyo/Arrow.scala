@@ -59,6 +59,14 @@ object Arrow:
         new ThreadLocal[Scratch]:
             override def initialValue() = new Scratch
 
+    // marks an AndThen as executed once: the second execution materializes the linked
+    // chain so repeated runs take the fused monomorphic path; never applied
+    @static private val DrivenOnce: Step[Any, Any, Any] =
+        new Transform[Any, Any, Any]:
+            def frame = Frame.internal
+            def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
+                throw new IllegalStateException("DrivenOnce sentinel applied")
+
     abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
         type X
         def head: Transform[A, X, S]
@@ -113,23 +121,36 @@ object Arrow:
                 case kyo: Kyo[Any, Any] @unchecked =>
                     kyo.map(this.asInstanceOf[Arrow[Any, Any, Any]])
                 case _ =>
-                    val s    = scratch.get
-                    val mark = s.top
-                    unrollUnits(s)
-                    val end = s.top
-                    @tailrec def drive(i: Int, v: Any < Nothing): Any < Nothing =
-                        if i == end then v
-                        else
-                            s(i)(v.asInstanceOf[Any]) match
-                                case kyo: Kyo[Any, Any] @unchecked =>
-                                    remainder(s, i + 1, end) match
-                                        case rest if rest eq identity => kyo
-                                        case rest                     => kyo.map(rest)
-                                case r =>
-                                    drive(i + 1, r)
-                    try drive(mark, v)
-                    finally s.top = mark
+                    val cached = flattened
+                    if cached eq null then
+                        flattened = DrivenOnce
+                        drive(v)
+                    else if cached eq DrivenOnce then
+                        val s = step.asInstanceOf[Step[Any, Any, Any]]
+                        s.head(v, s.tail)
+                    else
+                        cached.head(v, cached.tail)
+                    end if
         end applyTo
+
+        private def drive(v0: Any < Nothing): Any < Nothing =
+            val s    = scratch.get
+            val mark = s.top
+            unrollUnits(s)
+            val end = s.top
+            @tailrec def loop(i: Int, v: Any < Nothing): Any < Nothing =
+                if i == end then v
+                else
+                    s(i)(v.asInstanceOf[Any]) match
+                        case kyo: Kyo[Any, Any] @unchecked =>
+                            remainder(s, i + 1, end) match
+                                case rest if rest eq identity => kyo
+                                case rest                     => kyo.map(rest)
+                        case r =>
+                            loop(i + 1, r)
+            try loop(mark, v0)
+            finally s.top = mark
+        end drive
 
         private def remainder(s: Scratch, from: Int, end: Int): Arrow[Any, Any, Any] =
             @tailrec def link(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
@@ -161,7 +182,7 @@ object Arrow:
 
         def step =
             val cached = flattened
-            if cached ne null then cached.asInstanceOf[Step[A, C, S]]
+            if (cached ne null) && (cached ne DrivenOnce) then cached.asInstanceOf[Step[A, C, S]]
             else
                 val res = flatten
                 flattened = res.asInstanceOf[Step[Any, Any, Any]]
