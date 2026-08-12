@@ -134,8 +134,7 @@ object Eval:
     end evalLoop
 
     private def walk(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
-        val step = cont.step
-        step.head(v, step.tail)
+        cont.applyTo(v, Safepoint.get())
 
     @tailrec private def rebuild(top: Handlers, stop: Handlers, acc: Any < Nothing): Any < Nothing =
         if top eq stop then acc

@@ -1,6 +1,8 @@
 package kyo
 
 import kyo.kernel.*
+import kyo.kernel.internal.Kyo
+import kyo.kernel.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
@@ -12,6 +14,10 @@ sealed abstract class Arrow[-A, +B, -S]:
     def apply(v: A): B < S
 
     def step: Arrow.Step[A, B, S]
+
+    private[kyo] def applyTo(v: Any < Nothing, slot: Safepoint.Slot): Any < Nothing =
+        val s = step.asInstanceOf[Arrow.Step[Any, Any, Any]]
+        s.head(v, s.tail)
 
     final def chain[C, S2](next: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
         if self eq Arrow.identity then next.asInstanceOf[Arrow[A, C, S & S2]]
@@ -88,7 +94,22 @@ object Arrow:
         private var flattened: Step[Any, Any, Any] = null
 
         def apply(v: A) =
-            this.step(v)
+            applyTo(v.asInstanceOf[Any < Nothing], Safepoint.get()).asInstanceOf[C < S]
+
+        override private[kyo] def applyTo(v: Any < Nothing, slot: Safepoint.Slot): Any < Nothing =
+            if !Safepoint.enter(slot) then
+                val s = step.asInstanceOf[Step[Any, Any, Any]]
+                s.head(v, s.tail)
+            else
+                val out =
+                    a.applyTo(v, slot) match
+                        case kyo: Kyo[Any, Any] @unchecked =>
+                            kyo.map(b.asInstanceOf[Arrow[Any, Any, Any]])
+                        case r =>
+                            b.applyTo(r, slot)
+                Safepoint.exit(slot)
+                out
+        end applyTo
 
         override def toString: String = s"Arrow.AndThen($a, $b)"
 
