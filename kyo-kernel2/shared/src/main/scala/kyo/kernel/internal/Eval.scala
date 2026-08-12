@@ -31,22 +31,11 @@ object Eval:
     end partial
 
     private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, partial: Boolean): A < S =
+        // arms ordered by expected frequency: a suspension per answered
+        // operation, a defer per budget rescue or deferred effect, region
+        // nodes per handler entry or crossing
         @tailrec def loop(v: Any < Nothing, hs: Handlers): Any < Nothing =
             (v: @unchecked) match
-                case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                    kyo match
-                        case kyo: RebuiltNode if kyo.node.prev eq hs =>
-                            // the onion layer lands where it was built from, so
-                            // the original cell re-enters the stack as is
-                            loop(kyo.value, kyo.node)
-                        case _ =>
-                            loop(kyo.value, new Node(kyo.handler, kyo.exit, hs))
-                case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
-                    kyo match
-                        case kyo: RebuiltStateNode if kyo.node.prev eq hs =>
-                            loop(kyo.value, kyo.node)
-                        case _ =>
-                            loop(kyo.value, new StateNode(kyo.handler, kyo.exit, kyo.state, hs))
                 case kyo: Kyo.Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     hs.find(kyo.tag) match
                         case Empty =>
@@ -135,6 +124,20 @@ object Eval:
                     else
                         Safepoint.reset(slot)
                         loop(walk(kyo.cont, kyo.value), hs)
+                case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                    kyo match
+                        case kyo: RebuiltNode if kyo.node.prev eq hs =>
+                            // the onion layer lands where it was built from, so
+                            // the original cell re-enters the stack as is
+                            loop(kyo.value, kyo.node)
+                        case _ =>
+                            loop(kyo.value, new Node(kyo.handler, kyo.exit, hs))
+                case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                    kyo match
+                        case kyo: RebuiltStateNode if kyo.node.prev eq hs =>
+                            loop(kyo.value, kyo.node)
+                        case _ =>
+                            loop(kyo.value, new StateNode(kyo.handler, kyo.exit, kyo.state, hs))
                 case v =>
                     hs match
                         case Empty                          => v
