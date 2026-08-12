@@ -143,6 +143,50 @@ object Kyo:
         ) extends Handled[I, O, E, A, B, S, S2]
     end Handled
 
+    // a region that answers one operation: its inner result type A and its
+    // exit's input type B differ because the two clauses meet at B, the
+    // first-operation clause producing it directly and the done clause
+    // producing it from the settled inner value
+    trait HandledFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, +C, S, S2, -S3] extends Kyo[C, S & S2 & S3]:
+        def value: A < (E & S)
+        def handler: Handler.First[I, O, E, A, B, S, S2]
+        def exit: Arrow[B, C, S & S2 & S3]
+
+        final def map[D, S4](f: Arrow[C, D, S4]): D < (S & S2 & S3 & S4) =
+            val v = value
+            val h = handler
+            val e = exit
+            if e eq Arrow[B] then
+                // the identity exit collapses: e meaning forces C = B
+                new HandledFirst.Impl[I, O, E, A, B, D, S, S2, S3 & S4](v, h, f.asInstanceOf[Arrow[B, D, S & S2 & S3 & S4]])
+            else
+                new Arrow.AndThen[B, C, D, S & S2 & S3 & S4](e, f) with HandledFirst[I, O, E, A, B, D, S, S2, S3 & S4]:
+                    val value   = v
+                    val handler = h
+                    def exit    = this
+            end if
+        end map
+
+        final override def toString = s"Kyo(HandledFirst(${handler.tag.show}, $value))"
+    end HandledFirst
+
+    object HandledFirst:
+        // not inline: only the catching guard constructs through this apply, and
+        // an inline expansion buys nothing over a constructor call
+        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, C, S, S2, S3](
+            value: A < (E & S),
+            handler: Handler.First[I, O, E, A, B, S, S2],
+            exit: Arrow[B, C, S & S2 & S3]
+        ): HandledFirst[I, O, E, A, B, C, S, S2, S3] =
+            new Impl(value, handler, exit)
+
+        final class Impl[I[_], O[_], E <: ArrowEffect[I, O], A, B, +C, S, S2, -S3](
+            val value: A < (E & S),
+            val handler: Handler.First[I, O, E, A, B, S, S2],
+            val exit: Arrow[B, C, S & S2 & S3]
+        ) extends HandledFirst[I, O, E, A, B, C, S, S2, S3]
+    end HandledFirst
+
     trait HandledState[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State] extends Kyo[B, S & S2]:
         def value: A < (E & S)
         def handler: Handler.LoopState[I, O, E, A, S, State]

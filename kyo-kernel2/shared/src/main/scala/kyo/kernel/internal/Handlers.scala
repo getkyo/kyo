@@ -34,13 +34,23 @@ object Handlers:
             new StateNode(handler, exit, state, prev)
     end StateNode
 
+    final class FirstNode[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        val handler: Handler.First[I, O, E, A, B, S, S2],
+        val exit: Arrow[Any, Any, Any],
+        val prev: Handlers
+    ) extends Handlers:
+        def withPrev(prev: Handlers): FirstNode[I, O, E, A, B, S, S2] =
+            new FirstNode(handler, exit, prev)
+    end FirstNode
+
     extension (self: Handlers)
         def find[E2](tag: Tag[E2]): Handlers =
             @tailrec def loop(l: Handlers): Handlers =
                 l match
-                    case Empty                          => Empty
-                    case l: Node[?, ?, ?, ?, ?]         => if tag <:< l.handler.tag then l else loop(l.prev)
-                    case l: StateNode[?, ?, ?, ?, ?, ?] => if tag <:< l.handler.tag then l else loop(l.prev)
+                    case Empty                             => Empty
+                    case l: Node[?, ?, ?, ?, ?]            => if tag <:< l.handler.tag then l else loop(l.prev)
+                    case l: StateNode[?, ?, ?, ?, ?, ?]    => if tag <:< l.handler.tag then l else loop(l.prev)
+                    case l: FirstNode[?, ?, ?, ?, ?, ?, ?] => if tag <:< l.handler.tag then l else loop(l.prev)
             loop(self)
         end find
     end extension

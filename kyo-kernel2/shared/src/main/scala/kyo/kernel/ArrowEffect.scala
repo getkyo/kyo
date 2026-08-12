@@ -220,6 +220,50 @@ object ArrowEffect:
         end match
     end handleLoopWith
 
+    /** Answers the first operation of `E` and leaves.
+      *
+      * `f` receives the operation's input and its continuation, whose row still carries `E`: the operations after the first one are not
+      * answered by this call, and the continuation is a value, so it can be resumed later, more than once, or not at all. `done` produces
+      * the result when the computation settles without ever raising `E`.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S, B, S2](inline _tag: Tag[E], v: A < (E & S))(
+        inline f: [X] => (I[X], O[X] => A < (E & S)) => B < S2
+    )(inline done: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+        v match
+            case kyo: Kyo[?, ?] =>
+                // one allocation: the object is the handler and the region node
+                new Handler.First[I, O, E, A, B, S, S2] with Kyo.HandledFirst[I, O, E, A, B, B, S, S2, Any]:
+                    def tag                                              = _tag
+                    def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
+                    @targetName("applyDone")
+                    def apply(a: A) = done(a)
+                    val value       = v
+                    def handler     = this
+                    def exit        = Arrow[B]
+            case v =>
+                // settled: the effect cannot occur, so the done clause applies
+                // strictly with no region node
+                done(Kyo.unnest(v))
+        end match
+    end handleFirst
+
+    /** Handles `E` with `f` and routes the non-fatal failures of one pass to `recover`.
+      *
+      * The recovery covers the handled computation, including the steps resumed after a foreign operation, and every invocation of `f`.
+      * A region nested inside the computation evaluates on its own, so its internals are not covered: that is the boundary
+      * [[Effect.catching]] draws. The recovered value carries no `E`, so it does not reach `f`.
+      */
+    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline _tag: Tag[E],
+        inline v: => A < (E & S)
+    )(
+        inline f: [X] => (I[X], O[X] => A < (E & S & S2)) => A < (E & S & S2)
+    )(inline recover: Throwable => A < (S & S2))(using inline _frame: Frame): A < (S & S2) =
+        handle[I, O, E, A, S & S2](_tag, Effect.catching(v)(recover))(
+            [X] => (input, cont) => Effect.catching(f(input, cont))(recover)
+        )
+
     inline def handlePartial[I[_], O[_], E <: ArrowEffect[I, O], A, S](inline _tag: Tag[E], v: A < (E & S))(
         inline f: [X] => (I[X], O[X] => A < (E & S)) => Maybe[A < (E & S)]
     )(using inline _frame: Frame): A < (E & S) =

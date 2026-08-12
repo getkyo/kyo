@@ -6,6 +6,7 @@ import kyo.kernel.*
 import kyo.kernel.`<`.fromKyo
 import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.Handlers.Empty
+import kyo.kernel.internal.Handlers.FirstNode
 import kyo.kernel.internal.Handlers.Node
 import kyo.kernel.internal.Handlers.StateNode
 import scala.annotation.tailrec
@@ -90,6 +91,15 @@ object Eval:
                                     val cont: Any => Any < Nothing =
                                         o => rebuild(hsAll, node, resume(kCont, Nested.lift(o)))
                                     loop(h(kyo.input, cont), node)
+                        case node: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                            val hsAll = hs
+                            val kCont = kyo.cont
+                            val cont: Any => Any < Nothing =
+                                o => rebuild(hsAll, node, resume(kCont, Nested.lift(o)))
+                            // the region answers once: the clause's result runs at
+                            // node.prev, so the cell is off the spine before the
+                            // continuation it was handed can raise the effect again
+                            loop(walk(node.exit, node.handler(kyo.input, cont)), node.prev)
                 case kyo: Kyo.Defer[Any, Any, Any] @unchecked =>
                     if partial && Safepoint.consumeStopped(slot) then
                         rebuild(hs, Empty, v)
@@ -110,11 +120,22 @@ object Eval:
                             loop(kyo.value, kyo.node)
                         case _ =>
                             loop(kyo.value, new StateNode(kyo.handler, kyo.exit, kyo.state, hs))
+                case kyo: Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] @unchecked =>
+                    kyo match
+                        case kyo: RebuiltFirstNode if kyo.node.prev eq hs =>
+                            loop(kyo.value, kyo.node)
+                        case _ =>
+                            loop(kyo.value, new FirstNode(kyo.handler, kyo.exit, hs))
                 case v =>
                     hs match
                         case Empty                          => v
                         case n: Node[?, ?, ?, ?, ?]         => loop(resume(n.exit, v), n.prev)
                         case n: StateNode[?, ?, ?, ?, ?, ?] => loop(resume(n.exit, v), n.prev)
+                        case n: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                            // no operation reached the region: the done clause
+                            // produces the value the exit consumes, taking it out
+                            // of the currency because it crosses to a function
+                            loop(walk(n.exit, n.handler(Nested.unnest(v))), n.prev)
         loop(v0, Empty).asInstanceOf[A < S]
     end evalLoop
 
@@ -238,6 +259,14 @@ object Eval:
         def state   = node.state
     end RebuiltStateNode
 
+    final private class RebuiltFirstNode(
+        val value: Any < Nothing,
+        val node: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]
+    ) extends Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any]:
+        def handler = node.handler
+        def exit    = node.exit
+    end RebuiltFirstNode
+
     @tailrec private def rebuild(top: Handlers, stop: Handlers, acc: Any < Nothing): Any < Nothing =
         if top eq stop then acc
         else
@@ -246,6 +275,8 @@ object Eval:
                     rebuild(n.prev, stop, new RebuiltNode(acc, n))
                 case n: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     rebuild(n.prev, stop, new RebuiltStateNode(acc, n))
+                case n: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                    rebuild(n.prev, stop, new RebuiltFirstNode(acc, n))
                 case Empty =>
                     acc
     end rebuild
@@ -257,27 +288,30 @@ object Eval:
                 if l eq node then n
                 else
                     l match
-                        case l: Node[?, ?, ?, ?, ?]         => count(l.prev, n + 1)
-                        case l: StateNode[?, ?, ?, ?, ?, ?] => count(l.prev, n + 1)
-                        case Empty                          => n
+                        case l: Node[?, ?, ?, ?, ?]            => count(l.prev, n + 1)
+                        case l: StateNode[?, ?, ?, ?, ?, ?]    => count(l.prev, n + 1)
+                        case l: FirstNode[?, ?, ?, ?, ?, ?, ?] => count(l.prev, n + 1)
+                        case Empty                             => n
             val n     = count(top, 0)
             val cells = new Array[Handlers](n)
             @tailrec def fill(l: Handlers, i: Int): Unit =
                 if i < n then
                     cells(i) = l
                     l match
-                        case l: Node[?, ?, ?, ?, ?]         => fill(l.prev, i + 1)
-                        case l: StateNode[?, ?, ?, ?, ?, ?] => fill(l.prev, i + 1)
-                        case Empty                          => ()
+                        case l: Node[?, ?, ?, ?, ?]            => fill(l.prev, i + 1)
+                        case l: StateNode[?, ?, ?, ?, ?, ?]    => fill(l.prev, i + 1)
+                        case l: FirstNode[?, ?, ?, ?, ?, ?, ?] => fill(l.prev, i + 1)
+                        case Empty                             => ()
                     end match
             fill(top, 0)
             @tailrec def build(i: Int, acc: Handlers): Handlers =
                 if i < 0 then acc
                 else
                     cells(i) match
-                        case c: Node[?, ?, ?, ?, ?]         => build(i - 1, c.withPrev(acc))
-                        case c: StateNode[?, ?, ?, ?, ?, ?] => build(i - 1, c.withPrev(acc))
-                        case Empty                          => build(i - 1, acc)
+                        case c: Node[?, ?, ?, ?, ?]            => build(i - 1, c.withPrev(acc))
+                        case c: StateNode[?, ?, ?, ?, ?, ?]    => build(i - 1, c.withPrev(acc))
+                        case c: FirstNode[?, ?, ?, ?, ?, ?, ?] => build(i - 1, c.withPrev(acc))
+                        case Empty                             => build(i - 1, acc)
             build(n - 1, updated)
     end replace
 

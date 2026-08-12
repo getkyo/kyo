@@ -63,6 +63,8 @@ object Effect:
                 Kyo.Defer[Any, B, S](kyo.value, guard(kyo.cont))
             case kyo: Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any] @unchecked =>
                 Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any](kyo.value, kyo.handler, guard(kyo.exit))
+            case kyo: Kyo.HandledFirst[[Z] =>> Any, [Z] =>> Any, Nothing, Any, Any, B, S, Any, Any] @unchecked =>
+                Kyo.HandledFirst[[Z] =>> Any, [Z] =>> Any, Nothing, Any, Any, B, S, Any, Any](kyo.value, kyo.handler, guard(kyo.exit))
             case kyo: Kyo.HandledState[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any, Any] @unchecked =>
                 Kyo.HandledState[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any, Any](
                     kyo.value,
