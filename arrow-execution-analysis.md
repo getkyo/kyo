@@ -223,6 +223,39 @@ final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
 This takes build-side allocation from wrapper+node (about 48 B/map) to one fused object,
 parity with the old kernel's single wrapper.
 
+## Measured variant history (3-fork gates; time us/op, alloc B/op)
+
+Five execution designs were built and gated. The recursive on-stack walk (with and without a
+Kyo-input bail) went quadratic on trailingMapsStayLinear because early-suspending walks
+re-attach their pending right sides per frame, so every round leaves a deeper tree: the walk
+tears continuations down and the suspension re-accumulates them. The full-unroll buffer drive
+stayed quadratic for a subtler reason JFR exposed: its unroll expanded previously-minted
+linked Step chains node by node and re-minted them on every suspension. The invariant that
+restores linearity: a minted chain is never re-expanded or re-minted; pre-linked Steps stay
+opaque units executing through their own fused head(v, tail) path.
+
+| row | flatten baseline | recursive walk | full-unroll drive | units drive | adaptive (shipped) |
+|---|---|---|---|---|---|
+| fusionAfterSuspension | 271.5 / 1,073K | 166.8 / 545K | 167.9 / 569K | 195.1 / 569K | 196.0 / 561K |
+| fusionAfterSuspensionRunOnly | 0.829 / 1,288 | 0.588 / 64 | 0.644 / 64 | 0.666 / 64 | 0.291 / 64 |
+| trailingMapsStayLinear | 672 / 2.96M | 91,137 / 478M | 351,464 / 1.2G | 746 / 2.96M | 702 / 2.96M |
+| foreignCrossingsPayRotation | 377.2 / 1.84M | 412.1 / 1.84M | 401.0 / 1.84M | 403.4 / 1.84M | 400.6 / 1.84M |
+| suspensionBaseline | 82.9 / 640K | 80.7 / 640K | 80.2 / 640K | 81.0 / 640K | 81.3 / 640K |
+| handleLoopAnswersInPlace | 82.0 / 640K | 81.0 / 640K | 79.2 / 640K | 79.9 / 640K | 80.0 / 640K |
+| statefulAnswersPaySuccessor | 111.1 / 1.12M | 111.5 / 1.12M | 109.8 / 1.12M | 110.5 / 1.12M | 110.1 / 1.12M |
+| deepRecursionPaysRescuesOnly | 52.4 / 912 | 50.9 / 912 | 65.8 / 912 | 50.4 / 912 | 51.4 / 912 |
+| fusionAllocatesNothing | 0.578 / 0 | 0.578 / 0 | 0.574 / 0 | 0.585 / 0 | 0.581 / 0 |
+
+The shipped design (commits 8fa613309a and 772d22ac52) combines the units drive with
+adaptive materialization: fusion needs linked objects (the monomorphic call sites live inside
+each transform's per-map-site mapLoop), and minting only pays when the same chain executes
+repeatedly, so the flattened field doubles as a use detector. First execution drives units
+from the region (single-use chains never mint); the DrivenOnce sentinel marks it; the second
+execution materializes through step() and every later one runs fused. Run-only lands at old
+kernel parity (0.291 vs 0.283) with 64 B/op. Remaining deltas vs the old kernel:
+fusionAfterSuspension 2.2x time and 1.37x alloc (build-side wrapper plus chain node per map;
+the wrapper-fusion follow-up below), foreignCrossings 1.23x time at alloc parity.
+
 ## Expected end state
 
 With 1+2 (and 3 as a follow-up), per map over a suspension the new kernel allocates one
