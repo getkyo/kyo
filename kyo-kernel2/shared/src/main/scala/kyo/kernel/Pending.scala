@@ -27,43 +27,9 @@ object `<` extends Implicits:
                         def frame = _frame
                         def apply[D, S4](v: A < S4, next2: Arrow[C, D, S4]) =
                             mapLoop(v, next.chain(next2))
-                // the suspension arm stays out of mapLoop's hot body so the pure path keeps
-                // its inlining size
-                def suspendSite(kyo: Kyo[A, S3]): C < (S & S2 & S3) =
-                    kyo match
-                        case kyo: Kyo.Suspend[[Z] =>> Any, [Z] =>> Any, Nothing, Any, A, S3] @unchecked =>
-                            // the map site is the suspension's own chain node: one object
-                            // carrying f, with the previous continuation as its first step
-                            val r = kyo.root
-                            val c = kyo.cont
-                            if c eq Arrow[Any] then
-                                new Arrow.Transform[Any, C, S & S2 & S3]
-                                    with Kyo.Suspend[[Z] =>> Any, [Z] =>> Any, Nothing, Any, C, S & S2 & S3]:
-                                    override val root = r
-                                    def tag           = r.tag
-                                    def input         = r.input
-                                    def frame         = _frame
-                                    def cont          = this
-                                    def apply[D, S4](v: Any < S4, next2: Arrow[C, D, S4]) =
-                                        mapLoop(v.asInstanceOf[A < S4], next.chain(next2))
-                            else
-                                new Arrow.Composed[Any, A, C, S & S2 & S3](c)
-                                    with Kyo.Suspend[[Z] =>> Any, [Z] =>> Any, Nothing, Any, C, S & S2 & S3]:
-                                    override val root = r
-                                    def tag           = r.tag
-                                    def input         = r.input
-                                    def frame         = _frame
-                                    def cont          = this
-                                    override private[kyo] def evalB(v: Any < Nothing): Any < Nothing =
-                                        mapLoop(v.asInstanceOf[A < S3], next).asInstanceOf[Any < Nothing]
-                                    override private[kyo] def bArrow: Arrow[Any, Any, Any] =
-                                        arrow.asInstanceOf[Arrow[Any, Any, Any]]
-                            end if
-                        case kyo =>
-                            kyo.map(arrow)
                 v match
                     case kyo: Kyo[A, S3] @unchecked =>
-                        suspendSite(kyo)
+                        kyo.map(arrow)
                     case v =>
                         val res  = Kyo.unnest(v)
                         val slot = Safepoint.get()

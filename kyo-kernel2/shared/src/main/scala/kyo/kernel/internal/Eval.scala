@@ -144,13 +144,13 @@ object Eval:
                 kyo.map(cont)
             case _ =>
                 cont match
-                    case cont: Arrow.Composed[Any, Any, Any, Any] @unchecked =>
+                    case cont: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
                         evalChain(cont, v)
                     case cont =>
                         val step = cont.step
                         step.head(v, step.tail)
 
-    private def evalChain(root: Arrow.Composed[Any, Any, Any, Any], v0: Any < Nothing): Any < Nothing =
+    private def evalChain(root: Arrow.AndThen[Any, Any, Any, Any], v0: Any < Nothing): Any < Nothing =
         val slot = Safepoint.get()
         def run(u: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
             u match
@@ -162,19 +162,6 @@ object Eval:
                                 sus
                             case r =>
                                 run(at.b, r)
-                    Safepoint.exit(slot)
-                    out
-                case cp: Arrow.Composed[Any, Any, Any, Any] @unchecked if Safepoint.enter(slot) =>
-                    // a map site over a suspension carries its own second step: evalB applies
-                    // the site's transform directly, and bArrow materializes it as a value
-                    // only when a suspension needs the pending step
-                    val out =
-                        run(cp.a, v) match
-                            case sus: Suspended =>
-                                sus.rest = sus.rest.chain(cp.bArrow)
-                                sus
-                            case r =>
-                                cp.evalB(r)
                     Safepoint.exit(slot)
                     out
                 case u =>
