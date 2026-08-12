@@ -41,7 +41,7 @@ object Eval:
                         case Empty =>
                             kyo.root match
                                 case d: Kyo.Defaulted =>
-                                    loop(walk(kyo.cont, Nested.lift(d.default)), hs)
+                                    loop(resume(kyo.cont, Nested.lift(d.default)), hs)
                                 case _ =>
                                     if !partial then throw new IllegalStateException(s"unhandled suspension: $kyo")
                                     else rebuild(hs, Empty, v)
@@ -59,7 +59,7 @@ object Eval:
                                                 c._1
                                             )
                                         case done =>
-                                            walk(node.exit, Nested.lift(done))
+                                            resume(node.exit, Nested.lift(done))
                                     }(using Frame.internal)
                                     loop(chained, node.prev)
                                 case outcome =>
@@ -73,14 +73,14 @@ object Eval:
                                                 case p: Kyo[Any, Any] @unchecked =>
                                                     val kCont = kyo.cont
                                                     val chained = (p: Any < Any).map { a =>
-                                                        rebuild(hs2, updated, walk(kCont, Nested.lift(a)))
+                                                        rebuild(hs2, updated, resume(kCont, Nested.lift(a)))
                                                     }(using Frame.internal)
                                                     loop(chained, updated)
                                                 case answer =>
-                                                    loop(walk(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs2)
+                                                    loop(resume(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs2)
                                             end match
                                         case done =>
-                                            loop(walk(node.exit, Nested.lift(done)), node.prev)
+                                            loop(resume(node.exit, Nested.lift(done)), node.prev)
                             end match
                         case node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] @unchecked =>
                             node.handler match
@@ -93,7 +93,7 @@ object Eval:
                                                 case c: Loop.Continue[Any < Nothing] @unchecked =>
                                                     rebuild(hsAll, node.prev, walk(kCont, c._1))
                                                 case done =>
-                                                    walk(node.exit, Nested.lift(done))
+                                                    resume(node.exit, Nested.lift(done))
                                             }(using Frame.internal)
                                             loop(chained, node.prev)
                                         case outcome =>
@@ -104,19 +104,19 @@ object Eval:
                                                             val hsAll = hs
                                                             val kCont = kyo.cont
                                                             val chained = (p: Any < Any).map { a =>
-                                                                rebuild(hsAll, node, walk(kCont, Nested.lift(a)))
+                                                                rebuild(hsAll, node, resume(kCont, Nested.lift(a)))
                                                             }(using Frame.internal)
                                                             loop(chained, node)
                                                         case answer =>
-                                                            loop(walk(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs)
+                                                            loop(resume(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs)
                                                 case done =>
-                                                    loop(walk(node.exit, Nested.lift(done)), node.prev)
+                                                    loop(resume(node.exit, Nested.lift(done)), node.prev)
                                     end match
                                 case h: Handler.Cont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] =>
                                     val hsAll = hs
                                     val kCont = kyo.cont
                                     val cont: Any => Any < Nothing =
-                                        o => rebuild(hsAll, node, walk(kCont, Nested.lift(o)))
+                                        o => rebuild(hsAll, node, resume(kCont, Nested.lift(o)))
                                     loop(h(kyo.input, cont), node)
                 case kyo: Kyo.Defer[Any, Any, Any] @unchecked =>
                     if partial && Safepoint.consumeStopped(slot) then
@@ -141,8 +141,8 @@ object Eval:
                 case v =>
                     hs match
                         case Empty                          => v
-                        case n: Node[?, ?, ?, ?, ?]         => loop(walk(n.exit, v), n.prev)
-                        case n: StateNode[?, ?, ?, ?, ?, ?] => loop(walk(n.exit, v), n.prev)
+                        case n: Node[?, ?, ?, ?, ?]         => loop(resume(n.exit, v), n.prev)
+                        case n: StateNode[?, ?, ?, ?, ?, ?] => loop(resume(n.exit, v), n.prev)
         loop(v0, Empty).asInstanceOf[A < S]
     end evalLoop
 
@@ -153,15 +153,18 @@ object Eval:
 
     private def walk(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
         v match
-            case kyo: Kyo[Any, Nothing] @unchecked =>
-                kyo.map(cont)
-            case _ =>
-                cont match
-                    case cont: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
-                        evalChain(cont, v)
-                    case cont =>
-                        val step = cont.step
-                        step.head(v, step.tail)
+            case kyo: Kyo[Any, Nothing] @unchecked => kyo.map(cont)
+            case _                                 => resume(cont, v)
+
+    // the settled half of walk: callers use it directly when the value is
+    // proven not to be a computation (lifted, or matched apart already)
+    private def resume(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
+        cont match
+            case cont: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
+                evalChain(cont, v)
+            case cont =>
+                val step = cont.step
+                step.head(v, step.tail)
 
     private def evalChain(root: Arrow.AndThen[Any, Any, Any, Any], v0: Any < Nothing): Any < Nothing =
         val slot = Safepoint.get()
