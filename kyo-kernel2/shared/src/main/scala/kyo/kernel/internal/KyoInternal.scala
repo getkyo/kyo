@@ -35,9 +35,6 @@ object Kyo:
             case _ =>
                 Nested.unnest(v)
 
-    // a suspension carrying a fallback: evaluation resolves it through a
-    // matching handler like any suspension, and the miss path resumes with
-    // the default instead of failing, which is how optional context works
     // TODO no, this is not acceptable, we need to fully review. Let's discuss
     private[kyo] trait Defaulted:
         self: Suspend[?, ?, ?, ?, ?, ?] =>
@@ -58,14 +55,25 @@ object Kyo:
 
         final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
             val r = root
-            val c = cont.chain(f)
-            new Suspend[I, O, E, X, B, S & S2]:
-                override val root = r
-                def tag           = root.tag
-                def input         = root.input
-                def frame         = root.frame
-                val cont          = c
-            end new
+            val c = cont
+            if c eq Arrow[O[X]] then
+                // the identity continuation collapses: c meaning forces A = O[X]
+                new Suspend[I, O, E, X, B, S & S2]:
+                    override val root = r
+                    def tag           = root.tag
+                    def input         = root.input
+                    def frame         = root.frame
+                    val cont          = f.asInstanceOf[Arrow[O[X], B, S & S2]]
+            else
+                // one object per map: the suspension is its own chain node, meaning the
+                // previous continuation followed by f
+                new Arrow.AndThen[O[X], A, B, S & S2](c, f) with Suspend[I, O, E, X, B, S & S2]:
+                    override val root = r
+                    def tag           = root.tag
+                    def input         = root.input
+                    def frame         = root.frame
+                    def cont          = this
+            end if
         end map
     end Suspend
 
@@ -76,11 +84,6 @@ object Kyo:
         override def toString = s"Kyo(Defer($value))"
     end Defer
 
-    // the region node of a stateless handler; the handler field's union
-    // makes carrying a stateful handler in a stateless region a type error.
-    // The rows are split because the handler kinds are invariant in their
-    // row (their clauses use it in result position): S is the handler's row
-    // and S2 the extra row the exit continuation contributes
     final class Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2](
         val value: A < (E & S),
         val handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S],
@@ -92,10 +95,6 @@ object Kyo:
         override def toString = s"Kyo(Handled(${handler.tag.show}, $value))"
     end Handled
 
-    // the region node of a stateful handler. state is the value this entry
-    // of the region starts from: the initial state at construction, and the
-    // state the region had when a residual or a captured continuation
-    // rebuilt the node, so re-entering resumes rather than resetting
     final class HandledState[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State](
         val value: A < (E & S),
         val handler: Handler.LoopState[I, O, E, A, S, State],

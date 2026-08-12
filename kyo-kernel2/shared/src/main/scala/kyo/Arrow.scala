@@ -81,12 +81,17 @@ object Arrow:
         override def toString: String = s"Arrow($frameInfo)"
     end Transform
 
-    final private[kyo] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
+    // a composition: the previous arrow a, then a second step the subclass defines. AndThen
+    // carries the second step as an arrow value; a map site over a suspension carries it as
+    // the site's own transform (see Pending.map), materializing bArrow only when a
+    // suspension needs the pending step as a value.
+    abstract private[kyo] class Composed[-A, B, +C, -S](val a: Arrow[A, B, S]) extends Arrow[A, C, S]:
+
+        private[kyo] def evalB(v: Any < Nothing): Any < Nothing
+        private[kyo] def bArrow: Arrow[Any, Any, Any]
 
         def apply(v: A) =
             this.step(v)
-
-        override def toString: String = s"Arrow.AndThen($a, $b)"
 
         def step =
             val buffer = scratch.get
@@ -98,6 +103,10 @@ object Arrow:
                         case at: AndThen[?, ?, ?, ?] =>
                             buffer.prepend(at.b)
                             buffer.prepend(at.a)
+                            loop(pending + 1)
+                        case cp: Composed[?, ?, ?, ?] =>
+                            buffer.prepend(cp.bArrow)
+                            buffer.prepend(cp.a)
                             loop(pending + 1)
                         case t: Transform[?, ?, ?] =>
                             if t ne identity then buffer.append(t)
@@ -115,6 +124,18 @@ object Arrow:
             loop(1)
             link(identity).asInstanceOf[Step[A, C, S]]
         end step
+    end Composed
+
+    private[kyo] class AndThen[-A, B, +C, -S](a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Composed[A, B, C, S](a):
+
+        override private[kyo] def evalB(v: Any < Nothing): Any < Nothing =
+            val s = b.step.asInstanceOf[Step[Any, Any, Any]]
+            s.head(v, s.tail)
+
+        override private[kyo] def bArrow: Arrow[Any, Any, Any] =
+            b.asInstanceOf[Arrow[Any, Any, Any]]
+
+        override def toString: String = s"Arrow.AndThen($a, $b)"
     end AndThen
 
 end Arrow

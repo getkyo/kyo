@@ -6,11 +6,7 @@ import kyo.kernel.*
 import kyo.kernel.internal.Handlers.Empty
 import kyo.kernel.internal.Handlers.Node
 import kyo.kernel.internal.Handlers.StateNode
-import scala.annotation.static
 import scala.annotation.tailrec
-import scala.collection.mutable.ArrayDeque
-
-class Eval
 
 object Eval:
 
@@ -137,83 +133,70 @@ object Eval:
         loop(v0, Empty).asInstanceOf[A < S]
     end evalLoop
 
-    final private class Scratch:
-        val pending        = new ArrayDeque[Arrow[Any, Any, Any]]
-        private var region = new Array[Arrow[Any, Any, Any]](256)
-        var top            = 0
-        def push(u: Arrow[Any, Any, Any]): Unit =
-            if top == region.length then region = java.util.Arrays.copyOf(region, top * 2)
-            region(top) = u
-            top += 1
-        end push
-        def apply(i: Int): Arrow[Any, Any, Any] = region(i)
-    end Scratch
-
-    @static private val scratch: ThreadLocal[Scratch] =
-        new ThreadLocal[Scratch]:
-            override def initialValue() = new Scratch
-
-    private inline def BatchSize = 8
+    // a suspension travelling up the chain walk: the unfinished right sides compose into
+    // rest one chain node per frame; created at the suspension point, consumed by the walk
+    // root, never escapes
+    final private class Suspended(val kyo: Kyo[Any, Nothing], var rest: Arrow[Any, Any, Any])
 
     private def walk(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
-        cont match
-            case cont: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
-                v match
-                    case kyo: Kyo[Any, Nothing] @unchecked => kyo.map(cont)
-                    case _                                 => evalChain(cont, v)
-            case cont =>
-                val step = cont.step
-                step.head(v, step.tail)
+        v match
+            case kyo: Kyo[Any, Nothing] @unchecked =>
+                kyo.map(cont)
+            case _ =>
+                cont match
+                    case cont: Arrow.Composed[Any, Any, Any, Any] @unchecked =>
+                        evalChain(cont, v)
+                    case cont =>
+                        val step = cont.step
+                        step.head(v, step.tail)
 
-    private def evalChain(root: Arrow.AndThen[Any, Any, Any, Any], v0: Any < Nothing): Any < Nothing =
-        val s    = scratch.get
-        val mark = s.top
-        unroll(root, s)
-        val end = s.top
-        @tailrec def loop(i: Int, v: Any < Nothing): Any < Nothing =
-            if i == end then v
-            else
-                // a batch of units links into the head's tail arrow, so each transform
-                // calls the next through its own site; a suspension inside the batch has
-                // captured its unfinished part there, so the remainder starts past it
-                val batchEnd = Math.min(i + BatchSize, end)
-                val step     = s(i).step
-                step.head(v, step.tail.chain(remainder(s, i + 1, batchEnd))) match
-                    case kyo: Kyo[Any, Nothing] @unchecked =>
-                        remainder(s, batchEnd, end) match
-                            case rest if rest eq Arrow[Any] => kyo
-                            case rest                       => kyo.map(rest)
-                    case r =>
-                        loop(batchEnd, r)
-                end match
-        try loop(mark, v0)
-        finally s.top = mark
+    private def evalChain(root: Arrow.Composed[Any, Any, Any, Any], v0: Any < Nothing): Any < Nothing =
+        val slot = Safepoint.get()
+        def run(u: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
+            u match
+                case at: Arrow.AndThen[Any, Any, Any, Any] @unchecked if Safepoint.enter(slot) =>
+                    val out =
+                        run(at.a, v) match
+                            case sus: Suspended =>
+                                sus.rest = sus.rest.chain(at.b)
+                                sus
+                            case r =>
+                                run(at.b, r)
+                    Safepoint.exit(slot)
+                    out
+                case cp: Arrow.Composed[Any, Any, Any, Any] @unchecked if Safepoint.enter(slot) =>
+                    // a map site over a suspension carries its own second step: evalB applies
+                    // the site's transform directly, and bArrow materializes it as a value
+                    // only when a suspension needs the pending step
+                    val out =
+                        run(cp.a, v) match
+                            case sus: Suspended =>
+                                sus.rest = sus.rest.chain(cp.bArrow)
+                                sus
+                            case r =>
+                                cp.evalB(r)
+                    Safepoint.exit(slot)
+                    out
+                case u =>
+                    // a unit executes fused through its own sites; past the budget the
+                    // subtree flattens and executes as a linked chain that defers with
+                    // progress under the transform budget
+                    val step = u.step
+                    step.head(v, step.tail) match
+                        case kyo: Kyo[Any, Nothing] @unchecked => new Suspended(kyo, Arrow[Any])
+                        case r                                 => r
+
+        run(root, v0) match
+            case sus: Suspended =>
+                // the remainder links once at the suspension boundary, so the resumed part
+                // executes fused as well
+                sus.rest match
+                    case rest if rest eq Arrow[Any] => sus.kyo
+                    case rest                       => sus.kyo.map(rest.step)
+            case r =>
+                r
+        end match
     end evalChain
-
-    // composition nodes unroll; pre-linked Step chains stay opaque whole, and a minted
-    // chain is never re-expanded or re-minted
-    private def unroll(root: Arrow.AndThen[Any, Any, Any, Any], s: Scratch): Unit =
-        val pending = s.pending
-        @tailrec def loop(n: Int): Unit =
-            if n > 0 then
-                pending.removeHead() match
-                    case at: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
-                        pending.prepend(at.b)
-                        pending.prepend(at.a)
-                        loop(n + 1)
-                    case u =>
-                        if u ne Arrow[Any] then s.push(u)
-                        loop(n - 1)
-        pending.prepend(root)
-        loop(1)
-    end unroll
-
-    private def remainder(s: Scratch, from: Int, end: Int): Arrow[Any, Any, Any] =
-        @tailrec def link(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-            if j < from then acc
-            else link(j - 1, s(j).chain(acc))
-        link(end - 1, Arrow[Any])
-    end remainder
 
     @tailrec private def rebuild(top: Handlers, stop: Handlers, acc: Any < Nothing): Any < Nothing =
         if top eq stop then acc
