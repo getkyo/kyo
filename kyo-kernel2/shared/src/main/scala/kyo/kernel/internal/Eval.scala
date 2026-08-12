@@ -34,9 +34,19 @@ object Eval:
         @tailrec def loop(v: Any < Nothing, hs: Handlers): Any < Nothing =
             (v: @unchecked) match
                 case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                    loop(kyo.value, new Node(kyo.handler, kyo.exit, hs))
+                    kyo match
+                        case kyo: RebuiltNode if kyo.node.prev eq hs =>
+                            // the onion layer lands where it was built from, so
+                            // the original cell re-enters the stack as is
+                            loop(kyo.value, kyo.node)
+                        case _ =>
+                            loop(kyo.value, new Node(kyo.handler, kyo.exit, hs))
                 case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
-                    loop(kyo.value, new StateNode(kyo.handler, kyo.exit, kyo.state, hs))
+                    kyo match
+                        case kyo: RebuiltStateNode if kyo.node.prev eq hs =>
+                            loop(kyo.value, kyo.node)
+                        case _ =>
+                            loop(kyo.value, new StateNode(kyo.handler, kyo.exit, kyo.state, hs))
                 case kyo: Kyo.Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     hs.find(kyo.tag) match
                         case Empty =>
@@ -185,27 +195,34 @@ object Eval:
         end match
     end evalChain
 
+    // a region layer rebuilt from an existing cell: as a value it is the
+    // regular region node; when the evaluator consumes it in the position it
+    // was built from, the cell re-enters the stack with no new allocation
+    final private class RebuiltNode(
+        val value: Any < Nothing,
+        val node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any]
+    ) extends Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
+        def handler = node.handler
+        def exit    = node.exit
+    end RebuiltNode
+
+    final private class RebuiltStateNode(
+        val value: Any < Nothing,
+        val node: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
+    ) extends Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any]:
+        def handler = node.handler
+        def exit    = node.exit
+        def state   = node.state
+    end RebuiltStateNode
+
     @tailrec private def rebuild(top: Handlers, stop: Handlers, acc: Any < Nothing): Any < Nothing =
         if top eq stop then acc
         else
             top match
                 case n: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] @unchecked =>
-                    rebuild(
-                        n.prev,
-                        stop,
-                        Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any](acc, n.handler, n.exit)
-                    )
+                    rebuild(n.prev, stop, new RebuiltNode(acc, n))
                 case n: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                    rebuild(
-                        n.prev,
-                        stop,
-                        Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
-                            acc,
-                            n.handler,
-                            n.exit,
-                            n.state
-                        )
-                    )
+                    rebuild(n.prev, stop, new RebuiltStateNode(acc, n))
                 case Empty =>
                     acc
     end rebuild
