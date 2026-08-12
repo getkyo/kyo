@@ -87,4 +87,43 @@ superclass and timestamp before trusting any number.
 - deepRecursion allocation halved against the old kernel; rescue rows improved across the
   board (fusionPastBudget 776B vs 1,128B).
 
-## Full board vs old kernel (appended when the 20-row run lands)
+## Fusion after suspension: verified on this build
+
+PrintInlining on the resumed-chain row: 152 inline-hot verdicts on the per-site mapLoop
+bodies against 49 size rejections, and 108 monomorphic TypeProfile devirtualizations
+(full single-receiver counts) chaining site to site. About three quarters of the resumed
+chain's call sites compile into fused regions; the quarter that stays virtual (106-byte
+bodies past MaxInlineSize at warm sites) is the measured residual against the old kernel's
+fully pre-compiled nesting.
+
+## Full board vs old kernel (3 forks, gc profiler, same session)
+
+Time us/op and allocation B/op; ratio is shipped/old, lower is better.
+
+| row | old time | shipped time | ratio | old alloc | shipped alloc | ratio |
+|---|---|---|---|---|---|---|
+| trailingMapsStayLinear | 472,770.9 | 330.4 | 0.0007 | 1,601,202,471 | 2,001,146 | 0.001 |
+| evalFixedOverhead | 0.009 | 0.002 | 0.22 | ~0 | ~0 | - |
+| suspensionFusesContinuation | 70.22 | 29.70 | 0.42 | 240,051 | 240,104 | 1.00 |
+| uncachedValuesPayBoxingOnly | 74.71 | 42.08 | 0.56 | 141,777 | 155,488 | 1.10 |
+| handleLoopAnswersInPlace | 134.85 | 84.10 | 0.62 | 960,134 | 640,145 | 0.67 |
+| inlineLimitCostsTimeNotAllocation | 347.03 | 221.35 | 0.64 | 724,418 | 737,250 | 1.02 |
+| inlineLimitKeepsZeroAllocation | 2.167 | 1.415 | 0.65 | 0 | 0 | - |
+| fusionPastBudgetPaysRescuesOnly | 48.44 | 32.82 | 0.68 | 1,128 | 768 | 0.68 |
+| idleHandlerAddsNothing | 48.84 | 33.22 | 0.68 | 1,224 | 832 | 0.68 |
+| suspensionBaseline | 127.69 | 87.45 | 0.68 | 560,080 | 640,145 | 1.14 |
+| fusionAllocatesNothing | 0.830 | 0.573 | 0.69 | 0 | 0 | - |
+| statefulAnswersPaySuccessor | 153.68 | 112.96 | 0.73 | 1,040,139 | 1,118,177 | 1.08 |
+| userTypesSkipKernelWrapping | 43.86 | 38.08 | 0.87 | 177,040 | 176,960 | 1.00 |
+| deepRecursionPaysRescuesOnly | 55.08 | 51.51 | 0.94 | 2,128 | 912 | 0.43 |
+| foreignCrossingsPayRotation | 325.04 | 327.62 | 1.01 | 1,680,202 | 2,160,362 | 1.29 |
+| continuationBodiesFuse | 24.78 | 27.38 | 1.10 | 56,072 | 64,144 | 1.14 |
+| sharedHandlerPaysDispatch | 140.77 | 154.49 | 1.10 | 240,405 | 240,465 | 1.00 |
+| fusionAfterSuspension | 87.98 | 157.37 | 1.79 | 408,437 | 544,601 | 1.33 |
+| fusionAfterSuspensionRunOnly | 0.283 | 0.506 | 1.79 | ~0 | 64 | - |
+| partialSuspensionBaseline | kernel2-only | 85.99 | - | kernel2-only | 640,145 | - |
+
+Fourteen of nineteen shared rows faster, many by 1.4x to 2.4x and the linearity row by three
+orders of magnitude; allocation at or below the old kernel on twelve. The two structural
+losses are the build-and-answer-once family at 1.79x, bounded by the recorded site-fusion
+numbers (1.24x) that were rejected for their per-site footprint.
