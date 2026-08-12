@@ -53,6 +53,35 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         HttpClient.withConfig(_.timeout(60.seconds))(body)
 
+    /** Fails the leaf if it leaves a container behind. Snapshots the daemon's container set (all states) around the body, running the body
+      * under its own `Scope` first so scope-managed containers are torn down; any container present afterward that was not present before is
+      * a resource the leaf failed to free. This is the container analogue of kyo-test's socket/fd/thread leak checks: an accumulating
+      * daemon-side resource that otherwise passes silently and, across a full container-test run, exhausts the rootless per-user kernel
+      * keyring (each `runc create` allocates a session key; once `kernel.keys.maxkeys` is hit `runc create` fails "unable to create session
+      * key: disk quota exceeded" and every later exec/top sees "container state improper"). Diff-based, so a container leaked by an earlier
+      * leaf is attributed to that leaf, not this one.
+      */
+    private def checkingContainerLeak(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Async & Abort[Any] & Scope) =
+        Container.list(all = true).map { before =>
+            val beforeIds = before.map(_.id).toSet
+            Scope.run(v).andThen {
+                Container.list(all = true).map { after =>
+                    val leaked = after.filterNot(s => beforeIds.contains(s.id))
+                    if leaked.isEmpty then Kyo.unit
+                    else
+                        fail(
+                            s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
+                                leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
+                        )
+                    end if
+                }
+            }
+        }
+    end checkingContainerLeak
+
     /** Register one leaf test per available `(runtime, backend)` combination. Each registered test runs `v` with the appropriate
       * `Container.withBackendConfig` wrapper. Use as the body of `String -` in test declarations:
       * {{{"my container test" - runBackends { Container.init(image).map(_ => ()) }}}}
@@ -66,12 +95,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in {
-                        Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
+                        Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
                     }
                 }
 
                 "shell" in {
-                    Container.withBackendConfig(_.Shell(runtime))(v)
+                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }
         }
@@ -88,13 +117,13 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in {
                         Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                            HttpClient.withConfig(_.timeout(5.minutes))(v)
+                            HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
                         }
                     }
                 }
 
                 "shell" in {
-                    Container.withBackendConfig(_.Shell(runtime))(v)
+                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }
         }
@@ -126,7 +155,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             .nextOption()
         socket.foreach { path =>
             "http" in {
-                Container.withBackendConfig(_.UnixSocket(Path(path)))(v)
+                Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
             }
         }
     end runBackend
@@ -143,7 +172,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
         socket.foreach { path =>
             "http" in {
                 Container.withBackendConfig(_.UnixSocket(Path(path))) {
-                    HttpClient.withConfig(_.timeout(5.minutes))(v)
+                    HttpClient.withConfig(_.timeout(5.minutes))(checkingContainerLeak(v))
                 }
             }
         }
