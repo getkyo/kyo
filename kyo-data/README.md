@@ -24,6 +24,32 @@ val message: String = result match
 
 `Result` distinguishes a parsed value, an expected failure, and an unexpected panic in one type; the full API is covered in "Optional and fallible values" below.
 
+## Portable path matching
+
+`Glob` compiles slash-separated path patterns without using platform filesystem or regular-expression APIs. `/` is the separator on every platform, dot-prefixed names have no special treatment, and case sensitivity is always explicit. A complete `**` segment matches any number of path segments; `*` and `?` stay within one segment. Character classes, ranges, negation, alternatives, and backslash escaping are supported. A double star anywhere except a complete segment is rejected.
+
+```scala
+import kyo.*
+
+val scalaSources: Glob = glob"**/*.{scala,java}"
+
+assert(scalaSources.matches("src/main/App.scala", Glob.CaseSensitivity.Sensitive))
+assert(!scalaSources.matches("src/main/App.SCALA", Glob.CaseSensitivity.Sensitive))
+assert(scalaSources.matches("src/main/App.SCALA", Glob.CaseSensitivity.Insensitive))
+assert(scalaSources.show == "**/*.{scala,java}")
+assert(render"$scalaSources" == "**/*.{scala,java}")
+
+val malformed: Result[GlobParseException, Glob] = Glob.parse("[")
+assert(malformed.failure.exists(_.offset == 0))
+```
+
+`GlobParseException` extends `KyoException` and retains the zero-based offset and reason for invalid syntax.
+The `glob"..."` literal embeds its compiled automaton and does not parse the pattern again when the program starts.
+
+Kyo's file-system module will accept this compiled value directly for directory listing and tree
+walking, so a pattern compiles once and travels through backend-independent path code. Filesystem
+implementations must not substitute host glob syntax or host case rules.
+
 ## Optional and fallible values
 
 Code that loads, parses, or fetches things produces values that may be absent or may fail. The standard library spreads this across `Option`, `Either`, and `Try`. `kyo-data` replaces all three with two opaque types that allocate nothing for the happy path and distinguish expected failure from unexpected panic.

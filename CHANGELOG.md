@@ -6,6 +6,7 @@ All breaking API changes to this project will be documented in this file.
 
 ### Added
 
+- [kyo-data] `Glob`: a compiled, platform-independent pattern for matching slash-separated paths, with a `glob"..."` literal interpolator
 - [kyo-data] `OrderedDict[K, V]`: an immutable map that iterates in insertion order
 - [kyo-data] `OrderedDictBuilder[K, V]`: build an `OrderedDict` from repeated adds
 - [kyo-schema] `Schema.stringOrderedDictSchema` and `Schema.orderedDictSchema`: derive a `Schema` for a case class with an `OrderedDict` field
