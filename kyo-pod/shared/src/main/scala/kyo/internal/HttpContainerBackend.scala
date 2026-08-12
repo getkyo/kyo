@@ -486,8 +486,32 @@ final private[kyo] class HttpContainerBackend(
                     url(s"/containers/${id.value}", "force" -> force.toString, "v" -> removeVolumes.toString)
                 ).unit
             }
-        if force then HttpClient.withConfig(_.timeout(30.seconds))(call) else call
+        val deleted = if force then HttpClient.withConfig(_.timeout(30.seconds))(call) else call
+        deleted.andThen(awaitRemoved(id))
     end remove
+
+    /** The DELETE acks the removal request, but on rootless podman the container's teardown (SIGKILL, conmon exit, cgroup and
+      * session-keyring release) can still be in flight when it returns. A caller that discharges its scope and immediately creates the next
+      * container then stacks not-yet-retired containers, and under sustained churn the per-user kernel keyring is exhausted
+      * (`runc create` fails "unable to create session key: disk quota exceeded"). Block on the daemon-authoritative
+      * `/wait?condition=removed` until the container is actually gone (a `Missing` reply means it already is). This gives `remove` the same
+      * "fully retired on return" post-condition the shell backend's `rm` has, and the backpressure that keeps container creation from
+      * outrunning retirement. Mirrors [[waitForExit]]'s `/wait` long-poll.
+      */
+    private def awaitRemoved(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException] {
+            withErrorMapping(ctxContainer(id)) {
+                HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
+                    HttpClient.postText(url(s"/containers/${id.value}/wait", "condition" -> "removed"), "").unit
+                }
+            }
+        }.map {
+            case Result.Success(_)                            => ()
+            case Result.Failure(_: ContainerMissingException) => ()
+            case Result.Failure(other)                        => Abort.fail(other)
+            case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"awaitRemoved panicked for ${id.value}", ex))
+        }
+    end awaitRemoved
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
