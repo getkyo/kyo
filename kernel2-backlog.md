@@ -10,6 +10,7 @@ Last update: 2026-08-12, HEAD `90d1a4c285`.
 | handleFirst + handleCatching implementation | kernel2-impl | commits on this branch; kernel side landed at `90d1a4c285` (ArrowEffect, Handler, Handlers, Eval, KyoInternal, Effect), message says tests are the next commit; suite run pending |
 | Bracket as a node: `Kyo.Bracket` similar to `Kyo.Handled` | bracket-node-design | `bracket-node-design.md` |
 | Bracket as a handler kind on the Handlers stack | bracket-handler-design | `bracket-handler-design.md` |
+| Bracket as an effect: expressivity with existing machinery only (old kernel's internal Defer effect as precedent; fibers out of scope; primary output is the expressivity boundary, especially release on handler-discarded continuations) | bracket-effect-design | `bracket-effect-design.md` |
 
 The bracket pair is adversarial: each steelmans its architecture, ends with the
 same comparison table, and the judgment happens in-session. Both carry the fixed
