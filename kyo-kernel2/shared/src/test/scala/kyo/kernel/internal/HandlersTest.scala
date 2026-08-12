@@ -4,6 +4,7 @@ import kyo.Arrow
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.internal.Handlers.Empty
+import kyo.kernel.internal.Handlers.FirstNode
 import kyo.kernel.internal.Handlers.Node
 import kyo.kernel.internal.Handlers.StateNode
 import org.scalatest.freespec.AnyFreeSpec
@@ -91,6 +92,18 @@ class HandlersTest extends AnyFreeSpec:
 
     "a stateful cell is found by its tag" in {
         val cell = new StateNode(stateAsk, Arrow[Any], 1, Empty)
+        assert((cell: Handlers).find(Tag[Ask]) eq cell)
+        assert((cell: Handlers).find(Tag[Say]) eq Empty)
+    }
+
+    "a first cell is found by its tag" in {
+        val h =
+            new Handler.First[Const[Unit], Const[Int], Ask, Int, Int, Any, Any]:
+                def tag                                                   = Tag[Ask]
+                def apply[X](input: Unit, cont: Int => Int < (Ask & Any)) = 1
+                @targetName("applyDone")
+                def apply(v: Int) = v
+        val cell = new FirstNode(h, Arrow[Any], Empty)
         assert((cell: Handlers).find(Tag[Ask]) eq cell)
         assert((cell: Handlers).find(Tag[Say]) eq Empty)
     }

@@ -89,6 +89,20 @@ class EffectTest extends AnyFreeSpec:
             assert(effect.eval == "caught")
         }
 
+        "failure in a map after a first region" in {
+            val region =
+                ArrowEffect.handleFirst(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                    [C] => (input, cont) => cont(input.toString)
+                )(identity)
+            val effect = Effect.catching {
+                region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
+            } {
+                case _: RuntimeException => "caught"
+            }
+            val result = ArrowEffect.handle(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
+            assert(result.eval == "caught")
+        }
+
         "failure in a map after a stateful region" in {
             val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
                 [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)

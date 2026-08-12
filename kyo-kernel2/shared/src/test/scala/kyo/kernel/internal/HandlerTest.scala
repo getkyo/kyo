@@ -75,4 +75,15 @@ class HandlerTest extends AnyFreeSpec:
         assert(result.asInstanceOf[Int < Any].eval == 42)
     }
 
+    "a First handler answers with its own result type and dones with the settled one" in {
+        val h =
+            new Handler.First[Const[Unit], Const[Int], Ask, Int, String, Any, Any]:
+                def tag                                                   = Tag[Ask]
+                def apply[X](input: Unit, cont: Int => Int < (Ask & Any)) = s"answered ${cont(41)}"
+                @targetName("applyDone")
+                def apply(v: Int) = s"done $v"
+        assert(h[Any]((), o => o + 1).asInstanceOf[String] == "answered 42")
+        assert(h(7).asInstanceOf[String] == "done 7")
+    }
+
 end HandlerTest

@@ -134,11 +134,76 @@ class KyoInternalTest extends AnyFreeSpec:
         }
     }
 
-    "Defer and Handled render diagnostically" in {
+    "HandledFirst" - {
+        def firstAsk: Handler.First[Const[Unit], Const[Int], Ask, Int, String, Any, Any] =
+            new Handler.First[Const[Unit], Const[Int], Ask, Int, String, Any, Any]:
+                def tag                                           = Tag[Ask]
+                def apply[X](input: Unit, cont: Int => Int < Ask) = "answered"
+                @targetName("applyDone")
+                def apply(v: Int) = s"done $v"
+
+        "saves the region parts" in {
+            val h = firstAsk
+            val n = Kyo.HandledFirst(ask, h, Arrow[String])
+            assert(n.handler eq h)
+            assert(n.exit eq Arrow[String])
+        }
+
+        "map lands outside the region" in {
+            val h      = firstAsk
+            val n      = Kyo.HandledFirst(ask, h, Arrow[String])
+            val mapped = (n: String < Any).map(_ + "!")
+            (mapped: Any) match
+                case m: Kyo.HandledFirst[Const[Unit], Const[Int], Ask, Int, String, String, Any, Any, Any] @unchecked =>
+                    assert(m.handler eq h)
+                    assert(sameRef(m.value, n.value))
+                    assert(m.exit("x").eval == "x!")
+                case other =>
+                    fail(s"expected a HandledFirst, got $other")
+            end match
+        }
+
+        "chained maps accumulate in order outside the region" in {
+            val n      = Kyo.HandledFirst(ask, firstAsk, Arrow[String])
+            val mapped = (n: String < Any).map(_ + "!").map(_.toUpperCase)
+            (mapped: Any) match
+                case m: Kyo.HandledFirst[Const[Unit], Const[Int], Ask, Int, String, String, Any, Any, Any] @unchecked =>
+                    assert(m.exit("x").eval == "X!")
+                case other =>
+                    fail(s"expected a HandledFirst, got $other")
+            end match
+        }
+
+        "eval answers the operation through the first clause" in {
+            val n = Kyo.HandledFirst(ask.map(_ + 1), firstAsk, Arrow[String])
+            assert((n: String < Any).eval == "answered")
+        }
+
+        "eval takes the done clause when no operation occurs" in {
+            val n = Kyo.HandledFirst((41: Int < Ask).map(_ + 1), firstAsk, Arrow[String])
+            assert((n: String < Any).eval == "done 42")
+        }
+    }
+
+    "Defer, Handled, and HandledFirst render diagnostically" in {
         assert(Effect.defer(42).toString.startsWith("Kyo(Defer("))
         val n = node(loopAsk(1))
         assert(n.toString.startsWith("Kyo(Handled("))
         assert(n.toString.contains("Ask"))
+        val f =
+            Kyo.HandledFirst(
+                ask,
+                new Handler.First[Const[Unit], Const[Int], Ask, Int, Int, Any, Any]:
+                    def tag                                           = Tag[Ask]
+                    def apply[X](input: Unit, cont: Int => Int < Ask) = 0
+                    @targetName("applyDone")
+                    def apply(v: Int) =
+                        v
+                ,
+                Arrow[Int]
+            )
+        assert(f.toString.startsWith("Kyo(HandledFirst("))
+        assert(f.toString.contains("Ask"))
     }
 
 end KyoInternalTest
