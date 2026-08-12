@@ -38,6 +38,21 @@ The two defects fixed by construction:
 Verification: 547 suite, 9-row gates, PrintInlining on fusionAfterSuspension to confirm the
 per-site fusion actually fires, JFR allocation attribution.
 
+### A2. exp/stack-walk-safepoint: A with the budget as the stack bound
+Same walk as A, but each recursion frame brackets Safepoint.enter/exit instead of a constant
+depth cap: unified stack accounting, no magic constant. The livelock that killed the earlier
+budget-integrated walk is gone by construction: its cause was the per-frame kyo.map rebuild
+producing a fresh tree to re-descend; with the carrier unwind and flatten-remainder-once, an
+exhausted descent defers a linked chain that executes under the transform budget with
+guaranteed progress. Cost to measure: enter/exit per AndThen frame.
+
+### D. exp/wrapper-fusion: Suspend.map builds one object
+Suspend is a trait, so the map-over-suspension wrapper can extend AndThen directly:
+new AndThen(cont, f) with Suspend { def cont = this }. One 24-byte object per map that is the
+chain node and the suspension, correct in both roles by construction (as a value it carries
+the tag for dispatch; as an arrow it means prevCont then f, which is its continuation). Build
+allocation drops below the old kernel's wrapper. Layered on the winning walk variant.
+
 ### B. exp/flat-arrow: reintroduce the Flat representation
 Array-backed composition node. Its unique property neither chains nor batches have: a
 suspension's remainder is an O(1) window (array, from, until), no per-node minting at all.
@@ -48,6 +63,35 @@ Flat node + chain integration + execution + window remainder; gate the same rows
 ### C. exp/batch-growth: batch schedule 1,2,4,8 (cheap control)
 Bounds early-suspension waste like batch-8 while approaching fused completion. Only run if A
 disappoints; expected dominated.
+
+### E. exp/site-fusion: one object per map over a suspension
+JFR on the wrapper-fusion build attributes fusionAfterSuspension's remaining allocation gap to
+the per-site mapLoop arrow objects (about 280B/level) sitting beside the fused suspension
+nodes (about 264B/level); the old kernel's 408B is one KyoContinue per map unifying closure
+and composition. The equivalent here: the walk calls the composition node's evalB step instead
+of reading a b arrow, so the per-site class from Pending.map's Kyo arm can extend the node
+directly, capture f, and set a = kyo.cont: one object per map, old-kernel build parity,
+walked by the same recursion. Scope: Pending.map's Kyo arm, one node class, the walk's b step.
+
+### Further thread-stack strategies (added as the night progresses)
+
+- A10. In-place answering on the live stack: the deepest use of the thread stack. When the
+  walk hits a suspension whose handler is a Loop or StateNode handler (the answer-producing
+  kinds that never expose the continuation), ask the handler for the answer at the suspension
+  point and continue executing in the still-live frames: the remainder is the stack itself,
+  zero materialization, zero re-walk, old-kernel answer semantics. Not applicable to
+  Handler.Cont (the handler owns the continuation and may store or multi-shot it; a
+  capture-marker trick is unsound because handler code could observe the marker). Scope:
+  covers handleLoop/stateful shapes, not the handle-based rows; needs the walk to reach the
+  handler stack, so it touches the evalLoop/walk boundary. Conditional: only if A/A2/D leave
+  a gap on the answering rows.
+- F. Build-side pairing in chain(): appending a transform when the tree's b side is already a
+  lone transform merges them into a linked pair, AndThen(a, Step(b, f)): units get bigger
+  (more fusion per unit in the walk), the left spine gets shorter, at one extra short-lived
+  node per merge. Conditional: only if walk profiles show per-unit dispatch dominating.
+- Rejected on analysis: passing the remaining tree as the transform's next (mapLoop's
+  next.step would flatten it, re-minting); right-leaning chain building (quadratic appends);
+  capture-marker continuation stealing for Handler.Cont (unsound, marker observable).
 
 ## Decision and deliverable
 Winner by the 9-row gate table (time and allocation), tie-broken by simplicity. Then: full
