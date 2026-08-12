@@ -19,64 +19,58 @@ object `<` extends Implicits:
 
     extension [A, S](self: A < S)
 
+        // the per-site Transform is self-contained: its apply carries the whole
+        // evaluation step and the object is its own continuation node
+        // (this.chain(next)), so no mapLoop wraps the expansion and each site
+        // contributes one class definition and one call
         @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            @nowarn("msg=anonymous") def mapLoop[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
-                def arrow =
-                    new Arrow.Transform[A, C, S & S2 & S3]:
-                        def frame = _frame
-                        def apply[D, S4](v: A < S4, next2: Arrow[C, D, S4]) =
-                            mapLoop(v, next.chain(next2))
-                v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        kyo.map(arrow)
-                    case v =>
-                        val res  = Kyo.unnest(v)
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, arrow)
-                        else
-                            val step = next.step
-                            val out  = step.head(f(res), step.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
-                end match
-            end mapLoop
-            mapLoop(self: A < S, Arrow[B])
+            def arrow =
+                new Arrow.Transform[A, B, S & S2]:
+                    def frame = _frame
+                    def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
+                        v match
+                            case kyo: Kyo[A, S3] @unchecked =>
+                                kyo.map(this.chain(next))
+                            case v =>
+                                val res  = Kyo.unnest(v)
+                                val slot = Safepoint.get()
+                                if !Safepoint.enter(slot) then
+                                    Kyo.Defer(v, this.chain(next))
+                                else
+                                    val step = next.step
+                                    val out  = step.head(f(res), step.tail)
+                                    Safepoint.exit(slot)
+                                    out
+                                end if
+                        end match
+                    end apply
+            arrow(self: A < S, Arrow[B])
         end map
 
-        // flatMap, andThen, unit, and flatten carry their own full bodies
-        // instead of delegating to map: an inline method whose body calls
-        // another inline method expands twice per call site, and under nested
-        // closures (every for comprehension) the re-expansion compounds with
-        // depth, measured at 1.44x the old kernel's compile time before the
-        // bodies were split (kyo-compile-bench, ForComprehensions)
         @nowarn("msg=anonymous")
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            @nowarn("msg=anonymous") def flatMapLoop[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
-                def arrow =
-                    new Arrow.Transform[A, C, S & S2 & S3]:
-                        def frame = _frame
-                        def apply[D, S4](v: A < S4, next2: Arrow[C, D, S4]) =
-                            flatMapLoop(v, next.chain(next2))
-                v match
-                    case kyo: Kyo[A, S3] @unchecked =>
-                        kyo.map(arrow)
-                    case v =>
-                        val res  = Kyo.unnest(v)
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, arrow)
-                        else
-                            val step = next.step
-                            val out  = step.head(f(res), step.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
-                end match
-            end flatMapLoop
-            flatMapLoop(self: A < S, Arrow[B])
+            def arrow =
+                new Arrow.Transform[A, B, S & S2]:
+                    def frame = _frame
+                    def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
+                        v match
+                            case kyo: Kyo[A, S3] @unchecked =>
+                                kyo.map(this.chain(next))
+                            case v =>
+                                val res  = Kyo.unnest(v)
+                                val slot = Safepoint.get()
+                                if !Safepoint.enter(slot) then
+                                    Kyo.Defer(v, this.chain(next))
+                                else
+                                    val step = next.step
+                                    val out  = step.head(f(res), step.tail)
+                                    Safepoint.exit(slot)
+                                    out
+                                end if
+                        end match
+                    end apply
+            arrow(self: A < S, Arrow[B])
         end flatMap
 
         @nowarn("msg=anonymous")

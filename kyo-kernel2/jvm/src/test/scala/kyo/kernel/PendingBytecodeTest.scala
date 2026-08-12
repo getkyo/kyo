@@ -33,7 +33,7 @@ class PendingBytecodeTest extends AnyFreeSpec:
 
     "map" in {
         val sizes = methodBytecodeSize[TestMap]
-        assert(sizes == Map("test" -> 22, "arrow" -> 10, "mapLoop" -> 108))
+        assert(sizes == Map("test" -> 24))
     }
 
     "lift of a primitive is a bare cast" in {
