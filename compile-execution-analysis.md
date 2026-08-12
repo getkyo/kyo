@@ -147,6 +147,46 @@ options are nearly empty, which is itself the finding:
   recursion, it does not speed it up.
 - No positions/spans/coverage flag materially affects the phase.
 
+## What gets inlined, exactly
+
+The trace's per-expansion events name every inline expansion. Deep100 (100
+map sites) performs 500 expansions, five per site; ForComprehensions (12
+flows, 84 sites) performs 301:
+
+| method | Deep100 | ForComp | nested in | verdict |
+|---|---|---|---|---|
+| `map` / `flatMap` | 100 | 72 | top level | the design: per-site fusion |
+| `Kyo.unnest` | 100 | 72 | inside map | load-bearing: primitive answers skip the runtime unnest call |
+| `Kyo.Defer.apply` | 100 | 72 | inside map | UNJUSTIFIED: slow-path construction; de-inlined |
+| `lift` (conversion) | 100 | 13 | top level | load-bearing: the answer adaption must not be a runtime call |
+| `Frame.derive` (macro) | 100 | 72 | top level | inherent: per-site position info |
+
+Maximum inline nesting depth is 2 (map contains unnest and the Defer apply);
+there is no runaway inline-in-inline. Safepoint.get/enter/exit are plain
+static methods, not inline, so they cost nothing at expansion time.
+
+Measured deltas on Deep100's inlining phase (single runs, ~3% noise):
+
+- De-inlining the node companion applies (Defer, Handled, HandledState):
+  9,736 to 9,485 ms (~2.5%). Shipped: they sat on slow paths and bought no
+  runtime. mapLoop's residual shrinks 113 to 108 bytes per site.
+- Supplying one `given Frame` for the file instead of deriving per site:
+  9,736 to 7,828 ms (20%). Not shippable as-is (frames must be per-site for
+  diagnostics), but it isolates the amplification: each derive leaves an
+  Inlined node in the accumulated tree, and mechanism 2 re-collects every
+  Inlined node once per ancestor, so the macro's cost on deep chains is
+  quadratic amplification, not macro execution. A snippet-size theory was
+  checked and refuted: the emitted classfile holds no string constant over
+  236 characters.
+
+Is the issue "map/flatMap"? More precisely: it is RECEIVER-CHAINED `.map`.
+The accumulated receiver rides inside every later expansion, which is what
+both quadratic mechanisms multiply against. flatMap chains and for
+comprehensions nest FORWARD (each step inside the previous lambda), so
+nothing accumulates and their per-expansion cost is flat; their total is
+just expansion count times the per-site constant. The same 100 sites split
+across 20 methods compile ~18x faster than in one method.
+
 ## Implications
 
 Kernel-side (task #66): the cost driver is per-site expansion size times
