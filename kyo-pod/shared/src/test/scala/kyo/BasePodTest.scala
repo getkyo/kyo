@@ -65,18 +65,32 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
         Frame,
         kyo.test.AssertScope
     ): Unit < (Async & Abort[Any] & Scope) =
-        Container.list(all = true).map { before =>
-            val beforeIds = before.map(_.id).toSet
-            Scope.run(v).andThen {
-                Container.list(all = true).map { after =>
-                    val leaked = after.filterNot(s => beforeIds.contains(s.id))
-                    if leaked.isEmpty then Kyo.unit
-                    else
-                        fail(
-                            s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
-                                leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
-                        )
-                    end if
+        Container.currentBackend.map { backend =>
+            Container.list(all = true).map { before =>
+                val beforeIds = before.map(_.id).toSet
+                Scope.run(v).andThen {
+                    Container.list(all = true).map { after =>
+                        val candidates = after.filterNot(s => beforeIds.contains(s.id))
+                        // The daemon's listing side lags behind inspect on podman: a just-removed container can still show
+                        // up in `list` for a moment (the same lag HttpContainerBackend.awaitTerminalState documents). Confirm
+                        // each candidate is genuinely still present via an authoritative inspect before flagging it, so a
+                        // removed-but-still-listed container is not reported as a false leak.
+                        Kyo.foreach(candidates) { s =>
+                            Abort.run[ContainerException](backend.state(s.id)).map {
+                                case Result.Failure(_: ContainerMissingException) => Maybe.empty[Container.Summary]
+                                case _                                            => Maybe(s)
+                            }
+                        }.map { results =>
+                            val leaked = results.flatMap(m => Chunk.from(m.toList))
+                            if leaked.isEmpty then Kyo.unit
+                            else
+                                fail(
+                                    s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
+                                        leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
+                                )
+                            end if
+                        }
+                    }
                 }
             }
         }
