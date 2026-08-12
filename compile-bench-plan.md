@@ -3,85 +3,76 @@
 Goal: a defensible, repeatable measurement of the compilation-time cost each
 kernel imposes on user code. The kernel controls this cost through the inline
 expansion of map/suspend/handle (typer: inlining, implicit search, macro
-execution) and through the volume of code it makes the backend emit (the
-bytecode probe measured kernel2 at -32% per map site).
+execution) and through the volume of code it makes the backend emit.
 
-## Why not just time sbt
+## The instrument: kyo-compile-bench
 
-`sbt clean compile` couples the measurement to zinc invalidation, JVM startup,
-and a cold compiler JIT; variance swamps a 10-30% effect. The compiler itself
-must be warm and in-process, with fork-level statistics. That is exactly the
-JMH shape.
+A warmed in-process dotc compiles fixture files against each kernel's classes;
+each fixture is its own benchmark row isolating one cost driver. The project
+depends only on kyo-data and scala3-compiler; the kernels enter as -classpath
+entries, so the harness stays green regardless of the stack migration state.
+An earlier draft proposed a second instrument on kyo-compiler (presentation
+compiler latency); dropped as unnecessary complexity, and the batch numbers
+carry the story.
 
-## Instrument 1 (primary): batch dotc driver under JMH
+Methodology (JMH, one forked JVM per fixture-and-kernel combination):
 
-A new `kyo-compile-bench` project (the kyo-kernel-bench pattern: standalone,
-excluded from the mid-migration stack) depending only on `scala3-compiler` and
-JMH. It has no kyo dependency at runtime, so it builds and runs in this
-worktree today; the kernels enter only as classpath entries.
+- Each benchmark invocation is a fresh `dotc.Main.process` (fresh ContextBase
+  and symbol table), so no compiler state crosses invocations, and the JMH
+  fork isolates all shared-JVM state (JIT warmth, GC, path caches) between
+  combinations. Warmup iterations bring the compiler's own code to steady
+  state inside each fork; per-iteration output makes progress observable.
+- The Baseline fixture (plain Scala, no kyo) pins the measurement floor at
+  0.98-1.02 and would drift if the harness favored either side.
+- Fixtures live outside the kyo package so Frame derivation is the real
+  per-site macro cost, and are byte-identical against both kernels (handleLoop
+  is excluded: its handler shape diverges between kernels).
+- The first iteration of the harness was a hand-rolled in-process loop with
+  old/new interleaving; its ratios matched across differently composed runs
+  within ~2%, and JMH replaced it for fork isolation and standard reporting.
 
-- Each op: run the dotc driver in-process on a corpus directory with
-  `-classpath` = kyo-data classes + one kernel's classes, `-d` scratch dir,
-  `-usejavacp:false`. A captured reporter asserts zero errors, so a broken
-  corpus cannot masquerade as a fast one.
-- One benchmark method per (corpus row, kernel), same JVM, JMH warmup brings
-  the compiler to steady state; 3 forks give the error bars.
-- Full pipeline: captures typer/inlining AND the backend cost of the emitted
-  volume, i.e. what `sbt compile` users actually feel.
+## Results (6 warmup / 12 measure rounds, ratio = new/old)
 
-### Corpus (byte-identical for both kernels)
+| fixture | old ms | new ms | ratio |
+|---|---|---|---|
+| MapChainDeep100 | 20,314.7 | 9,595.1 | 0.47 |
+| HandleSites | 648.7 | 370.7 | 0.57 |
+| SuspendSites | 394.4 | 243.3 | 0.62 |
+| TagDerivation | 139.0 | 109.3 | 0.79 |
+| MapChain10 | 170.2 | 145.9 | 0.86 |
+| MapChainWide100 | 558.7 | 504.1 | 0.90 |
+| ForCompShallow | 255.5 | 235.4 | 0.92 |
+| FlatMapChains | 436.4 | 406.6 | 0.93 |
+| ForComprehensions | 710.2 | 679.4 | 0.96 |
+| NestedMaps | 702.3 | 680.3 | 0.97 |
+| EffectRowGenerics | 251.1 | 256.3 | 1.02 (floor) |
+| Baseline (no kyo) | 169.9 | 173.4 | 1.02 (floor) |
+| TOTAL | 24,751.1 | 13,399.7 | 0.54 |
 
-The mirrored KernelBench proved the shared surface is large enough. Rows:
+The corpus compiles in 54% of the old kernel's time. Notable shape: compile
+cost is roughly quadratic in map-chain length within a single method on BOTH
+kernels (10 sites ~170 ms, 100 sites ~20 s old / ~9.6 s new; the same 100
+sites across 20 methods cost ~0.5 s); the new kernel halves the constant.
 
-1. `MapChains`: 10 methods of 10 chained maps (the inline-expansion hammer),
-   plus scaling variants at 10/50/100 sites to expose the per-site slope.
-2. `SuspendHandle`: suspend, suspendWith, handle, handleLoop sites in the
-   shapes both kernels share.
-3. `EffectRows`: generic methods over effect intersections, Tag and implicit
-   search pressure.
-4. The mirrored KernelBench source itself as the realistic slice.
+## The regression the harness caught and its fix
 
-Constructs whose shape diverges between kernels (the stateful handleLoop
-answer form) are either excluded or held in per-kernel shim files of equal
-size, so the measured text stays identical.
+The first run measured ForComprehensions at 1.46x the old kernel (1.23x at
+half the nesting depth) while identical nesting through direct map calls sat
+at 0.97x and flat flatMap chains at 1.16x, isolating the cause: flatMap,
+andThen, unit, and flatten delegated to the inline map, so every call site
+expanded twice (the wrapper, then the inliner re-running over the spliced map
+call), compounding with closure-nesting depth in every for comprehension.
+The fix gives each extension its own full inline body, the old kernel's
+shape. After it, every fixture is at or below the old kernel; the diagnosis
+fixtures (NestedMaps, FlatMapChains, ForCompShallow) stay in the suite as
+regression pins.
 
-### Phase attribution (one-shot, not JMH)
+## Running it
 
-Diagnostic runs with `-Yprofile-enabled -Yprofile-trace <file>` produce chrome
-traces attributing time to typer/inlining vs erasure vs genBCode per kernel,
-answering WHERE a delta comes from, the same role PrintInlining plays for the
-runtime boards.
+```sh
+sbt ';project kyo-compile-bench ;Jmh/run'          # full board, forked
+sbt ';project kyo-compile-bench ;Jmh/run -f 0 -p fixture=ForComprehensions'  # quick in-process loop
+```
 
-## Instrument 2 (secondary): interactive latency via kyo-compiler
-
-kyo-compiler's warm per-config pool is the right instrument for the IDE-feel
-number (typer-only diagnostics latency), and this doubles as dogfooding.
-
-- Must run from a green checkout (main): this worktree's kyo-prelude/kyo-core
-  are mid-migration red and kyo-compiler sits above them. The harness process
-  is independent of the measured classpath, which points into this worktree's
-  kernel class directories.
-- Config A/B: identical toolchain and corpus, classpath old kernel vs kernel2.
-- Cache defeat: the presentation compiler caches typechecks by content, so
-  each iteration appends a unique nonce comment to the text.
-- Measured op: `compiler.compile(uri, corpus + nonce)` wall time, warmed,
-  reported as a distribution. Not JMH (the pool is Async and Scope-managed); a
-  simple timed loop with warmup discard and percentile output is adequate at
-  the 10-500 ms scale.
-
-## Deliverables
-
-- `kyo-compile-bench` project + corpus + a results table: per corpus row, mean
-  compile time per op for old vs new kernel, ratio, 3 forks, plus the phase
-  trace attribution for the largest delta.
-- The kyo-compiler interactive harness as a follow-up once measured against
-  main, reporting p50/p99 typecheck latency per corpus row per kernel.
-
-## Open choices
-
-1. Corpus scale: aim for ~200-500 ms per batch op so JMH avgt converges
-   quickly; tune file count once the first numbers land.
-2. Whether to pin `scala3-compiler` to the build's 3.8.4 (yes: same version
-   sbt uses, so numbers transfer).
-3. Whether instrument 2 lands in-repo (a kyo-compiler example/bench) or stays
-   a scratch harness until kyo-compiler's stack is green on kernel2.
+Open follow-ups: per-kernel shim fixtures to price the handleLoop family; a
+-Yprofile-trace mode for per-phase attribution.

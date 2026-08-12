@@ -753,12 +753,15 @@ lazy val `kyo-kernel-bench` =
 lazy val `kyo-compile-bench` =
     project
         .in(file("kyo-compile-bench"))
+        .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-data`.jvm)
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
             publish / skip := true,
-            run / fork     := true,
+            // No tests or doctests here; keep the doctest driver jars (built from the stack
+            // above the kernel, mid-migration) off the Test classpath that Jmh extends.
+            Test / unmanagedJars := Seq.empty,
             libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
         )
 
