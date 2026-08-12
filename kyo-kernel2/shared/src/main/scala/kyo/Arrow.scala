@@ -83,12 +83,26 @@ object Arrow:
 
     final private[Arrow] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
+        // memoized flatten: plain field, benign race (duplicate flattens produce
+        // equivalent chains); fits AndThen's alignment padding on the default layout
+        private var flattened: Step[Any, Any, Any] = null
+
         def apply(v: A) =
             this.step(v)
 
         override def toString: String = s"Arrow.AndThen($a, $b)"
 
         def step =
+            val cached = flattened
+            if cached ne null then cached.asInstanceOf[Step[A, C, S]]
+            else
+                val res = flatten
+                flattened = res.asInstanceOf[Step[Any, Any, Any]]
+                res
+            end if
+        end step
+
+        private def flatten =
             val buffer = scratch.get
             buffer.clear()
 
@@ -114,7 +128,7 @@ object Arrow:
             buffer.prepend(this)
             loop(1)
             link(identity).asInstanceOf[Step[A, C, S]]
-        end step
+        end flatten
     end AndThen
 
 end Arrow
