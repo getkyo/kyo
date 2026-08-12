@@ -29,6 +29,7 @@ class CompileBench:
         "Baseline",
         "EffectRowGenerics",
         "FlatMapChains",
+        "ForCompDeep25",
         "ForCompShallow",
         "ForComprehensions",
         "HandleSites",

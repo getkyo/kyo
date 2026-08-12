@@ -179,13 +179,32 @@ Measured deltas on Deep100's inlining phase (single runs, ~3% noise):
   checked and refuted: the emitted classfile holds no string constant over
   236 characters.
 
-Is the issue "map/flatMap"? More precisely: it is RECEIVER-CHAINED `.map`.
-The accumulated receiver rides inside every later expansion, which is what
-both quadratic mechanisms multiply against. flatMap chains and for
-comprehensions nest FORWARD (each step inside the previous lambda), so
-nothing accumulates and their per-expansion cost is flat; their total is
-just expansion count times the per-site constant. The same 100 sites split
-across 20 methods compile ~18x faster than in one method.
+Is the issue "map/flatMap"? The cost variable is INLINE-NESTING DEPTH PER
+EXPRESSION, and both syntactic shapes are superlinear in it. Measured
+inlining self time by depth, one expression per probe:
+
+| depth | receiver chain `.map().map()` | lambda nest `.map(_ => ...)` | for comprehension |
+|---|---|---|---|
+| 25 | | 1,958 ms | 2,280 ms |
+| 50 | 2,323 ms | 10,079 ms | 10,768 ms |
+| 100 | 9,736 ms | 85,832 ms | 100,379 ms |
+| exponent | 2.1 to 2.4 | 2.4 to 3.1 | 2.2 to 3.2 |
+
+For comprehensions desugar to the lambda-nested shape, and at equal depth it
+is roughly 10x MORE expensive than receiver chaining, with the exponent
+heading to cubic: each level embeds the entire already-expanded rest through
+the inline function parameter's substitution, under one more binder layer per
+level, so the symbol-and-owner substitution re-walks the rest with an
+environment that also grows with depth. (An earlier draft of this analysis
+claimed the lambda shape was flat; that was an artifact of the six-deep
+fixture, where the superlinear term is invisible. The ForCompDeep25 fixture
+now pins the shape at an affordable 2.3 s.)
+
+What saves real code is that comprehension depth is bounded by what a person
+writes in one expression: at 6 generators the cost is invisible, at 25 it is
+2.3 s for a single method, at 100 it is 100 s. Splitting an expression into
+separate defs or vals resets the depth: the same 100 map sites split across
+20 methods compile ~18x faster than in one method.
 
 ## Implications
 
