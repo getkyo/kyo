@@ -48,20 +48,7 @@ object Eval:
                         case node: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                             node.handler(kyo.input, node.state) match
                                 case pending: Kyo[Loop.Outcome2[Any, Any < Nothing, Any], Any] @unchecked =>
-                                    val hsAll = hs
-                                    val kCont = kyo.cont
-                                    val chained = (pending: Loop.Outcome2[Any, Any < Nothing, Any] < Any).map {
-                                        case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
-                                            Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
-                                                rebuild(hsAll, node, walk(kCont, c._2)),
-                                                node.handler,
-                                                node.exit,
-                                                c._1
-                                            )
-                                        case done =>
-                                            resume(node.exit, Nested.lift(done))
-                                    }(using Frame.internal)
-                                    loop(chained, node.prev)
+                                    loop(statePending(pending, node, hs, kyo.cont), node.prev)
                                 case outcome =>
                                     Nested.unnest[Loop.Outcome2[Any, Any < Nothing, Any]](outcome) match
                                         case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
@@ -71,11 +58,7 @@ object Eval:
                                             val hs2 = if updated eq node then hs else replace(hs, node, updated)
                                             (c._2: Any) match
                                                 case p: Kyo[Any, Any] @unchecked =>
-                                                    val kCont = kyo.cont
-                                                    val chained = (p: Any < Any).map { a =>
-                                                        rebuild(hs2, updated, resume(kCont, Nested.lift(a)))
-                                                    }(using Frame.internal)
-                                                    loop(chained, updated)
+                                                    loop(stateContinue(p, updated, hs2, kyo.cont), updated)
                                                 case answer =>
                                                     loop(resume(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs2)
                                             end match
@@ -87,26 +70,13 @@ object Eval:
                                 case h: Handler.Loop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] =>
                                     h(kyo.input) match
                                         case pending: Kyo[Loop.Outcome[Any < Nothing, Any], Any] @unchecked =>
-                                            val hsAll = hs
-                                            val kCont = kyo.cont
-                                            val chained = (pending: Loop.Outcome[Any < Nothing, Any] < Any).map {
-                                                case c: Loop.Continue[Any < Nothing] @unchecked =>
-                                                    rebuild(hsAll, node.prev, walk(kCont, c._1))
-                                                case done =>
-                                                    resume(node.exit, Nested.lift(done))
-                                            }(using Frame.internal)
-                                            loop(chained, node.prev)
+                                            loop(loopPending(pending, node, hs, kyo.cont), node.prev)
                                         case outcome =>
                                             Nested.unnest[Loop.Outcome[Any < Nothing, Any]](outcome) match
                                                 case c: Loop.Continue[Any < Nothing] @unchecked =>
                                                     (c._1: Any) match
                                                         case p: Kyo[Any, Any] @unchecked =>
-                                                            val hsAll = hs
-                                                            val kCont = kyo.cont
-                                                            val chained = (p: Any < Any).map { a =>
-                                                                rebuild(hsAll, node, resume(kCont, Nested.lift(a)))
-                                                            }(using Frame.internal)
-                                                            loop(chained, node)
+                                                            loop(loopContinue(p, node, hs, kyo.cont), node)
                                                         case answer =>
                                                             loop(resume(kyo.cont, answer.asInstanceOf[Any < Nothing]), hs)
                                                 case done =>
@@ -145,6 +115,60 @@ object Eval:
                         case n: StateNode[?, ?, ?, ?, ?, ?] => loop(resume(n.exit, v), n.prev)
         loop(v0, Empty).asInstanceOf[A < S]
     end evalLoop
+
+    // the pending-outcome re-entries: a handler that itself suspends chains
+    // its region's reconstruction after the pending outcome. Kept out of the
+    // evaluation loop so its hot arms stay small
+    private def statePending(
+        pending: Loop.Outcome2[Any, Any < Nothing, Any] < Any,
+        node: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+        hsAll: Handlers,
+        kCont: Arrow[Any, Any, Any]
+    ): Any < Nothing =
+        pending.map {
+            case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
+                Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
+                    rebuild(hsAll, node, walk(kCont, c._2)),
+                    node.handler,
+                    node.exit,
+                    c._1
+                )
+            case done =>
+                resume(node.exit, Nested.lift(done))
+        }(using Frame.internal)
+
+    private def stateContinue(
+        p: Any < Any,
+        updated: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+        hs2: Handlers,
+        kCont: Arrow[Any, Any, Any]
+    ): Any < Nothing =
+        p.map { a =>
+            rebuild(hs2, updated, resume(kCont, Nested.lift(a)))
+        }(using Frame.internal)
+
+    private def loopPending(
+        pending: Loop.Outcome[Any < Nothing, Any] < Any,
+        node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any],
+        hsAll: Handlers,
+        kCont: Arrow[Any, Any, Any]
+    ): Any < Nothing =
+        pending.map {
+            case c: Loop.Continue[Any < Nothing] @unchecked =>
+                rebuild(hsAll, node.prev, walk(kCont, c._1))
+            case done =>
+                resume(node.exit, Nested.lift(done))
+        }(using Frame.internal)
+
+    private def loopContinue(
+        p: Any < Any,
+        node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any],
+        hsAll: Handlers,
+        kCont: Arrow[Any, Any, Any]
+    ): Any < Nothing =
+        p.map { a =>
+            rebuild(hsAll, node, resume(kCont, Nested.lift(a)))
+        }(using Frame.internal)
 
     // a suspension travelling up the chain walk: the unfinished right sides compose into
     // rest one chain node per frame; created at the suspension point, consumed by the walk
