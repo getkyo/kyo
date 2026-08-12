@@ -33,11 +33,31 @@ object ContainerPredef:
       * `exec`. `budget` bounds the loop so a service that never comes up fails the check rather than hanging to the leaf timeout. The probe
       * is treated as ready on exit code 0, so `probe` must be a command that connects and exits non-zero until the service answers.
       */
-    private[kyo] def readinessLoop(probe: Chunk[String], budget: Duration = 150.seconds): Container.HealthCheck =
+    private[kyo] def readinessLoop(probe: Chunk[String], budget: Duration = 120.seconds): Container.HealthCheck =
         val quoted = probe.map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
         val script =
             s"""end=$$(($$(date +%s)+${budget.toSeconds})); while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"""
-        Container.HealthCheck.exec(Command("sh", "-c", script), Absent, Schedule.done)
+        val cmd = Command("sh", "-c", script)
+        new Container.HealthCheck:
+            def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                // The probe blocks inside the container until the service answers, so the single exec must be allowed to outlast the
+                // caller's ambient HttpClient timeout, which is often the 5s default (predef fixtures are used far beyond the kyo-pod
+                // suite, e.g. kyo-sql, without a longer scoped timeout). Give the exec its own timeout covering the whole budget; on
+                // the shell backend the HttpClient config is inert. The in-container loop already retries the probe, so one exec suffices.
+                HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
+                    container.exec(cmd).map { r =>
+                        if r.isSuccess then Kyo.unit
+                        else
+                            Abort.fail[ContainerException](ContainerHealthCheckException(
+                                container.id,
+                                s"readiness probe did not pass within ${budget.toSeconds}s",
+                                attempts = 1,
+                                lastError = r.stderr.trim
+                            ))
+                    }
+                }
+            def schedule: Schedule = Schedule.done
+        end new
     end readinessLoop
 
     // =============================================================================================
