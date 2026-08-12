@@ -499,17 +499,50 @@ final private[kyo] class HttpContainerBackend(
       * outrunning retirement. Mirrors [[waitForExit]]'s `/wait` long-poll.
       */
     private def awaitRemoved(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        Abort.run[ContainerException] {
-            withErrorMapping(ctxContainer(id)) {
-                HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
-                    HttpClient.postText(url(s"/containers/${id.value}/wait", "condition" -> "removed"), "").unit
+        def waitForRemoved: Unit < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException] {
+                withErrorMapping(ctxContainer(id)) {
+                    HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
+                        HttpClient.postText(url(s"/containers/${id.value}/wait", "condition" -> "removed"), "").unit
+                    }
                 }
+            }.map {
+                case Result.Success(_)                            => ()
+                case Result.Failure(_: ContainerMissingException) => ()
+                case Result.Failure(other)                        => Abort.fail(other)
+                case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"awaitRemoved panicked for ${id.value}", ex))
             }
-        }.map {
-            case Result.Success(_)                            => ()
-            case Result.Failure(_: ContainerMissingException) => ()
-            case Result.Failure(other)                        => Abort.fail(other)
-            case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"awaitRemoved panicked for ${id.value}", ex))
+        def stillPresent: Boolean < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException](state(id)).map {
+                case Result.Success(_)                            => true
+                case Result.Failure(_: ContainerMissingException) => false
+                case Result.Failure(other)                        => Abort.fail(other)
+                case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"awaitRemoved state panicked for ${id.value}", ex))
+            }
+        def forceRemove: Unit < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException] {
+                withErrorMapping(ctxContainer(id)) {
+                    HttpClient.withConfig(_.timeout(30.seconds)) {
+                        HttpClient.deleteText(url(s"/containers/${id.value}", "force" -> "true", "v" -> "true")).unit
+                    }
+                }
+            }.map {
+                case Result.Failure(_: ContainerMissingException) => ()
+                case Result.Failure(other)                        => Abort.fail(other)
+                case _                                            => ()
+            }
+        // /wait?condition=removed is the daemon-authoritative removal signal, but confirm the record is actually gone
+        // before returning: on loaded rootless podman the DELETE can ack while the record lingers. If the container
+        // survives, force-remove once more and re-wait, so `remove` never returns while the container is still
+        // retiring. A single guarded re-attempt, not a poll loop; the warning attributes it if it ever fires.
+        waitForRemoved.andThen {
+            stillPresent.map {
+                case false => ()
+                case true =>
+                    Log.warn(s"Container ${id.value} survived DELETE + wait?condition=removed; forcing removal again")
+                        .andThen(forceRemove)
+                        .andThen(waitForRemoved)
+            }
         }
     end awaitRemoved
 
