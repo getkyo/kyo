@@ -159,7 +159,7 @@ object `<` extends Implicits:
             inline f1: (=> A < S) => B,
             inline f2: (=> B) => C
         ): C =
-            def handle2 = handle(f1)
+            def handle2 = (self: A < S).handle(f1)
             f2(handle2)
         end handle
 
@@ -168,7 +168,7 @@ object `<` extends Implicits:
             inline f2: (=> B) => C,
             inline f3: (=> C) => D
         ): D =
-            def handle3 = handle(f1, f2)
+            def handle3 = (self: A < S).handle(f1, f2)
             f3(handle3)
         end handle
 
@@ -178,7 +178,7 @@ object `<` extends Implicits:
             inline f3: (=> C) => D,
             inline f4: (=> D) => E
         ): E =
-            def handle4 = handle(f1, f2, f3)
+            def handle4 = (self: A < S).handle(f1, f2, f3)
             f4(handle4)
         end handle
 
@@ -189,7 +189,7 @@ object `<` extends Implicits:
             inline f4: (=> D) => E,
             inline f5: (=> E) => F
         ): F =
-            def handle5 = handle(f1, f2, f3, f4)
+            def handle5 = (self: A < S).handle(f1, f2, f3, f4)
             f5(handle5)
         end handle
 
@@ -201,7 +201,7 @@ object `<` extends Implicits:
             inline f5: (=> E) => F,
             inline f6: (=> F) => G
         ): G =
-            def handle6 = handle(f1, f2, f3, f4, f5)
+            def handle6 = (self: A < S).handle(f1, f2, f3, f4, f5)
             f6(handle6)
         end handle
 
@@ -214,7 +214,7 @@ object `<` extends Implicits:
             inline f6: (=> F) => G,
             inline f7: (=> G) => H
         ): H =
-            def handle7 = handle(f1, f2, f3, f4, f5, f6)
+            def handle7 = (self: A < S).handle(f1, f2, f3, f4, f5, f6)
             f7(handle7)
         end handle
 
@@ -228,7 +228,7 @@ object `<` extends Implicits:
             inline f7: (=> G) => H,
             inline f8: (=> H) => I
         ): I =
-            def handle8 = handle(f1, f2, f3, f4, f5, f6, f7)
+            def handle8 = (self: A < S).handle(f1, f2, f3, f4, f5, f6, f7)
             f8(handle8)
         end handle
 
@@ -243,7 +243,7 @@ object `<` extends Implicits:
             inline f8: (=> H) => I,
             inline f9: (=> I) => J
         ): J =
-            def handle9 = handle(f1, f2, f3, f4, f5, f6, f7, f8)
+            def handle9 = (self: A < S).handle(f1, f2, f3, f4, f5, f6, f7, f8)
             f9(handle9)
         end handle
 
@@ -259,7 +259,7 @@ object `<` extends Implicits:
             inline f9: (=> I) => J,
             inline f10: (=> J) => K
         ): K =
-            def handle10 = handle(f1, f2, f3, f4, f5, f6, f7, f8, f9)
+            def handle10 = (self: A < S).handle(f1, f2, f3, f4, f5, f6, f7, f8, f9)
             f10(handle10)
         end handle
 

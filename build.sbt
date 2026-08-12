@@ -765,7 +765,8 @@ lazy val `kyo-compile-bench` =
             // the deep-inline fixtures recurse far in dotty's inliner; forked JMH JVMs
             // need the same stack headroom the build's own JVM runs with
             Jmh / javaOptions ++= Seq("-Xss32m", "-Xmx4g"),
-            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value,
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
         )
 
 lazy val `kyo-kernel2` =
@@ -784,6 +785,9 @@ lazy val `kyo-kernel2` =
         )
         .jvmSettings(
             mimaCheck(false),
+            // Bytecode-shape pins (PendingBytecodeTest, ArrowEffectBytecodeTest) read method
+            // sizes through javassist, matching the old kernel's BytecodeTest.
+            libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
             // Benchmarks run on default JVM flags: Jmh extends Test, which carries
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
