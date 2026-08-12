@@ -39,11 +39,11 @@ assert(scalaSources.matches("src/main/App.SCALA", Glob.CaseSensitivity.Insensiti
 assert(scalaSources.show == "**/*.{scala,java}")
 assert(render"$scalaSources" == "**/*.{scala,java}")
 
-val malformed: Result[Glob.ParseError, Glob] = Glob.parse("[")
+val malformed: Result[GlobParseException, Glob] = Glob.parse("[")
 assert(malformed.failure.exists(_.offset == 0))
 ```
 
-`Glob.ParseError` extends `KyoException` and retains the zero-based offset and reason for invalid syntax.
+`GlobParseException` extends `KyoException` and retains the zero-based offset and reason for invalid syntax.
 The `glob"..."` literal embeds its compiled automaton and does not parse the pattern again when the program starts.
 
 Kyo's file-system module will accept this compiled value directly for directory listing and tree

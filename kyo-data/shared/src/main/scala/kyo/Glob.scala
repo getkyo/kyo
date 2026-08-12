@@ -17,7 +17,22 @@ import scala.collection.mutable.ArrayBuffer
   * @see [[Glob.all]]
   * @see [[Glob.CaseSensitivity]]
   */
-opaque type Glob = Glob.Compiled
+final case class Glob private[kyo] (
+    private[kyo] val source: String,
+    private[kyo] val segments: Chunk[Glob.PathSegment]
+) derives CanEqual:
+
+    /** Returns the original pattern used to compile this glob. */
+    def show: String = source
+
+    /** Tests a slash-separated string against this glob. */
+    def matches(value: String, caseSensitivity: Glob.CaseSensitivity): Boolean =
+        Glob.matchSegments(this, Glob.splitValue(value), caseSensitivity)
+
+    /** Tests already-separated path components against this glob. */
+    def matches(parts: Chunk[String], caseSensitivity: Glob.CaseSensitivity): Boolean =
+        Glob.matchSegments(this, parts, caseSensitivity)
+end Glob
 
 object Glob:
 
@@ -25,7 +40,7 @@ object Glob:
     private val MaxAlternativeBranches = 256
 
     /** A glob that matches every path, including the empty path. */
-    val all: Glob = Compiled("**", Chunk(Recursive))
+    val all: Glob = Glob("**", Chunk(Recursive))
 
     /** Selects how literal characters and character classes are compared.
       *
@@ -40,35 +55,14 @@ object Glob:
         case Sensitive
         case Insensitive
 
-    /** Describes why a glob pattern could not be parsed.
-      *
-      * The offset is a zero-based character offset into the original pattern.
-      * The reason is stable, human-readable text suitable for diagnostics.
-      *
-      * @param offset
-      *   location of the invalid syntax
-      * @param reason
-      *   explanation of the invalid syntax
-      */
-    final case class ParseError(offset: Int, reason: String)(using Frame)
-        extends KyoException(reason)
-        derives CanEqual
-
     /** Parses and compiles a glob pattern. */
-    def parse(value: String)(using Frame): Result[ParseError, Glob] =
+    def parse(value: String)(using Frame): Result[GlobParseException, Glob] =
         if value.length > MaxPatternLength then
-            Result.fail(ParseError(MaxPatternLength, s"pattern exceeds maximum length of $MaxPatternLength"))
+            Result.fail(GlobParseException(MaxPatternLength, s"pattern exceeds maximum length of $MaxPatternLength"))
         else
             Parser(value).parse()
 
-    given CanEqual[Glob, Glob] = CanEqual.derived
-
     given Render[Glob] = Render.from(_.source)
-
-    final private[kyo] case class Compiled(
-        private[kyo] val source: String,
-        private[kyo] val segments: Chunk[PathSegment]
-    )
 
     private inline val EncodedRecursiveSegment = 0
     private inline val EncodedAutomatonSegment = 1
@@ -193,7 +187,7 @@ object Glob:
             segmentIndex += 1
         end while
 
-        Compiled(source, Chunk.from(segments))
+        Glob(source, Chunk.from(segments))
     end fromEncodedV1
 
     sealed private[kyo] trait PathSegment derives CanEqual
@@ -312,14 +306,14 @@ object Glob:
     final private class Parser(value: String)(using Frame):
         private val length = value.length
 
-        def parse(): Result[ParseError, Glob] =
+        def parse(): Result[GlobParseException, Glob] =
             splitSegments() match
                 case Result.Failure(error) => Result.fail(error)
                 case Result.Panic(error)   => Result.panic(error)
                 case Result.Success(rawSegments) =>
-                    val compiled                   = ArrayBuffer.empty[PathSegment]
-                    var index                      = 0
-                    var failure: Maybe[ParseError] = Absent
+                    val compiled                           = ArrayBuffer.empty[PathSegment]
+                    var index                              = 0
+                    var failure: Maybe[GlobParseException] = Absent
                     while index < rawSegments.size && failure.isEmpty do
                         val (raw, offset) = rawSegments(index)
                         if raw == "**" then compiled += Recursive
@@ -331,10 +325,10 @@ object Glob:
                         end if
                         index += 1
                     end while
-                    failure.fold(Result.succeed(Compiled(value, Chunk.from(compiled))))(Result.fail)
+                    failure.fold(Result.succeed(Glob(value, Chunk.from(compiled))))(Result.fail)
         end parse
 
-        private def splitSegments(): Result[ParseError, Chunk[(String, Int)]] =
+        private def splitSegments(): Result[GlobParseException, Chunk[(String, Int)]] =
             val segments = ArrayBuffer.empty[(String, Int)]
             var start    = 0
             var index    = 0
@@ -358,13 +352,13 @@ object Glob:
         private val length = value.length
         private var index  = 0
 
-        def parse(): Result[ParseError, Chunk[Atom]] =
+        def parse(): Result[GlobParseException, Chunk[Atom]] =
             parseSequence(inAlternative = false).flatMap { case (atoms, delimiter) =>
                 if delimiter == 0.toChar then Result.succeed(atoms)
-                else Result.fail(ParseError(baseOffset + index, s"unexpected delimiter '$delimiter'"))
+                else Result.fail(GlobParseException(baseOffset + index, s"unexpected delimiter '$delimiter'"))
             }
 
-        private def parseSequence(inAlternative: Boolean): Result[ParseError, (Chunk[Atom], Char)] =
+        private def parseSequence(inAlternative: Boolean): Result[GlobParseException, (Chunk[Atom], Char)] =
             val atoms = ArrayBuffer.empty[Atom]
             while index < length do
                 val char = value.charAt(index)
@@ -405,7 +399,7 @@ object Glob:
             Result.succeed((Chunk.from(atoms), 0.toChar))
         end parseSequence
 
-        private def parseAlternatives(): Result[ParseError, Atom] =
+        private def parseAlternatives(): Result[GlobParseException, Atom] =
             val opening  = index
             val branches = ArrayBuffer.empty[Chunk[Atom]]
             index += 1
@@ -432,7 +426,7 @@ object Glob:
             fail(opening, "unterminated alternative")
         end parseAlternatives
 
-        private def parseClass(): Result[ParseError, Atom] =
+        private def parseClass(): Result[GlobParseException, Atom] =
             val opening = index
             index += 1
             var negated = false
@@ -477,8 +471,8 @@ object Glob:
             Result.succeed(AtomClass(negated, Chunk.from(ranges)))
         end parseClass
 
-        private def fail[A](relativeOffset: Int, reason: String): Result[ParseError, A] =
-            Result.fail(ParseError(baseOffset + relativeOffset, reason))
+        private def fail[A](relativeOffset: Int, reason: String): Result[GlobParseException, A] =
+            Result.fail(GlobParseException(baseOffset + relativeOffset, reason))
     end SegmentParser
 
     final private case class ClassElement(value: Char, offset: Int, escaped: Boolean)
@@ -575,19 +569,19 @@ object Glob:
 
 end Glob
 
-extension (self: Glob)
-
-    /** Returns the original pattern used to compile this glob. */
-    def show: String = self.source
-
-    /** Tests a slash-separated string against this glob. */
-    def matches(value: String, caseSensitivity: Glob.CaseSensitivity): Boolean =
-        Glob.matchSegments(self, Glob.splitValue(value), caseSensitivity)
-
-    /** Tests already-separated path components against this glob. */
-    def matches(parts: Chunk[String], caseSensitivity: Glob.CaseSensitivity): Boolean =
-        Glob.matchSegments(self, parts, caseSensitivity)
-end extension
+/** Describes why a glob pattern could not be parsed.
+  *
+  * The offset is a zero-based character offset into the original pattern.
+  * The reason is stable, human-readable text suitable for diagnostics.
+  *
+  * @param offset
+  *   location of the invalid syntax
+  * @param reason
+  *   explanation of the invalid syntax
+  */
+final case class GlobParseException(offset: Int, reason: String)(using Frame)
+    extends KyoException(reason)
+    derives CanEqual
 
 extension (inline sc: StringContext)
 

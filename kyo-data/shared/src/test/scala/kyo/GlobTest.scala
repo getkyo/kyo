@@ -11,7 +11,7 @@ class GlobTest extends kyo.test.Test[Any]:
                 throw new AssertionError(s"unexpected parse error at ${error.offset}: ${error.reason}")
             case Result.Panic(error) => throw error
 
-    private def parseError(value: String): Glob.ParseError =
+    private def parseError(value: String): GlobParseException =
         Glob.parse(value) match
             case Result.Failure(error) => error
             case Result.Success(_)     => throw new AssertionError(s"expected '$value' to fail parsing")
@@ -34,7 +34,7 @@ class GlobTest extends kyo.test.Test[Any]:
         assert(Render[Glob].asString(scalaSources) == "**/*.{scala,java}")
         assert(render"$scalaSources" == "**/*.{scala,java}")
         assert(summon[CanEqual[Glob.CaseSensitivity, Glob.CaseSensitivity]] != null)
-        assert(summon[CanEqual[Glob.ParseError, Glob.ParseError]] != null)
+        assert(summon[CanEqual[GlobParseException, GlobParseException]] != null)
     }
 
     "wildcards" - {
