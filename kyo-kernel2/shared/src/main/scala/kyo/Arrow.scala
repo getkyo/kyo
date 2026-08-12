@@ -15,7 +15,7 @@ sealed abstract class Arrow[-A, +B, -S]:
 
     def step: Arrow.Step[A, B, S]
 
-    private[kyo] def applyTo(v: Any < Nothing, slot: Safepoint.Slot): Any < Nothing =
+    private[kyo] def applyTo(v: Any < Nothing): Any < Nothing =
         val s = step.asInstanceOf[Arrow.Step[Any, Any, Any]]
         s.head(v, s.tail)
 
@@ -43,9 +43,21 @@ object Arrow:
                     val step = next.step
                     step.head(v, step.tail)
 
-    @static private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
-        new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
-            override def initialValue() = new ArrayDeque
+    final private class Scratch:
+        val pending            = new ArrayDeque[Arrow[?, ?, ?]]
+        private var region     = new Array[Arrow[Any, Any, Any]](256)
+        private[Arrow] var top = 0
+        def push(t: Arrow[Any, Any, Any]): Unit =
+            if top == region.length then region = java.util.Arrays.copyOf(region, top * 2)
+            region(top) = t
+            top += 1
+        end push
+        def apply(i: Int): Arrow[Any, Any, Any] = region(i)
+    end Scratch
+
+    @static private val scratch: ThreadLocal[Scratch] =
+        new ThreadLocal[Scratch]:
+            override def initialValue() = new Scratch
 
     abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
         type X
@@ -94,22 +106,56 @@ object Arrow:
         private var flattened: Step[Any, Any, Any] = null
 
         def apply(v: A) =
-            applyTo(v.asInstanceOf[Any < Nothing], Safepoint.get()).asInstanceOf[C < S]
+            applyTo(v.asInstanceOf[Any < Nothing]).asInstanceOf[C < S]
 
-        override private[kyo] def applyTo(v: Any < Nothing, slot: Safepoint.Slot): Any < Nothing =
-            if !Safepoint.enter(slot) then
-                val s = step.asInstanceOf[Step[Any, Any, Any]]
-                s.head(v, s.tail)
-            else
-                val out =
-                    a.applyTo(v, slot) match
-                        case kyo: Kyo[Any, Any] @unchecked =>
-                            kyo.map(b.asInstanceOf[Arrow[Any, Any, Any]])
-                        case r =>
-                            b.applyTo(r, slot)
-                Safepoint.exit(slot)
-                out
+        override private[kyo] def applyTo(v: Any < Nothing): Any < Nothing =
+            v match
+                case kyo: Kyo[Any, Any] @unchecked =>
+                    kyo.map(this.asInstanceOf[Arrow[Any, Any, Any]])
+                case _ =>
+                    val s    = scratch.get
+                    val mark = s.top
+                    unrollUnits(s)
+                    val end = s.top
+                    @tailrec def drive(i: Int, v: Any < Nothing): Any < Nothing =
+                        if i == end then v
+                        else
+                            s(i)(v.asInstanceOf[Any]) match
+                                case kyo: Kyo[Any, Any] @unchecked =>
+                                    remainder(s, i + 1, end) match
+                                        case rest if rest eq identity => kyo
+                                        case rest                     => kyo.map(rest)
+                                case r =>
+                                    drive(i + 1, r)
+                    try drive(mark, v)
+                    finally s.top = mark
         end applyTo
+
+        private def remainder(s: Scratch, from: Int, end: Int): Arrow[Any, Any, Any] =
+            @tailrec def link(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+                if j < from then acc
+                else link(j - 1, s(j).chain(acc))
+            link(end - 1, identity.asInstanceOf[Arrow[Any, Any, Any]])
+        end remainder
+
+        // pre-linked Step chains stay opaque units: their fused head(v, tail) execution
+        // attaches their own remainder through the arrow captures, and a minted chain is
+        // never re-expanded or re-minted
+        private def unrollUnits(s: Scratch): Unit =
+            val pending = s.pending
+            @tailrec def loop(n: Int): Unit =
+                if n > 0 then
+                    pending.removeHead() match
+                        case at: AndThen[?, ?, ?, ?] =>
+                            pending.prepend(at.b)
+                            pending.prepend(at.a)
+                            loop(n + 1)
+                        case u =>
+                            if u ne identity then s.push(u.asInstanceOf[Arrow[Any, Any, Any]])
+                            loop(n - 1)
+            pending.prepend(this)
+            loop(1)
+        end unrollUnits
 
         override def toString: String = s"Arrow.AndThen($a, $b)"
 
@@ -123,32 +169,33 @@ object Arrow:
             end if
         end step
 
-        private def flatten =
-            val buffer = scratch.get
-            buffer.clear()
-
-            @tailrec def loop(pending: Int): Unit =
-                if pending > 0 then
-                    buffer.removeHead() match
+        private def unroll(s: Scratch): Unit =
+            val pending = s.pending
+            @tailrec def loop(n: Int): Unit =
+                if n > 0 then
+                    pending.removeHead() match
                         case at: AndThen[?, ?, ?, ?] =>
-                            buffer.prepend(at.b)
-                            buffer.prepend(at.a)
-                            loop(pending + 1)
+                            pending.prepend(at.b)
+                            pending.prepend(at.a)
+                            loop(n + 1)
                         case t: Transform[?, ?, ?] =>
-                            if t ne identity then buffer.append(t)
-                            loop(pending - 1)
-                        case s: Step[?, ?, ?] =>
-                            buffer.append(s.head)
-                            buffer.prepend(s.tail)
-                            loop(pending)
-
-            @tailrec def link(acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-                if buffer.isEmpty then acc
-                else link(Step(buffer.removeLast().asInstanceOf[Transform[Any, Any, Any]], acc))
-
-            buffer.prepend(this)
+                            if t ne identity then s.push(t.asInstanceOf[Transform[Any, Any, Any]])
+                            loop(n - 1)
+                        case st: Step[?, ?, ?] =>
+                            s.push(st.head.asInstanceOf[Transform[Any, Any, Any]])
+                            pending.prepend(st.tail)
+                            loop(n)
+            pending.prepend(this)
             loop(1)
-            link(identity).asInstanceOf[Step[A, C, S]]
+        end unroll
+
+        private def flatten =
+            val s    = scratch.get
+            val mark = s.top
+            unroll(s)
+            val res = remainder(s, mark, s.top)
+            s.top = mark
+            res.asInstanceOf[Step[A, C, S]]
         end flatten
     end AndThen
 
