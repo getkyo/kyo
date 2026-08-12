@@ -76,22 +76,159 @@ collapsing representations 1 and 2 into one object, the same trick suspendWith u
 suspension-as-continuation. Saves about 24 B and one indirection per map at build time,
 bringing build-side allocation to parity with the old kernel's single wrapper.
 
-### Rejected: memoize AndThen.step
+### Memoize AndThen.step: yes, and it is footprint-free
 
-Counts above: real shapes are single-use; the cache field would be dead weight plus a benign
-data race on every AndThen. Only the artificial stored-reuse bench improves.
+AndThen today is a 12-byte header plus two compressed refs, 20 bytes padded to 24. A third
+ref field lands exactly on the 24-byte boundary: zero growth on the default object layout the
+canonical bench numbers run on (under UseCompactObjectHeaders it would cost one 8-byte
+alignment step; benches deliberately run without that flag). The race is benign (idempotent
+computation, worst case a duplicate flatten).
+
+The split that keeps single-use chains allocation-free: `step()` populates the cache, because
+its callers need the chain as an Arrow value and the linked Steps must be minted anyway
+(handlePartial's `kyo.cont.step`, identity's two-arg apply, rebuild sites). The execution path
+(B below) reads the cache when present but never populates it, because minting on first
+execution would re-introduce the per-use allocation on every single-use chain, which the
+counts show is the dominant shape.
 
 ### Rejected: pre-linked construction
 
 Appending to a right-linked list is O(n) per map, O(n^2) per chain: this is the old kernel's
 trailing-maps quadratic, the thing the AndThen representation exists to fix.
 
+## The proposed change, concretely
+
+### 1. The scratch becomes a region: ordered array plus mark/top discipline
+
+The tree unroll runs no user code, so its pending-node stack can stay a plain reused deque.
+Only the ordered transform list must survive while user code (the driven transforms) runs, so
+it moves to an indexable growable array bracketed by mark/top. Nested executions stack above
+the caller's region; every bracket restores its own mark, so an exception unwinding past one
+bracket is corrected by the enclosing bracket's restore.
+
+```scala
+final private class Scratch:
+    val pending          = new ArrayDeque[Arrow[?, ?, ?]] // unroll only, drained before user code runs
+    var region           = new Array[Transform[Any, Any, Any]](256)
+    var top              = 0
+    def push(t: Transform[Any, Any, Any]): Unit =
+        if top == region.length then region = java.util.Arrays.copyOf(region, top * 2)
+        region(top) = t
+        top += 1
+end Scratch
+
+@static private val scratch: ThreadLocal[Scratch] =
+    new ThreadLocal[Scratch]:
+        override def initialValue() = new Scratch
+```
+
+### 2. Execution drives the region directly; the remainder is minted only on suspension
+
+A single internal entry replaces the step-then-apply dance at the evaluator's walk sites. The
+default implementation is today's behavior; AndThen overrides it with region execution. (Name
+provisional.)
+
+```scala
+// Arrow
+private[kyo] def applyTo(v: Any < Nothing): Any < Nothing =
+    val s = step
+    s.head(v, s.tail)
+```
+
+```scala
+// AndThen
+private var flattened: Step[Any, Any, Any] = null
+
+def apply(v: A) = applyTo(v).asInstanceOf[C < S]
+
+private[kyo] override def applyTo(v0: Any < Nothing): Any < Nothing =
+    val cached = flattened
+    if cached ne null then cached.head(v0, cached.tail)
+    else
+        val s    = scratch.get
+        val mark = s.top
+        unroll(s)         // today's tree walk, pushing transforms in order; no user code
+        val end  = s.top
+        @tailrec def run(i: Int, v: Any < Nothing): Any < Nothing =
+            if i == end then
+                s.top = mark
+                v
+            else
+                s.region(i)(v, identity) match
+                    case kyo: Kyo[Any, Any] @unchecked =>
+                        val rest = remainder(s, i + 1, end)
+                        s.top = mark
+                        if rest eq identity then kyo else kyo.map(rest)
+                    case v2 =>
+                        run(i + 1, v2)
+        run(mark, v0)
+end applyTo
+
+private def remainder(s: Scratch, from: Int, end: Int): Arrow[Any, Any, Any] =
+    @tailrec def link(j: Int, acc: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+        if j < from then acc
+        else link(j - 1, Step(s.region(j), acc))
+    link(end - 1, identity)
+
+def step =
+    val cached = flattened
+    if cached ne null then cached
+    else
+        val res = flatten   // today's unroll + link, via the region with the same bracket
+        flattened = res
+        res
+```
+
+```scala
+// Eval
+private def walk(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
+    cont.applyTo(v)
+```
+
+Properties, each following from a specific line:
+
+- Pure runs allocate nothing: the region is reused memory, transforms are applied with
+  identity as their next (their captured downstream is always identity on this path), and the
+  loop threads values through registers.
+- A transform that suspends (including a Safepoint park: enter returning false produces a
+  Defer, which is a Kyo) gets exactly the unfinished suffix as linked Steps. In
+  fusionAfterSuspension the suspending transform is the last, so `rest eq identity` and the
+  answer path attaches nothing.
+- Budget and preemption are untouched: every driven transform still passes through mapLoop's
+  enter/exit at its own application site.
+- mapLoop itself is untouched: its `next` on region-driven paths is always identity or a
+  linked Step (both have free `step`), never an AndThen.
+- A Kyo arriving as the input value falls into the first iteration's Kyo arm and attaches the
+  full chain, which is what happens today after the flatten.
+
+### 3. Follow-up: fuse the chain node into the Suspend wrapper
+
+`Suspend.map` allocates the wrapper and the chain node separately (KyoInternal.scala:56-66).
+The wrapper can carry the two chain fields itself and serve as its own cont, the same move
+suspendWith made for the suspension-as-continuation. Sketch, needs the Arrow/Kyo interplay
+worked out:
+
+```scala
+final def map[B, S2](f: Arrow[A, B, S2]): B < (S & S2) =
+    val r = root
+    // one object: both the new suspension and the appended chain node
+    new Suspend[I, O, E, X, B, S & S2] with ArrowChain(prev = cont, last = f):
+        override val root = r
+        def tag           = root.tag
+        def input         = root.input
+        def frame         = root.frame
+        def cont          = this
+```
+
+This takes build-side allocation from wrapper+node (about 48 B/map) to one fused object,
+parity with the old kernel's single wrapper.
+
 ## Expected end state
 
-With B (and C as a follow-up), per map over a suspension the new kernel allocates one fused
-wrapper node at build and nothing at answer time unless the computation suspends mid-chain,
-matching the old kernel's allocation shape while keeping O(1) append and the linear
-trailing-maps behavior. The hypotheses need bench confirmation on: fusionAfterSuspension,
+With 1+2 (and 3 as a follow-up), per map over a suspension the new kernel allocates one
+wrapper (fused with the chain node after 3) at build and nothing at answer time unless the
+computation suspends mid-chain, matching the old kernel's allocation shape while keeping O(1)
+append and the linear trailing-maps behavior. Bench gates: fusionAfterSuspension,
 fusionAfterSuspensionRunOnly, trailingMapsStayLinear (asymptotics guard), suspensionBaseline,
-foreignCrossingsPayRotation, and the fusion rows (no regression expected: pure chains never
-reach AndThen).
+foreignCrossingsPayRotation, and the fusion rows (no regression expected: pure fused chains
+never reach AndThen).
