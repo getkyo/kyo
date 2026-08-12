@@ -23,6 +23,23 @@ import kyo.*
   */
 object ContainerPredef:
 
+    /** A readiness [[Container.HealthCheck]] that runs `probe` from *inside* the container in a single bounded poll loop, rather than the
+      * host firing a fresh `exec` on every retry.
+      *
+      * On rootless podman every `exec` leaves a `conmon` that lingers for a fixed delay (~300s) after the exec exits and is not reaped when
+      * the container is removed. Polling a slow-booting database from the host at a sub-second cadence therefore piles up hundreds of
+      * orphaned `conmon` across a fixture suite and, on a loaded runner, exhausts the per-user process limit until `exec` and container
+      * `start` themselves begin to fail. Doing the poll loop inside the container collapses each fixture's readiness wait to a single
+      * `exec`. `budget` bounds the loop so a service that never comes up fails the check rather than hanging to the leaf timeout. The probe
+      * is treated as ready on exit code 0, so `probe` must be a command that connects and exits non-zero until the service answers.
+      */
+    private[kyo] def readinessLoop(probe: Chunk[String], budget: Duration = 150.seconds): Container.HealthCheck =
+        val quoted = probe.map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
+        val script =
+            s"""end=$$(($$(date +%s)+${budget.toSeconds})); while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"""
+        Container.HealthCheck.exec(Command("sh", "-c", script), Absent, Schedule.done)
+    end readinessLoop
+
     // =============================================================================================
     // Postgres
     // =============================================================================================
@@ -139,10 +156,7 @@ object ContainerPredef:
                 .env("POSTGRES_DB", c.database)
                 .port(c.port, 0)
                 .command("postgres", "-c", "fsync=off")
-                .healthCheck(Container.HealthCheck.exec(
-                    Command("psql", "-U", c.username, "-d", c.database, "-c", "SELECT 1"),
-                    Absent
-                ))
+                .healthCheck(readinessLoop(Chunk("psql", "-U", c.username, "-d", c.database, "-c", "SELECT 1")))
     end Postgres
 
     // =============================================================================================
@@ -343,11 +357,7 @@ object ContainerPredef:
                 .stopSignal(Container.Signal.SIGKILL)
                 .stopTimeout(defaultStopTimeout)
                 .portMappingTimeout(defaultPortMappingTimeout)
-                .healthCheck(Container.HealthCheck.exec(
-                    Command(healthCmdBase*),
-                    Absent,
-                    Schedule.fixed(200.millis).take(300)
-                ))
+                .healthCheck(readinessLoop(healthCmdBase))
             applyEnv(base, c)
         end buildContainerConfig
     end MySQL
@@ -453,11 +463,7 @@ object ContainerPredef:
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             Container.Config(c.image)
                 .port(c.port, 0)
-                .healthCheck(Container.HealthCheck.exec(
-                    Command("mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"),
-                    Present("1"),
-                    Schedule.fixed(500.millis).take(60)
-                ))
+                .healthCheck(readinessLoop(Chunk("mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok")))
     end MongoDB
 
 end ContainerPredef
