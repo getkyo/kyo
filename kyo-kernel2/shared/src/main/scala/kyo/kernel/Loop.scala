@@ -1,12 +1,12 @@
 package kyo.kernel
 
 import kyo.Frame
+import kyo.kernel.`<`.fromKyo
+import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
-import kyo.kernel.Implicits.liftInternal
-import kyo.kernel.`<`.fromKyo
 
 /** Provides utilities for creating and managing iterative computations with effects.
   *
@@ -180,7 +180,7 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, B, C, O, S](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < S =
-        Nested.lift(
+        Nested.lift( // TODO why call explicitly? also it can never be a nested computation? In fact, why is continue returnin ga computation? it seems it shouldn't
             new Continue3[A, B, C]:
                 def _1 = v1
                 def _2 = v2

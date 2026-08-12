@@ -63,16 +63,8 @@ object CanLift:
 
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
 
-    // case objects are products, so data constructors like Absent lift
-    // without touching the macro and never suspend units of this module
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
 
-    // the remaining singleton types are module objects and rare non-case
-    // singletons; they resolve through the macro, which rejects lifting kyo
-    // module objects and nested computations and passes everything else.
-    // Keeping the macro on this narrow path means ordinary lifts never
-    // expand a macro, so units of this module do not suspend compilation
-    // waiting for the macro classes
     inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
     inline given CanLift[Nothing] = CanLift.unsafe.bypass

@@ -2,11 +2,11 @@ package kyo.kernel
 
 import kyo.Arrow
 import kyo.Frame
+import kyo.kernel.`<`.fromKyo
+import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
-import kyo.kernel.Implicits.liftInternal
-import kyo.kernel.`<`.fromKyo
 
 abstract class Effect private[kernel] ()
 
@@ -24,6 +24,7 @@ object Effect:
     // produces, so later steps stay guarded. A region node's internals
     // evaluate at eval and are not covered; its exit steps are
     @nowarn("msg=anonymous")
+    // TODO this seems an expensive workaround for something that should be handled in Eval or Arrow?
     private def guarded[B, S](v: B < S, f: Throwable => B < S, _frame: Frame): B < S =
         def guard[In](cont: Arrow[In, B, S]): Arrow.Transform[In, B, S] =
             new Arrow.Transform[In, B, S]:
