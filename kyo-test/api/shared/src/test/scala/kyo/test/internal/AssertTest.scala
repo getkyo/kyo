@@ -55,9 +55,17 @@ class AssertTest extends AsyncFreeSpec with NonImplicitAssertions:
     // class-body code via the private[kyo] ctor (this test is under package kyo).
     private given AssertScope = new AssertScope(Chunk.empty)
 
+    // Power-assert instrumentation (the recorded subexpression value diagram) is compiled in only when KYO_TEST_POWER_ASSERT (or
+    // -Dkyo.test.powerAssert) is set; see AssertMacro. Tests that assert on those recorded values only make sense then, so gate them on
+    // the same flag, read here at runtime (compile and test run share the process env under sbt / CI).
+    private val powerAssertOn: Boolean =
+        sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
+            .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))
+
     // ── Leaf 1 scenario A: assert(a == b) produces a power diagram on failure ──
 
     "single-assert-power-diagram: assert(a == b) on unequal values throws with diagram" in {
+        assume(powerAssertOn)
         val a = 42
         val b = 99
         try
@@ -85,6 +93,7 @@ class AssertTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── Leaf 1 scenario B: assert(cond, msg) footer order: "// at" before "// message:" ──
 
     "single-assert-power-diagram: assert(cond, msg) has // at before // message:" in {
+        assume(powerAssertOn)
         try
             AssertTestProbe.runAssertMsg(1 == 2, "custom explanation")
             fail("Expected AssertionFailed to be thrown")

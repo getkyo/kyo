@@ -88,6 +88,13 @@ class AssertMacroPathDepTest extends AsyncFreeSpec with NonImplicitAssertions:
     // (PathDepHelper1..5) get their scope from the `in` leaf. Constructed via the private[kyo] ctor.
     private given AssertScope = new AssertScope(Chunk.empty)
 
+    // Power-assert instrumentation (the recorded subexpression value diagram) is compiled in only when KYO_TEST_POWER_ASSERT (or
+    // -Dkyo.test.powerAssert) is set; see AssertMacro. Tests that assert on those recorded values are gated on the same flag, read at
+    // runtime (compile and test run share the process env under sbt / CI).
+    private val powerAssertOn: Boolean =
+        sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT"))
+            .exists(v => Set("1", "true", "on", "yes").contains(v.trim.toLowerCase))
+
     /** Run the first leaf of a Test suite and return the TestResult. */
     private def runLeaf[S <: kyo.test.Test[Any]](make: => S): Future[TestResult] =
         LeafHarness.runLeaf(make)
@@ -96,6 +103,7 @@ class AssertMacroPathDepTest extends AsyncFreeSpec with NonImplicitAssertions:
     // assert(i.n == 99) where i: Outer.this.Inner and n = 7. Should fail and
     // the diagram should contain "7" (the recorded value of i.n).
     "path-dep inner class: diagram contains value of i.n on failure" in {
+        assume(powerAssertOn)
         runLeaf(new PathDepHelper1).map { result =>
             result match
                 case f: TestResult.Failed =>
@@ -112,6 +120,7 @@ class AssertMacroPathDepTest extends AsyncFreeSpec with NonImplicitAssertions:
     // class Outer { class Inner { val n = 7 }; val i = new Inner; assert(i.n == 5) }
     // The failing diagram should show "7".
     "path-dep outer/inner: diagram shows 7 when i.n == 5 fails" in {
+        assume(powerAssertOn)
         runLeaf(new PathDepHelper2).map { result =>
             result match
                 case f: TestResult.Failed =>
@@ -136,6 +145,7 @@ class AssertMacroPathDepTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "this.value == 0 fails and diagram shows value on mismatch" in {
+        assume(powerAssertOn)
         runLeaf(new PathDepHelper3b(42)).map { result =>
             result match
                 case f: TestResult.Failed =>
@@ -160,6 +170,7 @@ class AssertMacroPathDepTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "identity(1) == 2 fails with non-empty diagram" in {
+        assume(powerAssertOn)
         runLeaf(new PathDepHelper4b).map { result =>
             result match
                 case f: TestResult.Failed =>
@@ -180,6 +191,7 @@ class AssertMacroPathDepTest extends AsyncFreeSpec with NonImplicitAssertions:
     // assert(Suite.this.inner.list.head == 9) where inner and list are members
     // of nested classes and list.head = 1. Diagram should show "1".
     "Suite.this.inner.list.head == 9 fails and diagram shows head value" in {
+        assume(powerAssertOn)
         runLeaf(new PathDepHelper5).map { result =>
             result match
                 case f: TestResult.Failed =>
