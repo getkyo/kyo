@@ -153,6 +153,8 @@ object Eval:
         new ThreadLocal[Scratch]:
             override def initialValue() = new Scratch
 
+    private inline def BatchSize = 8
+
     private def walk(cont: Arrow[Any, Any, Any], v: Any < Nothing): Any < Nothing =
         cont match
             case cont: Arrow.AndThen[Any, Any, Any, Any] @unchecked =>
@@ -171,22 +173,25 @@ object Eval:
         @tailrec def loop(i: Int, v: Any < Nothing): Any < Nothing =
             if i == end then v
             else
-                val step = s(i).step
-                step.head(v, step.tail) match
+                // a batch of units links into the head's tail arrow, so each transform
+                // calls the next through its own site; a suspension inside the batch has
+                // captured its unfinished part there, so the remainder starts past it
+                val batchEnd = Math.min(i + BatchSize, end)
+                val step     = s(i).step
+                step.head(v, step.tail.chain(remainder(s, i + 1, batchEnd))) match
                     case kyo: Kyo[Any, Nothing] @unchecked =>
-                        remainder(s, i + 1, end) match
+                        remainder(s, batchEnd, end) match
                             case rest if rest eq Arrow[Any] => kyo
                             case rest                       => kyo.map(rest)
                     case r =>
-                        loop(i + 1, r)
+                        loop(batchEnd, r)
                 end match
         try loop(mark, v0)
         finally s.top = mark
     end evalChain
 
-    // composition nodes unroll; pre-linked Step chains stay opaque whole so their fused
-    // head(v, tail) execution attaches its own remainder through the arrow captures,
-    // and a minted chain is never re-expanded or re-minted
+    // composition nodes unroll; pre-linked Step chains stay opaque whole, and a minted
+    // chain is never re-expanded or re-minted
     private def unroll(root: Arrow.AndThen[Any, Any, Any, Any], s: Scratch): Unit =
         val pending = s.pending
         @tailrec def loop(n: Int): Unit =
