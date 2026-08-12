@@ -169,3 +169,33 @@ inside kyo-kernel2 may expand the module's own lift macro.
 - Compile bench before/after on the fixture suite plus LiftHeavy.
 - Runtime board guards: userTypes, suspension family, fusionAllocatesNothing,
   trailingMaps.
+
+## Implementation outcome (phase 1, commit afada84394)
+
+Shipped: the single macro conversion with the CanLift gate untouched, the
+liftInternal + fromKyo lexical escape in six kernel files (zero suspended
+units under -Xprint-suspension), liftAnyVal and liftUnit subsumed, all 600
+pins green.
+
+Two corrections the pins forced on the old kernel's emission rule:
+
+1. The old rule (cast for all classDefs and opaques) is unsound in principle
+   and kernel2's inventory trips it: Loop.Outcome's underlying admits
+   computations, Nested implements Product so trait-typed values can be
+   boxes, and Arrow-typed values can be fused suspensions. The shipped cast
+   arm is the provable subset: Nothing, AnyVal, String, final classes not
+   Boxed. Everything else keeps the runtime test, which is the pre-change
+   behavior, so nothing regressed.
+2. Importing liftInternal alone shadowed the companion's fromKyo node
+   conversion (lexical scope outranks implicit scope regardless of
+   specificity), wrapping kernel-internal Kyo values as nested values;
+   importing fromKyo alongside restores specificity-based selection.
+
+Emission deltas pinned in PendingBytecodeTest: String 10 to 2 bytes, final
+concrete class 17 to 2 (the issue-1314 gap closed), generic 17 to 8, mapLoop
+109 to 113 (the pure-arm answer lift's macro cast shape).
+
+Phase 2 (open): consolidate the CanLift given zoo behind one macro given and
+route the module rejection's guided message to the surface (currently the
+implicitNotFound text); CanLift.scala carries uncommitted review edits, so
+this phase waits for those to land.
