@@ -20,7 +20,7 @@ import org.openjdk.jmh.annotations.*
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
-@Warmup(iterations = 5, time = 1)
+@Warmup(iterations = 8, time = 1)
 @Measurement(iterations = 5, time = 1)
 @Fork(1)
 class CompileBench:
