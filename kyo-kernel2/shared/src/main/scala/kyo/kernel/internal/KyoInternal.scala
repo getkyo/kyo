@@ -94,7 +94,10 @@ object Kyo:
     end Defer
 
     object Defer:
-        inline def apply[A, B, S](value: A < S, cont: Arrow[A, B, S]): Defer[A, B, S] =
+        // not inline: construction sits on the budget-exhausted slow path, and an
+        // inline companion apply costs an Inliner cycle and residual tree at every
+        // map call site in every program (kyo-compile-bench, MapChainDeep100)
+        def apply[A, B, S](value: A < S, cont: Arrow[A, B, S]): Defer[A, B, S] =
             new Impl(value, cont)
 
         final class Impl[A, +B, -S](val value: A < S, val cont: Arrow[A, B, S]) extends Defer[A, B, S]
@@ -124,7 +127,9 @@ object Kyo:
     end Handled
 
     object Handled:
-        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        // not inline: only the evaluator constructs through this apply, and an
+        // inline expansion buys nothing over a constructor call
+        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
             value: A < (E & S),
             handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S],
             exit: Arrow[A, B, S & S2]
@@ -165,7 +170,9 @@ object Kyo:
     end HandledState
 
     object HandledState:
-        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+        // not inline: only the evaluator constructs through this apply, and an
+        // inline expansion buys nothing over a constructor call
+        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
             value: A < (E & S),
             handler: Handler.LoopState[I, O, E, A, S, State],
             exit: Arrow[A, B, S & S2],
