@@ -57,14 +57,14 @@ object Effect:
                     val cont          = guard(k.cont)
                 end new
             case kyo: Kyo.Defer[Any, B, S] @unchecked =>
-                new Kyo.Defer[Any, B, S](kyo.value, guard(kyo.cont))
+                Kyo.Defer[Any, B, S](kyo.value, guard(kyo.cont))
             case kyo: Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any] @unchecked =>
-                new Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any](kyo.value, kyo.handler, guard(kyo.cont))
+                Kyo.Handled[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any](kyo.value, kyo.handler, guard(kyo.exit))
             case kyo: Kyo.HandledState[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any, Any] @unchecked =>
-                new Kyo.HandledState[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any, Any](
+                Kyo.HandledState[[Z] =>> Any, [Z] =>> Any, Nothing, Any, B, S, Any, Any](
                     kyo.value,
                     kyo.handler,
-                    guard(kyo.cont),
+                    guard(kyo.exit),
                     kyo.state
                 )
             case v =>
@@ -74,7 +74,7 @@ object Effect:
 
     @nowarn("msg=anonymous")
     private[kyo] inline def defer[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
-        new Kyo.Defer[Unit, A, S](
+        Kyo.Defer[Unit, A, S](
             (),
             new Arrow.Transform[Unit, A, S]:
                 def frame = _frame

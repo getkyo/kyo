@@ -77,34 +77,108 @@ object Kyo:
         end map
     end Suspend
 
-    final class Defer[A, +B, -S](val value: A < S, val cont: Arrow[A, B, S]) extends Kyo[B, S]:
-        def map[C, S2](f: Arrow[B, C, S2]) =
-            new Defer(value, cont.chain(f))
+    sealed trait Defer[A, +B, -S] extends Kyo[B, S]:
+        def value: A < S
+        def cont: Arrow[A, B, S]
 
-        override def toString = s"Kyo(Defer($value))"
+        final def map[C, S2](f: Arrow[B, C, S2]): C < (S & S2) =
+            val v = value
+            // one object per map: the node is its own chain arrow, meaning the
+            // previous continuation followed by f
+            new Arrow.AndThen[A, B, C, S & S2](cont, f) with Defer[A, C, S & S2]:
+                val value = v
+                def cont  = this
+        end map
+
+        final override def toString = s"Kyo(Defer($value))"
     end Defer
 
-    final class Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2](
-        val value: A < (E & S),
-        val handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S],
-        val cont: Arrow[A, B, S & S2]
-    ) extends Kyo[B, S & S2]:
-        def map[C, S3](f: Arrow[B, C, S3]) =
-            new Handled[I, O, E, A, C, S, S2 & S3](value, handler, cont.chain(f))
+    object Defer:
+        inline def apply[A, B, S](value: A < S, cont: Arrow[A, B, S]): Defer[A, B, S] =
+            new Impl(value, cont)
 
-        override def toString = s"Kyo(Handled(${handler.tag.show}, $value))"
+        final class Impl[A, +B, -S](val value: A < S, val cont: Arrow[A, B, S]) extends Defer[A, B, S]
+    end Defer
+
+    trait Handled[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2] extends Kyo[B, S & S2]:
+        def value: A < (E & S)
+        def handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S]
+        def exit: Arrow[A, B, S & S2]
+
+        final def map[C, S3](f: Arrow[B, C, S3]): C < (S & S2 & S3) =
+            val v = value
+            val h = handler
+            val e = exit
+            if e eq Arrow[A] then
+                // the identity exit collapses: e meaning forces B = A
+                new Handled.Impl[I, O, E, A, C, S, S2 & S3](v, h, f.asInstanceOf[Arrow[A, C, S & S2 & S3]])
+            else
+                new Arrow.AndThen[A, B, C, S & S2 & S3](e, f) with Handled[I, O, E, A, C, S, S2 & S3]:
+                    val value   = v
+                    val handler = h
+                    def exit    = this
+            end if
+        end map
+
+        final override def toString = s"Kyo(Handled(${handler.tag.show}, $value))"
     end Handled
 
-    final class HandledState[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State](
-        val value: A < (E & S),
-        val handler: Handler.LoopState[I, O, E, A, S, State],
-        val cont: Arrow[A, B, S & S2],
-        val state: State
-    ) extends Kyo[B, S & S2]:
-        def map[C, S3](f: Arrow[B, C, S3]) =
-            new HandledState[I, O, E, A, C, S, S2 & S3, State](value, handler, cont.chain(f), state)
+    object Handled:
+        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+            value: A < (E & S),
+            handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S],
+            exit: Arrow[A, B, S & S2]
+        ): Handled[I, O, E, A, B, S, S2] =
+            new Impl(value, handler, exit)
 
-        override def toString = s"Kyo(HandledState(${handler.tag.show}, $state, $value))"
+        final class Impl[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2](
+            val value: A < (E & S),
+            val handler: Handler.Cont[I, O, E, A, S] | Handler.Loop[I, O, E, A, S],
+            val exit: Arrow[A, B, S & S2]
+        ) extends Handled[I, O, E, A, B, S, S2]
+    end Handled
+
+    trait HandledState[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State] extends Kyo[B, S & S2]:
+        def value: A < (E & S)
+        def handler: Handler.LoopState[I, O, E, A, S, State]
+        def exit: Arrow[A, B, S & S2]
+        def state: State
+
+        final def map[C, S3](f: Arrow[B, C, S3]): C < (S & S2 & S3) =
+            val v  = value
+            val h  = handler
+            val st = state
+            val e  = exit
+            if e eq Arrow[A] then
+                // the identity exit collapses: e meaning forces B = A
+                new HandledState.Impl[I, O, E, A, C, S, S2 & S3, State](v, h, f.asInstanceOf[Arrow[A, C, S & S2 & S3]], st)
+            else
+                new Arrow.AndThen[A, B, C, S & S2 & S3](e, f) with HandledState[I, O, E, A, C, S, S2 & S3, State]:
+                    val value   = v
+                    val handler = h
+                    val state   = st
+                    def exit    = this
+            end if
+        end map
+
+        final override def toString = s"Kyo(HandledState(${handler.tag.show}, $state, $value))"
+    end HandledState
+
+    object HandledState:
+        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+            value: A < (E & S),
+            handler: Handler.LoopState[I, O, E, A, S, State],
+            exit: Arrow[A, B, S & S2],
+            state: State
+        ): HandledState[I, O, E, A, B, S, S2, State] =
+            new Impl(value, handler, exit, state)
+
+        final class Impl[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State](
+            val value: A < (E & S),
+            val handler: Handler.LoopState[I, O, E, A, S, State],
+            val exit: Arrow[A, B, S & S2],
+            val state: State
+        ) extends HandledState[I, O, E, A, B, S, S2, State]
     end HandledState
 
 end Kyo

@@ -26,7 +26,7 @@ class KyoInternalTest extends AnyFreeSpec:
 
     def node(h: Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any] | Handler.Loop[Const[Unit], Const[Int], Ask, Int, Any])
         : AskHandled =
-        new Kyo.Handled(ask, h, Arrow[Int])
+        Kyo.Handled(ask, h, Arrow[Int])
 
     def sameRef(a: Any, b: Any): Boolean =
         (a, b) match
@@ -39,7 +39,7 @@ class KyoInternalTest extends AnyFreeSpec:
             val h = loopAsk(1)
             val n = node(h)
             assert(n.handler eq h)
-            assert(n.cont eq Arrow[Int])
+            assert(n.exit eq Arrow[Int])
         }
 
         "map lands outside the region" in {
@@ -50,7 +50,7 @@ class KyoInternalTest extends AnyFreeSpec:
                 case m: AskHandled @unchecked =>
                     assert(m.handler eq h)
                     assert(sameRef(m.value, n.value))
-                    assert(m.cont(41).eval == 42)
+                    assert(m.exit(41).eval == 42)
                 case other =>
                     fail(s"expected a Handled, got $other")
             end match
@@ -62,7 +62,7 @@ class KyoInternalTest extends AnyFreeSpec:
             val mapped = (n: Int < Any).map(_ + 1).map(_ * 10)
             (mapped: Any) match
                 case m: AskHandled @unchecked =>
-                    assert(m.cont(4).eval == 50)
+                    assert(m.exit(4).eval == 50)
                 case other =>
                     fail(s"expected a Handled, got $other")
             end match
@@ -72,13 +72,13 @@ class KyoInternalTest extends AnyFreeSpec:
             val hInner = loopAsk(1)
             val hOuter = loopAsk(2)
             val inner  = node(hInner)
-            val outer  = new Kyo.Handled(inner, hOuter, Arrow[Int])
+            val outer  = Kyo.Handled(inner, hOuter, Arrow[Int])
             val mapped = (outer: Int < Any).map(_ + 1)
             (mapped: Any) match
                 case m: AskHandled @unchecked =>
                     assert(m.handler eq hOuter)
                     assert(sameRef(m.value, inner))
-                    assert(inner.cont eq Arrow[Int])
+                    assert(inner.exit eq Arrow[Int])
                 case other =>
                     fail(s"expected a Handled, got $other")
             end match
@@ -89,7 +89,7 @@ class KyoInternalTest extends AnyFreeSpec:
                 new Handler.Cont[Const[Unit], Const[Int], Ask, Int, Any]:
                     def tag                                           = Tag[Ask]
                     def apply[X](input: Unit, cont: Int => Int < Ask) = cont(1)
-            val n = new Kyo.Handled(ask, contAsk, Arrow[Int])
+            val n = Kyo.Handled(ask, contAsk, Arrow[Int])
             assert((n: Int < Any).eval == 1)
         }
     }
@@ -100,10 +100,10 @@ class KyoInternalTest extends AnyFreeSpec:
                 new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
                     def tag                               = Tag[Ask]
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
-            val n = new Kyo.HandledState(ask, h, Arrow[Int], 7)
+            val n = Kyo.HandledState(ask, h, Arrow[Int], 7)
             assert(n.handler eq h)
             assert(n.state == 7)
-            assert(n.cont eq Arrow[Int])
+            assert(n.exit eq Arrow[Int])
         }
 
         "map lands outside the region and keeps the state" in {
@@ -111,13 +111,13 @@ class KyoInternalTest extends AnyFreeSpec:
                 new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
                     def tag                               = Tag[Ask]
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
-            val n      = new Kyo.HandledState(ask, h, Arrow[Int], 7)
+            val n      = Kyo.HandledState(ask, h, Arrow[Int], 7)
             val mapped = (n: Int < Any).map(_ + 1)
             (mapped: Any) match
                 case m: Kyo.HandledState[Const[Unit], Const[Int], Ask, Int, Int, Any, Any, Int] @unchecked =>
                     assert(m.handler eq h)
                     assert(m.state == 7)
-                    assert(m.cont(41).eval == 42)
+                    assert(m.exit(41).eval == 42)
                 case other =>
                     fail(s"expected a HandledState, got $other")
             end match
@@ -129,7 +129,7 @@ class KyoInternalTest extends AnyFreeSpec:
                     def tag                               = Tag[Ask]
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
             // the node carries 41: the region resumes from the node's state
-            val n = new Kyo.HandledState(ask.map(_ + 1), h, Arrow[Int], 41)
+            val n = Kyo.HandledState(ask.map(_ + 1), h, Arrow[Int], 41)
             assert((n: Int < Any).eval == 42)
         }
     }

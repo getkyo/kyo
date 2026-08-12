@@ -34,7 +34,7 @@ object `<` extends Implicits:
                         val res  = Kyo.unnest(v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            new Kyo.Defer(v, arrow)
+                            Kyo.Defer(v, arrow)
                         else
                             val step = next.step
                             val out  = step.head(f(res), step.tail)

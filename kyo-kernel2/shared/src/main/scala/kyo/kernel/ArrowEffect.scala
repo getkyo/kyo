@@ -63,17 +63,17 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < S =
         v match
             case kyo: Kyo[?, ?] =>
-                val handler =
-                    new Handler.Cont[I, O, E, A, S]:
-                        def tag                                              = _tag
-                        def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
-                new Kyo.Handled[I, O, E, A, A, S, Any](
-                    v,
-                    handler,
-                    Arrow[A]
-                ) // TODO explore merging Handler.Cont with Kyo.Handled by making one of them a trait but make sure no perf regrssion
+                // one allocation: the object is the handler and the region node
+                new Handler.Cont[I, O, E, A, S] with Kyo.Handled[I, O, E, A, A, S, Any]:
+                    def tag                                              = _tag
+                    def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
+                    val value                                            = v
+                    def handler                                          = this
+                    def exit                                             = Arrow[A]
             case v =>
-                // TODO do we need Kyo.unnest here? why does handleWith use it? just check and report
+                // no unnest: the value stays inside the computation, so its
+                // nesting box stays on; only crossing to a plain function
+                // parameter unnests, as in handleWith
                 v.asInstanceOf[A < S]
         end match
     end handle
@@ -84,21 +84,24 @@ object ArrowEffect:
     )(inline cont: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
         v match
             case kyo: Kyo[?, ?] =>
-                val handler =
-                    new Arrow.Transform[A, B, S2] with Handler.Cont[I, O, E, A, S]:
-                        self =>
-                        def tag                                              = _tag
-                        def frame                                            = _frame
-                        def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
-                        def apply[C, S3](v2: A < S3, next: Arrow[B, C, S3]) =
-                            v2 match
-                                case kyo: Kyo[A, S3] @unchecked =>
-                                    kyo.map(self.chain(next))
-                                case v2 =>
-                                    val res  = Kyo.unnest(v2)
-                                    val step = next.step
-                                    step.head(cont(res), step.tail)
-                new Kyo.Handled[I, O, E, A, B, S, S2](v, handler, handler) // TODO explore merging into the handler allocation as well
+                // one allocation: the object is the handler, the region node,
+                // and the region's exit arrow
+                new Arrow.Transform[A, B, S2] with Handler.Cont[I, O, E, A, S] with Kyo.Handled[I, O, E, A, B, S, S2]:
+                    self =>
+                    def tag                                              = _tag
+                    def frame                                            = _frame
+                    val value                                            = v
+                    def handler                                          = this
+                    def exit                                             = this
+                    def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
+                    def apply[C, S3](v2: A < S3, next: Arrow[B, C, S3]) =
+                        v2 match
+                            case kyo: Kyo[A, S3] @unchecked =>
+                                kyo.map(self.chain(next))
+                            case v2 =>
+                                val res  = Kyo.unnest(v2)
+                                val step = next.step
+                                step.head(cont(res), step.tail)
             case v =>
                 cont(Kyo.unnest(v))
         end match
@@ -110,14 +113,17 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         v match
             case kyo: Kyo[?, ?] =>
-                val handler =
-                    new Handler.Loop[I, O, E, A, S & S2]:
-                        def tag = _tag
-                        @targetName("applyInput")
-                        def apply[X](input: I[X]) = f(input)
-                new Kyo.Handled[I, O, E, A, A, S & S2, Any](v, handler, Arrow[A])
+                // one allocation: the object is the handler and the region node
+                new Handler.Loop[I, O, E, A, S & S2] with Kyo.Handled[I, O, E, A, A, S & S2, Any]:
+                    def tag = _tag
+                    @targetName("applyInput")
+                    def apply[X](input: I[X]) = f(input)
+                    val value                 = v
+                    def handler               = this
+                    def exit                  = Arrow[A]
             case v =>
-                // TODO review nesting as well
+                // no unnest: the value stays inside the computation, so its
+                // nesting box stays on
                 v.asInstanceOf[A < (S & S2)]
         end match
     end handleLoop
@@ -128,24 +134,25 @@ object ArrowEffect:
     )(inline cont: A => B < S3)(using inline _frame: Frame): B < (S & S2 & S3) =
         v match
             case kyo: Kyo[?, ?] =>
-                // one allocation: the object is the handler and the region's
-                // exit arrow
-                val handler =
-                    new Arrow.Transform[A, B, S3] with Handler.Loop[I, O, E, A, S & S2]:
-                        self =>
-                        def tag   = _tag
-                        def frame = _frame
-                        @targetName("applyInput")
-                        def apply[X](input: I[X]) = f(input)
-                        def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
-                            v2 match
-                                case kyo: Kyo[A, S4] @unchecked =>
-                                    kyo.map(self.chain(next))
-                                case v2 =>
-                                    val res  = Kyo.unnest(v2)
-                                    val step = next.step
-                                    step.head(cont(res), step.tail)
-                new Kyo.Handled[I, O, E, A, B, S & S2, S3](v, handler, handler)
+                // one allocation: the object is the handler, the region node,
+                // and the region's exit arrow
+                new Arrow.Transform[A, B, S3] with Handler.Loop[I, O, E, A, S & S2] with Kyo.Handled[I, O, E, A, B, S & S2, S3]:
+                    self =>
+                    def tag     = _tag
+                    def frame   = _frame
+                    val value   = v
+                    def handler = this
+                    def exit    = this
+                    @targetName("applyInput")
+                    def apply[X](input: I[X]) = f(input)
+                    def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
+                        v2 match
+                            case kyo: Kyo[A, S4] @unchecked =>
+                                kyo.map(self.chain(next))
+                            case v2 =>
+                                val res  = Kyo.unnest(v2)
+                                val step = next.step
+                                step.head(cont(res), step.tail)
             case v =>
                 // settled: the effect cannot occur, so the continuation
                 // applies strictly with no region node
@@ -160,11 +167,15 @@ object ArrowEffect:
         v match
             case kyo: Kyo[?, ?] =>
                 val state0 = state
-                val handler =
-                    new Handler.LoopState[I, O, E, A, S & S2, State]:
-                        def tag                                 = _tag
-                        def apply[X](input: I[X], state: State) = f(input, state)
-                new Kyo.HandledState[I, O, E, A, A, S & S2, Any, State](v, handler, Arrow[A], state0)
+                // one allocation: the object is the handler and the region node
+                new Handler.LoopState[I, O, E, A, S & S2, State] with Kyo.HandledState[I, O, E, A, A, S & S2, Any, State]:
+                    def tag                                 = _tag
+                    def apply[X](input: I[X], state: State) = f(input, state)
+                    val value                               = v
+                    def handler                             = this
+                    def exit                                = Arrow[A]
+                    val state                               = state0
+                end new
             case v =>
                 // settled: the effect cannot occur, so the value passes through
                 // strictly with no region node; the cast only shrinks the row
@@ -183,21 +194,27 @@ object ArrowEffect:
         v match
             case kyo: Kyo[?, ?] =>
                 val state0 = state
-                val handler =
-                    new Arrow.Transform[A, B, S3] with Handler.LoopState[I, O, E, A, S & S2, State]:
-                        self =>
-                        def tag                                 = _tag
-                        def frame                               = _frame
-                        def apply[X](input: I[X], state: State) = f(input, state)
-                        def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
-                            v2 match
-                                case kyo: Kyo[A, S4] @unchecked =>
-                                    kyo.map(self.chain(next))
-                                case v2 =>
-                                    val res  = Kyo.unnest(v2)
-                                    val step = next.step
-                                    step.head(cont(res), step.tail)
-                new Kyo.HandledState[I, O, E, A, B, S & S2, S3, State](v, handler, handler, state0)
+                // one allocation: the object is the handler, the region node,
+                // and the region's exit arrow
+                new Arrow.Transform[A, B, S3] with Handler.LoopState[I, O, E, A, S & S2, State]
+                    with Kyo.HandledState[I, O, E, A, B, S & S2, S3, State]:
+                    self =>
+                    def tag                                 = _tag
+                    def frame                               = _frame
+                    val value                               = v
+                    def handler                             = this
+                    def exit                                = this
+                    val state                               = state0
+                    def apply[X](input: I[X], state: State) = f(input, state)
+                    def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
+                        v2 match
+                            case kyo: Kyo[A, S4] @unchecked =>
+                                kyo.map(self.chain(next))
+                            case v2 =>
+                                val res  = Kyo.unnest(v2)
+                                val step = next.step
+                                step.head(cont(res), step.tail)
+                end new
             case v =>
                 cont(Kyo.unnest(v))
         end match

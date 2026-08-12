@@ -34,9 +34,9 @@ object Eval:
         @tailrec def loop(v: Any < Nothing, hs: Handlers): Any < Nothing =
             (v: @unchecked) match
                 case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                    loop(kyo.value, new Node(kyo.handler, kyo.cont, hs))
+                    loop(kyo.value, new Node(kyo.handler, kyo.exit, hs))
                 case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
-                    loop(kyo.value, new StateNode(kyo.handler, kyo.cont, kyo.state, hs))
+                    loop(kyo.value, new StateNode(kyo.handler, kyo.exit, kyo.state, hs))
                 case kyo: Kyo.Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     hs.find(kyo.tag) match
                         case Empty =>
@@ -53,7 +53,7 @@ object Eval:
                                     val kCont = kyo.cont
                                     val chained = (pending: Loop.Outcome2[Any, Any < Nothing, Any] < Any).map {
                                         case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
-                                            new Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
+                                            Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
                                                 rebuild(hsAll, node, walk(kCont, c._2)),
                                                 node.handler,
                                                 node.exit,
@@ -193,13 +193,13 @@ object Eval:
                     rebuild(
                         n.prev,
                         stop,
-                        new Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any](acc, n.handler, n.exit)
+                        Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any](acc, n.handler, n.exit)
                     )
                 case n: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     rebuild(
                         n.prev,
                         stop,
-                        new Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
+                        Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
                             acc,
                             n.handler,
                             n.exit,
