@@ -156,6 +156,53 @@ class PendingTest extends AnyFreeSpec:
             assert(result2.eval == "Effect1:10".length + 10)
         }
 
+        // A denied safepoint must defer the ORIGINAL wrapped value, never the unnested
+        // payload: the resume path dispatches on the representation, so a deferred
+        // computation-as-data would execute as a suspension and leak the inner effect.
+        // The old kernel shipped exactly this bug (its nested-resumption fix deferred
+        // over the original value); these pins port that regression coverage, forcing
+        // the deferral deterministically by draining the budget.
+
+        def drainedBudget[A](f: => A): A =
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
+            while Safepoint.enter(slot) do ()
+            try f
+            finally Safepoint.restore(slot, saved)
+        end drainedBudget
+
+        "map over a nested value denied by the budget defers the wrapped value" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.map(_.handle(TestEffect2.run)))
+            assert(deferred.eval == "hello".length + 10)
+        }
+
+        "flatMap over a nested value denied by the budget defers the wrapped value" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.flatMap(_.handle(TestEffect2.run)))
+            assert(deferred.eval == "hello".length + 10)
+        }
+
+        "flatten over a doubly nested value denied by the budget strips exactly one level" in {
+            val inner: Int < TestEffect2              = TestEffect2("hello")
+            val nested: Int < TestEffect2 < Any < Any = Kyo.lift(Kyo.lift(inner): Int < TestEffect2 < Any)
+            val deferred: Int < TestEffect2 < Any     = drainedBudget(nested.flatten)
+            val data                                  = deferred.eval
+            assert(TestEffect2.run(data).eval == "hello".length + 10)
+        }
+
+        "andThen over a nested value denied by the budget discards it unevaluated" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.andThen(99: Int < Any))
+            assert(deferred.eval == 99)
+        }
+
+        "unit over a nested value denied by the budget discards it unevaluated" in {
+            val nested: Int < TestEffect2 < Any = Kyo.lift(TestEffect2("hello"))
+            val deferred                        = drainedBudget(nested.unit)
+            assert(deferred.eval == ())
+        }
+
         "map on nested" in {
             val nested: String < TestEffect1 < Any = Kyo.lift(TestEffect1(50))
 
