@@ -309,9 +309,9 @@ object ContainerPredef:
             "--innodb-log-file-size=32M"
         )
 
-        /** MySQL flushes its InnoDB buffer pool during a graceful shutdown. The [[Container.Config]] default `stopTimeout` of `3.seconds`
-          * is too short: `mysqld` receives SIGTERM, cannot flush in time, and is SIGKILL'd, which leaves the daemon's `/stop` HTTP handler
-          * spinning past the client deadline and reporting `HttpTimeoutException` on teardown. `30.seconds` covers the flush.
+        /** Teardown budget for the post-SIGKILL `waitForExit` (see [[buildContainerConfig]]'s `stopSignal`). The fixture is force-removed
+          * with its anonymous volume, so no graceful shutdown is wanted; a cold SIGKILL of an idle `mysqld` exits at once, well under this
+          * ceiling. The value stays generous only to absorb reap latency when many containers contend for a loaded CI runner's CPU.
           */
         val defaultStopTimeout: Duration = 30.seconds
 
@@ -332,6 +332,12 @@ object ContainerPredef:
                 .env("MYSQL_DATABASE", c.database)
                 .port(c.port, 0)
                 .command(commandLine*)
+                // Teardown SIGKILLs instead of graceful-stopping. Asking mysqld for a graceful SIGTERM shutdown makes it flush its InnoDB
+                // buffer pool; under a loaded CI runner that flush exceeds any fixed stopTimeout, podman then SIGKILLs a process mid-flush
+                // (uninterruptible I/O), the `/stop` handler reports "given PID did not die within timeout", and the container is left
+                // un-retired: a daemon-side leak the container leak check flags. The fixture is thrown away with its anonymous volume, so a
+                // clean shutdown buys nothing; a cold SIGKILL of the idle post-test mysqld exits immediately and lets force-remove complete.
+                .stopSignal(Container.Signal.SIGKILL)
                 .stopTimeout(defaultStopTimeout)
                 .portMappingTimeout(defaultPortMappingTimeout)
                 .healthCheck(Container.HealthCheck.exec(
