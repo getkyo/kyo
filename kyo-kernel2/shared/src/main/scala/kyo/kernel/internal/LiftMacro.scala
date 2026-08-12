@@ -5,6 +5,12 @@ import scala.quoted.*
 
 object LiftMacro:
 
+    /** The macro entry for the non-trivial lift shapes. On an object rather than in the
+      * Implicits trait: a trait-member call in an inline body binds this-proxies at every
+      * expansion, eight dead bytes per lift site even on the branches that never reach it.
+      */
+    inline def expand[A, S](v: A): A < S = ${ liftMacro[A, S]('v) }
+
     /** Emits the lift of a pure value into a computation, specialized by what the type can
       * prove statically: a bare cast when a value of the type can never need the nesting box
       * (Nothing, primitives and value classes, String, and final classes that are not Boxed,

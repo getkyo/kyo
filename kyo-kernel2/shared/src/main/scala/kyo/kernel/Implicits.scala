@@ -6,8 +6,16 @@ import scala.language.implicitConversions
 
 private[kernel] trait Implicits:
 
+    // the trivial shapes reduce in the inliner without invoking the macro: a
+    // macro expansion per lift site is measurably more expensive than an
+    // erasedValue match, and primitive answers inside map-heavy code are the
+    // most common lift by far (kyo-compile-bench, ForComprehensions)
     implicit inline def lift[A, S](v: A)(using inline flat: CanLift[A]): A < S =
-        ${ LiftMacro.liftMacro[A, S]('v) }
+        inline scala.compiletime.erasedValue[A] match
+            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
+                v.asInstanceOf[A < S]
+            case _ =>
+                LiftMacro.expand[A, S](v)
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitMacro[S1, S2]('v) }
 
