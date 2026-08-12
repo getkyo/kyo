@@ -195,7 +195,49 @@ Emission deltas pinned in PendingBytecodeTest: String 10 to 2 bytes, final
 concrete class 17 to 2 (the issue-1314 gap closed), generic 17 to 8, mapLoop
 109 to 113 (the pure-arm answer lift's macro cast shape).
 
-Phase 2 (open): consolidate the CanLift given zoo behind one macro given and
-route the module rejection's guided message to the surface (currently the
-implicitNotFound text); CanLift.scala carries uncommitted review edits, so
-this phase waits for those to land.
+## Phase 2 outcome: the macro off the trivial shapes (commit 2350fb2bb0)
+
+The pure-macro lift regressed the primitive-dense fixtures (ForComprehensions
+1.14x, MapChainWide100 1.09x at eight warmups): a macro expansion per lift
+site costs more in the typer than an erasedValue match, and primitive answers
+inside map-heavy code are the most common lift by far. The conversion stays
+single: its body is the erasedValue prefilter, primitives and Unit and String
+reduce to a bare cast in the inliner, and only non-trivial types reach the
+macro. The macro entry lives on the LiftMacro object rather than in the
+Implicits trait: a trait-member call in an inline body binds this-proxies at
+every expansion, eight dead bytes per lift site even on branches that never
+reach it. The hybrid restored the regressed fixtures to pre-macro time
+(ForComprehensions 689 vs 707 pre-macro, Wide100 541 vs 527) with emission
+byte-identical to the pure macro.
+
+## Phase 3 outcome: CanLift removed (commit b6f61f7e80)
+
+The evidence added nothing the macro cannot check itself. The conversion
+dropped its gate, the macro took over both rejections (pending types with the
+flatten guidance, kyo modules), the function lifts route through the macro,
+liftInternal lost its parameter, and CanLift.scala went away entirely with
+its 13-test spec. Every rejection pin passed unchanged: a macro abort during
+implicit conversion search surfaces as search failure, so the same plain
+mismatch is reported. The final machinery is one conversion, one macro, one
+internal escape, against the original three files, nine implicits, two
+macros, and five givens.
+
+Measured effect of the removal: parity on the compile fixtures
+(ForComprehensions 727 +-43 vs the hybrid's 689 +-77, Wide100 552 +-38 vs
+541 +-47, SuspendSites 250 vs 250, EffectRowGenerics 257 vs 254 pre-macro;
+the CanLift given search was cheap relative to macro expansion). The removal
+is justified by the surface reduction alone, at no compile-time price.
+
+Runtime guards after the full campaign, against the standing board:
+userTypesSkipKernelWrapping 34.40 us/op vs 37.89 on the board (the
+concrete-class lift dropped its runtime Boxed dispatch for a bare cast; the
+last kernel2 row losing to the old kernel on time by more than noise outside
+the structural map-on-suspension family improved 9 percent), allocation
+byte-identical 176,720 B/op; fusionAllocatesNothing 0.584/0.004,
+suspensionBaseline 84.5/640,120, trailingMaps 325.1/2,001,146, uncachedValues
+38.6/155,248, all at board values.
+
+If the stack migration surfaces an API that genuinely needs a propagating
+no-nesting constraint (the old kernel's [A: CanLift] combinator signatures),
+the evidence can return as a standalone type scoped to that surface; the
+kernel itself no longer needs it.
