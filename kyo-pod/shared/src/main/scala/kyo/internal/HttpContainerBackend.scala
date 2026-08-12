@@ -384,7 +384,8 @@ final private[kyo] class HttpContainerBackend(
             AutoRemove = config.autoRemove,
             RestartPolicy = restartPol,
             Mounts = Seq.empty,
-            Tmpfs = tmpfs
+            Tmpfs = tmpfs,
+            Init = config.initProcess
         )
     end buildHostConfig
 
@@ -2324,7 +2325,8 @@ final private[kyo] class HttpContainerBackend(
         AutoRemove: Boolean = false,
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry(),
         Mounts: Seq[MountEntry] = Seq.empty,
-        Tmpfs: Map[String, String] = Map.empty
+        Tmpfs: Map[String, String] = Map.empty,
+        Init: Boolean = false
     ) derives Schema
 
     final private case class PortBindingEntry(

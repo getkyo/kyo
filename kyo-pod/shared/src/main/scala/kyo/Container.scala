@@ -806,6 +806,13 @@ object Container:
         interactive: Boolean,
         allocateTty: Boolean,
         autoRemove: Boolean,
+        /** Run the container's entrypoint under a minimal init process (Docker's `--init`, backed by tini/catatonit) that becomes PID 1.
+          * The init forwards signals to the entrypoint and reaps orphaned zombie children. Enable it for images whose main process is not
+          * init-aware (most database and application servers, e.g. `mysqld`): as PID 1 such a process neither reaps the zombies its helper
+          * subprocesses leave nor dies promptly on the daemon's stop signal, so under a loaded host the container wedges in `stopping` and
+          * the daemon reports "given PID did not die within timeout", leaking it.
+          */
+        initProcess: Boolean,
         restartPolicy: Config.RestartPolicy,
         stopSignal: Maybe[Signal],
         stopTimeout: Duration,
@@ -912,6 +919,9 @@ object Container:
 
         def autoRemove(value: Boolean): Config = copy(autoRemove = value)
 
+        /** Enable or disable the [[Config.initProcess init process]] (Docker's `--init`) for this container. */
+        def initProcess(value: Boolean): Config = copy(initProcess = value)
+
         def restartPolicy(policy: Config.RestartPolicy): Config = copy(restartPolicy = policy)
 
         def restartPolicy(f: Config.RestartPolicy.type => Config.RestartPolicy): Config =
@@ -961,6 +971,7 @@ object Container:
             interactive = false,
             allocateTty = false,
             autoRemove = false,
+            initProcess = false,
             restartPolicy = Config.RestartPolicy.No,
             stopSignal = Absent,
             stopTimeout = 3.seconds,

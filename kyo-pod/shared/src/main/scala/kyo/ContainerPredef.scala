@@ -332,11 +332,14 @@ object ContainerPredef:
                 .env("MYSQL_DATABASE", c.database)
                 .port(c.port, 0)
                 .command(commandLine*)
-                // Teardown SIGKILLs instead of graceful-stopping. Asking mysqld for a graceful SIGTERM shutdown makes it flush its InnoDB
-                // buffer pool; under a loaded CI runner that flush exceeds any fixed stopTimeout, podman then SIGKILLs a process mid-flush
-                // (uninterruptible I/O), the `/stop` handler reports "given PID did not die within timeout", and the container is left
-                // un-retired: a daemon-side leak the container leak check flags. The fixture is thrown away with its anonymous volume, so a
-                // clean shutdown buys nothing; a cold SIGKILL of the idle post-test mysqld exits immediately and lets force-remove complete.
+                // Run under an init process (catatonit as PID 1). mysqld is not init-aware: as PID 1 it does not reap the zombie children
+                // its subprocesses leave behind, so under a loaded CI runner the container wedges in `stopping`, the daemon reports "given
+                // PID did not die within timeout" on stop/remove, and the fixture leaks (a daemon-side leak the container leak check flags).
+                // The init reaps those zombies and forwards signals to mysqld, so teardown completes.
+                .initProcess(true)
+                // Teardown SIGKILLs rather than graceful-stopping. The fixture is thrown away with its anonymous volume, so mysqld's graceful
+                // InnoDB shutdown flush buys nothing and only adds a slow, I/O-heavy shutdown on an already-loaded runner. A cold SIGKILL of
+                // the idle post-test mysqld exits at once (the init forwards it and reaps), so force-remove completes promptly.
                 .stopSignal(Container.Signal.SIGKILL)
                 .stopTimeout(defaultStopTimeout)
                 .portMappingTimeout(defaultPortMappingTimeout)
