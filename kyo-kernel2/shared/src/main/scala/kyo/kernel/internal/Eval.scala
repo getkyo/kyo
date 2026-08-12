@@ -3,6 +3,8 @@ package kyo.kernel.internal
 import kyo.Arrow
 import kyo.Frame
 import kyo.kernel.*
+import kyo.kernel.`<`.fromKyo
+import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.Handlers.Empty
 import kyo.kernel.internal.Handlers.Node
 import kyo.kernel.internal.Handlers.StateNode

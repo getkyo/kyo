@@ -33,7 +33,7 @@ class PendingBytecodeTest extends AnyFreeSpec:
 
     "map" in {
         val sizes = methodBytecodeSize[TestMap]
-        assert(sizes == Map("test" -> 22, "arrow" -> 10, "mapLoop" -> 109))
+        assert(sizes == Map("test" -> 22, "arrow" -> 10, "mapLoop" -> 113))
     }
 
     "lift of a primitive is a bare cast" in {
@@ -43,19 +43,20 @@ class PendingBytecodeTest extends AnyFreeSpec:
 
     "lift of a String is a bare cast" in {
         val sizes = methodBytecodeSize[TestLiftString]
-        assert(sizes == Map("test" -> 10))
+        assert(sizes == Map("test" -> 2))
     }
 
-    "lift of a concrete class" in {
-        // a concrete class pays the runtime Boxed dispatch today even though the
-        // type can never be a computation; the lift redesign targets a bare cast
+    "lift of a concrete class is a bare cast" in {
+        // a final class admits no Boxed subtype, so the lift macro proves the
+        // value can never be a computation and emits a bare cast
         val sizes = methodBytecodeSize[TestLiftConcrete]
-        assert(sizes == Map("test" -> 17))
+        assert(sizes == Map("test" -> 2))
     }
 
-    "lift of a generic value" in {
+    "lift of a generic value is one runtime test" in {
+        // abstract types keep the runtime Boxed test, as a single static call
         val sizes = methodBytecodeSize[TestLiftGeneric]
-        assert(sizes == Map("test" -> 17))
+        assert(sizes == Map("test" -> 8))
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

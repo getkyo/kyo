@@ -1,6 +1,8 @@
 package kyo
 
 import kyo.kernel.*
+import kyo.kernel.`<`.fromKyo
+import kyo.kernel.Implicits.liftInternal
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec

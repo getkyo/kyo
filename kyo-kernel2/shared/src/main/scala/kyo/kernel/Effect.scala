@@ -5,6 +5,8 @@ import kyo.Frame
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
+import kyo.kernel.Implicits.liftInternal
+import kyo.kernel.`<`.fromKyo
 
 abstract class Effect private[kernel] ()
 

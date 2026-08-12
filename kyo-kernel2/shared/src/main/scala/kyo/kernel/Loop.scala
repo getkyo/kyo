@@ -5,6 +5,8 @@ import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
+import kyo.kernel.Implicits.liftInternal
+import kyo.kernel.`<`.fromKyo
 
 /** Provides utilities for creating and managing iterative computations with effects.
   *

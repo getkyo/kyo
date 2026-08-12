@@ -4,6 +4,8 @@ import kyo.Arrow
 import kyo.Const
 import kyo.Frame
 import kyo.Tag
+import kyo.kernel.`<`.fromKyo
+import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 
