@@ -83,21 +83,23 @@ final private[kyo] class HttpContainerBackend(
                 extractPortConflict(e.body) match
                     case Some(port) => Abort.fail(ContainerPortConflictException(port, e.body.getOrElse("")))
                     case None =>
-                        canonicalStatus(e) match
-                            case 304 =>
-                                ctx match
-                                    case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
-                                    case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
-                            case 404 =>
-                                Abort.fail(missingExceptionFor(ctx, e))
-                            case 409 =>
-                                Abort.fail(conflictExceptionFor(ctx))
-                            case _ =>
-                                warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
-                                    s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
-                                    e
-                                )))
-                        end match
+                        notRunningExceptionFor(e.body, ctx) match
+                            case Some(ex) => Abort.fail(ex)
+                            case None =>
+                                canonicalStatus(e) match
+                                    case 304 =>
+                                        ctx match
+                                            case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
+                                            case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
+                                    case 404 =>
+                                        Abort.fail(missingExceptionFor(ctx, e))
+                                    case 409 =>
+                                        Abort.fail(conflictExceptionFor(ctx))
+                                    case _ =>
+                                        warnIfMissingBody(e, ctx).andThen(Abort.fail(ContainerOperationException(
+                                            s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} for ${ctx.describe}",
+                                            e
+                                        )))
                 end match
             case other =>
                 Abort.fail(ContainerBackendException(s"HTTP transport failed for ${ctx.describe}", other))
@@ -132,6 +134,22 @@ final private[kyo] class HttpContainerBackend(
 
     private def conflictExceptionFor(ctx: ResourceContext)(using Frame): ContainerException =
         ErrorClassification.conflictFor(ctx)
+
+    /** Podman/docker refuse a state-dependent operation (exec-create, top) on a non-running container with a wrong-state message
+      * rather than a distinct status (podman's compat shim reports HTTP 500). Detect that family from the body and type it as
+      * [[ContainerAlreadyStoppedException]] for a container context, matching the shell backend; callers (exec/top) then recover via a
+      * fresh state read instead of seeing an opaque operation failure.
+      */
+    private def notRunningExceptionFor(body: Maybe[String], ctx: ResourceContext)(using Frame): Option[ContainerException] =
+        ctx match
+            case ResourceContext.Container(id) if bodyContainsNotRunning(body) => Some(ContainerAlreadyStoppedException(id))
+            case _                                                             => None
+
+    private def bodyContainsNotRunning(body: Maybe[String]): Boolean =
+        body.toOption.exists { b =>
+            val lower = b.toLowerCase
+            DaemonErrorPhrases.NotRunning.exists(lower.contains)
+        }
 
     /** Warn when a non-2xx error has no body and no canonical mapping. The combination prevents the classifier from doing better than
       * `ContainerOperationException`, which obscures the real condition.

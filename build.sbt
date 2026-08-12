@@ -2700,9 +2700,13 @@ lazy val `kyo-pod` =
                     // (single-fork, no marker) are deliberately not matched (the trailing `s` distinguishes them).
                     val simpleName = test.name.split('.').last
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
+                    // Match actual CALLS to the marker-registering helpers (helper name immediately followed by `{` or `(`),
+                    // not mere textual mentions. A suite's scaladoc can reference `runBackends` (ContainerOrchestrationItTest
+                    // points readers at ContainerItTest) while the suite itself only uses the single-fork `runBackend`; a plain
+                    // `contains` check then forks that http-only suite per runtime and runs it twice against one daemon.
+                    val runtimeHelperCall = """\b(runBackendsLong|runBackends|runRuntimes)\s*[{(]""".r
                     val usesRuntimeMarkers = srcOpt.exists { f =>
-                        val src = IO.read(f)
-                        src.contains("runBackends") || src.contains("runRuntimes")
+                        runtimeHelperCall.findFirstIn(IO.read(f)).isDefined
                     }
                     val targetRuntimes = if (usesRuntimeMarkers) Seq("podman", "docker") else Seq.empty
                     if (targetRuntimes.isEmpty)
