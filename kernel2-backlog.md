@@ -36,6 +36,20 @@ the given function on a match, stops at a `Defer` or settled value, returns Unit
 computation untouched. (`iotask-kernel2-integration-r2.md` 5.5, origin/main
 ArrowEffect.scala as the contract reference.)
 
+### Safepoint.stop cheap negative (was IOTask ruling R6)
+
+Context: `Safepoint.stop(thread)` delivers preemption by locating the target thread's
+slot; for a live thread that never evaluated, the probe walks the whole table (65536
+volatile reads) on the caller's thread. The early exit is correct by two invariants:
+slot entries never return to null once claimed, and claim takes the first free slot
+walking forward from home, so a null reached while probing proves the thread has no
+slot.
+
+Status: implementing now (kernel2-impl, third task in its queue): a null arm in the
+probe match returning false, plus a mixed-occupancy strengthening of the existing
+"stop misses a thread that never evaluated" pin. Pulled out of the parked IOTask
+theme per your note; the rest of IOTask stays parked.
+
 ### Exception enrichment (EffectTrace successor)
 
 Context: kernel2 dropped the old kernel's always-on trace ring (16 frames recorded per
@@ -231,14 +245,4 @@ releases run synchronously, Unit-returning; recommended), R4 (context stays a de
 a conditional subclass so the footprint trick survives), R5 (dispatchFirst; now in
 implementation), R6 (below). (`iotask-kernel2-integration-r2.md`; summary
 `backlog-sections/iotask.md`.)
-
-### Safepoint.stop cheap negative (IOTask ruling R6)
-
-Context: `Safepoint.stop(thread)` delivers preemption by locating the target thread's
-slot. For a live thread that never evaluated, the probe walks the whole slot table:
-65536 volatile reads on the caller's thread, and under the IOTask design the caller
-is the interrupter. There is a correct early exit (entries are never written back to
-null, so a null entry reached while probing proves the thread has no slot).
-
-Status: parked with IOTask; small and standalone if wanted earlier.
 
