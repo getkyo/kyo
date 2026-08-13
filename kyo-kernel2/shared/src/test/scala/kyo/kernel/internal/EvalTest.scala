@@ -525,6 +525,50 @@ class EvalTest extends AnyFreeSpec:
         end try
     }
 
+    "a fork's transplant" - {
+
+        sealed trait TestCtx extends ContextEffect[Int]
+
+        def testCtx: Int < TestCtx = ContextEffect.suspend(Tag[TestCtx])
+
+        // a computation nested under detach genuinely raises the effect it uses,
+        // but detach itself erases the row to Any, so wrapping the detach call with
+        // a ContextEffect.handle over that effect needs the row cast back. Harmless:
+        // the row is phantom, and the handler installed dynamically (found on `hs`
+        // when the detach suspension is answered) is what makes the transplant
+        // real, not this ascription. The same direct cast this file uses elsewhere
+        // to build fixtures (e.g. "the innermost handler of a tag answers") whose
+        // declared row does not match dynamic behavior
+
+        // extracts a still-pending, boxed child from a fully driven outer
+        // computation that wraps a detach call directly. Not `.eval`: its settle
+        // step picks the primitive or the Nested branch from the *static* type,
+        // and here the static type is itself a pending type over a JVM primitive
+        // ((Int < TestCtx) < Any), which reads as the primitive case and unboxes
+        // the Nested wrapper itself instead of what it carries. Nested.unnest
+        // checks the *runtime* shape instead, so it has no such blind spot: the
+        // currency discipline's own cast-at-the-boundary pattern (CONTRIBUTING.md)
+        // for exactly this class of erased-type read
+        def extract[A, S](v: A < S): A = Nested.unnest(Eval(v))
+
+        "a fork reached only after a parent's park still transplants the standing binding correctly" in {
+            // the Say suspension parks before the detach suspension is reached: the
+            // transplant has not run when Eval.partial captures the residual, and the
+            // TestCtx provision cell must still be there when the fork is finally
+            // reached on resume
+            val forked = say("x").map(_ => Effect.detach(testCtx)).asInstanceOf[(Int < TestCtx) < (TestCtx & Say)]
+            val bound  = ContextEffect.handle(Tag[TestCtx], 42)(forked)
+
+            val residual = Eval.partial(bound)
+            assert(residual.evalNow.isEmpty)
+
+            val childBoxed = ArrowEffect.handle(Tag[Say], residual)([X] => (_, cont) => cont(()))
+            val child      = extract(childBoxed).asInstanceOf[Int < Any]
+            // a separate, fresh drive of the child alone
+            assert(child.eval == 42)
+        }
+    }
+
 end EvalTest
 
 class EvalBoom extends RuntimeException("boom")
