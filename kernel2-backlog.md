@@ -63,9 +63,10 @@ reads the HANDLER kinds, the vocabulary the handling variants already publish. f
 no longer dispatches through a fresh anonymous handler class per handle site: the
 tag rides the cell, one reference test and field read per cell. State lives only on
 the stateful cell; the base refuses it; allocation per region entry unchanged. Eval
-shrank by a hundred-plus lines. Suite 683 green. Honest gate: JMH pending, mine to
-run in the next quiet window (sharedHandlerPaysDispatch carries find; I will run the
-full guard set since Eval's arms were restructured).
+shrank by a hundred-plus lines. Suite 683 green. Gate run and PASSED: sharedHandlerPaysDispatch 152.5/155.0 to 147.2 us (-4 percent,
+the megamorphic-to-field-read win showing), zero rows hold, others neutral or
+better; +8 B/op on region-entry rows is the tag field, one word per cell, the
+priced cost of the find improvement.
 
 ## Done, awaiting your ack (continued)
 
