@@ -128,3 +128,15 @@ jobs:
         run: |
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
+
+      # TEMP diagnostic (revert after): dump the resource sampler timeline captured during the test run.
+      - name: RESMON dump
+        if: ${{ always() && contains(inputs.os, 'linux') }}
+        shell: bash
+        run: |
+          if [ -f "$HOME/resmon.log" ]; then
+            echo "===== RESMON peaks: hthreads=$(grep -oE 'hthreads=[0-9]+' "$HOME/resmon.log" | grep -oE '[0-9]+' | sort -n | tail -1) hprocs=$(grep -oE 'hprocs=[0-9]+' "$HOME/resmon.log" | grep -oE '[0-9]+' | sort -n | tail -1) conmon=$(grep -oE 'conmon=[0-9]+' "$HOME/resmon.log" | grep -oE '[0-9]+' | sort -n | tail -1) cleanup=$(grep -oE 'cleanup=[0-9]+' "$HOME/resmon.log" | grep -oE '[0-9]+' | sort -n | tail -1) ctrs=$(grep -oE 'ctrs=[0-9]+' "$HOME/resmon.log" | grep -oE '[0-9]+' | sort -n | tail -1) memused=$(grep -oE 'memused=[0-9]+' "$HOME/resmon.log" | grep -oE '[0-9]+' | sort -n | tail -1) ====="
+            echo "===== RESMON timeline ====="; cat "$HOME/resmon.log"
+          else
+            echo "no resmon.log"
+          fi
