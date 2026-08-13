@@ -126,13 +126,22 @@ object Loop:
         new Continue:
             val _1 = ()
 
-    // The constructors return currency at the top row. A handler clause expects
-    // `Outcome[answer < row, result] < S`, its answer slot pending so a clause
-    // may answer effectfully, while most clauses answer with a settled value:
-    // only a `<`-shaped return unifies that expectation, since inference solves
-    // the answer type from the expected type instead of from the argument. The
-    // row is Any, which conforms wherever the site's row lands, so the type
-    // parameters are the old kernel's and its call sites keep working.
+    // The continue constructors return currency at the top row. A handler
+    // clause expects `Outcome[answer < row, result] < S`, its answer slot
+    // pending so a clause may answer effectfully, while most clauses answer
+    // with a settled value: only a `<`-shaped return unifies that expectation,
+    // since inference solves the answer type from the expected type instead of
+    // from the argument. The row is Any, which conforms wherever the site's
+    // row lands. Three bare-return designs were built and gated before this
+    // shape settled: plain bare constructors leave every settled-answer clause
+    // site red (the settled-into-pending step is a conversion, and a
+    // conversion blocks expected-type propagation into the type parameter);
+    // Outcome-lifting conversions in the companion fix those sites but cycle
+    // dotc's inference inside map-final clause bodies; carrying the payload
+    // row on Continue (`_1: A < S`) makes every site infer by variance with no
+    // conversion, but the field then erases to Object where the old field
+    // specializes to a primitive at the inline site, and the stored box costs
+    // Loop's driver 16 extra bytes and 2.9x time per settled iteration.
     //
     // A Continue extends nothing but Serializable and the runtime lift boxes
     // only Boxed values, so the boxing arm is unreachable for every value the
@@ -140,9 +149,9 @@ object Loop:
     // names its own result type: a shared helper taking the type from
     // inference solves it to the Kyo member of the currency union at some
     // sites, and the checkcast that produces fails when the loop runs.
-    // The done payloads keep the lift, since an arbitrary value may be a
-    // computation held as data and the box is what keeps the evaluator from
-    // reading it as a clause that suspended.
+    // The done payloads are bare: the value lift at the clause boundary boxes
+    // a payload that is itself a computation held as data, which keeps the
+    // evaluator from reading it as a clause that suspended.
 
     /** Creates an outcome signaling continuation with no state value.
       *
@@ -226,7 +235,7 @@ object Loop:
 
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
-    inline def done[A]: Outcome[A, Unit] < Any = Nested.lift(())
+    inline def done[A]: Outcome[A, Unit] = ()
 
     /** Creates an outcome signaling completion with a final value.
       *
@@ -234,7 +243,7 @@ object Loop:
       *   The final value
       */
     @targetName("done1")
-    inline def done[A, O](inline v: O): Outcome[A, O] < Any = Nested.lift(v)
+    inline def done[A, O](inline v: O): Outcome[A, O] = v
 
     /** Creates an outcome signaling completion with a final value for a two-state loop.
       *
@@ -242,7 +251,7 @@ object Loop:
       *   The final value
       */
     @targetName("done2")
-    inline def done[A, B, O](inline v: O): Outcome2[A, B, O] < Any = Nested.lift(v)
+    inline def done[A, B, O](inline v: O): Outcome2[A, B, O] = v
 
     /** Creates an outcome signaling completion with a final value for a three-state loop.
       *
@@ -250,7 +259,7 @@ object Loop:
       *   The final value
       */
     @targetName("done3")
-    inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] < Any = Nested.lift(v)
+    inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] = v
 
     /** Creates an outcome signaling completion with a final value for a four-state loop.
       *
@@ -258,7 +267,7 @@ object Loop:
       *   The final value
       */
     @targetName("done4")
-    inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] < Any = Nested.lift(v)
+    inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] = v
 
     /** Executes a loop with a single state value.
       *
