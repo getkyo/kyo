@@ -139,21 +139,12 @@ runs:
         # "crun: unknown version specified" (an OCI config version it rejects), which fails every
         # kyo-pod container integration test. runc accepts the config podman writes, so the service and
         # every container it starts use runc instead.
-        # exit_command_delay: seconds conmon defers podman's cleanup exit-command after an exec (or container) process
-        # exits. That exit-command reaps the exec session, its conmon pair, and its kernel keyring key. The podman HTTP
-        # API, unlike the CLI (which cleans up synchronously in the calling process), exposes no call to force exec-session
-        # cleanup, so this delay is the only lever. At the 300s default every API exec leaves a conmon alive for five
-        # minutes; the kyo-pod container suites issue hundreds of execs (ContainerItTest alone runs 800+), so on the
-        # rootless runners the deferred conmon accumulate and exhaust the user's process table until an in-container `sh`
-        # cannot fork ("Resource temporarily unavailable"), failing later container tests. Any positive delay leaves an
-        # accumulation window that a fast concurrent exec rate (observed on the JS runner) still overflows, so set it to 0:
-        # cleanup then runs the instant each exec exits, matching CLI behavior, and live conmon never accumulate regardless
-        # of exec rate. Verified against a real rootless podman: a burst of API execs holds the live-conmon count flat at
-        # baseline with delay=0, versus climbing by two per exec at any positive delay. delay=0 also reaps the exec session
-        # itself immediately, so the exit-code read (GET /exec/{id}/json) can 404; HttpContainerBackend.exec recovers the
-        # code from the daemon's durable exec_died event in that case, so correctness does not depend on the retention.
+        # Keep podman's default cleanup behavior (no exit_command_delay override). The kyo-pod container suites once
+        # exhausted the rootless runners, but the cause was memory pressure from the 12GB run-phase sbt driver heap, not
+        # conmon retention: that is fixed by the out-of-JVM run-phase heap cap in ci-test.sh. Forcing exit_command_delay=0
+        # here reaped exec sessions before the HTTP backend could read their exit code, so it is left at the default.
         mkdir -p "$HOME/.config/containers"
-        printf '[engine]\nruntime = "runc"\nexit_command_delay = 0\n' > "$HOME/.config/containers/containers.conf"
+        printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the

@@ -1097,36 +1097,6 @@ class ContainerItTest extends BasePodTest:
                     assert(outputs == Set("one", "two", "three"))
             }
         }
-
-        // Every exec opens a daemon exec session. The podman HTTP API, unlike the CLI, does not reap that session in the
-        // calling request: cleanup runs from conmon's deferred exit-command, so a runtime configured with a non-zero
-        // exit_command_delay lets finished sessions accumulate, each pinning a conmon process and a kernel keyring key,
-        // until the rootless process table or key quota is exhausted and an in-container command can no longer fork.
-        // Info.execIds exposes the sessions the daemon still tracks, so a settled container must report none once its
-        // execs have returned. This is the exec analogue of the container-leak check: it guards that the exec path frees
-        // its session promptly, the way the shell backend and the CLI do. The poll tolerates cleanup being asynchronous
-        // (the final session can be in flight for a moment even when reaping is immediate); under a deferring runtime the
-        // set never drains and the assertion fails.
-        "exec sessions are reaped, not leaked, across a burst of execs" - runBackend {
-            val burst = 25
-            Container.init(alpine).map { c =>
-                Kyo.foreach((1 to burst).toSeq)(_ => c.exec("true")).andThen {
-                    def drained(remaining: Int): Chunk[String] < (Async & Abort[ContainerException]) =
-                        c.inspect.map { info =>
-                            if info.execIds.isEmpty || remaining <= 0 then info.execIds
-                            else Async.sleep(200.millis).andThen(drained(remaining - 1))
-                        }
-                    // up to ~5s of settling (25 * 200ms): ample for immediate reaping, far under any deferred delay.
-                    drained(25).map { leaked =>
-                        assert(
-                            leaked.isEmpty,
-                            s"${leaked.size} of $burst exec session(s) still tracked after the burst: the runtime is " +
-                                s"deferring exec cleanup instead of freeing sessions promptly (${leaked.mkString(", ")})"
-                        )
-                    }
-                }
-            }
-        }
     }
 
     "execStream" - {
