@@ -208,6 +208,18 @@ final private[kyo] class HttpContainerBackend(
             case Result.Panic(ex) => Abort.fail(ContainerBackendException(s"Concurrency meter panicked during ${ctx.describe}", ex))
         }
 
+    /** Error mapping without the concurrency meter. For internal recovery/plumbing calls that must not consume a caller's
+      * meter permits (which would serialize them behind in-flight user operations and can stall a bounded-meter caller).
+      */
+    private def withErrorMappingUnmetered[A](ctx: ResourceContext)(
+        v: A < (Async & Abort[HttpException])
+    )(using Frame): A < (Async & Abort[ContainerException]) =
+        Abort.runWith[HttpException](v) {
+            case Result.Success(a) => a
+            case Result.Failure(e) => mapHttpError(e, ctx)
+            case Result.Panic(e)   => Abort.fail(ContainerBackendException(s"Unexpected error during ${ctx.describe}", e))
+        }
+
     /** POST with empty body, accepting 200/201/204 as success. */
     private def postUnit(endpoint: String, ctx: ResourceContext)(using Frame): Unit < (Async & Abort[ContainerException]) =
         withErrorMapping(ctx)(HttpClient.postText(url(endpoint), "").unit)
@@ -801,7 +813,7 @@ final private[kyo] class HttpContainerBackend(
         Frame
     ): ExitCode < (Async & Abort[ContainerException]) =
         val filters = s"""{"container":["${id.value}"],"event":["exec_died"]}"""
-        withErrorMapping(ctxContainer(id)) {
+        withErrorMappingUnmetered(ctxContainer(id)) {
             HttpClient.getText(libpodUrl("/events", "stream" -> "false", "since" -> since.toString, "filters" -> filters))
         }.map { body =>
             val died = body.split("\n").iterator.filter(_.trim.nonEmpty).flatMap { line =>
