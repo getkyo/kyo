@@ -25,14 +25,27 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
 
     final private case class ListenerCall(eventType: String, listener: scalajs.Any, options: scalajs.Any)
 
-    final private class ListenerTracker(failOnAdd: String = null, chronology: ArrayBuffer[String] = ArrayBuffer.empty):
-        val added    = ArrayBuffer.empty[ListenerCall]
-        val removed  = ArrayBuffer.empty[ListenerCall]
-        val attempts = ArrayBuffer.empty[String]
+    final private class ListenerTracker(
+        failOnAdd: String = null,
+        failOnDocumentAdd: String = null,
+        chronology: ArrayBuffer[String] = ArrayBuffer.empty
+    ):
+        val added           = ArrayBuffer.empty[ListenerCall]
+        val removed         = ArrayBuffer.empty[ListenerCall]
+        val documentAdded   = ArrayBuffer.empty[ListenerCall]
+        val documentRemoved = ArrayBuffer.empty[ListenerCall]
+        val attempts        = ArrayBuffer.empty[String]
+        var activeTimers    = 0
 
-        private val body           = dom.document.body.asInstanceOf[scalajs.Dynamic]
-        private val originalAdd    = body.addEventListener
-        private val originalRemove = body.removeEventListener
+        private val body                   = dom.document.body.asInstanceOf[scalajs.Dynamic]
+        private val document               = dom.document.asInstanceOf[scalajs.Dynamic]
+        private val window                 = dom.window.asInstanceOf[scalajs.Dynamic]
+        private val originalAdd            = body.addEventListener
+        private val originalRemove         = body.removeEventListener
+        private val originalDocumentAdd    = document.addEventListener
+        private val originalDocumentRemove = document.removeEventListener
+        private val originalSetInterval    = window.setInterval
+        private val originalClearInterval  = window.clearInterval
 
         def install(): ListenerTracker =
             body.updateDynamic("addEventListener")((eventType: String, listener: scalajs.Any, options: scalajs.Any) =>
@@ -48,12 +61,37 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 removed += ListenerCall(eventType, listener, options)
                 chronology += s"remove:$eventType"
             )
+            document.updateDynamic("addEventListener")((eventType: String, listener: scalajs.Any, options: scalajs.Any) =>
+                if eventType == failOnDocumentAdd then throw new scalajs.JavaScriptException(s"failed document add: $eventType")
+                else
+                    discard(originalDocumentAdd.call(document, eventType, listener, options))
+                    documentAdded += ListenerCall(eventType, listener, options)
+            )
+            document.updateDynamic("removeEventListener")((eventType: String, listener: scalajs.Any, options: scalajs.Any) =>
+                discard(originalDocumentRemove.call(document, eventType, listener, options))
+                documentRemoved += ListenerCall(eventType, listener, options)
+                chronology += s"remove-document:$eventType"
+            )
+            window.updateDynamic("setInterval")((callback: scalajs.Any, millis: scalajs.Any) =>
+                activeTimers += 1
+                originalSetInterval.call(window, callback, millis)
+            )
+            window.updateDynamic("clearInterval")((id: scalajs.Any) =>
+                discard(originalClearInterval.call(window, id))
+                activeTimers -= 1
+                chronology += "clear-interval"
+            )
             this
         end install
 
         def restore(): Unit =
             body.updateDynamic("addEventListener")(originalAdd)
             body.updateDynamic("removeEventListener")(originalRemove)
+            document.updateDynamic("addEventListener")(originalDocumentAdd)
+            document.updateDynamic("removeEventListener")(originalDocumentRemove)
+            window.updateDynamic("setInterval")(originalSetInterval)
+            window.updateDynamic("clearInterval")(originalClearInterval)
+        end restore
     end ListenerTracker
 
     private def sameCall(left: ListenerCall, right: ListenerCall): Boolean =
@@ -172,13 +210,17 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 tracker.added.foreach { addition =>
                     assert(tracker.removed.count(removal => sameCall(addition, removal)) == 1)
                 }
+                assert(tracker.documentAdded.map(_.eventType) == Seq("kyo:resolve-drag"))
+                assert(tracker.documentRemoved.size == 1)
+                assert(sameCall(tracker.documentRemoved.head, tracker.documentAdded.head))
+                assert(tracker.activeTimers == 0)
             }
         }
     }
 
     "cleans up a partially installed listener set when a later add fails" in {
         val chronology = ArrayBuffer.empty[String]
-        Scope.acquireRelease(Sync.defer(new ListenerTracker("submit", chronology).install()))(tracker =>
+        Scope.acquireRelease(Sync.defer(new ListenerTracker(failOnAdd = "submit", chronology = chronology).install()))(tracker =>
             Sync.defer(tracker.restore())
         ).map {
             tracker =>
@@ -219,8 +261,10 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                     val channelClose = chronology.indexOf("channel-close")
                     val interrupt    = chronology.indexOf("drain-interrupt")
                     val joined       = chronology.indexOf("drain-joined")
-                    assert(chronology.take(channelClose).size == 19)
-                    assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
+                    assert(chronology.take(channelClose).size == 21)
+                    assert(chronology.take(channelClose).head == "clear-interval")
+                    assert(chronology.take(channelClose)(1) == "remove-document:kyo:resolve-drag")
+                    assert(chronology.take(channelClose).drop(2).forall(_.startsWith("remove:")))
                     assert(channelClose < interrupt)
                     assert(interrupt < joined)
         }
@@ -258,8 +302,10 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 val interrupt    = chronology.indexOf("drain-interrupt")
                 val joined       = chronology.indexOf("drain-joined")
                 assert(tracker.removed.size == 19)
-                assert(chronology.take(channelClose).size == 19)
-                assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
+                assert(chronology.take(channelClose).size == 21)
+                assert(chronology.take(channelClose).head == "clear-interval")
+                assert(chronology.take(channelClose)(1) == "remove-document:kyo:resolve-drag")
+                assert(chronology.take(channelClose).drop(2).forall(_.startsWith("remove:")))
                 assert(channelClose < interrupt)
                 assert(interrupt < joined)
         }
@@ -280,6 +326,51 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                     }
                 }
             }
+        }
+    }
+
+    "rolls back existing and drag listeners when a late drag listener add fails" in {
+        val chronology = ArrayBuffer.empty[String]
+        Scope.acquireRelease(Sync.defer(new ListenerTracker(failOnAdd = "drop", chronology = chronology).install()))(tracker =>
+            Sync.defer(tracker.restore())
+        ).map { tracker =>
+            for
+                result <- Fiber.initUnscoped(Scope.run(DomBackend.mount(UI.div("mounted"), new LifecycleChronology(chronology))))
+                    .map(_.getResult)
+                _ <- assertEventually(Sync.defer(chronology.contains("drain-joined")))
+            yield
+                assert(result.isPanic)
+                assert(tracker.attempts.takeRight(5) == Seq("dragstart", "dragenter", "dragover", "dragleave", "drop"))
+                assert(tracker.added.size == 17)
+                assert(tracker.removed.size == tracker.added.size)
+                assert(tracker.removed.zip(tracker.added.reverse).forall((removal, addition) => sameCall(removal, addition)))
+                assert(tracker.documentAdded.isEmpty)
+                assert(tracker.activeTimers == 0)
+                val channelClose = chronology.indexOf("channel-close")
+                assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
+        }
+    }
+
+    "rolls back all body listeners when the resolution listener add fails" in {
+        val chronology = ArrayBuffer.empty[String]
+        Scope.acquireRelease(Sync.defer(
+            new ListenerTracker(failOnDocumentAdd = "kyo:resolve-drag", chronology = chronology).install()
+        ))(tracker => Sync.defer(tracker.restore())).map { tracker =>
+            for
+                result <- Fiber.initUnscoped(Scope.run(DomBackend.mount(UI.div("mounted"), new LifecycleChronology(chronology))))
+                    .map(_.getResult)
+                _ <- assertEventually(Sync.defer(chronology.contains("drain-joined")))
+            yield
+                assert(result.isPanic)
+                assert(tracker.added.size == 19)
+                assert(tracker.removed.size == tracker.added.size)
+                assert(tracker.removed.zip(tracker.added.reverse).forall((removal, addition) => sameCall(removal, addition)))
+                assert(tracker.documentAdded.isEmpty)
+                assert(tracker.documentRemoved.isEmpty)
+                assert(tracker.activeTimers == 0)
+                val channelClose = chronology.indexOf("channel-close")
+                assert(chronology.take(channelClose).size == 19)
+                assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
         }
     }
 

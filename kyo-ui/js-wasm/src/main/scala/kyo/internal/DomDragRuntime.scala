@@ -9,73 +9,136 @@ import scala.scalajs.js
 /** Scoped native HTML drag runtime for a locally mounted UI. */
 private[kyo] object DomDragRuntime:
 
-    private val limits             = DragProtocol.Limits.default
-    private val pendingTimeoutMs   = 5 * 60 * 1000
-    private val expiryIntervalMs   = 1000
-    private val sourceAttribute    = "data-kyo-drag-source"
-    private val sourceKeyAttribute = "data-kyo-drag-source-key"
-    private val targetAttribute    = "data-kyo-drop-target"
-    private val targetKeyAttribute = "data-kyo-drop-target-key"
+    private val limits                = DragProtocol.Limits.default
+    private[kyo] val pendingTimeoutMs = 5 * 60 * 1000
+    private val expiryIntervalMs      = 1000
+    private val sourceAttribute       = "data-kyo-drag-source"
+    private val sourceKeyAttribute    = "data-kyo-drag-source-key"
+    private val targetAttribute       = "data-kyo-drop-target"
+    private val targetKeyAttribute    = "data-kyo-drop-target-key"
+
+    private[kyo] trait CancelTimer:
+        def cancel(): Unit
+
+    private[kyo] trait Timing:
+        def nowMillis(): Double
+        def every(millis: Int)(run: () => Unit): CancelTimer
+
+    private object BrowserTiming extends Timing:
+        def nowMillis(): Double = js.Date.now()
+        def every(millis: Int)(run: () => Unit): CancelTimer =
+            val id = dom.window.setInterval(() => run(), millis)
+            new CancelTimer:
+                def cancel(): Unit = dom.window.clearInterval(id)
+        end every
+    end BrowserTiming
+
+    final private case class ProbeFile(mediaType: Maybe[String], directory: Maybe[Boolean])
+
+    final private case class Probe(textTypes: Set[String], uri: Boolean, files: Chunk[ProbeFile]):
+        def itemCount: Int = (if textTypes.nonEmpty then 1 else 0) + (if uri then 1 else 0) + files.size
+
+    final private case class ProbeResult(manifest: Probe, allowed: Drag.AllowedOperations)
+    final private case class Snapshot(
+        items: Chunk[DragProtocol.ItemData],
+        allowed: Drag.AllowedOperations,
+        tokens: mutable.Map[String, js.Any]
+    )
+    final private case class TargetMatch(target: Located[DragProtocol.TargetConfig], operation: Drag.Operation)
 
     /** Runtime control and diagnostics retained for drag file handoff support. */
     private[kyo] trait Handle:
         def resolve(sessionId: String, decision: Drag.Decision): Unit
         def activeSessions: Int
         def fileTokens: Int
+        private[kyo] def stateName: String
+        private[kyo] def activeSessionId: Maybe[String]
+        private[kyo] def contextIdentity: Int
+        private[kyo] def transitionCount: Int
         private[kyo] def fileToken(token: String): Maybe[js.Any]
     end Handle
 
     final private case class Located[A](element: dom.Element, path: Seq[String], config: A)
 
-    final private class Session(
+    final private class SessionContext(
         val id: String,
-        val items: Chunk[DragProtocol.ItemData],
         val source: Maybe[Located[DragProtocol.SourceConfig]],
-        val allowed: Drag.AllowedOperations,
+        var allowed: Drag.AllowedOperations,
         val tokens: mutable.Map[String, js.Any],
         val preview: Maybe[dom.Element],
         val startedAt: Double,
         var operation: Drag.Operation,
         var target: Maybe[Located[DragProtocol.TargetConfig]],
-        var dropped: Boolean,
-        var accepted: Boolean,
-        var browserEnded: Boolean,
-        var ended: Boolean
-    )
+        var items: Maybe[Chunk[DragProtocol.ItemData]]
+    ) derives CanEqual
+
+    private enum State derives CanEqual:
+        case Idle
+        case ExternalProbing(context: SessionContext, probe: Probe)
+        case Dragging(context: SessionContext)
+        case AwaitingDecision(context: SessionContext)
+        case AwaitingDecisionAfterEnd(context: SessionContext)
+        case AcceptedAwaitingEnd(context: SessionContext)
+
+        def maybeContext: Maybe[SessionContext] = this match
+            case Idle                              => Absent
+            case ExternalProbing(context, _)       => Present(context)
+            case Dragging(context)                 => Present(context)
+            case AwaitingDecision(context)         => Present(context)
+            case AwaitingDecisionAfterEnd(context) => Present(context)
+            case AcceptedAwaitingEnd(context)      => Present(context)
+    end State
+
+    private enum NativeEvent derives CanEqual:
+        case Start, Enter, Over, Leave, Drop, End
 
     /** Installs one capture listener for each native drag phase and one scoped resolution listener. */
-    private[kyo] def install(container: dom.Element, enqueue: UIEvent => Unit)(using Frame): Handle < (Sync & Scope) =
+    private[kyo] def install(
+        container: dom.Element,
+        enqueue: UIEvent => Unit,
+        timing: Timing = BrowserTiming
+    )(using Frame): Handle < (Sync & Scope) =
         Sync.defer {
-            val runtime = new Runtime(container, enqueue)
+            val runtime = new Runtime(container, enqueue, timing)
             Scope.ensure(Sync.defer(runtime.close())).andThen(runtime.install.map(_ => runtime))
         }
     end install
 
-    final private class Runtime(container: dom.Element, enqueue: UIEvent => Unit)(using Frame) extends Handle:
-        private var active: Session           = null
-        private var closed                    = false
-        private var sequence                  = 0L
-        private var interval: js.UndefOr[Int] = js.undefined
+    final private class Runtime(container: dom.Element, enqueue: UIEvent => Unit, timing: Timing)(using Frame) extends Handle:
+        private var state: State = State.Idle
+        private var closed       = false
+        private var sequence     = 0L
+        private var transitions  = 0
 
         private val dragListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => handle(event)
 
         private val resolveListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => resolveEvent(event)
 
-        def activeSessions: Int = if active == null then 0 else 1
-        def fileTokens: Int     = if active == null then 0 else active.tokens.size
+        def activeSessions: Int                         = state.maybeContext.fold(0)(_ => 1)
+        def fileTokens: Int                             = state.maybeContext.fold(0)(_.tokens.size)
+        private[kyo] def stateName: String              = state.productPrefix
+        private[kyo] def activeSessionId: Maybe[String] = state.maybeContext.map(_.id)
+        private[kyo] def contextIdentity: Int           = state.maybeContext.fold(0)(java.lang.System.identityHashCode)
+        private[kyo] def transitionCount: Int           = transitions
 
         private[kyo] def fileToken(token: String): Maybe[js.Any] =
-            if active == null then Absent else Maybe.fromOption(active.tokens.get(token))
+            state.maybeContext.flatMap(context => Maybe.fromOption(context.tokens.get(token)))
 
         def resolve(sessionId: String, decision: Drag.Decision): Unit =
-            val session = active
-            if !closed && session != null && !session.ended && session.id == sessionId && session.dropped then
-                decision match
-                    case Drag.Decision.Accept =>
-                        session.accepted = true
-                        if session.browserEnded then finish(session, cancelled = false)
-                    case _: Drag.Decision.Reject => finish(session, cancelled = true)
-            end if
+            if !closed then
+                state.maybeContext.foreach { context =>
+                    if context.id == sessionId then
+                        decision match
+                            case _: Drag.Decision.Reject => finish(context, cancelled = true)
+                            case Drag.Decision.Accept =>
+                                state match
+                                    case State.AwaitingDecision(current) if current eq context =>
+                                        move(State.AcceptedAwaitingEnd(context))
+                                    case State.AwaitingDecisionAfterEnd(current) if current eq context =>
+                                        finish(context, cancelled = false)
+                                    case _ => ()
+                    end if
+                }
         end resolve
 
         def install(using Frame): Unit < (Sync & Scope) =
@@ -87,15 +150,8 @@ private[kyo] object DomDragRuntime:
                 _ <- add(container, "drop", dragListener)
                 _ <- add(container, "dragend", dragListener)
                 _ <- add(document, "kyo:resolve-drag", resolveListener)
-                _ <- Scope.acquireRelease(Sync.defer {
-                    val id = dom.window.setInterval(() => expire(), expiryIntervalMs)
-                    interval = id
-                    id
-                })(id =>
-                    Sync.defer {
-                        dom.window.clearInterval(id)
-                        interval = js.undefined
-                    }
+                _ <- Scope.acquireRelease(Sync.defer(timing.every(expiryIntervalMs)(() => expire())))(timer =>
+                    Sync.defer(timer.cancel())
                 ).unit
             yield ()
 
@@ -114,126 +170,166 @@ private[kyo] object DomDragRuntime:
         def close(): Unit =
             if !closed then
                 closed = true
-                val session = active
-                if session != null then finish(session, cancelled = true)
+                state.maybeContext.foreach(finish(_, cancelled = true))
             end if
         end close
 
         private def handle(event: dom.Event): Unit =
             if !closed then
                 event.`type` match
-                    case "dragstart" => start(event)
-                    case "dragenter" => targetEvent(event, UIEvent.DragEnter.apply)
-                    case "dragover"  => targetEvent(event, UIEvent.DragOver.apply)
-                    case "dragleave" => leave(event)
-                    case "drop"      => drop(event)
-                    case "dragend"   => end(event)
+                    case "dragstart" => transition(NativeEvent.Start, event)
+                    case "dragenter" => transition(NativeEvent.Enter, event)
+                    case "dragover"  => transition(NativeEvent.Over, event)
+                    case "dragleave" => transition(NativeEvent.Leave, event)
+                    case "drop"      => transition(NativeEvent.Drop, event)
+                    case "dragend"   => transition(NativeEvent.End, event)
                     case _           => ()
         end handle
 
+        private def transition(native: NativeEvent, event: dom.Event): Unit =
+            (state, native) match
+                case (State.Idle, NativeEvent.Start) => start(event)
+                case (State.Idle, NativeEvent.Enter) => probeTarget(event, UIEvent.DragEnter.apply)
+                case (State.Idle, NativeEvent.Over)  => probeTarget(event, UIEvent.DragOver.apply)
+                case (State.Idle, NativeEvent.Drop)  => probeDrop(event)
+                case (State.ExternalProbing(context, probe), NativeEvent.Enter) =>
+                    targetEvent(event, context, Present(probe), UIEvent.DragEnter.apply)
+                case (State.ExternalProbing(context, probe), NativeEvent.Over) =>
+                    targetEvent(event, context, Present(probe), UIEvent.DragOver.apply)
+                case (State.ExternalProbing(context, _), NativeEvent.Leave) => leave(event, context, emit = false)
+                case (State.ExternalProbing(context, _), NativeEvent.Drop)  => externalDrop(event, context)
+                case (State.Dragging(context), NativeEvent.Enter) =>
+                    targetEvent(event, context, Absent, UIEvent.DragEnter.apply)
+                case (State.Dragging(context), NativeEvent.Over) =>
+                    targetEvent(event, context, Absent, UIEvent.DragOver.apply)
+                case (State.Dragging(context), NativeEvent.Leave)          => leave(event, context, emit = true)
+                case (State.Dragging(context), NativeEvent.Drop)           => internalDrop(event, context)
+                case (State.Dragging(context), NativeEvent.End)            => finish(context, cancelled = true)
+                case (State.AwaitingDecision(context), NativeEvent.End)    => move(State.AwaitingDecisionAfterEnd(context))
+                case (State.AcceptedAwaitingEnd(context), NativeEvent.End) => finish(context, cancelled = false)
+                case _                                                     => ()
+        end transition
+
         private def start(event: dom.Event): Unit =
-            if active != null then finish(active, cancelled = true)
-            val eventTarget = asElement(event.target)
-            closestSource(eventTarget).foreach { source =>
-                if !source.config.handle || closestAttribute(eventTarget, "data-kyo-drag-handle", source.element).nonEmpty then
-                    val transfer = dataTransfer(event)
-                    if transfer != null then
+            asElement(event.target).flatMap(closestSource).foreach { source =>
+                val nativeActivation =
+                    source.config.activation == Drag.Activation.Native || source.config.activation == Drag.Activation.Both
+                if nativeActivation &&
+                    (!source.config.handle || asElement(event.target).flatMap(closestAttribute(
+                        _,
+                        "data-kyo-drag-handle",
+                        source.element
+                    )).nonEmpty)
+                then
+                    dataTransfer(event).foreach { transfer =>
                         transfer.updateDynamic("effectAllowed")(effectAllowed(source.config.operations))
-                        preferred(source.config.operations, null, modifiers(event)).foreach { operation =>
+                        preferred(source.config.operations, Absent, modifiers(event)).foreach { operation =>
                             val id = token("drag")
                             setInternalData(transfer, source.config)
                             val preview = createPreview(source.element, source.config.preview, transfer)
-                            val session = Session(
+                            val context = SessionContext(
                                 id,
-                                source.config.items,
                                 Present(source),
                                 source.config.operations,
                                 mutable.Map.empty,
                                 preview,
-                                js.Date.now(),
+                                timing.nowMillis(),
                                 operation,
                                 Absent,
-                                dropped = false,
-                                accepted = false,
-                                browserEnded = false,
-                                ended = false
+                                Present(source.config.items)
                             )
-                            active = session
-                            emitStart(session, source.path, event)
+                            move(State.Dragging(context))
+                            emitStart(context, source.path, event)
                         }
-                    end if
+                    }
                 end if
             }
         end start
 
+        private def probeTarget(event: dom.Event, make: (Seq[String], DragProtocol.TargetData) => UIEvent): Unit =
+            newProbe(event).foreach { case State.ExternalProbing(context, probe) =>
+                move(State.ExternalProbing(context, probe))
+                targetEvent(event, context, Present(probe), make)
+                if context.target.isEmpty then discardContext(context)
+            }
+
         private def targetEvent(
             event: dom.Event,
+            context: SessionContext,
+            probe: Maybe[Probe],
             make: (Seq[String], DragProtocol.TargetData) => UIEvent
         ): Unit =
-            val session = ensureSession(event)
-            if session != null then
-                acceptedTarget(asElement(event.target), session, modifiers(event)).foreach { case (target, operation) =>
-                    event.preventDefault()
-                    setDropEffect(event, operation)
-                    session.operation = operation
-                    session.target = Present(target)
-                    enqueue(make(target.path, targetData(session, target, event, operation)))
-                }
-            end if
+            asElement(event.target).flatMap(acceptedTarget(_, context, probe, modifiers(event))).foreach { matched =>
+                event.preventDefault()
+                setDropEffect(event, matched.operation)
+                context.operation = matched.operation
+                context.target = Present(matched.target)
+                if probe.isEmpty then enqueue(make(matched.target.path, targetData(context, matched.target, event, matched.operation)))
+            }
         end targetEvent
 
-        private def leave(event: dom.Event): Unit =
-            val session = active
-            if session != null && !session.ended then
-                session.target.foreach { target =>
-                    val related = asElement(event.asInstanceOf[js.Dynamic].relatedTarget.asInstanceOf[Any])
-                    val remains = related != null && target.element.contains(related)
-                    if !remains then
-                        enqueue(UIEvent.DragLeave(target.path, targetData(session, target, event, session.operation)))
-                        session.target = Absent
-                }
-            end if
+        private def leave(event: dom.Event, context: SessionContext, emit: Boolean): Unit =
+            context.target.foreach { target =>
+                val related = asElement(event.asInstanceOf[js.Dynamic].relatedTarget.asInstanceOf[Any])
+                val remains = related.exists(target.element.contains)
+                if !remains then
+                    if emit then enqueue(UIEvent.DragLeave(target.path, targetData(context, target, event, context.operation)))
+                    context.target = Absent
+                end if
+            }
         end leave
 
-        private def drop(event: dom.Event): Unit =
-            val session = ensureSession(event)
-            if session != null then
-                acceptedTarget(asElement(event.target), session, modifiers(event)).foreach { case (target, operation) =>
-                    event.preventDefault()
-                    setDropEffect(event, operation)
-                    session.operation = operation
-                    session.target = Present(target)
-                    session.dropped = true
-                    enqueue(UIEvent.Drop(target.path, targetData(session, target, event, operation)))
+        private def probeDrop(event: dom.Event): Unit =
+            newProbe(event).foreach { case (external @ State.ExternalProbing(context, _)) =>
+                move(external)
+                externalDrop(event, context)
+            }
+
+        private def externalDrop(event: dom.Event, context: SessionContext): Unit =
+            dataTransfer(event).flatMap(snapshot).fold(discardContext(context)) { snapshot =>
+                context.items = Present(snapshot.items)
+                context.allowed = snapshot.allowed
+                context.tokens.addAll(snapshot.tokens)
+                asElement(event.target).flatMap(acceptedTarget(_, context, Absent, modifiers(event))).fold(discardContext(context)) {
+                    matched =>
+                        event.preventDefault()
+                        setDropEffect(event, matched.operation)
+                        context.operation = matched.operation
+                        context.target = Present(matched.target)
+                        move(State.AwaitingDecisionAfterEnd(context))
+                        emitStart(context, Seq.empty, event)
+                        if state.maybeContext.nonEmpty then
+                            enqueue(UIEvent.Drop(matched.target.path, targetData(context, matched.target, event, matched.operation)))
                 }
-            end if
-        end drop
+            }
+        end externalDrop
 
-        private def end(event: dom.Event): Unit =
-            val session = active
-            if session != null && !session.ended then
-                session.browserEnded = true
-                if !session.dropped then finish(session, cancelled = true)
-                else if session.accepted then finish(session, cancelled = false)
-            end if
-        end end
+        private def internalDrop(event: dom.Event, context: SessionContext): Unit =
+            asElement(event.target).flatMap(acceptedTarget(_, context, Absent, modifiers(event))).foreach { matched =>
+                event.preventDefault()
+                setDropEffect(event, matched.operation)
+                context.operation = matched.operation
+                context.target = Present(matched.target)
+                move(State.AwaitingDecision(context))
+                enqueue(UIEvent.Drop(matched.target.path, targetData(context, matched.target, event, matched.operation)))
+            }
+        end internalDrop
 
-        private def finish(session: Session, cancelled: Boolean): Unit =
-            if !session.ended then
-                session.ended = true
-                session.preview.foreach(_.remove())
-                session.tokens.clear()
-                val path = session.source.map(_.path).getOrElse(Seq.empty)
-                enqueue(UIEvent.DragEnd(path, DragProtocol.EndData(session.id, session.operation, cancelled)))
-                if active eq session then active = null
+        private def finish(context: SessionContext, cancelled: Boolean): Unit =
+            if state.maybeContext.exists(_ eq context) then
+                context.preview.foreach(_.remove())
+                context.tokens.clear()
+                if context.items.nonEmpty then
+                    val path = context.source.map(_.path).getOrElse(Seq.empty)
+                    enqueue(UIEvent.DragEnd(path, DragProtocol.EndData(context.id, context.operation, cancelled)))
+                move(State.Idle)
             end if
         end finish
 
         private def expire(): Unit =
-            val session = active
-            if session != null && js.Date.now() - session.startedAt >= pendingTimeoutMs - expiryIntervalMs then
-                finish(session, cancelled = true)
-        end expire
+            state.maybeContext.foreach { context =>
+                if timing.nowMillis() - context.startedAt >= pendingTimeoutMs then finish(context, cancelled = true)
+            }
 
         private def resolveEvent(event: dom.Event): Unit =
             val detail = event.asInstanceOf[js.Dynamic].detail
@@ -244,66 +340,66 @@ private[kyo] object DomDragRuntime:
             end if
         end resolveEvent
 
-        private def ensureSession(event: dom.Event): Session =
-            if active != null then active
-            else
-                val transfer = dataTransfer(event)
-                if transfer == null then null
-                else
-                    snapshot(transfer) match
-                        case Present((items, allowed, tokens)) =>
-                            val operation = preferred(allowed, null, modifiers(event)).getOrElse(Drag.Operation.Move)
-                            val session = Session(
-                                token("drag"),
-                                items,
-                                Absent,
-                                allowed,
-                                tokens,
-                                Absent,
-                                js.Date.now(),
-                                operation,
-                                Absent,
-                                dropped = false,
-                                accepted = false,
-                                browserEnded = false,
-                                ended = false
-                            )
-                            active = session
-                            emitStart(session, Seq.empty, event)
-                            session
-                        case Absent => null
-                end if
-        end ensureSession
+        private def newProbe(event: dom.Event): Maybe[State.ExternalProbing] =
+            dataTransfer(event).flatMap(probe).map { result =>
+                val operation = preferred(result.allowed, Absent, modifiers(event)).getOrElse(Drag.Operation.Move)
+                val context = SessionContext(
+                    token("drag"),
+                    Absent,
+                    result.allowed,
+                    mutable.Map.empty,
+                    Absent,
+                    timing.nowMillis(),
+                    operation,
+                    Absent,
+                    Absent
+                )
+                State.ExternalProbing(context, result.manifest)
+            }
 
-        private def emitStart(session: Session, path: Seq[String], event: dom.Event): Unit =
-            val sourceKey = session.source.map(_.config.key)
+        private def emitStart(context: SessionContext, path: Seq[String], event: dom.Event): Unit =
+            val sourceKey = context.source.map(_.config.key)
             val start = UIEvent.DragStart(
                 path,
-                DragProtocol.StartData(session.id, session.items, session.operation, sourceKey, point(event), modifiers(event))
+                DragProtocol.StartData(
+                    context.id,
+                    context.items.getOrElse(Chunk.empty),
+                    context.operation,
+                    sourceKey,
+                    point(event),
+                    modifiers(event)
+                )
             )
             DragProtocol.validate(DragProtocol.ClientMessage.Event(start), limits) match
                 case Result.Success(_) => enqueue(start)
-                case _                 => discardSession(session)
+                case _                 => discardContext(context)
         end emitStart
 
-        private def discardSession(session: Session): Unit =
-            session.ended = true
-            session.preview.foreach(_.remove())
-            session.tokens.clear()
-            if active eq session then active = null
-        end discardSession
+        private def discardContext(context: SessionContext): Unit =
+            if state.maybeContext.exists(_ eq context) then
+                context.preview.foreach(_.remove())
+                context.tokens.clear()
+                move(State.Idle)
+
+        private def move(next: State): Unit =
+            state = next
+            transitions += 1
 
         private def acceptedTarget(
             from: dom.Element,
-            session: Session,
+            context: SessionContext,
+            probe: Maybe[Probe],
             mods: UI.Modifiers
-        ): Maybe[(Located[DragProtocol.TargetConfig], Drag.Operation)] =
+        ): Maybe[TargetMatch] =
             var current = from
             while current != null && container.contains(current) do
                 decodeTarget(current).foreach { target =>
-                    val operation = preferred(session.allowed, target.config.accepts.operations, mods)
+                    val operation = preferred(context.allowed, Present(target.config.accepts.operations), mods)
                     operation.foreach { selected =>
-                        if accepts(target.config.accepts, session.items) then return Present((target, selected))
+                        val accepted = probe.fold(context.items.exists(accepts(target.config.accepts, _)))(
+                            acceptsProbe(target.config.accepts, _)
+                        )
+                        if accepted then return Present(TargetMatch(target, selected))
                     }
                 }
                 current = parent(current)
@@ -323,14 +419,41 @@ private[kyo] object DomDragRuntime:
             config.maxItems.forall(items.size <= _) && items.forall(item => accept.accepts(item.toDomain))
         end accepts
 
+        private def acceptsProbe(config: DragProtocol.AcceptConfig, probe: Probe): Boolean =
+            import DragWireByteSize.*
+            val accept = Drag.Accept(
+                config.mediaTypes,
+                config.operations,
+                config.maxItems,
+                config.maxFileSize.map(_.value),
+                config.directories
+            )
+            config.maxItems.forall(probe.itemCount <= _) &&
+            (probe.textTypes.isEmpty || accept.accepts(Drag.Item.Text(probe.textTypes.iterator.map(_ -> "").toMap))) &&
+            (!probe.uri || accept.accepts(Drag.Item.Uri("probe"))) &&
+            probe.files.forall { file =>
+                file.directory match
+                    case Present(true) => config.directories
+                    case Present(false) =>
+                        file.mediaType.fold(true)(media => acceptsProbeFile(accept, media))
+                    case Absent =>
+                        config.directories || file.mediaType.fold(true)(media => acceptsProbeFile(accept, media))
+            }
+        end acceptsProbe
+
+        private def acceptsProbeFile(accept: Drag.Accept, mediaType: String): Boolean =
+            accept.copy(maxFileSize = Absent).accepts(
+                Drag.Item.File(Drag.FileMeta("probe", "probe", mediaType, ByteSize.Zero, Instant.Epoch))
+            )
+
         private def targetData(
-            session: Session,
+            context: SessionContext,
             target: Located[DragProtocol.TargetConfig],
             event: dom.Event,
             operation: Drag.Operation
         ): DragProtocol.TargetData =
             DragProtocol.TargetData(
-                session.id,
+                context.id,
                 operation,
                 Present(target.config.key),
                 point(event),
@@ -349,15 +472,21 @@ private[kyo] object DomDragRuntime:
         end closestSource
 
         private def decodeSource(element: dom.Element): Maybe[Located[DragProtocol.SourceConfig]] =
-            decode[DragProtocol.SourceConfig](element, sourceAttribute).filter { located =>
-                val dedicated = element.getAttribute(sourceKeyAttribute)
-                dedicated != null && dedicated == located.config.key
+            decode[DragProtocol.SourceConfig](element, sourceAttribute).flatMap { located =>
+                DragProtocol.validateSourceConfig(located.config, limits) match
+                    case Result.Success(config) =>
+                        val dedicated = element.getAttribute(sourceKeyAttribute)
+                        if dedicated != null && dedicated == config.key then Present(located) else Absent
+                    case _ => Absent
             }
 
         private def decodeTarget(element: dom.Element): Maybe[Located[DragProtocol.TargetConfig]] =
-            decode[DragProtocol.TargetConfig](element, targetAttribute).filter { located =>
-                val dedicated = element.getAttribute(targetKeyAttribute)
-                dedicated != null && dedicated == located.config.key
+            decode[DragProtocol.TargetConfig](element, targetAttribute).flatMap { located =>
+                DragProtocol.validateTargetConfig(located.config, limits) match
+                    case Result.Success(config) =>
+                        val dedicated = element.getAttribute(targetKeyAttribute)
+                        if dedicated != null && dedicated == config.key then Present(located) else Absent
+                    case _ => Absent
             }
 
         private def decode[A: Schema](element: dom.Element, attribute: String): Maybe[Located[A]] =
@@ -391,9 +520,61 @@ private[kyo] object DomDragRuntime:
                 case _                                => ()
             }
 
-        private def snapshot(
-            transfer: js.Dynamic
-        ): Maybe[(Chunk[DragProtocol.ItemData], Drag.AllowedOperations, mutable.Map[String, js.Any])] =
+        private def probe(transfer: js.Dynamic): Maybe[ProbeResult] =
+            val textTypes = mutable.Set.empty[String]
+            var uri       = false
+            val files     = ChunkBuilder.init[ProbeFile]
+            val rawTypes  = transfer.types
+            if !js.isUndefined(rawTypes) && rawTypes != null then
+                val types = rawTypes.asInstanceOf[js.Array[String]]
+                var index = 0
+                while index < types.length do
+                    val mediaType = types(index).trim.toLowerCase(java.util.Locale.ROOT)
+                    if mediaType == "text/uri-list" then uri = true
+                    else if mediaType.contains("/") then textTypes += mediaType
+                    index += 1
+                end while
+            end if
+            val rawItems = transfer.items
+            if !js.isUndefined(rawItems) && rawItems != null then
+                val items = rawItems.asInstanceOf[js.Array[js.Dynamic]]
+                var index = 0
+                while index < items.length do
+                    val item = items(index)
+                    val kind = if js.isUndefined(item.kind) then "" else item.kind.asInstanceOf[String]
+                    val mediaType =
+                        if js.isUndefined(item.`type`) || item.`type` == null || item.`type`.asInstanceOf[String].isEmpty then Absent
+                        else Present(item.`type`.asInstanceOf[String].trim.toLowerCase(java.util.Locale.ROOT))
+                    if kind == "string" then
+                        mediaType.foreach { media =>
+                            if media == "text/uri-list" then uri = true
+                            else if media.contains("/") then textTypes += media
+                        }
+                    else if kind == "file" then
+                        files.addOne(ProbeFile(mediaType, probeDirectory(item)))
+                    end if
+                    index += 1
+                end while
+            end if
+            val manifest = Probe(textTypes.toSet, uri, files.result())
+            val allowed = allowedFromBrowser(
+                if js.isUndefined(transfer.effectAllowed) then "all" else transfer.effectAllowed.asInstanceOf[String]
+            )
+            if manifest.itemCount > 0 && manifest.itemCount <= limits.maxItemCount && allowed.values.nonEmpty then
+                Present(ProbeResult(manifest, allowed))
+            else Absent
+        end probe
+
+        private def probeDirectory(item: js.Dynamic): Maybe[Boolean] =
+            if js.typeOf(item.webkitGetAsEntry) == "function" then
+                try
+                    val entry = item.webkitGetAsEntry()
+                    if entry == null || js.isUndefined(entry) then Absent
+                    else Present(entry.isDirectory.asInstanceOf[Boolean])
+                catch case _: Throwable => Absent
+            else Absent
+
+        private def snapshot(transfer: js.Dynamic): Maybe[Snapshot] =
             val collected = ChunkBuilder.init[DragProtocol.ItemData]
             val tokens    = mutable.Map.empty[String, js.Any]
             val text      = mutable.Map.empty[String, String]
@@ -414,35 +595,52 @@ private[kyo] object DomDragRuntime:
             end if
             if text.nonEmpty then collected.addOne(DragProtocol.ItemData.Text(text.toMap))
 
-            val rawItems  = transfer.items
-            val rawFiles  = transfer.files
-            val itemList  = if js.isUndefined(rawItems) || rawItems == null then null else rawItems.asInstanceOf[js.Array[js.Dynamic]]
-            val files     = if js.isUndefined(rawFiles) || rawFiles == null then null else rawFiles.asInstanceOf[js.Array[js.Dynamic]]
-            val fileCount = if files == null then 0 else files.length
-            var index     = 0
-            var valid     = true
-            while index < fileCount do
-                val file = files(index)
-                val item =
-                    if itemList == null || index >= itemList.length then null
-                    else itemList(index)
-                directory(item) match
-                    case Present(entry) =>
-                        val fallback =
-                            if js.isUndefined(file.name) || file.name == null then "directory" else file.name.asInstanceOf[String]
-                        val name = safeName(entry.name, fallback)
-                        val id   = token("directory")
-                        tokens(id) = entry
-                        collected.addOne(DragProtocol.ItemData.Directory(id, name))
-                    case Absent =>
+            val itemList = defined(transfer.items).map(_.asInstanceOf[js.Array[js.Dynamic]])
+            var valid    = true
+            if itemList.exists(_.nonEmpty) then
+                val items = itemList.getOrElse(js.Array())
+                var index = 0
+                while index < items.length do
+                    val item = items(index)
+                    val kind = if js.isUndefined(item.kind) then "" else item.kind.asInstanceOf[String]
+                    if kind == "file" then
+                        directory(item) match
+                            case Present(entry) =>
+                                val name = safeName(entry.name, "directory")
+                                val id   = token("directory")
+                                tokens(id) = entry
+                                collected.addOne(DragProtocol.ItemData.Directory(id, name))
+                            case Absent =>
+                                val file =
+                                    if js.typeOf(item.getAsFile) == "function" then defined(item.getAsFile())
+                                    else Absent
+                                file match
+                                    case Absent => valid = false
+                                    case Present(file) =>
+                                        fileMeta(file) match
+                                            case Present(metadata) =>
+                                                tokens(metadata.token) = file
+                                                collected.addOne(DragProtocol.ItemData.File(metadata))
+                                            case Absent => valid = false
+                                end match
+                    end if
+                    index += 1
+                end while
+            else
+                defined(transfer.files).map(_.asInstanceOf[js.Array[js.Dynamic]]).foreach { files =>
+                    var index = 0
+                    while index < files.length do
+                        val file = files(index)
                         fileMeta(file) match
                             case Present(metadata) =>
                                 tokens(metadata.token) = file
                                 collected.addOne(DragProtocol.ItemData.File(metadata))
                             case Absent => valid = false
-                end match
-                index += 1
-            end while
+                        end match
+                        index += 1
+                    end while
+                }
+            end if
 
             val result = collected.result()
             val allowed = allowedFromBrowser(
@@ -455,7 +653,7 @@ private[kyo] object DomDragRuntime:
             if !valid then Absent
             else
                 DragProtocol.validate(DragProtocol.ClientMessage.Event(start), limits) match
-                    case Result.Success(_) if result.nonEmpty && allowed.values.nonEmpty => Present((result, allowed, tokens))
+                    case Result.Success(_) if result.nonEmpty && allowed.values.nonEmpty => Present(Snapshot(result, allowed, tokens))
                     case _                                                               => Absent
             end if
         end snapshot
@@ -499,10 +697,10 @@ private[kyo] object DomDragRuntime:
 
         private def preferred(
             source: Drag.AllowedOperations,
-            target: Drag.AllowedOperations | Null,
+            target: Maybe[Drag.AllowedOperations],
             mods: UI.Modifiers
         ): Maybe[Drag.Operation] =
-            val common = if target == null then source.values else source.values.intersect(target.values)
+            val common = target.fold(source.values)(value => source.values.intersect(value.values))
             val requested =
                 if mods.alt then Drag.Operation.Link
                 else if mods.ctrl || mods.meta then Drag.Operation.Copy
@@ -569,14 +767,15 @@ private[kyo] object DomDragRuntime:
         end previewNode
 
         private def setDropEffect(event: dom.Event, operation: Drag.Operation): Unit =
-            val transfer = dataTransfer(event)
-            if transfer != null then
+            dataTransfer(event).foreach { transfer =>
                 transfer.updateDynamic("dropEffect")(operation.toString.toLowerCase)
-        end setDropEffect
+            }
 
-        private def dataTransfer(event: dom.Event): js.Dynamic =
-            val value = event.asInstanceOf[js.Dynamic].dataTransfer
-            if js.isUndefined(value) || value == null then null else value.asInstanceOf[js.Dynamic]
+        private def dataTransfer(event: dom.Event): Maybe[js.Dynamic] =
+            defined(event.asInstanceOf[js.Dynamic].dataTransfer)
+
+        private def defined(value: js.Dynamic): Maybe[js.Dynamic] =
+            if js.isUndefined(value) || value == null then Absent else Present(value)
 
         private def modifiers(event: dom.Event): UI.Modifiers =
             val dyn = event.asInstanceOf[js.Dynamic]
@@ -592,9 +791,9 @@ private[kyo] object DomDragRuntime:
         private def number(value: js.Dynamic): Double =
             if js.typeOf(value) == "number" && value.asInstanceOf[Double].isFinite then value.asInstanceOf[Double] else 0d
 
-        private def asElement(value: Any): dom.Element = value match
-            case element: dom.Element => element
-            case _                    => null
+        private def asElement(value: Any): Maybe[dom.Element] = value match
+            case element: dom.Element => Present(element)
+            case _                    => Absent
 
         private def parent(element: dom.Element): dom.Element = element.parentNode match
             case value: dom.Element => value

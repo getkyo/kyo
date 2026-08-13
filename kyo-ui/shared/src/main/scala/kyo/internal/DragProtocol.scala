@@ -266,6 +266,19 @@ private[kyo] object DragProtocol:
     private[kyo] def encodedSourceConfig(source: Drag.Source, limits: Limits)(using Frame): Result[ValidationFailure, String] =
         sourceConfigAndJson(source, limits).map(_._2)
 
+    /** Revalidates a decoded browser source configuration before the DOM runtime uses it. */
+    private[kyo] def validateSourceConfig(config: SourceConfig, limits: Limits)(using
+        Frame
+    ): Result[ValidationFailure, SourceConfig] =
+        validateIdentifier(config.key, "source.key", limits)
+            .flatMap(_ => validateCount(config.items.size, "source.items", limits.maxItemCount))
+            .flatMap(_ => validateAll(config.items)(validateItem(_, limits)))
+            .flatMap(_ => validateOptionalText(config.label, "source.label", limits.maxNameLength))
+            .flatMap(_ => validatePreview(config.preview, limits))
+            .flatMap(_ => validateEncodedAttribute(Json.encode(config), "dragSource", limits))
+            .map(_ => config)
+    end validateSourceConfig
+
     /** Validates and converts domain target rules into their browser-bound representation. */
     private[kyo] def targetConfig(target: Drag.Target, limits: Limits)(using Frame): Result[ValidationFailure, TargetConfig] =
         targetConfigAndJson(target, limits).map(_._1)
@@ -312,6 +325,30 @@ private[kyo] object DragProtocol:
     /** Converts and encodes a target once, validating the exact compact browser attribute value. */
     private[kyo] def encodedTargetConfig(target: Drag.Target, limits: Limits)(using Frame): Result[ValidationFailure, String] =
         targetConfigAndJson(target, limits).map(_._2)
+
+    /** Revalidates a decoded browser target configuration before the DOM runtime uses it. */
+    private[kyo] def validateTargetConfig(config: TargetConfig, limits: Limits)(using
+        Frame
+    ): Result[ValidationFailure, TargetConfig] =
+        val accepts = config.accepts
+        validateIdentifier(config.key, "target.key", limits)
+            .flatMap(_ => validateOptionalText(config.label, "target.label", limits.maxNameLength))
+            .flatMap(_ => validateCount(accepts.mediaTypes.size, "target.mediaTypes", limits.maxTextRepresentationCount))
+            .flatMap(_ => validateAll(accepts.mediaTypes)(validateAcceptedMediaType(_, limits)))
+            .flatMap(_ =>
+                accepts.maxItems match
+                    case Present(value) if value < 0 => Result.fail(ValidationFailure.InvalidCount("target.maxItems", value))
+                    case Present(value)              => validateCount(value, "target.maxItems", limits.maxItemCount)
+                    case Absent                      => Result.unit
+            )
+            .flatMap(_ =>
+                accepts.maxFileSize match
+                    case Present(value) => validateWireByteSize(value.value, "target.maxFileSize")
+                    case Absent         => Result.unit
+            )
+            .flatMap(_ => validateEncodedAttribute(Json.encode(config), "dropTarget", limits))
+            .map(_ => config)
+    end validateTargetConfig
 
     private def validateDomainItem(item: Drag.Item, limits: Limits): Result[ValidationFailure, Unit] =
         item match

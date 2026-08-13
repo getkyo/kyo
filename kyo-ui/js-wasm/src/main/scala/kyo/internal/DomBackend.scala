@@ -13,6 +13,11 @@ private[kyo] object DomBackend:
         def channelClosed(): Unit
         def drainInterrupting(): Unit
         def drainJoined(): Unit
+        def dragRuntimeInstalled(runtime: DomDragRuntime.Handle): Unit = ()
+        def dragEventQueued(event: UIEvent): Unit                      = ()
+        def dragEventHandled(event: UIEvent): Unit                     = ()
+        def drainInstalled(drain: Fiber[Unit, Any]): Unit              = ()
+        def drainStarted(): Unit                                       = ()
     end MountDiagnostics
 
     private object NoMountDiagnostics extends MountDiagnostics:
@@ -84,13 +89,15 @@ private[kyo] object DomBackend:
             // Panic propagates rather than being silently swallowed as a clean drain end.
             // The drain carries the session's scroll sink: a handler calling UI.scrollIntoView scrolls the
             // local document, the browser-mount counterpart of the server session's WebSocket op.
-            _ <- Scope.acquireRelease(
+            drain <- Scope.acquireRelease(
                 Fiber.initUnscoped(UICommands.scrollSink.let(Present(scrollLocal)) {
                     DragCommands.resolveSink.let(Present(resolveLocal)) {
-                        Loop.foreach(Abort.runPartial[Closed](events.take).map {
-                            case Result.Success(eff) => eff.andThen(Loop.continue)
-                            case Result.Failure(_)   => Loop.done
-                        })
+                        Sync.defer(diagnostics.drainStarted()).andThen(
+                            Loop.foreach(Abort.runPartial[Closed](events.take).map {
+                                case Result.Success(eff) => eff.andThen(Loop.continue)
+                                case Result.Failure(_)   => Loop.done
+                            })
+                        )
                     }
                 })
             )(drain =>
@@ -98,12 +105,25 @@ private[kyo] object DomBackend:
                     Sync.defer(diagnostics.drainJoined())
                 }
             )
+            _ <- Sync.defer(diagnostics.drainInstalled(drain))
             // Finalizers are LIFO. Register the drain first, then the channel, then listeners, so teardown
             // removes callbacks before closing their queue and finally interrupts and joins the drain.
             _ <- Scope.ensure(events.close.andThen(Sync.defer(diagnostics.channelClosed())).unit)
             _ <- setupEventDelegation(dispatch.handle, events)
             _ <- setupInputMasking()
-            _ <- DomDragRuntime.install(container, event => fireFromJs(events, dispatch.handle(event.path, event).unit))
+            dragRuntime <- DomDragRuntime.install(
+                container,
+                event =>
+                    diagnostics.dragEventQueued(event)
+                    fireFromJs(
+                        events,
+                        dispatch.handle(event.path, event).map { result =>
+                            diagnostics.dragEventHandled(event)
+                            result
+                        }.unit
+                    )
+            )
+            _ <- Sync.defer(diagnostics.dragRuntimeInstalled(dragRuntime))
             _ <- Async.never
         yield ()
         end for
@@ -125,11 +145,13 @@ private[kyo] object DomBackend:
     private def resolveLocal(sessionId: String, decision: Drag.Decision)(using Frame): Unit < Async =
         Sync.defer {
             val detail = Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))
-            val event = js.Dynamic.newInstance(js.Dynamic.global.CustomEvent)(
-                "kyo:resolve-drag",
-                js.Dynamic.literal(detail = detail)
-            )
-            discard(document.asInstanceOf[js.Dynamic].dispatchEvent(event))
+            val publish = () =>
+                val event = js.Dynamic.newInstance(dom.window.asInstanceOf[js.Dynamic].CustomEvent)(
+                    "kyo:resolve-drag",
+                    js.Dynamic.literal(detail = detail)
+                )
+                discard(document.asInstanceOf[js.Dynamic].dispatchEvent(event))
+            discard(dom.window.setTimeout(publish, 0))
         }
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
