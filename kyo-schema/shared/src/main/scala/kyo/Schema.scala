@@ -2492,6 +2492,9 @@ object Schema:
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[Long].asInstanceOf[Tag[Any]])
     )
 
+    /** Schema for ByteSize values. */
+    given byteSizeSchema: Schema[ByteSize] = Schema.longSchema.transform(ByteSize.fromBytes)(_.toBytes)
+
     /** Schema for Float values. */
     given floatSchema: Schema[Float] = Schema.init[Float](
         writeFn = (v, w) => w.float(v),
