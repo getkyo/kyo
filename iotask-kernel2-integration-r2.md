@@ -228,8 +228,8 @@ around it.
    `Array[Long]` r1 cited. `stopped` is now `consumeStopped` (`Safepoint.scala:174-180`).
    Reworked in 3.1 and 3.5.
 2. **A pending `Stop` now converts into a budget drain at the next slot resolution.**
-   `resolve` drains an armed slot whose entry is a `Stop` (`Safepoint.scala:101-102`), and both
-   `get()` (`Safepoint.scala:71-76`) and the fused `enter()` (`Safepoint.scala:124-130`) route
+   `resolve` drains an armed slot whose entry is a `Stop` (`Safepoint.scala:101-102`), and
+   `get()` (`Safepoint.scala:71-76`) routes
    through `resolve` whenever the fast-path identity test fails, which a `Stop` wrapper
    guarantees. This is the single largest change to the preemption story and it makes the
    latency bound one step rather than 512. Reworked in 3.3.
@@ -237,18 +237,17 @@ around it.
    `Eval.partial` (`Eval.scala:28`) and preserved across a drain (`Safepoint.scala:59`), which
    is what scopes the drain to fiber drives and leaves ordinary synchronous evaluation alone.
    Used in 3.1 and 3.3.
-4. **`Safepoint.enter()` is fused**: it resolves the slot and consumes one budget step in one
-   call, returning a negative sentinel when denied, tested by `slot.entered`
-   (`Safepoint.scala:111-130`). The two-step `get()` plus `enter(slot)` API remains for the
-   evaluator loop (`Safepoint.scala:132-133`, used at `Eval.scala:190`). Pinned by
-   `kyo-kernel2/shared/src/test/scala/kyo/kernel/internal/SafepointTest.scala:51-66`. Used in
-   3.3.
+4. **Budget entry is the two-step `get()` plus `enter(slot)` pair** at the computation
+   sites and in the evaluator loop. A fused single-call `enter()` with a negative sentinel
+   existed briefly (1982c8c4cc) and was reverted (fcd19e40fc): it cost the eager map path up
+   to 1.6x. Pinned by `SafepointTest` "the budget flows through enter, exit, save, and
+   restore". Used in 3.3.
 5. **`Pending.map` and `flatMap` were restructured**: the evaluation body is a local `run` def
    per site, the anonymous `Arrow.Transform` delegates to it, and the eager entry calls `run`
    directly with no `Transform` allocation
    (`kyo-kernel2/shared/src/main/scala/kyo/kernel/Pending.scala:26-52` and `54-80`). There is
-   no `mapLoop`. The budget entry is `Safepoint.enter()` at `Pending.scala:40` and the rescue
-   is `Kyo.Defer(v, arrow.chain(next))` at `Pending.scala:41-42`. Used in 3.3.
+   no `mapLoop`. The budget entry is `Safepoint.get()` plus `Safepoint.enter(slot)` at
+   `Pending.scala:40-41` and the rescue is `Kyo.Defer(v, arrow.chain(next))`. Used in 3.3.
 6. **`Eval` is a different evaluator.** `evalLoop(v0, slot, partial)` runs one flat `@tailrec`
    loop over an immutable spine of `Handlers` cells (`Eval.scala:35-119`), with
    `Kyo.Handled`/`Kyo.HandledState` region nodes (`Eval.scala:99-112`), a `Handler.Cont` and
@@ -430,10 +429,9 @@ replaced.
   slots.get(slot).isInstanceOf[Stop] then depths(slot) = depths(slot).drained`
   (`Safepoint.scala:101-102`). `drained` keeps `Armed` and resets to bare `DepthGuard`
   (`Safepoint.scala:59`), which makes the next `enterInto` fail.
-- `Safepoint.enter()` is the fused entry: resolve plus one budget step, returning `Denied = -1`
-  when refused, tested by the `entered` extension (`Safepoint.scala:111-130`).
-  `Safepoint.enter(slot)` is the two-step form used by the evaluator (`Safepoint.scala:132-133`,
-  called at `Eval.scala:190`).
+- Budget entry is two-step everywhere: `Safepoint.get()` resolves the slot,
+  `Safepoint.enter(slot)` consumes one step and refuses when drained, at the computation
+  sites and in the evaluator loop (called at `Eval.scala:190`).
 - `Safepoint.stop(thread)` guards on `thread.isAlive()`, re-derives `home`, probes for the
   thread's slot, and CASes the entry from the bare `Thread` to `new Stop(thread)`; an
   already-wrapped entry returns true, and a thread owning no slot returns false after `Slots`
@@ -449,9 +447,8 @@ replaced.
   (`Eval.scala:16-19`), so the ambient budget state survives a nested synchronous evaluation.
 
 `SafepointTest` pins the wrap-and-consume contract, its idempotence, that `get` resolves the
-owning slot while a stop is pending, that a thread which never evaluated is missed, and that
-the fused and two-step entries share one budget cell
-(`kyo-kernel2/shared/src/test/scala/kyo/kernel/internal/SafepointTest.scala:10-66`).
+owning slot while a stop is pending, and that a thread which never evaluated is missed
+(`kyo-kernel2/shared/src/test/scala/kyo/kernel/internal/SafepointTest.scala`).
 
 ### 3.2 Mapping the scheduler's preemption decision onto it
 
@@ -513,11 +510,11 @@ strict steps plus the current fused segment". Under the drain conversion added a
 
 Trace it. A stop lands: `Safepoint.stop` CASes `slots(i)` from the bare `Thread` to a `Stop`
 (`Safepoint.scala:165`). The running thread is inside `Eval.partial`, so its slot is armed
-(`Eval.scala:28`). The next settled `map` step calls `Safepoint.enter()`
+(`Eval.scala:28`). The next settled `map` step calls `Safepoint.get()`
 (`Pending.scala:40`), whose fast-path test `slots.get(h) eq thread` now fails because the entry
-is a `Stop` (`Safepoint.scala:127`), so it calls `resolve`, which finds the cached slot, sees
-armed plus `Stop`, and drains the budget (`Safepoint.scala:98-103`). `enterInto` then fails
-(`Safepoint.scala:49-56`), `enter()` returns `Denied`, `slot.entered` is false
+is a `Stop`, so it calls `resolve`, which finds the cached slot, sees
+armed plus `Stop`, and drains the budget (`Safepoint.scala:98-103`). `Safepoint.enter(slot)` then fails
+(`Safepoint.scala:49-56`)
 (`Safepoint.scala:117`), and `map` mints `Kyo.Defer(v, arrow.chain(next))`
 (`Pending.scala:41-42`) instead of executing. The evaluator's next iteration takes the `Defer`
 arm, `Safepoint.consumeStopped(slot)` returns true, and the residual is `rebuild(hs, Empty, v)`
