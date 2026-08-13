@@ -25,9 +25,10 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
 
     final private case class ListenerCall(eventType: String, listener: scalajs.Any, options: scalajs.Any)
 
-    final private class ListenerTracker:
-        val added   = ArrayBuffer.empty[ListenerCall]
-        val removed = ArrayBuffer.empty[ListenerCall]
+    final private class ListenerTracker(failOnAdd: String = null, chronology: ArrayBuffer[String] = ArrayBuffer.empty):
+        val added    = ArrayBuffer.empty[ListenerCall]
+        val removed  = ArrayBuffer.empty[ListenerCall]
+        val attempts = ArrayBuffer.empty[String]
 
         private val body           = dom.document.body.asInstanceOf[scalajs.Dynamic]
         private val originalAdd    = body.addEventListener
@@ -35,11 +36,16 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
 
         def install(): ListenerTracker =
             body.updateDynamic("addEventListener")((eventType: String, listener: scalajs.Any, options: scalajs.Any) =>
-                added += ListenerCall(eventType, listener, options)
-                discard(originalAdd.call(body, eventType, listener, options))
+                attempts += eventType
+                if eventType == failOnAdd then throw new scalajs.JavaScriptException(s"failed add: $eventType")
+                else
+                    added += ListenerCall(eventType, listener, options)
+                    discard(originalAdd.call(body, eventType, listener, options))
+                end if
             )
             body.updateDynamic("removeEventListener")((eventType: String, listener: scalajs.Any, options: scalajs.Any) =>
                 removed += ListenerCall(eventType, listener, options)
+                chronology += s"remove:$eventType"
                 discard(originalRemove.call(body, eventType, listener, options))
             )
             this
@@ -54,6 +60,20 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
         left.eventType == right.eventType &&
             scalajs.special.strictEquals(left.listener, right.listener) &&
             scalajs.special.strictEquals(left.options, right.options)
+
+    private def captureTrue(call: ListenerCall): Boolean =
+        scalajs.typeOf(call.options) == "boolean" && call.options.asInstanceOf[Boolean]
+
+    private def wheelOptions(call: ListenerCall): Boolean =
+        scalajs.typeOf(call.options) == "object" &&
+            call.options.asInstanceOf[scalajs.Dynamic].capture.asInstanceOf[Boolean] &&
+            !call.options.asInstanceOf[scalajs.Dynamic].passive.asInstanceOf[Boolean]
+
+    final private class LifecycleChronology(events: ArrayBuffer[String]) extends DomBackend.MountDiagnostics:
+        def channelClosing(): Unit    = events += "channel-close"
+        def drainInterrupting(): Unit = events += "drain-interrupt"
+        def drainJoined(): Unit       = events += "drain-joined"
+    end LifecycleChronology
 
     private def mountAndStop(tracker: ListenerTracker, expectedAdded: Int = 13)(using
         Frame,
@@ -132,12 +152,71 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                     "compositionend"
                 )
                 assert(tracker.added.map(_.eventType).sorted == expected.sorted)
+                val nonWheel = tracker.added.filterNot(_.eventType == "wheel")
+                assert(nonWheel.size == 12)
+                assert(nonWheel.forall(captureTrue))
+                val wheel = tracker.added.filter(_.eventType == "wheel")
+                assert(wheel.size == 1)
+                assert(wheel.forall(wheelOptions))
+                assert(tracker.added.filter(c => c.eventType == "beforeinput" || c.eventType == "compositionend").forall(captureTrue))
                 assert(tracker.removed.size == tracker.added.size)
+                assert(tracker.removed.filterNot(_.eventType == "wheel").forall(captureTrue))
+                assert(tracker.removed.filter(_.eventType == "wheel").forall(wheelOptions))
                 assert(tracker.removed.zip(tracker.added.reverse).forall((removal, addition) => sameCall(removal, addition)))
                 tracker.added.foreach { addition =>
                     assert(tracker.removed.count(removal => sameCall(addition, removal)) == 1)
                 }
             }
+        }
+    }
+
+    "cleans up a partially installed listener set when a later add fails" in {
+        val chronology = ArrayBuffer.empty[String]
+        Scope.acquireRelease(Sync.defer(new ListenerTracker("submit", chronology).install()))(tracker =>
+            Sync.defer(tracker.restore())
+        ).map {
+            tracker =>
+                for
+                    result <- Fiber.initUnscoped(Scope.run(DomBackend.mount(UI.div("mounted"), new LifecycleChronology(chronology))))
+                        .map(_.getResult)
+                    _ <- assertEventually(Sync.defer(chronology.contains("drain-joined")))
+                yield
+                    assert(result.isPanic)
+                    assert(tracker.attempts == Seq("click", "input", "change", "submit"))
+                    assert(tracker.added.map(_.eventType) == Seq("click", "input", "change"))
+                    assert(tracker.removed.map(_.eventType) == Seq("change", "input", "click"))
+                    assert(tracker.removed.size == tracker.added.size)
+                    assert(chronology == Seq(
+                        "remove:change",
+                        "remove:input",
+                        "remove:click",
+                        "channel-close",
+                        "drain-interrupt",
+                        "drain-joined"
+                    ))
+        }
+    }
+
+    "tears down listeners before the event channel and drain" in {
+        val chronology = ArrayBuffer.empty[String]
+        Scope.acquireRelease(Sync.defer(new ListenerTracker(chronology = chronology).install()))(tracker =>
+            Sync.defer(tracker.restore())
+        ).map {
+            tracker =>
+                for
+                    fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(UI.div("mounted"), new LifecycleChronology(chronology))))
+                    _     <- assertEventually(Sync.defer(tracker.added.size == 13))
+                    _     <- fiber.interrupt
+                    _     <- fiber.getResult
+                    _     <- assertEventually(Sync.defer(chronology.contains("drain-joined")))
+                yield
+                    val channelClose = chronology.indexOf("channel-close")
+                    val interrupt    = chronology.indexOf("drain-interrupt")
+                    val joined       = chronology.indexOf("drain-joined")
+                    assert(chronology.take(channelClose).size == 13)
+                    assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
+                    assert(channelClose < interrupt)
+                    assert(interrupt < joined)
         }
     }
 

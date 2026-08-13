@@ -9,6 +9,18 @@ import scala.scalajs.js
 /** Scala.js UI backend. Mounts a UI into the browser DOM. */
 private[kyo] object DomBackend:
 
+    private[kyo] trait MountDiagnostics:
+        def channelClosing(): Unit
+        def drainInterrupting(): Unit
+        def drainJoined(): Unit
+    end MountDiagnostics
+
+    private object NoMountDiagnostics extends MountDiagnostics:
+        def channelClosing(): Unit    = ()
+        def drainInterrupting(): Unit = ()
+        def drainJoined(): Unit       = ()
+    end NoMountDiagnostics
+
     /** One seeded `data-kyo-focus-auto` element and where focus should go when it leaves the document.
       *
       * @param path
@@ -27,14 +39,17 @@ private[kyo] object DomBackend:
 
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
-        mountInto(ui, document.body)
+        mountInto(ui, document.body, NoMountDiagnostics)
+
+    private[kyo] def mount(ui: UI, diagnostics: MountDiagnostics)(using Frame): Unit < (Async & Scope) =
+        mountInto(ui, document.body, diagnostics)
 
     /** Mount a UI into a specific DOM element selected by CSS selector. */
     def mount(ui: UI, selector: String)(using Frame): Unit < (Async & Scope) =
         Sync.defer {
             val target = document.querySelector(selector)
             if target == null then Abort.panic(UIException(s"Element not found: $selector"))
-            else mountInto(ui, target.asInstanceOf[dom.Element])
+            else mountInto(ui, target.asInstanceOf[dom.Element], NoMountDiagnostics)
         }
     end mount
 
@@ -51,7 +66,7 @@ private[kyo] object DomBackend:
     private[kyo] def injectStylesheet(sheet: Stylesheet)(using Frame): Unit < Sync =
         DomStyleSheet.injectBase().andThen(Sync.defer(DomStyleSheet.injectStylesheet(sheet.render)))
 
-    private def mountInto(ui: UI, container: dom.Element)(using Frame): Unit < (Async & Scope) =
+    private def mountInto(ui: UI, container: dom.Element, diagnostics: MountDiagnostics)(using Frame): Unit < (Async & Scope) =
         for
             _    <- DomStyleSheet.injectBase()
             root <- ReactiveUI.normalize(ui, Seq.empty)
@@ -78,10 +93,14 @@ private[kyo] object DomBackend:
                         })
                     }
                 })
-            )(drain => drain.interrupt.andThen(drain.getResult).unit)
+            )(drain =>
+                Sync.defer(diagnostics.drainInterrupting()).andThen(drain.interrupt).andThen(drain.getResult).andThen {
+                    Sync.defer(diagnostics.drainJoined())
+                }
+            )
             // Finalizers are LIFO. Register the drain first, then the channel, then listeners, so teardown
             // removes callbacks before closing their queue and finally interrupts and joins the drain.
-            _ <- Scope.ensure(events.close.unit)
+            _ <- Scope.ensure(Sync.defer(diagnostics.channelClosing()).andThen(events.close).unit)
             _ <- setupEventDelegation(dispatch.handle, events)
             _ <- setupInputMasking()
             _ <- Async.never
@@ -372,9 +391,21 @@ private[kyo] object DomBackend:
         listener: scalajs.js.Function1[dom.Event, Unit],
         capture: Boolean
     )(using Frame): Unit < (Scope & Sync) =
-        Sync.defer(document.body.addEventListener(eventType, listener, capture)).andThen {
-            Scope.ensure(Sync.defer(document.body.removeEventListener(eventType, listener, capture)))
-        }
+        final case class Installed(
+            target: dom.EventTarget,
+            eventType: String,
+            listener: scalajs.js.Function1[dom.Event, Unit],
+            capture: Boolean
+        )
+        Scope.acquireRelease {
+            Sync.defer {
+                val target = document.body
+                target.addEventListener(eventType, listener, capture)
+                Installed(target, eventType, listener, capture)
+            }
+        }(installed =>
+            Sync.defer(installed.target.removeEventListener(installed.eventType, installed.listener, installed.capture))
+        ).unit
     end addScopedListener
 
     private def addScopedListener(
@@ -382,9 +413,21 @@ private[kyo] object DomBackend:
         listener: scalajs.js.Function1[dom.Event, Unit],
         options: dom.EventListenerOptions
     )(using Frame): Unit < (Scope & Sync) =
-        Sync.defer(document.body.addEventListener(eventType, listener, options)).andThen {
-            Scope.ensure(Sync.defer(document.body.removeEventListener(eventType, listener, options)))
-        }
+        final case class Installed(
+            target: dom.EventTarget,
+            eventType: String,
+            listener: scalajs.js.Function1[dom.Event, Unit],
+            options: dom.EventListenerOptions
+        )
+        Scope.acquireRelease {
+            Sync.defer {
+                val target = document.body
+                target.addEventListener(eventType, listener, options)
+                Installed(target, eventType, listener, options)
+            }
+        }(installed =>
+            Sync.defer(installed.target.removeEventListener(installed.eventType, installed.listener, installed.options))
+        ).unit
     end addScopedListener
 
     /** Set up capture-phase event delegation on document.body. */
