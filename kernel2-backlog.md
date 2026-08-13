@@ -99,17 +99,17 @@ improvement. Merge only if the code is simple and elegant to integrate; otherwis
 park it with the findings recorded. Queued behind the two implementation agents so
 the measurements are clean; I own this one.
 
-### JS, Native, and Wasm compile check (delayed to a bigger sweep)
+### JS, Native, and Wasm: platform seam implementing now (sonnet, isolated worktree)
 
-Context: kernel2 declares all four platforms with zero platform-specific sources, and
-only JVM has ever been compiled. The shared Safepoint uses AtomicReferenceArray,
-Thread.currentThread, and Thread.threadId(); whether every platform compiles and
-links is unverified and gates any platform-parity claim. Evidence so far, found
-during the enrichment work: JS does NOT link, pre-existing, exactly three missing
-java.lang.Thread members (threadId(), isAlive(), the constructor) all reached from
-shared Safepoint and its tests; Native compiles clean. Per your note: fixed in a
-bigger sweep rather than now; the fix shape is a platform seam for the thread
-identity Safepoint needs.
+Context: kernel2 declares four platforms with zero platform-specific sources; JS does
+not link, with exactly three missing java.lang.Thread members (threadId, isAlive, the
+constructor), all reached from the shared Safepoint and its tests; Native compiles
+clean. The fix is one private[kernel] seam for the thread operations Safepoint
+actually uses: jvm and native delegate to java.lang.Thread with inline forwarders
+(zero hot-path change, pins must hold), js and wasm are the single-threaded
+degenerate case. The thread-constructing test cases relocate to platform sources
+without weakening assertions. Gates: JVM suite at baseline, JS compile and link
+green, Native compile green. Safepoint's algorithm and pinned behavior change zero.
 
 ## Parked (your call to revive)
 
