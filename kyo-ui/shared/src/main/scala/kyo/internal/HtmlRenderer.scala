@@ -130,7 +130,7 @@ private[kyo] object HtmlRenderer:
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
                 w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
-                renderCommonAttrs(sb, elem.attrs, cssRules)
+                renderCommonAttrs(sb, elem, cssRules)
                 renderEventAttr(sb, elem)
                 for _ <- renderElementAttrs(sb, elem)
                 yield
@@ -378,7 +378,8 @@ private[kyo] object HtmlRenderer:
             }
         }
 
-    private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs, cssRules: Maybe[CssCollector] = Absent)(using Frame): Unit =
+    private def renderCommonAttrs(sb: StringBuilder, elem: Element, cssRules: Maybe[CssCollector] = Absent)(using Frame): Unit =
+        val attrs = elem.attrs
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
         val pseudoClass = registerPseudoClass(cssRules, attrs.uiStyle)
         val classes = pseudoClass match
@@ -392,10 +393,15 @@ private[kyo] object HtmlRenderer:
         attrs.focusAuto.foreach(v => if v then w(sb, """ data-kyo-focus-auto="1""""))
         attrs.focusRestore.foreach(v => if v then w(sb, """ data-kyo-focus-restore="1""""))
         attrs.dragSource.foreach { source =>
-            w(sb, s""" data-kyo-drag-source="${esc(Json.encode(source))}"""")
-            w(sb, """ draggable="true"""")
+            w(sb, s""" data-kyo-drag-source="${esc(encodedDragSource(source))}"""")
+            w(sb, s""" data-kyo-drag-source-key="${esc(source.key)}"""")
+            val nativeActivation = source.activation == Drag.Activation.Native || source.activation == Drag.Activation.Both
+            if nativeActivation && !elem.isInstanceOf[Svg.SvgElement] then w(sb, """ draggable="true"""")
         }
-        attrs.dropTarget.foreach(target => w(sb, s""" data-kyo-drop-target="${esc(Json.encode(target))}""""))
+        attrs.dropTarget.foreach { target =>
+            w(sb, s""" data-kyo-drop-target="${esc(encodedDropTarget(target))}"""")
+            w(sb, s""" data-kyo-drop-target-key="${esc(target.key)}"""")
+        }
         // A source and target can coexist on one sortable element. The source owns the single DOM
         // routing key in that case, while the complete target key remains present in its JSON metadata.
         attrs.dragSource match
@@ -422,6 +428,16 @@ private[kyo] object HtmlRenderer:
             w(sb, s""" data-kyo-prop-$name="${esc(value)}"""")
         }
     end renderCommonAttrs
+
+    private def encodedDragSource(source: Drag.Source)(using Frame): String =
+        DragProtocol.sourceConfig(source, DragProtocol.Limits.default) match
+            case Result.Success(config) => Json.encode(config)
+            case failure                => throw new IllegalArgumentException(s"Invalid drag source metadata: $failure")
+
+    private def encodedDropTarget(target: Drag.Target)(using Frame): String =
+        DragProtocol.targetConfig(target, DragProtocol.Limits.default) match
+            case Result.Success(config) => Json.encode(config)
+            case failure                => throw new IllegalArgumentException(s"Invalid drop target metadata: $failure")
 
     // ---- Element-specific attributes ----
 

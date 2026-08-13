@@ -785,6 +785,13 @@ object UI:
             /** Declares this element as a drop target with stable acceptance metadata. */
             def dropTarget(target: Drag.Target): Self = withAttrs(attrs.copy(dropTarget = Present(target)))
 
+            /** Marks this element as an activation handle for an ancestor drag source.
+              *
+              * Emits the reserved `data-kyo-drag-handle="true"` marker without adding presentation
+              * or focus behavior. Authors remain responsible for making keyboard handles focusable.
+              */
+            def dragHandle: Self = withAttrs(attrs.copy(dataAttrs = attrs.dataAttrs.updated("kyo-drag-handle", "true")))
+
             /** Runs `action` when a drag session starts, ignoring the event payload. */
             def onDragStart(action: => Any < Async): Self =
                 withAttrs(attrs.copy(onDragStart = Present(Sync.defer(action)(using frame))))

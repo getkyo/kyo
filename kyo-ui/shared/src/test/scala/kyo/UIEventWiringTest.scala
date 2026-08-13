@@ -97,7 +97,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             .onClick(())(UI.span("child<&>"))
 
         val expectedSourceJson =
-            """{"key":"source\"&<key>","items":[{"Text":{"representations":{"text/plain":"card\"&<text>"}}}],"operations":{"values":[{"Copy":{}}]},"label":"source\"&<label>","handle":true,"preview":{"Label":{"value":"preview\"&<label>"}}}"""
+            """{"key":"source\"&<key>","items":[{"Text":{"representations":{"text/plain":"card\"&<text>"}}}],"operations":{"values":[{"Copy":{}}]},"label":"source\"&<label>","handle":true,"preview":{"Label":{"value":"preview\"&<label>"}},"activation":{"Both":{}}}"""
         val expectedTargetJson =
             """{"key":"target\"&<key>","accepts":{"mediaTypes":["text/plain"],"operations":{"values":[{"Copy":{}}]},"maxItems":2,"directories":true},"label":"target\"&<label>"}"""
 
@@ -121,8 +121,8 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             assert(targetJson == expectedTargetJson)
             assert(attribute(html, "data-kyo-drag-source") == htmlEscape(expectedSourceJson))
             assert(attribute(html, "data-kyo-drop-target") == htmlEscape(expectedTargetJson))
-            assert(Json.decode[Drag.Source](sourceJson) == Result.succeed(source))
-            assert(Json.decode[Drag.Target](targetJson) == Result.succeed(target))
+            assert(Json.decode[DragProtocol.SourceConfig](sourceJson) == DragProtocol.sourceConfig(source, DragProtocol.Limits.default))
+            assert(Json.decode[DragProtocol.TargetConfig](targetJson) == DragProtocol.targetConfig(target, DragProtocol.Limits.default))
             assert(attribute(html, "data-kyo-drag-key") == "source&quot;&amp;&lt;key&gt;")
             assert(html.contains("draggable=\"true\""))
             assert(html.contains("id=\"drag-node\""))
@@ -174,7 +174,10 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         yield
             assert(dropResult == Drag.Decision.Accept)
             assert(sortResult == Drag.Decision.Accept)
-            assert(Json.decode[Drag.Target](htmlUnescape(attribute(html, "data-kyo-drop-target"))) == Result.succeed(target))
+            assert(
+                Json.decode[DragProtocol.TargetConfig](htmlUnescape(attribute(html, "data-kyo-drop-target"))) ==
+                    DragProtocol.targetConfig(target, DragProtocol.Limits.default)
+            )
             assert(attribute(html, "data-kyo-drag-key") == "svg&quot;&amp;&lt;target&gt;")
             assert(!html.contains("draggable=\"true\""))
             assert(!html.contains("handler-secret"))
@@ -229,6 +232,141 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             assert(ui.attrs.dropTarget == Present(target))
             assert(html.contains("id=\"observer\""))
             assert(attribute(html, "data-kyo-ev") == "dragstart,dragend,dragenter,dragleave,dragover")
+        end for
+    }
+
+    "drag activation, dedicated identities, and handle markers render by namespace" in {
+        val native  = Drag.Source("native", Chunk.empty, activation = Drag.Activation.Native)
+        val sensors = Drag.Source("sensors", Chunk.empty, activation = Drag.Activation.Sensors)
+        val both    = Drag.Source("source\"&<", Chunk.empty)
+        val target  = Drag.Target("target\"&<", Drag.Accept())
+        val cases = Chunk(
+            UI.div.dragSource(native)   -> true,
+            UI.div.dragSource(sensors)  -> false,
+            UI.div.dragSource(both)     -> true,
+            Svg.rect.dragSource(native) -> false,
+            Svg.rect.dragSource(both)   -> false
+        )
+
+        for
+            rendered   <- Kyo.foreach(cases) { case (ui, _) => HtmlRenderer.render(ui, Seq.empty) }
+            dual       <- HtmlRenderer.render(UI.div.dragSource(both).dropTarget(target), Seq.empty)
+            htmlHandle <- HtmlRenderer.render(UI.span.dragHandle, Seq.empty)
+            svgHandle  <- HtmlRenderer.render(Svg.circle.dragHandle, Seq.empty)
+        yield
+            rendered.zip(cases).foreach { case (html, (_, expectedDraggable)) =>
+                assert(html.contains("draggable=\"true\"") == expectedDraggable)
+                assert(html.contains("data-kyo-drag-source="))
+            }
+            assert(attribute(dual, "data-kyo-drag-source-key") == "source&quot;&amp;&lt;")
+            assert(attribute(dual, "data-kyo-drop-target-key") == "target&quot;&amp;&lt;")
+            assert(attribute(dual, "data-kyo-drag-key") == "source&quot;&amp;&lt;")
+            assert(htmlHandle.contains("data-kyo-drag-handle=\"true\""))
+            assert(svgHandle.contains("data-kyo-drag-handle=\"true\""))
+            val defaultConfig = htmlUnescape(attribute(rendered(2), "data-kyo-drag-source"))
+            assert(defaultConfig.contains("\"activation\":{\"Both\":{}}"))
+        end for
+    }
+
+    "browser drag configs preserve safe byte boundaries and reject unsafe or excessive metadata" in {
+        val maxSafe      = 9_007_199_254_740_991L
+        val safeFile     = Drag.FileMeta("file-token", "file.txt", "text/plain", ByteSize.fromBytes(maxSafe), Instant.Epoch)
+        val unsafeFile   = safeFile.copy(size = ByteSize.fromBytes(maxSafe + 1L))
+        val safeSource   = Drag.Source("safe-source", Chunk(Drag.Item.File(safeFile)))
+        val unsafeSource = Drag.Source("unsafe-source", Chunk(Drag.Item.File(unsafeFile)))
+        val safeTarget   = Drag.Target("safe-target", Drag.Accept(maxFileSize = Present(ByteSize.fromBytes(maxSafe))))
+        val unsafeTarget = Drag.Target("unsafe-target", Drag.Accept(maxFileSize = Present(ByteSize.fromBytes(maxSafe + 1L))))
+        val tooMany      = Drag.Source("many", Chunk.fill(DragProtocol.Limits.default.maxItemCount + 1)(Drag.Item.Uri("https://kyo.dev")))
+        val tooMuchText =
+            Drag.Source("text", Chunk(Drag.Item.Text(Map("text/plain" -> ("x" * (DragProtocol.Limits.default.maxTextLength + 1))))))
+        val aggregateText = "x" * DragProtocol.Limits.default.maxAttributeLength
+        val tooLargeJson  = Drag.Source("aggregate", Chunk(Drag.Item.Text(Map("text/plain" -> aggregateText))))
+        val tooManyRepresentations = Drag.Source(
+            "representations",
+            Chunk(Drag.Item.Text((0 to DragProtocol.Limits.default.maxTextRepresentationCount).map(i => s"text/x-$i" -> "x").toMap))
+        )
+        val invalidKey = Drag.Source("x" * (DragProtocol.Limits.default.maxIdentifierLength + 1), Chunk.empty)
+        val invalidLabel = Drag.Source(
+            "label",
+            Chunk.empty,
+            label = Present("x" * (DragProtocol.Limits.default.maxNameLength + 1))
+        )
+        val invalidTargetMedia = Drag.Target("media", Drag.Accept(mediaTypes = Set("not-a-media-type")))
+        val invalidTargetCount = Drag.Target(
+            "count",
+            Drag.Accept(maxItems = Present(DragProtocol.Limits.default.maxItemCount + 1))
+        )
+
+        val safeSourceConfig = DragProtocol.sourceConfig(safeSource, DragProtocol.Limits.default)
+        val safeTargetConfig = DragProtocol.targetConfig(safeTarget, DragProtocol.Limits.default)
+        assert(safeSourceConfig.isSuccess)
+        assert(safeTargetConfig.isSuccess)
+        assert(DragProtocol.sourceConfig(unsafeSource, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.targetConfig(unsafeTarget, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.sourceConfig(tooMany, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.sourceConfig(tooMuchText, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.sourceConfig(tooLargeJson, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.sourceConfig(tooManyRepresentations, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.sourceConfig(invalidKey, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.sourceConfig(invalidLabel, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.targetConfig(invalidTargetMedia, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.targetConfig(invalidTargetCount, DragProtocol.Limits.default).isFailure)
+        Chunk[UI](
+            UI.div.dragSource(unsafeSource),
+            UI.div.dropTarget(unsafeTarget),
+            UI.div.dragSource(tooMany),
+            UI.div.dragSource(tooMuchText),
+            UI.div.dragSource(tooLargeJson)
+        ).foreach { invalidUi =>
+            val error = intercept[IllegalArgumentException](HtmlRenderer.render(invalidUi, Seq.empty))
+            assert(error.getMessage.contains("Invalid"))
+        }
+
+        for
+            sourceHtml <- HtmlRenderer.render(UI.div.dragSource(safeSource), Seq.empty)
+            targetHtml <- HtmlRenderer.render(UI.div.dropTarget(safeTarget), Seq.empty)
+        yield
+            val sourceJson = htmlUnescape(attribute(sourceHtml, "data-kyo-drag-source"))
+            val targetJson = htmlUnescape(attribute(targetHtml, "data-kyo-drop-target"))
+            assert(Json.decode[DragProtocol.SourceConfig](sourceJson) == safeSourceConfig)
+            assert(Json.decode[DragProtocol.TargetConfig](targetJson) == safeTargetConfig)
+            assert(sourceJson.contains(maxSafe.toString))
+            assert(targetJson.contains(maxSafe.toString))
+        end for
+    }
+
+    "drag action handlers stay lazy, propagate failures, and coexist with typed handlers" in {
+        val dropFailure = new RuntimeException("drop failure")
+        val sortFailure = new RuntimeException("sort failure")
+        val ui = UI.div
+            .onDrop(Sync.defer(throw dropFailure))
+            .onDrop((_: Drag.Event) => Drag.Decision.Accept)
+            .onSortMove(Sync.defer(throw sortFailure))
+            .onSortMove((_: Drag.Move) => Drag.Decision.Accept)
+            .onDragOver("action-result")
+            .onDragOver((_: Drag.Event) => "typed-result")
+
+        assert(ui.attrs.onDrop.nonEmpty)
+        assert(ui.attrs.onDropEvt.nonEmpty)
+        assert(ui.attrs.onSortMove.nonEmpty)
+        assert(ui.attrs.onSortMoveEvt.nonEmpty)
+        assert(ui.attrs.onDragOver.nonEmpty)
+        assert(ui.attrs.onDragOverEvt.nonEmpty)
+
+        val drop = ui.attrs.onDrop.getOrElse(fail("missing drop action"))
+        val sort = ui.attrs.onSortMove.getOrElse(fail("missing sort action"))
+        for
+            html       <- HtmlRenderer.render(ui, Seq.empty)
+            dropResult <- Abort.run[Any](drop)
+            sortResult <- Abort.run[Any](sort)
+        yield
+            assert(attribute(html, "data-kyo-ev") == "dragover,drop,sortmove")
+            dropResult match
+                case Result.Panic(error) => assert(error eq dropFailure)
+                case other               => fail(s"expected drop panic, got $other")
+            sortResult match
+                case Result.Panic(error) => assert(error eq sortFailure)
+                case other               => fail(s"expected sort panic, got $other")
         end for
     }
 

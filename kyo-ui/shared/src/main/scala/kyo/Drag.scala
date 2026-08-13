@@ -60,6 +60,19 @@ object Drag:
         case Label(value: String)
     end Preview
 
+    /** Browser mechanisms allowed to activate a drag source.
+      *
+      * `Native` enables the platform's native HTML drag behavior, `Sensors` reserves activation for
+      * pointer or keyboard sensors, and `Both` permits either mechanism. SVG elements never receive
+      * the HTML `draggable` attribute, even when native activation is allowed.
+      *
+      * [[Drag.Source]] defaults to `Both`. Higher-level components that implement their own pointer
+      * and keyboard sensors can select `Sensors` to avoid also enabling native HTML drag behavior.
+      */
+    enum Activation derives CanEqual, Schema:
+        case Native, Sensors, Both
+    end Activation
+
     /** Stable identifier of a collection participating in a move. */
     final case class Location(collection: String) derives CanEqual, Schema
 
@@ -87,8 +100,11 @@ object Drag:
       *
       * `key` is the stable element identity exposed to drag events. `items` are the transferable
       * values made available by the source, and `operations` limits the operations it supports.
-      * `label` supplies optional accessible metadata, `handle` records whether activation is
-      * restricted to a handle, and `preview` selects the browser representation used while dragging.
+      * `label` supplies optional accessible metadata. When `handle` is true, activation begins only
+      * from a descendant marked with [[kyo.UI.Ast.Interactive.dragHandle]], which emits the reserved
+      * `data-kyo-drag-handle="true"` runtime marker. The marker is presentation-neutral and does not
+      * make its element focusable. `preview` selects the browser representation used while dragging,
+      * and `activation` selects the native and sensor mechanisms allowed to begin the drag.
       *
       * The complete value is serialized into the element's drag-source data attribute.
       */
@@ -98,7 +114,8 @@ object Drag:
         operations: AllowedOperations = AllowedOperations.move,
         label: Maybe[String] = Absent,
         handle: Boolean = false,
-        preview: Preview = Preview.Clone
+        preview: Preview = Preview.Clone,
+        activation: Activation = Activation.Both
     ) derives CanEqual, Schema
 
     /** Declarative configuration attached to a drop-target UI element.

@@ -118,6 +118,33 @@ private[kyo] object DragProtocol:
             case Directory(token, name) => Drag.Item.Directory(token, name)
     end ItemData
 
+    /** Browser-bound drag source configuration with safe file byte quantities. */
+    final private[kyo] case class SourceConfig(
+        key: String,
+        items: Chunk[ItemData],
+        operations: Drag.AllowedOperations,
+        label: Maybe[String],
+        handle: Boolean,
+        preview: Drag.Preview,
+        activation: Drag.Activation
+    ) derives CanEqual, Schema
+
+    /** Browser-bound drop acceptance configuration with a safe optional file-size limit. */
+    final private[kyo] case class AcceptConfig(
+        mediaTypes: Set[String],
+        operations: Drag.AllowedOperations,
+        maxItems: Maybe[Int],
+        maxFileSize: Maybe[WireByteSize],
+        directories: Boolean
+    ) derives CanEqual, Schema
+
+    /** Browser-bound drop target configuration. */
+    final private[kyo] case class TargetConfig(
+        key: String,
+        accepts: AcceptConfig,
+        label: Maybe[String]
+    ) derives CanEqual, Schema
+
     /** Directory entry metadata returned by the browser. */
     private[kyo] enum EntryData derives CanEqual, Schema:
         case File(meta: FileMetaData)
@@ -166,7 +193,8 @@ private[kyo] object DragProtocol:
         maxMediaTypeLength: Int,
         maxReasonLength: Int,
         maxBase64Length: Int,
-        maxDecodedChunkSize: ByteSize
+        maxDecodedChunkSize: ByteSize,
+        maxAttributeLength: Int = 1_048_576
     ) derives CanEqual
 
     private[kyo] object Limits:
@@ -182,7 +210,8 @@ private[kyo] object DragProtocol:
             maxMediaTypeLength = 255,
             maxReasonLength = 4096,
             maxBase64Length = 1_398_104,
-            maxDecodedChunkSize = 1.mib
+            maxDecodedChunkSize = 1.mib,
+            maxAttributeLength = 1_048_576
         )
     end Limits
 
@@ -196,7 +225,129 @@ private[kyo] object DragProtocol:
         case InvalidMediaType(value: String)
         case InvalidTimestamp
         case InvalidNumber(field: String)
+        case InvalidCount(field: String, actual: Int)
+        case InvalidByteSize(field: String, actual: ByteSize)
+        case ByteSizeTooLarge(field: String, maximum: ByteSize, actual: ByteSize)
     end ValidationFailure
+
+    private val maxBrowserSafeSize = ByteSize.fromBytes(9_007_199_254_740_991L)
+
+    /** Validates and converts a domain drag source into its browser-bound representation. */
+    private[kyo] def sourceConfig(source: Drag.Source, limits: Limits)(using Frame): Result[ValidationFailure, SourceConfig] =
+        validateIdentifier(source.key, "source.key", limits)
+            .flatMap(_ => validateCount(source.items.size, "source.items", limits.maxItemCount))
+            .flatMap(_ => validateAll(source.items)(validateDomainItem(_, limits)))
+            .flatMap(_ => validateOptionalText(source.label, "source.label", limits.maxNameLength))
+            .flatMap(_ => validatePreview(source.preview, limits))
+            .map(_ =>
+                SourceConfig(
+                    source.key,
+                    source.items.map(toItemData),
+                    source.operations,
+                    source.label,
+                    source.handle,
+                    source.preview,
+                    source.activation
+                )
+            )
+            .flatMap(config => validateEncodedAttribute(Json.encode(config), "dragSource", limits).map(_ => config))
+    end sourceConfig
+
+    /** Validates and converts domain target rules into their browser-bound representation. */
+    private[kyo] def targetConfig(target: Drag.Target, limits: Limits)(using Frame): Result[ValidationFailure, TargetConfig] =
+        val accepts = target.accepts
+        validateIdentifier(target.key, "target.key", limits)
+            .flatMap(_ => validateOptionalText(target.label, "target.label", limits.maxNameLength))
+            .flatMap(_ => validateCount(accepts.mediaTypes.size, "target.mediaTypes", limits.maxTextRepresentationCount))
+            .flatMap(_ => validateAll(accepts.mediaTypes)(validateAcceptedMediaType(_, limits)))
+            .flatMap(_ =>
+                accepts.maxItems match
+                    case Present(value) if value < 0 => Result.fail(ValidationFailure.InvalidCount("target.maxItems", value))
+                    case Present(value)              => validateCount(value, "target.maxItems", limits.maxItemCount)
+                    case Absent                      => Result.unit
+            )
+            .flatMap(_ =>
+                accepts.maxFileSize match
+                    case Present(value) => validateWireByteSize(value, "target.maxFileSize")
+                    case Absent         => Result.unit
+            )
+            .map(_ =>
+                TargetConfig(
+                    target.key,
+                    AcceptConfig(
+                        accepts.mediaTypes,
+                        accepts.operations,
+                        accepts.maxItems,
+                        accepts.maxFileSize.map(WireByteSize(_)),
+                        accepts.directories
+                    ),
+                    target.label
+                )
+            )
+            .flatMap(config => validateEncodedAttribute(Json.encode(config), "dropTarget", limits).map(_ => config))
+    end targetConfig
+
+    private def validateDomainItem(item: Drag.Item, limits: Limits): Result[ValidationFailure, Unit] =
+        item match
+            case Drag.Item.Text(representations) =>
+                validateCount(representations.size, "representations", limits.maxTextRepresentationCount)
+                    .flatMap(_ =>
+                        validateAll(representations) { case (mediaType, text) =>
+                            validateMediaType(mediaType, limits)
+                                .flatMap(_ => validateText(text, "text", limits.maxTextLength, allowEmpty = true))
+                        }
+                    )
+            case Drag.Item.Uri(value) =>
+                validateText(value, "uri", limits.maxTextLength, allowEmpty = false)
+            case Drag.Item.File(meta) =>
+                validateWireByteSize(meta.size, "file.size")
+                    .flatMap(_ => validateFileMeta(toFileMetaData(meta), limits))
+            case Drag.Item.Directory(token, name) =>
+                validateIdentifier(token, "token", limits)
+                    .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
+    end validateDomainItem
+
+    private def toItemData(item: Drag.Item): ItemData = item match
+        case Drag.Item.Text(representations)  => ItemData.Text(representations)
+        case Drag.Item.Uri(value)             => ItemData.Uri(value)
+        case Drag.Item.File(meta)             => ItemData.File(toFileMetaData(meta))
+        case Drag.Item.Directory(token, name) => ItemData.Directory(token, name)
+
+    private def toFileMetaData(meta: Drag.FileMeta): FileMetaData =
+        FileMetaData(meta.token, meta.name, meta.mediaType, WireByteSize(meta.size), meta.lastModified)
+
+    private def validateWireByteSize(value: ByteSize, field: String): Result[ValidationFailure, Unit] =
+        if value < ByteSize.Zero then Result.fail(ValidationFailure.InvalidByteSize(field, value))
+        else if value > maxBrowserSafeSize then Result.fail(ValidationFailure.ByteSizeTooLarge(field, maxBrowserSafeSize, value))
+        else Result.unit
+
+    private def validateOptionalText(
+        value: Maybe[String],
+        field: String,
+        maximum: Int
+    ): Result[ValidationFailure, Unit] =
+        value match
+            case Present(value) => validateText(value, field, maximum, allowEmpty = false)
+            case Absent         => Result.unit
+
+    private def validatePreview(preview: Drag.Preview, limits: Limits): Result[ValidationFailure, Unit] =
+        preview match
+            case Drag.Preview.Label(value) => validateText(value, "source.preview.label", limits.maxNameLength, allowEmpty = false)
+            case _                         => Result.unit
+
+    private def validateAcceptedMediaType(value: String, limits: Limits): Result[ValidationFailure, Unit] =
+        validateText(value, "mediaType", limits.maxMediaTypeLength, allowEmpty = false).flatMap { _ =>
+            val normalized = value.trim
+            if normalized.endsWith("/*") && isMediaToken(normalized.dropRight(2)) then Result.unit
+            else validateMediaType(value, limits)
+        }
+
+    private def validateEncodedAttribute(
+        value: String,
+        field: String,
+        limits: Limits
+    ): Result[ValidationFailure, Unit] =
+        validateText(value, field, limits.maxAttributeLength, allowEmpty = false)
 
     /** Validates an untrusted decoded browser message before runtime dispatch. */
     private[kyo] def validate(message: ClientMessage, limits: Limits): Result[ValidationFailure, ClientMessage] =
