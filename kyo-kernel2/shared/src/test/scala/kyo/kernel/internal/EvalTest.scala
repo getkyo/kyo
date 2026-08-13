@@ -3,6 +3,7 @@ package kyo.kernel.internal
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
@@ -484,4 +485,46 @@ class EvalTest extends AnyFreeSpec:
         catch case e: StackOverflowError => fail(s"stack overflow settling $depth chained re-raised answers")
     }
 
+    "a drive that throws restores the caller's budget" in {
+        val slot  = Safepoint.get()
+        val outer = Safepoint.save(slot)
+        try
+            var consumed = 0
+            while consumed < 7 do
+                assert(Safepoint.enter(slot))
+                consumed += 1
+            try discard(Eval(Effect.defer[Int, Any](throw new EvalBoom)))
+            catch case _: EvalBoom => ()
+            var left = 0
+            while Safepoint.enter(slot) do left += 1
+            assert(left == Period - 7)
+        finally
+            Safepoint.reset(slot)
+            Safepoint.restore(slot, outer)
+        end try
+    }
+
+    "a partial drive that throws restores the caller's armed state" in {
+        val slot  = Safepoint.get()
+        val outer = Safepoint.save(slot)
+        try
+            try discard(Eval.partial(Effect.defer[Int, Any](throw new EvalBoom)))
+            catch case _: EvalBoom => ()
+                // an armed bit left behind by the aborted drive drains the budget of
+                // the next computation on this thread the moment a stop is requested
+            end try
+            assert(Safepoint.stop(Thread.currentThread()))
+            val slot2 = Safepoint.get()
+            assert(Safepoint.consumeStopped(slot2))
+            var left = 0
+            while Safepoint.enter(slot2) do left += 1
+            assert(left == Period)
+        finally
+            Safepoint.reset(slot)
+            Safepoint.restore(slot, outer)
+        end try
+    }
+
 end EvalTest
+
+class EvalBoom extends RuntimeException("boom")
