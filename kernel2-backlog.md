@@ -56,29 +56,26 @@ Native, and Wasm sweep item.
 
 ## Next up
 
-### ContextEffect isolation encoding (ready)
+### ContextEffect isolation: implemented, review passed, in the merge queue
 
-Context: forking must carry context effects (Local, Env: scoped values, always safe
-to inherit) into the child. The old kernel did this generically through the Context
-map (`Isolate.internal.runDetached`/`restoring`, Noninheritable filtered); kernel2
-deleted the map, so the "simple state copying" category of the as-is Isolate design
-needs a kernel2 encoding.
+Status: implemented in an isolated worktree (commit 342da0e5a7, 7 files, 367
+insertions), 642 tests green with 12 new, my review passed it. All four rulings
+honored: the recognizer is structural (a marker mixed in only by handle's own region
+construction, so user handlers over context tags are never transplant candidates),
+laziness preserved exactly, Noninheritable tested at fork time with the cost argument
+recorded in place (handle sits on pinned warm paths, forks already pay for
+scheduling), provision cells only. The agent's tests caught a real currency bug (the
+implicit lift double-boxing an already-Kyo child at the transplant call site), fixed
+with a documented boundary cast. No bytecode pin movement.
 
-Design, ruled ready: **boundary inheritance narrowed to context cells.** The fork
-transplants exactly the regions ContextEffect.handle installed, with neutral exits,
-skipping Noninheritable; no Isolate instance is involved for context members; the
-derive macro's ContextEffect filter ports verbatim; nothing threads through the hot
-path, the fork boundary owns the whole mechanism. The instances alternative is ruled
-out on three independent grounds (Local never appears in any row; Env reads through
-the erased Tag[Env[Any]]; downstream opaque aliases would each need instances).
+Names for your ack at merge: Provision (the recognizer marker), Detached and detach
+(the boundary crossing), transplant (the walk); all private[kyo], all from the design
+docs, none formally ruled.
 
-Value-forks, ruled: V2 the recognizer is STRUCTURAL, a named provision region built
-by ContextEffect.handle (not a tag test), so transplantability is a property of the
-representation; V1 layered values stay lazily resolved for exact origin/main parity
-(entry-resolution and the compaction revisit later as an optimization); V3 the
-Noninheritable bit placement is decided by measurement at implementation; V4 the
-transplant copies provision cells only, keeping the old simple/complex split.
-Full design: `contexteffect-isolation-design.md`.
+Merge plan: enrichment merges first (its JMH A/B is running now); then I port this
+commit's diff onto the merged tip myself, because both changes meet at Eval's
+find-miss arm (enrichment guards it, isolation adds the Detached case) and that
+reconciliation is judge's work, not an agent's.
 
 ### Handlers encapsulation (your TODO at Handlers.scala:8)
 
