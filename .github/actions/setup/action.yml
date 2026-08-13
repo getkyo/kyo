@@ -190,29 +190,13 @@ runs:
           echo "ubuntu runc package Conflicts with containerd.io, and installing it removes docker-ce." >&2
           exit 1
         fi
-        # ===== TEMP RESOURCE PROBE (diagnostic; revert after) — reproduce delay=0 exec cleanup accumulation on this runner =====
+        # ===== TEMP LIMITS PROBE (diagnostic; revert after) — the ceilings that in-container `sh: Cannot fork` hits =====
         set +e
-        echo "===== RESPROBE ulimit_u=$(ulimit -u) $(grep exit_command_delay "$HOME/.config/containers/containers.conf") ====="
-        podman pull alpine:latest >/dev/null 2>&1
-        pcid=$(curl -s --unix-socket "$sock" -X POST -H 'Content-Type: application/json' -d '{"image":"alpine","command":["sh","-c","sleep 900"]}' "http://d/v5.0.0/libpod/containers/create" | grep -oE '"Id":"[a-f0-9]+"' | head -1 | cut -d'"' -f4)
-        curl -s --unix-socket "$sock" -X POST "http://d/v5.0.0/libpod/containers/$pcid/start" >/dev/null
-        samp(){ echo "RESPROBE $1 threads=$(ps -eL --no-headers 2>/dev/null | wc -l) conmon=$(pgrep -x conmon 2>/dev/null | wc -l) cleanup=$(pgrep -f 'container cleanup' 2>/dev/null | wc -l) podman=$(pgrep -x podman 2>/dev/null | wc -l) keys=$(cat /proc/keys 2>/dev/null | wc -l)"; }
-        samp start
-        for i in $(seq 1 400); do
-          peid=$(curl -s --unix-socket "$sock" -X POST -H 'Content-Type: application/json' -d '{"AttachStdout":true,"Cmd":["true"]}' "http://d/v5.0.0/libpod/containers/$pcid/exec" | grep -oE '"Id":"[a-f0-9]+"' | head -1 | cut -d'"' -f4)
-          curl -s --unix-socket "$sock" -X POST -H 'Content-Type: application/json' -d '{"Detach":false}' "http://d/v5.0.0/libpod/exec/$peid/start" -o /dev/null
-          [ $((i % 50)) -eq 0 ] && samp "seq_i=$i"
-        done
-        samp seq_end
-        # concurrent burst: 60 execs in parallel (mimics per-leaf concurrency)
-        for i in $(seq 1 60); do
-          ( peid=$(curl -s --unix-socket "$sock" -X POST -H 'Content-Type: application/json' -d '{"AttachStdout":true,"Cmd":["true"]}' "http://d/v5.0.0/libpod/containers/$pcid/exec" | grep -oE '"Id":"[a-f0-9]+"' | head -1 | cut -d'"' -f4); curl -s --unix-socket "$sock" -X POST -H 'Content-Type: application/json' -d '{"Detach":false}' "http://d/v5.0.0/libpod/exec/$peid/start" -o /dev/null ) &
-        done
-        samp burst_inflight; wait; samp burst_done
-        curl -s --unix-socket "$sock" -X DELETE "http://d/v5.0.0/libpod/containers/$pcid?force=true&v=true" -o /dev/null
-        echo "===== RESPROBE DONE ====="
+        echo "RESPROBE ulimit_u_soft=$(ulimit -Su) ulimit_u_hard=$(ulimit -Hu) threads_max=$(cat /proc/sys/kernel/threads-max 2>/dev/null) pid_max=$(cat /proc/sys/kernel/pid_max 2>/dev/null) nproc=$(nproc) mem_mb=$(free -m 2>/dev/null | awk '/Mem:/{print $2}') swap_mb=$(free -m 2>/dev/null | awk '/Swap:/{print $2}') $(grep exit_command_delay "$HOME/.config/containers/containers.conf")"
+        echo "RESPROBE baseline threads=$(ps -eL --no-headers 2>/dev/null | wc -l) procs=$(ps -e --no-headers 2>/dev/null | wc -l) conmon=$(pgrep -xc conmon 2>/dev/null || echo 0)"
+        echo "RESPROBE DONE"
         set -e
-        # ===== END TEMP RESOURCE PROBE =====
+        # ===== END TEMP LIMITS PROBE =====
 
     - name: Configure build environment (Windows)
       if: ${{ contains(inputs.os, 'windows') }}
