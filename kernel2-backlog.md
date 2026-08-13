@@ -141,29 +141,135 @@ the same change. JMH-gated (sharedHandlerPaysDispatch is the row). The design do
 names for the parent and its subdivisions are the agent's proposals, subject to your
 naming. (`kernel2-todos-design.md` section 2.)
 
-### Small kernel items
+### Eval save/restore leak (fix in flight)
 
-FB fix
-- save/restore try/finally in `Eval.apply`/`partial`: found by the enrichment
-  analysis, pre-existing: an escaping throw leaves the thread's budget and armed bit
-  as the aborted drive left them. Small, standalone fix.
+Context: `Eval.apply` and `Eval.partial` save the thread's safepoint state on entry
+and restore it on exit, but with no try/finally: an exception escaping the drive
+leaves the thread's budget and armed bit exactly as the aborted drive left them,
+corrupting the next drive on that thread. Pre-existing; surfaced by the enrichment
+analysis (its finding 8).
+
+Status: being fixed now, inside the enrichment implementation running in the isolated
+worktree (the fix wraps the restore in finally at both entry points, with a
+regression test asserting the budget after an escaping throw). If that implementation
+stalls, this fix cherry-picks alone.
 
 ## Parked (your call to revive)
-FB I told you no compact representation of any items in the fuckign backlog! all proper sections. I fucking fon't want to repeat this.
-| item | one-line context | design |
-|---|---|---|
-| Effect.catching as a region | the guarded arrow-rewrite pays per resumed step and cannot cover nested region interiors; the redesign makes catching a region node with a passive cell | `kernel2-todos-design.md` section 1 |
-| Defaulted redesign | `default: Any` untyped probe replacing the old Context-map definedness check; redesign: Maybe-shaped ContextEffect answers plus a typed Unhandled marker (task #31) | `kernel2-todos-design.md` section 3 |
-| IOTask integration | the full scheduler port: boundary layer, park protocol, preemption wiring, field layout; rulings R1-R6 | `iotask-kernel2-integration-r2.md`; summary `backlog-sections/iotask.md` |
-| IOTask's small kernel asks | Eval.partial deadline (R1), settled-answer budget charge (R2, JMH-gated), Safepoint.stop cheap negative (R6) | same doc, section 9 |
+
+### Effect.catching as a region
+
+Context: `Effect.catching(v)(recover)` is the kernel's failure-recovery combinator.
+Its current mechanism, `guarded`, rewrites the computation as it runs: every resumed
+step gets wrapped in a fresh guard arrow and every node that comes back is
+re-allocated with a guarded exit, which is your TODO at Effect.scala:27 ("an
+expensive workaround for something that should be handled in Eval or Arrow?"). The
+analysis confirmed the cost (one guard allocation, one node re-allocation, and one
+chain flatten per resumed step) and a semantic hole: the rewrite reaches region
+exits but not region interiors, so a throw inside a nested handled region is not
+recovered, which nothing in the API suggests.
+
+Design: make the catching scope a region: a `Kyo.Caught` node holding value, recover,
+and exit, entered like any region and popped through its exit; the failure path finds
+the innermost catching region by walking the handler stack at the throw point.
+Catching becomes one allocation; `guarded` and its per-node-kind arms are deleted;
+the nested-interior hole closes because a nested region sits inside the catching
+region on the same stack. A plain evaluator try cannot do this because a guarded
+residual recovered in a second drive is pinned behavior: the scope must be a value
+that parks and rebuilds, and a region is the only such structure.
+(`kernel2-todos-design.md` section 1.)
+
+Parked by your call ("not sure about this region thing"). If revived, it consumes the
+same failure-path walk the bracket ruling decides.
+
+### Defaulted redesign (optional context)
+
+Context: `Kyo.Defaulted` is the optional-context mechanism: a suspension that carries
+its own fallback, which the evaluator's find-miss arm answers with when no handler is
+installed (`Local.get` works with no `Local.let` in scope because of it). Your TODO
+at KyoInternal.scala:38 rejects it, and the diagnosis agrees: the fallback is typed
+`Any`, the row claims an effect that may never dispatch to a handler, and the second
+consumer (the definedness probe that `Env.run`'s union and `Local.let`'s merge need)
+only exists because the old kernel's Context map, which answered "is there an outer
+handler" with a map lookup, was deleted.
+
+Design: split the two needs. Context answers carry their own definedness:
+`ContextEffect[+A] extends ArrowEffect[Const[Unit], Const[Maybe[A]]]`, so the probe
+becomes an ordinary read. The optional fallback becomes a typed marker (`unhandled:
+O[X]` on the suspension) replacing Defaulted in the find-miss arm, typed at the
+operation's output instead of `Any`. (`kernel2-todos-design.md` section 3; parked
+task #31's discussion input. Interacts with the ContextEffect isolation design in
+flight: its capture reads change shape if this lands.)
+
+### IOTask integration
+
+Context: IOTask is the scheduler's task, driving a fiber's computation in preemptible
+slices and owning interruption, completion, and the finalizer contract. The port to
+kernel2 is designed in full and re-verified against the current kernel (r2): the
+fiber boundary is a handler region installed outermost, so a parked re-raise leaves a
+bare residual that `handlePartial` re-enters without nesting a second layer; the park
+must be written as a pending outcome (the settled form, one character away, spins);
+the field layout lands at baseline parity (32 bytes).
+
+Status: parked. Its rulings when revived: R1 (a deadline parameter on `Eval.partial`,
+without which single-threaded platforms cannot preempt a fiber that never suspends),
+R2 (charge the settled-answer arm one budget step so answer-loops like `Async.Join`
+over completed promises become preemptible; hot arm, JMH-gated), R3 (abandoned
+releases run synchronously, Unit-returning; recommended), R4 (context stays a def on
+a conditional subclass so the footprint trick survives), R5 (dispatchFirst; now in
+implementation), R6 (below). (`iotask-kernel2-integration-r2.md`; summary
+`backlog-sections/iotask.md`.)
+
+### Safepoint.stop cheap negative (IOTask ruling R6)
+
+Context: `Safepoint.stop(thread)` delivers preemption by locating the target thread's
+slot. For a live thread that never evaluated, the probe walks the whole slot table:
+65536 volatile reads on the caller's thread, and under the IOTask design the caller
+is the interrupter. There is a correct early exit (entries are never written back to
+null, so a null entry reached while probing proves the thread has no slot).
+
+Status: parked with IOTask; small and standalone if wanted earlier.
 
 ## Standing
 
-| item | pointer |
-|---|---|
-| kyo-bench arena rows old vs new (task #8) | KernelBench boards exist for both kernels |
-| Safepoint overflow one-shot report decision (task #57) | internal/Safepoint.scala |
-| Fold Implicits back into Pending.scala (layout parity) | kernel-parity-gaps.md section 2 |
-| Stray empty dir kyo-kernel2/kyo-kernel2/ | hygiene |
-| JS/Native/Wasm compile check of kernel2 | kernel-parity-gaps.md section 4 |
-| deepRecursion 1.05x time (0.43x alloc) | rescue-path target if the perf campaign reopens |
+### kyo-bench arena rows, old vs new kernel (task #8)
+
+Context: kyo-bench holds the end-to-end arena benchmarks (the cross-framework rows).
+Running them over both kernels is the test of whether the micro-board positions
+matter in realistic workloads. Blocked on the stack above the kernel compiling
+against kernel2 (kyo-prelude, kyo-core), so it queues behind the ports.
+
+### Safepoint overflow report decision (task #57)
+
+Context: when the slot table is exhausted, a thread lands on the shared overflow slot,
+which ignores budget operations and misses preemption by design (pinned by test). The
+open decision is whether to restore a one-shot diagnostic report when that happens,
+so an operator learns the table is undersized, and to refresh the stale safepoint
+analysis file that predates the depth-only redesign.
+
+### Fold Implicits back into Pending.scala
+
+Context: the old kernel kept every lift implicit inside `object <` in Pending.scala;
+kernel2 moved them to `kernel/Implicits.scala` during the lift consolidation. Folding
+the trait back restores file-layout parity with the old kernel
+(`kernel-parity-gaps.md` section 2). Pure organization; your call.
+
+### Stray empty directory
+
+Context: `kyo-kernel2/kyo-kernel2/` exists as an empty, untracked directory tree left
+by some earlier tooling. Delete on the next hygiene pass.
+
+### JS, Native, and Wasm compile check
+
+Context: kernel2 declares all four platforms with zero platform-specific sources, and
+this campaign has only ever compiled JVM. The shared Safepoint uses
+AtomicReferenceArray, Thread.currentThread, and Thread.threadId(); whether all
+platforms compile and link is unverified, and it gates any platform-parity claim
+(`kernel-parity-gaps.md` section 4). One compile per platform answers it.
+
+### deepRecursion rescue-path time
+
+Context: `deepRecursionPaysRescuesOnly` measures trampolined recursion through the
+safepoint budget's rescue path. Current position: 1.05x the old kernel's time against
+a 0.43x allocation win on the same row; the time moved with the self-contained map
+design (the whole rescue family did, while staying at old-kernel parity elsewhere).
+The next optimization target if the performance campaign reopens.
