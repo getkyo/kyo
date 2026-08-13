@@ -128,7 +128,13 @@ final private[kyo] class Http1ClientConnection(
     /** The inbound channel for reading remaining body bytes (for streaming or large bodies). */
     def bodyChannel: Channel.Unsafe[Span[Byte]] = inbound
 
-    /** Resets and returns the connection-scoped DecoderState for reuse on a new chunked response. */
+    /** Resets and returns the connection-scoped DecoderState for a new BUFFERED chunked response.
+      *
+      * Buffered decodes only: a buffered decode is strictly intra-request (the connection is not released until the
+      * response promise completes at decode end), so reusing one zero-alloc state across responses is safe. A
+      * STREAMING decode outlives the request scope (its body IOTask runs past response delivery), so it allocates its
+      * own DecoderState; handing it this shared instance would let the next request's reset corrupt a live decode.
+      */
     def chunkedDecoderState: ChunkedBodyDecoder.DecoderState =
         decoderState.reset()
         decoderState
