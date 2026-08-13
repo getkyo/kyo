@@ -61,26 +61,29 @@ private[kyo] object DomBackend:
             _    <- Sync.defer(seedEnter(container, Set.empty))
             _    <- Sync.defer(seedFocusAuto(container, Set.empty))
             _    <- Sync.defer(beginAnimationsSync(container))
-            _    <- setupInputMasking()
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
-            // Single-consumer drain owned by the ambient page Scope: every JS event effect is run by a
-            // Fiber.init consumer (interrupted on page teardown). The single consumer preserves event ordering
-            // and is scoped, so page teardown interrupt propagates to the drain via the ambient Scope.
+            // Single-consumer drain owned by the ambient page Scope. The single consumer preserves event ordering.
             events <- Channel.init[Unit < Async](256)
             // runPartial captures only the Closed failure (the channel closed on page teardown -> stop draining); a
             // Panic propagates rather than being silently swallowed as a clean drain end.
             // The drain carries the session's scroll sink: a handler calling UI.scrollIntoView scrolls the
             // local document, the browser-mount counterpart of the server session's WebSocket op.
-            _ <- Fiber.init(UICommands.scrollSink.let(Present(scrollLocal)) {
-                DragCommands.resolveSink.let(Present(resolveLocal)) {
-                    Loop.foreach(Abort.runPartial[Closed](events.take).map {
-                        case Result.Success(eff) => eff.andThen(Loop.continue)
-                        case Result.Failure(_)   => Loop.done
-                    })
-                }
-            })
+            _ <- Scope.acquireRelease(
+                Fiber.initUnscoped(UICommands.scrollSink.let(Present(scrollLocal)) {
+                    DragCommands.resolveSink.let(Present(resolveLocal)) {
+                        Loop.foreach(Abort.runPartial[Closed](events.take).map {
+                            case Result.Success(eff) => eff.andThen(Loop.continue)
+                            case Result.Failure(_)   => Loop.done
+                        })
+                    }
+                })
+            )(drain => drain.interrupt.andThen(drain.getResult).unit)
+            // Finalizers are LIFO. Register the drain first, then the channel, then listeners, so teardown
+            // removes callbacks before closing their queue and finally interrupts and joins the drain.
+            _ <- Scope.ensure(events.close.unit)
             _ <- setupEventDelegation(dispatch.handle, events)
+            _ <- setupInputMasking()
             _ <- Async.never
         yield ()
         end for
@@ -364,10 +367,30 @@ private[kyo] object DomBackend:
         found
     end declaredInChain
 
+    private def addScopedListener(
+        eventType: String,
+        listener: scalajs.js.Function1[dom.Event, Unit],
+        capture: Boolean
+    )(using Frame): Unit < (Scope & Sync) =
+        Sync.defer(document.body.addEventListener(eventType, listener, capture)).andThen {
+            Scope.ensure(Sync.defer(document.body.removeEventListener(eventType, listener, capture)))
+        }
+    end addScopedListener
+
+    private def addScopedListener(
+        eventType: String,
+        listener: scalajs.js.Function1[dom.Event, Unit],
+        options: dom.EventListenerOptions
+    )(using Frame): Unit < (Scope & Sync) =
+        Sync.defer(document.body.addEventListener(eventType, listener, options)).andThen {
+            Scope.ensure(Sync.defer(document.body.removeEventListener(eventType, listener, options)))
+        }
+    end addScopedListener
+
     /** Set up capture-phase event delegation on document.body. */
     private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async, events: Channel[Unit < Async])(using
         Frame
-    ): Unit < Sync = Sync.defer {
+    ): Unit < (Scope & Sync) =
         final class ChainTypes(target: dom.Element):
             def contains(t: String): Boolean = declaredInChain(target, t)
 
@@ -512,15 +535,21 @@ private[kyo] object DomBackend:
             }
         end handler
 
-        Seq("click", "input", "change", "submit", "keydown", "keyup", "focus", "blur", "mouseover", "mouseout").foreach { t =>
-            document.body.addEventListener(t, handler, true)
-        }
-        document.body.addEventListener(
-            "wheel",
-            handler,
-            js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
-        )
-    }
+        val wheelOptions = js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
+        for
+            _ <- addScopedListener("click", handler, true)
+            _ <- addScopedListener("input", handler, true)
+            _ <- addScopedListener("change", handler, true)
+            _ <- addScopedListener("submit", handler, true)
+            _ <- addScopedListener("keydown", handler, true)
+            _ <- addScopedListener("keyup", handler, true)
+            _ <- addScopedListener("focus", handler, true)
+            _ <- addScopedListener("blur", handler, true)
+            _ <- addScopedListener("mouseover", handler, true)
+            _ <- addScopedListener("mouseout", handler, true)
+            _ <- addScopedListener("wheel", handler, wheelOptions)
+        yield ()
+        end for
     end setupEventDelegation
 
     private def findPathElement(el: dom.Element): Maybe[dom.Element] =
@@ -672,7 +701,7 @@ private[kyo] object DomBackend:
         dispatchInput(t)
     end setFilteredAt
 
-    private def setupInputMasking()(using Frame): Unit < Sync = Sync.defer {
+    private def setupInputMasking()(using Frame): Unit < (Scope & Sync) =
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
             val tRaw = e.target
             if tRaw != null then
@@ -747,9 +776,9 @@ private[kyo] object DomBackend:
                     end if
                 end if
             end if
-        document.body.addEventListener("beforeinput", handler, true)
-        document.body.addEventListener("compositionend", compositionEndHandler, true)
-    }
+        addScopedListener("beforeinput", handler, true).andThen {
+            addScopedListener("compositionend", compositionEndHandler, true)
+        }
     end setupInputMasking
 
     /** Corrects the whole value once a composition finishes.
