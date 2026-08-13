@@ -190,14 +190,6 @@ runs:
           echo "ubuntu runc package Conflicts with containerd.io, and installing it removes docker-ce." >&2
           exit 1
         fi
-        # ===== TEMP during-test resource sampler (diagnostic; revert after) =====
-        ( while true; do
-            echo "RESMON ts=$(date +%s) hthreads=$(ps -eL --no-headers 2>/dev/null | wc -l) hprocs=$(ps -e --no-headers 2>/dev/null | wc -l) conmon=$(pgrep -xc conmon 2>/dev/null || echo 0) cleanup=$(ps -eo args 2>/dev/null | grep -c '[c]ontainer cleanup') ctrs=$(podman ps -q 2>/dev/null | wc -l) memused=$(free -m 2>/dev/null | awk '/Mem:/{print $3}')"
-            sleep 5
-          done ) >> "$HOME/resmon.log" 2>&1 &
-        disown || true
-        echo "RESMON sampler launched"
-        # ===== END TEMP sampler =====
 
     - name: Configure build environment (Windows)
       if: ${{ contains(inputs.os, 'windows') }}
