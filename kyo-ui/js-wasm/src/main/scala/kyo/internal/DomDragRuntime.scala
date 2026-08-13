@@ -630,17 +630,18 @@ private[kyo] object DomDragRuntime:
             var valid     = true
             val rawTypes  = transfer.types
             if !js.isUndefined(rawTypes) && rawTypes != null then
-                val types = rawTypes.asInstanceOf[js.Array[String]]
-                var index = 0
+                val types     = rawTypes.asInstanceOf[js.Array[String]]
+                val seenTypes = mutable.Set.empty[Drag.MediaType]
+                var index     = 0
                 while index < types.length do
                     val raw = types(index)
                     if !raw.equalsIgnoreCase("Files") then
                         Drag.MediaType.parse(raw) match
-                            case Present(mediaType) if mediaType.render == "text/uri-list" =>
-                                val value = transfer.getData(raw).asInstanceOf[String]
-                                if value.nonEmpty then collected.addOne(DragProtocol.ItemData.Uri(value))
                             case Present(mediaType) =>
-                                if text.contains(mediaType) then valid = false
+                                if !seenTypes.add(mediaType) then valid = false
+                                else if mediaType.render == "text/uri-list" then
+                                    val value = transfer.getData(raw).asInstanceOf[String]
+                                    if value.nonEmpty then collected.addOne(DragProtocol.ItemData.Uri(value))
                                 else if text.size < limits.maxTextRepresentationCount then
                                     text(mediaType) = transfer.getData(raw).asInstanceOf[String]
                                 else valid = false
