@@ -139,15 +139,20 @@ runs:
         # "crun: unknown version specified" (an OCI config version it rejects), which fails every
         # kyo-pod container integration test. runc accepts the config podman writes, so the service and
         # every container it starts use runc instead.
-        # exit_command_delay: seconds conmon waits after a container/exec process exits before running podman's cleanup
-        # exit-command (which reaps the session, its conmon, and its kernel keyring key). The default is 300s: every exec
-        # then leaves a conmon alive for 5 minutes. The kyo-pod container suites issue hundreds of execs (ContainerItTest
-        # alone runs 800+), so at 300s those conmon pile into the thousands and, on the memory/PID-constrained JS/Wasm/Native
-        # runners, exhaust the rootless user's process table until an in-container `sh` cannot fork ("Resource temporarily
-        # unavailable"), failing later container tests intermittently. kyo-pod reads each exec's exit code immediately, so the
-        # long retention buys nothing here; 10s reaps sessions promptly and keeps the live-conmon count bounded.
+        # exit_command_delay: seconds conmon defers podman's cleanup exit-command after an exec (or container) process
+        # exits. That exit-command reaps the exec session, its conmon pair, and its kernel keyring key. The podman HTTP
+        # API, unlike the CLI (which cleans up synchronously in the calling process), exposes no call to force exec-session
+        # cleanup, so this delay is the only lever. At the 300s default every API exec leaves a conmon alive for five
+        # minutes; the kyo-pod container suites issue hundreds of execs (ContainerItTest alone runs 800+), so on the
+        # rootless runners the deferred conmon accumulate and exhaust the user's process table until an in-container `sh`
+        # cannot fork ("Resource temporarily unavailable"), failing later container tests. Any positive delay leaves an
+        # accumulation window that a fast concurrent exec rate (observed on the JS runner) still overflows, so set it to 0:
+        # cleanup then runs the instant each exec exits, matching CLI behavior, and live conmon never accumulate regardless
+        # of exec rate. Verified against a real rootless podman: a burst of API execs holds the live-conmon count flat at
+        # baseline with delay=0, versus climbing by two per exec at any positive delay. kyo-pod reads each exec's exit code
+        # immediately, so nothing depends on the retention.
         mkdir -p "$HOME/.config/containers"
-        printf '[engine]\nruntime = "runc"\nexit_command_delay = 10\n' > "$HOME/.config/containers/containers.conf"
+        printf '[engine]\nruntime = "runc"\nexit_command_delay = 0\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the
