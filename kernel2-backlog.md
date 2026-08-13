@@ -4,51 +4,35 @@ Queues: implementing, designing, awaiting ruling, next up, parked. Each item car
 its own context so it reads without the linked docs; the docs carry the full designs.
 Done work is removed once acked. Last update: 2026-08-12.
 
+## Done, awaiting your ack (removed from the file once acked)
+
+### Loop TODO resolved, with a design deviation the compiler forced (`58d523b805`)
+
+The designed bare-Outcome return failed its own compile gate: 58 sites in the module
+stop compiling, because kernel2's Loop kind answers with settled values into pending
+answer slots (origin/main's clause sites always pass already-pending answers, which
+is why its bare constructors infer there). What landed instead answers your TODO's
+actual complaints: the runtime lift on `continue` is gone (unreachable: Continue is
+not Boxed), the lift on `done` stays with a new pin explaining it is load-bearing
+(the payload may be a computation held as data), state accessors became vals, the
+currency rule in CONTRIBUTING is rewritten, and the TODO is deleted. Suite 634
+passed. The design doc's section 4.3 stands rejected by evidence.
+
+### dispatchFirst (`fe5a1ce6aa`)
+
+As specified: region-peeling walk over Handled/HandledState/HandledFirst values to
+the standing suspension, tag test in the same direction as find and handlePartial
+(the old kernel spelled it the other way), runs the clause on the input only, stops
+at Defer and settled values so no user code runs from a dead remainder. 73 test
+lines covering the peel depths, no-match, and both stops.
+
+### Safepoint.stop ends its probe at the first unclaimed cell (`76de3d9cf7`)
+
+The 65536-volatile-read worst case for never-evaluated threads is gone. The commit
+cites all three cell-table write sites for the never-null-again invariant and the
+claim-from-home argument, with a mixed-occupancy test in SafepointConcurrencyTest.
+
 ## Implementing now
-
-### Loop constructors return bare Outcome
-
-Context: `Loop.continue`/`Loop.done` are the constructors handler clauses use to answer
-an operation (continue with a new state and answer, or finish the region). In kernel2
-they return `Outcome[...] < S`, pending-wrapped, with an explicit `Nested.lift` and an
-extra type parameter on every constructor; your TODO at Loop.scala:183 asks why. The
-answer from the analysis: an inference workaround from the deleted lower-bound era that
-outlived its cause and broke signature parity with the old kernel.
-
-Design: bare `Outcome[...]` returns matching origin/main exactly; the lift moves to the
-use sites where the implicit conversion already fires; ten runner sites inside
-Loop.scala adjust; handler clause types are unchanged (they consume pending positions,
-bare values convert). Origin/main compiles 1,750 call sites over the same currency with
-a stricter lift; one compile settles the inference question and gates the change.
-(`kernel2-todos-design.md` section 4.)
-
-### dispatchFirst
-
-Context: the old kernel has a `private[kyo]` sibling of handleFirst that IOTask uses
-for the interrupt-before-join cascade repair: look at the head of a computation, and if
-the standing suspension is a given effect, run a side-effecting inspection of its input
-without answering or changing anything. Kernel2 lacks it, and on kernel2 the standing
-suspension can be wrapped in region nodes, so a head test must peel them.
-
-Design: a `private[kyo]` inline entry beside handleFirst that walks `Handled` /
-`HandledState` / `HandledFirst` values to the standing suspension, tests its tag, runs
-the given function on a match, stops at a `Defer` or settled value, returns Unit,
-computation untouched. (`iotask-kernel2-integration-r2.md` 5.5, origin/main
-ArrowEffect.scala as the contract reference.)
-
-### Safepoint.stop cheap negative (was IOTask ruling R6)
-
-Context: `Safepoint.stop(thread)` delivers preemption by locating the target thread's
-slot; for a live thread that never evaluated, the probe walks the whole table (65536
-volatile reads) on the caller's thread. The early exit is correct by two invariants:
-slot entries never return to null once claimed, and claim takes the first free slot
-walking forward from home, so a null reached while probing proves the thread has no
-slot.
-
-Status: implementing now (kernel2-impl, third task in its queue): a null arm in the
-probe match returning false, plus a mixed-occupancy strengthening of the existing
-"stop misses a thread that never evaluated" pin. Pulled out of the parked IOTask
-theme per your note; the rest of IOTask stays parked.
 
 ### Exception enrichment (EffectTrace successor)
 
