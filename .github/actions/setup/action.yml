@@ -149,8 +149,9 @@ runs:
         # accumulation window that a fast concurrent exec rate (observed on the JS runner) still overflows, so set it to 0:
         # cleanup then runs the instant each exec exits, matching CLI behavior, and live conmon never accumulate regardless
         # of exec rate. Verified against a real rootless podman: a burst of API execs holds the live-conmon count flat at
-        # baseline with delay=0, versus climbing by two per exec at any positive delay. kyo-pod reads each exec's exit code
-        # immediately, so nothing depends on the retention.
+        # baseline with delay=0, versus climbing by two per exec at any positive delay. delay=0 also reaps the exec session
+        # itself immediately, so the exit-code read (GET /exec/{id}/json) can 404; HttpContainerBackend.exec recovers the
+        # code from the daemon's durable exec_died event in that case, so correctness does not depend on the retention.
         mkdir -p "$HOME/.config/containers"
         printf '[engine]\nruntime = "runc"\nexit_command_delay = 0\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
