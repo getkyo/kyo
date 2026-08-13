@@ -23,35 +23,61 @@ ruling: answering through a passed continuation costs nothing at depth one (80.3
 in the codebase uses cont for anything but immediate application, so the no-cont
 clause keeps the depth-independent in-place answering at no expressiveness loss.
 
-### One-macro lift: CanLift carries the lint, the emission is macro-free (`79043c80a4`)
+### One-macro lift: the lint is a given, the emission is the macro (`79043c80a4` plus the follow-up in flight)
 
-Your direction ("a single CanLift macro that derives, and lift just takes the
-evidence"), landed with the old kernel's factoring and kernel2's soundness. The
-pending lint rides the NotGiven parameter, resolved where the conversion is written
-and baked, so generic paths are waived and stay sound through the runtime box; the
-single macro rejects kyo modules; the lift body is macro-free (erasedValue casts the
-trivial shapes, CanLift.lift boxes the rest at runtime). Failures found and fixed on
-the way, each by probe: covariant evidence let the negation solve through Nothing so
-the lint never fired (invariance is load-bearing and documented); the opaque-Boolean
-strategy literal did not survive inlining proxies; a plain compiletime.error trap
-replaced the abortCastUnit macro because a failed nested evidence inside a conversion
-candidate surfaces as a plain mismatch, so the trap must win the search to speak.
-Deleted: LiftMacro.scala, liftUnit (Unit rides liftAnyVal), one macro of two.
+Your direction ("a single CanLift macro, and lift just takes the evidence") landed,
+and the measurement forced the split to its final shape. The rule that decides the
+structure: **the lint must not re-expand, the emission must.** So the lint is a
+macro-free given whose NotGiven parameter resolves where the conversion is written
+and is baked (which waives a generic inline context, the root cause of the
+computation-as-data rejections), and the single macro is the emission, re-expanded
+per site so each type gets its own strategy:
+
+    // CanLift.scala, the lint
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
+    // same file, the one macro
+    private[kyo] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
+    // Implicits.scala, the whole conversion
+    implicit inline def lift[A: CanLift, S](v: A): A < S = CanLift.lift[A, S](v)
+
+Four designs were built and measured before this one. Covariant evidence let the
+negation solve through Nothing so the lint never fired (invariance is load-bearing,
+documented). An opaque-Boolean strategy literal did not survive dotc's inlining
+proxies. Putting the emission in the lift body as an erasedValue match compiled and
+passed, but lost the macro's per-type analysis and cost
+userTypesSkipKernelWrapping 10.4 percent (34.0 to 37.5, tight bars, allocation
+byte-identical, so pure CPU: the bytecode pin showed final classes going from a
+2-byte cast to an 8-byte call doing a runtime Boxed test). Making the evidence itself
+the lifter recovered the cast in principle but inflated every lift site to 23 bytes
+through the virtual call, which would eat JIT inline budget in exactly the rows that
+protect it.
+
+Deleted along the way: LiftMacro.scala, liftUnit, liftAnyVal (the macro's isValue arm
+covers primitives, pin-verified at 2 bytes), and the hand-maintained erasedValue type
+list. The public conversion surface is now lift, abortCastUnit, and the six function
+lifts; abortCastUnit survives as a plain inline compiletime.error trap because a
+failed nested evidence inside a conversion candidate surfaces as a plain mismatch, so
+the trap must win the search to speak, pinned by the negative dotc fixture.
 liftInternal stays with its true justification recorded: the kernel's core files sit
 in a bootstrap cycle with any macro-bearing evidence, so the module cannot summon its
-own derivation. The computation-as-data pins compile un-annotated and now verify the
-boxed runtime path. Suite green: 686 passed, 1 ignored.
+own derivation. Bytecode pins: primitive, String, and concrete class at 2 bytes, the
+generic path at 8 through a monomorphic bridge. Suite green: 686 passed, 1 ignored.
 
-Gates: the 903 negative dotc fixture passes; allocation byte-identical on all six
-guard rows (your boxing concern is settled: zero new allocation anywhere). Timing
-verdicts are deferred to a quiet machine: a concurrent 32G kyo-core compile
-contaminated the window (error bars 5 to 50x the morning baselines). Open watches for
-the quiet re-measure: userTypesSkipKernelWrapping (37.7 noisy vs 34.0; the one
-plausible real effect is the deliberate trade of the emission macro's static cast for
-the runtime Boxed test on final classes, and if it confirms, the static analysis
-returns as an inline arm without reopening the design) and the liftAnyVal
-question (config B, deleting it, runs the same fixtures to decide whether it earns
-its place).
+Gates, on a quiet machine: the 903 negative dotc fixture passes; the full 13-fixture
+compile board came back flat-to-better against the morning baselines (Baseline 129.8
+to 124.0, NestedMaps 734.7 to 691.5, MapChainDeep100 8603 to 8430, FlatMapChains
+414.8 to 395.3, MapChainWide100 523.9 to 507.6, ForComprehensions 663 to 652,
+ForCompDeep25 flat, TagDerivation 117.3 to 118.1), so the evidence search costs
+nothing measurable at compile time; allocation is byte-identical on every guard row,
+which settles the boxing question outright. Final verification of the restored
+emission (3 forks on the affected rows plus the full fixture board with liftAnyVal
+deleted) is running now.
+
+One open item it will also settle: statefulAnswersPaySuccessor read 118.9 to 123.6
+(+4 percent) with +16 B/op. The allocation delta is one object per region completion
+(0.0014 percent of the row's 1.1 MB churn) and cannot explain 4.7 us, so the time is
+either the parity port's completion arm or a single-fork JIT draw; the three-fork run
+separates them.
 
 ### Lifting out of the box for Loop.Outcome: four designs built and gated, the winner is bare done plus the currency-shaped continue
 
