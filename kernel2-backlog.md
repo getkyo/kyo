@@ -55,26 +55,40 @@ uncontended. Workflow on completion, per your note: I review the work and iterat
 with the agent until the code is clean, elegant, and fully functional, then merge the
 changes into this branch. Design: `exception-enrichment-design.md`.
 
-## Designing now (context-isolation-design agent)
+## Designed, awaiting your read (value-forks V1-V4)
 
 ### ContextEffect isolation encoding
 
-Context: forking must carry context effects (Local, Env: scoped values, always safe to
-inherit) into the child. The old kernel did this generically: context values live in
-the Context map, and the fork copies entries (`Isolate.internal.runDetached`/
-`restoring`), with Noninheritable filtered out. Kernel2 deleted the map; context
-effects are ordinary regions on the handler stack, so the generic copy has no direct
-translation, and the Isolate design (kept as-is by ruling) needs a kernel2 encoding
-for its "simple state copying" category.
+Context: forking must carry context effects (Local, Env: scoped values, always safe
+to inherit) into the child. The old kernel did this generically through the Context
+map (`Isolate.internal.runDetached`/`restoring`, Noninheritable filtered); kernel2
+deleted the map, so the "simple state copying" category of the as-is Isolate design
+needs a kernel2 encoding.
 
-Design in progress, two candidates plus better if found: (a) boundary inheritance: the
-fork transplants standing context cells into the child (Noninheritable skips); no
-instance involved; (b) derived per-effect instances over the as-is interface: capture =
-read the value, isolate = `ContextEffect.handle(tag, state)(v)` child-side, restore =
-identity, emitted mechanically by derive. The parity bar is the old kernel's exact
-semantics: inheritable/noninheritable, Env's union-on-nest, Local's merge, a mixed
-context-plus-stateful row through derive. Deliverable:
-`contexteffect-isolation-design.md`.
+Design landed (`contexteffect-isolation-design.md`, committed): **boundary
+inheritance, narrowed to context cells, with a structural recognizer** for which
+regions to transplant. Three independent findings each rule out the derived-instances
+alternative: Local never appears in any effect row (`Local.get` is `A < Any`), so a
+row-driven derivation emits nothing for it and every fork would silently reset locals
+to defaults, breaking pinned behavior; Env installs and reads through the erased
+`Tag[Env[Any]]`, so a mechanically derived per-member instance would install cells
+its own reads cannot find; and downstream opaque aliases (`Topic <: Env[...]`,
+`Arena <: Env[...] & Sync`) would each need hand-written instances where the
+ContextEffect filter covers them today. The one real advantage of the instance
+approach (flattening N nested bindings into one cell for the child) folds into the
+boundary as transplant-time compaction. The derive macro's existing ContextEffect
+filter ports verbatim; no Isolate instance is involved for context members; the
+state-aware region exit is NOT needed for context members (only stateful ones,
+which need it regardless).
+
+Your value-forks, from its section 10: V1 layered context resolved at region entry
+vs at each read (entry resolution deletes the N-probes-per-read factor; differs
+observably in one re-entry case; origin/main is on the lazy side; either needs a
+pin). V2 recognizer as a named provision handler vs a tag test (structural and
+cheaper on the walk vs smaller today and admitting user handlers over context tags).
+V3 where the Noninheritable bit is decided (region construction vs fork time; pure
+measurement). V4 whether transplant ever copies more than provision cells (the doc
+narrows to provision cells, keeping the old split intact).
 
 ## Next up
 
