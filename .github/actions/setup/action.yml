@@ -195,6 +195,8 @@ runs:
         echo "RESPROBE ulimit_u_soft=$(ulimit -Su) ulimit_u_hard=$(ulimit -Hu) threads_max=$(cat /proc/sys/kernel/threads-max 2>/dev/null) pid_max=$(cat /proc/sys/kernel/pid_max 2>/dev/null) nproc=$(nproc) mem_mb=$(free -m 2>/dev/null | awk '/Mem:/{print $2}') swap_mb=$(free -m 2>/dev/null | awk '/Swap:/{print $2}') $(grep exit_command_delay "$HOME/.config/containers/containers.conf")"
         echo "RESPROBE baseline threads=$(ps -eL --no-headers 2>/dev/null | wc -l) procs=$(ps -e --no-headers 2>/dev/null | wc -l) conmon=$(pgrep -xc conmon 2>/dev/null || echo 0)"
         echo "RESPROBE DONE"
+        # Deliberate fast-fail so the setup step archives its log immediately (cancelling the run truncates it).
+        echo "RESPROBE intentional-exit-1-to-surface-log"; exit 1
         set -e
         # ===== END TEMP LIMITS PROBE =====
 
