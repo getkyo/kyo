@@ -4,7 +4,7 @@ Queues: implementing, designing, awaiting ruling, next up, parked. Each item car
 its own context so it reads without the linked docs; the docs carry the full designs.
 Done work is removed once acked. Last update: 2026-08-12.
 
-## Implementing now (kernel2-impl agent)
+## Implementing now
 
 ### Loop constructors return bare Outcome
 
@@ -36,6 +36,25 @@ the given function on a match, stops at a `Defer` or settled value, returns Unit
 computation untouched. (`iotask-kernel2-integration-r2.md` 5.5, origin/main
 ArrowEffect.scala as the contract reference.)
 
+### Exception enrichment (EffectTrace successor)
+
+Context: kernel2 dropped the old kernel's always-on trace ring (16 frames recorded per
+step through Safepoint, per-platform pools). Failures currently carry only the physical
+stack. The design restores effect-level frames by reconstruction: at the few boundaries
+an exception crosses, walk the live continuation chain and handler stack (Transforms
+and suspensions already carry Frames) and splice synthesized frames into the
+exception, with a suppressed carrier for accumulation and idempotence. Also unblocks
+the five ignored fiberTrace tests (same walker over a fiber's residual), and includes
+the standalone fix for the Eval save/restore leak (an escaping throw currently leaves
+the thread's budget and armed bit as the aborted drive left them).
+
+Status: an opus agent is implementing it end to end in an isolated worktree, taking
+the design's own recommendations as provisional defaults for the unruled points (each
+application recorded), full suite as the gate, JMH A/B only if the machine is
+uncontended. Workflow on completion, per your note: I review the work and iterate
+with the agent until the code is clean, elegant, and fully functional, then merge the
+changes into this branch. Design: `exception-enrichment-design.md`.
+
 ## Designing now (context-isolation-design agent)
 
 ### ContextEffect isolation encoding
@@ -57,104 +76,95 @@ semantics: inheritable/noninheritable, Env's union-on-nest, Local's merge, a mix
 context-plus-stateful row through derive. Deliverable:
 `contexteffect-isolation-design.md`.
 
-## Awaiting your ruling
+## Next up
+
+### Handlers encapsulation (your TODO at Handlers.scala:8)
+
+Provenance: your review TODO, "can we encapsulate so the internal representation is
+easier to evolve later?", sized by what has happened since: adding FirstNode for
+handleFirst had to touch every place that enumerates the node classes (seven sites).
+
+Context: Handlers is the evaluator's stack of installed handler regions, a linked
+list of Node (stateless handler), StateNode (stateful), and FirstNode (one-shot).
+Five operations walk it: find (locate the handler for a suspension's tag; hot, once
+per answered operation), the settled-value pop, rebuild (turn a stack prefix back
+into a value when parking), replace (functional state update), and the isolate design
+adds a transplant. Every one pattern-matches the node classes today, and find reads
+the tag through `handler.tag`, a megamorphic call because every handle site expands
+its own anonymous handler class.
+
+Design direction, per your note: no exposed hierarchy. `Handlers` stays the single
+type, and the needs become methods on it: find, the pop, rebuild, replace and the
+state update, and later the transplant. The node classes become private
+implementation inside the object; Eval stops matching them anywhere and calls the
+methods; the per-kind operation dispatch also goes behind the surface (the found
+region hands back its handler through the existing Handler kinds, which are already
+the public vocabulary). Internally the tag is a field so find is a walk of field
+reads, closing the megamorphic call. Adding a future region kind then touches one
+file. Constraint to hold: no dispatch regression on the hot path (JMH-gated,
+sharedHandlerPaysDispatch is the row). The design doc's exposed-hierarchy shape
+(`kernel2-todos-design.md` section 2) is superseded by this direction; internal names
+are yours to rule at review.
+
+### deepRecursion rescue-path time (implement, with a bar)
+
+Context: `deepRecursionPaysRescuesOnly` measures trampolined recursion through the
+safepoint budget's rescue path. Current position: 1.05x the old kernel's time against
+a 0.43x allocation win on the same row. The time moved with the self-contained map
+design: the whole rescue family did (fusionPastBudget 32.8 to 47.9 us against its own
+earlier board, while staying at old-kernel parity), so the regression has a located
+cause to root-cause rather than a mystery.
+
+Status and bar, per your note: implement, diligently. Root-cause first (profile the
+rescue path, attribute the time between the Defer mint, the reset, and the re-entry
+dispatch), then the simplest fix that addresses the cause, then a JMH A/B on
+deepRecursionPaysRescuesOnly and fusionPastBudgetPaysRescuesOnly proving a measured
+improvement. Merge only if the code is simple and elegant to integrate; otherwise
+park it with the findings recorded. Queued behind the two implementation agents so
+the measurements are clean; I own this one.
+
+### JS, Native, and Wasm compile check (delayed to a bigger sweep)
+
+Context: kernel2 declares all four platforms with zero platform-specific sources, and
+only JVM has ever been compiled. The shared Safepoint uses AtomicReferenceArray,
+Thread.currentThread, and Thread.threadId(); whether every platform compiles and
+links is unverified and gates any platform-parity claim. Per your note: do it, folded
+into a bigger sweep rather than now.
+
+## Parked (your call to revive)
 
 ### Bracket primitive
 
 Context: acquire/use/release with the fixed contract: use fully interruptible; no
 interruption between acquire finishing and use starting; release always executes
-(normal completion, exception unwind, and discard of an interrupted fiber's remainder)
-and runs to completion once started. Ruled already: not served via Isolate (release on
-a short-circuit that truncates the owning region is the inexpressible core). IOTask
-adds R-B1 (discard entry synchronous, Unit), R-B2 (a throw escaping a partial drive
-already ran what it unwound), R-B3 (a done-truncation runs the discarded regions'
-releases).
+(normal completion, exception unwind, and discard of an interrupted fiber's
+remainder) and runs to completion once started. Ruled: not served via Isolate
+(release on a short-circuit that truncates the owning region is the inexpressible
+core). IOTask adds R-B1 (discard entry synchronous, Unit), R-B2 (a throw escaping a
+partial drive already ran what it unwound), R-B3 (a done-truncation runs the
+discarded regions' releases).
 
-Three designs on disk. `bracket-node-design.md`: a `Kyo.Bracket` node that exists
-exactly when the resource exists; acquire chains into one strict transform that reads
-the resource and allocates obligation and node with no budget check between, so the
-gap closes by representation, no mask, effectful acquire included; weakness: a
-captured continuation carrying a bracket segment is a value fork.
-`bracket-handler-design.md`: a handler kind whose region state accumulates
-obligations via a register op; Scope becomes a direct instance; needs a mask cell for
-the gap; weakness: taxes the handler-stack walk for every open region's lifetime plus
-a round trip per resource. `bracket-effect-design.md` (the probe): the contract is not
-expressible in the current algebra; the minimal kernel assist is a per-cell disposal
-hook over truncation-discarded regions plus one catch at the evaluator boundary;
-everything else in the siblings is convenience.
+Three designs on disk, judgment deferred by your call. `bracket-node-design.md`: a
+`Kyo.Bracket` node that exists exactly when the resource exists; acquire chains into
+one strict transform that reads the resource and allocates obligation and node with
+no budget check between, so the gap closes by representation, no mask, effectful
+acquire included; weakness: a captured continuation carrying a bracket segment is a
+value fork. `bracket-handler-design.md`: a handler kind whose region state
+accumulates obligations via a register op; Scope becomes a direct instance; needs a
+mask region for the gap; weakness: taxes the handler-stack walk for every open
+region's lifetime plus a round trip per resource. `bracket-effect-design.md` (the
+probe): the contract is not expressible in the current algebra; the minimal kernel
+assist is a per-cell disposal hook over truncation-discarded regions plus one catch
+at the evaluator boundary; everything else in the siblings is convenience. When
+revived, the ruling should decide that shared disposal walk explicitly (consumers:
+bracket unwind, R-B3 truncation, enrichment frames).
 
-The ruling should decide that shared disposal walk explicitly: its consumers are
-bracket unwind, R-B3 truncation, and enrichment frames (and the parked
-catching-as-region if ever revived). Decision axes: gap mechanism (representation vs
-mask) and steady-state cost (node free on the hot walk; handler taxes it).
+### kyo-bench arena rows, old vs new kernel (task #8)
 
-### Exception enrichment (EffectTrace successor)
-
-Context: kernel2 dropped the old kernel's always-on trace ring (16 frames recorded per
-step through Safepoint, per-platform pools). Failures currently carry only the physical
-stack. The design restores effect-level frames by reconstruction: at the few boundaries
-an exception crosses, walk the live continuation chain and handler stack (Transforms
-and suspensions already carry Frames; cells carry tags) and splice synthesized frames
-into the exception, with a suppressed carrier for accumulation and idempotence. Also
-unblocks the five ignored fiberTrace tests (same walker over a fiber's residual).
-Review status: the executive summary, attach-point inventory, carrier and splice
-sections, and rulings were reviewed against the sources; the full 885 lines were not
-adversarially re-verified. **Implementation-as-validation is now running**: an opus
-agent in an isolated worktree is building the design end to end, taking the doc's own
-recommendations as provisional defaults for the unruled 9.1-9.7 (each application
-recorded), with the full suite as the gate and the JMH A/B run only if the machine is
-uncontended. Performance is the design's organizing constraint (reconstruct-at-throw
-chosen so the non-throwing path pays nothing; per-arm try regions shaped to preserve
-tailrec); the try-region neutrality claim is exactly what the A/B validates. The
-design's finding 8 (Eval save/restore without try/finally leaks budget state on an
-escaping throw) is included in that implementation as a standalone fix. Rulings
-9.1-9.7 in `exception-enrichment-design.md`; 9.6 (the Debug combinator) is explicitly
-out of the implementation's scope.
-
-## Next up (designed, blocked on the bracket ruling)
-
-### Handlers encapsulation (your TODO at Handlers.scala:8)
-
-Provenance: this is the designed answer to your own review TODO, "can we encapsulate
-so the internal representation is easier to evolve later?", sized by what has happened
-since: adding FirstNode for handleFirst had to touch every place that enumerates the
-node classes.
-
-Context: Handlers is the evaluator's stack of installed handler regions, a linked
-list of Node (stateless handler), StateNode (stateful), and FirstNode (one-shot).
-Five operations walk it: find (locate the handler for a suspension's tag; the hot
-one, once per answered operation), the settled-value pop, rebuild (turn a stack
-prefix back into a value when parking), replace (functional state update), and the
-isolate design adds a transplant. Every one of them pattern-matches all three node
-classes: seven enumeration sites today. Separately, find reads the tag through
-`handler.tag`, and since every handle call site expands its own anonymous handler
-class, that call is megamorphic on the hot path.
-
-Design, in existing vocabulary: give Node, StateNode, and FirstNode a shared abstract
-parent inside Handlers that carries what every walk already uses on all of them: the
-exit arrow, prev, the withPrev copy, the rebuilt-node constructor, and the handler's
-tag hoisted to a field. The generic walks then read the parent and stop enumerating
-the concrete classes; only the operation-dispatch arm in Eval still distinguishes
-them, because that is where they genuinely differ. The tag-as-field turns find's
-megamorphic call into a field read: the encapsulation and a hot-path improvement in
-the same change. JMH-gated (sharedHandlerPaysDispatch is the row). The design doc's
-names for the parent and its subdivisions are the agent's proposals, subject to your
-naming. (`kernel2-todos-design.md` section 2.)
-
-### Eval save/restore leak (fix in flight)
-
-Context: `Eval.apply` and `Eval.partial` save the thread's safepoint state on entry
-and restore it on exit, but with no try/finally: an exception escaping the drive
-leaves the thread's budget and armed bit exactly as the aborted drive left them,
-corrupting the next drive on that thread. Pre-existing; surfaced by the enrichment
-analysis (its finding 8).
-
-Status: being fixed now, inside the enrichment implementation running in the isolated
-worktree (the fix wraps the restore in finally at both entry points, with a
-regression test asserting the budget after an escaping throw). If that implementation
-stalls, this fix cherry-picks alone.
-
-## Parked (your call to revive)
+Context: kyo-bench holds the end-to-end arena benchmarks (the cross-framework rows).
+Running them over both kernels is the test of whether the micro-board positions
+matter in realistic workloads. Blocked regardless on the stack above the kernel
+compiling against kernel2, so parking costs nothing today.
 
 ### Effect.catching as a region
 
@@ -229,47 +239,3 @@ null, so a null entry reached while probing proves the thread has no slot).
 
 Status: parked with IOTask; small and standalone if wanted earlier.
 
-## Standing
-
-### kyo-bench arena rows, old vs new kernel (task #8)
-
-Context: kyo-bench holds the end-to-end arena benchmarks (the cross-framework rows).
-Running them over both kernels is the test of whether the micro-board positions
-matter in realistic workloads. Blocked on the stack above the kernel compiling
-against kernel2 (kyo-prelude, kyo-core), so it queues behind the ports.
-
-### Safepoint overflow report decision (task #57)
-
-Context: when the slot table is exhausted, a thread lands on the shared overflow slot,
-which ignores budget operations and misses preemption by design (pinned by test). The
-open decision is whether to restore a one-shot diagnostic report when that happens,
-so an operator learns the table is undersized, and to refresh the stale safepoint
-analysis file that predates the depth-only redesign.
-
-### Fold Implicits back into Pending.scala
-
-Context: the old kernel kept every lift implicit inside `object <` in Pending.scala;
-kernel2 moved them to `kernel/Implicits.scala` during the lift consolidation. Folding
-the trait back restores file-layout parity with the old kernel
-(`kernel-parity-gaps.md` section 2). Pure organization; your call.
-
-### Stray empty directory
-
-Context: `kyo-kernel2/kyo-kernel2/` exists as an empty, untracked directory tree left
-by some earlier tooling. Delete on the next hygiene pass.
-
-### JS, Native, and Wasm compile check
-
-Context: kernel2 declares all four platforms with zero platform-specific sources, and
-this campaign has only ever compiled JVM. The shared Safepoint uses
-AtomicReferenceArray, Thread.currentThread, and Thread.threadId(); whether all
-platforms compile and link is unverified, and it gates any platform-parity claim
-(`kernel-parity-gaps.md` section 4). One compile per platform answers it.
-
-### deepRecursion rescue-path time
-
-Context: `deepRecursionPaysRescuesOnly` measures trampolined recursion through the
-safepoint budget's rescue path. Current position: 1.05x the old kernel's time against
-a 0.43x allocation win on the same row; the time moved with the self-contained map
-design (the whole rescue family did, while staying at old-kernel parity elsewhere).
-The next optimization target if the performance campaign reopens.
