@@ -44,21 +44,4 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.restore(slot, saved)
     }
 
-    "the fused enter resolves the slot and consumes the same budget" in {
-        val slot  = Safepoint.get()
-        val saved = Safepoint.save(slot)
-        val s     = Safepoint.enter()
-        assert(s.entered)
-        Safepoint.exit(s)
-        var entered = 0
-        while Safepoint.enter().entered do entered += 1
-        assert(entered == Period)
-        // the fused drain is visible to the two-step entry: same budget cell
-        assert(!Safepoint.enter(slot))
-        Safepoint.reset(slot)
-        assert(Safepoint.enter().entered)
-        Safepoint.exit(slot)
-        Safepoint.restore(slot, saved)
-    }
-
 end SafepointTest

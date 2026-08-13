@@ -108,27 +108,6 @@ object Safepoint:
         end if
     end resolve
 
-    private inline def Denied: Slot = -1
-
-    extension (self: Slot)
-        /** True when the fused enter() consumed a budget step; a denied slot
-          * must not be exited.
-          */
-        inline def entered: Boolean = self >= 0
-    end extension
-
-    /** Resolves the current thread's slot and consumes one budget step in a
-      * single operation: the common shape at computation sites, which either
-      * proceed (and later exit) or park into a Defer.
-      */
-    @static def enter(): Slot =
-        val thread = Threads.current()
-        val h      = home(thread)
-        val slot   = if slots.get(h) eq thread then h else resolve(thread, h)
-        if depths(slot).enterInto(slot) then slot
-        else Denied
-    end enter
-
     @static def enter(slot: Slot): Boolean =
         depths(slot).enterInto(slot)
 

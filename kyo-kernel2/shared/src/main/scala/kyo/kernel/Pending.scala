@@ -37,8 +37,8 @@ object `<` extends Implicits:
                         kyo.map(arrow.chain(next))
                     case v =>
                         val res  = Kyo.unnest(v)
-                        val slot = Safepoint.enter()
-                        if !slot.entered then
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
                             Kyo.Defer(v, arrow.chain(next))
                         else
                             val step = next.step
@@ -65,8 +65,8 @@ object `<` extends Implicits:
                         kyo.map(arrow.chain(next))
                     case v =>
                         val res  = Kyo.unnest(v)
-                        val slot = Safepoint.enter()
-                        if !slot.entered then
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
                             Kyo.Defer(v, arrow.chain(next))
                         else
                             val step = next.step
@@ -92,8 +92,8 @@ object `<` extends Implicits:
                         kyo.map(arrow)
                     case v =>
                         // the value is discarded, so it stays boxed
-                        val slot = Safepoint.enter()
-                        if !slot.entered then
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
                             Kyo.Defer(v, arrow)
                         else
                             val step = next.step
@@ -119,8 +119,8 @@ object `<` extends Implicits:
                         kyo.map(arrow)
                     case v =>
                         // the value is discarded, so it stays boxed
-                        val slot = Safepoint.enter()
-                        if !slot.entered then
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
                             Kyo.Defer(v, arrow)
                         else
                             val step = next.step
@@ -280,8 +280,8 @@ object `<` extends Implicits:
                         kyo.map(arrow)
                     case v =>
                         val res  = Kyo.unnest(v)
-                        val slot = Safepoint.enter()
-                        if !slot.entered then
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
                             Kyo.Defer(v, arrow)
                         else
                             val step = next.step
