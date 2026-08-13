@@ -17,6 +17,8 @@ import kyo.internal.UIExchange
   */
 class UIEventWiringTest extends kyo.test.Test[Any]:
 
+    override def config = super.config.sequential
+
     import UI.*
 
     /** Minimal UIExchange stub that discards onChange notifications. */
@@ -35,11 +37,18 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             yield subscription.handle
         }
 
-    private def withDispatch[A](ui: UI)(f: ((Seq[String], UIEvent) => Boolean < Async) => A < Async)(using Frame): A < Async =
+    private def withDispatch[A](ui: UI)(f: ((Seq[String], UIEvent) => Boolean < Async) => A < (Async & Scope))(using
+        Frame
+    ): A < Async =
+        withDispatch(ui, ReactiveUI.DragSessionLimits())(f)
+
+    private def withDispatch[A](ui: UI, limits: ReactiveUI.DragSessionLimits)(
+        f: ((Seq[String], UIEvent) => Boolean < Async) => A < (Async & Scope)
+    )(using Frame): A < Async =
         Scope.run {
             for
                 root         <- ReactiveUI.normalize(ui, Seq.empty)
-                subscription <- ReactiveUI.subscribe(root, new NoopExchange)
+                subscription <- ReactiveUI.subscribe(root, new NoopExchange, limits)
                 result       <- f(subscription.handle)
             yield result
         }
@@ -528,6 +537,280 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             )))
             assert(actualResolutions == Chunk(duplicate))
         end for
+    }
+
+    "drag lifecycle serializes concurrent duplicate start drop and sort dispatch" in {
+        def start(id: String) = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Move, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        def target(id: String) = DragProtocol.TargetData(
+            id,
+            Drag.Operation.Move,
+            Absent,
+            Drag.Point(0, 0),
+            UI.Modifiers.none,
+            Absent
+        )
+        val move = Drag.Move(
+            Chunk("a"),
+            Drag.Location("left"),
+            Drag.Location("right"),
+            Absent,
+            Drag.Position.On,
+            Drag.Operation.Move
+        )
+        for
+            entered     <- Latch.init(1)
+            release     <- Latch.init(1)
+            starts      <- AtomicRef.init(0)
+            drops       <- AtomicRef.init(0)
+            sorts       <- AtomicRef.init(0)
+            resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+            ui = UI.div
+                .onDragStart((_: Drag.Event) => starts.getAndUpdate(_ + 1).unit)
+                .onDrop((_: Drag.Event) =>
+                    entered.release.andThen(release.await).andThen(drops.getAndUpdate(_ + 1)).andThen(Drag.Decision.Accept)
+                )
+                .onSortMove((_: Drag.Move) => sorts.getAndUpdate(_ + 1).andThen(Drag.Decision.Accept))
+            _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
+                withDispatch(ui) { dispatch =>
+                    for
+                        _              <- dispatch(Seq.empty, start("drop"))
+                        _              <- dispatch(Seq.empty, start("sort"))
+                        firstDrop      <- Fiber.init(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("drop"))))
+                        _              <- entered.await
+                        firstSort      <- Fiber.init(dispatch(Seq.empty, UIEvent.SortMove(Seq.empty, "sort", move)))
+                        duplicateStart <- Fiber.init(dispatch(Seq.empty, start("drop")))
+                        duplicateDrop  <- Fiber.init(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("drop"))))
+                        duplicateSort <-
+                            Fiber.init(dispatch(Seq.empty, UIEvent.SortMove(Seq.empty, "sort", move)))
+                        _ <- release.release
+                        _ <- firstDrop.get
+                        _ <- firstSort.get
+                        _ <- duplicateStart.get
+                        _ <- duplicateDrop.get
+                        _ <- duplicateSort.get
+                    yield ()
+                }
+            }
+            actualStarts      <- starts.get
+            actualDrops       <- drops.get
+            actualSorts       <- sorts.get
+            actualResolutions <- resolutions.get
+        yield
+            assert(actualStarts == 2)
+            assert(actualDrops == 1)
+            assert(actualSorts == 1)
+            assert(actualResolutions.count(_._1 == "drop") == 2)
+            assert(actualResolutions.count(_._1 == "sort") == 1)
+        end for
+    }
+
+    "concurrent duplicate start admits one session and rejects the other" in {
+        val event = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData("same", Chunk.empty, Drag.Operation.Move, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        val duplicate = Drag.Decision.Reject(
+            Drag.Rejection.Application("A drag session with this identifier is already active.")
+        )
+        for
+            entered     <- Latch.init(1)
+            release     <- Latch.init(1)
+            starts      <- AtomicRef.init(0)
+            resolutions <- AtomicRef.init(Chunk.empty[Drag.Decision])
+            ui = UI.div.onDragStart((_: Drag.Event) =>
+                entered.release.andThen(release.await).andThen(starts.getAndUpdate(_ + 1).unit)
+            )
+            _ <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
+                withDispatch(ui) { dispatch =>
+                    for
+                        first  <- Fiber.init(dispatch(Seq.empty, event))
+                        _      <- entered.await
+                        second <- Fiber.init(dispatch(Seq.empty, event))
+                        _      <- release.release
+                        _      <- first.get
+                        _      <- second.get
+                    yield ()
+                }
+            }
+            actualStarts      <- starts.get
+            actualResolutions <- resolutions.get
+        yield
+            assert(actualStarts == 1)
+            assert(actualResolutions == Chunk(duplicate))
+        end for
+    }
+
+    "drag session capacity and expiry are bounded and generation safe" in {
+        val limits = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.second)
+        def start(id: String) = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        val capacity = Drag.Decision.Reject(Drag.Rejection.Application("Too many active drag sessions."))
+        val expired  = Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+        Clock.withTimeControl { control =>
+            for
+                starts      <- AtomicRef.init(Chunk.empty[String])
+                resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+                ui = UI.div.onDragStart((event: Drag.Event) => starts.getAndUpdate(_.append(event.sessionId)).unit)
+                _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
+                    withDispatch(ui, limits) { dispatch =>
+                        for
+                            _ <- dispatch(Seq.empty, start("first"))
+                            _ <- dispatch(Seq.empty, start("full"))
+                            _ <- dispatch(
+                                Seq.empty,
+                                UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("first", Drag.Operation.Copy, cancelled = true))
+                            )
+                            _ <- dispatch(Seq.empty, start("after-end"))
+                            _ <- control.advance(Duration.Zero, 100.millis)
+                            _ <- control.advance(1.second, 100.millis)
+                            _ <- dispatch(Seq.empty, start("after-end"))
+                        yield ()
+                    }
+                }
+                actualStarts      <- starts.get
+                actualResolutions <- resolutions.get
+            yield
+                assert(actualStarts == Chunk("first", "after-end", "after-end"))
+                assert(actualResolutions == Chunk("full" -> capacity, "after-end" -> expired))
+        }
+    }
+
+    "drop serializes queued over and end while end-first rejects a later drop" in {
+        def start(id: String) = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Move, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        def target(id: String) = DragProtocol.TargetData(
+            id,
+            Drag.Operation.Move,
+            Absent,
+            Drag.Point(0, 0),
+            UI.Modifiers.none,
+            Absent
+        )
+        val unknown = Drag.Decision.Reject(Drag.Rejection.Application("No drop handler accepted the operation."))
+        for
+            entered     <- Latch.init(1)
+            release     <- Latch.init(1)
+            starts      <- AtomicRef.init(0)
+            overs       <- AtomicRef.init(0)
+            drops       <- AtomicRef.init(0)
+            resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+            ui = UI.div
+                .onDragStart((_: Drag.Event) => starts.getAndUpdate(_ + 1).unit)
+                .onDragOver((_: Drag.Event) => overs.getAndUpdate(_ + 1).unit)
+                .onDrop((_: Drag.Event) =>
+                    entered.release.andThen(release.await).andThen(drops.getAndUpdate(_ + 1)).andThen(Drag.Decision.Accept)
+                )
+            _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
+                withDispatch(ui) { dispatch =>
+                    for
+                        _         <- dispatch(Seq.empty, start("ordered"))
+                        dropFiber <- Fiber.init(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("ordered"))))
+                        _         <- entered.await
+                        overFiber <- Fiber.init(dispatch(Seq.empty, UIEvent.DragOver(Seq.empty, target("ordered"))))
+                        endFiber <- Fiber.init(dispatch(
+                            Seq.empty,
+                            UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("ordered", Drag.Operation.Move, cancelled = false))
+                        ))
+                        _ <- release.release
+                        _ <- dropFiber.get
+                        _ <- overFiber.get
+                        _ <- endFiber.get
+                        _ <- dispatch(Seq.empty, start("ordered"))
+                        _ <- dispatch(
+                            Seq.empty,
+                            UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("ordered", Drag.Operation.Move, cancelled = true))
+                        )
+                        _ <- dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("ordered")))
+                    yield ()
+                }
+            }
+            actualStarts      <- starts.get
+            actualOvers       <- overs.get
+            actualDrops       <- drops.get
+            actualResolutions <- resolutions.get
+        yield
+            assert(actualStarts == 2)
+            assert(actualOvers == 0)
+            assert(actualDrops == 1)
+            assert(actualResolutions == Chunk("ordered" -> Drag.Decision.Accept, "ordered" -> unknown))
+        end for
+    }
+
+    "terminal expiry is silent and a stale timer cannot remove a reused identifier" in {
+        val limits = ReactiveUI.DragSessionLimits(maxSessions = 2, lifetime = 2.seconds)
+        def start(id: String) = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        def target(id: String) = DragProtocol.TargetData(
+            id,
+            Drag.Operation.Copy,
+            Absent,
+            Drag.Point(0, 0),
+            UI.Modifiers.none,
+            Absent
+        )
+        Clock.withTimeControl { control =>
+            for
+                drops       <- AtomicRef.init(0)
+                resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+                ui = UI.div.onDrop(drops.getAndUpdate(_ + 1).andThen(Drag.Decision.Accept))
+                _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
+                    withDispatch(ui, limits) { dispatch =>
+                        for
+                            _ <- dispatch(Seq.empty, start("terminal"))
+                            _ <- dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("terminal")))
+                            _ <- dispatch(Seq.empty, start("reuse"))
+                            _ <- control.advance(1.second, 100.millis)
+                            _ <- dispatch(
+                                Seq.empty,
+                                UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("reuse", Drag.Operation.Copy, cancelled = true))
+                            )
+                            _ <- dispatch(Seq.empty, start("reuse"))
+                            _ <- control.advance(1.second, 100.millis)
+                            _ <- dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("reuse")))
+                            _ <- control.advance(1.second, 100.millis)
+                            _ <- dispatch(Seq.empty, start("terminal"))
+                        yield ()
+                    }
+                }
+                actualDrops       <- drops.get
+                actualResolutions <- resolutions.get
+            yield
+                assert(actualDrops == 2)
+                assert(actualResolutions == Chunk("terminal" -> Drag.Decision.Accept, "reuse" -> Drag.Decision.Accept))
+        }
+    }
+
+    "drag session limits reject nonpositive values" in {
+        intercept[IllegalArgumentException](ReactiveUI.DragSessionLimits(maxSessions = 0))
+        intercept[IllegalArgumentException](ReactiveUI.DragSessionLimits(lifetime = Duration.Zero))
+        succeed
+    }
+
+    "closing the subscription scope cancels active expiry work" in {
+        val limits = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.second)
+        val event = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData("closing", Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        Clock.withTimeControl { control =>
+            for
+                resolutions <- AtomicRef.init(Chunk.empty[Drag.Decision])
+                _ <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
+                    withDispatch(UI.div, limits)(_(Seq.empty, event).unit)
+                }
+                _      <- control.advance(1.second, 100.millis)
+                actual <- resolutions.get
+            yield assert(actual.isEmpty)
+        }
     }
 
     "drag activation, dedicated identities, and handle markers render by namespace" in {

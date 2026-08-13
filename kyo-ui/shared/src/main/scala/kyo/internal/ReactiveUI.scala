@@ -122,7 +122,15 @@ private[kyo] object ReactiveUI:
 
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
-    final private case class DragSession(event: Drag.Event, terminalResolved: Boolean)
+    final private case class DragSession(event: Drag.Event, terminalResolved: Boolean, generation: Long)
+
+    final private[kyo] case class DragSessionLimits(
+        maxSessions: Int = 128,
+        lifetime: Duration = 5.minutes
+    ):
+        require(maxSessions > 0, s"DragSessionLimits.maxSessions must be positive: $maxSessions")
+        require(lifetime > Duration.Zero, s"DragSessionLimits.lifetime must be positive: $lifetime")
+    end DragSessionLimits
 
     /** Walk a static UI tree. Collect reactive children, build handle. */
     private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false)(using Frame): (Seq[ReactiveUI], Handler) < Sync =
@@ -703,25 +711,82 @@ private[kyo] object ReactiveUI:
     /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
       * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber).
       */
-    def subscribe(rui: ReactiveUI, exchange: UIExchange)(using Frame): Subscription < (Async & Scope) =
+    def subscribe(
+        rui: ReactiveUI,
+        exchange: UIExchange,
+        dragLimits: DragSessionLimits = DragSessionLimits()
+    )(using Frame): Subscription < (Async & Scope) =
         for
             signalChangeTime <- AtomicRef.init(Instant.Epoch)
             dragSessions     <- AtomicRef.init(Map.empty[String, DragSession])
+            generation       <- AtomicLong.init(0L)
+            dragMutex        <- Meter.initMutex
+            expirations      <- Channel.init[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])](dragLimits.maxSessions)
             _                <- Scope.ensure(dragSessions.set(Map.empty))
-            _                <- subscribeScoped(rui, exchange, signalChangeTime)
-        yield Subscription(dragHandle(rui.handle, dragSessions), signalChangeTime)
+            _ <- Fiber.init {
+                Loop.foreach(Abort.runPartial[Closed](expirations.take).map {
+                    case Result.Success((sessionId, expectedGeneration, resolver)) =>
+                        Fiber.init {
+                            Clock.sleep(dragLimits.lifetime).map(_.get).andThen(dragMutex.run {
+                                sessionsExpired(sessionId, expectedGeneration, resolver, dragSessions)
+                            })
+                        }.unit.andThen(Loop.continue)
+                    case Result.Failure(_) => Loop.done
+                })
+            }
+            _ <- subscribeScoped(rui, exchange, signalChangeTime)
+        yield Subscription(
+            dragHandle(rui.handle, dragSessions, generation, dragMutex, expirations, dragLimits),
+            signalChangeTime
+        )
 
-    private def dragHandle(handle: Handler, sessions: AtomicRef[Map[String, DragSession]])(using Frame): Handler =
+    private def dragHandle(
+        handle: Handler,
+        sessions: AtomicRef[Map[String, DragSession]],
+        generation: AtomicLong,
+        mutex: Meter,
+        expirations: Channel[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])],
+        limits: DragSessionLimits
+    )(using Frame): Handler =
         (path, event) =>
-            event match
-                case UIEvent.DragStart(_, data) =>
-                    sessions.get.map(_.contains(data.sessionId)).map {
-                        case true =>
+            if isDragEvent(event) then
+                Abort.runPartial[Closed](
+                    mutex.run(dragDispatch(handle, sessions, generation, expirations, limits, path, event))
+                ).map {
+                    case Result.Success(value) => value
+                    case Result.Failure(_)     => true
+                }
+            else safeDispatch(handle, path, event)
+
+    private def isDragEvent(event: UIEvent): Boolean = event match
+        case _: UIEvent.DragStart | _: UIEvent.DragEnd | _: UIEvent.DragEnter | _: UIEvent.DragLeave |
+            _: UIEvent.DragOver | _: UIEvent.Drop | _: UIEvent.SortMove => true
+        case _ => false
+
+    private def dragDispatch(
+        handle: Handler,
+        sessions: AtomicRef[Map[String, DragSession]],
+        generation: AtomicLong,
+        expirations: Channel[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])],
+        limits: DragSessionLimits,
+        path: Seq[String],
+        event: UIEvent
+    )(using Frame): Boolean < Async =
+        event match
+            case UIEvent.DragStart(_, data) =>
+                DragCommands.resolveSink.use { resolver =>
+                    sessions.get.map { current =>
+                        if current.contains(data.sessionId) then
                             DragCommands.resolve(
                                 data.sessionId,
                                 Drag.Decision.Reject(Drag.Rejection.Application("A drag session with this identifier is already active."))
                             ).andThen(true)
-                        case false =>
+                        else if current.size >= limits.maxSessions then
+                            DragCommands.resolve(
+                                data.sessionId,
+                                Drag.Decision.Reject(Drag.Rejection.Application("Too many active drag sessions."))
+                            ).andThen(true)
+                        else
                             val domain = Drag.Event(
                                 data.sessionId,
                                 data.domainItems,
@@ -732,54 +797,92 @@ private[kyo] object ReactiveUI:
                                 data.modifiers,
                                 Absent
                             )
-                            sessions.getAndUpdate(_ + (data.sessionId -> DragSession(domain, terminalResolved = false))).unit
-                                .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
-                                    DragCommands.Payload.Event(domain),
-                                    Absent
-                                ))) {
-                                    safeDispatch(handle, path, event)
-                                })
+                            generation.incrementAndGet.map { nextGeneration =>
+                                sessions.set(current + (data.sessionId -> DragSession(
+                                    domain,
+                                    terminalResolved = false,
+                                    nextGeneration
+                                )))
+                                    .andThen(putExpiration(expirations, data.sessionId, nextGeneration, resolver))
+                                    .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                        DragCommands.Payload.Event(domain),
+                                        Absent
+                                    ))) {
+                                        safeDispatch(handle, path, event)
+                                    })
+                            }
                     }
-                case UIEvent.DragEnd(_, data) =>
-                    sessions.get.map(_.get(data.sessionId)).map {
-                        case Some(session) =>
-                            val finalEvent = session.event.copy(operation = data.operation)
-                            sessions.getAndUpdate(_ - data.sessionId).unit
-                                .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
-                                    DragCommands.Payload.End(Drag.End(finalEvent, canceled = data.cancelled)),
-                                    Absent
-                                ))) {
-                                    safeDispatch(handle, path, event)
-                                })
-                        case None => true
-                    }
-                case target: UIEvent.DragEnter => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
-                case target: UIEvent.DragLeave => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
-                case target: UIEvent.DragOver  => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
-                case target: UIEvent.Drop      => dispatchTarget(handle, path, event, target.event, sessions, terminal = true)
-                case UIEvent.SortMove(_, sessionId, move) =>
-                    sessions.get.map(_.get(sessionId)).map {
-                        case Some(session) if !session.terminalResolved =>
-                            for
-                                decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
-                                _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
-                                    DragCommands.Payload.Move(move),
-                                    Present(decisions)
-                                ))) {
-                                    safeDispatch(handle, path, event)
-                                }
-                                decision <- finalDecision(decisions, "No sort handler accepted the move.")
-                                _        <- sessions.getAndUpdate(_ + (sessionId -> session.copy(terminalResolved = true)))
-                                _        <- DragCommands.resolve(sessionId, decision)
-                            yield true
-                        case None =>
-                            DragCommands.resolve(
+                }
+            case UIEvent.DragEnd(_, data) =>
+                sessions.get.map(_.get(data.sessionId)).map {
+                    case Some(session) =>
+                        val finalEvent = session.event.copy(operation = data.operation)
+                        sessions.getAndUpdate(_ - data.sessionId).unit
+                            .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                DragCommands.Payload.End(Drag.End(finalEvent, canceled = data.cancelled)),
+                                Absent
+                            ))) {
+                                safeDispatch(handle, path, event)
+                            })
+                    case None => true
+                }
+            case target: UIEvent.DragEnter => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
+            case target: UIEvent.DragLeave => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
+            case target: UIEvent.DragOver  => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
+            case target: UIEvent.Drop      => dispatchTarget(handle, path, event, target.event, sessions, terminal = true)
+            case UIEvent.SortMove(_, sessionId, move) =>
+                sessions.get.map(_.get(sessionId)).map {
+                    case Some(session) if !session.terminalResolved =>
+                        for
+                            decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
+                            _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
+                                DragCommands.Payload.Move(move),
+                                Present(decisions)
+                            ))) {
+                                safeDispatch(handle, path, event)
+                            }
+                            decision <- finalDecision(decisions, "No sort handler accepted the move.")
+                            _        <- sessions.getAndUpdate(_ + (sessionId -> session.copy(terminalResolved = true)))
+                            _        <- DragCommands.resolve(sessionId, decision)
+                        yield true
+                    case None =>
+                        DragCommands.resolve(
+                            sessionId,
+                            Drag.Decision.Reject(Drag.Rejection.Application("No sort handler accepted the move."))
+                        ).andThen(true)
+                    case _ => true
+                }
+            case _ => safeDispatch(handle, path, event)
+
+    private def putExpiration(
+        expirations: Channel[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])],
+        sessionId: String,
+        generation: Long,
+        resolver: Maybe[(String, Drag.Decision) => Unit < Async]
+    )(using
+        Frame
+    ): Unit < Async =
+        Abort.runPartial[Closed](expirations.put((sessionId, generation, resolver))).unit
+
+    private def sessionsExpired(
+        sessionId: String,
+        expectedGeneration: Long,
+        resolver: Maybe[(String, Drag.Decision) => Unit < Async],
+        sessions: AtomicRef[Map[String, DragSession]]
+    )(using Frame): Unit < Async =
+        sessions.get.map { current =>
+            current.get(sessionId) match
+                case Some(session) if session.generation == expectedGeneration =>
+                    sessions.set(current - sessionId).andThen(
+                        if session.terminalResolved then ()
+                        else
+                            resolver.fold((): Unit < Async)(_(
                                 sessionId,
-                                Drag.Decision.Reject(Drag.Rejection.Application("No sort handler accepted the move."))
-                            ).andThen(true)
-                        case _ => true
-                    }
-                case _ => safeDispatch(handle, path, event)
+                                Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+                            ))
+                    )
+                case _ => ()
+        }
 
     private def dispatchTarget(
         handle: Handler,
@@ -809,7 +912,7 @@ private[kyo] object ReactiveUI:
                             safeDispatch(handle, path, wire)
                         }
                         decision <- finalDecision(decisions, "No drop handler accepted the operation.")
-                        _        <- sessions.getAndUpdate(_ + (data.sessionId -> DragSession(domain, terminalResolved = true)))
+                        _        <- sessions.getAndUpdate(_ + (data.sessionId -> session.copy(event = domain, terminalResolved = true)))
                         _        <- DragCommands.resolve(data.sessionId, decision)
                     yield true
                 else
