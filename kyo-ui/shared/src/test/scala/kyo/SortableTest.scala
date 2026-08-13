@@ -42,6 +42,21 @@ class SortableTest extends kyo.test.Test[Any]:
             assert(Sortable.move(collection, collection, request) == Result.Success((Chunk("a", "d", "b", "c"), Chunk("a", "d", "b", "c"))))
         }
 
+        "moves multiple keys within one collection in visible source order" in {
+            val collection = Chunk("a", "b", "c", "d", "e")
+            val request = move(
+                Chunk("d", "b"),
+                Present("e"),
+                Position.After,
+                source = sourceLocation,
+                destination = sourceLocation
+            )
+            assert(
+                Sortable.move(collection, collection, request) ==
+                    Result.Success((Chunk("a", "c", "e", "b", "d"), Chunk("a", "c", "e", "b", "d")))
+            )
+        }
+
         "moves between collections before an anchor" in {
             val request = move(Chunk("b"), Present("y"), Position.Before)
             assert(

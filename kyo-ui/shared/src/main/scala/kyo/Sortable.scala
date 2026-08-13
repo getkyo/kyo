@@ -45,42 +45,45 @@ object Sortable:
             val requested      = move.keys.toSet
             if requested.size != move.keys.size then
                 reject("Moving item keys must be unique.")
-            else if !requested.forall(source.contains) then
-                reject("Every moving item must exist in the source collection.")
-            else if move.anchor.exists(requested.contains) then
-                reject("The destination is part of the moving selection.")
-            else if move.operation == Operation.Link then
-                reject("Sortable collections do not support link operations.")
-            else if sameCollection && move.operation == Operation.Copy then
-                reject("Copying within one keyed collection requires application-assigned destination keys.")
-            else if move.position == Position.On || move.position == Position.Inside then
-                reject("Sortable collections require Before or After placement.")
             else
-                val effectiveDestination =
-                    if sameCollection then source
-                    else destination
-                move.anchor match
-                    case Present(anchor) if !effectiveDestination.contains(anchor) =>
-                        reject("The destination anchor does not exist.")
-                    case _ if !hasUniqueKeys(source) =>
-                        reject("Source collection keys must be unique.")
-                    case _ if !sameCollection && !hasUniqueKeys(destination) =>
-                        reject("Destination collection keys must be unique.")
-                    case _ =>
-                        val ordered = source.filter(requested.contains)
-                        if sameCollection then
-                            val cleaned = source.filterNot(requested.contains)
-                            val updated = insert(cleaned, ordered, move.anchor, move.position)
-                            Result.Success((updated, updated))
-                        else
-                            val base    = destination.filterNot(requested.contains)
-                            val updated = insert(base, ordered, move.anchor, move.position)
-                            val updatedSource =
-                                if move.operation == Operation.Copy then source
-                                else source.filterNot(requested.contains)
-                            Result.Success((updatedSource, updated))
-                        end if
-                end match
+                val sourceKeys = source.toSet
+                if !requested.forall(sourceKeys.contains) then
+                    reject("Every moving item must exist in the source collection.")
+                else if move.anchor.exists(requested.contains) then
+                    reject("The destination is part of the moving selection.")
+                else if move.operation == Operation.Link then
+                    reject("Sortable collections do not support link operations.")
+                else if sameCollection && move.operation == Operation.Copy then
+                    reject("Copying within one keyed collection requires application-assigned destination keys.")
+                else if move.position == Position.On || move.position == Position.Inside then
+                    reject("Sortable collections require Before or After placement.")
+                else
+                    val effectiveDestination =
+                        if sameCollection then source
+                        else destination
+                    move.anchor match
+                        case Present(anchor) if !effectiveDestination.contains(anchor) =>
+                            reject("The destination anchor does not exist.")
+                        case _ if sourceKeys.size != source.size =>
+                            reject("Source collection keys must be unique.")
+                        case _ if !sameCollection && destination.toSet.size != destination.size =>
+                            reject("Destination collection keys must be unique.")
+                        case _ =>
+                            val ordered = source.filter(requested.contains)
+                            if sameCollection then
+                                val cleaned = source.filterNot(requested.contains)
+                                val updated = insert(cleaned, ordered, move.anchor, move.position)
+                                Result.Success((updated, updated))
+                            else
+                                val base    = destination.filterNot(requested.contains)
+                                val updated = insert(base, ordered, move.anchor, move.position)
+                                val updatedSource =
+                                    if move.operation == Operation.Copy then source
+                                    else source.filterNot(requested.contains)
+                                Result.Success((updatedSource, updated))
+                            end if
+                    end match
+                end if
             end if
         end if
     end move
@@ -100,15 +103,17 @@ object Sortable:
                     if position == Position.Before then anchorIndex else anchorIndex + 1
                 case Absent =>
                     if position == Position.Before then 0 else base.size
-        val builder = ChunkBuilder.init[String]
-        builder.addAll(base.take(index))
-        builder.addAll(ordered)
-        builder.addAll(base.drop(index))
-        builder.result()
+        if base.isEmpty then ordered
+        else if index == 0 then ordered.concat(base)
+        else if index == base.size then base.concat(ordered)
+        else
+            val builder = ChunkBuilder.init[String]
+            builder.addAll(base.take(index))
+            builder.addAll(ordered)
+            builder.addAll(base.drop(index))
+            builder.result()
+        end if
     end insert
-
-    private def hasUniqueKeys(collection: Chunk[String]): Boolean =
-        collection.toSet.size == collection.size
 
     private def reject(
         reason: String
