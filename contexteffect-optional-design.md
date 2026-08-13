@@ -1,3 +1,5 @@
+# SUPERSEDED by threaded-context-design.md: ContextEffect and the handler-based provision were removed from kyo-kernel2 outright
+
 # ContextEffect without a carried default: one optional read, answered Absent
 
 Proposal. Resolves the TODO at `KyoInternal.scala:38` ("no, this is not
