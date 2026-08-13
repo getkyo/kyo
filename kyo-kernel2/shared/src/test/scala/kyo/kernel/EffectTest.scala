@@ -245,6 +245,9 @@ class EffectTest extends AnyFreeSpec:
         assert(effect.eval == 6)
     }
 
+    // Parked with the removal of ContextEffect and Effect.detach from kyo-kernel2.
+    // Restore against the replacement design.
+    /*
     "detach" - {
 
         sealed trait TestCtx extends ContextEffect[Int]
@@ -304,5 +307,6 @@ class EffectTest extends AnyFreeSpec:
             assert(child.eval == 100)
         }
     }
+     */
 
 end EffectTest

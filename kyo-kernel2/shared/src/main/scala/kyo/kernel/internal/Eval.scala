@@ -2,7 +2,6 @@ package kyo.kernel.internal
 
 import kyo.Arrow
 import kyo.Frame
-import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.`<`.fromKyo
 import kyo.kernel.Implicits.liftInternal
@@ -66,30 +65,11 @@ object Eval:
                 case kyo: Kyo.Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                     val cell = hs.find(kyo.tag)
                     if cell eq Empty then
-                        kyo.root match
-                            case d: Kyo.Defaulted =>
-                                val next =
-                                    try resume(kyo.cont, Nested.lift(d.default))
-                                    catch case ex: Throwable => enrich(ex, v, hs)
-                                loop(next, hs)
-                            case d: Kyo.Detached =>
-                                // d.child is read through the widened Any the Detached
-                                // trait declares (mirroring Defaulted.default): a plain
-                                // .asInstanceOf into transplant's erased Any < Nothing
-                                // parameter, not an ascription, so it does not route
-                                // through the currency discipline's implicit lift, which
-                                // would otherwise re-box an already-Kyo child in a second,
-                                // spurious Nested layer before transplant ever sees it
-                                val next =
-                                    try resume(kyo.cont, Nested.lift(transplant(hs, d.child.asInstanceOf[Any < Nothing])))
-                                    catch case ex: Throwable => enrich(ex, v, hs)
-                                loop(next, hs)
-                            case _ =>
-                                if !partial then
-                                    val ex = new IllegalStateException(s"unhandled suspension: $kyo")
-                                    EffectTrace.attach(ex, v, hs)
-                                    throw ex
-                                else rebuild(hs, Empty, v)
+                        if !partial then
+                            val ex = new IllegalStateException(s"unhandled suspension: $kyo")
+                            EffectTrace.attach(ex, v, hs)
+                            throw ex
+                        else rebuild(hs, Empty, v)
                     else
                         // the answering region dispatches on its handler's kind, which
                         // is the one place the kinds genuinely differ: different clause
@@ -314,31 +294,5 @@ object Eval:
     @tailrec private def rebuild(top: Handlers, stop: Handlers, acc: Any < Nothing): Any < Nothing =
         if (top eq stop) || (top eq Empty) then acc
         else rebuild(top.prev, stop, top.rebuilt(acc))
-
-    // a fork's copy of the standing context: keeps only the provision regions
-    // (ContextEffect.provision is the sole site that mixes the recognizer in, and
-    // it builds a Loop handler, which is why the cast below holds), skipping
-    // Noninheritable ones, with neutral exits. Walking innermost-out and wrapping
-    // the accumulator preserves nesting order: the outermost region lands
-    // outermost, so re-entry stacks the child's copy exactly as the parent had it
-    @tailrec private def transplant(top: Handlers, acc: Any < Nothing): Any < Nothing =
-        if top eq Empty then acc
-        else
-            top.handler match
-                case _: ContextEffect.Provision if !(top.tag <:< Tag[ContextEffect.Noninheritable]) =>
-                    transplant(
-                        top.prev,
-                        Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any](
-                            acc,
-                            top.handler.asInstanceOf[
-                                Handler.Cont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] |
-                                    Handler.Loop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any]
-                            ],
-                            Arrow[Any]
-                        )
-                    )
-                case _ =>
-                    transplant(top.prev, acc)
-    end transplant
 
 end Eval

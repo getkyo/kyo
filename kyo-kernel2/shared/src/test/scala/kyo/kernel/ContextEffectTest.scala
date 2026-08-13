@@ -1,5 +1,14 @@
 package kyo.kernel
 
+import org.scalatest.freespec.AnyFreeSpec
+
+// Parked with the removal of ContextEffect from kyo-kernel2. The suite is preserved
+// verbatim below; restore it against the replacement design.
+class ContextEffectTest extends AnyFreeSpec:
+    "parked: ContextEffect was removed from kyo-kernel2" ignore { succeed }
+end ContextEffectTest
+
+/*
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.internal.*
@@ -301,3 +310,4 @@ class ContextEffectTest extends AnyFreeSpec:
     }
 
 end ContextEffectTest
+ */

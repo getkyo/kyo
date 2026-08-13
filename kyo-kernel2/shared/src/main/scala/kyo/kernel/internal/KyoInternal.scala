@@ -35,18 +35,6 @@ object Kyo:
             case _ =>
                 Nested.unnest(v)
 
-    // TODO no, this is not acceptable, we need to fully review. Let's discuss
-    private[kyo] trait Defaulted:
-        self: Suspend[?, ?, ?, ?, ?, ?] =>
-        def default: Any
-
-    // a fork's boundary crossing: answered in the same find-miss arm as
-    // Defaulted, with the standing handler stack rebuilt around the carried
-    // child instead of a fixed fallback
-    private[kyo] trait Detached:
-        self: Suspend[?, ?, ?, ?, ?, ?] =>
-        def child: Any
-
     trait Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
         self =>
 

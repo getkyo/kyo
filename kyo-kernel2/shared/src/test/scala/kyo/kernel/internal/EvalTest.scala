@@ -525,6 +525,9 @@ class EvalTest extends AnyFreeSpec:
         end try
     }
 
+    // Parked with the removal of ContextEffect, Effect.detach, and Eval.transplant
+    // from kyo-kernel2. Restore against the replacement design.
+    /*
     "a fork's transplant" - {
 
         sealed trait TestCtx extends ContextEffect[Int]
@@ -568,6 +571,7 @@ class EvalTest extends AnyFreeSpec:
             assert(child.eval == 42)
         }
     }
+     */
 
 end EvalTest
 

@@ -1,9 +1,7 @@
 package kyo.kernel
 
 import kyo.Arrow
-import kyo.Const
 import kyo.Frame
-import kyo.Tag
 import kyo.kernel.`<`.fromKyo
 import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.*
@@ -13,31 +11,6 @@ import scala.util.control.NonFatal
 abstract class Effect private[kernel] ()
 
 object Effect:
-
-    // the marker a fork site raises to reach the standing handler stack; never
-    // handled by a user clause, only answered by Eval's find-miss arm, which reads
-    // the live stack instead of a fixed fallback (contrast with Kyo.Defaulted)
-    sealed private trait DetachEffect extends ArrowEffect[Const[Unit], Const[Any]]
-
-    /** Carries a computation out of the standing handler stack, boxed as data with the stack's provision cells rebuilt around it.
-      *
-      * The child is not evaluated here: it crosses out as the payload of a suspension answered by `Eval`'s find-miss arm, which reads the
-      * live stack at the point the suspension is answered (not at this call's construction point) and rebuilds the inheritable provision
-      * cells around it. The result is the child wearing its own copy of the standing context, ready to be evaluated on a fresh drive.
-      */
-    @nowarn("msg=anonymous")
-    private[kyo] inline def detach[A, S](v: A < S)(using inline _frame: Frame): (A < S) < Any =
-        new Kyo.Suspend[Const[Unit], Const[Any], DetachEffect, Any, A < S, Any] with Kyo.Detached:
-            def tag   = Tag[DetachEffect]
-            def input = ()
-            def frame = _frame
-            // the operation is never actually dispatched: Eval's find-miss arm answers
-            // this suspension directly from hs, so the continuation only ever receives
-            // the transplanted child, never a real O[X] answer. The cast keeps that
-            // erased operation slot out of the implicit lift, mirroring the currency
-            // discipline's boundary casts elsewhere in the kernel.
-            def cont  = Arrow[Any].asInstanceOf[Arrow[Any, A < S, Any]]
-            def child = v
 
     inline def catching[A, S, B >: A, S2](inline v: => A < S)(
         inline f: Throwable => B < S2
