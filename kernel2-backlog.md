@@ -46,12 +46,32 @@ infer by subtyping at zero cost), stays dead on correctness: it makes a nested
 computation conform with no boxing point, the settled-nested confusion the lift
 macro exists to intercept, which is why it was dropped in the first place.
 
-What landed: `done` is now bare (`def done[A, O](v: O): Outcome[A, O] = v`, the
-ordinary value lift at the clause boundary reaches it and its boxing arm keeps a
-computation-as-data payload from reading as a suspension; full suite green), and
-`continue` keeps the `<`-shaped return, which is the one design where settled
-answers infer out of the box at zero runtime cost. The constructor comment and
-CONTRIBUTING rule 4 now record the whole tested design space with the measurements.
+A fifth design, from your "just place an explicit lift" question, was probed after
+the landing and is viable: declare Outcome and Continue covariant in the payload
+(legal, output-only) and keep bare constructors. Under invariance an explicit lift
+must name the slot's exact effect row, which is unwritable; under covariance the
+uniform ascription `x: T < Any` conforms to every slot by row contravariance. The
+probe compiled the main sources green (ContextEffect's two generic sites take
+`value0: A < Any`) and ArrowEffectTest's 25 settled sites went to zero with the
+single uniform annotation, including the map-final clause bodies that cycled the
+conversions design. The cost is the annotation itself, at every settled answer, the
+dominant clause shape. The probe worktree is kept if you rule for this shape.
+
+There is also the deeper fork you raised: kernel2's handleLoop clause diverges from
+the old kernel's by not receiving the continuation (the payload is the answer, not
+`cont(input)`), which is what makes the evaluator answer in place
+(handleLoopAnswersInPlace 137.2 to 80.0 us against the old kernel) and also what
+creates the settled-into-pending sites in the first place. Ruling the signature back
+to the old kernel's shape restores bare symmetric constructors with no help, and
+costs a continuation closure per answered operation plus clause-driven re-entry.
+
+What landed meanwhile: `done` is bare (`def done[A, O](v: O): Outcome[A, O] = v`,
+the ordinary value lift reaches it and its boxing arm keeps a computation-as-data
+payload from reading as a suspension; full suite green), and `continue` keeps the
+`<`-shaped return, the one design where settled answers infer with no annotation at
+zero runtime cost. The constructor comment and CONTRIBUTING rule 4 record the tested
+design space; awaiting your ruling between the three shapes (as landed; covariant
+bare with the uniform ascription; old-kernel handleLoop signature).
 
 ### Final board rerun after the fix: six rows lifted, the sweep now closes clean
 FB give me the perf comparison tabels in the console with emoji indicaiton of better/neutral/regression
