@@ -17,7 +17,16 @@ object Effect:
     )(using inline _frame: Frame): B < (S & S2) =
         try guarded(v: B < (S & S2), f, _frame)
         catch
-            case ex: Throwable if NonFatal(ex) => f(ex)
+            case ex: Throwable if NonFatal(ex) => recover(ex, f, _frame)
+
+    // the guarded computation has already been consumed here, so the catching
+    // site's own frame is all this boundary can contribute; the enrichment
+    // happens before f runs, so a user's recovery sees the enriched exception
+    private def recover[B, S](ex: Throwable, f: Throwable => B < S, _frame: Frame): B < S =
+        EffectTrace.attach(ex, _frame)
+        EffectTrace.splice(ex)
+        f(ex)
+    end recover
 
     // the guard lives in the continuation arrow: each resumed step applies
     // the original continuation under the handler and re-wraps what it
@@ -41,7 +50,13 @@ object Effect:
                                 _frame
                             )
                         catch
-                            case ex: Throwable if NonFatal(ex) => f(ex)
+                            case ex: Throwable if NonFatal(ex) =>
+                                // cont holds the steps that were running inside the
+                                // guard, next the steps that follow it: the failing
+                                // step's own frame is in cont
+                                EffectTrace.attach(ex, _frame, cont, next)
+                                EffectTrace.splice(ex)
+                                f(ex)
                     (w: @unchecked) match
                         case kyo: Kyo[B, S] @unchecked =>
                             kyo.map(next.asInstanceOf[Arrow[B, C, S]]).asInstanceOf[C < S3]
