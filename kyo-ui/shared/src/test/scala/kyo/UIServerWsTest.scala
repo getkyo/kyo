@@ -24,6 +24,11 @@ import kyo.internal.UIServer
   */
 class UIServerWsTest extends kyo.test.Test[Any]:
 
+    private def mediaType(value: String): Drag.MediaType = Drag.MediaType.parse(value).get
+
+    private def dragText(representations: (String, String)*): Drag.Item.Text =
+        Drag.Item.Text(representations.iterator.map((media, value) => mediaType(media) -> value).toMap)
+
     // ==================== Leaf 1: round trip ====================
 
     // notNative: WS-behavior leaf; see class scaladoc for RI-001 rationale.
@@ -209,7 +214,15 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 ) =>
                 assert(DragProtocol.validate(message, DragProtocol.Limits.default) == Result.succeed(message))
                 assert(meta.size.value == ByteSize.Zero)
-                assert(meta.toDomain == Drag.FileMeta("token", "file.bin", "application/octet-stream", ByteSize.Zero, Instant.Epoch))
+                assert(
+                    meta.toDomain == Drag.FileMeta(
+                        "token",
+                        "file.bin",
+                        mediaType("application/octet-stream"),
+                        ByteSize.Zero,
+                        Instant.Epoch
+                    )
+                )
             case other => fail(s"expected decoded zero-sized file metadata, got $other")
         end match
 
@@ -298,8 +311,8 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         validStart match
             case DragProtocol.ClientMessage.Event(UIEvent.DragStart(_, data)) =>
                 assert(data.domainItems == Chunk(
-                    Drag.Item.Text(Map("text/plain" -> "text")),
-                    Drag.Item.Text(Map("text/plain" -> "text"))
+                    dragText("text/plain" -> "text"),
+                    dragText("text/plain" -> "text")
                 ))
             case other => fail(s"expected validated drag start, got $other")
         end match
@@ -371,6 +384,56 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 limits
             ) == Result.fail(DragProtocol.ValidationFailure.TooMany("entries", 2, 3))
         )
+    }
+
+    "DragProtocol validates wire media grammar and normalizes only during domain conversion" in {
+        val start = DragProtocol.ClientMessage.Event(
+            UIEvent.DragStart(
+                Seq.empty,
+                DragProtocol.StartData(
+                    "session",
+                    Chunk(DragProtocol.ItemData.Text(Map(" TEXT/PLAIN " -> "value"))),
+                    Drag.Operation.Copy,
+                    Absent,
+                    Drag.Point(0, 0),
+                    UI.Modifiers.none
+                )
+            )
+        )
+        val target = DragProtocol.TargetConfig(
+            "target",
+            DragProtocol.AcceptConfig(Set(" IMAGE/* "), Drag.AllowedOperations.all, Absent, Absent, directories = false),
+            Absent
+        )
+        val invalidExact = DragProtocol.ClientMessage.Event(
+            UIEvent.DragStart(
+                Seq.empty,
+                DragProtocol.StartData(
+                    "session",
+                    Chunk(DragProtocol.ItemData.Text(Map("text/*" -> "value"))),
+                    Drag.Operation.Copy,
+                    Absent,
+                    Drag.Point(0, 0),
+                    UI.Modifiers.none
+                )
+            )
+        )
+
+        assert(DragProtocol.validate(start, DragProtocol.Limits.default) == Result.succeed(start))
+        assert(DragProtocol.validateTargetConfig(target, DragProtocol.Limits.default) == Result.succeed(target))
+        DragProtocol.validateTargetConfigAndDomain(target, DragProtocol.Limits.default) match
+            case Result.Success((wire, accept)) =>
+                assert(wire == target)
+                assert(accept.mediaTypes.map(_.render) == Set("image/*"))
+            case other => fail(s"expected validated target config, got $other")
+        end match
+        assert(DragProtocol.validate(invalidExact, DragProtocol.Limits.default).isFailure)
+        start match
+            case DragProtocol.ClientMessage.Event(UIEvent.DragStart(_, data)) =>
+                val text = data.domainItems.head.asInstanceOf[Drag.Item.Text]
+                assert(text.representations.keySet.map(_.render) == Set("text/plain"))
+            case other => fail(s"expected drag start, got $other")
+        end match
     }
 
     "DragProtocol validation bounds event path depth and still validates segments" in {

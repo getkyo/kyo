@@ -33,9 +33,9 @@ private[kyo] object DomDragRuntime:
         end every
     end BrowserTiming
 
-    final private case class ProbeFile(mediaType: Maybe[String], directory: Maybe[Boolean])
+    final private case class ProbeFile(mediaType: Maybe[Drag.MediaType], directory: Maybe[Boolean])
 
-    final private case class Probe(textTypes: Set[String], uri: Boolean, files: Chunk[ProbeFile]):
+    final private case class Probe(textTypes: Set[Drag.MediaType], uri: Boolean, files: Chunk[ProbeFile]):
         def itemCount: Int = (if textTypes.nonEmpty then 1 else 0) + (if uri then 1 else 0) + files.size
 
     final private case class ProbeResult(manifest: Probe, allowed: Drag.AllowedOperations)
@@ -44,7 +44,8 @@ private[kyo] object DomDragRuntime:
         allowed: Drag.AllowedOperations,
         tokens: mutable.Map[String, js.Any]
     )
-    final private case class TargetMatch(target: Located[DragProtocol.TargetConfig], operation: Drag.Operation)
+    final private case class ValidatedTarget(wire: DragProtocol.TargetConfig, accept: Drag.Accept)
+    final private case class TargetMatch(target: Located[ValidatedTarget], operation: Drag.Operation)
 
     /** Runtime control and diagnostics retained for drag file handoff support. */
     private[kyo] trait Handle:
@@ -68,7 +69,7 @@ private[kyo] object DomDragRuntime:
         val preview: Maybe[dom.Element],
         val startedAt: Double,
         var operation: Drag.Operation,
-        var target: Maybe[Located[DragProtocol.TargetConfig]],
+        var target: Maybe[Located[ValidatedTarget]],
         var items: Maybe[Chunk[DragProtocol.ItemData]]
     ) derives CanEqual
 
@@ -394,10 +395,10 @@ private[kyo] object DomDragRuntime:
             var current = from
             while current != null && container.contains(current) do
                 decodeTarget(current).foreach { target =>
-                    val operation = preferred(context.allowed, Present(target.config.accepts.operations), mods)
+                    val operation = preferred(context.allowed, Present(target.config.accept.operations), mods)
                     operation.foreach { selected =>
-                        val accepted = probe.fold(context.items.exists(accepts(target.config.accepts, _)))(
-                            acceptsProbe(target.config.accepts, _)
+                        val accepted = probe.fold(context.items.exists(accepts(target.config.accept, _)))(
+                            acceptsProbe(target.config.accept, _)
                         )
                         if accepted then return Present(TargetMatch(target, selected))
                     }
@@ -407,55 +408,39 @@ private[kyo] object DomDragRuntime:
             Absent
         end acceptedTarget
 
-        private def accepts(config: DragProtocol.AcceptConfig, items: Chunk[DragProtocol.ItemData]): Boolean =
-            import DragWireByteSize.*
-            val accept = Drag.Accept(
-                config.mediaTypes,
-                config.operations,
-                config.maxItems,
-                config.maxFileSize.map(_.value),
-                config.directories
-            )
-            config.maxItems.forall(items.size <= _) && items.forall(item => accept.accepts(item.toDomain))
+        private def accepts(accept: Drag.Accept, items: Chunk[DragProtocol.ItemData]): Boolean =
+            accept.maxItems.forall(items.size <= _) && items.forall(item => accept.accepts(item.toDomain))
         end accepts
 
-        private def acceptsProbe(config: DragProtocol.AcceptConfig, probe: Probe): Boolean =
-            import DragWireByteSize.*
-            val accept = Drag.Accept(
-                config.mediaTypes,
-                config.operations,
-                config.maxItems,
-                config.maxFileSize.map(_.value),
-                config.directories
-            )
-            config.maxItems.forall(probe.itemCount <= _) &&
-            (probe.textTypes.isEmpty || accept.accepts(Drag.Item.Text(probe.textTypes.iterator.map(_ -> "").toMap))) &&
-            (!probe.uri || accept.accepts(Drag.Item.Uri("probe"))) &&
-            probe.files.forall { file =>
-                file.directory match
-                    case Present(true) => config.directories
-                    case Present(false) =>
-                        file.mediaType.fold(true)(media => acceptsProbeFile(accept, media))
-                    case Absent =>
-                        config.directories || file.mediaType.fold(true)(media => acceptsProbeFile(accept, media))
-            }
+        private def acceptsProbe(accept: Drag.Accept, probe: Probe): Boolean =
+            accept.maxItems.forall(probe.itemCount <= _) &&
+                (probe.textTypes.isEmpty || accept.accepts(Drag.Item.Text(probe.textTypes.iterator.map(_ -> "").toMap))) &&
+                (!probe.uri || accept.accepts(Drag.Item.Uri("probe"))) &&
+                probe.files.forall { file =>
+                    file.directory match
+                        case Present(true) => accept.directories
+                        case Present(false) =>
+                            file.mediaType.fold(true)(media => acceptsProbeFile(accept, media))
+                        case Absent =>
+                            accept.directories || file.mediaType.fold(true)(media => acceptsProbeFile(accept, media))
+                }
         end acceptsProbe
 
-        private def acceptsProbeFile(accept: Drag.Accept, mediaType: String): Boolean =
+        private def acceptsProbeFile(accept: Drag.Accept, mediaType: Drag.MediaType): Boolean =
             accept.copy(maxFileSize = Absent).accepts(
                 Drag.Item.File(Drag.FileMeta("probe", "probe", mediaType, ByteSize.Zero, Instant.Epoch))
             )
 
         private def targetData(
             context: SessionContext,
-            target: Located[DragProtocol.TargetConfig],
+            target: Located[ValidatedTarget],
             event: dom.Event,
             operation: Drag.Operation
         ): DragProtocol.TargetData =
             DragProtocol.TargetData(
                 context.id,
                 operation,
-                Present(target.config.key),
+                Present(target.config.wire.key),
                 point(event),
                 modifiers(event),
                 Present(Drag.Position.Inside)
@@ -480,12 +465,14 @@ private[kyo] object DomDragRuntime:
                     case _ => Absent
             }
 
-        private def decodeTarget(element: dom.Element): Maybe[Located[DragProtocol.TargetConfig]] =
+        private def decodeTarget(element: dom.Element): Maybe[Located[ValidatedTarget]] =
             decode[DragProtocol.TargetConfig](element, targetAttribute).flatMap { located =>
-                DragProtocol.validateTargetConfig(located.config, limits) match
-                    case Result.Success(config) =>
+                DragProtocol.validateTargetConfigAndDomain(located.config, limits) match
+                    case Result.Success((config, accept)) =>
                         val dedicated = element.getAttribute(targetKeyAttribute)
-                        if dedicated != null && dedicated == config.key then Present(located) else Absent
+                        if dedicated != null && dedicated == config.key then
+                            Present(Located(located.element, located.path, ValidatedTarget(config, accept)))
+                        else Absent
                     case _ => Absent
             }
 
@@ -521,17 +508,22 @@ private[kyo] object DomDragRuntime:
             }
 
         private def probe(transfer: js.Dynamic): Maybe[ProbeResult] =
-            val textTypes = mutable.Set.empty[String]
+            val textTypes = mutable.Set.empty[Drag.MediaType]
             var uri       = false
+            var valid     = true
             val files     = ChunkBuilder.init[ProbeFile]
             val rawTypes  = transfer.types
             if !js.isUndefined(rawTypes) && rawTypes != null then
                 val types = rawTypes.asInstanceOf[js.Array[String]]
                 var index = 0
                 while index < types.length do
-                    val mediaType = types(index).trim.toLowerCase(java.util.Locale.ROOT)
-                    if mediaType == "text/uri-list" then uri = true
-                    else if mediaType.contains("/") then textTypes += mediaType
+                    val raw = types(index)
+                    if !raw.equalsIgnoreCase("Files") then
+                        Drag.MediaType.parse(raw) match
+                            case Present(mediaType) if mediaType.render == "text/uri-list" => uri = true
+                            case Present(mediaType)                                        => textTypes += mediaType
+                            case Absent                                                    => valid = false
+                    end if
                     index += 1
                 end while
             end if
@@ -542,15 +534,17 @@ private[kyo] object DomDragRuntime:
                 while index < items.length do
                     val item = items(index)
                     val kind = if js.isUndefined(item.kind) then "" else item.kind.asInstanceOf[String]
-                    val mediaType =
-                        if js.isUndefined(item.`type`) || item.`type` == null || item.`type`.asInstanceOf[String].isEmpty then Absent
-                        else Present(item.`type`.asInstanceOf[String].trim.toLowerCase(java.util.Locale.ROOT))
+                    val rawMediaType =
+                        if js.isUndefined(item.`type`) || item.`type` == null then ""
+                        else item.`type`.asInstanceOf[String]
+                    val mediaType = if rawMediaType.isEmpty then Absent else Drag.MediaType.parse(rawMediaType)
                     if kind == "string" then
-                        mediaType.foreach { media =>
-                            if media == "text/uri-list" then uri = true
-                            else if media.contains("/") then textTypes += media
-                        }
+                        mediaType match
+                            case Present(media) if media.render == "text/uri-list" => uri = true
+                            case Present(media)                                    => textTypes += media
+                            case Absent                                            => valid = false
                     else if kind == "file" then
+                        if rawMediaType.nonEmpty && mediaType.isEmpty then valid = false
                         files.addOne(ProbeFile(mediaType, probeDirectory(item)))
                     end if
                     index += 1
@@ -560,7 +554,7 @@ private[kyo] object DomDragRuntime:
             val allowed = allowedFromBrowser(
                 if js.isUndefined(transfer.effectAllowed) then "all" else transfer.effectAllowed.asInstanceOf[String]
             )
-            if manifest.itemCount > 0 && manifest.itemCount <= limits.maxItemCount && allowed.values.nonEmpty then
+            if valid && manifest.itemCount > 0 && manifest.itemCount <= limits.maxItemCount && allowed.values.nonEmpty then
                 Present(ProbeResult(manifest, allowed))
             else Absent
         end probe
@@ -577,26 +571,32 @@ private[kyo] object DomDragRuntime:
         private def snapshot(transfer: js.Dynamic): Maybe[Snapshot] =
             val collected = ChunkBuilder.init[DragProtocol.ItemData]
             val tokens    = mutable.Map.empty[String, js.Any]
-            val text      = mutable.Map.empty[String, String]
+            val text      = mutable.Map.empty[Drag.MediaType, String]
+            var valid     = true
             val rawTypes  = transfer.types
             if !js.isUndefined(rawTypes) && rawTypes != null then
                 val types = rawTypes.asInstanceOf[js.Array[String]]
                 var index = 0
-                while index < types.length && text.size < limits.maxTextRepresentationCount do
-                    val mediaType = types(index)
-                    if mediaType == "text/uri-list" then
-                        val value = transfer.getData(mediaType).asInstanceOf[String]
-                        if value.nonEmpty then collected.addOne(DragProtocol.ItemData.Uri(value))
-                    else if mediaType.contains("/") then
-                        text(mediaType) = transfer.getData(mediaType).asInstanceOf[String]
+                while index < types.length do
+                    val raw = types(index)
+                    if !raw.equalsIgnoreCase("Files") then
+                        Drag.MediaType.parse(raw) match
+                            case Present(mediaType) if mediaType.render == "text/uri-list" =>
+                                val value = transfer.getData(raw).asInstanceOf[String]
+                                if value.nonEmpty then collected.addOne(DragProtocol.ItemData.Uri(value))
+                            case Present(mediaType) =>
+                                if text.contains(mediaType) || text.size < limits.maxTextRepresentationCount then
+                                    text(mediaType) = transfer.getData(raw).asInstanceOf[String]
+                                else valid = false
+                            case Absent => valid = false
                     end if
                     index += 1
                 end while
             end if
-            if text.nonEmpty then collected.addOne(DragProtocol.ItemData.Text(text.toMap))
+            if text.nonEmpty then
+                collected.addOne(DragProtocol.ItemData.Text(text.iterator.map((media, value) => media.render -> value).toMap))
 
             val itemList = defined(transfer.items).map(_.asInstanceOf[js.Array[js.Dynamic]])
-            var valid    = true
             if itemList.exists(_.nonEmpty) then
                 val items = itemList.getOrElse(js.Array())
                 var index = 0
@@ -675,17 +675,19 @@ private[kyo] object DomDragRuntime:
             then Absent
             else
                 val name = safeName(file.name, "file")
-                val media =
+                val rawMedia =
                     val value = if js.isUndefined(file.`type`) then "" else file.`type`.asInstanceOf[String]
                     if value.nonEmpty then value else "application/octet-stream"
-                val id = token("file")
-                Present(DragProtocol.FileMetaData(
-                    id,
-                    name,
-                    media,
-                    DragProtocol.WireByteSize(ByteSize.fromBytes(size.toLong)),
-                    Instant.fromJava(java.time.Instant.ofEpochMilli(lastModified.toLong))
-                ))
+                Drag.MediaType.parse(rawMedia).map { media =>
+                    val id = token("file")
+                    DragProtocol.FileMetaData(
+                        id,
+                        name,
+                        media.render,
+                        DragProtocol.WireByteSize(ByteSize.fromBytes(size.toLong)),
+                        Instant.fromJava(java.time.Instant.ofEpochMilli(lastModified.toLong))
+                    )
+                }
             end if
         end fileMeta
 

@@ -100,7 +100,8 @@ private[kyo] object DragProtocol:
     ) derives CanEqual, Schema:
 
         /** Converts validated wire metadata to domain file metadata. */
-        def toDomain: Drag.FileMeta = Drag.FileMeta(token, name, mediaType, size.value, lastModified)
+        def toDomain: Drag.FileMeta =
+            Drag.FileMeta(token, name, Drag.MediaType.parse(mediaType).get, size.value, lastModified)
     end FileMetaData
 
     /** Transfer item whose file byte quantities are validated while decoding. */
@@ -112,7 +113,8 @@ private[kyo] object DragProtocol:
 
         /** Converts a validated wire item to its domain representation. */
         def toDomain: Drag.Item = this match
-            case Text(representations)  => Drag.Item.Text(representations)
+            case Text(representations) =>
+                Drag.Item.Text(representations.iterator.map((mediaType, value) => Drag.MediaType.parse(mediaType).get -> value).toMap)
             case Uri(value)             => Drag.Item.Uri(value)
             case File(meta)             => Drag.Item.File(meta.toDomain)
             case Directory(token, name) => Drag.Item.Directory(token, name)
@@ -291,7 +293,7 @@ private[kyo] object DragProtocol:
         validateIdentifier(target.key, "target.key", limits)
             .flatMap(_ => validateOptionalText(target.label, "target.label", limits.maxNameLength))
             .flatMap(_ => validateCount(accepts.mediaTypes.size, "target.mediaTypes", limits.maxTextRepresentationCount))
-            .flatMap(_ => validateAll(accepts.mediaTypes)(validateAcceptedMediaType(_, limits)))
+            .flatMap(_ => validateAll(accepts.mediaTypes)(value => validateAcceptedMediaType(value.render, limits)))
             .flatMap(_ =>
                 accepts.maxItems match
                     case Present(value) if value < 0 => Result.fail(ValidationFailure.InvalidCount("target.maxItems", value))
@@ -307,7 +309,7 @@ private[kyo] object DragProtocol:
                 TargetConfig(
                     target.key,
                     AcceptConfig(
-                        accepts.mediaTypes,
+                        accepts.mediaTypes.map(_.render),
                         accepts.operations,
                         accepts.maxItems,
                         accepts.maxFileSize.map(WireByteSize(_)),
@@ -330,25 +332,40 @@ private[kyo] object DragProtocol:
     private[kyo] def validateTargetConfig(config: TargetConfig, limits: Limits)(using
         Frame
     ): Result[ValidationFailure, TargetConfig] =
+        validateTargetConfigAndDomain(config, limits).map(_._1)
+
+    /** Validates a decoded browser target and converts its media patterns in the same pass. */
+    private[kyo] def validateTargetConfigAndDomain(config: TargetConfig, limits: Limits)(using
+        Frame
+    ): Result[ValidationFailure, (TargetConfig, Drag.Accept)] =
         val accepts = config.accepts
         validateIdentifier(config.key, "target.key", limits)
             .flatMap(_ => validateOptionalText(config.label, "target.label", limits.maxNameLength))
             .flatMap(_ => validateCount(accepts.mediaTypes.size, "target.mediaTypes", limits.maxTextRepresentationCount))
-            .flatMap(_ => validateAll(accepts.mediaTypes)(validateAcceptedMediaType(_, limits)))
-            .flatMap(_ =>
-                accepts.maxItems match
+            .flatMap(_ => parseAcceptedMediaTypes(accepts.mediaTypes, limits))
+            .flatMap { mediaTypes =>
+                val itemCount = accepts.maxItems match
                     case Present(value) if value < 0 => Result.fail(ValidationFailure.InvalidCount("target.maxItems", value))
                     case Present(value)              => validateCount(value, "target.maxItems", limits.maxItemCount)
                     case Absent                      => Result.unit
-            )
-            .flatMap(_ =>
-                accepts.maxFileSize match
-                    case Present(value) => validateWireByteSize(value.value, "target.maxFileSize")
-                    case Absent         => Result.unit
-            )
-            .flatMap(_ => validateEncodedAttribute(Json.encode(config), "dropTarget", limits))
-            .map(_ => config)
-    end validateTargetConfig
+                itemCount
+                    .flatMap { _ =>
+                        accepts.maxFileSize match
+                            case Present(value) => validateWireByteSize(value.value, "target.maxFileSize")
+                            case Absent         => Result.unit
+                    }
+                    .flatMap(_ => validateEncodedAttribute(Json.encode(config), "dropTarget", limits))
+                    .map(_ =>
+                        config -> Drag.Accept(
+                            mediaTypes,
+                            accepts.operations,
+                            accepts.maxItems,
+                            accepts.maxFileSize.map(_.value),
+                            accepts.directories
+                        )
+                    )
+            }
+    end validateTargetConfigAndDomain
 
     private def validateDomainItem(item: Drag.Item, limits: Limits): Result[ValidationFailure, Unit] =
         item match
@@ -356,7 +373,7 @@ private[kyo] object DragProtocol:
                 validateCount(representations.size, "representations", limits.maxTextRepresentationCount)
                     .flatMap(_ =>
                         validateAll(representations) { case (mediaType, text) =>
-                            validateMediaType(mediaType, limits)
+                            validateMediaType(mediaType.render, limits)
                                 .flatMap(_ => validateText(text, "text", limits.maxTextLength, allowEmpty = true))
                         }
                     )
@@ -371,13 +388,14 @@ private[kyo] object DragProtocol:
     end validateDomainItem
 
     private def toItemData(item: Drag.Item): ItemData = item match
-        case Drag.Item.Text(representations)  => ItemData.Text(representations)
+        case Drag.Item.Text(representations) =>
+            ItemData.Text(representations.iterator.map((mediaType, value) => mediaType.render -> value).toMap)
         case Drag.Item.Uri(value)             => ItemData.Uri(value)
         case Drag.Item.File(meta)             => ItemData.File(toFileMetaData(meta))
         case Drag.Item.Directory(token, name) => ItemData.Directory(token, name)
 
     private def toFileMetaData(meta: Drag.FileMeta): FileMetaData =
-        FileMetaData(meta.token, meta.name, meta.mediaType, WireByteSize(meta.size), meta.lastModified)
+        FileMetaData(meta.token, meta.name, meta.mediaType.render, WireByteSize(meta.size), meta.lastModified)
 
     private def validateWireByteSize(value: ByteSize, field: String): Result[ValidationFailure, Unit] =
         if value < ByteSize.Zero then Result.fail(ValidationFailure.InvalidByteSize(field, value))
@@ -400,10 +418,29 @@ private[kyo] object DragProtocol:
 
     private def validateAcceptedMediaType(value: String, limits: Limits): Result[ValidationFailure, Unit] =
         validateText(value, "mediaType", limits.maxMediaTypeLength, allowEmpty = false).flatMap { _ =>
-            val normalized = value.trim
-            if normalized.endsWith("/*") && isMediaToken(normalized.dropRight(2)) then Result.unit
-            else validateMediaType(value, limits)
+            if Drag.MediaTypePattern.parse(value).nonEmpty then Result.unit
+            else Result.fail(ValidationFailure.InvalidMediaType(value))
         }
+
+    private def parseAcceptedMediaTypes(
+        values: Set[String],
+        limits: Limits
+    ): Result[ValidationFailure, Set[Drag.MediaTypePattern]] =
+        val iterator = values.iterator
+        var parsed   = Set.empty[Drag.MediaTypePattern]
+        var result   = Result.unit: Result[ValidationFailure, Unit]
+        while iterator.hasNext && result.isSuccess do
+            val value = iterator.next()
+            result = validateText(value, "mediaType", limits.maxMediaTypeLength, allowEmpty = false).flatMap { _ =>
+                Drag.MediaTypePattern.parse(value) match
+                    case Present(pattern) =>
+                        parsed += pattern
+                        Result.unit
+                    case Absent => Result.fail(ValidationFailure.InvalidMediaType(value))
+            }
+        end while
+        result.map(_ => parsed)
+    end parseAcceptedMediaTypes
 
     private def validateEncodedAttribute(
         value: String,
@@ -579,21 +616,8 @@ private[kyo] object DragProtocol:
 
     private def validateMediaType(value: String, limits: Limits): Result[ValidationFailure, Unit] =
         validateText(value, "mediaType", limits.maxMediaTypeLength, allowEmpty = false).flatMap { _ =>
-            val normalized = value.trim
-            val slash      = normalized.indexOf('/')
-            if slash > 0 && slash == normalized.lastIndexOf('/') && slash < normalized.length - 1 &&
-                isMediaToken(normalized.substring(0, slash)) && isMediaToken(normalized.substring(slash + 1))
-            then Result.unit
+            if Drag.MediaType.parse(value).nonEmpty then Result.unit
             else Result.fail(ValidationFailure.InvalidMediaType(value))
-            end if
-        }
-
-    private def isMediaToken(value: String): Boolean =
-        value.nonEmpty && !value.contains('*') && value.forall { char =>
-            (char >= 'a' && char <= 'z') ||
-            (char >= 'A' && char <= 'Z') ||
-            (char >= '0' && char <= '9') ||
-            "!#$%&'*+-.^_`|~".contains(char)
         }
 
     private def validatePoint(point: Drag.Point): Result[ValidationFailure, Unit] =

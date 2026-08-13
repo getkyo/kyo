@@ -11,6 +11,13 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
 
     override def config = super.config.sequential
 
+    private def mediaType(value: String): Drag.MediaType = Drag.MediaType.parse(value).get
+
+    private def mediaTypePattern(value: String): Drag.MediaTypePattern = Drag.MediaTypePattern.parse(value).get
+
+    private def dragText(representations: (String, String)*): Drag.Item.Text =
+        Drag.Item.Text(representations.iterator.map((media, value) => mediaType(media) -> value).toMap)
+
     final private class FakeTransfer:
         private val values       = scalajs.Dictionary.empty[String]
         private val exposedFiles = scalajs.Array[scalajs.Any]()
@@ -133,7 +140,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
         val source = Drag.Source(
             "source-key",
             Chunk(
-                Drag.Item.Text(Map("text/plain" -> "card", "text/html" -> "<b>card</b>")),
+                dragText("text/plain" -> "card", "text/html" -> "<b>card</b>"),
                 Drag.Item.Uri("https://kyo.dev/card")
             ),
             operations = Drag.AllowedOperations(Set(Drag.Operation.Copy, Drag.Operation.Move, Drag.Operation.Link)),
@@ -142,7 +149,11 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
         val target = Drag.Target(
             "target-key",
             Drag.Accept(
-                mediaTypes = Set("text/plain", "text/html", "text/uri-list"),
+                mediaTypes = Set(
+                    mediaTypePattern("text/plain"),
+                    mediaTypePattern("text/html"),
+                    mediaTypePattern("text/uri-list")
+                ),
                 operations = Drag.AllowedOperations(Set(Drag.Operation.Copy, Drag.Operation.Link)),
                 maxItems = Present(3)
             )
@@ -276,9 +287,15 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
     }
 
     "selects the nearest accepted target and suppresses false descendant leaves" in {
-        val source       = Drag.Source("source", Chunk(Drag.Item.Text(Map("text/plain" -> "one"))))
-        val rejected     = Drag.Target("inner", Drag.Accept(mediaTypes = Set("image/png"), operations = Drag.AllowedOperations.copy))
-        val accepted     = Drag.Target("outer", Drag.Accept(mediaTypes = Set("text/plain"), operations = Drag.AllowedOperations.move))
+        val source = Drag.Source("source", Chunk(dragText("text/plain" -> "one")))
+        val rejected = Drag.Target(
+            "inner",
+            Drag.Accept(mediaTypes = Set(mediaTypePattern("image/png")), operations = Drag.AllowedOperations.copy)
+        )
+        val accepted = Drag.Target(
+            "outer",
+            Drag.Accept(mediaTypes = Set(mediaTypePattern("text/plain")), operations = Drag.AllowedOperations.move)
+        )
         val sourceJson   = success(DragProtocol.encodedSourceConfig(source, DragProtocol.Limits.default))
         val rejectedJson = success(DragProtocol.encodedTargetConfig(rejected, DragProtocol.Limits.default))
         val acceptedJson = success(DragProtocol.encodedTargetConfig(accepted, DragProtocol.Limits.default))
@@ -459,7 +476,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
     "rejects incompatible targets and unsafe external file numbers synchronously" in {
         val target = Drag.Target(
             "images",
-            Drag.Accept(mediaTypes = Set("image/png"), operations = Drag.AllowedOperations.copy)
+            Drag.Accept(mediaTypes = Set(mediaTypePattern("image/png")), operations = Drag.AllowedOperations.copy)
         )
         val targetJson = success(DragProtocol.encodedTargetConfig(target, DragProtocol.Limits.default))
         val events     = ArrayBuffer.empty[UIEvent]
@@ -508,6 +525,56 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "rejects invalid external media types during probing and snapshotting" in {
+        val targetJson = success(DragProtocol.encodedTargetConfig(
+            Drag.Target("target", Drag.Accept(operations = Drag.AllowedOperations.copy)),
+            DragProtocol.Limits.default
+        ))
+        val events = ArrayBuffer.empty[UIEvent]
+
+        Scope.run {
+            for
+                fixture <- Sync.defer {
+                    val root = dom.document.createElement("div")
+                    root.innerHTML =
+                        """<div id="target" data-kyo-path="target" data-kyo-drop-target="" data-kyo-drop-target-key="target"></div>"""
+                    root.querySelector("#target").asInstanceOf[dom.Element].setAttribute("data-kyo-drop-target", targetJson)
+                    discard(dom.document.body.appendChild(root))
+                    root
+                }
+                runtime <- DomDragRuntime.install(fixture, event => events += event)
+                _ <- Sync.defer {
+                    val targetEl = fixture.querySelector("#target").asInstanceOf[dom.Element]
+
+                    val invalidProbe = new FakeTransfer
+                    invalidProbe.allow("copy")
+                    invalidProbe.setData("text/plain", "valid")
+                    invalidProbe.setData("text/*", "invalid")
+                    val enter = dragEvent("dragenter", targetEl, invalidProbe, 1, 2)
+                    discard(targetEl.dispatchEvent(enter))
+                    assert(!enter.defaultPrevented)
+                    assert(runtime.stateName == "Idle")
+
+                    val invalidSnapshot = new FakeTransfer
+                    invalidSnapshot.allow("copy")
+                    invalidSnapshot.setData(" TEXT/PLAIN ", "canonical")
+                    val validEnter = dragEvent("dragenter", targetEl, invalidSnapshot, 3, 4)
+                    discard(targetEl.dispatchEvent(validEnter))
+                    assert(validEnter.defaultPrevented)
+                    assert(runtime.stateName == "ExternalProbing")
+                    invalidSnapshot.setData("text/*", "invalid")
+                    invalidSnapshot.beginDrop()
+                    val drop = dragEvent("drop", targetEl, invalidSnapshot, 5, 6)
+                    discard(targetEl.dispatchEvent(drop))
+                    assert(!drop.defaultPrevented)
+                    assert(runtime.stateName == "Idle")
+                    assert(events.isEmpty)
+                    fixture.remove()
+                }
+            yield ()
+        }
+    }
+
     "maps every allowed operation set and cleans custom previews" in {
         val cases: Seq[(Drag.AllowedOperations, (String, Maybe[Drag.Operation]))] = Seq(
             Drag.AllowedOperations.none                                           -> ("none", Absent),
@@ -536,7 +603,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                         val index                     = entry._2
                         val source = Drag.Source(
                             s"source-$index",
-                            Chunk(Drag.Item.Text(Map("text/plain" -> s"item-$index"))),
+                            Chunk(dragText("text/plain" -> s"item-$index")),
                             operations = allowed,
                             preview = Drag.Preview.Native
                         )
@@ -569,7 +636,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     ).zipWithIndex.foreach { case ((preview, label), index) =>
                         val source = Drag.Source(
                             s"preview-$index",
-                            Chunk(Drag.Item.Text(Map("text/plain" -> "preview"))),
+                            Chunk(dragText("text/plain" -> "preview")),
                             preview = preview
                         )
                         val element = dom.document.createElement("div")
@@ -600,12 +667,12 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
 
     "rejects decoded source and target configs mutated past protocol limits" in {
         val validSource = success(DragProtocol.sourceConfig(
-            Drag.Source("source", Chunk(Drag.Item.Text(Map("text/plain" -> "safe"))), preview = Drag.Preview.Clone),
+            Drag.Source("source", Chunk(dragText("text/plain" -> "safe")), preview = Drag.Preview.Clone),
             DragProtocol.Limits.default
         ))
         val invalidSource = validSource.copy(label = Present("x" * (DragProtocol.Limits.default.maxNameLength + 1)))
         val validTarget = success(DragProtocol.targetConfig(
-            Drag.Target("target", Drag.Accept(mediaTypes = Set("text/plain"))),
+            Drag.Target("target", Drag.Accept(mediaTypes = Set(mediaTypePattern("text/plain")))),
             DragProtocol.Limits.default
         ))
         val invalidTarget = validTarget.copy(label = Present("x" * (DragProtocol.Limits.default.maxNameLength + 1)))
@@ -661,7 +728,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
     }
 
     "cleans an active source exactly once when rejected before drop" in {
-        val source = Drag.Source("early", Chunk(Drag.Item.Text(Map("text/plain" -> "early"))))
+        val source = Drag.Source("early", Chunk(dragText("text/plain" -> "early")))
         val events = ArrayBuffer.empty[UIEvent]
         Scope.run {
             for
@@ -694,7 +761,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
     }
 
     "expires at the exact five minute boundary using scoped timing" in {
-        val source = Drag.Source("timed", Chunk(Drag.Item.Text(Map("text/plain" -> "timed"))))
+        val source = Drag.Source("timed", Chunk(dragText("text/plain" -> "timed")))
         val events = ArrayBuffer.empty[UIEvent]
         val timing = new FakeTiming
         Scope.run {
@@ -727,10 +794,14 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
     }
 
     "mount dispatches a protected external drop through handlers and local resolution" in {
-        val source = Drag.Source("mounted-source", Chunk(Drag.Item.Text(Map("text/plain" -> "internal"))))
+        val source = Drag.Source("mounted-source", Chunk(dragText("text/plain" -> "internal")))
         val target = Drag.Target(
             "mounted-target",
-            Drag.Accept(mediaTypes = Set("text/plain"), operations = Drag.AllowedOperations.copy, maxItems = Present(2))
+            Drag.Accept(
+                mediaTypes = Set(mediaTypePattern("text/plain")),
+                operations = Drag.AllowedOperations.copy,
+                maxItems = Present(2)
+            )
         )
         val transfer = new FakeTransfer
         transfer.allow("copy")
@@ -808,7 +879,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                 val drop  = actualDrops.head
                 assert(start.sessionId == drop.sessionId)
                 assert(start.items.size == 2)
-                assert(start.items(0) == Drag.Item.Text(Map("text/plain" -> "external")))
+                assert(start.items(0) == dragText("text/plain" -> "external"))
                 assert(start.items(1).asInstanceOf[Drag.Item.File].meta.name == "note.txt")
                 assert(start.operation == Drag.Operation.Copy)
                 assert(start.sourceKey == Absent)

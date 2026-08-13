@@ -9,8 +9,8 @@ import java.util.Locale
   * from one item. Item counts and operation compatibility are evaluated by the event layer, where
   * the complete transfer and requested operation are available.
   *
-  * MIME media types are compared after trimming and locale-independent lowercasing. Targets can
-  * accept an exact media type or a wildcard for every subtype of a type.
+  * Exact media types and target patterns are validated and normalized before they enter domain
+  * values. Targets can accept an exact media type or a wildcard for every subtype of a type.
   *
   * @see [[Drag.Accept]] for per-item acceptance
   * @see [[Drag.Move]] for collection move descriptions
@@ -19,6 +19,126 @@ import java.util.Locale
 object Drag:
 
     // --- Public values ---
+
+    /** Canonical exact media type used by drag transfer values.
+      *
+      * Values contain one concrete RFC-token-like main type and subtype separated by `/`. Parsing
+      * trims surrounding whitespace and applies locale-independent lowercase normalization.
+      * Wildcards, parameters, non-ASCII characters, and additional separators are rejected.
+      *
+      * The opaque representation is the canonical string itself, so carrying a media type adds no
+      * wrapper allocation.
+      *
+      * @see [[MediaType.parse]] for validated construction
+      * @see [[MediaTypePattern]] for target acceptance patterns
+      */
+    opaque type MediaType = String
+
+    object MediaType:
+
+        /** Parses and normalizes an exact media type. */
+        def parse(value: String): Maybe[MediaType] =
+            if value == null then Absent
+            else
+                val trimmed = value.trim
+                if isExactMediaType(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
+                else Absent
+            end if
+        end parse
+
+        extension (self: MediaType)
+            /** Returns the canonical media type string. */
+            def render: String = self
+
+        /** Scalar string schema that validates and normalizes decoded media types. */
+        given Schema[MediaType] = Schema.init[MediaType](
+            writeFn = (value, writer) => writer.string(value.render),
+            readFn = reader =>
+                val raw = reader.string()
+                kyo.internal.constructedOrThrow(
+                    parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
+                    "Drag.MediaType"
+                )(using reader.frame)
+            ,
+            structure = Structure.Type.Primitive(
+                Structure.PrimitiveKind.String,
+                Tag[MediaType].asInstanceOf[Tag[Any]]
+            )
+        )
+
+        given CanEqual[MediaType, MediaType] = CanEqual.derived
+
+    end MediaType
+
+    /** Canonical exact or main-type wildcard accepted by a drag target.
+      *
+      * Exact patterns share [[MediaType]] grammar. Wildcards have one concrete main token followed
+      * by a slash and asterisk. Global wildcards and partial subtype wildcards are rejected. Parsing
+      * trims surrounding whitespace and applies locale-independent lowercase normalization.
+      *
+      * The opaque representation is the canonical string itself. Matching compares that string
+      * directly and does not allocate substrings or wrapper values.
+      *
+      * @see [[MediaTypePattern.parse]] for validated construction
+      * @see [[MediaTypePattern.matches]] for exact and wildcard matching
+      */
+    opaque type MediaTypePattern = String
+
+    object MediaTypePattern:
+
+        /** Parses and normalizes an exact media type or concrete main-type wildcard. */
+        def parse(value: String): Maybe[MediaTypePattern] =
+            if value == null then Absent
+            else
+                val trimmed = value.trim
+                if isMediaTypePattern(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
+                else Absent
+            end if
+        end parse
+
+        /** Creates an exact pattern from an already validated media type. */
+        def exact(value: MediaType): MediaTypePattern = value.render
+
+        extension (self: MediaTypePattern)
+            /** Returns the canonical pattern string. */
+            def render: String = self
+
+            /** Tests whether this exact or wildcard pattern accepts a media type. */
+            def matches(value: MediaType): Boolean =
+                val mediaType = value.render
+                if self.endsWith("/*") then
+                    val mainLength = self.length - 2
+                    if mediaType.length <= mainLength || mediaType.charAt(mainLength) != '/' then false
+                    else
+                        var index = 0
+                        while index < mainLength && self.charAt(index) == mediaType.charAt(index) do
+                            index += 1
+                        index == mainLength
+                    end if
+                else self == mediaType
+                end if
+            end matches
+        end extension
+
+        /** Scalar string schema that validates and normalizes decoded patterns. */
+        given Schema[MediaTypePattern] = Schema.init[MediaTypePattern](
+            writeFn = (value, writer) => writer.string(value.render),
+            readFn = reader =>
+                val raw = reader.string()
+                kyo.internal.constructedOrThrow(
+                    parse(raw).toResult(Result.fail(s"invalid media type pattern: $raw")),
+                    "Drag.MediaTypePattern"
+                )(using reader.frame)
+            ,
+            structure = Structure.Type.Primitive(
+                Structure.PrimitiveKind.String,
+                Tag[MediaTypePattern].asInstanceOf[Tag[Any]]
+            )
+        )
+
+        given CanEqual[MediaTypePattern, MediaTypePattern] = CanEqual.derived
+
+    end MediaTypePattern
 
     /** Operation requested for a drag transfer. */
     enum Operation derives CanEqual, Schema:
@@ -79,18 +199,18 @@ object Drag:
     /** Pointer coordinates in the viewport. */
     final case class Point(x: Double, y: Double) derives CanEqual, Schema
 
-    /** Browser file metadata and the token used to retrieve its content. */
+    /** Browser file metadata with a validated exact media type and the token used to retrieve its content. */
     final case class FileMeta(
         token: String,
         name: String,
-        mediaType: String,
+        mediaType: MediaType,
         size: ByteSize,
         lastModified: Instant
     ) derives CanEqual, Schema
 
     /** One transferable value exposed by a browser drag. */
     enum Item derives CanEqual, Schema:
-        case Text(representations: Map[String, String])
+        case Text(representations: Map[MediaType, String])
         case Uri(value: String)
         case File(meta: FileMeta)
         case Directory(token: String, name: String)
@@ -138,7 +258,7 @@ object Drag:
       * is carried here for the event layer and is intentionally not applied by [[accepts]].
       */
     final case class Accept(
-        mediaTypes: Set[String] = Set.empty,
+        mediaTypes: Set[MediaTypePattern] = Set.empty,
         operations: AllowedOperations = AllowedOperations.all,
         maxItems: Maybe[Int] = Absent,
         maxFileSize: Maybe[ByteSize] = Absent,
@@ -150,9 +270,9 @@ object Drag:
     end Accept
 
     object Accept:
-        /** Creates acceptance rules for one or more normalized MIME media types. */
-        def types(first: String, rest: String*): Accept =
-            Accept(mediaTypes = (first +: rest).iterator.map(normalizeMediaType).toSet)
+        /** Creates acceptance rules for one or more validated media type patterns. */
+        def types(first: MediaTypePattern, rest: MediaTypePattern*): Accept =
+            Accept(mediaTypes = rest.toSet + first)
     end Accept
 
     /** Ordered movement of selected keys between collections. */
@@ -215,17 +335,7 @@ object Drag:
 
     // --- Internal matching ---
 
-    private val uriMediaType = "text/uri-list"
-
-    final private case class ExactMediaType(mainType: String, subType: String) derives CanEqual
-
-    private enum MediaTypePattern derives CanEqual:
-        case Exact(value: ExactMediaType)
-        case Wildcard(mainType: String)
-    end MediaTypePattern
-
-    private def normalizeMediaType(mediaType: String) =
-        mediaType.trim.toLowerCase(Locale.ROOT)
+    private val uriMediaType = MediaType.parse("text/uri-list").get
 
     private def accepts(accept: Accept, item: Item): Boolean =
         item match
@@ -242,52 +352,30 @@ object Drag:
                 accept.directories
     end accepts
 
-    private def acceptsMediaTypes(accepted: Set[String], offered: Set[String]): Boolean =
-        offered.exists { transferred =>
-            parseExactMediaType(transferred) match
-                case Present(actual) =>
-                    accepted.isEmpty || accepted.exists { configured =>
-                        parseMediaTypePattern(configured) match
-                            case Present(MediaTypePattern.Exact(expected))    => expected == actual
-                            case Present(MediaTypePattern.Wildcard(mainType)) => mainType == actual.mainType
-                            case Absent                                       => false
-                    }
-                case Absent => false
-        }
-    end acceptsMediaTypes
-
-    private def parseExactMediaType(mediaType: String): Maybe[ExactMediaType] =
-        parseExactNormalized(normalizeMediaType(mediaType))
-
-    private def parseMediaTypePattern(mediaType: String): Maybe[MediaTypePattern] =
-        val normalized = normalizeMediaType(mediaType)
-        if normalized.endsWith("/*") then
-            val mainType = normalized.dropRight(2)
-            if isConcreteToken(mainType) then Present(MediaTypePattern.Wildcard(mainType))
-            else Absent
-        else
-            parseExactNormalized(normalized).map(MediaTypePattern.Exact(_))
-        end if
-    end parseMediaTypePattern
-
-    private def parseExactNormalized(mediaType: String): Maybe[ExactMediaType] =
-        val slash = mediaType.indexOf('/')
-        if slash > 0 && slash == mediaType.lastIndexOf('/') && slash < mediaType.length - 1 then
-            val mainType = mediaType.substring(0, slash)
-            val subType  = mediaType.substring(slash + 1)
-            if isConcreteToken(mainType) && isConcreteToken(subType) then Present(ExactMediaType(mainType, subType))
-            else Absent
-        else Absent
-        end if
-    end parseExactNormalized
-
-    private def isConcreteToken(value: String): Boolean =
-        value.nonEmpty && !value.contains('*') && value.forall(isTokenCharacter)
+    private def acceptsMediaTypes(accepted: Set[MediaTypePattern], offered: Set[MediaType]): Boolean =
+        offered.exists(actual => accepted.isEmpty || accepted.exists(pattern => MediaTypePattern.matches(pattern)(actual)))
 
     private def isTokenCharacter(value: Char): Boolean =
         (value >= 'a' && value <= 'z') ||
             (value >= 'A' && value <= 'Z') ||
             (value >= '0' && value <= '9') ||
             "!#$%&'*+-.^_`|~".contains(value)
+
+    private def isExactMediaType(value: String): Boolean =
+        val slash = value.indexOf('/')
+        slash > 0 && slash == value.lastIndexOf('/') && slash < value.length - 1 &&
+        isConcreteToken(value, 0, slash) && isConcreteToken(value, slash + 1, value.length)
+    end isExactMediaType
+
+    private def isMediaTypePattern(value: String): Boolean =
+        if value.endsWith("/*") then isConcreteToken(value, 0, value.length - 2)
+        else isExactMediaType(value)
+
+    private def isConcreteToken(value: String, start: Int, end: Int): Boolean =
+        var index = start
+        while index < end && value.charAt(index) != '*' && isTokenCharacter(value.charAt(index)) do
+            index += 1
+        index == end && start < end
+    end isConcreteToken
 
 end Drag

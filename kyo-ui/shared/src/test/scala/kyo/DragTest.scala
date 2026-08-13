@@ -4,6 +4,99 @@ import Drag.*
 
 class DragTest extends kyo.test.Test[Any]:
 
+    private def mediaType(value: String): MediaType =
+        MediaType.parse(value).get
+
+    private def mediaTypePattern(value: String): MediaTypePattern =
+        MediaTypePattern.parse(value).get
+
+    private def text(representations: (String, String)*): Item.Text =
+        Item.Text(representations.iterator.map((media, value) => mediaType(media) -> value).toMap)
+
+    "MediaType" - {
+        "parses and renders canonical exact media types" in {
+            assert(MediaType.parse("  Application/Vnd.Kyo+Json  ").map(_.render) == Present("application/vnd.kyo+json"))
+            assert(MediaType.parse("text/plain").map(_.render) == Present("text/plain"))
+        }
+
+        "rejects invalid exact media types" in {
+            Chunk(
+                null,
+                "",
+                "   ",
+                "text",
+                "/plain",
+                "text/",
+                "text/plain/extra",
+                "text/*",
+                "*/plain",
+                "text/(plain)",
+                "text/pläin"
+            ).foreach(value => assert(MediaType.parse(value) == Absent))
+        }
+
+        "uses a normalized scalar schema and rejects invalid decoding" in {
+            val mediaType = MediaType.parse(" Text/Plain ").getOrElse(fail("valid media type did not parse"))
+            assert(Json.encode(mediaType) == "\"text/plain\"")
+            assert(Json.decode[MediaType]("\" APPLICATION/JSON \"").map(_.render) == Result.succeed("application/json"))
+            Json.decode[MediaType]("\"text/*\"") match
+                case Result.Failure(error: ConstructorRejectedException) => assert(error.typeName == "Drag.MediaType")
+                case other                                               => fail(s"expected constructor rejection, got $other")
+        }
+
+        "is statically distinct from MediaTypePattern and String" in {
+            typeCheckFailure("""val value: Drag.MediaType = Drag.MediaTypePattern.parse("text/plain").get""")
+            typeCheckFailure("""val value: Drag.MediaType = "text/plain"""")
+        }
+    }
+
+    "MediaTypePattern" - {
+        "parses exact and concrete wildcard patterns canonically" in {
+            assert(MediaTypePattern.parse(" Text/Plain ").map(_.render) == Present("text/plain"))
+            assert(MediaTypePattern.parse(" IMAGE/* ").map(_.render) == Present("image/*"))
+        }
+
+        "rejects invalid patterns" in {
+            Chunk(
+                null,
+                "",
+                "   ",
+                "image",
+                "/png",
+                "image/",
+                "image/png/extra",
+                "*/*",
+                "*/png",
+                "image/**",
+                "image/p*ng",
+                "imäge/*"
+            ).foreach(value => assert(MediaTypePattern.parse(value) == Absent))
+        }
+
+        "matches exact media types without crossing main types" in {
+            val exact    = MediaTypePattern.parse("image/png").getOrElse(fail("valid exact pattern did not parse"))
+            val wildcard = MediaTypePattern.parse("image/*").getOrElse(fail("valid wildcard pattern did not parse"))
+            val png      = MediaType.parse("image/png").getOrElse(fail("valid png media type did not parse"))
+            val jpeg     = MediaType.parse("image/jpeg").getOrElse(fail("valid jpeg media type did not parse"))
+            val text     = MediaType.parse("text/plain").getOrElse(fail("valid text media type did not parse"))
+            assert(exact.matches(png))
+            assert(!exact.matches(jpeg))
+            assert(wildcard.matches(png))
+            assert(wildcard.matches(jpeg))
+            assert(!wildcard.matches(text))
+            assert(MediaTypePattern.exact(png) == exact)
+        }
+
+        "uses a normalized scalar schema and rejects invalid decoding" in {
+            val pattern = MediaTypePattern.parse(" Image/* ").getOrElse(fail("valid pattern did not parse"))
+            assert(Json.encode(pattern) == "\"image/*\"")
+            assert(Json.decode[MediaTypePattern]("\" TEXT/PLAIN \"").map(_.render) == Result.succeed("text/plain"))
+            Json.decode[MediaTypePattern]("\"*/*\"") match
+                case Result.Failure(error: ConstructorRejectedException) => assert(error.typeName == "Drag.MediaTypePattern")
+                case other                                               => fail(s"expected constructor rejection, got $other")
+        }
+    }
+
     "AllowedOperations" - {
         "constants contain exactly their named operations" in {
             assert(AllowedOperations.none == AllowedOperations(Set.empty))
@@ -25,78 +118,67 @@ class DragTest extends kyo.test.Test[Any]:
 
     "Accept" - {
         "matches an exact text representation" in {
-            val accept          = Accept.types("application/x-card", "text/plain")
-            val result: Boolean = accept.accepts(Item.Text(Map("application/x-card" -> "card")))
+            val accept          = Accept.types(mediaTypePattern("application/x-card"), mediaTypePattern("text/plain"))
+            val result: Boolean = accept.accepts(text("application/x-card" -> "card"))
             assert(result)
-            assert(!accept.accepts(Item.Text(Map("application/x-other" -> "other"))))
+            assert(!accept.accepts(text("application/x-other" -> "other")))
         }
 
-        "normalizes configured and transferred media types" in {
-            val accept = Accept.types("  APPLICATION/X-CARD  ", " Text/Plain ")
-            assert(accept.mediaTypes == Set("application/x-card", "text/plain"))
-            assert(accept.accepts(Item.Text(Map(" APPLICATION/X-CARD " -> "card"))))
+        "stores and matches canonical typed media values" in {
+            val application = mediaTypePattern("  APPLICATION/X-CARD  ")
+            val textPlain   = mediaTypePattern(" Text/Plain ")
+            val accept      = Accept.types(application, textPlain)
+            assert(accept.mediaTypes.map(_.render) == Set("application/x-card", "text/plain"))
+            assert(accept.accepts(text(" APPLICATION/X-CARD " -> "card")))
         }
 
         "matches a type wildcard" in {
-            val accept = Accept.types("image/*")
-            assert(accept.accepts(Item.Text(Map("image/png" -> "png"))))
-            assert(!accept.accepts(Item.Text(Map("text/plain" -> "text"))))
+            val accept = Accept.types(mediaTypePattern("image/*"))
+            assert(accept.accepts(text("image/png" -> "png")))
+            assert(!accept.accepts(text("text/plain" -> "text")))
         }
 
         "rejects text with no transfer representations" in {
             assert(!Accept().accepts(Item.Text(Map.empty)))
         }
 
-        "unfiltered acceptance requires a valid exact offered media type" in {
-            val accept = Accept()
-            assert(accept.accepts(Item.Text(Map("application/vnd.kyo+json" -> "valid"))))
-            Chunk("", "image", "/png", "image/", "image//png", "image/*", "image/(png)").foreach { mediaType =>
-                assert(!accept.accepts(Item.Text(Map(mediaType -> "invalid"))))
-            }
+        "unfiltered acceptance accepts typed exact offered media types" in {
+            assert(Accept().accepts(text("application/vnd.kyo+json" -> "valid")))
         }
 
-        "rejects malformed configured and offered media type pairs" in {
-            val malformedPairs = Chunk(
-                ""           -> "",
-                "image"      -> "image",
-                "/png"       -> "/png",
-                "image/"     -> "image/",
-                "image//png" -> "image//png",
-                "image/*"    -> "image/*",
-                "*/*"        -> "*/png",
-                "image/**"   -> "image/**"
-            )
-            malformedPairs.foreach { case (configured, offered) =>
-                assert(!Accept.types(configured).accepts(Item.Text(Map(offered -> "invalid"))))
-            }
+        "requires typed media values at domain construction sites" in {
+            typeCheckFailure("""Drag.Accept.types("text/plain")""")
+            typeCheckFailure("""Drag.Accept(mediaTypes = Set("text/plain"))""")
+            typeCheckFailure("""Drag.Item.Text(Map("text/plain" -> "value"))""")
+            typeCheckFailure("""Drag.FileMeta("token", "file", "text/plain", ByteSize.Zero, Instant.Epoch)""")
         }
 
         "does not enforce item count for a single item" in {
             val accept = Accept(maxItems = Present(0))
-            assert(accept.accepts(Item.Text(Map("text/plain" -> "text"))))
+            assert(accept.accepts(text("text/plain" -> "text")))
         }
 
         "accepts URI items as text/uri-list" in {
-            assert(Accept.types("text/uri-list").accepts(Item.Uri("https://getkyo.io")))
-            assert(!Accept.types("text/plain").accepts(Item.Uri("https://getkyo.io")))
+            assert(Accept.types(mediaTypePattern("text/uri-list")).accepts(Item.Uri("https://getkyo.io")))
+            assert(!Accept.types(mediaTypePattern("text/plain")).accepts(Item.Uri("https://getkyo.io")))
         }
 
         "checks file media type and size" in {
-            val file = Item.File(FileMeta("token", "card.bin", " APPLICATION/X-CARD ", 65.kib, Instant.Epoch))
+            val file = Item.File(FileMeta("token", "card.bin", mediaType(" APPLICATION/X-CARD "), 65.kib, Instant.Epoch))
             val accept = Accept(
-                mediaTypes = Set("application/x-card"),
+                mediaTypes = Set(mediaTypePattern("application/x-card")),
                 operations = AllowedOperations.copy,
                 maxFileSize = Present(64.kib)
             )
             assert(accept.operations == AllowedOperations.copy)
             assert(!accept.accepts(file))
-            assert(!Accept.types("application/x-other").accepts(file))
-            assert(Accept.types("application/*").accepts(file))
+            assert(!Accept.types(mediaTypePattern("application/x-other")).accepts(file))
+            assert(Accept.types(mediaTypePattern("application/*")).accepts(file))
         }
 
         "accepts a file exactly at the size limit" in {
-            val file   = Item.File(FileMeta("token", "card.bin", "application/x-card", 64.kib, Instant.Epoch))
-            val accept = Accept(mediaTypes = Set("application/x-card"), maxFileSize = Present(64.kib))
+            val file   = Item.File(FileMeta("token", "card.bin", mediaType("application/x-card"), 64.kib, Instant.Epoch))
+            val accept = Accept(mediaTypes = Set(mediaTypePattern("application/x-card")), maxFileSize = Present(64.kib))
             assert(accept.accepts(file))
         }
 

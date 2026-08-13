@@ -21,6 +21,13 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
     import UI.*
 
+    private def mediaType(value: String): Drag.MediaType = Drag.MediaType.parse(value).get
+
+    private def mediaTypePattern(value: String): Drag.MediaTypePattern = Drag.MediaTypePattern.parse(value).get
+
+    private def dragText(representations: (String, String)*): Drag.Item.Text =
+        Drag.Item.Text(representations.iterator.map((media, value) => mediaType(media) -> value).toMap)
+
     /** Minimal UIExchange stub that discards onChange notifications. */
     private class NoopExchange extends UIExchange:
         def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async = ()
@@ -89,7 +96,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     "drag capabilities preserve chained HTML attributes and render complete escaped metadata" in {
         val source = Drag.Source(
             key = "source\"&<key>",
-            items = Chunk(Drag.Item.Text(Map("text/plain" -> "card\"&<text>"))),
+            items = Chunk(dragText("text/plain" -> "card\"&<text>")),
             operations = Drag.AllowedOperations.copy,
             label = Present("source\"&<label>"),
             handle = true,
@@ -98,7 +105,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val target = Drag.Target(
             key = "target\"&<key>",
             accepts = Drag.Accept(
-                mediaTypes = Set("text/plain"),
+                mediaTypes = Set(mediaTypePattern("text/plain")),
                 operations = Drag.AllowedOperations.copy,
                 maxItems = Present(2),
                 directories = true
@@ -163,7 +170,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     }
 
     "shared drag API renders SVG target metadata without making it draggable" in {
-        val target = Drag.Target("svg\"&<target>", Drag.Accept.types("image/svg+xml"), Present("svg target"))
+        val target = Drag.Target("svg\"&<target>", Drag.Accept.types(mediaTypePattern("image/svg+xml")), Present("svg target"))
         val ui = Svg.rect
             .id("drop-zone")
             .dropTarget(target)
@@ -320,7 +327,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         yield
             val expectedStart = Drag.Event(
                 "drag-1",
-                Chunk(Drag.Item.Text(Map("text/plain" -> "card"))),
+                Chunk(dragText("text/plain" -> "card")),
                 Drag.Operation.Copy,
                 Present("source"),
                 Absent,
@@ -530,7 +537,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             assert(actualEnds == Chunk(Drag.End(
                 Drag.Event(
                     "duplicate",
-                    Chunk(Drag.Item.Text(Map("text/plain" -> "first"))),
+                    Chunk(dragText("text/plain" -> "first")),
                     Drag.Operation.Link,
                     Present("source-1"),
                     Absent,
@@ -912,7 +919,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
     "browser drag configs preserve safe byte boundaries and reject unsafe or excessive metadata" in {
         val maxSafe      = 9_007_199_254_740_991L
-        val safeFile     = Drag.FileMeta("file-token", "file.txt", "text/plain", ByteSize.fromBytes(maxSafe), Instant.Epoch)
+        val safeFile     = Drag.FileMeta("file-token", "file.txt", mediaType("text/plain"), ByteSize.fromBytes(maxSafe), Instant.Epoch)
         val unsafeFile   = safeFile.copy(size = ByteSize.fromBytes(maxSafe + 1L))
         val safeSource   = Drag.Source("safe-source", Chunk(Drag.Item.File(safeFile)))
         val unsafeSource = Drag.Source("unsafe-source", Chunk(Drag.Item.File(unsafeFile)))
@@ -920,12 +927,14 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val unsafeTarget = Drag.Target("unsafe-target", Drag.Accept(maxFileSize = Present(ByteSize.fromBytes(maxSafe + 1L))))
         val tooMany      = Drag.Source("many", Chunk.fill(DragProtocol.Limits.default.maxItemCount + 1)(Drag.Item.Uri("https://kyo.dev")))
         val tooMuchText =
-            Drag.Source("text", Chunk(Drag.Item.Text(Map("text/plain" -> ("x" * (DragProtocol.Limits.default.maxTextLength + 1))))))
+            Drag.Source("text", Chunk(dragText("text/plain" -> ("x" * (DragProtocol.Limits.default.maxTextLength + 1)))))
         val aggregateText = "x" * DragProtocol.Limits.default.maxAttributeLength
-        val tooLargeJson  = Drag.Source("aggregate", Chunk(Drag.Item.Text(Map("text/plain" -> aggregateText))))
+        val tooLargeJson  = Drag.Source("aggregate", Chunk(dragText("text/plain" -> aggregateText)))
         val tooManyRepresentations = Drag.Source(
             "representations",
-            Chunk(Drag.Item.Text((0 to DragProtocol.Limits.default.maxTextRepresentationCount).map(i => s"text/x-$i" -> "x").toMap))
+            Chunk(Drag.Item.Text(
+                (0 to DragProtocol.Limits.default.maxTextRepresentationCount).map(i => mediaType(s"text/x-$i") -> "x").toMap
+            ))
         )
         val invalidKey = Drag.Source("x" * (DragProtocol.Limits.default.maxIdentifierLength + 1), Chunk.empty)
         val invalidLabel = Drag.Source(
@@ -933,7 +942,11 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             Chunk.empty,
             label = Present("x" * (DragProtocol.Limits.default.maxNameLength + 1))
         )
-        val invalidTargetMedia = Drag.Target("media", Drag.Accept(mediaTypes = Set("not-a-media-type")))
+        val invalidTargetMedia = DragProtocol.TargetConfig(
+            "media",
+            DragProtocol.AcceptConfig(Set("not-a-media-type"), Drag.AllowedOperations.all, Absent, Absent, directories = false),
+            Absent
+        )
         val invalidTargetCount = Drag.Target(
             "count",
             Drag.Accept(maxItems = Present(DragProtocol.Limits.default.maxItemCount + 1))
@@ -955,7 +968,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         assert(DragProtocol.sourceConfig(tooManyRepresentations, DragProtocol.Limits.default).isFailure)
         assert(DragProtocol.sourceConfig(invalidKey, DragProtocol.Limits.default).isFailure)
         assert(DragProtocol.sourceConfig(invalidLabel, DragProtocol.Limits.default).isFailure)
-        assert(DragProtocol.targetConfig(invalidTargetMedia, DragProtocol.Limits.default).isFailure)
+        assert(DragProtocol.validateTargetConfig(invalidTargetMedia, DragProtocol.Limits.default).isFailure)
         assert(DragProtocol.targetConfig(invalidTargetCount, DragProtocol.Limits.default).isFailure)
         Chunk[UI](
             UI.div.dragSource(unsafeSource),
