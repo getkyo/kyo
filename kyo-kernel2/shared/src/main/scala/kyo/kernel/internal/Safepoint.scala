@@ -159,15 +159,23 @@ object Safepoint:
         @tailrec def loop(i: Int, probes: Int): Boolean =
             if probes == Slots then false
             else
-                val idx = i & (Slots - 1)
-                slots.get(idx) match
-                    case owner: Thread if owner eq thread =>
-                        slots.compareAndSet(idx, owner, new Stop(thread)) || loop(i, probes)
-                    case pending: Stop if pending.thread eq thread =>
-                        true
-                    case _ =>
-                        loop(i + 1, probes + 1)
-                end match
+                val idx   = i & (Slots - 1)
+                val entry = slots.get(idx)
+                // an unclaimed cell ends the probe: a claim walks forward from
+                // this same home and stops at the first free cell, and no site
+                // writes a cell back to null once claimed, so a thread holding
+                // one would have been found before here
+                if entry eq null then false
+                else
+                    entry match
+                        case owner: Thread if owner eq thread =>
+                            slots.compareAndSet(idx, owner, new Stop(thread)) || loop(i, probes)
+                        case pending: Stop if pending.thread eq thread =>
+                            true
+                        case _ =>
+                            loop(i + 1, probes + 1)
+                    end match
+                end if
         thread.isAlive() && loop(home(thread), 0)
     end stop
 

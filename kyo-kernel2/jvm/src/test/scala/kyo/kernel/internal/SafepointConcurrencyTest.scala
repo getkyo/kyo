@@ -101,6 +101,27 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         assert(yielded)
     }
 
+    "a live thread that never evaluated is not stoppable" in {
+        // the caller holds a claimed cell, so the probe reads a table with mixed
+        // occupancy before it reaches a free one
+        discard(Safepoint.get())
+        @volatile var running = true
+        @volatile var started = false
+        val t = new Thread(() =>
+            started = true
+            while running do Thread.onSpinWait()
+        )
+        t.start()
+        try
+            assert(spinUntil()(started))
+            assert(t.isAlive())
+            assert(!Safepoint.stop(t))
+        finally
+            running = false
+            t.join(10000)
+        end try
+    }
+
     "a dead thread is not stoppable" in {
         val t = new Thread(() => discard(Safepoint.get()))
         t.start()
