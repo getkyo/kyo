@@ -112,14 +112,28 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "JVM phase-split: three ordered processes (full)"
     else record no "JVM phase-split: three ordered processes (full)"; fi
 
-    # 2. JS and Wasm take the same three-process split.
+    # 2. JS and Wasm take the same three-process split. Their run phase (call 3) carries the out-of-JVM
+    # driver heap cap; the two compile phases do not.
     run_runner JS test 'exit 0'
     js_ok=no
-    if calls_count 3 && call_nth_is 3 "testKyo --all JS" && exit_is 0; then js_ok=yes; fi
+    if calls_count 3 && call_nth_is 3 "-J-Xmx6G testKyo --all JS" && exit_is 0; then js_ok=yes; fi
     run_runner Wasm test 'exit 0'
-    if [ "$js_ok" = yes ] && calls_count 3 && call_nth_is 3 "testKyo --all Wasm" && exit_is 0
+    if [ "$js_ok" = yes ] && calls_count 3 && call_nth_is 3 "-J-Xmx6G testKyo --all Wasm" \
+       && call_nth_is 1 "testKyo --phase compile-main --all Wasm" && exit_is 0
     then record ok "JS and Wasm take the same three-process split"
     else record no "JS and Wasm take the same three-process split"; fi
+
+    # 2b. The run-phase heap cap is applied to the out-of-JVM targets' run process and to nothing else:
+    # not the JVM run (its tests run in the driver), not the compile phases, not the native link.
+    run_runner JVM test 'exit 0'
+    jvm_uncapped=no
+    if call_nth_is 3 "testKyo --all JVM"; then jvm_uncapped=yes; fi
+    run_runner Native test 'echo "Tests: succeeded 1, failed 0"; exit 0'
+    if [ "$jvm_uncapped" = yes ] \
+       && calls_have "-J-Xmx6G testKyo --all Native" \
+       && calls_lack "-J-Xmx6G kyoNative/Test/nativeLink"
+    then record ok "run-phase heap cap: out-of-JVM run only, never JVM/compile/link"
+    else record no "run-phase heap cap: out-of-JVM run only, never JVM/compile/link"; fi
 
     # 3. Phase-split fails fast on a compile-main failure.
     run_runner JVM test 'exit 1'
@@ -296,6 +310,21 @@ run_arg() {
     esac
 }
 
+# Run-phase driver heap cap for the out-of-JVM targets. JS and Wasm run their tests in Node and Native
+# runs the linked binary, so the run-phase sbt driver holds no test heap; yet .jvmopts pins -Xmx12G for
+# the compile phases (where it is needed). On the 16GB runner a 12GB run-phase driver (measured at
+# 9-11GB RSS) leaves under 1GB for the Node/Wasm runtime plus podman and its containers, so the kyo-pod
+# container suites hit memory pressure: in-container `sh: Cannot fork` (EAGAIN) and OOM-killed
+# containers. Cap the run-phase driver for those targets so the containers keep their headroom; JVM
+# keeps the full heap because its tests run inside the driver, and the compile and native-link phases
+# keep it because they are the heap-heavy ones. `-J-Xmx` is appended after .jvmopts on the java command
+# line, so it wins. Overridable via RUN_HEAP_CAP.
+RUN_HEAP_CAP="${RUN_HEAP_CAP:-6G}"
+run_phase_heap() {
+    [ "$PLATFORM" = JVM ] && return 0
+    printf -- '-J-Xmx%s' "$RUN_HEAP_CAP"
+}
+
 # -- JVM / JS / Wasm: three-process phase-split, fail-fast --
 run_phase_split() {
     local arg; arg=$(run_arg)
@@ -312,7 +341,7 @@ run_phase_split() {
         *)
             sbt "testKyo --phase compile-main $arg $PLATFORM" || return $?
             sbt "testKyo --phase compile-test $arg $PLATFORM" || return $?
-            sbt "testKyo $arg $PLATFORM" || return $?
+            sbt $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
             return 0
             ;;
     esac
@@ -403,9 +432,9 @@ run_native() {
         log "attempt $attempt/$MAX_RETRIES running: sbt testKyo $arg Native"
         : > "$LOG"; watchdog_killed=0
         if command -v setsid >/dev/null 2>&1; then
-            setsid sbt "testKyo $arg Native" >> "$LOG" 2>&1 &
+            setsid sbt $(run_phase_heap) "testKyo $arg Native" >> "$LOG" 2>&1 &
         else
-            sbt "testKyo $arg Native" >> "$LOG" 2>&1 &
+            sbt $(run_phase_heap) "testKyo $arg Native" >> "$LOG" 2>&1 &
         fi
         sbt_pid=$!
         tail -f "$LOG" 2>/dev/null & tail_pid=$!
