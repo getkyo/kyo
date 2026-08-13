@@ -1099,6 +1099,7 @@ lazy val `kyo-ffi-it` =
         .in(file("kyo-ffi/it"))
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-ffi`)
+        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`,
