@@ -2945,6 +2945,10 @@ private[kyo] object HttpContainerBackend:
         else if DaemonErrorPhrases.AlreadyInUse.exists(text.contains) || text.contains("name is reserved") then Some(409)
         else if DaemonErrorPhrases.NoSuchImage.exists(text.contains) then Some(404)
         else if DaemonErrorPhrases.NoSuchContainer.exists(text.contains) then Some(404)
+        // A reaped exec session (podman reaps it at exit_command_delay=0 when the exec process exits). Concurrent execs surface this
+        // as a 500 rather than the 404 a serial exec gets; canonicalize to 404 so the exec inspect treats it as an exec-session miss
+        // and recovers the exit code from the exec_died event. Distinct from "no such container".
+        else if text.contains("no such exec session") then Some(404)
         else None
         end if
     end inferStatusFromMessage
