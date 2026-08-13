@@ -6,112 +6,52 @@ Done work is removed once acked. Last update: 2026-08-13.
 
 ## Done, awaiting your ack (removed from the file once acked)
 
-### Loop TODO resolved, with a design deviation the compiler forced (`58d523b805`)
+### Loop bare constructors: rechecked from scratch on your pushback, the `< Any` return is load-bearing
 
-The designed bare-Outcome return failed its own compile gate: 58 sites in the module
-stop compiling, because kernel2's Loop kind answers with settled values into pending
-answer slots (origin/main's clause sites always pass already-pending answers, which
-is why its bare constructors infer there). What landed instead answers your TODO's
-actual complaints: the runtime lift on `continue` is gone (unreachable: Continue is
-not Boxed), the lift on `done` stays with a new pin explaining it is load-bearing
-(the payload may be a computation held as data), state accessors became vals, the
-currency rule in CONTRIBUTING is rewritten, and the TODO is deleted. Suite 634
-passed. The design doc's section 4.3 stands rejected by evidence.
+Your question ("were you just lazy to fix the uses?") deserved evidence, not the
+agent's claim, so I reran the experiment on the current tip: constructors flipped to
+origin/main's exact bare shape, module compiled. 64 sites go red (2 main, 62 test),
+and every single one is the settled-answer clause a downstream handler author writes:
 
-### dispatchFirst (`fe5a1ce6aa`)
+    ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.continue(21))
 
-As specified: region-peeling walk over Handled/HandledState/HandledFirst values to
-the standing suspension, tag test in the same direction as find and handlePartial
-(the old kernel spelled it the other way), runs the clause on the input only, stops
-at Defer and settled values so no user code runs from a dead remainder. 73 test
-lines covering the peel depths, no-match, and both stops.
+    Found:    Loop.Outcome[A, O]           where A >: (21 : Int)
+    Required: Loop.Outcome[Int < (Ask & Any & (Any & Say)), Int] < Any
 
-### Safepoint.stop ends its probe at the first unclaimed cell (`76de3d9cf7`)
+The failure is not fixable at the uses in any acceptable way: the fix each site needs
+is an ascription naming the slot's exact effect row (`21: Int < (Ask & Any & (Any &
+Say))` above), which no user can be asked to write and which breaks the moment a row
+changes. The two main-source sites (ContextEffect.handle) can take ascriptions; the
+62 test sites are stand-ins for every future handleLoop clause.
 
-The 65536-volatile-read worst case for never-evaluated threads is gone. The commit
-cites all three cell-table write sites for the never-null-again invariant and the
-claim-from-home argument, with a mixed-occupancy test in SafepointConcurrencyTest.
+Why origin/main gets away with bare constructors and kernel2 cannot: a protocol
+difference, not inference luck. The old kernel's handleLoop clause receives an
+explicit continuation and continues with the already-pending whole computation
+(`Loop.continue(cont(input))`), so the argument's type is the slot's type verbatim
+and bare inference lands it. Kernel2's Loop handler kind answers the operation
+directly, and the common answer is a settled value into a pending slot
+(`Outcome[O[X] < (E & S & S2), A] < S2`). Settled-into-pending is a lift conversion,
+and a conversion blocks expected-type propagation into `continue`'s type parameter:
+A infers from the argument as `Int`, and the invariant Outcome rejects `Continue[Int]`
+where `Continue[Int < row]` is required. The `< Any` return is the inference vehicle
+that avoids the conversion: a `<`-shaped return unifies with the slot directly, so A
+solves from the expected type and the settled argument conforms. At runtime the value
+is the bare Continue; the `< Any` is erased currency, zero cost.
 
-## Done, awaiting your ack (continued)
-
-### Exception enrichment merged (`b59725e885`..`333b6fc154`)
-
-The A/B gate passed: allocation byte-identical on all four guard rows
-(fusionAllocatesNothing 0.004, inlineLimitKeepsZeroAllocation 0.010,
-sharedHandlerPaysDispatch 240,441, suspensionBaseline 640,120 B/op on both sides),
-times within overlapping error bars (worst +1.6 percent on sharedHandler, error
-2.1 to 2.6). The try-region neutrality claim is now empirical. Suite 678 green on
-the combined tree. Also in: the Eval save/restore leak fix with red-first tests.
-
-### ContextEffect isolation merged (`c9bb8b1941`)
-
-Hand-ported onto the enriched tree; the two changes met at Eval's find-miss arm
-and the Detached resume took the same enrichment guard as its Defaulted sibling.
-All four rulings honored; suite 678 green. Names for your ack: Provision, Detached
-and detach, transplant (all private[kyo]).
-
-## Done, awaiting your ack (continued)
-
-### Handlers encapsulation landed (`664335092c`): the spine keeps its cell kinds to itself
-
-Your ruled direction, implemented: Handlers is one exposed type; Node, StateNode,
-FirstNode, and the rebuilt region nodes are private to the file; every outside walk
-reads the four values a region has (tag, handler, exit, prev as fields) plus methods
-each with a consumer at HEAD (find, push which folded the cell-reuse identity test
-into the spine, replace, withState, rebuilt). Operation dispatch stays per-kind but
-reads the HANDLER kinds, the vocabulary the handling variants already publish. find
-no longer dispatches through a fresh anonymous handler class per handle site: the
-tag rides the cell, one reference test and field read per cell. State lives only on
-the stateful cell; the base refuses it; allocation per region entry unchanged. Eval
-shrank by a hundred-plus lines. Suite 683 green. Gate run and PASSED: sharedHandlerPaysDispatch 152.5/155.0 to 147.2 us (-4 percent,
-the megamorphic-to-field-read win showing), zero rows hold, others neutral or
-better; +8 B/op on region-entry rows is the tag field, one word per cell, the
-priced cost of the find improvement.
-
-## Done, awaiting your ack (continued)
-
-### kernel2 links on all four platforms (`adb748d5b5` merged)
-
-One private[kernel] Threads seam: jvm-native aliases Handle = Thread with inline
-forwarders (bytecode pins byte-identical, so zero hot-path change is proven, not
-argued), js-wasm is the single-threaded degenerate case (one handle, constant id,
-always alive). Safepoint's algorithm and pins unchanged; the one test that
-constructs a second thread moved unweakened to jvm-native. Gates all green: JVM
-683, JS test link, Native full suite 662 through a real clang link, Wasm compile
-and link. The transparent alias (not opaque) is deliberate: Safepoint's instanceof
-on the Stop union must stay a real check.
-
-## Done, awaiting your ack (continued)
-
-### deepRecursion watch item closed by measurement, no change made
-
-Fresh rescue-row numbers on the current tip: deepRecursionPaysRescuesOnly 54.17 us
-against the old kernel's 54.90 (was 57.68 before tonight), allocation win intact at
-912 vs 2,128 B/op; fusionPastBudgetPaysRescuesOnly 48.29 vs 48.20 old, 448 vs 1,128
-B/op. The night's kernel changes closed the 1.05x gap as a byproduct. Per your bar,
-no speculative optimization was attempted: the mandate row is at parity or better
-and the watch ends here.
-
-### The fused Safepoint.enter() was a large hidden regression; reverted (`fcd19e40fc`)
-
-The final sweep flagged userTypesSkipKernelWrapping at 1.21x the old kernel, the one
-unexplained loss on the board. A two-stage bisect over throwaway worktrees found the
-step exactly: your local-run map shape (`4b2eab8441`) was a much bigger win than we
-knew (userTypes 44.1 to 33.8 us, uncached 50.2 to 37.5), and the fused enter() I added
-in the next commit (`1982c8c4cc`, from your sentinel-slot idea) wiped it (33.8 to
-52.5). The validation at the time missed it because it measured both changes bundled
-against the candidate: the net looked flat while hiding a -13 us gain and a +14 us
-loss on the same rows. Two attribution experiments on the tip: restoring the five
-Pending sites to get-then-enter measured 33.8/38.0; an inline-def enter() keeping the
-single-call form measured 37.6/38.8. So the un-inlined fused method carried most of
-the cost and the sentinel merge kept an 11 percent residual even when spliced, which
-rules out the single-call API in any form. The two-step get/enter is back at the
-computation sites, the sentinel machinery (Denied, Slot.entered, zero-arg enter) is
-deleted, and the nested-defer pins from that commit stay. Suite green: 682 passed, 1
-ignored (the disabled map bytecode pin).
+Alternatives checked and rejected: covariant Outcome/Continue (sound but useless,
+`Int <: Int < S` is not subtyping outside Pending.scala's opacity scope, both
+kernels); retyping the Loop-kind slot to settled answers with effects riding the
+clause row (pessimizes every pending-answer site with an extra map per answer inside
+the handler hot loop); a macro reading the expected type (not accessible to inline
+defs, and would put a macro expansion in every loop site, the compile-time cost this
+campaign just removed). What `58d523b805` landed otherwise stands: dead lift on
+`continue` removed, load-bearing lift on `done` pinned, accessors to vals, TODO
+deleted. If you want a different tradeoff here (for example accepting the extra map
+to get bare constructors), that is a protocol ruling on the Loop handler kind, and I
+have the experiment set up to measure it.
 
 ### Final board rerun after the fix: six rows lifted, the sweep now closes clean
-
+FB give me the perf comparison tabels in the console with emoji indicaiton of better/neutral/regression
 The fix reached everything that pays budget entry on the eager path, not just the two
 guard rows: userTypes 53.1 to 34.0 (0.78x old), uncached 51.5 to 37.6 (0.51x),
 fusionPastBudget 48.1 to 33.6 (0.69x), idleHandler 48.3 to 33.0 (0.68x),
@@ -227,4 +167,3 @@ releases run synchronously, Unit-returning; recommended), R4 (context stays a de
 a conditional subclass so the footprint trick survives), R5 (dispatchFirst; now in
 implementation), R6 (below). (`iotask-kernel2-integration-r2.md`; summary
 `backlog-sections/iotask.md`.)
-
