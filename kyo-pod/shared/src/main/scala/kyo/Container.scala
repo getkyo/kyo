@@ -1401,6 +1401,10 @@ object Container:
       *   the host-side PID of the container's main process; meaningful only while running
       * @param restartCount
       *   number of times the runtime has restarted the container under its [[Config.RestartPolicy]]
+      * @param execIds
+      *   IDs of the exec sessions the daemon still tracks for this container: any in-flight exec plus any finished exec
+      *   whose cleanup has not run yet. Empty once every exec session has been reaped, so a non-empty set for a settled
+      *   container signals exec sessions the daemon has not freed (each holds a conmon and a keyring key).
       */
     final case class Info(
         id: Id,
@@ -1422,7 +1426,8 @@ object Container:
         restartCount: Int,
         driver: String,
         platform: Platform,
-        networkSettings: Info.NetworkSettings
+        networkSettings: Info.NetworkSettings,
+        execIds: Chunk[String]
     ) derives CanEqual
 
     object Info:

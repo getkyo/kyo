@@ -2232,7 +2232,8 @@ final private[kyo] class HttpContainerBackend(
                 gateway = if dto.NetworkSettings.Gateway.nonEmpty then Present(dto.NetworkSettings.Gateway) else Absent,
                 macAddress = if dto.NetworkSettings.MacAddress.nonEmpty then Present(dto.NetworkSettings.MacAddress) else Absent,
                 networks = networks
-            )
+            ),
+            execIds = Chunk.from(dto.ExecIDs.getOrElse(Seq.empty))
         )
     end mapInspectToInfo
 
@@ -2431,7 +2432,8 @@ final private[kyo] class HttpContainerBackend(
         RestartCount: Int = 0,
         Driver: String = "",
         Mounts: Option[Seq[InspectMountDto]] = None,
-        Platform: String = ""
+        Platform: String = "",
+        ExecIDs: Option[Seq[String]] = None
     ) derives Schema
 
     final private case class InspectStateDto(

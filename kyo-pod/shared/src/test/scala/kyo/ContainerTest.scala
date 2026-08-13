@@ -1092,7 +1092,8 @@ class ContainerTest extends BasePodTest:
             restartCount = 0,
             driver = "",
             platform = Container.Platform.default,
-            networkSettings = Container.Info.NetworkSettings(Absent, Absent, Absent, Dict.empty)
+            networkSettings = Container.Info.NetworkSettings(Absent, Absent, Absent, Dict.empty),
+            execIds = Chunk.empty
         )
 
     "Container.explainPortMissing" - {
