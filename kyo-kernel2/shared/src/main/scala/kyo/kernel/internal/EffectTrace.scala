@@ -52,40 +52,43 @@ private[kyo] object EffectTrace:
       * unconditionally and propagation is the same for every exception.
       */
     def attach(ex: Throwable, v: Any, hs: Handlers): Unit =
-        if NonFatal(ex) then
-            val carrier = carrierOf(ex)
-            val builder = new Builder(MaxFrames - carrier.elements.length)
+        reconstruct(ex) { builder =>
             builder.node(v)
             builder.cells(hs)
-            builder.installInto(carrier)
-        end if
-    end attach
+        }
 
     /** The frame-only boundary: `Effect.catching`'s outer arm, where the guarded computation has already been consumed and only the
       * `catching` call site remains in scope.
       */
     def attach(ex: Throwable, frame: Frame): Unit =
-        if NonFatal(ex) then
-            val carrier = carrierOf(ex)
-            val builder = new Builder(MaxFrames - carrier.elements.length)
-            builder.frame(frame)
-            builder.installInto(carrier)
-        end if
-    end attach
+        reconstruct(ex)(_.frame(frame))
 
     /** The chain boundary: `Effect.catching`'s guard arm, which holds the steps that were running inside the guard (`cont`) and the steps
       * that follow it (`next`), with the `catching` site between them.
       */
     def attach(ex: Throwable, frame: Frame, cont: Arrow[?, ?, ?], next: Arrow[?, ?, ?]): Unit =
-        if NonFatal(ex) then
-            val carrier = carrierOf(ex)
-            val builder = new Builder(MaxFrames - carrier.elements.length)
+        reconstruct(ex) { builder =>
             builder.arrow(cont)
             builder.frame(frame)
             builder.arrow(next)
-            builder.installInto(carrier)
+        }
+
+    /** Runs one reconstruction into the exception's carrier.
+      *
+      * A fatal error is returned unmodified: the test lives here rather than in a catch guard so that every guarded arm rethrows
+      * unconditionally and propagation is the same for every exception. A non-fatal failure of the walk itself is dropped, because an
+      * exception raised while describing a failure would replace the failure, which is strictly worse than describing nothing.
+      */
+    private inline def reconstruct(ex: Throwable)(inline fill: Builder => Unit): Unit =
+        if NonFatal(ex) then
+            try
+                val carrier = carrierOf(ex)
+                val builder = new Builder(MaxFrames - carrier.elements.length)
+                fill(builder)
+                builder.installInto(carrier)
+            catch case failure if NonFatal(failure) => ()
         end if
-    end attach
+    end reconstruct
 
     /** Writes the accumulated frames into the exception's stack trace, synthesized frames first, then the physical trace with the kernel's
       * plumbing removed.
@@ -96,17 +99,19 @@ private[kyo] object EffectTrace:
       */
     def splice(ex: Throwable): Unit =
         if NonFatal(ex) && !ex.isInstanceOf[NoStackTrace] then
-            find(ex) match
-                case Maybe.Present(carrier) if carrier.elements.length > 0 =>
-                    val physical =
-                        carrier.physical match
-                            case Maybe.Present(p) => p
-                            case Maybe.Absent =>
-                                val p = ex.getStackTrace.filterNot(isPlumbing)
-                                carrier.physical = Maybe(p)
-                                p
-                    ex.setStackTrace(carrier.elements ++ physical)
-                case _ => ()
+            try
+                find(ex) match
+                    case Maybe.Present(carrier) if carrier.elements.length > 0 =>
+                        val physical =
+                            carrier.physical match
+                                case Maybe.Present(p) => p
+                                case Maybe.Absent =>
+                                    val p = ex.getStackTrace.filterNot(isPlumbing)
+                                    carrier.physical = Maybe(p)
+                                    p
+                        ex.setStackTrace(carrier.elements ++ physical)
+                    case _ => ()
+            catch case failure if NonFatal(failure) => ()
         end if
     end splice
 

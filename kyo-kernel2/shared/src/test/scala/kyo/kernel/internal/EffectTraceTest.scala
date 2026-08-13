@@ -1,5 +1,6 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.*
@@ -211,6 +212,20 @@ class EffectTraceTest extends AnyFreeSpec:
             assert(carrier(ex).elements.length == 64)
             assert(carrier(ex).dropped > 0)
         }
+    }
+
+    "a failure of the walk itself leaves the original failure travelling" in {
+        // a node whose frame cannot be read: describing a failure must never
+        // replace the failure being described
+        val unreadable =
+            new Kyo.Suspend[Const[Unit], Const[Int], Ask, Any, Int, Ask]:
+                def tag   = Tag[Ask]
+                def input = ()
+                def frame = throw new IllegalStateException("frame read failed")
+                def cont  = Arrow[Int]
+
+        val ex = intercept[Boom](answerAsk(1)((unreadable: Int < Ask).map(_ => throw new Boom)).eval)
+        assert(ex.getMessage == "boom")
     }
 
     "the carrier renders the frames as a message" in {
