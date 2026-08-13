@@ -103,6 +103,7 @@ private[kyo] object DomBackend:
             _ <- Scope.ensure(events.close.andThen(Sync.defer(diagnostics.channelClosed())).unit)
             _ <- setupEventDelegation(dispatch.handle, events)
             _ <- setupInputMasking()
+            _ <- DomDragRuntime.install(container, event => fireFromJs(events, dispatch.handle(event.path, event).unit))
             _ <- Async.never
         yield ()
         end for
