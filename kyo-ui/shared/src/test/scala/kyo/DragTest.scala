@@ -47,6 +47,30 @@ class DragTest extends kyo.test.Test[Any]:
             assert(!Accept().accepts(Item.Text(Map.empty)))
         }
 
+        "unfiltered acceptance requires a valid exact offered media type" in {
+            val accept = Accept()
+            assert(accept.accepts(Item.Text(Map("application/vnd.kyo+json" -> "valid"))))
+            Chunk("", "image", "/png", "image/", "image//png", "image/*", "image/(png)").foreach { mediaType =>
+                assert(!accept.accepts(Item.Text(Map(mediaType -> "invalid"))))
+            }
+        }
+
+        "rejects malformed configured and offered media type pairs" in {
+            val malformedPairs = Chunk(
+                ""           -> "",
+                "image"      -> "image",
+                "/png"       -> "/png",
+                "image/"     -> "image/",
+                "image//png" -> "image//png",
+                "image/*"    -> "image/*",
+                "*/*"        -> "*/png",
+                "image/**"   -> "image/**"
+            )
+            malformedPairs.foreach { case (configured, offered) =>
+                assert(!Accept.types(configured).accepts(Item.Text(Map(offered -> "invalid"))))
+            }
+        }
+
         "does not enforce item count for a single item" in {
             val accept = Accept(maxItems = Present(0))
             assert(accept.accepts(Item.Text(Map("text/plain" -> "text"))))
@@ -68,6 +92,12 @@ class DragTest extends kyo.test.Test[Any]:
             assert(!accept.accepts(file))
             assert(!Accept.types("application/x-other").accepts(file))
             assert(Accept.types("application/*").accepts(file))
+        }
+
+        "accepts a file exactly at the size limit" in {
+            val file   = Item.File(FileMeta("token", "card.bin", "application/x-card", 64.kib, Instant.Epoch))
+            val accept = Accept(mediaTypes = Set("application/x-card"), maxFileSize = Present(64.kib))
+            assert(accept.accepts(file))
         }
 
         "checks directory acceptance" in {

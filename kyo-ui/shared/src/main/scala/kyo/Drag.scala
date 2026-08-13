@@ -18,6 +18,8 @@ import java.util.Locale
   */
 object Drag:
 
+    // --- Public values ---
+
     /** Operation requested for a drag transfer. */
     enum Operation derives CanEqual, Schema:
         case Copy, Move, Link
@@ -83,8 +85,8 @@ object Drag:
 
     /** Per-item rules declared by a drop target.
       *
-      * An empty media type set accepts every non-empty transfer representation. `maxItems` is
-      * carried here for the event layer and is intentionally not applied by [[accepts]].
+      * An empty media type set accepts every valid exact MIME transfer representation. `maxItems`
+      * is carried here for the event layer and is intentionally not applied by [[accepts]].
       */
     final case class Accept(
         mediaTypes: Set[String] = Set.empty,
@@ -130,7 +132,16 @@ object Drag:
         case Reject(rejection: Rejection)
     end Decision
 
+    // --- Internal matching ---
+
     private val uriMediaType = "text/uri-list"
+
+    final private case class ExactMediaType(mainType: String, subType: String) derives CanEqual
+
+    private enum MediaTypePattern derives CanEqual:
+        case Exact(value: ExactMediaType)
+        case Wildcard(mainType: String)
+    end MediaTypePattern
 
     private def normalizeMediaType(mediaType: String) =
         mediaType.trim.toLowerCase(Locale.ROOT)
@@ -151,15 +162,51 @@ object Drag:
     end accepts
 
     private def acceptsMediaTypes(accepted: Set[String], offered: Set[String]): Boolean =
-        offered.nonEmpty &&
-            (accepted.isEmpty || accepted.exists { configured =>
-                val expected = normalizeMediaType(configured)
-                offered.exists { transferred =>
-                    val actual = normalizeMediaType(transferred)
-                    expected == actual ||
-                    (expected.endsWith("/*") && actual.startsWith(expected.dropRight(1)) && actual.length > expected.length - 1)
-                }
-            })
+        offered.exists { transferred =>
+            parseExactMediaType(transferred) match
+                case Present(actual) =>
+                    accepted.isEmpty || accepted.exists { configured =>
+                        parseMediaTypePattern(configured) match
+                            case Present(MediaTypePattern.Exact(expected))    => expected == actual
+                            case Present(MediaTypePattern.Wildcard(mainType)) => mainType == actual.mainType
+                            case Absent                                       => false
+                    }
+                case Absent => false
+        }
     end acceptsMediaTypes
+
+    private def parseExactMediaType(mediaType: String): Maybe[ExactMediaType] =
+        parseExactNormalized(normalizeMediaType(mediaType))
+
+    private def parseMediaTypePattern(mediaType: String): Maybe[MediaTypePattern] =
+        val normalized = normalizeMediaType(mediaType)
+        if normalized.endsWith("/*") then
+            val mainType = normalized.dropRight(2)
+            if isConcreteToken(mainType) then Present(MediaTypePattern.Wildcard(mainType))
+            else Absent
+        else
+            parseExactNormalized(normalized).map(MediaTypePattern.Exact(_))
+        end if
+    end parseMediaTypePattern
+
+    private def parseExactNormalized(mediaType: String): Maybe[ExactMediaType] =
+        val slash = mediaType.indexOf('/')
+        if slash > 0 && slash == mediaType.lastIndexOf('/') && slash < mediaType.length - 1 then
+            val mainType = mediaType.substring(0, slash)
+            val subType  = mediaType.substring(slash + 1)
+            if isConcreteToken(mainType) && isConcreteToken(subType) then Present(ExactMediaType(mainType, subType))
+            else Absent
+        else Absent
+        end if
+    end parseExactNormalized
+
+    private def isConcreteToken(value: String): Boolean =
+        value.nonEmpty && !value.contains('*') && value.forall(isTokenCharacter)
+
+    private def isTokenCharacter(value: Char): Boolean =
+        (value >= 'a' && value <= 'z') ||
+            (value >= 'A' && value <= 'Z') ||
+            (value >= '0' && value <= '9') ||
+            "!#$%&'*+-.^_`|~".contains(value)
 
 end Drag
