@@ -55,9 +55,9 @@ uncontended. Workflow on completion, per your note: I review the work and iterat
 with the agent until the code is clean, elegant, and fully functional, then merge the
 changes into this branch. Design: `exception-enrichment-design.md`.
 
-## Designed, awaiting your read (value-forks V1-V4)
+## Next up
 
-### ContextEffect isolation encoding
+### ContextEffect isolation encoding (ready)
 
 Context: forking must carry context effects (Local, Env: scoped values, always safe
 to inherit) into the child. The old kernel did this generically through the Context
@@ -65,32 +65,21 @@ map (`Isolate.internal.runDetached`/`restoring`, Noninheritable filtered); kerne
 deleted the map, so the "simple state copying" category of the as-is Isolate design
 needs a kernel2 encoding.
 
-Design landed (`contexteffect-isolation-design.md`, committed): **boundary
-inheritance, narrowed to context cells, with a structural recognizer** for which
-regions to transplant. Three independent findings each rule out the derived-instances
-alternative: Local never appears in any effect row (`Local.get` is `A < Any`), so a
-row-driven derivation emits nothing for it and every fork would silently reset locals
-to defaults, breaking pinned behavior; Env installs and reads through the erased
-`Tag[Env[Any]]`, so a mechanically derived per-member instance would install cells
-its own reads cannot find; and downstream opaque aliases (`Topic <: Env[...]`,
-`Arena <: Env[...] & Sync`) would each need hand-written instances where the
-ContextEffect filter covers them today. The one real advantage of the instance
-approach (flattening N nested bindings into one cell for the child) folds into the
-boundary as transplant-time compaction. The derive macro's existing ContextEffect
-filter ports verbatim; no Isolate instance is involved for context members; the
-state-aware region exit is NOT needed for context members (only stateful ones,
-which need it regardless).
+Design, ruled ready: **boundary inheritance narrowed to context cells.** The fork
+transplants exactly the regions ContextEffect.handle installed, with neutral exits,
+skipping Noninheritable; no Isolate instance is involved for context members; the
+derive macro's ContextEffect filter ports verbatim; nothing threads through the hot
+path, the fork boundary owns the whole mechanism. The instances alternative is ruled
+out on three independent grounds (Local never appears in any row; Env reads through
+the erased Tag[Env[Any]]; downstream opaque aliases would each need instances).
 
-Your value-forks, from its section 10: V1 layered context resolved at region entry
-vs at each read (entry resolution deletes the N-probes-per-read factor; differs
-observably in one re-entry case; origin/main is on the lazy side; either needs a
-pin). V2 recognizer as a named provision handler vs a tag test (structural and
-cheaper on the walk vs smaller today and admitting user handlers over context tags).
-V3 where the Noninheritable bit is decided (region construction vs fork time; pure
-measurement). V4 whether transplant ever copies more than provision cells (the doc
-narrows to provision cells, keeping the old split intact).
-
-## Next up
+Value-forks, ruled: V2 the recognizer is STRUCTURAL, a named provision region built
+by ContextEffect.handle (not a tag test), so transplantability is a property of the
+representation; V1 layered values stay lazily resolved for exact origin/main parity
+(entry-resolution and the compaction revisit later as an optimization); V3 the
+Noninheritable bit placement is decided by measurement at implementation; V4 the
+transplant copies provision cells only, keeping the old simple/complex split.
+Full design: `contexteffect-isolation-design.md`.
 
 ### Handlers encapsulation (your TODO at Handlers.scala:8)
 
