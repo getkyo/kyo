@@ -67,6 +67,19 @@ shrank by a hundred-plus lines. Suite 683 green. Honest gate: JMH pending, mine 
 run in the next quiet window (sharedHandlerPaysDispatch carries find; I will run the
 full guard set since Eval's arms were restructured).
 
+## Done, awaiting your ack (continued)
+
+### kernel2 links on all four platforms (`adb748d5b5` merged)
+
+One private[kernel] Threads seam: jvm-native aliases Handle = Thread with inline
+forwarders (bytecode pins byte-identical, so zero hot-path change is proven, not
+argued), js-wasm is the single-threaded degenerate case (one handle, constant id,
+always alive). Safepoint's algorithm and pins unchanged; the one test that
+constructs a second thread moved unweakened to jvm-native. Gates all green: JVM
+683, JS test link, Native full suite 662 through a real clang link, Wasm compile
+and link. The transparent alias (not opaque) is deliberate: Safepoint's instanceof
+on the Stop union must stay a real check.
+
 ## Implementing now
 
 ## Next up
@@ -87,18 +100,6 @@ deepRecursionPaysRescuesOnly and fusionPastBudgetPaysRescuesOnly proving a measu
 improvement. Merge only if the code is simple and elegant to integrate; otherwise
 park it with the findings recorded. Queued behind the two implementation agents so
 the measurements are clean; I own this one.
-
-### JS, Native, and Wasm: platform seam implementing now (sonnet, isolated worktree)
-
-Context: kernel2 declares four platforms with zero platform-specific sources; JS does
-not link, with exactly three missing java.lang.Thread members (threadId, isAlive, the
-constructor), all reached from the shared Safepoint and its tests; Native compiles
-clean. The fix is one private[kernel] seam for the thread operations Safepoint
-actually uses: jvm and native delegate to java.lang.Thread with inline forwarders
-(zero hot-path change, pins must hold), js and wasm are the single-threaded
-degenerate case. The thread-constructing test cases relocate to platform sources
-without weakening assertions. Gates: JVM suite at baseline, JS compile and link
-green, Native compile green. Safepoint's algorithm and pinned behavior change zero.
 
 ## Parked (your call to revive)
 
