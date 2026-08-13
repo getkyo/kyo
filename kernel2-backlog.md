@@ -6,49 +6,52 @@ Done work is removed once acked. Last update: 2026-08-13.
 
 ## Done, awaiting your ack (removed from the file once acked)
 
-### Loop bare constructors: rechecked from scratch on your pushback, the `< Any` return is load-bearing
+### Lifting out of the box for Loop.Outcome: four designs built and gated, the winner is bare done plus the currency-shaped continue
 
-Your question ("were you just lazy to fix the uses?") deserved evidence, not the
-agent's claim, so I reran the experiment on the current tip: constructors flipped to
-origin/main's exact bare shape, module compiled. 64 sites go red (2 main, 62 test),
-and every single one is the settled-answer clause a downstream handler author writes:
+Your goal ("making liftings work out of the box should be a goal here if possible")
+drove a full design sweep, each variant compiled against the whole module and gated,
+three of them through the full suite:
 
-    ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.continue(21))
+Plain bare constructors (origin/main's shape) leave 64 sites red, every one the
+settled-answer clause a handler author writes (`[X] => _ => Loop.continue(21)`). The
+settled-into-pending step is a conversion, and a conversion blocks expected-type
+propagation into the constructor's type parameter: the answer type infers from the
+argument and the invariant Outcome rejects it. The per-site fix is an ascription
+naming the slot's exact effect row, unwritable in user code. origin/main never hits
+this because its clause protocol passes the already-pending continuation
+(`Loop.continue(cont(input))`), so the argument's type is the slot's type verbatim.
 
-    Found:    Loop.Outcome[A, O]           where A >: (21 : Int)
-    Required: Loop.Outcome[Int < (Ask & Any & (Any & Say)), Int] < Any
+Outcome-lifting conversions in the companion (your "why doesn't it auto-lift"
+direction, made concrete: `Outcome[A, O]` converts to `Outcome[A < S, O] < S2`) fix
+all the plain settled sites but break effectful clause bodies: at
+`say("pre").map(_ => Loop.continue(41))` the conversion search cycles against the
+lambda's own result-type inference, dotc reports cyclic errors and exceeds its
+recursion limit, and inferred rows degrade (`Int < Ask` where `Int < Any` inferred
+before). A protocol that pushes the compiler over its recursion limit on ordinary
+user code is disqualified.
 
-The failure is not fixable at the uses in any acceptable way: the fix each site needs
-is an ascription naming the slot's exact effect row (`21: Int < (Ask & Any & (Any &
-Say))` above), which no user can be asked to write and which breaks the moment a row
-changes. The two main-source sites (ContextEffect.handle) can take ascriptions; the
-62 test sites are stand-ins for every future handleLoop clause.
+The row on the payload (`Continue[+A, -S]` storing `_1: A < S`, `Outcome[A, S, O]`)
+is the principled variance encoding: every site infers by plain subtyping, no
+conversion exists anywhere, and the FULL SUITE PASSED (682 green, all 64 sites
+inferring with zero ascriptions). It died on the measurement: the payload field
+erases to Object where the old `_1: A` specializes to a primitive at the inline
+site, so the settled value's box is stored in the heap object and escape analysis
+cannot remove it. JMH on a 100k countdown through Loop's driver: 16 to 32 B/op and
+166.7 to 489.7 us (2.9x), with the handler answer rows at exact parity (79.6/80.0,
+119.2/119.0). Loop.apply is the workhorse under the whole stack, so this is
+disqualifying by the performance-by-nature bar.
 
-Why origin/main gets away with bare constructors and kernel2 cannot: a protocol
-difference, not inference luck. The old kernel's handleLoop clause receives an
-explicit continuation and continues with the already-pending whole computation
-(`Loop.continue(cont(input))`), so the argument's type is the slot's type verbatim
-and bare inference lands it. Kernel2's Loop handler kind answers the operation
-directly, and the common answer is a settled value into a pending slot
-(`Outcome[O[X] < (E & S & S2), A] < S2`). Settled-into-pending is a lift conversion,
-and a conversion blocks expected-type propagation into `continue`'s type parameter:
-A infers from the argument as `Int`, and the invariant Outcome rejects `Continue[Int]`
-where `Continue[Int < row]` is required. The `< Any` return is the inference vehicle
-that avoids the conversion: a `<`-shaped return unifies with the slot directly, so A
-solves from the expected type and the settled argument conforms. At runtime the value
-is the bare Continue; the `< Any` is erased currency, zero cost.
+The remaining lever, the old `>: A` lower bound on `<` (bare constructors would then
+infer by subtyping at zero cost), stays dead on correctness: it makes a nested
+computation conform with no boxing point, the settled-nested confusion the lift
+macro exists to intercept, which is why it was dropped in the first place.
 
-Alternatives checked and rejected: covariant Outcome/Continue (sound but useless,
-`Int <: Int < S` is not subtyping outside Pending.scala's opacity scope, both
-kernels); retyping the Loop-kind slot to settled answers with effects riding the
-clause row (pessimizes every pending-answer site with an extra map per answer inside
-the handler hot loop); a macro reading the expected type (not accessible to inline
-defs, and would put a macro expansion in every loop site, the compile-time cost this
-campaign just removed). What `58d523b805` landed otherwise stands: dead lift on
-`continue` removed, load-bearing lift on `done` pinned, accessors to vals, TODO
-deleted. If you want a different tradeoff here (for example accepting the extra map
-to get bare constructors), that is a protocol ruling on the Loop handler kind, and I
-have the experiment set up to measure it.
+What landed: `done` is now bare (`def done[A, O](v: O): Outcome[A, O] = v`, the
+ordinary value lift at the clause boundary reaches it and its boxing arm keeps a
+computation-as-data payload from reading as a suspension; full suite green), and
+`continue` keeps the `<`-shaped return, which is the one design where settled
+answers infer out of the box at zero runtime cost. The constructor comment and
+CONTRIBUTING rule 4 now record the whole tested design space with the measurements.
 
 ### Final board rerun after the fix: six rows lifted, the sweep now closes clean
 FB give me the perf comparison tabels in the console with emoji indicaiton of better/neutral/regression
