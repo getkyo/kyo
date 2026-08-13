@@ -73,7 +73,16 @@ Parked by your call ("not sure about this region thing"). If revived, it consume
 same failure-path walk the bracket ruling decides.
 
 ### Defaulted redesign (optional context)
-FB double check the design and explain it to me in a reply in th econsole using code snippets to explain
+
+Design re-verified against the live code (2026-08-13) and explained in console. It
+holds, and its two halves are one mechanism rather than two: typing the context answer
+as `Maybe[A]` makes the definedness probe an ordinary read, and typing the find-miss
+fallback at the operation's output (`unhandled: O[X]` replacing `Defaulted.default:
+Any`) is what lets that probe answer `Absent` when no handler is installed. Together
+they delete the `undefined` AnyRef sentinel, the identity comparison against it, and
+the `Any` typing. Cost to weigh when you rule: the operation type of every context
+effect changes, so `Local`/`Env` in kyo-prelude move with it when the stack ports.
+
 Context: `Kyo.Defaulted` is the optional-context mechanism: a suspension that carries
 its own fallback, which the evaluator's find-miss arm answers with when no handler is
 installed (`Local.get` works with no `Local.let` in scope because of it). Your TODO
