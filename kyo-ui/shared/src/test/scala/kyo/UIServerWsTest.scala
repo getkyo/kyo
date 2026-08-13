@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.DragProtocol
 import kyo.internal.HtmlOp
 import kyo.internal.MouseEventData
 import kyo.internal.UIEvent
@@ -120,7 +121,87 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(decoded == Result.Success(event))
     }
 
-    // ==================== Leaf 5: scrollIntoView command over WS ====================
+    // ==================== Leaf 5: drag protocol envelopes ====================
+
+    "DragProtocol.ClientMessage cases round-trip through exact JSON wire representations" in {
+        val event = UIEvent.DragEnd(
+            Seq("source"),
+            DragProtocol.EndData("session-2", Drag.Operation.Link, cancelled = false)
+        )
+        val file = Drag.FileMeta(
+            token = "file-token",
+            name = "notes.txt",
+            mediaType = "text/plain",
+            size = 12.bytes,
+            lastModified = Instant.Epoch
+        )
+        val cases = Chunk[(DragProtocol.ClientMessage, String)](
+            DragProtocol.ClientMessage.Event(event) ->
+                """{"Event":{"value":{"DragEnd":{"path":["source"],"event":{"sessionId":"session-2","operation":{"Link":{}},"cancelled":false}}}}}""",
+            DragProtocol.ClientMessage.FileChunk("read-1", Chunk[Byte](1, -2, 3), done = true) ->
+                """{"FileChunk":{"requestId":"read-1","bytes":[1,-2,3],"done":true}}""",
+            DragProtocol.ClientMessage.FileEntries(
+                "read-2",
+                Chunk(
+                    DragProtocol.EntryData.File(file),
+                    DragProtocol.EntryData.Directory("dir-token", "assets")
+                ),
+                done = false
+            ) ->
+                """{"FileEntries":{"requestId":"read-2","entries":[{"File":{"meta":{"token":"file-token","name":"notes.txt","mediaType":"text/plain","size":12,"lastModified":"1970-01-01T00:00:00Z"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"done":false}}""",
+            DragProtocol.ClientMessage.FileFailure(
+                "read-3",
+                DragProtocol.FileFailureData.LimitExceeded("entry limit")
+            ) ->
+                """{"FileFailure":{"requestId":"read-3","failure":{"LimitExceeded":{"reason":"entry limit"}}}}"""
+        )
+
+        cases.foreach { case (message, expected) =>
+            val encoded = Json.encode[DragProtocol.ClientMessage](message)
+            assert(encoded == expected)
+            assert(Json.decode[DragProtocol.ClientMessage](encoded) == Result.succeed(message))
+        }
+    }
+
+    "DragProtocol.ClientMessage distinguishes UI events from file responses" in {
+        val eventJson =
+            """{"Event":{"value":{"DragEnd":{"path":["source"],"event":{"sessionId":"session-2","operation":{"Copy":{}},"cancelled":false}}}}}"""
+        val chunkJson = """{"FileChunk":{"requestId":"read-1","bytes":[7],"done":true}}"""
+
+        assert(
+            Json.decode[DragProtocol.ClientMessage](eventJson) == Result.succeed(
+                DragProtocol.ClientMessage.Event(
+                    UIEvent.DragEnd(Seq("source"), DragProtocol.EndData("session-2", Drag.Operation.Copy, cancelled = false))
+                )
+            )
+        )
+        assert(
+            Json.decode[DragProtocol.ClientMessage](chunkJson) == Result.succeed(
+                DragProtocol.ClientMessage.FileChunk("read-1", Chunk[Byte](7), done = true)
+            )
+        )
+    }
+
+    "drag HtmlOp cases round-trip through exact JSON wire representations" in {
+        val cases = Chunk[(HtmlOp, String)](
+            HtmlOp.ReadDropFile("read-file", "file-token", 4.kib, 64.kib) ->
+                """{"ReadDropFile":{"requestId":"read-file","token":"file-token","offset":4096,"maxSize":65536}}""",
+            HtmlOp.ReadDropDirectory("read-dir", "dir-token", Present("cursor-1"), 50) ->
+                """{"ReadDropDirectory":{"requestId":"read-dir","token":"dir-token","cursor":"cursor-1","maxEntries":50}}""",
+            HtmlOp.CancelDropRead("read-file") ->
+                """{"CancelDropRead":{"requestId":"read-file"}}""",
+            HtmlOp.ResolveDrag("session-2", Drag.Decision.Reject(Drag.Rejection.Application("locked"))) ->
+                """{"ResolveDrag":{"sessionId":"session-2","decision":{"Reject":{"rejection":{"Application":{"reason":"locked"}}}}}}"""
+        )
+
+        cases.foreach { case (op, expected) =>
+            val encoded = Json.encode[HtmlOp](op)
+            assert(encoded == expected)
+            assert(Json.decode[HtmlOp](encoded) == Result.succeed(op))
+        }
+    }
+
+    // ==================== Leaf 6: scrollIntoView command over WS ====================
 
     // notNative: WS-behavior leaf; see class scaladoc for RI-001 rationale.
     "scrollIntoView: a click handler's command reaches the client as a ScrollIntoView op".notNative in {

@@ -2,6 +2,8 @@ package kyo.internal
 
 import kyo.*
 
+// --- Event payloads ---
+
 /** Mouse event payload on the wire. Reconstructed into UI.MouseEvent on the server. */
 final private[kyo] case class MouseEventData(
     modifiers: UI.Modifiers,
@@ -14,6 +16,8 @@ final private[kyo] case class KeyboardEventData(
     modifiers: UI.Modifiers,
     targetId: Maybe[String]
 ) derives CanEqual, Schema
+
+// --- Events ---
 
 /** Client -> server event. Typed per event kind. */
 private[kyo] enum UIEvent derives CanEqual, Schema:
@@ -32,4 +36,11 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case Scroll(path: Seq[String], deltaX: Double, deltaY: Double, modifiers: UI.Modifiers, targetId: Maybe[String])
     case Hover(path: Seq[String], mouse: MouseEventData)
     case Unhover(path: Seq[String], mouse: MouseEventData)
+    case DragStart(path: Seq[String], event: DragProtocol.EventData)
+    case DragEnd(path: Seq[String], event: DragProtocol.EndData)
+    case DragEnter(path: Seq[String], event: DragProtocol.EventData)
+    case DragLeave(path: Seq[String], event: DragProtocol.EventData)
+    case DragOver(path: Seq[String], event: DragProtocol.EventData)
+    case Drop(path: Seq[String], event: DragProtocol.EventData)
+    case SortMove(path: Seq[String], sessionId: String, move: Drag.Move)
 end UIEvent
