@@ -45,11 +45,16 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     private def withDispatch[A](ui: UI, limits: ReactiveUI.DragSessionLimits)(
         f: ((Seq[String], UIEvent) => Boolean < Async) => A < (Async & Scope)
     )(using Frame): A < Async =
+        withSubscription(ui, limits)(subscription => f(subscription.handle))
+
+    private def withSubscription[A](ui: UI, limits: ReactiveUI.DragSessionLimits)(
+        f: ReactiveUI.Subscription => A < (Async & Scope)
+    )(using Frame): A < Async =
         Scope.run {
             for
                 root         <- ReactiveUI.normalize(ui, Seq.empty)
                 subscription <- ReactiveUI.subscribe(root, new NoopExchange, limits)
-                result       <- f(subscription.handle)
+                result       <- f(subscription)
             yield result
         }
 
@@ -810,6 +815,65 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                 _      <- control.advance(1.second, 100.millis)
                 actual <- resolutions.get
             yield assert(actual.isEmpty)
+        }
+    }
+
+    "drag Start and End churn keeps one bounded expiry worker" in {
+        val limits = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.hour)
+        val start = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData("churn", Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        val end = UIEvent.DragEnd(
+            Seq.empty,
+            DragProtocol.EndData("churn", Drag.Operation.Copy, cancelled = true)
+        )
+        for
+            subscription <- Scope.run {
+                for
+                    root         <- ReactiveUI.normalize(UI.div, Seq.empty)
+                    subscription <- ReactiveUI.subscribe(root, new NoopExchange, limits)
+                    _ <- Kyo.foreach(0 until 1000) { _ =>
+                        subscription.handle(Seq.empty, start).andThen(subscription.handle(Seq.empty, end))
+                    }
+                    sessions <- subscription.dragSessionCount
+                    workers  <- subscription.dragExpiryWorkerCount
+                yield
+                    assert(sessions == 0)
+                    assert(workers == 1)
+                    subscription
+            }
+            sessions <- subscription.dragSessionCount
+            workers  <- subscription.dragExpiryWorkerCount
+        yield
+            assert(sessions == 0)
+            assert(workers == 0)
+        end for
+    }
+
+    "an earlier drag deadline wakes the expiry scheduler" in {
+        val limits = ReactiveUI.DragSessionLimits(maxSessions = 2, lifetime = 1.hour)
+        def start(id: String) = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        val expired = Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+        Clock.withTimeControl { control =>
+            for
+                resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+                _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
+                    withDispatch(UI.div, limits) { dispatch =>
+                        for
+                            _ <- dispatch(Seq.empty, start("later"))
+                            _ <- control.advance(Duration.Zero, 100.millis)
+                            _ <- control.set(Instant.Epoch - 2.hours, 100.millis)
+                            _ <- dispatch(Seq.empty, start("earlier"))
+                            _ <- control.advance(1.hour, 100.millis)
+                        yield ()
+                    }
+                }
+                actual <- resolutions.get
+            yield assert(actual == Chunk("earlier" -> expired))
         }
     }
 

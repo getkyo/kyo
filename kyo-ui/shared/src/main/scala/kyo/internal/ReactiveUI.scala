@@ -122,7 +122,15 @@ private[kyo] object ReactiveUI:
 
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
-    final private case class DragSession(event: Drag.Event, terminalResolved: Boolean, generation: Long)
+    private type DragResolver = Maybe[(String, Drag.Decision) => Unit < Async]
+
+    final private case class DragSession(
+        event: Drag.Event,
+        terminalResolved: Boolean,
+        generation: Long,
+        expiresAt: Instant,
+        resolver: DragResolver
+    )
 
     final private[kyo] case class DragSessionLimits(
         maxSessions: Int = 128,
@@ -706,7 +714,15 @@ private[kyo] object ReactiveUI:
       * region fiber's lifecycle; the per-value Scope (opened by observe) owns each region's children,
       * so closing the root scope cascade-tears-down the tree.
       */
-    case class Subscription(handle: Handler, lastSignalChangeTime: AtomicRef[Instant])
+    case class Subscription(
+        handle: Handler,
+        lastSignalChangeTime: AtomicRef[Instant],
+        private val dragSessionCountFn: () => Int < Sync = () => 0,
+        private val dragExpiryWorkerCountFn: () => Int < Sync = () => 0
+    ):
+        private[kyo] def dragSessionCount(using Frame): Int < Sync      = dragSessionCountFn()
+        private[kyo] def dragExpiryWorkerCount(using Frame): Int < Sync = dragExpiryWorkerCountFn()
+    end Subscription
 
     /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
       * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber).
@@ -721,23 +737,18 @@ private[kyo] object ReactiveUI:
             dragSessions     <- AtomicRef.init(Map.empty[String, DragSession])
             generation       <- AtomicLong.init(0L)
             dragMutex        <- Meter.initMutex
-            expirations      <- Channel.init[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])](dragLimits.maxSessions)
+            expiryWake       <- Channel.init[Unit](1)
+            expiryWorkers    <- AtomicInt.init(0)
             _                <- Scope.ensure(dragSessions.set(Map.empty))
-            _ <- Fiber.init {
-                Loop.foreach(Abort.runPartial[Closed](expirations.take).map {
-                    case Result.Success((sessionId, expectedGeneration, resolver)) =>
-                        Fiber.init {
-                            Clock.sleep(dragLimits.lifetime).map(_.get).andThen(dragMutex.run {
-                                sessionsExpired(sessionId, expectedGeneration, resolver, dragSessions)
-                            })
-                        }.unit.andThen(Loop.continue)
-                    case Result.Failure(_) => Loop.done
-                })
-            }
+            _ <- Fiber.init(Sync.ensure(expiryWorkers.set(0)) {
+                expiryWorkers.set(1).andThen(expiryScheduler(dragSessions, dragMutex, expiryWake))
+            }).unit
             _ <- subscribeScoped(rui, exchange, signalChangeTime)
         yield Subscription(
-            dragHandle(rui.handle, dragSessions, generation, dragMutex, expirations, dragLimits),
-            signalChangeTime
+            dragHandle(rui.handle, dragSessions, generation, dragMutex, expiryWake, dragLimits),
+            signalChangeTime,
+            () => dragSessions.get.map(_.size),
+            () => expiryWorkers.get
         )
 
     private def dragHandle(
@@ -745,13 +756,13 @@ private[kyo] object ReactiveUI:
         sessions: AtomicRef[Map[String, DragSession]],
         generation: AtomicLong,
         mutex: Meter,
-        expirations: Channel[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])],
+        expiryWake: Channel[Unit],
         limits: DragSessionLimits
     )(using Frame): Handler =
         (path, event) =>
             if isDragEvent(event) then
                 Abort.runPartial[Closed](
-                    mutex.run(dragDispatch(handle, sessions, generation, expirations, limits, path, event))
+                    mutex.run(dragDispatch(handle, sessions, generation, expiryWake, limits, path, event))
                 ).map {
                     case Result.Success(value) => value
                     case Result.Failure(_)     => true
@@ -767,7 +778,7 @@ private[kyo] object ReactiveUI:
         handle: Handler,
         sessions: AtomicRef[Map[String, DragSession]],
         generation: AtomicLong,
-        expirations: Channel[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])],
+        expiryWake: Channel[Unit],
         limits: DragSessionLimits,
         path: Seq[String],
         event: UIEvent
@@ -797,19 +808,23 @@ private[kyo] object ReactiveUI:
                                 data.modifiers,
                                 Absent
                             )
-                            generation.incrementAndGet.map { nextGeneration =>
-                                sessions.set(current + (data.sessionId -> DragSession(
-                                    domain,
-                                    terminalResolved = false,
-                                    nextGeneration
-                                )))
-                                    .andThen(putExpiration(expirations, data.sessionId, nextGeneration, resolver))
-                                    .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
-                                        DragCommands.Payload.Event(domain),
-                                        Absent
-                                    ))) {
-                                        safeDispatch(handle, path, event)
-                                    })
+                            Clock.now.map { now =>
+                                generation.incrementAndGet.map { nextGeneration =>
+                                    sessions.set(current + (data.sessionId -> DragSession(
+                                        domain,
+                                        terminalResolved = false,
+                                        nextGeneration,
+                                        now + limits.lifetime,
+                                        resolver
+                                    )))
+                                        .andThen(wakeExpiryScheduler(expiryWake))
+                                        .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                            DragCommands.Payload.Event(domain),
+                                            Absent
+                                        ))) {
+                                            safeDispatch(handle, path, event)
+                                        })
+                                }
                             }
                     }
                 }
@@ -854,34 +869,47 @@ private[kyo] object ReactiveUI:
                 }
             case _ => safeDispatch(handle, path, event)
 
-    private def putExpiration(
-        expirations: Channel[(String, Long, Maybe[(String, Drag.Decision) => Unit < Async])],
-        sessionId: String,
-        generation: Long,
-        resolver: Maybe[(String, Drag.Decision) => Unit < Async]
-    )(using
-        Frame
-    ): Unit < Async =
-        Abort.runPartial[Closed](expirations.put((sessionId, generation, resolver))).unit
+    private def wakeExpiryScheduler(expiryWake: Channel[Unit])(using Frame): Unit < Sync =
+        Abort.runPartial[Closed](expiryWake.offer(())).unit
 
-    private def sessionsExpired(
-        sessionId: String,
-        expectedGeneration: Long,
-        resolver: Maybe[(String, Drag.Decision) => Unit < Async],
-        sessions: AtomicRef[Map[String, DragSession]]
-    )(using Frame): Unit < Async =
+    private def expiryScheduler(
+        sessions: AtomicRef[Map[String, DragSession]],
+        mutex: Meter,
+        expiryWake: Channel[Unit]
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        Loop.foreach {
+            sessions.get.map { current =>
+                current.valuesIterator.map(_.expiresAt).minOption match
+                    case None =>
+                        Abort.runPartial[Closed](expiryWake.take).map {
+                            case Result.Success(_) => Loop.continue
+                            case Result.Failure(_) => Loop.done
+                        }
+                    case Some(expiresAt) =>
+                        Clock.now.map { now =>
+                            val wait                = expiresAt - now
+                            val sleep: Unit < Async = if wait > Duration.Zero then Clock.sleep(wait).map(_.get) else ()
+                            Abort.runPartial[Closed](Async.race(sleep, expiryWake.take.unit)).map {
+                                case Result.Success(_) =>
+                                    Clock.now.map(expireNow => mutex.run(expireSessions(expireNow, sessions)))
+                                        .andThen(Loop.continue)
+                                case Result.Failure(_) => Loop.done
+                            }
+                        }
+            }
+        }
+
+    private def expireSessions(now: Instant, sessions: AtomicRef[Map[String, DragSession]])(using Frame): Unit < Async =
         sessions.get.map { current =>
-            current.get(sessionId) match
-                case Some(session) if session.generation == expectedGeneration =>
-                    sessions.set(current - sessionId).andThen(
-                        if session.terminalResolved then ()
-                        else
-                            resolver.fold((): Unit < Async)(_(
-                                sessionId,
-                                Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
-                            ))
-                    )
-                case _ => ()
+            val (expired, retained) = current.partition((_, session) => session.expiresAt <= now)
+            sessions.set(retained).andThen(Kyo.foreach(expired.toSeq) { case (sessionId, session) =>
+                if session.terminalResolved then ()
+                else
+                    session.resolver.fold((): Unit < Async)(_(
+                        sessionId,
+                        Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+                    ))
+            }.unit)
         }
 
     private def dispatchTarget(
