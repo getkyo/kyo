@@ -68,6 +68,30 @@ class SortableTest extends kyo.test.Test[Any]:
             assert(Sortable.move(Chunk("a", "b", "c"), Chunk.empty, request) == Result.Success((Chunk("a", "c"), Chunk("b"))))
         }
 
+        "prepends to a nonempty destination before an absent anchor" in {
+            val request = move(Chunk("b"), Absent, Position.Before)
+            assert(
+                Sortable.move(Chunk("a", "b", "c"), Chunk("x", "y"), request) ==
+                    Result.Success((Chunk("a", "c"), Chunk("b", "x", "y")))
+            )
+        }
+
+        "appends to a nonempty destination after an absent anchor" in {
+            val request = move(Chunk("b"), Absent, Position.After)
+            assert(
+                Sortable.move(Chunk("a", "b", "c"), Chunk("x", "y"), request) ==
+                    Result.Success((Chunk("a", "c"), Chunk("x", "y", "b")))
+            )
+        }
+
+        "moves a colliding destination key to the requested position" in {
+            val request = move(Chunk("b"), Present("y"), Position.After)
+            assert(
+                Sortable.move(Chunk("a", "b", "c"), Chunk("x", "b", "y"), request) ==
+                    Result.Success((Chunk("a", "c"), Chunk("x", "y", "b")))
+            )
+        }
+
         "inserts selected keys in visible source order" in {
             val request = move(Chunk("d", "b"), Present("y"), Position.Before)
             assert(
@@ -163,6 +187,143 @@ class SortableTest extends kyo.test.Test[Any]:
                 Sortable.move(Chunk("a", "b"), Chunk("x", "y"), request) ==
                     Result.Failure(Rejection.Application("Sortable collections require Before or After placement."))
             )
+        }
+
+        "rejects a duplicate selected source key" in {
+            val request = move(Chunk("a"), Present("y"), Position.Before)
+            assert(
+                Sortable.move(Chunk("a", "a", "b"), Chunk("x", "y"), request) ==
+                    Result.Failure(Rejection.Application("Source collection keys must be unique."))
+            )
+        }
+
+        "rejects a duplicate unselected source key" in {
+            val request = move(Chunk("a"), Present("y"), Position.Before)
+            assert(
+                Sortable.move(Chunk("a", "b", "b"), Chunk("x", "y"), request) ==
+                    Result.Failure(Rejection.Application("Source collection keys must be unique."))
+            )
+        }
+
+        "rejects a missing key before duplicate source keys" in {
+            val request = move(Chunk("a", "b"), Present("y"), Position.Before)
+            assert(
+                Sortable.move(Chunk("a", "a"), Chunk("x", "y"), request) ==
+                    Result.Failure(Rejection.Application("Every moving item must exist in the source collection."))
+            )
+        }
+
+        "rejects a duplicate destination key" in {
+            val request = move(Chunk("a"), Present("y"), Position.Before)
+            assert(
+                Sortable.move(Chunk("a", "b"), Chunk("x", "x", "y"), request) ==
+                    Result.Failure(Rejection.Application("Destination collection keys must be unique."))
+            )
+        }
+
+        "rejects a duplicate destination anchor" in {
+            val request = move(Chunk("a"), Present("y"), Position.Before)
+            assert(
+                Sortable.move(Chunk("a", "b"), Chunk("x", "y", "y"), request) ==
+                    Result.Failure(Rejection.Application("Destination collection keys must be unique."))
+            )
+        }
+
+        "ignores the destination argument for a same-location move" in {
+            val request = move(
+                Chunk("b"),
+                Present("c"),
+                Position.After,
+                source = sourceLocation,
+                destination = sourceLocation
+            )
+            assert(
+                Sortable.move(Chunk("a", "b", "c"), Chunk("ignored", "ignored"), request) ==
+                    Result.Success((Chunk("a", "c", "b"), Chunk("a", "c", "b")))
+            )
+        }
+
+        "rejects source duplicates before destination duplicates" in {
+            val request = move(Chunk("a"), Present("y"), Position.Before)
+            assert(
+                Sortable.move(Chunk("a", "a"), Chunk("y", "y"), request) ==
+                    Result.Failure(Rejection.Application("Source collection keys must be unique."))
+            )
+        }
+
+        "validation precedence" - {
+            "rejects empty keys before later request errors" in {
+                val request = move(Chunk.empty, Present("missing"), Position.On, Operation.Link)
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("y", "y"), request) ==
+                        Result.Failure(Rejection.Application("At least one item must move."))
+                )
+            }
+
+            "rejects duplicate requested keys before missing keys" in {
+                val request = move(Chunk("missing", "missing"), Present("missing"), Position.Before)
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("y", "y"), request) ==
+                        Result.Failure(Rejection.Application("Moving item keys must be unique."))
+                )
+            }
+
+            "rejects missing keys before a selected anchor" in {
+                val request = move(Chunk("missing"), Present("missing"), Position.Before)
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("y", "y"), request) ==
+                        Result.Failure(Rejection.Application("Every moving item must exist in the source collection."))
+                )
+            }
+
+            "rejects a selected anchor before a link operation" in {
+                val request = move(Chunk("a"), Present("a"), Position.Before, Operation.Link)
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("a", "a"), request) ==
+                        Result.Failure(Rejection.Application("The destination is part of the moving selection."))
+                )
+            }
+
+            "rejects a link operation before invalid placement" in {
+                val request = move(Chunk("a"), Present("missing"), Position.On, Operation.Link)
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("y", "y"), request) ==
+                        Result.Failure(Rejection.Application("Sortable collections do not support link operations."))
+                )
+            }
+
+            "rejects a same-collection copy before invalid placement" in {
+                val request = move(
+                    Chunk("a"),
+                    Present("missing"),
+                    Position.On,
+                    Operation.Copy,
+                    sourceLocation,
+                    sourceLocation
+                )
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("ignored"), request) ==
+                        Result.Failure(
+                            Rejection.Application("Copying within one keyed collection requires application-assigned destination keys.")
+                        )
+                )
+            }
+
+            "rejects invalid placement before a missing anchor" in {
+                val request = move(Chunk("a"), Present("missing"), Position.Inside)
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("y", "y"), request) ==
+                        Result.Failure(Rejection.Application("Sortable collections require Before or After placement."))
+                )
+            }
+
+            "rejects a missing anchor before collection duplicates" in {
+                val request = move(Chunk("a"), Present("missing"), Position.Before)
+                assert(
+                    Sortable.move(Chunk("a", "a"), Chunk("y", "y"), request) ==
+                        Result.Failure(Rejection.Application("The destination anchor does not exist."))
+                )
+            }
         }
     }
 
