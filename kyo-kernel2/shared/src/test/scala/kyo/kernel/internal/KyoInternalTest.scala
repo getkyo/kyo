@@ -97,9 +97,10 @@ class KyoInternalTest extends AnyFreeSpec:
     "HandledState" - {
         "saves the region parts including the state" in {
             val h =
-                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:
                     def tag                               = Tag[Ask]
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+                    def applyDone(state: Int, v: Int)     = v
             val n = Kyo.HandledState(ask, h, Arrow[Int], 7)
             assert(n.handler eq h)
             assert(n.state == 7)
@@ -108,13 +109,14 @@ class KyoInternalTest extends AnyFreeSpec:
 
         "map lands outside the region and keeps the state" in {
             val h =
-                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:
                     def tag                               = Tag[Ask]
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+                    def applyDone(state: Int, v: Int)     = v
             val n      = Kyo.HandledState(ask, h, Arrow[Int], 7)
             val mapped = (n: Int < Any).map(_ + 1)
             (mapped: Any) match
-                case m: Kyo.HandledState[Const[Unit], Const[Int], Ask, Int, Int, Any, Any, Int] @unchecked =>
+                case m: Kyo.HandledState[Const[Unit], Const[Int], Ask, Int, Int, Int, Any, Any, Int] @unchecked =>
                     assert(m.handler eq h)
                     assert(m.state == 7)
                     assert(m.exit(41).eval == 42)
@@ -125,9 +127,10 @@ class KyoInternalTest extends AnyFreeSpec:
 
         "eval seeds the region from the node's state" in {
             val h =
-                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+                new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:
                     def tag                               = Tag[Ask]
                     def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+                    def applyDone(state: Int, v: Int)     = v
             // the node carries 41: the region resumes from the node's state
             val n = Kyo.HandledState(ask.map(_ + 1), h, Arrow[Int], 41)
             assert((n: Int < Any).eval == 42)

@@ -203,7 +203,7 @@ private[kyo] object EffectTrace:
                 case h: Kyo.Handled[?, ?, ?, ?, ?, ?, ?] @unchecked =>
                     region(h.handler.tag)
                     arrow(h.exit)
-                case h: Kyo.HandledState[?, ?, ?, ?, ?, ?, ?, ?] @unchecked =>
+                case h: Kyo.HandledState[?, ?, ?, ?, ?, ?, ?, ?, ?] @unchecked =>
                     region(h.handler.tag)
                     arrow(h.exit)
                 case h: Kyo.HandledFirst[?, ?, ?, ?, ?, ?, ?, ?, ?] @unchecked =>

@@ -180,20 +180,21 @@ object ArrowEffect:
 
     /** Answers the first operation of `E` and leaves.
       *
-      * `f` receives the operation's input and its continuation, whose row still carries `E`: the operations after the first one are not
-      * answered by this call, and the continuation is a value, so it can be resumed later, more than once, or not at all. `done` produces
-      * the result when the computation settles without ever raising `E`.
+      * `handle` receives the operation's input and its continuation, whose row still carries `E`: the operations after the first one are
+      * not answered by this call, and the continuation is a value, so it can be resumed later, more than once, or not at all. `done`
+      * produces the result when the computation settles without ever raising `E`.
       */
     @nowarn("msg=anonymous")
-    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S, B, S2](inline _tag: Tag[E], v: A < (E & S))(
-        inline f: [X] => (I[X], O[X] => A < (E & S)) => B < S2
-    )(inline done: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
+        inline handle: [X] => (I[X], O[X] => A < (E & S)) => B < S2,
+        inline done: A => B < S2
+    )(using inline _frame: Frame): B < (S & S2) =
         v match
             case kyo: Kyo[?, ?] =>
                 // one allocation: the object is the handler and the region node
                 new Handler.First[I, O, E, A, B, S, S2] with Kyo.HandledFirst[I, O, E, A, B, B, S, S2, Any]:
-                    def tag                                              = _tag
-                    def apply[X](input: I[X], cont: O[X] => A < (E & S)) = f(input, cont)
+                    def tag                                              = effectTag
+                    def apply[X](input: I[X], cont: O[X] => A < (E & S)) = handle(input, cont)
                     @targetName("applyDone")
                     def apply(a: A) = done(a)
                     val value       = v

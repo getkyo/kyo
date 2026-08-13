@@ -33,10 +33,11 @@ class HandlersTest extends AnyFreeSpec:
             @targetName("applyInput")
             def apply[X](input: String) = Loop.continue(())
 
-    def stateAsk: Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int] =
-        new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+    def stateAsk: Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int] =
+        new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:
             def tag                               = Tag[Ask]
             def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+            def applyDone(state: Int, v: Int)     = v
 
     def firstAsk: Handler.First[Const[Unit], Const[Int], Ask, Int, Int, Any, Any] =
         new Handler.First[Const[Unit], Const[Int], Ask, Int, Int, Any, Any]:
@@ -51,9 +52,9 @@ class HandlersTest extends AnyFreeSpec:
     def erased(v: Kyo.Handled[?, ?, ?, ?, ?, ?, ?]): Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] =
         v.asInstanceOf[Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]]
 
-    def erasedState(v: Kyo.HandledState[?, ?, ?, ?, ?, ?, ?, ?])
-        : Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] =
-        v.asInstanceOf[Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any]]
+    def erasedState(v: Kyo.HandledState[?, ?, ?, ?, ?, ?, ?, ?, ?])
+        : Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] =
+        v.asInstanceOf[Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any]]
 
     def erasedFirst(v: Kyo.HandledFirst[?, ?, ?, ?, ?, ?, ?, ?, ?])
         : Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] =

@@ -92,8 +92,9 @@ class EffectTest extends AnyFreeSpec:
         "failure in a map after a first region" in {
             val region =
                 ArrowEffect.handleFirst(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                    [C] => (input, cont) => cont(input.toString)
-                )(identity)
+                    [C] => (input, cont) => cont(input.toString),
+                    identity
+                )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
             } {

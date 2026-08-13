@@ -355,29 +355,63 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
-    "handleLoopWith" - {
-        "fuses the continuation into the region" in {
+    "stateful done" - {
+        "a map after the region reaches the result" in {
             val v = ask.map(a => ask.map(b => a + b))
-            val r = ArrowEffect.handleLoopWith(Tag[Ask], v)([X] => _ => Loop.continue(21))(_ + 1)
+            val r = ArrowEffect.handleLoop(Tag[Ask], v)([X] => _ => Loop.continue(21)).map(_ + 1)
             assert(r.eval == 43)
         }
 
-        "stateful: the continuation sees the final answer" in {
+        "done sees the final answer" in {
             val v = ask.map(a => ask.map(b => a + b))
-            val r = ArrowEffect.handleLoopWith(Tag[Ask], 10, v)([X] => (_, s) => Loop.continue(s + 1, s))(_ * 2)
+            val r: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], 10, v)([X] => (_, s) => Loop.continue(s + 1, s), (_, v) => v * 2)
             assert(r.eval == 42)
         }
 
-        "a settled input applies the continuation strictly" in {
-            val r = ArrowEffect.handleLoopWith(Tag[Ask], box(41))([X] => _ => Loop.continue(0))(_ + 1)
+        "done observes the final state" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val r: (List[Int], Int) < Any = ArrowEffect.handleLoop(Tag[Ask], List.empty[Int], v)(
+                [X] => (_, seen) => Loop.continue(seen :+ seen.size, seen.size),
+                (seen, res) => (seen, res)
+            )
+            assert(r.eval == (List(0, 1), 1))
+        }
+
+        "Loop.done carries the final result and bypasses done" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val r: String < Any = ArrowEffect.handleLoop(Tag[Ask], 0, v)(
+                [X] => (_, s) => if s == 1 then Loop.done("stopped") else Loop.continue(s + 1, 1),
+                (s, res: Int) => s"done $res"
+            )
+            assert(r.eval == "stopped")
+        }
+
+        "done may be effectful" in {
+            val r: Int < Say = ArrowEffect.handleLoop(Tag[Ask], 5, ask)(
+                [X] => (_, s) => Loop.continue(s, s),
+                (s, res) => say("bye").map(_ => s + res)
+            )
+            assert(ArrowEffect.handle(Tag[Say], r)([X] => (_, cont) => cont(())).eval == 10)
+        }
+
+        "the overload without done completes with the result and discards the state" in {
+            val v = ask.map(a => ask.map(b => a + b))
+            val r = ArrowEffect.handleLoop(Tag[Ask], 10, v)([X] => (_, s) => Loop.continue(s + 1, s))
+            assert(r.eval == 21)
+        }
+
+        "a settled input applies done strictly" in {
+            val r: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], 1, box(41))([X] => (_, s) => Loop.continue(s, 0), (s, v) => v + s)
             assert(r.eval == 42)
         }
 
-        "a parked stateful region resumes with its state and fused exit" in {
+        "a parked stateful region resumes with its state and done" in {
             val v: Int < (Ask & Say) = ask.map(_ => say("x")).map(_ => ask)
-            val fused =
-                ArrowEffect.handleLoopWith(Tag[Ask], 10, v)([X] => (_, s) => Loop.continue(s + 1, s))(_ * 2)
-            val parked = Eval.partial(fused)
+            val handled: Int < Say =
+                ArrowEffect.handleLoop(Tag[Ask], 10, v)([X] => (_, s) => Loop.continue(s + 1, s), (_, v) => v * 2)
+            val parked = Eval.partial(handled)
             assert(parked.evalNow.isEmpty)
             assert(ArrowEffect.handle(Tag[Say], parked)([X] => (_, cont) => cont(())).eval == 22)
         }
@@ -392,7 +426,9 @@ class ArrowEffectTest extends AnyFreeSpec:
                     (_, cont) =>
                         answered += 1
                         cont(4)
-            )(identity)
+                ,
+                identity
+            )
             val r = ArrowEffect.handle(Tag[Ask], first)([X] => (_, cont) => cont(2))
             assert(r.eval == 42)
             assert(answered == 1)
@@ -404,7 +440,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 reached = true
                 a + 1
             }
-            val r = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => -1)(identity)
+            val r = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => -1, identity)
             assert(r.eval == -1)
             assert(!reached)
         }
@@ -412,8 +448,9 @@ class ArrowEffectTest extends AnyFreeSpec:
         "the continuation is handed out as a value and resumed later" in {
             val v = ask.map(a => ask.map(b => a * 10 + b))
             val r = ArrowEffect.handleFirst(Tag[Ask], v)(
-                [X] => (_, cont) => (1, () => cont(4))
-            )(a => (0, () => (a: Int < Ask)))
+                [X] => (_, cont) => (1, () => cont(4)),
+                a => (0, () => (a: Int < Ask))
+            )
             val (answered, rest) = r.eval
             assert(answered == 1)
             assert(ArrowEffect.handle(Tag[Ask], rest())([X] => (_, cont) => cont(2)).eval == 42)
@@ -426,8 +463,9 @@ class ArrowEffectTest extends AnyFreeSpec:
                 a * 10
             }
             val first = ArrowEffect.handleFirst(Tag[Ask], v)(
-                [X] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b))
-            )(identity)
+                [X] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
+                identity
+            )
             assert(ArrowEffect.handle(Tag[Ask], first)([X] => (_, cont) => cont(0)).eval == 30)
             assert(runs == 2)
         }
@@ -435,8 +473,9 @@ class ArrowEffectTest extends AnyFreeSpec:
         "an operation raised by the clause reaches the outer handler" in {
             var outerAnswered = 0
             val first = ArrowEffect.handleFirst(Tag[Ask], ask.map(_ + 1))(
-                [X] => (_, cont) => ask.map(extra => cont(extra * 10))
-            )(identity)
+                [X] => (_, cont) => ask.map(extra => cont(extra * 10)),
+                identity
+            )
             val r = ArrowEffect.handle(Tag[Ask], first)(
                 [X] =>
                     (_, cont) =>
@@ -449,20 +488,20 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a settled input applies the done clause strictly" in {
             val v: Int < Ask = 41
-            val r            = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(0))(_ + 1)
+            val r            = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(0), _ + 1)
             assert(r.evalNow == Maybe(42))
         }
 
         "the done clause may suspend" in {
             val v: Int < (Ask & Say) = say("x").map(_ => 41)
-            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => -1)(a => say("done").map(_ => a + 1))
+            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => -1, a => say("done").map(_ => a + 1))
             val r                    = ArrowEffect.handle(Tag[Say], first)([X] => (_, cont) => cont(()))
             assert(r.eval == 42)
         }
 
         "maps chained after the region apply to both clauses" in {
             def firstOf(v: Int < (Ask & Say)) =
-                ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => 1)(_ => 2).map(_ * 10).map(_ + 1)
+                ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => 1, _ => 2).map(_ * 10).map(_ + 1)
             val answered = ArrowEffect.handle(Tag[Say], firstOf(say("x").map(_ => ask)))([X] => (_, cont) => cont(()))
             val settled  = ArrowEffect.handle(Tag[Say], firstOf(say("x").map(_ => 41)))([X] => (_, cont) => cont(()))
             assert(answered.eval == 11)
@@ -471,14 +510,14 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "the done clause runs when the computation settles without the operation" in {
             val v: Int < (Ask & Say) = say("x").map(_ => 41)
-            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => -1)(_ + 1)
+            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => -1, _ + 1)
             val r                    = ArrowEffect.handle(Tag[Say], first)([X] => (_, cont) => cont(()))
             assert(r.eval == 42)
         }
 
         "the handler stays installed until the operation arrives after a foreign crossing" in {
             val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
-            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(41))(identity)
+            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(41), identity)
             val sayHandled           = ArrowEffect.handle(Tag[Say], first)([X] => (_, cont) => cont(()))
             assert(ArrowEffect.handle(Tag[Ask], sayHandled)([X] => (_, cont) => cont(0)).eval == 42)
         }
@@ -490,14 +529,14 @@ class ArrowEffectTest extends AnyFreeSpec:
                 exits += 1
                 a
             }
-            val first = ArrowEffect.handleFirst(Tag[Ask], region)([X] => (_, cont) => cont(41))(identity)
+            val first = ArrowEffect.handleFirst(Tag[Ask], region)([X] => (_, cont) => cont(41), identity)
             assert(ArrowEffect.handle(Tag[Ask], first)([X] => (_, cont) => cont(0)).eval == 42)
             assert(exits == 1)
         }
 
         "a parked region answers the operation after it resumes" in {
             val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
-            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(41))(identity)
+            val first                = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, cont) => cont(41), identity)
             val parked               = Eval.partial(first)
             assert(parked.evalNow.isEmpty)
             val sayHandled = ArrowEffect.handle(Tag[Say], parked)([X] => (_, cont) => cont(()))
@@ -506,13 +545,15 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "the innermost handleFirst wins under nested same-tag handlers" in {
             var outerAnswered = 0
-            val inner         = ArrowEffect.handleFirst(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(10))(identity)
+            val inner         = ArrowEffect.handleFirst(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(10), identity)
             val outer = ArrowEffect.handleFirst(Tag[Ask], inner.asInstanceOf[Int < Ask])(
                 [X] =>
                     (_, cont) =>
                         outerAnswered += 1
                         cont(100)
-            )(identity)
+                ,
+                identity
+            )
             assert(ArrowEffect.handle(Tag[Ask], outer)([X] => (_, cont) => cont(0)).eval == 11)
             assert(outerAnswered == 0)
         }
@@ -521,10 +562,12 @@ class ArrowEffectTest extends AnyFreeSpec:
             val payload: Int < Say           = say("p").map(_ => 7)
             val v: (Int < Say) < (Ask & Say) = say("x").map(_ => box(payload))
             var seen: AnyRef                 = null
-            val first = ArrowEffect.handleFirst(Tag[Ask], v)([X] => (_, _) => box(payload)) { a =>
-                seen = a.asInstanceOf[AnyRef]
-                box(a)
-            }
+            val first = ArrowEffect.handleFirst(Tag[Ask], v)(
+                [X] => (_, _) => box(payload),
+                a =>
+                    seen = a.asInstanceOf[AnyRef]
+                    box(a)
+            )
             val boxed = ArrowEffect.handle(Tag[Say], first)([X] => (_, cont) => cont(())).eval
             assert(seen eq payload.asInstanceOf[AnyRef])
             assert(ArrowEffect.handle(Tag[Say], boxed)([X] => (_, cont) => cont(())).eval == 7)
@@ -533,7 +576,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "deep sequential operations are stack safe" in {
             def loop(n: Int): Int < Ask =
                 if n == 0 then 0 else ask.map(_ => loop(n - 1))
-            val first = ArrowEffect.handleFirst(Tag[Ask], loop(100000))([X] => (_, cont) => cont(1))(identity)
+            val first = ArrowEffect.handleFirst(Tag[Ask], loop(100000))([X] => (_, cont) => cont(1), identity)
             assert(ArrowEffect.handle(Tag[Ask], first)([X] => (_, cont) => cont(1)).eval == 0)
         }
     }
@@ -570,7 +613,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "peels a first region node" in {
             var seen = ""
             val region =
-                ArrowEffect.handleFirst(Tag[Ask], say("first").map(_ => ask))([X] => (_, cont) => cont(1))(identity)
+                ArrowEffect.handleFirst(Tag[Ask], say("first").map(_ => ask))([X] => (_, cont) => cont(1), identity)
             ArrowEffect.dispatchFirst(Tag[Say], region)([X] => input => seen = input)
             assert(seen == "first")
         }
@@ -764,7 +807,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "parks at a first region node without evaluating it" in {
-            val region = ArrowEffect.handleFirst(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41))(identity)
+            val region = ArrowEffect.handleFirst(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(41), identity)
             val parked = ArrowEffect.handlePartial(Tag[Ask], region)([X] => (_, cont) => Maybe(cont(0)))
             assert(parked.evalNow.isEmpty)
             assert(ArrowEffect.handle(Tag[Ask], parked)([X] => (_, cont) => cont(0)).eval == 42)
