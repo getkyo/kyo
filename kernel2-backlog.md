@@ -32,50 +32,27 @@ The 65536-volatile-read worst case for never-evaluated threads is gone. The comm
 cites all three cell-table write sites for the never-null-again invariant and the
 claim-from-home argument, with a mixed-occupancy test in SafepointConcurrencyTest.
 
+## Done, awaiting your ack (continued)
+
+### Exception enrichment merged (`b59725e885`..`333b6fc154`)
+
+The A/B gate passed: allocation byte-identical on all four guard rows
+(fusionAllocatesNothing 0.004, inlineLimitKeepsZeroAllocation 0.010,
+sharedHandlerPaysDispatch 240,441, suspensionBaseline 640,120 B/op on both sides),
+times within overlapping error bars (worst +1.6 percent on sharedHandler, error
+2.1 to 2.6). The try-region neutrality claim is now empirical. Suite 678 green on
+the combined tree. Also in: the Eval save/restore leak fix with red-first tests.
+
+### ContextEffect isolation merged (`c9bb8b1941`)
+
+Hand-ported onto the enriched tree; the two changes met at Eval's find-miss arm
+and the Detached resume took the same enrichment guard as its Defaulted sibling.
+All four rulings honored; suite 678 green. Names for your ack: Provision, Detached
+and detach, transplant (all private[kyo]).
+
 ## Implementing now
 
-### Exception enrichment: implemented, review passed, merge gated on the JMH A/B
-
-Status: built end to end in an isolated worktree (branch worktree-agent-ab6a372849018a255,
-three commits), 650 tests passed with 21 new, the save/restore leak fixed with
-red-first tests, containment of walk failures added with a reproducing test. My
-review passed it without iteration: uniform guarded-arm shape preserving tailrec, one
-shared enrich helper, role-declared walk avoiding the dual-role double-count, no new
-public nouns, doctrine-conscious throughout. Nine design deviations, all local, all
-documented in the commit trail (notably: catching needed attach not just splice, the
-cap needed eviction against the left-deep chain shape map actually builds, and the
-design's own propagation invariant needed the containment fix).
-
-Merge gate: the try-region allocation-neutrality claim is the one unvalidated piece;
-the agent correctly skipped the JMH A/B on a contended machine. Plan: once the
-machine frees, run the guard rows on the main tip and on the rebased branch, then
-merge. Discovery recorded from this work: kernel2 does not link on Scala.js today,
-pre-existing, three java.lang.Thread members used by shared Safepoint (threadId,
-isAlive, the constructor in tests); Native compiles clean. Folded into the JS,
-Native, and Wasm sweep item.
-
-## Next up
-
-### ContextEffect isolation: implemented, review passed, in the merge queue
-
-Status: implemented in an isolated worktree (commit 342da0e5a7, 7 files, 367
-insertions), 642 tests green with 12 new, my review passed it. All four rulings
-honored: the recognizer is structural (a marker mixed in only by handle's own region
-construction, so user handlers over context tags are never transplant candidates),
-laziness preserved exactly, Noninheritable tested at fork time with the cost argument
-recorded in place (handle sits on pinned warm paths, forks already pay for
-scheduling), provision cells only. The agent's tests caught a real currency bug (the
-implicit lift double-boxing an already-Kyo child at the transplant call site), fixed
-with a documented boundary cast. No bytecode pin movement.
-
-Names for your ack at merge: Provision (the recognizer marker), Detached and detach
-(the boundary crossing), transplant (the walk); all private[kyo], all from the design
-docs, none formally ruled.
-
-Merge plan: enrichment merges first (its JMH A/B is running now); then I port this
-commit's diff onto the merged tip myself, because both changes meet at Eval's
-find-miss arm (enrichment guards it, isolation adds the Detached case) and that
-reconciliation is judge's work, not an agent's.
+## Next up (Handlers now implementing via kernel2-impl on the merged tip)
 
 ### Handlers encapsulation (your TODO at Handlers.scala:8)
 
