@@ -97,53 +97,59 @@ an exception crosses, walk the live continuation chain and handler stack (Transf
 and suspensions already carry Frames; cells carry tags) and splice synthesized frames
 into the exception, with a suppressed carrier for accumulation and idempotence. Also
 unblocks the five ignored fiberTrace tests (same walker over a fiber's residual).
-
-Your FB, answered: **validated: no** — analysis-stage, no code written, no benchmark
-run; claims about the current sources are file:line-cited, behavioral claims are
-argued, not executed. **Performance: yes, it is the design's organizing constraint** —
-reconstruct-at-throw was chosen over the prototype's accumulate-at-catch precisely so
-the non-throwing path pays nothing (no recording, no carrier, no per-step work; the
-per-arm try regions are shaped to preserve tailrec and are argued allocation-neutral
-by inspection); the doc gates landing on a JMH A/B and its ruling 9.7 fixes the arm
-set before measuring so the A/B answers the right question. What remains unvalidated
-until implementation: the try-region neutrality claim and the walk's cost at an actual
-throw. Rulings 9.1-9.7 in `exception-enrichment-design.md`; summary in
-`backlog-sections/enrichment.md`.
+Review status: the executive summary, attach-point inventory, carrier and splice
+sections, and rulings were reviewed against the sources; the full 885 lines were not
+adversarially re-verified. **Implementation-as-validation is now running**: an opus
+agent in an isolated worktree is building the design end to end, taking the doc's own
+recommendations as provisional defaults for the unruled 9.1-9.7 (each application
+recorded), with the full suite as the gate and the JMH A/B run only if the machine is
+uncontended. Performance is the design's organizing constraint (reconstruct-at-throw
+chosen so the non-throwing path pays nothing; per-arm try regions shaped to preserve
+tailrec); the try-region neutrality claim is exactly what the A/B validates. The
+design's finding 8 (Eval save/restore without try/finally leaks budget state on an
+escaping throw) is included in that implementation as a standalone fix. Rulings
+9.1-9.7 in `exception-enrichment-design.md`; 9.6 (the Debug combinator) is explicitly
+out of the implementation's scope.
 
 ## Next up (designed, blocked on the bracket ruling)
 
-### Handlers cell layer
+### Handlers encapsulation (your TODO at Handlers.scala:8)
 
-Context, from the ground: `Handlers` is the evaluator's runtime stack of installed
-handler regions — a linked list the eval loop threads through evaluation. Each link
-("cell") is one active region: `Node` (stateless handler), `StateNode` (stateful),
-and since handleFirst landed, `FirstNode` (one-shot). Five operations walk this list:
-`find` (locate the handler for a suspension's tag — the hot one, once per answered
-operation), the settled-value pop, `rebuild` (turn a stack prefix back into a value
-when parking), `replace` (functional state update), and the isolate design adds a
-transplant walk. Today every one of these pattern-matches all cell kinds: seven live
-enumeration sites, and adding `FirstNode` touched all seven. Separately, `find` calls
-`handler.tag` through the handler object — a fresh anonymous class per handle call
-site, so that call is megamorphic by construction, on the hot path.
+Provenance: this is the designed answer to your own review TODO, "can we encapsulate
+so the internal representation is easier to evolve later?", sized by what has happened
+since: adding FirstNode for handleFirst had to touch every place that enumerates the
+node classes.
 
-Design: a `Cell(exit, prev)` base class carrying what every walk needs (`withPrev`,
-`rebuilt`), with `Answering(tag, ...)` and `Passive` beneath it; the generic walks
-read the base and stop enumerating kinds; only operation dispatch stays per-kind. The
-tag becomes a field on the cell, turning find's megamorphic call into a field read —
-the encapsulation your Handlers.scala TODO asked for and a hot-path improvement in
-the same change. JMH-gated (`sharedHandlerPaysDispatch` is the row). `Passive` (cells
-that answer no operation) is only needed if the bracket ruling or a revived
-catching-as-region introduces one, hence queued behind it.
-(`kernel2-todos-design.md` section 2.)
+Context: Handlers is the evaluator's stack of installed handler regions, a linked
+list of Node (stateless handler), StateNode (stateful), and FirstNode (one-shot).
+Five operations walk it: find (locate the handler for a suspension's tag; the hot
+one, once per answered operation), the settled-value pop, rebuild (turn a stack
+prefix back into a value when parking), replace (functional state update), and the
+isolate design adds a transplant. Every one of them pattern-matches all three node
+classes: seven enumeration sites today. Separately, find reads the tag through
+`handler.tag`, and since every handle call site expands its own anonymous handler
+class, that call is megamorphic on the hot path.
+
+Design, in existing vocabulary: give Node, StateNode, and FirstNode a shared abstract
+parent inside Handlers that carries what every walk already uses on all of them: the
+exit arrow, prev, the withPrev copy, the rebuilt-node constructor, and the handler's
+tag hoisted to a field. The generic walks then read the parent and stop enumerating
+the concrete classes; only the operation-dispatch arm in Eval still distinguishes
+them, because that is where they genuinely differ. The tag-as-field turns find's
+megamorphic call into a field read: the encapsulation and a hot-path improvement in
+the same change. JMH-gated (sharedHandlerPaysDispatch is the row). The design doc's
+names for the parent and its subdivisions are the agent's proposals, subject to your
+naming. (`kernel2-todos-design.md` section 2.)
 
 ### Small kernel items
 
+FB fix
 - save/restore try/finally in `Eval.apply`/`partial`: found by the enrichment
   analysis, pre-existing: an escaping throw leaves the thread's budget and armed bit
   as the aborted drive left them. Small, standalone fix.
 
 ## Parked (your call to revive)
-
+FB I told you no compact representation of any items in the fuckign backlog! all proper sections. I fucking fon't want to repeat this.
 | item | one-line context | design |
 |---|---|---|
 | Effect.catching as a region | the guarded arrow-rewrite pays per resumed step and cannot cover nested region interiors; the redesign makes catching a region node with a passive cell | `kernel2-todos-design.md` section 1 |
