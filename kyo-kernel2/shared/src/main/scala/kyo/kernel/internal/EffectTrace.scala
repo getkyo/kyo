@@ -214,21 +214,10 @@ private[kyo] object EffectTrace:
 
         /** The regions, innermost first: the label of each entered handler and the steps its exit would have run. */
         @tailrec def cells(hs: Handlers): Unit =
-            if !full then
-                hs match
-                    case Handlers.Empty => ()
-                    case n: Handlers.Node[?, ?, ?, ?, ?] =>
-                        region(n.handler.tag)
-                        arrow(n.exit)
-                        cells(n.prev)
-                    case n: Handlers.StateNode[?, ?, ?, ?, ?, ?] =>
-                        region(n.handler.tag)
-                        arrow(n.exit)
-                        cells(n.prev)
-                    case n: Handlers.FirstNode[?, ?, ?, ?, ?, ?, ?] =>
-                        region(n.handler.tag)
-                        arrow(n.exit)
-                        cells(n.prev)
+            if !full && (hs ne Handlers.Empty) then
+                region(hs.tag)
+                arrow(hs.exit)
+                cells(hs.prev)
         end cells
 
         /** The arrow role: the steps of one chain, in the order they would have run. */

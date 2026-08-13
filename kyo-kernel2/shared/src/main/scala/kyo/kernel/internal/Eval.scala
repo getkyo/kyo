@@ -7,9 +7,6 @@ import kyo.kernel.*
 import kyo.kernel.`<`.fromKyo
 import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.Handlers.Empty
-import kyo.kernel.internal.Handlers.FirstNode
-import kyo.kernel.internal.Handlers.Node
-import kyo.kernel.internal.Handlers.StateNode
 import scala.annotation.tailrec
 
 object Eval:
@@ -61,108 +58,113 @@ object Eval:
         @tailrec def loop(v: Any < Nothing, hs: Handlers): Any < Nothing =
             (v: @unchecked) match
                 case kyo: Kyo.Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                    hs.find(kyo.tag) match
-                        case Empty =>
-                            kyo.root match
-                                case d: Kyo.Defaulted =>
-                                    val next =
-                                        try resume(kyo.cont, Nested.lift(d.default))
-                                        catch case ex: Throwable => enrich(ex, v, hs)
-                                    loop(next, hs)
-                                case d: Kyo.Detached =>
-                                    // d.child is read through the widened Any the Detached
-                                    // trait declares (mirroring Defaulted.default): a plain
-                                    // .asInstanceOf into transplant's erased Any < Nothing
-                                    // parameter, not an ascription, so it does not route
-                                    // through the currency discipline's implicit lift, which
-                                    // would otherwise re-box an already-Kyo child in a second,
-                                    // spurious Nested layer before transplant ever sees it
-                                    val next =
-                                        try resume(kyo.cont, Nested.lift(transplant(hs, d.child.asInstanceOf[Any < Nothing])))
-                                        catch case ex: Throwable => enrich(ex, v, hs)
-                                    loop(next, hs)
-                                case _ =>
-                                    if !partial then
-                                        val ex = new IllegalStateException(s"unhandled suspension: $kyo")
-                                        EffectTrace.attach(ex, v, hs)
-                                        throw ex
-                                    else rebuild(hs, Empty, v)
-                        case node: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                            val clause =
-                                try node.handler(kyo.input, node.state)
-                                catch case ex: Throwable => enrich(ex, v, hs)
-                            clause match
-                                case pending: Kyo[Loop.Outcome2[Any, Any < Nothing, Any], Any] @unchecked =>
-                                    loop(statePending(pending, node, hs, kyo.cont), node.prev)
-                                case outcome =>
-                                    Nested.unnest[Loop.Outcome2[Any, Any < Nothing, Any]](outcome) match
-                                        case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
-                                            val updated =
-                                                if c._1.asInstanceOf[AnyRef] eq node.state.asInstanceOf[AnyRef] then node
-                                                else node.withState(c._1)
-                                            val hs2 = if updated eq node then hs else replace(hs, node, updated)
-                                            (c._2: Any) match
-                                                case p: Kyo[Any, Any] @unchecked =>
-                                                    loop(continuePending(p, updated, hs2, kyo.cont), updated)
-                                                case answer =>
-                                                    val next =
-                                                        try resume(kyo.cont, answer.asInstanceOf[Any < Nothing])
-                                                        catch case ex: Throwable => enrich(ex, v, hs2)
-                                                    loop(next, hs2)
-                                            end match
-                                        case done =>
-                                            val next =
-                                                try resume(node.exit, Nested.lift(done))
-                                                catch case ex: Throwable => enrich(ex, v, hs)
-                                            loop(next, node.prev)
-                            end match
-                        case node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] @unchecked =>
-                            node.handler match
-                                case h: Handler.Loop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] =>
-                                    val clause =
-                                        try h(kyo.input)
-                                        catch case ex: Throwable => enrich(ex, v, hs)
-                                    clause match
-                                        case pending: Kyo[Loop.Outcome[Any < Nothing, Any], Any] @unchecked =>
-                                            loop(loopPending(pending, node, hs, kyo.cont), node.prev)
-                                        case outcome =>
-                                            Nested.unnest[Loop.Outcome[Any < Nothing, Any]](outcome) match
-                                                case c: Loop.Continue[Any < Nothing] @unchecked =>
-                                                    (c._1: Any) match
-                                                        case p: Kyo[Any, Any] @unchecked =>
-                                                            loop(continuePending(p, node, hs, kyo.cont), node)
-                                                        case answer =>
-                                                            val next =
-                                                                try resume(kyo.cont, answer.asInstanceOf[Any < Nothing])
-                                                                catch case ex: Throwable => enrich(ex, v, hs)
-                                                            loop(next, hs)
-                                                case done =>
-                                                    val next =
-                                                        try resume(node.exit, Nested.lift(done))
-                                                        catch case ex: Throwable => enrich(ex, v, hs)
-                                                    loop(next, node.prev)
-                                    end match
-                                case h: Handler.Cont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] =>
-                                    val hsAll = hs
-                                    val kCont = kyo.cont
-                                    val cont: Any => Any < Nothing =
-                                        o => rebuild(hsAll, node, resume(kCont, Nested.lift(o)))
-                                    val next =
-                                        try h(kyo.input, cont)
-                                        catch case ex: Throwable => enrich(ex, v, hs)
-                                    loop(next, node)
-                        case node: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                            val hsAll = hs
-                            val kCont = kyo.cont
-                            val cont: Any => Any < Nothing =
-                                o => rebuild(hsAll, node, resume(kCont, Nested.lift(o)))
-                            // the region answers once: the clause's result runs at
-                            // node.prev, so the cell is off the spine before the
-                            // continuation it was handed can raise the effect again
-                            val next =
-                                try walk(node.exit, node.handler(kyo.input, cont))
-                                catch case ex: Throwable => enrich(ex, v, hs)
-                            loop(next, node.prev)
+                    val cell = hs.find(kyo.tag)
+                    if cell eq Empty then
+                        kyo.root match
+                            case d: Kyo.Defaulted =>
+                                val next =
+                                    try resume(kyo.cont, Nested.lift(d.default))
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                loop(next, hs)
+                            case d: Kyo.Detached =>
+                                // d.child is read through the widened Any the Detached
+                                // trait declares (mirroring Defaulted.default): a plain
+                                // .asInstanceOf into transplant's erased Any < Nothing
+                                // parameter, not an ascription, so it does not route
+                                // through the currency discipline's implicit lift, which
+                                // would otherwise re-box an already-Kyo child in a second,
+                                // spurious Nested layer before transplant ever sees it
+                                val next =
+                                    try resume(kyo.cont, Nested.lift(transplant(hs, d.child.asInstanceOf[Any < Nothing])))
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                loop(next, hs)
+                            case _ =>
+                                if !partial then
+                                    val ex = new IllegalStateException(s"unhandled suspension: $kyo")
+                                    EffectTrace.attach(ex, v, hs)
+                                    throw ex
+                                else rebuild(hs, Empty, v)
+                    else
+                        // the answering region dispatches on its handler's kind, which
+                        // is the one place the kinds genuinely differ: different clause
+                        // protocols, different spine effects, different continuations
+                        cell.handler match
+                            case h: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] =>
+                                val clause =
+                                    try h(kyo.input, cell.state)
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                clause match
+                                    case pending: Kyo[Loop.Outcome2[Any, Any < Nothing, Any], Any] @unchecked =>
+                                        loop(statePending(pending, h, cell, hs, kyo.cont), cell.prev)
+                                    case outcome =>
+                                        Nested.unnest[Loop.Outcome2[Any, Any < Nothing, Any]](outcome) match
+                                            case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
+                                                val updated =
+                                                    if c._1.asInstanceOf[AnyRef] eq cell.state.asInstanceOf[AnyRef] then cell
+                                                    else cell.withState(c._1)
+                                                val hs2 = if updated eq cell then hs else hs.replace(cell, updated)
+                                                (c._2: Any) match
+                                                    case p: Kyo[Any, Any] @unchecked =>
+                                                        loop(continuePending(p, updated, hs2, kyo.cont), updated)
+                                                    case answer =>
+                                                        val next =
+                                                            try resume(kyo.cont, answer.asInstanceOf[Any < Nothing])
+                                                            catch case ex: Throwable => enrich(ex, v, hs2)
+                                                        loop(next, hs2)
+                                                end match
+                                            case done =>
+                                                val next =
+                                                    try resume(cell.exit, Nested.lift(done))
+                                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                                loop(next, cell.prev)
+                                end match
+                            case h: Handler.Loop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] =>
+                                val clause =
+                                    try h(kyo.input)
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                clause match
+                                    case pending: Kyo[Loop.Outcome[Any < Nothing, Any], Any] @unchecked =>
+                                        loop(loopPending(pending, cell, hs, kyo.cont), cell.prev)
+                                    case outcome =>
+                                        Nested.unnest[Loop.Outcome[Any < Nothing, Any]](outcome) match
+                                            case c: Loop.Continue[Any < Nothing] @unchecked =>
+                                                (c._1: Any) match
+                                                    case p: Kyo[Any, Any] @unchecked =>
+                                                        loop(continuePending(p, cell, hs, kyo.cont), cell)
+                                                    case answer =>
+                                                        val next =
+                                                            try resume(kyo.cont, answer.asInstanceOf[Any < Nothing])
+                                                            catch case ex: Throwable => enrich(ex, v, hs)
+                                                        loop(next, hs)
+                                            case done =>
+                                                val next =
+                                                    try resume(cell.exit, Nested.lift(done))
+                                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                                loop(next, cell.prev)
+                                end match
+                            case h: Handler.Cont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] =>
+                                val hsAll = hs
+                                val kCont = kyo.cont
+                                val cont: Any => Any < Nothing =
+                                    o => rebuild(hsAll, cell, resume(kCont, Nested.lift(o)))
+                                val next =
+                                    try h(kyo.input, cont)
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                loop(next, cell)
+                            case h: Handler.First[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] =>
+                                val hsAll = hs
+                                val kCont = kyo.cont
+                                val cont: Any => Any < Nothing =
+                                    o => rebuild(hsAll, cell, resume(kCont, Nested.lift(o)))
+                                // the region answers once: the clause's result runs at
+                                // cell.prev, so the cell is off the spine before the
+                                // continuation it was handed can raise the effect again
+                                val next =
+                                    try walk(cell.exit, h(kyo.input, cont))
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                loop(next, cell.prev)
+                        end match
+                    end if
                 case kyo: Kyo.Defer[Any, Any, Any] @unchecked =>
                     if partial && Safepoint.consumeStopped(slot) then
                         rebuild(hs, Empty, v)
@@ -173,46 +175,29 @@ object Eval:
                             catch case ex: Throwable => enrich(ex, v, hs)
                         loop(next, hs)
                 case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                    kyo match
-                        case kyo: RebuiltNode if kyo.node.prev eq hs =>
-                            // the onion layer lands where it was built from, so
-                            // the original cell re-enters the stack as is
-                            loop(kyo.value, kyo.node)
-                        case _ =>
-                            loop(kyo.value, new Node(kyo.handler, kyo.exit, hs))
+                    loop(kyo.value, hs.push(kyo))
                 case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
-                    kyo match
-                        case kyo: RebuiltStateNode if kyo.node.prev eq hs =>
-                            loop(kyo.value, kyo.node)
-                        case _ =>
-                            loop(kyo.value, new StateNode(kyo.handler, kyo.exit, kyo.state, hs))
+                    loop(kyo.value, hs.push(kyo))
                 case kyo: Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] @unchecked =>
-                    kyo match
-                        case kyo: RebuiltFirstNode if kyo.node.prev eq hs =>
-                            loop(kyo.value, kyo.node)
-                        case _ =>
-                            loop(kyo.value, new FirstNode(kyo.handler, kyo.exit, hs))
+                    loop(kyo.value, hs.push(kyo))
                 case v =>
-                    hs match
-                        case Empty => v
-                        case n: Node[?, ?, ?, ?, ?] =>
-                            val next =
-                                try resume(n.exit, v)
-                                catch case ex: Throwable => enrich(ex, v, hs)
-                            loop(next, n.prev)
-                        case n: StateNode[?, ?, ?, ?, ?, ?] =>
-                            val next =
-                                try resume(n.exit, v)
-                                catch case ex: Throwable => enrich(ex, v, hs)
-                            loop(next, n.prev)
-                        case n: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                            // no operation reached the region: the done clause
-                            // produces the value the exit consumes, taking it out
-                            // of the currency because it crosses to a function
-                            val next =
-                                try walk(n.exit, n.handler(Nested.unnest(v)))
-                                catch case ex: Throwable => enrich(ex, v, hs)
-                            loop(next, n.prev)
+                    if hs eq Empty then v
+                    else
+                        hs.handler match
+                            case h: Handler.First[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] =>
+                                // no operation reached the region: the done clause
+                                // produces the value the exit consumes, taking it out
+                                // of the currency because it crosses to a function
+                                val next =
+                                    try walk(hs.exit, h(Nested.unnest(v)))
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                loop(next, hs.prev)
+                            case _ =>
+                                val next =
+                                    try resume(hs.exit, v)
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                loop(next, hs.prev)
+                    end if
         loop(v0, Empty).asInstanceOf[A < S]
     end evalLoop
 
@@ -221,20 +206,21 @@ object Eval:
     // evaluation loop so its hot arms stay small
     private def statePending(
         pending: Loop.Outcome2[Any, Any < Nothing, Any] < Any,
-        node: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+        handler: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+        cell: Handlers,
         hsAll: Handlers,
         kCont: Arrow[Any, Any, Any]
     ): Any < Nothing =
         pending.map {
             case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
                 Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
-                    rebuild(hsAll, node, walk(kCont, c._2)),
-                    node.handler,
-                    node.exit,
+                    rebuild(hsAll, cell, walk(kCont, c._2)),
+                    handler,
+                    cell.exit,
                     c._1
                 )
             case done =>
-                resume(node.exit, Nested.lift(done))
+                resume(cell.exit, Nested.lift(done))
         }(using Frame.internal)
 
     // shared by the stateless and stateful regions: rebuild only walks cells
@@ -250,15 +236,15 @@ object Eval:
 
     private def loopPending(
         pending: Loop.Outcome[Any < Nothing, Any] < Any,
-        node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any],
+        cell: Handlers,
         hsAll: Handlers,
         kCont: Arrow[Any, Any, Any]
     ): Any < Nothing =
         pending.map {
             case c: Loop.Continue[Any < Nothing] @unchecked =>
-                rebuild(hsAll, node.prev, walk(kCont, c._1))
+                rebuild(hsAll, cell.prev, walk(kCont, c._1))
             case done =>
-                resume(node.exit, Nested.lift(done))
+                resume(cell.exit, Nested.lift(done))
         }(using Frame.internal)
 
     // a suspension travelling up the chain walk: the unfinished right sides compose into
@@ -316,52 +302,19 @@ object Eval:
         end match
     end evalChain
 
-    // a region layer rebuilt from an existing cell: as a value it is the
-    // regular region node; when the evaluator consumes it in the position it
-    // was built from, the cell re-enters the stack with no new allocation
-    final private class RebuiltNode(
-        val value: Any < Nothing,
-        val node: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any]
-    ) extends Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
-        def handler = node.handler
-        def exit    = node.exit
-    end RebuiltNode
-
-    final private class RebuiltStateNode(
-        val value: Any < Nothing,
-        val node: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]
-    ) extends Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any]:
-        def handler = node.handler
-        def exit    = node.exit
-        def state   = node.state
-    end RebuiltStateNode
-
-    final private class RebuiltFirstNode(
-        val value: Any < Nothing,
-        val node: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]
-    ) extends Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any]:
-        def handler = node.handler
-        def exit    = node.exit
-    end RebuiltFirstNode
-
+    // the crossed regions are restored as region nodes around the resumed
+    // computation, one per cell, and what this produces the next loop iterations
+    // simply re-enter
     @tailrec private def rebuild(top: Handlers, stop: Handlers, acc: Any < Nothing): Any < Nothing =
-        if top eq stop then acc
-        else
-            top match
-                case n: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] @unchecked =>
-                    rebuild(n.prev, stop, new RebuiltNode(acc, n))
-                case n: StateNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                    rebuild(n.prev, stop, new RebuiltStateNode(acc, n))
-                case n: FirstNode[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                    rebuild(n.prev, stop, new RebuiltFirstNode(acc, n))
-                case Empty =>
-                    acc
-    end rebuild
+        if (top eq stop) || (top eq Empty) then acc
+        else rebuild(top.prev, stop, top.rebuilt(acc))
 
     // a fork's copy of the standing context: walks the whole stack once, keeping
-    // only the provision cells ContextEffect.handle installed (the structural
-    // recognizer, Provision, is what makes a cell eligible; every other node kind,
-    // including a stateful region over a context tag, is skipped), with neutral
+    // only the provision regions ContextEffect.handle installed (the structural
+    // recognizer, Provision, is what makes a region eligible, and it is read off
+    // the handler alone now that the cell kinds are the spine's own business;
+    // ContextEffect.provision is the only site that mixes it in and it builds a
+    // Loop handler, so the regions this keeps are the same ones), with neutral
     // exits. Walking from the innermost cell outward and wrapping the accumulator
     // preserves nesting order: the outermost cell ends up outermost in the built
     // value, so re-entry through Eval's Handled arm pushes it first and the
@@ -373,53 +326,26 @@ object Eval:
     // erased construction through this factory in the file (e.g. statePending's
     // Kyo.HandledState call above)
     @tailrec private def transplant(top: Handlers, acc: Any < Nothing): Any < Nothing =
-        top match
-            case Empty => acc
-            case n: Node[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] @unchecked =>
-                n.handler match
-                    case p: ContextEffect.Provision if !(n.handler.tag <:< Tag[ContextEffect.Noninheritable]) =>
-                        transplant(
-                            n.prev,
-                            Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any](acc, n.handler, Arrow[Any])
-                        )
-                    case _ =>
-                        transplant(n.prev, acc)
-            case n: StateNode[?, ?, ?, ?, ?, ?]    => transplant(n.prev, acc)
-            case n: FirstNode[?, ?, ?, ?, ?, ?, ?] => transplant(n.prev, acc)
-    end transplant
-
-    private def replace(top: Handlers, node: Handlers, updated: Handlers): Handlers =
-        if top eq node then updated
+        if top eq Empty then acc
         else
-            @tailrec def count(l: Handlers, n: Int): Int =
-                if l eq node then n
-                else
-                    l match
-                        case l: Node[?, ?, ?, ?, ?]            => count(l.prev, n + 1)
-                        case l: StateNode[?, ?, ?, ?, ?, ?]    => count(l.prev, n + 1)
-                        case l: FirstNode[?, ?, ?, ?, ?, ?, ?] => count(l.prev, n + 1)
-                        case Empty                             => n
-            val n     = count(top, 0)
-            val cells = new Array[Handlers](n)
-            @tailrec def fill(l: Handlers, i: Int): Unit =
-                if i < n then
-                    cells(i) = l
-                    l match
-                        case l: Node[?, ?, ?, ?, ?]            => fill(l.prev, i + 1)
-                        case l: StateNode[?, ?, ?, ?, ?, ?]    => fill(l.prev, i + 1)
-                        case l: FirstNode[?, ?, ?, ?, ?, ?, ?] => fill(l.prev, i + 1)
-                        case Empty                             => ()
-                    end match
-            fill(top, 0)
-            @tailrec def build(i: Int, acc: Handlers): Handlers =
-                if i < 0 then acc
-                else
-                    cells(i) match
-                        case c: Node[?, ?, ?, ?, ?]            => build(i - 1, c.withPrev(acc))
-                        case c: StateNode[?, ?, ?, ?, ?, ?]    => build(i - 1, c.withPrev(acc))
-                        case c: FirstNode[?, ?, ?, ?, ?, ?, ?] => build(i - 1, c.withPrev(acc))
-                        case Empty                             => build(i - 1, acc)
-            build(n - 1, updated)
-    end replace
+            top.handler match
+                case p: ContextEffect.Provision if !(top.tag <:< Tag[ContextEffect.Noninheritable]) =>
+                    transplant(
+                        top.prev,
+                        // ContextEffect.provision is the one site that mixes the
+                        // recognizer in, and it builds a Loop handler, so the cell's
+                        // erased handler is the kind a region node takes
+                        Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any](
+                            acc,
+                            top.handler.asInstanceOf[
+                                Handler.Cont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] |
+                                    Handler.Loop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any]
+                            ],
+                            Arrow[Any]
+                        )
+                    )
+                case _ =>
+                    transplant(top.prev, acc)
+    end transplant
 
 end Eval
