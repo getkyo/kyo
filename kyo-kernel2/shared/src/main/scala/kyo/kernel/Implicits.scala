@@ -6,48 +6,65 @@ import scala.language.implicitConversions
 
 private[kernel] trait Implicits:
 
-    // the trivial shapes reduce in the inliner without invoking the macro: a
-    // macro expansion per lift site is measurably more expensive than an
-    // erasedValue match, and primitive answers inside map-heavy code are the
-    // most common lift by far (kyo-compile-bench, ForComprehensions). The
-    // conversion carries no evidence gate: the macro itself rejects pending
-    // types and kyo modules, which spares every lift site the implicit search
-    implicit inline def lift[A, S](v: A): A < S =
+    // CanLift is the lint (pending types, kyo modules), resolved where the
+    // conversion is written, so generic contexts are waived and stay sound
+    // through the runtime box. The emission is the erasedValue match: a bare
+    // cast for the shapes that can never need the nesting box, the runtime
+    // Boxed test for everything else
+    implicit inline def lift[A: CanLift, S](v: A): A < S =
         inline scala.compiletime.erasedValue[A] match
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A < S]
             case _ =>
-                LiftMacro.expand[A, S](v)
+                CanLift.lift[A, S](v)
 
-    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitMacro[S1, S2]('v) }
+    // the trivial shapes spare the evidence search entirely: primitive answers
+    // inside map-heavy code are the most common lift by far (kyo-compile-bench,
+    // ForComprehensions), and A <: AnyVal makes this more specific than lift.
+    // Unit is an AnyVal, so it rides this path too
+    implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
 
-    // the function lifts route their results through the gating macro, so a
+    // a matching conversion that aborts after selection: a failed nested
+    // evidence inside a conversion candidate surfaces as a plain mismatch, so
+    // the Unit row trap (issue 903) must win the search first to speak
+    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 =
+        scala.compiletime.error(
+            "Cannot lift `Unit < S1` to the expected type (`Unit < S2`).\n" +
+                "This may be due to an effect type mismatch.\n" +
+                "Consider removing or adjusting the type constraint on the left-hand side.\n" +
+                "More info : https://github.com/getkyo/kyo/issues/903"
+        )
+
+    // the function lifts route their results through the canonical lift, so a
     // nested result type (A1 => B < S < S2) is rejected like any other lift
 
     /** Converts a pure single-argument function to an effectful computation. */
-    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B): A1 => B < Any =
-        a1 => LiftMacro.expand[B, Any](f(a1))
+    implicit inline def liftPureFunction1[A1, B: CanLift](inline f: A1 => B): A1 => B < Any =
+        a1 => lift(f(a1))
 
     /** Converts a pure two-argument function to an effectful computation. */
-    implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B): (A1, A2) => B < Any =
-        (a1, a2) => LiftMacro.expand[B, Any](f(a1, a2))
+    implicit inline def liftPureFunction2[A1, A2, B: CanLift](inline f: (A1, A2) => B): (A1, A2) => B < Any =
+        (a1, a2) => lift(f(a1, a2))
 
     /** Converts a pure three-argument function to an effectful computation. */
-    implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B): (A1, A2, A3) => B < Any =
-        (a1, a2, a3) => LiftMacro.expand[B, Any](f(a1, a2, a3))
+    implicit inline def liftPureFunction3[A1, A2, A3, B: CanLift](inline f: (A1, A2, A3) => B): (A1, A2, A3) => B < Any =
+        (a1, a2, a3) => lift(f(a1, a2, a3))
 
     /** Converts a pure four-argument function to an effectful computation. */
-    implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B): (A1, A2, A3, A4) => B < Any =
-        (a1, a2, a3, a4) => LiftMacro.expand[B, Any](f(a1, a2, a3, a4))
+    implicit inline def liftPureFunction4[A1, A2, A3, A4, B: CanLift](inline f: (A1, A2, A3, A4) => B): (A1, A2, A3, A4) => B < Any =
+        (a1, a2, a3, a4) => lift(f(a1, a2, a3, a4))
 
     /** Converts a pure five-argument function to an effectful computation. */
-    implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B](inline f: (A1, A2, A3, A4, A5) => B): (A1, A2, A3, A4, A5) => B < Any =
-        (a1, a2, a3, a4, a5) => LiftMacro.expand[B, Any](f(a1, a2, a3, a4, a5))
+    implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B: CanLift](
+        inline f: (A1, A2, A3, A4, A5) => B
+    ): (A1, A2, A3, A4, A5) => B < Any =
+        (a1, a2, a3, a4, a5) => lift(f(a1, a2, a3, a4, a5))
 
     /** Converts a pure six-argument function to an effectful computation. */
-    implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B](inline f: (A1, A2, A3, A4, A5, A6) => B)
-        : (A1, A2, A3, A4, A5, A6) => B < Any =
-        (a1, a2, a3, a4, a5, a6) => LiftMacro.expand[B, Any](f(a1, a2, a3, a4, a5, a6))
+    implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B: CanLift](
+        inline f: (A1, A2, A3, A4, A5, A6) => B
+    ): (A1, A2, A3, A4, A5, A6) => B < Any =
+        (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asString(value: APendingS): String = value match
@@ -59,12 +76,14 @@ end Implicits
 
 object Implicits:
 
-    /** The macro-free lift for this module's own sources. The public lift expands
-      * LiftMacro, and a unit whose compilation suspends on a same-module macro crashes the
-      * inliner (StaleSymbolException, diagnosed with -Xprint-suspension), so files inside
-      * kyo-kernel2 import this conversion instead: an import has lexical-scope priority over
-      * the companion's implicit scope, so the macro never expands in the module that defines
-      * it, while every other module and this module's own tests take the macro path.
+    /** The macro-free lift for this module's own sources. The kernel's core files sit in a
+      * dependency cycle with any macro-bearing evidence (CanLift needs Pending, Pending
+      * needs Arrow, and Arrow's own body lifts), so the module cannot summon its own
+      * derivation macro; historically the attempt also crashed the inliner
+      * (StaleSymbolException, diagnosed with -Xprint-suspension). Files inside kyo-kernel2
+      * import this conversion instead: an import has lexical-scope priority over the
+      * companion's implicit scope, so the macro never expands in the module that defines
+      * it, while every other module and this module's own tests take the evidence path.
       */
     implicit private[kyo] inline def liftInternal[A, S](v: A): A < S =
         inline scala.compiletime.erasedValue[A] match

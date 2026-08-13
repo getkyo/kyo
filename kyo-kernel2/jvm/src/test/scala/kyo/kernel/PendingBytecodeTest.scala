@@ -51,11 +51,15 @@ class PendingBytecodeTest extends AnyFreeSpec:
         assert(sizes == Map("test" -> 2))
     }
 
-    "lift of a concrete class is a bare cast" in {
-        // a final class admits no Boxed subtype, so the lift macro proves the
-        // value can never be a computation and emits a bare cast
+    "lift of a concrete class is one runtime test" in {
+        // the lift's emission is the erasedValue match, so only the listed
+        // trivial shapes take the bare cast; a concrete class takes the same
+        // single static call as the generic row, whose runtime Boxed test the
+        // JIT resolves to a predictable branch. The per-type static analysis
+        // that proved final classes cast-safe lived in the emission macro and
+        // left with it when the lint moved to CanLift
         val sizes = methodBytecodeSize[TestLiftConcrete]
-        assert(sizes == Map("test" -> 2))
+        assert(sizes == Map("test" -> 8))
     }
 
     "lift of a generic value is one runtime test" in {
