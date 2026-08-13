@@ -50,37 +50,26 @@ and the Detached resume took the same enrichment guard as its Defaulted sibling.
 All four rulings honored; suite 678 green. Names for your ack: Provision, Detached
 and detach, transplant (all private[kyo]).
 
+## Done, awaiting your ack (continued)
+
+### Handlers encapsulation landed (`664335092c`): the spine keeps its cell kinds to itself
+
+Your ruled direction, implemented: Handlers is one exposed type; Node, StateNode,
+FirstNode, and the rebuilt region nodes are private to the file; every outside walk
+reads the four values a region has (tag, handler, exit, prev as fields) plus methods
+each with a consumer at HEAD (find, push which folded the cell-reuse identity test
+into the spine, replace, withState, rebuilt). Operation dispatch stays per-kind but
+reads the HANDLER kinds, the vocabulary the handling variants already publish. find
+no longer dispatches through a fresh anonymous handler class per handle site: the
+tag rides the cell, one reference test and field read per cell. State lives only on
+the stateful cell; the base refuses it; allocation per region entry unchanged. Eval
+shrank by a hundred-plus lines. Suite 683 green. Honest gate: JMH pending, mine to
+run in the next quiet window (sharedHandlerPaysDispatch carries find; I will run the
+full guard set since Eval's arms were restructured).
+
 ## Implementing now
 
-## Next up (Handlers now implementing via kernel2-impl on the merged tip)
-
-### Handlers encapsulation (your TODO at Handlers.scala:8)
-
-Provenance: your review TODO, "can we encapsulate so the internal representation is
-easier to evolve later?", sized by what has happened since: adding FirstNode for
-handleFirst had to touch every place that enumerates the node classes (seven sites).
-
-Context: Handlers is the evaluator's stack of installed handler regions, a linked
-list of Node (stateless handler), StateNode (stateful), and FirstNode (one-shot).
-Five operations walk it: find (locate the handler for a suspension's tag; hot, once
-per answered operation), the settled-value pop, rebuild (turn a stack prefix back
-into a value when parking), replace (functional state update), and the isolate design
-adds a transplant. Every one pattern-matches the node classes today, and find reads
-the tag through `handler.tag`, a megamorphic call because every handle site expands
-its own anonymous handler class.
-
-Design direction, per your note: no exposed hierarchy. `Handlers` stays the single
-type, and the needs become methods on it: find, the pop, rebuild, replace and the
-state update, and later the transplant. The node classes become private
-implementation inside the object; Eval stops matching them anywhere and calls the
-methods; the per-kind operation dispatch also goes behind the surface (the found
-region hands back its handler through the existing Handler kinds, which are already
-the public vocabulary). Internally the tag is a field so find is a walk of field
-reads, closing the megamorphic call. Adding a future region kind then touches one
-file. Constraint to hold: no dispatch regression on the hot path (JMH-gated,
-sharedHandlerPaysDispatch is the row). The design doc's exposed-hierarchy shape
-(`kernel2-todos-design.md` section 2) is superseded by this direction; internal names
-are yours to rule at review.
+## Next up
 
 ### deepRecursion rescue-path time (implement, with a bar)
 
