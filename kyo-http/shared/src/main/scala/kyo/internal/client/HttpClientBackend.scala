@@ -150,7 +150,8 @@ final private[kyo] class HttpClientBackend private (
             encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
                 onInvalid = ex =>
                     bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
-                    resultPromise.completeDiscard(Result.fail(ex)),
+                    resultPromise.completeDiscard(Result.fail(ex))
+                ,
                 f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
                     responsePromise.onComplete { parseResult =>
@@ -167,7 +168,9 @@ final private[kyo] class HttpClientBackend private (
                                     if parsed.statusCode >= 400 then
                                         // The buffered fallback consumes the whole error body before completing
                                         // resultPromise, so the reuse decision mirrors the buffered contract.
-                                        bodyOutcome.foreach(p => resultPromise.onComplete(r => p.completeDiscard(Result.succeed(r.isSuccess))))
+                                        bodyOutcome.foreach(p =>
+                                            resultPromise.onComplete(r => p.completeDiscard(Result.succeed(r.isSuccess)))
+                                        )
                                         readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
                                     else
                                         val lastBodySpan = conn.http1.lastBodySpan
@@ -1053,7 +1056,7 @@ final private[kyo] class HttpClientBackend private (
                 Sync.Unsafe.defer {
                     if released.compareAndSet(false, true) then
                         bodyOutcome match
-                            case Absent => pool.release(key, conn)
+                            case Absent        => pool.release(key, conn)
                             case Present(done) =>
                                 // Streaming route: the response body outlives `use`, which completes at headers time
                                 // with a lazy stream. Winning the CAS here TRANSFERS the reuse decision to the
@@ -1210,7 +1213,8 @@ final private[kyo] class HttpClientBackend private (
                                 val connectFiber = connect(url, config.connectTimeout, config.tls)
                                 connectFiber.safe.use { conn =>
                                     trackConn(conn)
-                                    val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                                    val (responseFiber, bodyOutcome) =
+                                        sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
                                     releasingConn(key, conn, bodyOutcome)(responseFiber.safe.use(f))
                                 }
                             }
