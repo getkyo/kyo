@@ -176,6 +176,51 @@ The kernel primitive Isolate needs is just: read an entry from a captured
 context, and the seeding node above. The strategy zoo stays at the effect
 level where it belongs.
 
+### Handlers after the change: one cell, one region node
+
+Taking live state off the cells unlocks a collapse of the cell and node
+taxonomy, because what distinguishes `Node` / `StateNode` / `FirstNode` after
+tier one (delete `replace`, `withPrev`, the `state`/`withState` refusals) is
+only which `Kyo` region node their `rebuilt` produces, and what distinguishes
+`Handled` / `HandledState` / `HandledFirst` is by then one field: the state
+seed. Unify the region node,
+
+```scala
+trait Handled[...] extends Kyo[...]:
+    def value: A < (E & S)
+    def handler: Handler[...]   // any kind; dispatch already matches kinds
+    def exit: Arrow[...]
+    def seed: Any               // initial or snapshot state; null for stateless
+```
+
+and the tower collapses:
+
+- Handlers.scala: `Empty` + one cell class + one rebuilt class + `find` + one
+  `push`; the per-kind casting accessors vanish (~70-80 lines, from 185).
+- KyoInternal.scala: `HandledState` and `HandledFirst` deleted with their
+  duplicated `map` implementations (~90 lines).
+- Eval.scala: three region-node arms and three push shapes become one each;
+  handler-kind dispatch stays the single place the kinds differ, which is
+  already Handler.scala's published vocabulary.
+- The fused single allocation survives: `handleLoop` still builds
+  `new Handler.LoopState with Kyo.Handled { def handler = this; def seed = state }`.
+
+Two consequences to gate:
+
+1. **Entry-owning cells cannot reuse the push fast path.** A parked region can
+   resume in a different drive whose seeded map has a different outer entry
+   for the tag, so `saved` must be recomputed at every push; re-entry
+   allocates a fresh cell for entry-owning regions (stateless cells keep the
+   reuse path, they save nothing). Re-entry only happens after a crossing that
+   already paid a rebuild, so nothing hot changes.
+2. **One extra field per region node** (`seed`, null for stateless): 8 bytes
+   per `handle` call. `idleHandlerAddsNothing` and the bytecode pins gate it.
+
+Binding regions (`ContextEffect.handle`) can ride the unified node with a null
+handler, structurally unreachable by dispatch once context tags are not
+raisable as operations, or get a four-line dedicated cell. The dedicated cell
+is the cleaner read; either fits.
+
 ## 3. What executes, per scenario
 
 - **`Local.get` under a `let`**: one Defer node, one map lookup, resume. No
@@ -221,9 +266,10 @@ it (`def value(ctx) = kyo.value(ctx)`), which is the same rewrap. A read
 riding the Defer arm also inherits the arm's budget reset, matching the old
 kernel, where every read was a suspension with safepoint handling.
 
-`HandledState` survives as the region-entry carrier for the initial state, but
-its cell stops carrying live state. `Handler.LoopState` keeps `apply` and
-`applyDone`; the evaluator passes `ctx(tag)` where it passed `cell.state`.
+With the unified region node (section 2), `HandledState` and `HandledFirst`
+are deleted rather than kept: the seed rides the one `Handled` node.
+`Handler.LoopState` keeps `apply` and `applyDone`; the evaluator passes
+`ctx(tag)` where it passed `cell.state`.
 
 ## 5. The honest tradeoffs
 
