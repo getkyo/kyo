@@ -81,26 +81,20 @@ constructs a second thread moved unweakened to jvm-native. Gates all green: JVM
 and link. The transparent alias (not opaque) is deliberate: Safepoint's instanceof
 on the Stop union must stay a real check.
 
+## Done, awaiting your ack (continued)
+
+### deepRecursion watch item closed by measurement, no change made
+
+Fresh rescue-row numbers on the current tip: deepRecursionPaysRescuesOnly 54.17 us
+against the old kernel's 54.90 (was 57.68 before tonight), allocation win intact at
+912 vs 2,128 B/op; fusionPastBudgetPaysRescuesOnly 48.29 vs 48.20 old, 448 vs 1,128
+B/op. The night's kernel changes closed the 1.05x gap as a byproduct. Per your bar,
+no speculative optimization was attempted: the mandate row is at parity or better
+and the watch ends here.
+
 ## Implementing now
 
 ## Next up
-
-### deepRecursion rescue-path time (implement, with a bar)
-
-Context: `deepRecursionPaysRescuesOnly` measures trampolined recursion through the
-safepoint budget's rescue path. Current position: 1.05x the old kernel's time against
-a 0.43x allocation win on the same row. The time moved with the self-contained map
-design: the whole rescue family did (fusionPastBudget 32.8 to 47.9 us against its own
-earlier board, while staying at old-kernel parity), so the regression has a located
-cause to root-cause rather than a mystery.
-
-Status and bar, per your note: implement, diligently. Root-cause first (profile the
-rescue path, attribute the time between the Defer mint, the reset, and the re-entry
-dispatch), then the simplest fix that addresses the cause, then a JMH A/B on
-deepRecursionPaysRescuesOnly and fusionPastBudgetPaysRescuesOnly proving a measured
-improvement. Merge only if the code is simple and elegant to integrate; otherwise
-park it with the findings recorded. Queued behind the two implementation agents so
-the measurements are clean; I own this one.
 
 ## Parked (your call to revive)
 
