@@ -225,7 +225,7 @@ class EvalTest extends AnyFreeSpec:
             if n == 0 then 0
             else (0: Int < Any).map(_ => loop(n - 1))
         val v = loop(100000)
-        assert(Safepoint.stop(Thread.currentThread()))
+        assert(Safepoint.stop(Threads.current()))
         val parked = Eval.partial(v)
         assert(parked.evalNow.isEmpty)
         assert(Eval.partial(parked).evalNow == Maybe(0))
@@ -235,7 +235,7 @@ class EvalTest extends AnyFreeSpec:
         @tailrec def flat(v: Int < Any, n: Int): Int < Any =
             if n == 0 then v else flat(v.map(_ + 1), n - 1)
         val v = Effect.defer {
-            assert(Safepoint.stop(Thread.currentThread()))
+            assert(Safepoint.stop(Threads.current()))
             flat(0, 5000)
         }
         val out = Eval.partial(v)
@@ -247,7 +247,7 @@ class EvalTest extends AnyFreeSpec:
         def burn(n: Int): Int < Any =
             if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
         val v = burn(Period * 2).map { _ =>
-            assert(Safepoint.stop(Thread.currentThread()))
+            assert(Safepoint.stop(Threads.current()))
             burn(Period * 4)
         }
         val out = Eval.partial(v)
@@ -318,7 +318,7 @@ class EvalTest extends AnyFreeSpec:
             if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
         val program: Int < VarE =
             varOp(_ + 7).map { _ =>
-                assert(Safepoint.stop(Thread.currentThread()))
+                assert(Safepoint.stop(Threads.current()))
                 burn(Period * 4).map(_ => varOp(_ + 1))
             }
         val parked = Eval.partial(runVar(50)(program))
@@ -513,7 +513,7 @@ class EvalTest extends AnyFreeSpec:
                 // an armed bit left behind by the aborted drive drains the budget of
                 // the next computation on this thread the moment a stop is requested
             end try
-            assert(Safepoint.stop(Thread.currentThread()))
+            assert(Safepoint.stop(Threads.current()))
             val slot2 = Safepoint.get()
             assert(Safepoint.consumeStopped(slot2))
             var left = 0

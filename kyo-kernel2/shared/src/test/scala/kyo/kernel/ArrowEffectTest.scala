@@ -804,7 +804,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             def burn(n: Int): Int < Any =
                 if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
             val v = burn(Period * 2).map(_ => ask)
-            assert(Safepoint.stop(Thread.currentThread()))
+            assert(Safepoint.stop(Threads.current()))
             val parked = ArrowEffect.handlePartial(Tag[Ask], v)(
                 [X] =>
                     (_, cont) =>
