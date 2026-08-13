@@ -89,6 +89,53 @@ structural fork you ruled acceptable at the stop-optimization decision (1.79x an
 the RunOnly microrow). Compile fixtures unchanged: the new kernel wins 12 of 13
 with Baseline at parity, MapChainDeep100 at 0.39x.
 
+### handleLoop consumer audit: all 52 sites fit the resume/stop envelope; two exit-protocol gaps found
+
+Every ArrowEffect.handleLoop site in the old-kernel stack was read in detail
+(kyo-prelude: Stream 24, Pipe 8, Sink 4, Emit 3, Var, Poll, Check; kyo-core:
+StreamCoreExtensions 5; kyo-ai: LLM 2; kyo-parse, kyo-http, kyo-combinators: 1
+each). Clause classification:
+
+Resume with a settled answer, possibly after decision effects on the clause row
+(Poll/Emit/Async performed in the clause, then cont(settled)): 46 sites. In the
+answer shape every one of these drops the cont parameter and gets shorter.
+
+Stop: Stream.mapPartial's bare Loop.done; Parse's Loop.done((state, failure));
+Check and LLM aborting through the clause row. Conditional truncation
+(Stream.take/takeWhile/dropWhile substituting Kyo.unit for the continuation) is
+the stop primitive spelled at the next emit and maps onto Loop.done directly,
+with identical semantics (the segment between emits still runs either way).
+
+No site lets cont escape: a grep across all nine consumer files plus the full
+read found every cont applied inside its own clause. The continuation-as-value
+handlers (Sink.zip weaving two polls, Poll.runFirst, Emit.runFirst) are
+handleFirst sites in the old kernel too, and kernel2's handleFirst keeps that
+cont-passing contract.
+
+The two gaps, both in the exit protocol of the stateful variants, found by
+checking kernel2's signatures against what the sites consume:
+
+First, the old kernel's stateful handleLoop has done: (State, A) => B < (S & S2),
+observing the final state at normal completion, and it may be effectful
+(EmitCombinators' done emits the leftover buffer). Consumers: Emit.run and
+runFold, Check.runChunk, Var.run, Stream.run, runFold and foldKyo, LLM, Parse.
+Kernel2's stateful handleLoopWith exit is cont: A => B < S3, which never sees
+the state, so none of these are expressible today. Fix: the stateful exit
+becomes (State, A) => B < S3 and Eval's completion arm passes cell.state (the
+live cell carries the current state; the completion arm already dispatches
+per kind for First).
+
+Second, the old kernel's Loop.done carries B and bypasses the done transform:
+Parse's fatal arm constructs the final (state, failure) directly, with no A in
+hand. Kernel2's done carries A and runs through the exit. Fix: the stateful
+Outcome's done slot types as the exit's output and the clause-done path in Eval
+resumes past the exit transform (the fused exit is an Arrow whose step
+decomposes into head and tail).
+
+Both fixes are Eval-and-signature extensions inside the existing kinds, no
+architecture change and no continuation anywhere. With them, the answer-shaped
+handleLoop supports every existing effect in the codebase.
+
 ## Implementing now
 
 ## Next up
