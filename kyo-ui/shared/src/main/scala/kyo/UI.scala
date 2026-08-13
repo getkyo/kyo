@@ -779,6 +779,63 @@ object UI:
             /** Runs `f` when the mouse wheel is used over this element, receiving the [[kyo.UI.WheelEvent]] payload. */
             def onScroll(f: WheelEvent => Any < Async): Self = withAttrs(attrs.copy(onScrollEvt = Present(f)))
 
+            /** Declares this element as a drag source with stable transfer metadata. */
+            def dragSource(source: Drag.Source): Self = withAttrs(attrs.copy(dragSource = Present(source)))
+
+            /** Declares this element as a drop target with stable acceptance metadata. */
+            def dropTarget(target: Drag.Target): Self = withAttrs(attrs.copy(dropTarget = Present(target)))
+
+            /** Runs `action` when a drag session starts, ignoring the event payload. */
+            def onDragStart(action: => Any < Async): Self =
+                withAttrs(attrs.copy(onDragStart = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` when a drag session starts, receiving the normalized drag event. */
+            def onDragStart(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragStartEvt = Present(f)))
+
+            /** Runs `action` when a drag session ends, ignoring the event payload. */
+            def onDragEnd(action: => Any < Async): Self =
+                withAttrs(attrs.copy(onDragEnd = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` when a drag session ends, receiving its final state and cancellation flag. */
+            def onDragEnd(f: Drag.End => Unit < Async): Self = withAttrs(attrs.copy(onDragEndEvt = Present(f)))
+
+            /** Runs `action` when a drag enters this target, ignoring the event payload. */
+            def onDragEnter(action: => Any < Async): Self =
+                withAttrs(attrs.copy(onDragEnter = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` when a drag enters this target, receiving the normalized drag event. */
+            def onDragEnter(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragEnterEvt = Present(f)))
+
+            /** Runs `action` when a drag leaves this target, ignoring the event payload. */
+            def onDragLeave(action: => Any < Async): Self =
+                withAttrs(attrs.copy(onDragLeave = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` when a drag leaves this target, receiving the normalized drag event. */
+            def onDragLeave(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragLeaveEvt = Present(f)))
+
+            /** Runs `action` while a drag moves over this target, ignoring the event payload. */
+            def onDragOver(action: => Any < Async): Self =
+                withAttrs(attrs.copy(onDragOver = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` while a drag moves over this target, receiving the normalized drag event. */
+            def onDragOver(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragOverEvt = Present(f)))
+
+            /** Runs `action` for a drop and accepts it after the action completes successfully. */
+            def onDrop(action: => Any < Async): Self =
+                given Frame = frame
+                withAttrs(attrs.copy(onDrop = Present(Sync.defer(action)(using frame).andThen(Drag.Decision.Accept))))
+
+            /** Runs `f` for a drop and uses its decision as the drop result. */
+            def onDrop(f: Drag.Event => Drag.Decision < Async): Self = withAttrs(attrs.copy(onDropEvt = Present(f)))
+
+            /** Runs `action` for a sortable move and accepts it after the action completes successfully. */
+            def onSortMove(action: => Any < Async): Self =
+                given Frame = frame
+                withAttrs(attrs.copy(onSortMove = Present(Sync.defer(action)(using frame).andThen(Drag.Decision.Accept))))
+
+            /** Runs `f` for a sortable move and uses its decision as the move result. */
+            def onSortMove(f: Drag.Move => Drag.Decision < Async): Self = withAttrs(attrs.copy(onSortMoveEvt = Present(f)))
+
             /** Marks this element (and its subtree) as a keyboard-navigation region whose page-scrolling keys are
               * suppressed. While focus is on this element or a descendant, the client calls `preventDefault()`
               * synchronously for the navigation keys so the browser does not ALSO scroll the page; the keydown is
@@ -1070,6 +1127,22 @@ object UI:
             onUnhoverEvt: Maybe[MouseEvent => Any < Async] = Absent,
             onScroll: Maybe[Any < Async] = Absent,
             onScrollEvt: Maybe[WheelEvent => Any < Async] = Absent,
+            dragSource: Maybe[Drag.Source] = Absent,
+            dropTarget: Maybe[Drag.Target] = Absent,
+            onDragStart: Maybe[Any < Async] = Absent,
+            onDragStartEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDragEnd: Maybe[Any < Async] = Absent,
+            onDragEndEvt: Maybe[Drag.End => Unit < Async] = Absent,
+            onDragEnter: Maybe[Any < Async] = Absent,
+            onDragEnterEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDragLeave: Maybe[Any < Async] = Absent,
+            onDragLeaveEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDragOver: Maybe[Any < Async] = Absent,
+            onDragOverEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDrop: Maybe[Drag.Decision < Async] = Absent,
+            onDropEvt: Maybe[Drag.Event => Drag.Decision < Async] = Absent,
+            onSortMove: Maybe[Drag.Decision < Async] = Absent,
+            onSortMoveEvt: Maybe[Drag.Move => Drag.Decision < Async] = Absent,
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
             jsProps: Map[String, String] = Map.empty,

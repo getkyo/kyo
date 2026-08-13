@@ -83,6 +83,38 @@ object Drag:
         case Directory(token: String, name: String)
     end Item
 
+    /** Declarative configuration attached to a draggable UI element.
+      *
+      * `key` is the stable element identity exposed to drag events. `items` are the transferable
+      * values made available by the source, and `operations` limits the operations it supports.
+      * `label` supplies optional accessible metadata, `handle` records whether activation is
+      * restricted to a handle, and `preview` selects the browser representation used while dragging.
+      *
+      * The complete value is serialized into the element's drag-source data attribute.
+      */
+    final case class Source(
+        key: String,
+        items: Chunk[Item],
+        operations: AllowedOperations = AllowedOperations.move,
+        label: Maybe[String] = Absent,
+        handle: Boolean = false,
+        preview: Preview = Preview.Clone
+    ) derives CanEqual, Schema
+
+    /** Declarative configuration attached to a drop-target UI element.
+      *
+      * `key` is the stable element identity exposed to drag events. `accepts` describes the item,
+      * operation, count, size, and directory rules advertised by the target. `label` supplies
+      * optional accessible metadata for browser runtimes and assistive interfaces.
+      *
+      * The complete value is serialized into the element's drop-target data attribute.
+      */
+    final case class Target(
+        key: String,
+        accepts: Accept,
+        label: Maybe[String] = Absent
+    ) derives CanEqual, Schema
+
     /** Per-item rules declared by a drop target.
       *
       * An empty media type set accepts every valid exact MIME transfer representation. `maxItems`
@@ -115,6 +147,38 @@ object Drag:
         position: Position,
         operation: Operation
     ) derives CanEqual, Schema
+
+    /** Domain payload delivered to drag lifecycle handlers.
+      *
+      * The payload combines the session and transferred values with the selected operation,
+      * optional source and target identities, pointer coordinates, keyboard modifiers, and the
+      * resolved placement relative to a target. Fields unavailable for a lifecycle phase are
+      * represented by [[kyo.Maybe]] rather than sentinel values.
+      *
+      * This handler value is assembled from validated wire protocol values and is not itself a
+      * wire schema.
+      */
+    final case class Event(
+        sessionId: String,
+        items: Chunk[Item],
+        operation: Operation,
+        sourceKey: Maybe[String],
+        targetKey: Maybe[String],
+        point: Maybe[Point],
+        modifiers: UI.Modifiers,
+        position: Maybe[Position]
+    ) derives CanEqual
+
+    /** Domain payload delivered when a drag session ends.
+      *
+      * `event` contains the final normalized drag state. `canceled` is true when the session ended
+      * without completing its selected operation. The spelling is part of the public handler API
+      * and intentionally differs from the internal wire field where applicable.
+      *
+      * This handler value is assembled from validated wire protocol values and is not itself a
+      * wire schema.
+      */
+    final case class End(event: Event, canceled: Boolean) derives CanEqual
 
     /** Reason a drag item or event was not accepted. */
     enum Rejection derives CanEqual, Schema:

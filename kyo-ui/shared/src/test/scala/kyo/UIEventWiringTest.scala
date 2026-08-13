@@ -34,6 +34,157 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             yield subscription.handle
         }
 
+    private def htmlUnescape(value: String): String =
+        value
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+
+    private def htmlEscape(value: String): String =
+        value
+            .replace("&", "&amp;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+
+    private def attribute(html: String, name: String)(using kyo.test.AssertScope): String =
+        val prefix = s"$name=\""
+        val start  = html.indexOf(prefix)
+        assert(start >= 0, s"missing $name in $html")
+        val valueStart = start + prefix.length
+        val valueEnd   = html.indexOf('"', valueStart)
+        assert(valueEnd >= valueStart, s"unterminated $name in $html")
+        html.substring(valueStart, valueEnd)
+    end attribute
+
+    // ---- Declarative drag AST and rendering ----
+
+    "drag capabilities preserve chained HTML attributes and render complete escaped metadata" in {
+        val source = Drag.Source(
+            key = "source\"&<key>",
+            items = Chunk(Drag.Item.Text(Map("text/plain" -> "card\"&<text>"))),
+            operations = Drag.AllowedOperations.copy,
+            label = Present("source\"&<label>"),
+            handle = true,
+            preview = Drag.Preview.Label("preview\"&<label>")
+        )
+        val target = Drag.Target(
+            key = "target\"&<key>",
+            accepts = Drag.Accept(
+                mediaTypes = Set("text/plain"),
+                operations = Drag.AllowedOperations.copy,
+                maxItems = Present(2),
+                directories = true
+            ),
+            label = Present("target\"&<label>")
+        )
+        val ui = UI.div
+            .id("drag-node")
+            .cssClass("card")
+            .data("kind", "task")
+            .dragSource(source)
+            .dropTarget(target)
+            .onDragStart((_: Drag.Event) => ())
+            .onDragEnd((_: Drag.End) => ())
+            .onDragEnter((_: Drag.Event) => ())
+            .onDragLeave((_: Drag.Event) => ())
+            .onDragOver((_: Drag.Event) => ())
+            .onDrop((_: Drag.Event) => Drag.Decision.Accept)
+            .onSortMove((_: Drag.Move) => Drag.Decision.Accept)
+            .onClick(())(UI.span("child<&>"))
+
+        val expectedSourceJson =
+            """{"key":"source\"&<key>","items":[{"Text":{"representations":{"text/plain":"card\"&<text>"}}}],"operations":{"values":[{"Copy":{}}]},"label":"source\"&<label>","handle":true,"preview":{"Label":{"value":"preview\"&<label>"}}}"""
+        val expectedTargetJson =
+            """{"key":"target\"&<key>","accepts":{"mediaTypes":["text/plain"],"operations":{"values":[{"Copy":{}}]},"maxItems":2,"directories":true},"label":"target\"&<label>"}"""
+
+        assert(ui.attrs.dragSource == Present(source))
+        assert(ui.attrs.dropTarget == Present(target))
+        assert(ui.attrs.onClick.nonEmpty)
+        assert(ui.attrs.onDragStartEvt.nonEmpty)
+        assert(ui.attrs.onDragEndEvt.nonEmpty)
+        assert(ui.attrs.onDragEnterEvt.nonEmpty)
+        assert(ui.attrs.onDragLeaveEvt.nonEmpty)
+        assert(ui.attrs.onDragOverEvt.nonEmpty)
+        assert(ui.attrs.onDropEvt.nonEmpty)
+        assert(ui.attrs.onSortMoveEvt.nonEmpty)
+        assert(ui.children.size == 1)
+
+        for html <- HtmlRenderer.render(ui, Seq.empty)
+        yield
+            val sourceJson = htmlUnescape(attribute(html, "data-kyo-drag-source"))
+            val targetJson = htmlUnescape(attribute(html, "data-kyo-drop-target"))
+            assert(sourceJson == expectedSourceJson)
+            assert(targetJson == expectedTargetJson)
+            assert(attribute(html, "data-kyo-drag-source") == htmlEscape(expectedSourceJson))
+            assert(attribute(html, "data-kyo-drop-target") == htmlEscape(expectedTargetJson))
+            assert(Json.decode[Drag.Source](sourceJson) == Result.succeed(source))
+            assert(Json.decode[Drag.Target](targetJson) == Result.succeed(target))
+            assert(attribute(html, "data-kyo-drag-key") == "source&quot;&amp;&lt;key&gt;")
+            assert(html.contains("draggable=\"true\""))
+            assert(html.contains("id=\"drag-node\""))
+            assert(html.contains("class=\"card\""))
+            assert(html.contains("data-kind=\"task\""))
+            assert(html.contains("child&lt;&amp;&gt;"))
+            assert(
+                attribute(html, "data-kyo-ev") ==
+                    "click,dragstart,dragend,dragenter,dragleave,dragover,drop,sortmove"
+            )
+            assert(!html.contains("Function"))
+            assert(!html.contains("Drag.Event"))
+        end for
+    }
+
+    "shared drag API renders SVG target metadata without making it draggable" in {
+        val target = Drag.Target("svg\"&<target>", Drag.Accept.types("image/svg+xml"), Present("svg target"))
+        val ui = Svg.rect
+            .id("drop-zone")
+            .dropTarget(target)
+            .onDragStart("drag-start-handler-secret")
+            .onDragEnd("drag-end-handler-secret")
+            .onDragEnter("drag-enter-handler-secret")
+            .onDragLeave("drag-leave-handler-secret")
+            .onDragOver("drag-over-handler-secret")
+            .onDrop("drop-handler-secret")
+            .onSortMove("sort-move-handler-secret")
+
+        assert(ui.attrs.dropTarget == Present(target))
+        assert(ui.attrs.onDragStart.nonEmpty)
+        assert(ui.attrs.onDragEnd.nonEmpty)
+        assert(ui.attrs.onDragEnter.nonEmpty)
+        assert(ui.attrs.onDragLeave.nonEmpty)
+        assert(ui.attrs.onDragOver.nonEmpty)
+        assert(ui.attrs.onDrop.nonEmpty)
+        assert(ui.attrs.onSortMove.nonEmpty)
+
+        val dropDecision = ui.attrs.onDrop match
+            case Present(handler) => handler
+            case Absent           => fail("missing drop action handler")
+        val sortDecision = ui.attrs.onSortMove match
+            case Present(handler) => handler
+            case Absent           => fail("missing sort action handler")
+
+        for
+            dropResult <- dropDecision
+            sortResult <- sortDecision
+            html       <- HtmlRenderer.render(ui, Seq.empty)
+        yield
+            assert(dropResult == Drag.Decision.Accept)
+            assert(sortResult == Drag.Decision.Accept)
+            assert(Json.decode[Drag.Target](htmlUnescape(attribute(html, "data-kyo-drop-target"))) == Result.succeed(target))
+            assert(attribute(html, "data-kyo-drag-key") == "svg&quot;&amp;&lt;target&gt;")
+            assert(!html.contains("draggable=\"true\""))
+            assert(!html.contains("handler-secret"))
+            assert(
+                attribute(html, "data-kyo-ev") ==
+                    "dragstart,dragend,dragenter,dragleave,dragover,drop,sortmove"
+            )
+        end for
+    }
+
     // ---- onHover action fires (HTML) ----
 
     "onHover(action) fires on Hover dispatch (HTML div)" in {

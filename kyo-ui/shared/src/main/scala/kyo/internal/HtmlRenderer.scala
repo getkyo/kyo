@@ -378,7 +378,7 @@ private[kyo] object HtmlRenderer:
             }
         }
 
-    private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs, cssRules: Maybe[CssCollector] = Absent): Unit =
+    private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs, cssRules: Maybe[CssCollector] = Absent)(using Frame): Unit =
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
         val pseudoClass = registerPseudoClass(cssRules, attrs.uiStyle)
         val classes = pseudoClass match
@@ -391,6 +391,16 @@ private[kyo] object HtmlRenderer:
         attrs.focusGroup.foreach(id => w(sb, s""" data-kyo-focus-group="${esc(id)}""""))
         attrs.focusAuto.foreach(v => if v then w(sb, """ data-kyo-focus-auto="1""""))
         attrs.focusRestore.foreach(v => if v then w(sb, """ data-kyo-focus-restore="1""""))
+        attrs.dragSource.foreach { source =>
+            w(sb, s""" data-kyo-drag-source="${esc(Json.encode(source))}"""")
+            w(sb, """ draggable="true"""")
+        }
+        attrs.dropTarget.foreach(target => w(sb, s""" data-kyo-drop-target="${esc(Json.encode(target))}""""))
+        // A source and target can coexist on one sortable element. The source owns the single DOM
+        // routing key in that case, while the complete target key remains present in its JSON metadata.
+        attrs.dragSource match
+            case Present(source) => w(sb, s""" data-kyo-drag-key="${esc(source.key)}"""")
+            case Absent          => attrs.dropTarget.foreach(target => w(sb, s""" data-kyo-drag-key="${esc(target.key)}""""))
         // Marker only: stop-propagation is decided server-side in ReactiveUI.dispatchToElement; the client never reads this.
         attrs.stopPropagation.foreach(v => if v then w(sb, """ data-kyo-stop="1""""))
         // enter/leave transition class lists (read client-side by the patch-application code).
@@ -659,6 +669,13 @@ private[kyo] object HtmlRenderer:
         if attrs.onHover.nonEmpty || attrs.onHoverEvt.nonEmpty then events += "mouseover"
         if attrs.onUnhover.nonEmpty || attrs.onUnhoverEvt.nonEmpty then events += "mouseout"
         if attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty then events += "wheel"
+        if attrs.onDragStart.nonEmpty || attrs.onDragStartEvt.nonEmpty then events += "dragstart"
+        if attrs.onDragEnd.nonEmpty || attrs.onDragEndEvt.nonEmpty then events += "dragend"
+        if attrs.onDragEnter.nonEmpty || attrs.onDragEnterEvt.nonEmpty then events += "dragenter"
+        if attrs.onDragLeave.nonEmpty || attrs.onDragLeaveEvt.nonEmpty then events += "dragleave"
+        if attrs.onDragOver.nonEmpty || attrs.onDragOverEvt.nonEmpty then events += "dragover"
+        if attrs.onDrop.nonEmpty || attrs.onDropEvt.nonEmpty then events += "drop"
+        if attrs.onSortMove.nonEmpty || attrs.onSortMoveEvt.nonEmpty then events += "sortmove"
         // "input" event: when handler is set OR when .value(SignalRef) auto-binding is in use
         elem match
             case ti: TextInput if ti.onInput.nonEmpty || hasSignalRefValue(ti.value) => events += "input"
