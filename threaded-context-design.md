@@ -58,14 +58,38 @@ cell that owns a ctx entry records the previous value for its tag at push and
 the pop puts it back. The saved value lives on the cell, so it is immutable
 and snapshot-free.
 
-The whole mechanism is four verbs, all inside Eval:
+The whole mechanism is four verbs, sequenced by Eval but owned by the cells:
 
-| verb | where | what |
+| verb | where Eval calls it | what the cell does |
 |---|---|---|
-| **seed** | push of a `HandledState` or binding node | `cell.saved = ctx.get(tag); ctx.updated(tag, init)` |
-| **restore** | pop (settle at region, `Loop.done`, First answer) | `ctx.restoreOrRemove(tag, cell.saved)` |
-| **unwind** | truncation (Cont/First dispatch, pending-answer re-entries) | restore-walk of the crossed cells, `hs → cell` |
-| **snapshot** | rebuild (resumer, partial residual) | rebuilt nodes read their entry from the ctx captured at dispatch |
+| **seed** | push of a `HandledState` or binding node | record `saved = ctx.get(tag)`, return `ctx.updated(tag, init)` |
+| **restore** | pop (settle at region, `Loop.done`, First answer) | return `ctx` with `saved` put back (or the tag removed) |
+| **unwind** | truncation (Cont/First dispatch, pending-answer re-entries) | fold **restore** over the crossed cells, `hs → cell` |
+| **snapshot** | rebuild (resumer, partial residual) | rebuilt node reads its own entry from the ctx captured at dispatch |
+
+Ownership is deliberately split this way because the entry/cell correspondence
+is partial in both directions. Stateless cells (Cont, Loop, First regions) own
+no entry and inherit no-op verbs. And a forked drive starts with a seeded map
+and an empty spine: inherited entries have no owning cell at all (the old
+kernel is identical, `IOTask.context` with no handler anywhere), which is why
+the map cannot be a field of the spine or be derived from it. The two
+structures also change at different rates: the spine at region entry/exit
+(stack-disciplined, rare), the map per answered operation (hot). Fusing them
+into one value forces either the `replace` path-copy this design deletes
+(entry as an immutable cell field), broken multi-shot resumption and park
+snapshots (entry as a `var`: a captured resumer shares the cell), or a wrapper
+allocation per state write (map as a field of a spine holder). And
+`ctx.inherit` filters the map in O(entries) precisely because the map is its
+own value; entries-on-cells would make fork a spine walk, which is transplant
+coming back.
+
+So the merge is protocol-level, not representational: cells expose
+`seed`/`restore`/`read`/snapshot, `Context` is defined alongside `Handlers` as
+its internal detail rather than a peer abstraction, and Eval touches raw map
+operations in exactly two places, seeding a drive and answering `runDetached`
+with `ctx.inherit`. One file owns the region-entry correspondence; the
+evaluator only sequences the verbs, which is what keeps the two threaded loop
+variables from drifting.
 
 Snapshot needs no eager copy: `ctx` is a persistent map, so capturing it in a
 resumer or a pending-outcome arrow is capturing a reference, and rebuild walks
