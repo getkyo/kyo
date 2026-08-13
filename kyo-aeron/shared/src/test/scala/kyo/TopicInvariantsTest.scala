@@ -228,7 +228,6 @@ class TopicInvariantsTest extends Test:
         val messages     = Seq(1, 2, 3)
         val probe        = -1
         val probeBackoff = 5.millis
-        val maxProbes    = 2000 // bounded: ~10 s ceiling at 5 ms; stops if an image never connects
         Topic.run {
             for
                 started    <- Latch.init(2)
@@ -237,7 +236,11 @@ class TopicInvariantsTest extends Test:
                 // started.await only proves both consumer fibers started, not that both aeron images
                 // are receiving; a one-shot publish can close before a late image connects, and aeron
                 // never redelivers, so that consumer would hang. Probe with sentinel -1 until both
-                // signal first receipt, then the real batch follows in the SAME publication.
+                // signal first receipt, then the real batch follows in the SAME publication. The probe
+                // has no step cap on purpose: a fixed ceiling that fired before a slow image connected
+                // (seen on the emulated arm64 and windows CI runners) published the batch into a
+                // half-connected state and hung anyway, so the test-level timeout is the only backstop
+                // for a genuinely unconnectable image.
                 consumer1 <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(
                         Topic.stream[Int]("aeron:ipc").tap(_ => receiving1.release).filterPure(_ >= 0).take(messages.size).run
@@ -255,7 +258,7 @@ class TopicInvariantsTest extends Test:
                         Stream.unfold(0, chunkSize = 1) { step =>
                             receiving1.pending.map { w1 =>
                                 receiving2.pending.map { w2 =>
-                                    if (w1 == 0 && w2 == 0) || step >= maxProbes then Absent: Maybe[(Int, Int)]
+                                    if w1 == 0 && w2 == 0 then Absent: Maybe[(Int, Int)]
                                     else Async.sleep(probeBackoff).andThen(Present((probe, step + 1)): Maybe[(Int, Int)])
                                 }
                             }
