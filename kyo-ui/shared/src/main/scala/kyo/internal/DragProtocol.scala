@@ -83,6 +83,7 @@ private[kyo] object DragProtocol:
     /** Conservative bounds applied before dispatching an untrusted browser message. */
     final private[kyo] case class Limits(
         maxIdentifierLength: Int,
+        maxPathDepth: Int,
         maxItemCount: Int,
         maxTextRepresentationCount: Int,
         maxDirectoryEntryCount: Int,
@@ -98,6 +99,7 @@ private[kyo] object DragProtocol:
         /** Default inbound limits, including a one MiB decoded file chunk ceiling. */
         val default: Limits = Limits(
             maxIdentifierLength = 256,
+            maxPathDepth = 256,
             maxItemCount = 128,
             maxTextRepresentationCount = 32,
             maxDirectoryEntryCount = 256,
@@ -144,33 +146,35 @@ private[kyo] object DragProtocol:
     private val browserTimestampMax = Instant.parse("9999-12-31T23:59:59.999999999Z").getOrThrow
 
     private def validateEvent(event: UIEvent, limits: Limits): Result[ValidationFailure, Unit] =
-        validateAll(event.path)(validateIdentifier(_, "path", limits)).flatMap { _ =>
-            event match
-                case event: UIEvent.Click         => validateMouse(event.mouse, limits)
-                case event: UIEvent.ClickSelf     => validateMouse(event.mouse, limits)
-                case event: UIEvent.Input         => validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
-                case event: UIEvent.Change        => validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
-                case _: UIEvent.ChangeChecked     => Result.unit
-                case event: UIEvent.ChangeNumeric => validateNumber(event.value, "value")
-                case event: UIEvent.Submit        => validateMouse(event.mouse, limits)
-                case event: UIEvent.KeyDown       => validateKeyboard(event.keyboard, limits)
-                case event: UIEvent.KeyUp         => validateKeyboard(event.keyboard, limits)
-                case event: UIEvent.Focus         => validateMouse(event.mouse, limits)
-                case event: UIEvent.Blur          => validateMouse(event.mouse, limits)
-                case event: UIEvent.Scroll =>
-                    validateNumber(event.deltaX, "deltaX")
-                        .flatMap(_ => validateNumber(event.deltaY, "deltaY"))
-                        .flatMap(_ => validateOptionalIdentifier(event.targetId, "targetId", limits))
-                case event: UIEvent.Hover     => validateMouse(event.mouse, limits)
-                case event: UIEvent.Unhover   => validateMouse(event.mouse, limits)
-                case event: UIEvent.DragStart => validateStart(event.event, limits)
-                case event: UIEvent.DragEnd   => validateEnd(event.event, limits)
-                case event: UIEvent.DragEnter => validateTarget(event.event, limits)
-                case event: UIEvent.DragLeave => validateTarget(event.event, limits)
-                case event: UIEvent.DragOver  => validateTarget(event.event, limits)
-                case event: UIEvent.Drop      => validateTarget(event.event, limits)
-                case event: UIEvent.SortMove  => validateSortMove(event.sessionId, event.move, limits)
-        }
+        validateCount(event.path.size, "path", limits.maxPathDepth)
+            .flatMap(_ => validateAll(event.path)(validateIdentifier(_, "path", limits)))
+            .flatMap { _ =>
+                event match
+                    case event: UIEvent.Click         => validateMouse(event.mouse, limits)
+                    case event: UIEvent.ClickSelf     => validateMouse(event.mouse, limits)
+                    case event: UIEvent.Input         => validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
+                    case event: UIEvent.Change        => validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
+                    case _: UIEvent.ChangeChecked     => Result.unit
+                    case event: UIEvent.ChangeNumeric => validateNumber(event.value, "value")
+                    case event: UIEvent.Submit        => validateMouse(event.mouse, limits)
+                    case event: UIEvent.KeyDown       => validateKeyboard(event.keyboard, limits)
+                    case event: UIEvent.KeyUp         => validateKeyboard(event.keyboard, limits)
+                    case event: UIEvent.Focus         => validateMouse(event.mouse, limits)
+                    case event: UIEvent.Blur          => validateMouse(event.mouse, limits)
+                    case event: UIEvent.Scroll =>
+                        validateNumber(event.deltaX, "deltaX")
+                            .flatMap(_ => validateNumber(event.deltaY, "deltaY"))
+                            .flatMap(_ => validateOptionalIdentifier(event.targetId, "targetId", limits))
+                    case event: UIEvent.Hover     => validateMouse(event.mouse, limits)
+                    case event: UIEvent.Unhover   => validateMouse(event.mouse, limits)
+                    case event: UIEvent.DragStart => validateStart(event.event, limits)
+                    case event: UIEvent.DragEnd   => validateEnd(event.event, limits)
+                    case event: UIEvent.DragEnter => validateTarget(event.event, limits)
+                    case event: UIEvent.DragLeave => validateTarget(event.event, limits)
+                    case event: UIEvent.DragOver  => validateTarget(event.event, limits)
+                    case event: UIEvent.Drop      => validateTarget(event.event, limits)
+                    case event: UIEvent.SortMove  => validateSortMove(event.sessionId, event.move, limits)
+            }
     end validateEvent
 
     private def validateMouse(mouse: MouseEventData, limits: Limits): Result[ValidationFailure, Unit] =

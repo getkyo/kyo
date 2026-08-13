@@ -209,6 +209,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
     "DragProtocol validation rejects malformed and oversized wire data" in {
         val limits = DragProtocol.Limits(
             maxIdentifierLength = 8,
+            maxPathDepth = 256,
             maxItemCount = 2,
             maxTextRepresentationCount = 2,
             maxDirectoryEntryCount = 2,
@@ -314,6 +315,35 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 limits
             ) == Result.fail(DragProtocol.ValidationFailure.TooMany("entries", 2, 3))
         )
+    }
+
+    "DragProtocol validation bounds event path depth and still validates segments" in {
+        val limits        = DragProtocol.Limits.default
+        val validPath     = Seq.fill(256)("segment")
+        val oversizedPath = Seq.fill(257)("segment")
+        val valid = DragProtocol.ClientMessage.Event(
+            UIEvent.DragEnd(validPath, DragProtocol.EndData("session", Drag.Operation.Copy, cancelled = false))
+        )
+        val oversized = DragProtocol.ClientMessage.Event(
+            UIEvent.DragEnd(oversizedPath, DragProtocol.EndData("session", Drag.Operation.Copy, cancelled = false))
+        )
+        val invalidSegment = DragProtocol.ClientMessage.Event(
+            UIEvent.DragEnd(Seq("valid", ""), DragProtocol.EndData("session", Drag.Operation.Copy, cancelled = false))
+        )
+        val root = DragProtocol.ClientMessage.Event(
+            UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("session", Drag.Operation.Copy, cancelled = false))
+        )
+
+        assert(DragProtocol.validate(valid, limits) == Result.succeed(valid))
+        assert(
+            DragProtocol.validate(oversized, limits) ==
+                Result.fail(DragProtocol.ValidationFailure.TooMany("path", 256, 257))
+        )
+        assert(
+            DragProtocol.validate(invalidSegment, limits) ==
+                Result.fail(DragProtocol.ValidationFailure.Empty("path"))
+        )
+        assert(DragProtocol.validate(root, limits) == Result.succeed(root))
     }
 
     "DragProtocol validation enforces identifier, metadata, and reason boundaries" in {
