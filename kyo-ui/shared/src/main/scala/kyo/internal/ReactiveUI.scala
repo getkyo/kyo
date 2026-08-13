@@ -765,19 +765,31 @@ private[kyo] object ReactiveUI:
         limits: DragSessionLimits
     )(using Frame): ValidatedHandler =
         (path, event) =>
-            if isDragEvent(event.wire) then
-                Abort.runPartial[Closed](
-                    mutex.run(dragDispatch(handle, sessions, expiryWake, limits, path, event))
-                ).map {
-                    case Result.Success(value) => value
-                    case Result.Failure(_)     => true
-                }
-            else safeDispatch(handle, path, event.wire)
-
-    private def isDragEvent(event: UIEvent): Boolean = event match
-        case _: UIEvent.DragStart | _: UIEvent.DragEnd | _: UIEvent.DragEnter | _: UIEvent.DragLeave |
-            _: UIEvent.DragOver | _: UIEvent.Drop | _: UIEvent.SortMove => true
-        case _ => false
+            event match
+                case event: DragProtocol.ValidatedEvent.Click         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ClickSelf     => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Input         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Change        => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ChangeChecked => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.ChangeNumeric => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Submit        => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.KeyDown       => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.KeyUp         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Focus         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Blur          => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Scroll        => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Hover         => safeDispatch(handle, path, event.wire)
+                case event: DragProtocol.ValidatedEvent.Unhover       => safeDispatch(handle, path, event.wire)
+                case _: DragProtocol.ValidatedEvent.Start | _: DragProtocol.ValidatedEvent.End |
+                    _: DragProtocol.ValidatedEvent.Enter | _: DragProtocol.ValidatedEvent.Leave |
+                    _: DragProtocol.ValidatedEvent.Over | _: DragProtocol.ValidatedEvent.Drop |
+                    _: DragProtocol.ValidatedEvent.SortMove =>
+                    Abort.runPartial[Closed](
+                        mutex.run(dragDispatch(handle, sessions, expiryWake, limits, path, event))
+                    ).map {
+                        case Result.Success(value) => value
+                        case Result.Failure(_)     => true
+                    }
 
     private def dragDispatch(
         handle: Handler,
@@ -787,53 +799,51 @@ private[kyo] object ReactiveUI:
         path: Seq[String],
         event: DragProtocol.ValidatedEvent
     )(using Frame): Boolean < Async =
-        event.wire match
-            case UIEvent.DragStart(_, data) =>
-                event.startItems.fold(true: Boolean < Async) { domainItems =>
-                    DragCommands.resolveSink.use { resolver =>
-                        sessions.get.map { current =>
-                            if current.contains(data.sessionId) then
-                                DragCommands.resolve(
-                                    data.sessionId,
-                                    Drag.Decision.Reject(
-                                        Drag.Rejection.Application("A drag session with this identifier is already active.")
-                                    )
-                                ).andThen(true)
-                            else if current.size >= limits.maxSessions then
-                                DragCommands.resolve(
-                                    data.sessionId,
-                                    Drag.Decision.Reject(Drag.Rejection.Application("Too many active drag sessions."))
-                                ).andThen(true)
-                            else
-                                val domain = Drag.Event(
-                                    data.sessionId,
-                                    domainItems,
-                                    data.operation,
-                                    data.sourceKey,
-                                    Absent,
-                                    Present(data.point),
-                                    data.modifiers,
-                                    Absent
+        event match
+            case DragProtocol.ValidatedEvent.Start(wire @ UIEvent.DragStart(_, data), domainItems) =>
+                DragCommands.resolveSink.use { resolver =>
+                    sessions.get.map { current =>
+                        if current.contains(data.sessionId) then
+                            DragCommands.resolve(
+                                data.sessionId,
+                                Drag.Decision.Reject(
+                                    Drag.Rejection.Application("A drag session with this identifier is already active.")
                                 )
-                                Clock.now.map { now =>
-                                    sessions.set(current + (data.sessionId -> DragSession(
-                                        domain,
-                                        terminalResolved = false,
-                                        now + limits.lifetime,
-                                        resolver
-                                    )))
-                                        .andThen(wakeExpiryScheduler(expiryWake))
-                                        .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
-                                            DragCommands.Payload.Event(domain),
-                                            Absent
-                                        ))) {
-                                            safeDispatch(handle, path, event.wire)
-                                        })
-                                }
-                        }
+                            ).andThen(true)
+                        else if current.size >= limits.maxSessions then
+                            DragCommands.resolve(
+                                data.sessionId,
+                                Drag.Decision.Reject(Drag.Rejection.Application("Too many active drag sessions."))
+                            ).andThen(true)
+                        else
+                            val domain = Drag.Event(
+                                data.sessionId,
+                                domainItems,
+                                data.operation,
+                                data.sourceKey,
+                                Absent,
+                                Present(data.point),
+                                data.modifiers,
+                                Absent
+                            )
+                            Clock.now.map { now =>
+                                sessions.set(current + (data.sessionId -> DragSession(
+                                    domain,
+                                    terminalResolved = false,
+                                    now + limits.lifetime,
+                                    resolver
+                                )))
+                                    .andThen(wakeExpiryScheduler(expiryWake))
+                                    .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                        DragCommands.Payload.Event(domain),
+                                        Absent
+                                    ))) {
+                                        safeDispatch(handle, path, event.wire)
+                                    })
+                            }
                     }
                 }
-            case UIEvent.DragEnd(_, data) =>
+            case DragProtocol.ValidatedEvent.End(wire @ UIEvent.DragEnd(_, data)) =>
                 sessions.get.map(_.get(data.sessionId)).map {
                     case Some(session) =>
                         val finalEvent = session.event.copy(operation = data.operation)
@@ -842,15 +852,19 @@ private[kyo] object ReactiveUI:
                                 DragCommands.Payload.End(Drag.End(finalEvent, canceled = data.cancelled)),
                                 Absent
                             ))) {
-                                safeDispatch(handle, path, event.wire)
+                                safeDispatch(handle, path, wire)
                             })
                     case None => true
                 }
-            case target: UIEvent.DragEnter => dispatchTarget(handle, path, event.wire, target.event, sessions, terminal = false)
-            case target: UIEvent.DragLeave => dispatchTarget(handle, path, event.wire, target.event, sessions, terminal = false)
-            case target: UIEvent.DragOver  => dispatchTarget(handle, path, event.wire, target.event, sessions, terminal = false)
-            case target: UIEvent.Drop      => dispatchTarget(handle, path, event.wire, target.event, sessions, terminal = true)
-            case UIEvent.SortMove(_, sessionId, move) =>
+            case DragProtocol.ValidatedEvent.Enter(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = false)
+            case DragProtocol.ValidatedEvent.Leave(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = false)
+            case DragProtocol.ValidatedEvent.Over(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = false)
+            case DragProtocol.ValidatedEvent.Drop(wire) =>
+                dispatchTarget(handle, path, wire, wire.event, sessions, terminal = true)
+            case DragProtocol.ValidatedEvent.SortMove(wire @ UIEvent.SortMove(_, sessionId, move)) =>
                 sessions.get.map(_.get(sessionId)).map {
                     case Some(session) if !session.terminalResolved =>
                         for
@@ -859,7 +873,7 @@ private[kyo] object ReactiveUI:
                                 DragCommands.Payload.Move(move),
                                 Present(decisions)
                             ))) {
-                                safeDispatch(handle, path, event.wire)
+                                safeDispatch(handle, path, wire)
                             }
                             decision <- finalDecision(decisions, "No sort handler accepted the move.")
                             _        <- sessions.getAndUpdate(_ + (sessionId -> session.copy(terminalResolved = true)))
@@ -872,7 +886,14 @@ private[kyo] object ReactiveUI:
                         ).andThen(true)
                     case _ => true
                 }
-            case _ => safeDispatch(handle, path, event.wire)
+            case _: DragProtocol.ValidatedEvent.Click | _: DragProtocol.ValidatedEvent.ClickSelf |
+                _: DragProtocol.ValidatedEvent.Input | _: DragProtocol.ValidatedEvent.Change |
+                _: DragProtocol.ValidatedEvent.ChangeChecked | _: DragProtocol.ValidatedEvent.ChangeNumeric |
+                _: DragProtocol.ValidatedEvent.Submit | _: DragProtocol.ValidatedEvent.KeyDown |
+                _: DragProtocol.ValidatedEvent.KeyUp | _: DragProtocol.ValidatedEvent.Focus |
+                _: DragProtocol.ValidatedEvent.Blur | _: DragProtocol.ValidatedEvent.Scroll |
+                _: DragProtocol.ValidatedEvent.Hover | _: DragProtocol.ValidatedEvent.Unhover =>
+                safeDispatch(handle, path, event.wire)
 
     private def wakeExpiryScheduler(expiryWake: Channel[Unit])(using Frame): Unit < Sync =
         Abort.runPartial[Closed](expiryWake.offer(())).unit

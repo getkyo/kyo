@@ -40,6 +40,21 @@ class DragTest extends kyo.test.Test[Any]:
             ).foreach(value => assert(MediaType.parse(value) == Absent))
         }
 
+        "trims only HTTP optional whitespace" in {
+            assert(MediaType.parse(" \tTEXT/PLAIN\t ").map(_.render) == Present("text/plain"))
+            (0 to 31).filterNot(_ == '\t'.toInt).foreach { value =>
+                val char = value.toChar
+                assert(MediaType.parse(s"${char}text/plain") == Absent)
+                assert(MediaType.parse(s"text/plain${char}") == Absent)
+            }
+            assert(MediaType.parse(s"${0x7f.toChar}text/plain") == Absent)
+            assert(MediaType.parse(s"text/plain${0x7f.toChar}") == Absent)
+            Chunk('\u00a0', '\u1680', '\u2003', '\u2028', '\u3000').foreach { char =>
+                assert(MediaType.parse(s"${char}text/plain") == Absent)
+                assert(MediaType.parse(s"text/plain${char}") == Absent)
+            }
+        }
+
         "uses a normalized scalar schema and rejects invalid decoding" in {
             val mediaType = MediaType.parse(" Text/Plain ").getOrElse(fail("valid media type did not parse"))
             assert(Json.encode(mediaType) == "\"text/plain\"")
@@ -78,6 +93,17 @@ class DragTest extends kyo.test.Test[Any]:
             ).foreach(value => assert(MediaTypePattern.parse(value) == Absent))
         }
 
+        "trims only HTTP optional whitespace" in {
+            assert(MediaTypePattern.parse(" \tIMAGE/*\t ").map(_.render) == Present("image/*"))
+            (0 to 31).filterNot(_ == '\t'.toInt).foreach { value =>
+                val char = value.toChar
+                assert(MediaTypePattern.parse(s"${char}image/*") == Absent)
+                assert(MediaTypePattern.parse(s"image/*${char}") == Absent)
+            }
+            assert(MediaTypePattern.parse(s"${0x7f.toChar}image/*") == Absent)
+            assert(MediaTypePattern.parse(s"image/*${0x7f.toChar}") == Absent)
+        }
+
         "matches exact media types without crossing main types" in {
             val exact    = MediaTypePattern.parse("image/png").getOrElse(fail("valid exact pattern did not parse"))
             val wildcard = MediaTypePattern.parse("image/*").getOrElse(fail("valid wildcard pattern did not parse"))
@@ -103,6 +129,21 @@ class DragTest extends kyo.test.Test[Any]:
     }
 
     "nested media type schemas" - {
+        "uses one canonical object schema for public MediaType maps" in {
+            val values = Map(mediaType("text/plain") -> "plain", mediaType("text/html") -> "html")
+            val schema = summon[Schema[Map[MediaType, String]]]
+            val json   = Json.encode(values)(using schema)
+            assert(json == """{"text/plain":"plain","text/html":"html"}""")
+            assert(Json.decode[Map[MediaType, String]]("""{" TEXT/PLAIN ":"plain"}""")
+                .map(_.map((key, value) => key.render -> value)) == Result.succeed(Map("text/plain" -> "plain")))
+            Json.decode[Map[MediaType, String]]("""{"text/*":"invalid"}""") match
+                case Result.Failure(_: ConstructorRejectedException) => ()
+                case other                                           => fail(s"expected constructor rejection, got $other")
+            Json.decode[Map[MediaType, String]]("""{"TEXT/PLAIN":"first","text/plain":"second"}""") match
+                case Result.Failure(_: ConstructorRejectedException) => ()
+                case other                                           => fail(s"expected canonical collision rejection, got $other")
+        }
+
         "validate and normalize FileMeta media types" in {
             val file = FileMeta("token", "file.txt", mediaType("text/plain"), ByteSize.Zero, Instant.Epoch)
             val json = Json.encode(file)
@@ -119,6 +160,9 @@ class DragTest extends kyo.test.Test[Any]:
                 case other => fail(s"expected normalized text item, got $other")
             end match
             assertConstructorRejected[Item](json.replace("text/plain", "text/*"))
+            assertConstructorRejected[Item](
+                """{"Text":{"representations":{"TEXT/PLAIN":"first","text/plain":"second"}}}"""
+            )
         }
 
         "validate and normalize Accept media type patterns" in {

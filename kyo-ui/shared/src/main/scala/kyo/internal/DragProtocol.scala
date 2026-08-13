@@ -7,10 +7,10 @@ private[kyo] opaque type DragWireByteSize = ByteSize
 
 /** Construction, access, and scalar schema for browser byte quantities. */
 private[kyo] object DragWireByteSize:
-    private val maxBrowserSafeSize = ByteSize.fromBytes(9_007_199_254_740_991L)
+    private val maximum = ByteSize.fromBytes(9_007_199_254_740_991L)
 
-    /** Creates a wire byte quantity from an already-valid domain byte quantity. */
-    def apply(value: ByteSize): DragWireByteSize = value
+    /** Creates a wire byte quantity when the domain value is browser-safe. */
+    def from(value: ByteSize): Result[String, DragWireByteSize] = fromRaw(value.toBytes)
 
     extension (self: DragWireByteSize)
         /** Returns the domain byte quantity. */
@@ -18,7 +18,7 @@ private[kyo] object DragWireByteSize:
 
     private def fromRaw(value: Long): Result[String, DragWireByteSize] =
         if value < 0 then Result.fail(s"negative byte size: $value")
-        else if value > maxBrowserSafeSize.toBytes then Result.fail(s"byte size exceeds browser safe integer maximum: $value")
+        else if value > maximum.toBytes then Result.fail(s"byte size exceeds browser safe integer maximum: $value")
         else Result.succeed(ByteSize.fromBytes(value))
 
     /** Scalar schema that rejects invalid browser byte quantities before constructing `ByteSize`. */
@@ -86,7 +86,7 @@ private[kyo] object DragProtocol:
     /** Browser-safe byte quantity that rejects invalid raw wire integers during schema decoding. */
     private[kyo] type WireByteSize = DragWireByteSize
 
-    /** Constructor and accessor namespace for browser-safe wire byte quantities. */
+    /** Construction and access namespace for browser-safe wire byte quantities. */
     private[kyo] val WireByteSize: DragWireByteSize.type = DragWireByteSize
 
     import DragWireByteSize.*
@@ -118,10 +118,33 @@ private[kyo] object DragProtocol:
     end ItemData
 
     /** Protocol event whose wire values and drag domain payload have passed one authoritative conversion boundary. */
-    final private[kyo] case class ValidatedEvent(
-        wire: UIEvent,
-        startItems: Maybe[Chunk[Drag.Item]]
-    ) derives CanEqual
+    sealed private[kyo] trait ValidatedEvent derives CanEqual:
+        def wire: UIEvent
+
+    /** Closed construction namespace for validated protocol events. */
+    private[kyo] object ValidatedEvent:
+        final case class Click private[DragProtocol] (wire: UIEvent.Click)                              extends ValidatedEvent
+        final case class ClickSelf private[DragProtocol] (wire: UIEvent.ClickSelf)                      extends ValidatedEvent
+        final case class Input private[DragProtocol] (wire: UIEvent.Input)                              extends ValidatedEvent
+        final case class Change private[DragProtocol] (wire: UIEvent.Change)                            extends ValidatedEvent
+        final case class ChangeChecked private[DragProtocol] (wire: UIEvent.ChangeChecked)              extends ValidatedEvent
+        final case class ChangeNumeric private[DragProtocol] (wire: UIEvent.ChangeNumeric)              extends ValidatedEvent
+        final case class Submit private[DragProtocol] (wire: UIEvent.Submit)                            extends ValidatedEvent
+        final case class KeyDown private[DragProtocol] (wire: UIEvent.KeyDown)                          extends ValidatedEvent
+        final case class KeyUp private[DragProtocol] (wire: UIEvent.KeyUp)                              extends ValidatedEvent
+        final case class Focus private[DragProtocol] (wire: UIEvent.Focus)                              extends ValidatedEvent
+        final case class Blur private[DragProtocol] (wire: UIEvent.Blur)                                extends ValidatedEvent
+        final case class Scroll private[DragProtocol] (wire: UIEvent.Scroll)                            extends ValidatedEvent
+        final case class Hover private[DragProtocol] (wire: UIEvent.Hover)                              extends ValidatedEvent
+        final case class Unhover private[DragProtocol] (wire: UIEvent.Unhover)                          extends ValidatedEvent
+        final case class Start private[DragProtocol] (wire: UIEvent.DragStart, items: Chunk[Drag.Item]) extends ValidatedEvent
+        final case class End private[DragProtocol] (wire: UIEvent.DragEnd)                              extends ValidatedEvent
+        final case class Enter private[DragProtocol] (wire: UIEvent.DragEnter)                          extends ValidatedEvent
+        final case class Leave private[DragProtocol] (wire: UIEvent.DragLeave)                          extends ValidatedEvent
+        final case class Over private[DragProtocol] (wire: UIEvent.DragOver)                            extends ValidatedEvent
+        final case class Drop private[DragProtocol] (wire: UIEvent.Drop)                                extends ValidatedEvent
+        final case class SortMove private[DragProtocol] (wire: UIEvent.SortMove)                        extends ValidatedEvent
+    end ValidatedEvent
 
     /** Browser-bound drag source configuration with safe file byte quantities. */
     final private[kyo] case class SourceConfig(
@@ -133,6 +156,12 @@ private[kyo] object DragProtocol:
         preview: Drag.Preview,
         activation: Drag.Activation
     ) derives CanEqual, Schema
+
+    /** Decoded source configuration paired with its validated domain items. */
+    final private[kyo] case class ValidatedSourceConfig private[DragProtocol] (
+        wire: SourceConfig,
+        items: Chunk[Drag.Item]
+    ) derives CanEqual
 
     /** Browser-bound drop acceptance configuration with a safe optional file-size limit. */
     final private[kyo] case class AcceptConfig(
@@ -149,6 +178,12 @@ private[kyo] object DragProtocol:
         accepts: AcceptConfig,
         label: Maybe[String]
     ) derives CanEqual, Schema
+
+    /** Decoded target configuration paired with its validated domain acceptance rules. */
+    final private[kyo] case class ValidatedTargetConfig private[DragProtocol] (
+        wire: TargetConfig,
+        accept: Drag.Accept
+    ) derives CanEqual
 
     /** Directory entry metadata returned by the browser. */
     private[kyo] enum EntryData derives CanEqual, Schema:
@@ -228,6 +263,7 @@ private[kyo] object DragProtocol:
         case InvalidBase64
         case ChunkTooLarge(maximum: ByteSize, actual: ByteSize)
         case InvalidMediaType(value: String)
+        case DuplicateMediaType(value: String)
         case InvalidTimestamp
         case InvalidNumber(field: String)
         case InvalidCount(field: String, actual: Int)
@@ -250,10 +286,11 @@ private[kyo] object DragProtocol:
             .flatMap(_ => validateAll(source.items)(validateDomainItem(_, limits)))
             .flatMap(_ => validateOptionalText(source.label, "source.label", limits.maxNameLength))
             .flatMap(_ => validatePreview(source.preview, limits))
-            .map(_ =>
+            .flatMap(_ => toItemData(source.items))
+            .map(items =>
                 SourceConfig(
                     source.key,
-                    source.items.map(toItemData),
+                    items,
                     source.operations,
                     source.label,
                     source.handle,
@@ -275,14 +312,24 @@ private[kyo] object DragProtocol:
     private[kyo] def validateSourceConfig(config: SourceConfig, limits: Limits)(using
         Frame
     ): Result[ValidationFailure, SourceConfig] =
+        validateSourceConfigAndDomain(config, Json.encode(config), limits).map(_.wire)
+
+    /** Validates the exact decoded source attribute and converts its items once. */
+    private[kyo] def validateSourceConfigAndDomain(
+        config: SourceConfig,
+        encoded: String,
+        limits: Limits
+    ): Result[ValidationFailure, ValidatedSourceConfig] =
         validateIdentifier(config.key, "source.key", limits)
             .flatMap(_ => validateCount(config.items.size, "source.items", limits.maxItemCount))
-            .flatMap(_ => validateItemsAndDomain(config.items, limits).unit)
-            .flatMap(_ => validateOptionalText(config.label, "source.label", limits.maxNameLength))
-            .flatMap(_ => validatePreview(config.preview, limits))
-            .flatMap(_ => validateEncodedAttribute(Json.encode(config), "dragSource", limits))
-            .map(_ => config)
-    end validateSourceConfig
+            .flatMap(_ => validateItemsAndDomain(config.items, limits))
+            .flatMap { items =>
+                validateOptionalText(config.label, "source.label", limits.maxNameLength)
+                    .flatMap(_ => validatePreview(config.preview, limits))
+                    .flatMap(_ => validateEncodedAttribute(encoded, "dragSource", limits))
+                    .map(_ => ValidatedSourceConfig(config, items))
+            }
+    end validateSourceConfigAndDomain
 
     /** Validates and converts domain target rules into their browser-bound representation. */
     private[kyo] def targetConfig(target: Drag.Target, limits: Limits)(using Frame): Result[ValidationFailure, TargetConfig] =
@@ -303,19 +350,15 @@ private[kyo] object DragProtocol:
                     case Present(value)              => validateCount(value, "target.maxItems", limits.maxItemCount)
                     case Absent                      => Result.unit
             )
-            .flatMap(_ =>
-                accepts.maxFileSize match
-                    case Present(value) => validateWireByteSize(value, "target.maxFileSize")
-                    case Absent         => Result.unit
-            )
-            .map(_ =>
+            .flatMap(_ => wireByteSize(accepts.maxFileSize, "target.maxFileSize"))
+            .map(maxFileSize =>
                 TargetConfig(
                     target.key,
                     AcceptConfig(
                         accepts.mediaTypes.map(_.render),
                         accepts.operations,
                         accepts.maxItems,
-                        accepts.maxFileSize.map(WireByteSize(_)),
+                        maxFileSize,
                         accepts.directories
                     ),
                     target.label
@@ -335,12 +378,20 @@ private[kyo] object DragProtocol:
     private[kyo] def validateTargetConfig(config: TargetConfig, limits: Limits)(using
         Frame
     ): Result[ValidationFailure, TargetConfig] =
-        validateTargetConfigAndDomain(config, limits).map(_._1)
+        validateTargetConfigAndDomain(config, Json.encode(config), limits).map(_.wire)
 
     /** Validates a decoded browser target and converts its media patterns in the same pass. */
     private[kyo] def validateTargetConfigAndDomain(config: TargetConfig, limits: Limits)(using
         Frame
-    ): Result[ValidationFailure, (TargetConfig, Drag.Accept)] =
+    ): Result[ValidationFailure, ValidatedTargetConfig] =
+        validateTargetConfigAndDomain(config, Json.encode(config), limits)
+
+    /** Validates the exact decoded target attribute and converts its media patterns once. */
+    private[kyo] def validateTargetConfigAndDomain(
+        config: TargetConfig,
+        encoded: String,
+        limits: Limits
+    ): Result[ValidationFailure, ValidatedTargetConfig] =
         val accepts = config.accepts
         validateIdentifier(config.key, "target.key", limits)
             .flatMap(_ => validateOptionalText(config.label, "target.label", limits.maxNameLength))
@@ -357,14 +408,17 @@ private[kyo] object DragProtocol:
                             case Present(value) => validateWireByteSize(value.value, "target.maxFileSize")
                             case Absent         => Result.unit
                     }
-                    .flatMap(_ => validateEncodedAttribute(Json.encode(config), "dropTarget", limits))
+                    .flatMap(_ => validateEncodedAttribute(encoded, "dropTarget", limits))
                     .map(_ =>
-                        config -> Drag.Accept(
-                            mediaTypes,
-                            accepts.operations,
-                            accepts.maxItems,
-                            accepts.maxFileSize.map(_.value),
-                            accepts.directories
+                        ValidatedTargetConfig(
+                            config,
+                            Drag.Accept(
+                                mediaTypes,
+                                accepts.operations,
+                                accepts.maxItems,
+                                accepts.maxFileSize.map(_.value),
+                                accepts.directories
+                            )
                         )
                     )
             }
@@ -383,22 +437,53 @@ private[kyo] object DragProtocol:
             case Drag.Item.Uri(value) =>
                 validateText(value, "uri", limits.maxTextLength, allowEmpty = false)
             case Drag.Item.File(meta) =>
-                validateWireByteSize(meta.size, "file.size")
-                    .flatMap(_ => validateFileMetaAndDomain(toFileMetaData(meta), limits).unit)
+                validateIdentifier(meta.token, "token", limits)
+                    .flatMap(_ => validateText(meta.name, "name", limits.maxNameLength, allowEmpty = false))
+                    .flatMap(_ => validateMediaType(meta.mediaType.render, limits))
+                    .flatMap(_ => validateWireByteSize(meta.size, "file.size"))
+                    .flatMap(_ =>
+                        if meta.lastModified >= browserTimestampMin && meta.lastModified <= browserTimestampMax then Result.unit
+                        else Result.fail(ValidationFailure.InvalidTimestamp)
+                    )
             case Drag.Item.Directory(token, name) =>
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
     end validateDomainItem
 
-    private def toItemData(item: Drag.Item): ItemData = item match
-        case Drag.Item.Text(representations) =>
-            ItemData.Text(representations.iterator.map((mediaType, value) => mediaType.render -> value).toMap)
-        case Drag.Item.Uri(value)             => ItemData.Uri(value)
-        case Drag.Item.File(meta)             => ItemData.File(toFileMetaData(meta))
-        case Drag.Item.Directory(token, name) => ItemData.Directory(token, name)
+    private def toItemData(items: Chunk[Drag.Item]): Result[ValidationFailure, Chunk[ItemData]] =
+        val builder  = ChunkBuilder.init[ItemData]
+        val iterator = items.iterator
+        var result   = Result.unit: Result[ValidationFailure, Unit]
+        while iterator.hasNext && result.isSuccess do
+            result = toItemData(iterator.next()).map(builder.addOne).unit
+        result.map(_ => builder.result())
+    end toItemData
 
-    private def toFileMetaData(meta: Drag.FileMeta): FileMetaData =
-        FileMetaData(meta.token, meta.name, meta.mediaType.render, WireByteSize(meta.size), meta.lastModified)
+    private def toItemData(item: Drag.Item): Result[ValidationFailure, ItemData] = item match
+        case Drag.Item.Text(representations) =>
+            Result.succeed(ItemData.Text(representations.iterator.map((mediaType, value) => mediaType.render -> value).toMap))
+        case Drag.Item.Uri(value) => Result.succeed(ItemData.Uri(value))
+        case Drag.Item.File(meta) =>
+            validatedWireByteSize(meta.size, "file.size").map(size =>
+                ItemData.File(FileMetaData(meta.token, meta.name, meta.mediaType.render, size, meta.lastModified))
+            )
+        case Drag.Item.Directory(token, name) => Result.succeed(ItemData.Directory(token, name))
+
+    private def wireByteSize(
+        value: Maybe[ByteSize],
+        field: String
+    ): Result[ValidationFailure, Maybe[WireByteSize]] =
+        value match
+            case Absent => Result.succeed(Absent)
+            case Present(value) =>
+                validatedWireByteSize(value, field).map(Present(_))
+
+    private def validatedWireByteSize(value: ByteSize, field: String): Result[ValidationFailure, WireByteSize] =
+        validateWireByteSize(value, field).flatMap { _ =>
+            WireByteSize.from(value) match
+                case Result.Success(value) => Result.succeed(value)
+                case _                     => Result.fail(ValidationFailure.InvalidByteSize(field, value))
+        }
 
     private def validateWireByteSize(value: ByteSize, field: String): Result[ValidationFailure, Unit] =
         if value < ByteSize.Zero then Result.fail(ValidationFailure.InvalidByteSize(field, value))
@@ -437,8 +522,11 @@ private[kyo] object DragProtocol:
             result = validateText(value, "mediaType", limits.maxMediaTypeLength, allowEmpty = false).flatMap { _ =>
                 Drag.MediaTypePattern.parse(value) match
                     case Present(pattern) =>
-                        parsed += pattern
-                        Result.unit
+                        if parsed.contains(pattern) then
+                            Result.fail(ValidationFailure.DuplicateMediaType(pattern.render))
+                        else
+                            parsed += pattern
+                            Result.unit
                     case Absent => Result.fail(ValidationFailure.InvalidMediaType(value))
             }
         end while
@@ -479,36 +567,66 @@ private[kyo] object DragProtocol:
             .flatMap(_ => validateAll(event.path)(validateIdentifier(_, "path", limits)))
             .flatMap { _ =>
                 event match
-                    case event: UIEvent.Click     => validateMouse(event.mouse, limits).map(_ => Absent)
-                    case event: UIEvent.ClickSelf => validateMouse(event.mouse, limits).map(_ => Absent)
+                    case event: UIEvent.Click =>
+                        validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Click(event))
+                    case event: UIEvent.ClickSelf =>
+                        validateMouse(event.mouse, limits).map(_ => ValidatedEvent.ClickSelf(event))
                     case event: UIEvent.Input =>
-                        validateText(event.value, "value", limits.maxTextLength, allowEmpty = true).map(_ => Absent)
+                        validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
+                            .map(_ => ValidatedEvent.Input(event))
                     case event: UIEvent.Change =>
-                        validateText(event.value, "value", limits.maxTextLength, allowEmpty = true).map(_ => Absent)
-                    case _: UIEvent.ChangeChecked     => Result.succeed(Absent)
-                    case event: UIEvent.ChangeNumeric => validateNumber(event.value, "value").map(_ => Absent)
-                    case event: UIEvent.Submit        => validateMouse(event.mouse, limits).map(_ => Absent)
-                    case event: UIEvent.KeyDown       => validateKeyboard(event.keyboard, limits).map(_ => Absent)
-                    case event: UIEvent.KeyUp         => validateKeyboard(event.keyboard, limits).map(_ => Absent)
-                    case event: UIEvent.Focus         => validateMouse(event.mouse, limits).map(_ => Absent)
-                    case event: UIEvent.Blur          => validateMouse(event.mouse, limits).map(_ => Absent)
+                        validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
+                            .map(_ => ValidatedEvent.Change(event))
+                    case event: UIEvent.ChangeChecked => Result.succeed(ValidatedEvent.ChangeChecked(event))
+                    case event: UIEvent.ChangeNumeric =>
+                        validateNumber(event.value, "value").map(_ => ValidatedEvent.ChangeNumeric(event))
+                    case event: UIEvent.Submit => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Submit(event))
+                    case event: UIEvent.KeyDown =>
+                        validateKeyboard(event.keyboard, limits).map(_ => ValidatedEvent.KeyDown(event))
+                    case event: UIEvent.KeyUp =>
+                        validateKeyboard(event.keyboard, limits).map(_ => ValidatedEvent.KeyUp(event))
+                    case event: UIEvent.Focus => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Focus(event))
+                    case event: UIEvent.Blur  => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Blur(event))
                     case event: UIEvent.Scroll =>
                         validateNumber(event.deltaX, "deltaX")
                             .flatMap(_ => validateNumber(event.deltaY, "deltaY"))
                             .flatMap(_ => validateOptionalIdentifier(event.targetId, "targetId", limits))
-                            .map(_ => Absent)
-                    case event: UIEvent.Hover     => validateMouse(event.mouse, limits).map(_ => Absent)
-                    case event: UIEvent.Unhover   => validateMouse(event.mouse, limits).map(_ => Absent)
-                    case event: UIEvent.DragStart => validateStartAndDomain(event.event, limits).map(Present(_))
-                    case event: UIEvent.DragEnd   => validateEnd(event.event, limits).map(_ => Absent)
-                    case event: UIEvent.DragEnter => validateTarget(event.event, limits).map(_ => Absent)
-                    case event: UIEvent.DragLeave => validateTarget(event.event, limits).map(_ => Absent)
-                    case event: UIEvent.DragOver  => validateTarget(event.event, limits).map(_ => Absent)
-                    case event: UIEvent.Drop      => validateTarget(event.event, limits).map(_ => Absent)
-                    case event: UIEvent.SortMove  => validateSortMove(event.sessionId, event.move, limits).map(_ => Absent)
+                            .map(_ => ValidatedEvent.Scroll(event))
+                    case event: UIEvent.Hover   => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Hover(event))
+                    case event: UIEvent.Unhover => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Unhover(event))
+                    case event: UIEvent.DragStart =>
+                        validateStartAndDomain(event.event, limits).map(ValidatedEvent.Start(event, _))
+                    case event: UIEvent.DragEnd => validateEnd(event.event, limits).map(_ => ValidatedEvent.End(event))
+                    case event: UIEvent.DragEnter =>
+                        validateTarget(event.event, limits).map(_ => ValidatedEvent.Enter(event))
+                    case event: UIEvent.DragLeave =>
+                        validateTarget(event.event, limits).map(_ => ValidatedEvent.Leave(event))
+                    case event: UIEvent.DragOver =>
+                        validateTarget(event.event, limits).map(_ => ValidatedEvent.Over(event))
+                    case event: UIEvent.Drop => validateTarget(event.event, limits).map(_ => ValidatedEvent.Drop(event))
+                    case event: UIEvent.SortMove =>
+                        validateSortMove(event.sessionId, event.move, limits).map(_ => ValidatedEvent.SortMove(event))
             }
-            .map(ValidatedEvent(event, _))
     end validateEventAndDomain
+
+    /** Validates a locally constructed start without reconverting its already validated domain items. */
+    private[kyo] def validatedStart(
+        event: UIEvent.DragStart,
+        items: Chunk[Drag.Item],
+        limits: Limits
+    ): Result[ValidationFailure, ValidatedEvent.Start] =
+        validateCount(event.path.size, "path", limits.maxPathDepth)
+            .flatMap(_ => validateAll(event.path)(validateIdentifier(_, "path", limits)))
+            .flatMap(_ => validateIdentifier(event.event.sessionId, "sessionId", limits))
+            .flatMap(_ => validateCount(event.event.items.size, "items", limits.maxItemCount))
+            .flatMap { _ =>
+                if event.event.items.size == items.size then Result.unit
+                else Result.fail(ValidationFailure.InvalidCount("domainItems", items.size))
+            }
+            .flatMap(_ => validateOptionalIdentifier(event.event.sourceKey, "sourceKey", limits))
+            .flatMap(_ => validatePoint(event.event.point))
+            .map(_ => ValidatedEvent.Start(event, items))
+    end validatedStart
 
     private def validateMouse(mouse: MouseEventData, limits: Limits): Result[ValidationFailure, Unit] =
         validateOptionalIdentifier(mouse.targetId, "targetId", limits)
@@ -520,9 +638,12 @@ private[kyo] object DragProtocol:
     private def validateStartAndDomain(data: StartData, limits: Limits): Result[ValidationFailure, Chunk[Drag.Item]] =
         validateIdentifier(data.sessionId, "sessionId", limits)
             .flatMap(_ => validateCount(data.items.size, "items", limits.maxItemCount))
-            .flatMap(_ => validateOptionalIdentifier(data.sourceKey, "sourceKey", limits))
-            .flatMap(_ => validatePoint(data.point))
             .flatMap(_ => validateItemsAndDomain(data.items, limits))
+            .flatMap(items =>
+                validateOptionalIdentifier(data.sourceKey, "sourceKey", limits)
+                    .flatMap(_ => validatePoint(data.point))
+                    .map(_ => items)
+            )
 
     private def validateTarget(data: TargetData, limits: Limits): Result[ValidationFailure, Unit] =
         validateIdentifier(data.sessionId, "sessionId", limits)
@@ -558,14 +679,21 @@ private[kyo] object DragProtocol:
                 validateCount(representations.size, "representations", limits.maxTextRepresentationCount)
                     .flatMap { _ =>
                         val builder  = Map.newBuilder[Drag.MediaType, String]
+                        val seen     = scala.collection.mutable.Set.empty[Drag.MediaType]
                         val iterator = representations.iterator
                         var result   = Result.unit: Result[ValidationFailure, Unit]
                         while iterator.hasNext && result.isSuccess do
                             val (rawMediaType, text) = iterator.next()
                             result = parseMediaType(rawMediaType, limits)
                                 .flatMap(mediaType =>
-                                    validateText(text, "text", limits.maxTextLength, allowEmpty = true)
-                                        .map(_ => builder += mediaType -> text)
+                                    if seen.contains(mediaType) then
+                                        Result.fail(ValidationFailure.DuplicateMediaType(mediaType.render))
+                                    else
+                                        validateText(text, "text", limits.maxTextLength, allowEmpty = true)
+                                            .map { _ =>
+                                                seen += mediaType
+                                                builder += mediaType -> text
+                                            }
                                 )
                                 .unit
                         end while

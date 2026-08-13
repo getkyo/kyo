@@ -179,6 +179,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     val nested   = fixture.querySelector("#nested").asInstanceOf[dom.Element]
                     discard(handle.dispatchEvent(dragEvent("dragstart", handle, transfer, 10, 20)))
                     assert(runtime.stateName == "Dragging")
+                    assert(runtime.sourceItemConversions == 1)
                     val domainItemsIdentity = runtime.domainItemsIdentity
                     assert(domainItemsIdentity != 0)
                     assert(transfer.effectAllowed == "all")
@@ -190,12 +191,14 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     discard(nested.dispatchEvent(enter))
                     assert(enter.defaultPrevented)
                     assert(transfer.dropEffect == "link")
+                    assert(runtime.targetConfigConversions == 1)
 
                     val over = dragEvent("dragover", nested, transfer, 31, 41, ctrl = true)
                     discard(nested.dispatchEvent(over))
                     assert(over.defaultPrevented)
                     assert(transfer.dropEffect == "copy")
                     assert(runtime.domainItemsIdentity == domainItemsIdentity)
+                    assert(runtime.targetConfigConversions == 1)
 
                     val drop = dragEvent("drop", nested, transfer, 32, 42, ctrl = true)
                     discard(nested.dispatchEvent(drop))
@@ -570,6 +573,29 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     val drop = dragEvent("drop", targetEl, invalidSnapshot, 5, 6)
                     discard(targetEl.dispatchEvent(drop))
                     assert(!drop.defaultPrevented)
+                    assert(runtime.stateName == "Idle")
+                    assert(events.isEmpty)
+
+                    val collidingProbe = new FakeTransfer
+                    collidingProbe.allow("copy")
+                    collidingProbe.setData("TEXT/PLAIN", "first")
+                    collidingProbe.setData("text/plain", "second")
+                    val rejectedCollisionEnter = dragEvent("dragenter", targetEl, collidingProbe, 6, 7)
+                    discard(targetEl.dispatchEvent(rejectedCollisionEnter))
+                    assert(!rejectedCollisionEnter.defaultPrevented)
+                    assert(runtime.stateName == "Idle")
+
+                    val collidingSnapshot = new FakeTransfer
+                    collidingSnapshot.allow("copy")
+                    collidingSnapshot.setData("TEXT/PLAIN", "first")
+                    val collisionEnter = dragEvent("dragenter", targetEl, collidingSnapshot, 7, 8)
+                    discard(targetEl.dispatchEvent(collisionEnter))
+                    assert(collisionEnter.defaultPrevented)
+                    collidingSnapshot.setData("text/plain", "second")
+                    collidingSnapshot.beginDrop()
+                    val collisionDrop = dragEvent("drop", targetEl, collidingSnapshot, 9, 10)
+                    discard(targetEl.dispatchEvent(collisionDrop))
+                    assert(!collisionDrop.defaultPrevented)
                     assert(runtime.stateName == "Idle")
                     assert(events.isEmpty)
                     fixture.remove()

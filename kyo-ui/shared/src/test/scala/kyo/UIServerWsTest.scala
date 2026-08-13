@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.DragProtocol
 import kyo.internal.HtmlOp
+import kyo.internal.KeyboardEventData
 import kyo.internal.MouseEventData
 import kyo.internal.UIEvent
 import kyo.internal.UIServer
@@ -28,6 +29,72 @@ class UIServerWsTest extends kyo.test.Test[Any]:
 
     private def dragText(representations: (String, String)*): Drag.Item.Text =
         Drag.Item.Text(representations.iterator.map((media, value) => mediaType(media) -> value).toMap)
+
+    private def wireSize(value: ByteSize)(using kyo.test.AssertScope): DragProtocol.WireByteSize =
+        DragProtocol.WireByteSize.from(value) match
+            case Result.Success(value) => value
+            case Result.Failure(error) => fail(error)
+            case Result.Panic(error)   => throw error
+
+    "validated drag events cannot be forged" in {
+        typeCheckFailure(
+            """kyo.internal.DragProtocol.ValidatedEvent.Start(kyo.internal.UIEvent.DragStart(Seq.empty, kyo.internal.DragProtocol.StartData("session", Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)), Chunk.empty)"""
+        )
+    }
+
+    "wire byte sizes cannot be constructed outside browser-safe bounds" in {
+        typeCheckFailure("""kyo.internal.DragProtocol.WireByteSize(1.bytes)""")
+        typeCheckFailure("""val value: kyo.internal.DragProtocol.WireByteSize = 1.bytes""")
+        assert(DragProtocol.WireByteSize.from(ByteSize.Zero).isSuccess)
+        assert(DragProtocol.WireByteSize.from(ByteSize.fromBytes(9_007_199_254_740_991L)).isSuccess)
+        assert(DragProtocol.WireByteSize.from(ByteSize.fromBytes(9_007_199_254_740_992L)).isFailure)
+    }
+
+    "validated events preserve every non-start phase" in {
+        val mouse    = MouseEventData(UI.Modifiers.none, Absent)
+        val keyboard = KeyboardEventData("Enter", UI.Modifiers.none, Absent)
+        val target = DragProtocol.TargetData(
+            "session",
+            Drag.Operation.Copy,
+            Absent,
+            Drag.Point(0, 0),
+            UI.Modifiers.none,
+            Absent
+        )
+        val move = Drag.Move(
+            Chunk("item"),
+            Drag.Location("source"),
+            Drag.Location("destination"),
+            Absent,
+            Drag.Position.Inside,
+            Drag.Operation.Move
+        )
+        val events = Chunk[UIEvent](
+            UIEvent.Click(Seq.empty, mouse),
+            UIEvent.ClickSelf(Seq.empty, mouse),
+            UIEvent.Input(Seq.empty, "input"),
+            UIEvent.Change(Seq.empty, "change"),
+            UIEvent.ChangeChecked(Seq.empty, checked = true),
+            UIEvent.ChangeNumeric(Seq.empty, 1.0),
+            UIEvent.Submit(Seq.empty, mouse),
+            UIEvent.KeyDown(Seq.empty, keyboard),
+            UIEvent.KeyUp(Seq.empty, keyboard),
+            UIEvent.Focus(Seq.empty, mouse),
+            UIEvent.Blur(Seq.empty, mouse),
+            UIEvent.Scroll(Seq.empty, 1.0, 2.0, UI.Modifiers.none, Absent),
+            UIEvent.Hover(Seq.empty, mouse),
+            UIEvent.Unhover(Seq.empty, mouse),
+            UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("session", Drag.Operation.Copy, cancelled = false)),
+            UIEvent.DragEnter(Seq.empty, target),
+            UIEvent.DragLeave(Seq.empty, target),
+            UIEvent.DragOver(Seq.empty, target),
+            UIEvent.Drop(Seq.empty, target),
+            UIEvent.SortMove(Seq.empty, "session", move)
+        )
+        events.foreach { event =>
+            assert(DragProtocol.validateEventAndDomain(event, DragProtocol.Limits.default).map(_.wire) == Result.succeed(event))
+        }
+    }
 
     // ==================== Leaf 1: round trip ====================
 
@@ -137,7 +204,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             token = "file-token",
             name = "notes.txt",
             mediaType = "text/plain",
-            size = DragProtocol.WireByteSize(12.bytes),
+            size = wireSize(12.bytes),
             lastModified = Instant.Epoch
         )
         val cases = Chunk[(DragProtocol.ClientMessage, String)](
@@ -405,6 +472,17 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             DragProtocol.AcceptConfig(Set(" IMAGE/* "), Drag.AllowedOperations.all, Absent, Absent, directories = false),
             Absent
         )
+        val collidingTarget = DragProtocol.TargetConfig(
+            "target",
+            DragProtocol.AcceptConfig(
+                Set("IMAGE/*", "image/*"),
+                Drag.AllowedOperations.all,
+                Absent,
+                Absent,
+                directories = false
+            ),
+            Absent
+        )
         val invalidExact = DragProtocol.ClientMessage.Event(
             UIEvent.DragStart(
                 Seq.empty,
@@ -418,16 +496,37 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 )
             )
         )
+        val collidingExact = DragProtocol.ClientMessage.Event(
+            UIEvent.DragStart(
+                Seq.empty,
+                DragProtocol.StartData(
+                    "session",
+                    Chunk(DragProtocol.ItemData.Text(Map("TEXT/PLAIN" -> "first", "text/plain" -> "second"))),
+                    Drag.Operation.Copy,
+                    Absent,
+                    Drag.Point(0, 0),
+                    UI.Modifiers.none
+                )
+            )
+        )
 
         assert(DragProtocol.validate(start, DragProtocol.Limits.default) == Result.succeed(start))
         assert(DragProtocol.validateTargetConfig(target, DragProtocol.Limits.default) == Result.succeed(target))
+        assert(
+            DragProtocol.validateTargetConfig(collidingTarget, DragProtocol.Limits.default) ==
+                Result.fail(DragProtocol.ValidationFailure.DuplicateMediaType("image/*"))
+        )
         DragProtocol.validateTargetConfigAndDomain(target, DragProtocol.Limits.default) match
-            case Result.Success((wire, accept)) =>
-                assert(wire == target)
-                assert(accept.mediaTypes.map(_.render) == Set("image/*"))
+            case Result.Success(validated) =>
+                assert(validated.wire == target)
+                assert(validated.accept.mediaTypes.map(_.render) == Set("image/*"))
             case other => fail(s"expected validated target config, got $other")
         end match
         assert(DragProtocol.validate(invalidExact, DragProtocol.Limits.default).isFailure)
+        assert(
+            DragProtocol.validate(collidingExact, DragProtocol.Limits.default) ==
+                Result.fail(DragProtocol.ValidationFailure.DuplicateMediaType("text/plain"))
+        )
         invalidExact match
             case DragProtocol.ClientMessage.Event(UIEvent.DragStart(_, data)) =>
                 assert(data.domainItems().isFailure)
@@ -473,6 +572,26 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(DragProtocol.validate(root, limits) == Result.succeed(root))
     }
 
+    "DragProtocol reports invalid start items before later invalid fields" in {
+        val message = DragProtocol.ClientMessage.Event(
+            UIEvent.DragStart(
+                Seq.empty,
+                DragProtocol.StartData(
+                    "session",
+                    Chunk(DragProtocol.ItemData.Text(Map("text/*" -> "invalid"))),
+                    Drag.Operation.Copy,
+                    Present(""),
+                    Drag.Point(Double.NaN, Double.NaN),
+                    UI.Modifiers.none
+                )
+            )
+        )
+        assert(
+            DragProtocol.validate(message, DragProtocol.Limits.default) ==
+                Result.fail(DragProtocol.ValidationFailure.InvalidMediaType("text/*"))
+        )
+    }
+
     "DragProtocol validation enforces identifier, metadata, and reason boundaries" in {
         val limits = DragProtocol.Limits.default
         val emptySession = DragProtocol.ClientMessage.Event(
@@ -494,7 +613,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 "token",
                 "file",
                 "image/*",
-                DragProtocol.WireByteSize(1.bytes),
+                wireSize(1.bytes),
                 Instant.Epoch
             ))),
             Absent
@@ -505,7 +624,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 "token",
                 "file",
                 "image/png",
-                DragProtocol.WireByteSize(1.bytes),
+                wireSize(1.bytes),
                 Instant.Max
             ))),
             Absent

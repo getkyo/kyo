@@ -45,8 +45,8 @@ private[kyo] object DomDragRuntime:
         allowed: Drag.AllowedOperations,
         tokens: mutable.Map[String, js.Any]
     )
-    final private case class ValidatedTarget(wire: DragProtocol.TargetConfig, accept: Drag.Accept)
-    final private case class TargetMatch(target: Located[ValidatedTarget], operation: Drag.Operation)
+    final private case class TargetMatch(target: Located[DragProtocol.ValidatedTargetConfig], operation: Drag.Operation)
+    final private case class ConfigCache[A](element: dom.Element, raw: String, value: Maybe[A])
 
     /** Runtime control and diagnostics retained for drag file handoff support. */
     private[kyo] trait Handle:
@@ -58,6 +58,8 @@ private[kyo] object DomDragRuntime:
         private[kyo] def contextIdentity: Int
         private[kyo] def domainItemsIdentity: Int
         private[kyo] def transitionCount: Int
+        private[kyo] def sourceItemConversions: Int
+        private[kyo] def targetConfigConversions: Int
         private[kyo] def fileToken(token: String): Maybe[js.Any]
     end Handle
 
@@ -65,13 +67,13 @@ private[kyo] object DomDragRuntime:
 
     final private class SessionContext(
         val id: String,
-        val source: Maybe[Located[DragProtocol.SourceConfig]],
+        val source: Maybe[Located[DragProtocol.ValidatedSourceConfig]],
         var allowed: Drag.AllowedOperations,
         val tokens: mutable.Map[String, js.Any],
         val preview: Maybe[dom.Element],
         val startedAt: Double,
         var operation: Drag.Operation,
-        var target: Maybe[Located[ValidatedTarget]],
+        var target: Maybe[Located[DragProtocol.ValidatedTargetConfig]],
         var wireItems: Maybe[Chunk[DragProtocol.ItemData]],
         var domainItems: Maybe[Chunk[Drag.Item]]
     ) derives CanEqual
@@ -109,10 +111,14 @@ private[kyo] object DomDragRuntime:
     end install
 
     final private class Runtime(container: dom.Element, enqueue: UIEvent => Unit, timing: Timing)(using Frame) extends Handle:
-        private var state: State = State.Idle
-        private var closed       = false
-        private var sequence     = 0L
-        private var transitions  = 0
+        private var state: State                                                        = State.Idle
+        private var closed                                                              = false
+        private var sequence                                                            = 0L
+        private var transitions                                                         = 0
+        private var sourceConversions                                                   = 0
+        private var targetConversions                                                   = 0
+        private var sourceCache: Maybe[ConfigCache[DragProtocol.ValidatedSourceConfig]] = Absent
+        private var targetCache: Maybe[ConfigCache[DragProtocol.ValidatedTargetConfig]] = Absent
 
         private val dragListener: js.Function1[dom.Event, Unit] = (event: dom.Event) => handle(event)
 
@@ -125,7 +131,9 @@ private[kyo] object DomDragRuntime:
         private[kyo] def contextIdentity: Int           = state.maybeContext.fold(0)(java.lang.System.identityHashCode)
         private[kyo] def domainItemsIdentity: Int =
             state.maybeContext.flatMap(_.domainItems).fold(0)(java.lang.System.identityHashCode)
-        private[kyo] def transitionCount: Int = transitions
+        private[kyo] def transitionCount: Int         = transitions
+        private[kyo] def sourceItemConversions: Int   = sourceConversions
+        private[kyo] def targetConfigConversions: Int = targetConversions
 
         private[kyo] def fileToken(token: String): Maybe[js.Any] =
             state.maybeContext.flatMap(context => Maybe.fromOption(context.tokens.get(token)))
@@ -177,6 +185,8 @@ private[kyo] object DomDragRuntime:
             if !closed then
                 closed = true
                 state.maybeContext.foreach(finish(_, cancelled = true))
+                sourceCache = Absent
+                targetCache = Absent
             end if
         end close
 
@@ -218,44 +228,36 @@ private[kyo] object DomDragRuntime:
 
         private def start(event: dom.Event): Unit =
             asElement(event.target).flatMap(closestSource).foreach { source =>
+                val config = source.config.wire
                 val nativeActivation =
-                    source.config.activation == Drag.Activation.Native || source.config.activation == Drag.Activation.Both
+                    config.activation == Drag.Activation.Native || config.activation == Drag.Activation.Both
                 if nativeActivation &&
-                    (!source.config.handle || asElement(event.target).flatMap(closestAttribute(
+                    (!config.handle || asElement(event.target).flatMap(closestAttribute(
                         _,
                         "data-kyo-drag-handle",
                         source.element
                     )).nonEmpty)
                 then
                     dataTransfer(event).foreach { transfer =>
-                        transfer.updateDynamic("effectAllowed")(effectAllowed(source.config.operations))
-                        preferred(source.config.operations, Absent, modifiers(event)).foreach { operation =>
-                            DragProtocol.StartData(
-                                "validation",
-                                source.config.items,
+                        transfer.updateDynamic("effectAllowed")(effectAllowed(config.operations))
+                        preferred(config.operations, Absent, modifiers(event)).foreach { operation =>
+                            val id = token("drag")
+                            setInternalData(transfer, config)
+                            val preview = createPreview(source.element, config.preview, transfer)
+                            val context = SessionContext(
+                                id,
+                                Present(source),
+                                config.operations,
+                                mutable.Map.empty,
+                                preview,
+                                timing.nowMillis(),
                                 operation,
-                                Present(source.config.key),
-                                Drag.Point(0, 0),
-                                UI.Modifiers.none
-                            ).domainItems(limits).foreach { domainItems =>
-                                val id = token("drag")
-                                setInternalData(transfer, source.config)
-                                val preview = createPreview(source.element, source.config.preview, transfer)
-                                val context = SessionContext(
-                                    id,
-                                    Present(source),
-                                    source.config.operations,
-                                    mutable.Map.empty,
-                                    preview,
-                                    timing.nowMillis(),
-                                    operation,
-                                    Absent,
-                                    Present(source.config.items),
-                                    Present(domainItems)
-                                )
-                                move(State.Dragging(context))
-                                emitStart(context, source.path, event)
-                            }
+                                Absent,
+                                Present(config.items),
+                                Present(source.config.items)
+                            )
+                            move(State.Dragging(context))
+                            emitStart(context, source.path, event)
                         }
                     }
                 end if
@@ -376,8 +378,8 @@ private[kyo] object DomDragRuntime:
             }
 
         private def emitStart(context: SessionContext, path: Seq[String], event: dom.Event): Unit =
-            val sourceKey = context.source.map(_.config.key)
-            val start = UIEvent.DragStart(
+            val sourceKey = context.source.map(_.config.wire.key)
+            val start: UIEvent.DragStart = UIEvent.DragStart(
                 path,
                 DragProtocol.StartData(
                     context.id,
@@ -388,9 +390,11 @@ private[kyo] object DomDragRuntime:
                     modifiers(event)
                 )
             )
-            DragProtocol.validate(DragProtocol.ClientMessage.Event(start), limits) match
-                case Result.Success(_) => enqueue(start)
-                case _                 => discardContext(context)
+            context.domainItems.fold(discardContext(context)) { items =>
+                DragProtocol.validatedStart(start, items, limits) match
+                    case Result.Success(validated) => enqueue(validated.wire)
+                    case _                         => discardContext(context)
+            }
         end emitStart
 
         private def discardContext(context: SessionContext): Unit =
@@ -450,7 +454,7 @@ private[kyo] object DomDragRuntime:
 
         private def targetData(
             context: SessionContext,
-            target: Located[ValidatedTarget],
+            target: Located[DragProtocol.ValidatedTargetConfig],
             event: dom.Event,
             operation: Drag.Operation
         ): DragProtocol.TargetData =
@@ -463,7 +467,7 @@ private[kyo] object DomDragRuntime:
                 Present(Drag.Position.Inside)
             )
 
-        private def closestSource(from: dom.Element): Maybe[Located[DragProtocol.SourceConfig]] =
+        private def closestSource(from: dom.Element): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
             var current = from
             while current != null && container.contains(current) do
                 decodeSource(current) match
@@ -473,37 +477,59 @@ private[kyo] object DomDragRuntime:
             Absent
         end closestSource
 
-        private def decodeSource(element: dom.Element): Maybe[Located[DragProtocol.SourceConfig]] =
-            decode[DragProtocol.SourceConfig](element, sourceAttribute).flatMap { located =>
-                DragProtocol.validateSourceConfig(located.config, limits) match
-                    case Result.Success(config) =>
-                        val dedicated = element.getAttribute(sourceKeyAttribute)
-                        if dedicated != null && dedicated == config.key then Present(located) else Absent
-                    case _ => Absent
-            }
-
-        private def decodeTarget(element: dom.Element): Maybe[Located[ValidatedTarget]] =
-            decode[DragProtocol.TargetConfig](element, targetAttribute).flatMap { located =>
-                DragProtocol.validateTargetConfigAndDomain(located.config, limits) match
-                    case Result.Success((config, accept)) =>
-                        val dedicated = element.getAttribute(targetKeyAttribute)
-                        if dedicated != null && dedicated == config.key then
-                            Present(Located(located.element, located.path, ValidatedTarget(config, accept)))
-                        else Absent
-                    case _ => Absent
-            }
-
-        private def decode[A: Schema](element: dom.Element, attribute: String): Maybe[Located[A]] =
-            val raw = element.getAttribute(attribute)
-            if raw == null || raw.length > limits.maxAttributeLength then Absent
-            else
-                validPath(element.getAttribute("data-kyo-path")).flatMap { path =>
-                    Json.decode[A](raw) match
-                        case Result.Success(config) => Present(Located(element, path, config))
-                        case _                      => Absent
+        private def decodeSource(element: dom.Element): Maybe[Located[DragProtocol.ValidatedSourceConfig]] =
+            validPath(element.getAttribute("data-kyo-path")).flatMap { path =>
+                cachedSource(element).flatMap { config =>
+                    val dedicated = element.getAttribute(sourceKeyAttribute)
+                    if dedicated != null && dedicated == config.wire.key then Present(Located(element, path, config)) else Absent
                 }
+            }
+
+        private def cachedSource(element: dom.Element): Maybe[DragProtocol.ValidatedSourceConfig] =
+            val raw = element.getAttribute(sourceAttribute)
+            if raw == null then Absent
+            else
+                sourceCache match
+                    case Present(cached) if (cached.element eq element) && cached.raw == raw => cached.value
+                    case _ =>
+                        val value =
+                            if raw.length > limits.maxAttributeLength then Absent
+                            else
+                                sourceConversions += 1
+                                Json.decode[DragProtocol.SourceConfig](raw) match
+                                    case Result.Success(config) => DragProtocol.validateSourceConfigAndDomain(config, raw, limits).toMaybe
+                                    case _                      => Absent
+                        sourceCache = Present(ConfigCache(element, raw, value))
+                        value
             end if
-        end decode
+        end cachedSource
+
+        private def decodeTarget(element: dom.Element): Maybe[Located[DragProtocol.ValidatedTargetConfig]] =
+            validPath(element.getAttribute("data-kyo-path")).flatMap { path =>
+                cachedTarget(element).flatMap { config =>
+                    val dedicated = element.getAttribute(targetKeyAttribute)
+                    if dedicated != null && dedicated == config.wire.key then Present(Located(element, path, config)) else Absent
+                }
+            }
+
+        private def cachedTarget(element: dom.Element): Maybe[DragProtocol.ValidatedTargetConfig] =
+            val raw = element.getAttribute(targetAttribute)
+            if raw == null then Absent
+            else
+                targetCache match
+                    case Present(cached) if (cached.element eq element) && cached.raw == raw => cached.value
+                    case _ =>
+                        val value =
+                            if raw.length > limits.maxAttributeLength then Absent
+                            else
+                                targetConversions += 1
+                                Json.decode[DragProtocol.TargetConfig](raw) match
+                                    case Result.Success(config) => DragProtocol.validateTargetConfigAndDomain(config, raw, limits).toMaybe
+                                    case _                      => Absent
+                        targetCache = Present(ConfigCache(element, raw, value))
+                        value
+            end if
+        end cachedTarget
 
         private def validPath(raw: String): Maybe[Seq[String]] =
             if raw == null then Absent
@@ -531,23 +557,30 @@ private[kyo] object DomDragRuntime:
             val files     = ChunkBuilder.init[ProbeFile]
             val rawTypes  = transfer.types
             if !js.isUndefined(rawTypes) && rawTypes != null then
-                val types = rawTypes.asInstanceOf[js.Array[String]]
-                var index = 0
+                val types     = rawTypes.asInstanceOf[js.Array[String]]
+                val seenTypes = mutable.Set.empty[Drag.MediaType]
+                var index     = 0
                 while index < types.length do
                     val raw = types(index)
                     if !raw.equalsIgnoreCase("Files") then
                         Drag.MediaType.parse(raw) match
-                            case Present(mediaType) if mediaType.render == "text/uri-list" => uri = true
-                            case Present(mediaType)                                        => textTypes += mediaType
-                            case Absent                                                    => valid = false
+                            case Present(mediaType) if seenTypes.contains(mediaType) => valid = false
+                            case Present(mediaType) if mediaType.render == "text/uri-list" =>
+                                seenTypes += mediaType
+                                uri = true
+                            case Present(mediaType) =>
+                                seenTypes += mediaType
+                                textTypes += mediaType
+                            case Absent => valid = false
                     end if
                     index += 1
                 end while
             end if
             val rawItems = transfer.items
             if !js.isUndefined(rawItems) && rawItems != null then
-                val items = rawItems.asInstanceOf[js.Array[js.Dynamic]]
-                var index = 0
+                val items     = rawItems.asInstanceOf[js.Array[js.Dynamic]]
+                val seenTypes = mutable.Set.empty[Drag.MediaType]
+                var index     = 0
                 while index < items.length do
                     val item = items(index)
                     val kind = if js.isUndefined(item.kind) then "" else item.kind.asInstanceOf[String]
@@ -557,9 +590,14 @@ private[kyo] object DomDragRuntime:
                     val mediaType = if rawMediaType.isEmpty then Absent else Drag.MediaType.parse(rawMediaType)
                     if kind == "string" then
                         mediaType match
-                            case Present(media) if media.render == "text/uri-list" => uri = true
-                            case Present(media)                                    => textTypes += media
-                            case Absent                                            => valid = false
+                            case Present(media) if seenTypes.contains(media) => valid = false
+                            case Present(media) if media.render == "text/uri-list" =>
+                                seenTypes += media
+                                uri = true
+                            case Present(media) =>
+                                seenTypes += media
+                                textTypes += media
+                            case Absent => valid = false
                     else if kind == "file" then
                         if rawMediaType.nonEmpty && mediaType.isEmpty then valid = false
                         files.addOne(ProbeFile(mediaType, probeDirectory(item)))
@@ -602,7 +640,8 @@ private[kyo] object DomDragRuntime:
                                 val value = transfer.getData(raw).asInstanceOf[String]
                                 if value.nonEmpty then collected.addOne(DragProtocol.ItemData.Uri(value))
                             case Present(mediaType) =>
-                                if text.contains(mediaType) || text.size < limits.maxTextRepresentationCount then
+                                if text.contains(mediaType) then valid = false
+                                else if text.size < limits.maxTextRepresentationCount then
                                     text(mediaType) = transfer.getData(raw).asInstanceOf[String]
                                 else valid = false
                             case Absent => valid = false
@@ -688,7 +727,6 @@ private[kyo] object DomDragRuntime:
             else Absent
 
         private def fileMeta(file: js.Dynamic): Maybe[DragProtocol.FileMetaData] =
-            import DragWireByteSize.*
             val size         = file.size.asInstanceOf[Double]
             val lastModified = file.lastModified.asInstanceOf[Double]
             if !size.isFinite || size < 0 || size > 9_007_199_254_740_991d || size != math.floor(size) ||
@@ -699,15 +737,17 @@ private[kyo] object DomDragRuntime:
                 val rawMedia =
                     val value = if js.isUndefined(file.`type`) then "" else file.`type`.asInstanceOf[String]
                     if value.nonEmpty then value else "application/octet-stream"
-                Drag.MediaType.parse(rawMedia).map { media =>
-                    val id = token("file")
-                    DragProtocol.FileMetaData(
-                        id,
-                        name,
-                        media.render,
-                        DragProtocol.WireByteSize(ByteSize.fromBytes(size.toLong)),
-                        Instant.fromJava(java.time.Instant.ofEpochMilli(lastModified.toLong))
-                    )
+                DragProtocol.WireByteSize.from(ByteSize.fromBytes(size.toLong)).toMaybe.flatMap { wireSize =>
+                    Drag.MediaType.parse(rawMedia).map { media =>
+                        val id = token("file")
+                        DragProtocol.FileMetaData(
+                            id,
+                            name,
+                            media.render,
+                            wireSize,
+                            Instant.fromJava(java.time.Instant.ofEpochMilli(lastModified.toLong))
+                        )
+                    }
                 }
             end if
         end fileMeta

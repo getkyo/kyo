@@ -23,7 +23,8 @@ object Drag:
     /** Canonical exact media type used by drag transfer values.
       *
       * Values contain one concrete RFC-token-like main type and subtype separated by `/`. Parsing
-      * trims surrounding whitespace and applies locale-independent lowercase normalization.
+      * removes only surrounding HTTP optional whitespace (space and horizontal tab) and applies locale-independent lowercase normalization.
+      * Other controls and Unicode whitespace are rejected by token validation.
       * Wildcards, parameters, non-ASCII characters, and additional separators are rejected.
       *
       * The opaque representation is the canonical string itself, so carrying a media type adds no
@@ -40,7 +41,7 @@ object Drag:
         def parse(value: String): Maybe[MediaType] =
             if value == null then Absent
             else
-                val trimmed = value.trim
+                val trimmed = trimOptionalWhitespace(value)
                 if isExactMediaType(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
                 else Absent
             end if
@@ -68,13 +69,61 @@ object Drag:
 
         given CanEqual[MediaType, MediaType] = CanEqual.derived
 
+        /** Object-shaped schema for maps whose keys are validated exact media types. */
+        given mapSchema[V](using valueSchema0: => Schema[V]): Schema[Map[MediaType, V]] =
+            lazy val valueSchema = valueSchema0
+            Schema.init[Map[MediaType, V]](
+                writeFn = (value, writer) =>
+                    writer.mapStart(value.size)
+                    value.iterator.zipWithIndex.foreach { case ((mediaType, item), index) =>
+                        writer.field(mediaType.render, index)
+                        valueSchema.serializeWrite(item, writer)
+                    }
+                    writer.mapEnd()
+                ,
+                readFn = reader =>
+                    discard(reader.mapStart())
+                    val builder = Map.newBuilder[MediaType, V]
+                    val seen    = scala.collection.mutable.Set.empty[MediaType]
+                    var count   = 1
+                    while reader.hasNextEntry() do
+                        reader.checkCollectionSize(count)
+                        val raw = reader.field()
+                        val mediaType = kyo.internal.constructedOrThrow(
+                            parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
+                            "Drag.MediaType"
+                        )(using reader.frame)
+                        if seen.contains(mediaType) then
+                            kyo.internal.constructedOrThrow(
+                                Result.fail(s"duplicate canonical media type: ${mediaType.render}"),
+                                "Drag.MediaType"
+                            )(using reader.frame)
+                        end if
+                        seen += mediaType
+                        builder += mediaType -> valueSchema.serializeRead(reader)
+                        count += 1
+                    end while
+                    reader.mapEnd()
+                    builder.result()
+                ,
+                absentDefaultValue = Maybe(Map.empty[MediaType, V]),
+                structure = Structure.Type.Mapping(
+                    "Map",
+                    Tag[Any],
+                    summon[Schema[MediaType]].structure,
+                    valueSchema.structure
+                )
+            )
+        end mapSchema
+
     end MediaType
 
     /** Canonical exact or main-type wildcard accepted by a drag target.
       *
       * Exact patterns share [[MediaType]] grammar. Wildcards have one concrete main token followed
       * by a slash and asterisk. Global wildcards and partial subtype wildcards are rejected. Parsing
-      * trims surrounding whitespace and applies locale-independent lowercase normalization.
+      * removes only surrounding HTTP optional whitespace (space and horizontal tab) and applies locale-independent lowercase normalization.
+      * Other controls and Unicode whitespace are rejected by token validation.
       *
       * The opaque representation is the canonical string itself. Matching compares that string
       * directly and does not allocate substrings or wrapper values.
@@ -90,7 +139,7 @@ object Drag:
         def parse(value: String): Maybe[MediaTypePattern] =
             if value == null then Absent
             else
-                val trimmed = value.trim
+                val trimmed = trimOptionalWhitespace(value)
                 if isMediaTypePattern(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
                 else Absent
             end if
@@ -371,6 +420,16 @@ object Drag:
             (value >= '0' && value <= '9') ||
             "!#$%&'*+-.^_`|~".contains(value)
 
+    private def trimOptionalWhitespace(value: String): String =
+        var start = 0
+        var end   = value.length
+        while start < end && isOptionalWhitespace(value.charAt(start)) do start += 1
+        while end > start && isOptionalWhitespace(value.charAt(end - 1)) do end -= 1
+        if start == 0 && end == value.length then value else value.substring(start, end)
+    end trimOptionalWhitespace
+
+    private def isOptionalWhitespace(value: Char): Boolean = value == ' ' || value == '\t'
+
     private def isExactMediaType(value: String): Boolean =
         val slash = value.indexOf('/')
         slash > 0 && slash == value.lastIndexOf('/') && slash < value.length - 1 &&
@@ -391,43 +450,7 @@ object Drag:
 end Drag
 
 private object DragSchemas:
-    private given mediaTypeMap: Schema[Map[Drag.MediaType, String]] =
-        val valueSchema = summon[Schema[String]]
-        Schema.init[Map[Drag.MediaType, String]](
-            writeFn = (value, writer) =>
-                writer.mapStart(value.size)
-                value.iterator.zipWithIndex.foreach { case ((mediaType, text), index) =>
-                    writer.field(mediaType.render, index)
-                    valueSchema.serializeWrite(text, writer)
-                }
-                writer.mapEnd()
-            ,
-            readFn = reader =>
-                discard(reader.mapStart())
-                val builder = Map.newBuilder[Drag.MediaType, String]
-                var count   = 1
-                while reader.hasNextEntry() do
-                    reader.checkCollectionSize(count)
-                    val raw = reader.field()
-                    val mediaType = kyo.internal.constructedOrThrow(
-                        Drag.MediaType.parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
-                        "Drag.MediaType"
-                    )(using reader.frame)
-                    builder += mediaType -> valueSchema.serializeRead(reader)
-                    count += 1
-                end while
-                reader.mapEnd()
-                builder.result()
-            ,
-            absentDefaultValue = Maybe(Map.empty[Drag.MediaType, String]),
-            structure = Structure.Type.Mapping(
-                "Map",
-                Tag[Any],
-                summon[Schema[Drag.MediaType]].structure,
-                valueSchema.structure
-            )
-        )
-    end mediaTypeMap
+    private given mediaTypeMap: Schema[Map[Drag.MediaType, String]] = Drag.MediaType.mapSchema[String]
 
     private given mediaTypePatternSet: Schema[Set[Drag.MediaTypePattern]] =
         Schema.setSchema(using summon[Schema[Drag.MediaTypePattern]])
