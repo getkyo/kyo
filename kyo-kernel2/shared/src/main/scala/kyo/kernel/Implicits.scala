@@ -6,23 +6,10 @@ import scala.language.implicitConversions
 
 private[kernel] trait Implicits:
 
-    // CanLift is the lint (pending types, kyo modules), resolved where the
-    // conversion is written, so generic contexts are waived and stay sound
-    // through the runtime box. The emission is the erasedValue match: a bare
-    // cast for the shapes that can never need the nesting box, the runtime
-    // Boxed test for everything else
-    implicit inline def lift[A: CanLift, S](v: A): A < S =
-        inline scala.compiletime.erasedValue[A] match
-            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
-                v.asInstanceOf[A < S]
-            case _ =>
-                CanLift.lift[A, S](v)
-
-    // the trivial shapes spare the evidence search entirely: primitive answers
-    // inside map-heavy code are the most common lift by far (kyo-compile-bench,
-    // ForComprehensions), and A <: AnyVal makes this more specific than lift.
-    // Unit is an AnyVal, so it rides this path too
-    implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
+    // the evidence is the lint alone, resolved where the conversion is written
+    // and baked, so a generic context is waived and stays sound through the
+    // emission's box; CanLift.lift is the emission, re-expanded per site
+    implicit inline def lift[A: CanLift, S](v: A): A < S = CanLift.lift[A, S](v)
 
     // a matching conversion that aborts after selection: a failed nested
     // evidence inside a conversion candidate surfaces as a plain mismatch, so

@@ -5,12 +5,13 @@ import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is the lift's evidence: the lint that a type may lift at all.
+/** CanLift is the lift's evidence, and its companion carries the lift's one macro.
   *
-  * The pending check is the NotGiven parameter: it fails the derivation where a concretely nested type is written, surfacing the guidance
-  * below, and it resolves once at the site the conversion is written, so an inline method with an abstract type parameter passes it there
-  * and bakes the evidence, waiving generic paths from the lint while the lift's runtime box keeps them sound. The macro is the rest of the
-  * lint: it rejects kyo module singletons with a guided message.
+  * The split follows what each half must do at expansion time. The lint may not re-expand: it rides the NotGiven parameter of a macro-free
+  * given, so it resolves once where the conversion is written and is baked as a value, which waives an inline method with an abstract type
+  * parameter and keeps it sound through the boxing emission. The emission must re-expand: it is the macro, so an inline method instantiated
+  * at a concrete type still gets that type's strategy, the bare cast where a value of the type can never be a computation and the runtime
+  * Boxed test everywhere else.
   *
   * Invariance is load-bearing: with a covariant evidence the derivation leaves the type under-constrained and the negation becomes
   * satisfiable through Nothing, so the lint never fires.
@@ -32,25 +33,41 @@ opaque type CanLift[A] = Null
 
 object CanLift:
 
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = ${ CanLift.deriveImpl[A] }
-
-    /** The runtime arm of the lift: tests and boxes a value that may be a computation held as data. A plain method rather than inline, so
-      * the conversion's expansion at any site calls through this public bridge instead of reaching for the internal box directly.
-      */
-    def lift[A, S](v: A): A < S = Nested.lift(v)
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
 
     object unsafe:
-        /** Unconditionally provides evidence; the lift's runtime box keeps the bypass sound. */
+        /** Unconditionally provides evidence; the emission's own analysis keeps the representation sound. */
         inline given bypass[A]: CanLift[A] = null
     end unsafe
 
-    private[internal] def deriveImpl[A: Type](using Quotes): Expr[CanLift[A]] =
+    /** The lift's emission, expanded at the site the conversion lands on. */
+    private[kyo] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
+
+    /** The runtime arm the emission calls when a value of the type could be a computation. A monomorphic bridge rather than the box
+      * directly: the emission lands at every generic lift site, and the shortest call keeps those sites inside the JIT's inline budget.
+      */
+    private[kyo] def box[A, S](v: A): A < S = Nested.lift(v)
+
+    private def liftImpl[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
 
-        val sym = TypeRepr.of[A].dealias.widen.dealias.typeSymbol
-        if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
+        val tpe  = TypeRepr.of[A].dealias
+        val wide = tpe.widen.dealias
+        val sym  = wide.typeSymbol
+
+        def isNothing = tpe =:= TypeRepr.of[Nothing]
+        def isModule  = sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case)
+        def isValue   = wide <:< TypeRepr.of[AnyVal] || wide <:< TypeRepr.of[String]
+        // a final class admits no Boxed subtype, so a value of the type is
+        // provably not a computation and the box test can never fire
+        def isSafeFinalClass =
+            sym.isClassDef && sym.flags.is(Flags.Final) && !sym.flags.is(Flags.Trait) &&
+                !(wide <:< TypeRepr.of[Boxed])
+
+        if isModule then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
-        '{ CanLift.unsafe.bypass[A] }
-    end deriveImpl
+        else if isNothing || isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ CanLift.box[A, S]($v) }
+        end if
+    end liftImpl
 
 end CanLift
