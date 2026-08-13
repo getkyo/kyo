@@ -410,3 +410,47 @@ acceptable at the stop-optimization decision.
 Note on the earlier "Runtime guard rows" table above: its new-kernel
 numbers were measured with the fused enter() in place and read
 uniformly worse than the shipped kernel; this final board supersedes it.
+
+## The lift's final shape: lint as a given, emission as the macro (4648ce9868)
+
+The rule the measurements forced: the lint may not re-expand, the emission
+must. The lint is a macro-free given whose `NotGiven` parameter resolves
+where the conversion is written and is baked, which waives an inline method
+with an abstract type parameter (the root cause of the computation-as-data
+rejections) and keeps it sound through the box. The emission is the one
+macro, re-expanded per site, so a type instantiated later still gets its own
+strategy: a bare cast where a value of the type can never be a computation
+(Nothing, value types, String, final non-Boxed classes), the monomorphic
+box bridge everywhere else.
+
+Two intermediate designs were measured and rejected. A macro-free emission
+(an erasedValue match in the lift body) passed the suite but lost the
+per-type analysis and cost userTypesSkipKernelWrapping 10.4 percent (34.0 to
+37.5, allocation byte-identical, so pure CPU; the bytecode pin showed final
+classes going from a 2-byte cast to an 8-byte call doing a runtime Boxed
+test). Making the evidence itself the lifter recovered the cast in principle
+but inflated every lift site to 23 bytes through the virtual call.
+
+### Runtime, 3 forks (-f 3 -wi 8 -i 5 -prof gc)
+
+| row | baseline | final | note |
+|---|---|---|---|
+| userTypesSkipKernelWrapping | 34.0 | 33.70 +/- 0.20 | regression recovered |
+| uncachedValuesPayBoxingOnly | 37.6 | 37.31 +/- 0.34 | flat |
+| statefulAnswersPaySuccessor | 118.9 | 119.78 +/- 1.69 | bars overlap |
+| inlineLimitCostsTimeNotAllocation | 228.2 | 226.71 +/- 2.59 | flat |
+| inlineLimitKeepsZeroAllocation | 1.644 | 1.647 +/- 0.014 | flat |
+
+Allocation is byte-identical on every row. statefulAnswersPaySuccessor read
++4 percent on a single fork earlier; across three forks the bars overlap the
+baseline, so that reading was a JIT draw, not a regression.
+
+### Compile fixtures with liftAnyVal deleted
+
+The conversion was kept on the premise that a per-site implicit search
+costs compile time. It does not, because the search resolves a macro-free
+given: MapChainDeep100 8429.7 to 8077.5 ms, NestedMaps 691.5 to 635.8,
+FlatMapChains 395.3 to 378.0, ForComprehensions 651.9 to 637.1,
+ForCompDeep25 1471.4 to 1451.7, TagDerivation 118.1 to 114.8, with every
+row that moved the other way inside its error bars. The emission's isValue
+arm covers primitives, pinned at 2 bytes, so the conversion is deleted.
