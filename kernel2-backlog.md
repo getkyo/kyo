@@ -6,6 +6,53 @@ Done work is removed once acked. Last update: 2026-08-13.
 
 ## Done, awaiting your ack (removed from the file once acked)
 
+### handleLoop family at old-kernel parity (`4e09878e0e`)
+
+Your ruling executed: the family matches origin/main verbatim except the sanctioned
+no-cont clause. Three overloads under one name (stateless; stateful delegating to the
+canonical with an identity done; canonical stateful with handle and done in one
+parameter list, done: (State, A) => B < (S & S2) observing the final state, bypassed
+by a clause's Loop.done whose slot now types as B). Both handleLoopWith variants are
+gone, handleFirst regained the old parameter list, effectTag/handle/done replaced
+_tag/f/cont, and both exit-protocol gaps from the consumer audit are closed with
+acceptance tests (an Emit.run-shaped accumulator asserting the final state reaches
+done, a Parse-shaped bypass asserting the clause-built B skips the transform, the
+delegation pin, and an effectful done). The isolating measurement that preceded the
+ruling: answering through a passed continuation costs nothing at depth one (80.3 vs
+81.2 us, allocation byte-identical), and the consumer audit showed no handleLoop site
+in the codebase uses cont for anything but immediate application, so the no-cont
+clause keeps the depth-independent in-place answering at no expressiveness loss.
+
+### One-macro lift: CanLift carries the lint, the emission is macro-free (`79043c80a4`)
+
+Your direction ("a single CanLift macro that derives, and lift just takes the
+evidence"), landed with the old kernel's factoring and kernel2's soundness. The
+pending lint rides the NotGiven parameter, resolved where the conversion is written
+and baked, so generic paths are waived and stay sound through the runtime box; the
+single macro rejects kyo modules; the lift body is macro-free (erasedValue casts the
+trivial shapes, CanLift.lift boxes the rest at runtime). Failures found and fixed on
+the way, each by probe: covariant evidence let the negation solve through Nothing so
+the lint never fired (invariance is load-bearing and documented); the opaque-Boolean
+strategy literal did not survive inlining proxies; a plain compiletime.error trap
+replaced the abortCastUnit macro because a failed nested evidence inside a conversion
+candidate surfaces as a plain mismatch, so the trap must win the search to speak.
+Deleted: LiftMacro.scala, liftUnit (Unit rides liftAnyVal), one macro of two.
+liftInternal stays with its true justification recorded: the kernel's core files sit
+in a bootstrap cycle with any macro-bearing evidence, so the module cannot summon its
+own derivation. The computation-as-data pins compile un-annotated and now verify the
+boxed runtime path. Suite green: 686 passed, 1 ignored.
+
+Gates: the 903 negative dotc fixture passes; allocation byte-identical on all six
+guard rows (your boxing concern is settled: zero new allocation anywhere). Timing
+verdicts are deferred to a quiet machine: a concurrent 32G kyo-core compile
+contaminated the window (error bars 5 to 50x the morning baselines). Open watches for
+the quiet re-measure: userTypesSkipKernelWrapping (37.7 noisy vs 34.0; the one
+plausible real effect is the deliberate trade of the emission macro's static cast for
+the runtime Boxed test on final classes, and if it confirms, the static analysis
+returns as an inline arm without reopening the design) and the liftAnyVal
+question (config B, deleting it, runs the same fixtures to decide whether it earns
+its place).
+
 ### Lifting out of the box for Loop.Outcome: four designs built and gated, the winner is bare done plus the currency-shaped continue
 
 Your goal ("making liftings work out of the box should be a goal here if possible")
