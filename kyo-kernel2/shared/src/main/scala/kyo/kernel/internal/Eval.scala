@@ -51,6 +51,12 @@ object Eval:
         throw ex
     end enrich
 
+    // the continuation a capturing clause receives: resuming rebuilds the crossed
+    // regions around the resumption, so the value re-enters exactly the stack it
+    // left. Shared by the Cont and First arms
+    private def resumer(hs: Handlers, cell: Handlers, kCont: Arrow[Any, Any, Any]): Any => Any < Nothing =
+        o => rebuild(hs, cell, resume(kCont, Nested.lift(o)))
+
     private def evalLoop[A, S](v0: A < S, slot: Safepoint.Slot, partial: Boolean): A < S =
         // arms ordered by expected frequency: a suspension per answered
         // operation, a defer per budget rescue or deferred effect, region
@@ -143,24 +149,16 @@ object Eval:
                                                 loop(next, cell.prev)
                                 end match
                             case h: Handler.Cont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any] =>
-                                val hsAll = hs
-                                val kCont = kyo.cont
-                                val cont: Any => Any < Nothing =
-                                    o => rebuild(hsAll, cell, resume(kCont, Nested.lift(o)))
                                 val next =
-                                    try h(kyo.input, cont)
+                                    try h(kyo.input, resumer(hs, cell, kyo.cont))
                                     catch case ex: Throwable => enrich(ex, v, hs)
                                 loop(next, cell)
                             case h: Handler.First[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] =>
-                                val hsAll = hs
-                                val kCont = kyo.cont
-                                val cont: Any => Any < Nothing =
-                                    o => rebuild(hsAll, cell, resume(kCont, Nested.lift(o)))
                                 // the region answers once: the clause's result runs at
                                 // cell.prev, so the cell is off the spine before the
                                 // continuation it was handed can raise the effect again
                                 val next =
-                                    try walk(cell.exit, h(kyo.input, cont))
+                                    try walk(cell.exit, h(kyo.input, resumer(hs, cell, kyo.cont)))
                                     catch case ex: Throwable => enrich(ex, v, hs)
                                 loop(next, cell.prev)
                         end match
@@ -309,32 +307,19 @@ object Eval:
         if (top eq stop) || (top eq Empty) then acc
         else rebuild(top.prev, stop, top.rebuilt(acc))
 
-    // a fork's copy of the standing context: walks the whole stack once, keeping
-    // only the provision regions ContextEffect.handle installed (the structural
-    // recognizer, Provision, is what makes a region eligible, and it is read off
-    // the handler alone now that the cell kinds are the spine's own business;
-    // ContextEffect.provision is the only site that mixes it in and it builds a
-    // Loop handler, so the regions this keeps are the same ones), with neutral
-    // exits. Walking from the innermost cell outward and wrapping the accumulator
-    // preserves nesting order: the outermost cell ends up outermost in the built
-    // value, so re-entry through Eval's Handled arm pushes it first and the
-    // innermost cell lands on top of the child's stack, exactly as the parent had it.
-    // The Noninheritable test reads the handler's own tag (the same field `find`
-    // already reads), one subtype test per provision cell actually walked; nothing
-    // is precomputed at the handle site that installed the cell.
-    // Kyo.Handled.apply's type params are given explicitly, matching every other
-    // erased construction through this factory in the file (e.g. statePending's
-    // Kyo.HandledState call above)
+    // a fork's copy of the standing context: keeps only the provision regions
+    // (ContextEffect.provision is the sole site that mixes the recognizer in, and
+    // it builds a Loop handler, which is why the cast below holds), skipping
+    // Noninheritable ones, with neutral exits. Walking innermost-out and wrapping
+    // the accumulator preserves nesting order: the outermost region lands
+    // outermost, so re-entry stacks the child's copy exactly as the parent had it
     @tailrec private def transplant(top: Handlers, acc: Any < Nothing): Any < Nothing =
         if top eq Empty then acc
         else
             top.handler match
-                case p: ContextEffect.Provision if !(top.tag <:< Tag[ContextEffect.Noninheritable]) =>
+                case _: ContextEffect.Provision if !(top.tag <:< Tag[ContextEffect.Noninheritable]) =>
                     transplant(
                         top.prev,
-                        // ContextEffect.provision is the one site that mixes the
-                        // recognizer in, and it builds a Loop handler, so the cell's
-                        // erased handler is the kind a region node takes
                         Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any](
                             acc,
                             top.handler.asInstanceOf[

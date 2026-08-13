@@ -83,25 +83,6 @@ object Arrow:
         override def toString: String = s"Arrow($frameInfo)"
     end Transform
 
-    // abstract class TransformF[-A, B, -S] extends Transform[A, B, S]:
-    //     def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2) =
-    //         v match
-    //             case kyo: Kyo[A, S3] @unchecked =>
-    //                 kyo.map(this.chain(next))
-    //             case v =>
-    //                 val res  = Kyo.unnest(v)
-    //                 val slot = Safepoint.get()
-    //                 if !Safepoint.enter(slot) then
-    //                     Kyo.Defer(v, this.chain(next))
-    //                 else
-    //                     val step = next.step
-    //                     val out  = step.head(f(res), step.tail)
-    //                     Safepoint.exit(slot)
-    //                     out
-    //                 end if
-    //         end match
-    //     def run[C, S2](v: A, next: Arrow[B, C, S2]): C < (S & S2) =
-
     private[kyo] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
         def apply(v: A) =
