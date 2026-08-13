@@ -185,6 +185,53 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "typed drag observers preserve concrete effect results and immutable wiring" in {
+        val source = Drag.Source("observer-source", Chunk.empty)
+        val target = Drag.Target("observer-target", Drag.Accept())
+        val event = Drag.Event(
+            sessionId = "observer-session",
+            items = Chunk.empty,
+            operation = Drag.Operation.Move,
+            sourceKey = Present(source.key),
+            targetKey = Present(target.key),
+            point = Absent,
+            modifiers = UI.Modifiers.none,
+            position = Absent
+        )
+        val end = Drag.End(event, canceled = false)
+        val ui = UI.div
+            .id("observer")
+            .dragSource(source)
+            .dropTarget(target)
+            .onDragStart((_: Drag.Event) => Sync.defer("start-result"))
+            .onDragEnd((_: Drag.End) => Sync.defer("end-result"))
+            .onDragEnter((_: Drag.Event) => Sync.defer("enter-result"))
+            .onDragLeave((_: Drag.Event) => Sync.defer("leave-result"))
+            .onDragOver((_: Drag.Event) => Sync.defer("over-result"))
+
+        val startHandler = ui.attrs.onDragStartEvt.getOrElse(fail("missing drag-start observer"))
+        val endHandler   = ui.attrs.onDragEndEvt.getOrElse(fail("missing drag-end observer"))
+        val enterHandler = ui.attrs.onDragEnterEvt.getOrElse(fail("missing drag-enter observer"))
+        val leaveHandler = ui.attrs.onDragLeaveEvt.getOrElse(fail("missing drag-leave observer"))
+        val overHandler  = ui.attrs.onDragOverEvt.getOrElse(fail("missing drag-over observer"))
+
+        for
+            startResult <- startHandler(event)
+            endResult   <- endHandler(end)
+            enterResult <- enterHandler(event)
+            leaveResult <- leaveHandler(event)
+            overResult  <- overHandler(event)
+            html        <- HtmlRenderer.render(ui, Seq.empty)
+        yield
+            assert(Chunk(startResult, endResult, enterResult, leaveResult, overResult).map(_.toString) ==
+                Chunk("start-result", "end-result", "enter-result", "leave-result", "over-result"))
+            assert(ui.attrs.dragSource == Present(source))
+            assert(ui.attrs.dropTarget == Present(target))
+            assert(html.contains("id=\"observer\""))
+            assert(attribute(html, "data-kyo-ev") == "dragstart,dragend,dragenter,dragleave,dragover")
+        end for
+    }
+
     // ---- onHover action fires (HTML) ----
 
     "onHover(action) fires on Hover dispatch (HTML div)" in {

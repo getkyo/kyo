@@ -790,35 +790,35 @@ object UI:
                 withAttrs(attrs.copy(onDragStart = Present(Sync.defer(action)(using frame))))
 
             /** Runs `f` when a drag session starts, receiving the normalized drag event. */
-            def onDragStart(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragStartEvt = Present(f)))
+            def onDragStart(f: Drag.Event => Any < Async): Self = withAttrs(attrs.copy(onDragStartEvt = Present(f)))
 
             /** Runs `action` when a drag session ends, ignoring the event payload. */
             def onDragEnd(action: => Any < Async): Self =
                 withAttrs(attrs.copy(onDragEnd = Present(Sync.defer(action)(using frame))))
 
             /** Runs `f` when a drag session ends, receiving its final state and cancellation flag. */
-            def onDragEnd(f: Drag.End => Unit < Async): Self = withAttrs(attrs.copy(onDragEndEvt = Present(f)))
+            def onDragEnd(f: Drag.End => Any < Async): Self = withAttrs(attrs.copy(onDragEndEvt = Present(f)))
 
             /** Runs `action` when a drag enters this target, ignoring the event payload. */
             def onDragEnter(action: => Any < Async): Self =
                 withAttrs(attrs.copy(onDragEnter = Present(Sync.defer(action)(using frame))))
 
             /** Runs `f` when a drag enters this target, receiving the normalized drag event. */
-            def onDragEnter(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragEnterEvt = Present(f)))
+            def onDragEnter(f: Drag.Event => Any < Async): Self = withAttrs(attrs.copy(onDragEnterEvt = Present(f)))
 
             /** Runs `action` when a drag leaves this target, ignoring the event payload. */
             def onDragLeave(action: => Any < Async): Self =
                 withAttrs(attrs.copy(onDragLeave = Present(Sync.defer(action)(using frame))))
 
             /** Runs `f` when a drag leaves this target, receiving the normalized drag event. */
-            def onDragLeave(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragLeaveEvt = Present(f)))
+            def onDragLeave(f: Drag.Event => Any < Async): Self = withAttrs(attrs.copy(onDragLeaveEvt = Present(f)))
 
             /** Runs `action` while a drag moves over this target, ignoring the event payload. */
             def onDragOver(action: => Any < Async): Self =
                 withAttrs(attrs.copy(onDragOver = Present(Sync.defer(action)(using frame))))
 
             /** Runs `f` while a drag moves over this target, receiving the normalized drag event. */
-            def onDragOver(f: Drag.Event => Unit < Async): Self = withAttrs(attrs.copy(onDragOverEvt = Present(f)))
+            def onDragOver(f: Drag.Event => Any < Async): Self = withAttrs(attrs.copy(onDragOverEvt = Present(f)))
 
             /** Runs `action` for a drop and accepts it after the action completes successfully. */
             def onDrop(action: => Any < Async): Self =
@@ -1130,15 +1130,15 @@ object UI:
             dragSource: Maybe[Drag.Source] = Absent,
             dropTarget: Maybe[Drag.Target] = Absent,
             onDragStart: Maybe[Any < Async] = Absent,
-            onDragStartEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDragStartEvt: Maybe[Drag.Event => Any < Async] = Absent,
             onDragEnd: Maybe[Any < Async] = Absent,
-            onDragEndEvt: Maybe[Drag.End => Unit < Async] = Absent,
+            onDragEndEvt: Maybe[Drag.End => Any < Async] = Absent,
             onDragEnter: Maybe[Any < Async] = Absent,
-            onDragEnterEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDragEnterEvt: Maybe[Drag.Event => Any < Async] = Absent,
             onDragLeave: Maybe[Any < Async] = Absent,
-            onDragLeaveEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDragLeaveEvt: Maybe[Drag.Event => Any < Async] = Absent,
             onDragOver: Maybe[Any < Async] = Absent,
-            onDragOverEvt: Maybe[Drag.Event => Unit < Async] = Absent,
+            onDragOverEvt: Maybe[Drag.Event => Any < Async] = Absent,
             onDrop: Maybe[Drag.Decision < Async] = Absent,
             onDropEvt: Maybe[Drag.Event => Drag.Decision < Async] = Absent,
             onSortMove: Maybe[Drag.Decision < Async] = Absent,
