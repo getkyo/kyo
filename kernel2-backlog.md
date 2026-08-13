@@ -2,7 +2,7 @@
 
 Queues: implementing, designing, awaiting ruling, next up, parked. Each item carries
 its own context so it reads without the linked docs; the docs carry the full designs.
-Done work is removed once acked. Last update: 2026-08-12.
+Done work is removed once acked. Last update: 2026-08-13.
 
 ## Done, awaiting your ack (removed from the file once acked)
 
@@ -91,6 +91,40 @@ against the old kernel's 54.90 (was 57.68 before tonight), allocation win intact
 B/op. The night's kernel changes closed the 1.05x gap as a byproduct. Per your bar,
 no speculative optimization was attempted: the mandate row is at parity or better
 and the watch ends here.
+
+### The fused Safepoint.enter() was a large hidden regression; reverted (`fcd19e40fc`)
+
+The final sweep flagged userTypesSkipKernelWrapping at 1.21x the old kernel, the one
+unexplained loss on the board. A two-stage bisect over throwaway worktrees found the
+step exactly: your local-run map shape (`4b2eab8441`) was a much bigger win than we
+knew (userTypes 44.1 to 33.8 us, uncached 50.2 to 37.5), and the fused enter() I added
+in the next commit (`1982c8c4cc`, from your sentinel-slot idea) wiped it (33.8 to
+52.5). The validation at the time missed it because it measured both changes bundled
+against the candidate: the net looked flat while hiding a -13 us gain and a +14 us
+loss on the same rows. Two attribution experiments on the tip: restoring the five
+Pending sites to get-then-enter measured 33.8/38.0; an inline-def enter() keeping the
+single-call form measured 37.6/38.8. So the un-inlined fused method carried most of
+the cost and the sentinel merge kept an 11 percent residual even when spliced, which
+rules out the single-call API in any form. The two-step get/enter is back at the
+computation sites, the sentinel machinery (Denied, Slot.entered, zero-arg enter) is
+deleted, and the nested-defer pins from that commit stay. Suite green: 682 passed, 1
+ignored (the disabled map bytecode pin).
+
+### Final board rerun after the fix: six rows lifted, the sweep now closes clean
+
+The fix reached everything that pays budget entry on the eager path, not just the two
+guard rows: userTypes 53.1 to 34.0 (0.78x old), uncached 51.5 to 37.6 (0.51x),
+fusionPastBudget 48.1 to 33.6 (0.69x), idleHandler 48.3 to 33.0 (0.68x),
+inlineLimitCosts 265.6 to 228.2 (0.66x). Full final board in
+compile-execution-analysis.md, section "The fused enter() regression". Standing:
+thirteen time wins, deepRecursion at parity (0.99x, the row you set the bar on),
+three tracked gaps under 1.10x (foreignCrossings 1.08x time against a 0.90x
+allocation win; sharedHandler 1.09x, the megamorphic dispatch row, already improved
+4 percent by the Handlers encapsulation; continuationBodiesFuse 1.10x, one extra
+word per fused body), and the two fusion-after-suspension rows carrying the
+structural fork you ruled acceptable at the stop-optimization decision (1.79x and
+the RunOnly microrow). Compile fixtures unchanged: the new kernel wins 12 of 13
+with Baseline at parity, MapChainDeep100 at 0.39x.
 
 ## Implementing now
 

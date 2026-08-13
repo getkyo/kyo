@@ -292,11 +292,12 @@ entry path calls `run` directly. Consequences, each verified:
 - The suspend and defer arms mint the Transform lazily inside `run`
   (`arrow.chain(next)`), preserving the candidate's node-count.
 
-Alongside it, `Safepoint.enter()` fuses slot resolution and budget entry
-into one call returning the slot, with a negative sentinel when denied
-(Slot is an opaque Int, so the sentinel stays unboxed; every other Slot
-API fails fast on a negative index). The evaluator keeps the two-step
-get/enter for its get-once, enter-per-step loop.
+Alongside it, `Safepoint.enter()` fused slot resolution and budget entry
+into one call returning the slot, with a negative sentinel when denied.
+That fusion was later found to carry a large regression on the eager
+path and was reverted (see "The fused enter() regression" below); the
+two-step get/enter is the shipped shape at the computation sites and in
+the evaluator loop.
 
 ### Compile fixtures, in-session A/B (JMH, 8 warmup, 5 measure)
 
@@ -338,3 +339,74 @@ Open items after this board:
 2. fusionAfterSuspension 1.84x time / 1.16x alloc: the standing
    two-objects-vs-one map-on-suspension structural fork, unchanged by
    this work, still awaiting a ruling.
+
+## The fused enter() regression: found by the final sweep, reverted (fcd19e40fc)
+
+The end-of-campaign sweep flagged userTypesSkipKernelWrapping at 1.21x
+the old kernel (53.1 vs 43.8 us/op), the only unexplained loss on the
+board. A two-stage bisect over throwaway detached worktrees attributed
+it:
+
+| point | userTypes | uncached |
+|---|---|---|
+| 61f80d45d3 (candidate design) | 44.1 | 50.2 |
+| 4b2eab8441 (local-run map) | 33.8 | 37.5 |
+| 9e9f725727 (flatMap mirror) | 34.0 | 37.6 |
+| 1982c8c4cc (fused enter()) | 52.5 | 51.8 |
+| session tip pre-fix | 53.1 | 51.5 |
+
+The local-run map shape was a large win on the eager reference path, and
+the fused `Safepoint.enter()` in the very next commit wiped it. The
+original validation missed this because it bundled both changes and
+compared the pair against the candidate: the net looked flat while
+hiding a -13 us gain and a +14 us loss on the same rows.
+
+Attribution experiments on the tip: restoring the five Pending sites to
+the two-step get-then-enter measured 33.8/38.0; an inline-def variant
+keeping the single-call API (splicing get plus enter at each site)
+measured 37.6/38.8. So the un-inlined fused method carried most of the
+cost, and the sentinel merge kept an 11 percent residual even when
+spliced. The two-step shape returned in fcd19e40fc and the sentinel
+machinery (Denied, Slot.entered, the zero-arg enter) was deleted. The
+nested-defer pins from 1982c8c4cc stay.
+
+### Final board, old vs new kernel (post-fix tip, -f 1 -wi 8 -i 5 -prof gc)
+
+The fix lifted six rows, not two: everything that pays budget entry on
+the eager path.
+
+| row | old kernel | new kernel | time | alloc |
+|---|---|---|---|---|
+| trailingMapsStayLinear | 642,517 us / 1.60 GB | 354.8 us / 2,161,402 B | 0.0006x | 0.0013x |
+| suspensionFusesContinuation | 78.6 us / 240,041 B | 26.4 us / 240,088 B | 0.34x | 1.00x |
+| uncachedValuesPayBoxingOnly | 74.2 us / 141,777 B | 37.6 us / 155,160 B | 0.51x | 1.09x |
+| handleLoopAnswersInPlace | 137.2 us / 960,144 B | 80.0 us / 640,129 B | 0.58x | 0.67x |
+| suspensionBaseline | 131.7 us / 560,089 B | 81.8 us / 640,129 B | 0.62x | 1.14x |
+| inlineLimitCostsTimeNotAllocation | 347.7 us / 724,338 B | 228.2 us / 735,642 B | 0.66x | 1.02x |
+| idleHandlerAddsNothing | 48.5 us / 1,224 B | 33.0 us / 496 B | 0.68x | 0.41x |
+| fusionPastBudgetPaysRescuesOnly | 48.9 us / 1,128 B | 33.6 us / 448 B | 0.69x | 0.40x |
+| fusionAllocatesNothing | 0.830 us | 0.580 us | 0.70x | zero holds |
+| inlineLimitKeepsZeroAllocation | 2.19 us | 1.64 us | 0.75x | zero holds |
+| userTypesSkipKernelWrapping | 43.8 us / 177,056 B | 34.0 us / 176,632 B | 0.78x | 1.00x |
+| statefulAnswersPaySuccessor | 144.4 us / 1,040,148 B | 118.9 us / 1,118,153 B | 0.82x | 1.08x |
+| evalFixedOverhead | 0.009 us | 0.002 us | 0.22x | zero |
+| deepRecursionPaysRescuesOnly | 54.3 us / 2,128 B | 53.9 us / 912 B | 0.99x | 0.43x |
+| foreignCrossingsPayRotation | 320.7 us / 1,680,202 B | 345.7 us / 1,520,266 B | 1.08x | 0.90x |
+| sharedHandlerPaysDispatch | 135.2 us / 240,415 B | 147.3 us / 240,449 B | 1.09x | 1.00x |
+| continuationBodiesFuse | 24.7 us / 56,072 B | 27.1 us / 64,128 B | 1.10x | 1.14x |
+| fusionAfterSuspension | 87.0 us / 408,431 B | 155.8 us / 472,513 B | 1.79x | 1.16x |
+| fusionAfterSuspensionRunOnly | 0.270 us | 0.521 us | 1.93x | 48 B |
+| partialSuspensionBaseline | no old row | 81.4 us / 640,129 B | | |
+
+Thirteen wins, one parity (deepRecursion, the mandate row), three modest
+gaps under 1.10x (foreignCrossings trades 8 percent time for a 10
+percent allocation win; sharedHandler is the megamorphic dispatch row,
+already improved 4 percent by the Handlers encapsulation; the
+continuation-body row pays one extra word per fused body), and the two
+fusion-after-suspension rows carrying the standing structural fork
+(map-on-suspension re-suspends rather than fusing), previously ruled
+acceptable at the stop-optimization decision.
+
+Note on the earlier "Runtime guard rows" table above: its new-kernel
+numbers were measured with the fused enter() in place and read
+uniformly worse than the shipped kernel; this final board supersedes it.
