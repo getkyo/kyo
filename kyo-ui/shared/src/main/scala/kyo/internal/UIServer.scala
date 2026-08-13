@@ -47,11 +47,17 @@ private[kyo] object UIServer:
                 // only a Closed (the socket closed, so the command is moot); a Panic propagates.
                 scrollSink = (id: String) =>
                     Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.ScrollIntoView(id))))).unit
+                resolveSink = (sessionId: String, decision: Drag.Decision) =>
+                    Abort.runPartial[Closed](
+                        ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))))
+                    ).unit
                 _ <- UICommands.scrollSink.let(Present(scrollSink)) {
-                    Async.race(
-                        ws.stream.foreach(payload => dispatchEvent(sub.handle, payload)),
-                        ws.onPeerClose
-                    )
+                    DragCommands.resolveSink.let(Present(resolveSink)) {
+                        Async.race(
+                            ws.stream.foreach(payload => dispatchEvent(sub.handle, payload)),
+                            ws.onPeerClose
+                        )
+                    }
                 }
             yield ()
         }

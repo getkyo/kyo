@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.DragCommands
 import kyo.internal.DragProtocol
 import kyo.internal.HtmlRenderer
 import kyo.internal.MouseEventData
@@ -32,6 +33,15 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                 root         <- ReactiveUI.normalize(ui, Seq.empty)
                 subscription <- ReactiveUI.subscribe(root, new NoopExchange)
             yield subscription.handle
+        }
+
+    private def withDispatch[A](ui: UI)(f: ((Seq[String], UIEvent) => Boolean < Async) => A < Async)(using Frame): A < Async =
+        Scope.run {
+            for
+                root         <- ReactiveUI.normalize(ui, Seq.empty)
+                subscription <- ReactiveUI.subscribe(root, new NoopExchange)
+                result       <- f(subscription.handle)
+            yield result
         }
 
     private def htmlUnescape(value: String): String =
@@ -232,6 +242,258 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             assert(ui.attrs.dropTarget == Present(target))
             assert(html.contains("id=\"observer\""))
             assert(attribute(html, "data-kyo-ev") == "dragstart,dragend,dragenter,dragleave,dragover")
+        end for
+    }
+
+    "drag dispatch reconstructs session payloads, bubbles targets, and resolves the first rejection once" in {
+        val start = DragProtocol.StartData(
+            "drag-1",
+            Chunk(DragProtocol.ItemData.Text(Map("text/plain" -> "card"))),
+            Drag.Operation.Copy,
+            Present("source"),
+            Drag.Point(1, 2),
+            UI.Modifiers(shift = true)
+        )
+        val target = DragProtocol.TargetData(
+            "drag-1",
+            Drag.Operation.Move,
+            Present("target"),
+            Drag.Point(3, 4),
+            UI.Modifiers(ctrl = true),
+            Present(Drag.Position.Before)
+        )
+        val rejection = Drag.Decision.Reject(Drag.Rejection.Application("locked"))
+
+        for
+            calls       <- AtomicRef.init(Chunk.empty[String])
+            startSeen   <- AtomicRef.init(Absent: Maybe[Drag.Event])
+            targetSeen  <- AtomicRef.init(Chunk.empty[Drag.Event])
+            endSeen     <- AtomicRef.init(Absent: Maybe[Drag.End])
+            resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+            child = UI.div
+                .dragSource(Drag.Source("source", Chunk.empty))
+                .dropTarget(Drag.Target("target", Drag.Accept()))
+                .onDragStart((event: Drag.Event) => startSeen.set(Present(event)))
+                .onDragEnter(calls.getAndUpdate(_.append("inner-enter")).unit)
+                .onDragEnter((event: Drag.Event) => targetSeen.getAndUpdate(_.append(event)).unit)
+                .onDragLeave((event: Drag.Event) => targetSeen.getAndUpdate(_.append(event)).unit)
+                .onDragOver((event: Drag.Event) => targetSeen.getAndUpdate(_.append(event)).unit)
+                .onDrop(calls.getAndUpdate(_.append("inner-action")).andThen(Drag.Decision.Accept))
+                .onDrop((_: Drag.Event) => calls.getAndUpdate(_.append("inner-typed")).andThen(rejection))
+                .onDragEnd((end: Drag.End) => endSeen.set(Present(end)))
+            ui = UI.div
+                .onDragStart(calls.getAndUpdate(_.append("outer-start")).unit)
+                .onDragEnter(calls.getAndUpdate(_.append("outer-enter")).unit)
+                .onDrop(calls.getAndUpdate(_.append("outer-action")).andThen(Drag.Decision.Accept))(child)
+            _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
+                withDispatch(ui) { dispatch =>
+                    dispatch(Seq("0"), UIEvent.DragStart(Seq("0"), start))
+                        .andThen(dispatch(Seq("0"), UIEvent.DragEnter(Seq("0"), target)))
+                        .andThen(dispatch(Seq("0"), UIEvent.DragLeave(Seq("0"), target)))
+                        .andThen(dispatch(Seq("0"), UIEvent.DragOver(Seq("0"), target)))
+                        .andThen(dispatch(Seq("0"), UIEvent.Drop(Seq("0"), target)))
+                        .andThen(dispatch(
+                            Seq("0"),
+                            UIEvent.DragEnd(Seq("0"), DragProtocol.EndData("drag-1", Drag.Operation.Link, cancelled = true))
+                        ))
+                }
+            }
+            actualStart       <- startSeen.get
+            actualTarget      <- targetSeen.get
+            actualEnd         <- endSeen.get
+            actualCalls       <- calls.get
+            actualResolutions <- resolutions.get
+        yield
+            val expectedStart = Drag.Event(
+                "drag-1",
+                Chunk(Drag.Item.Text(Map("text/plain" -> "card"))),
+                Drag.Operation.Copy,
+                Present("source"),
+                Absent,
+                Present(Drag.Point(1, 2)),
+                UI.Modifiers(shift = true),
+                Absent
+            )
+            val expectedTarget = expectedStart.copy(
+                operation = Drag.Operation.Move,
+                targetKey = Present("target"),
+                point = Present(Drag.Point(3, 4)),
+                modifiers = UI.Modifiers(ctrl = true),
+                position = Present(Drag.Position.Before)
+            )
+            assert(actualStart == Present(expectedStart))
+            assert(actualTarget == Chunk(expectedTarget, expectedTarget, expectedTarget))
+            assert(actualEnd == Present(Drag.End(expectedTarget.copy(operation = Drag.Operation.Link), canceled = true)))
+            assert(actualCalls == Chunk("inner-enter", "outer-enter", "inner-action", "inner-typed", "outer-action"))
+            assert(actualResolutions == Chunk("drag-1" -> rejection))
+        end for
+    }
+
+    "unknown drop rejects without handlers and a known terminal event resolves only once" in {
+        val target = DragProtocol.TargetData(
+            "missing",
+            Drag.Operation.Copy,
+            Present("target"),
+            Drag.Point(0, 0),
+            UI.Modifiers.none,
+            Absent
+        )
+        val noHandler = Drag.Decision.Reject(Drag.Rejection.Application("No drop handler accepted the operation."))
+        val knownStart = DragProtocol.StartData(
+            "known",
+            Chunk.empty,
+            Drag.Operation.Copy,
+            Absent,
+            Drag.Point(0, 0),
+            UI.Modifiers.none
+        )
+        val knownTarget = target.copy(sessionId = "known")
+        val sortStart   = knownStart.copy(sessionId = "no-sort")
+        val move = Drag.Move(
+            Chunk("a"),
+            Drag.Location("left"),
+            Drag.Location("right"),
+            Absent,
+            Drag.Position.On,
+            Drag.Operation.Move
+        )
+        val noSort = Drag.Decision.Reject(Drag.Rejection.Application("No sort handler accepted the move."))
+        for
+            calls       <- AtomicRef.init(0)
+            resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+            ui = UI.div.onDrop(calls.getAndUpdate(_ + 1).andThen(Drag.Decision.Accept))
+            _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
+                withDispatch(ui) { dispatch =>
+                    dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target))
+                        .andThen(dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, knownStart)))
+                        .andThen(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, knownTarget)))
+                        .andThen(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, knownTarget)))
+                        .andThen(dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, sortStart)))
+                        .andThen(dispatch(Seq.empty, UIEvent.SortMove(Seq.empty, "no-sort", move)))
+                }
+            }
+            actualCalls <- calls.get
+            actual      <- resolutions.get
+        yield
+            assert(actualCalls == 1)
+            assert(actual == Chunk(
+                "missing" -> noHandler,
+                "known"   -> Drag.Decision.Accept,
+                "no-sort" -> noSort
+            ))
+        end for
+    }
+
+    "drag resolution outside a runner is a no-op" in {
+        DragCommands.resolve("absent", Drag.Decision.Accept).andThen(succeed)
+    }
+
+    "sort decisions bubble inner first and stop only at a declared handler" in {
+        val start = DragProtocol.StartData(
+            "sort-1",
+            Chunk.empty,
+            Drag.Operation.Move,
+            Present("source"),
+            Drag.Point(0, 0),
+            UI.Modifiers.none
+        )
+        val move = Drag.Move(
+            Chunk("a"),
+            Drag.Location("left"),
+            Drag.Location("right"),
+            Absent,
+            Drag.Position.After,
+            Drag.Operation.Move
+        )
+        val reject = Drag.Decision.Reject(Drag.Rejection.Application("sorted locked"))
+        for
+            calls       <- AtomicRef.init(Chunk.empty[String])
+            resolutions <- AtomicRef.init(Chunk.empty[Drag.Decision])
+            child = UI.div
+                .stopPropagation(true)
+                .onSortMove(calls.getAndUpdate(_.append("inner-action")).andThen(Drag.Decision.Accept))
+                .onSortMove((_: Drag.Move) => calls.getAndUpdate(_.append("inner-typed")).andThen(reject))
+            ui = UI.div.onSortMove(calls.getAndUpdate(_.append("outer")).andThen(Drag.Decision.Accept))(UI.section(child))
+            _ <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
+                withDispatch(ui) { dispatch =>
+                    dispatch(Seq("0", "0"), UIEvent.DragStart(Seq("0", "0"), start))
+                        .andThen(dispatch(Seq("0", "0"), UIEvent.SortMove(Seq("0", "0"), "sort-1", move)))
+                }
+            }
+            actualCalls     <- calls.get
+            actualDecisions <- resolutions.get
+        yield
+            assert(actualCalls == Chunk("inner-action", "inner-typed"))
+            assert(actualDecisions == Chunk(reject))
+        end for
+    }
+
+    "drop handler failures resolve an application rejection and continue bubbling" in {
+        val start = DragProtocol.StartData(
+            "failed-drop",
+            Chunk.empty,
+            Drag.Operation.Copy,
+            Absent,
+            Drag.Point(0, 0),
+            UI.Modifiers.none
+        )
+        val target = DragProtocol.TargetData(
+            "failed-drop",
+            Drag.Operation.Copy,
+            Absent,
+            Drag.Point(0, 0),
+            UI.Modifiers.none,
+            Absent
+        )
+        val failure = Drag.Decision.Reject(Drag.Rejection.Application("The drop handler failed."))
+        val failingHandler: Drag.Event => Drag.Decision < Async =
+            (_: Drag.Event) => Sync.defer(throw new RuntimeException("failed"))
+        for
+            outer       <- AtomicRef.init(false)
+            resolutions <- AtomicRef.init(Chunk.empty[Drag.Decision])
+            child = UI.div.onDrop(failingHandler)
+            ui    = UI.div.onDrop(outer.set(true).andThen(Drag.Decision.Accept))(child)
+            _ <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
+                withDispatch(ui) { dispatch =>
+                    dispatch(Seq("0"), UIEvent.DragStart(Seq("0"), start))
+                        .andThen(dispatch(Seq("0"), UIEvent.Drop(Seq("0"), target)))
+                }
+            }
+            bubbled <- outer.get
+            actual  <- resolutions.get
+        yield
+            assert(bubbled)
+            assert(actual == Chunk(failure))
+        end for
+    }
+
+    "duplicate drag start rejects without replacing the active session" in {
+        def start(point: Drag.Point) = DragProtocol.StartData(
+            "duplicate",
+            Chunk.empty,
+            Drag.Operation.Copy,
+            Present("source"),
+            point,
+            UI.Modifiers.none
+        )
+        val duplicate = Drag.Decision.Reject(
+            Drag.Rejection.Application("A drag session with this identifier is already active.")
+        )
+        for
+            starts      <- AtomicRef.init(Chunk.empty[Drag.Event])
+            resolutions <- AtomicRef.init(Chunk.empty[Drag.Decision])
+            ui = UI.div.onDragStart((event: Drag.Event) => starts.getAndUpdate(_.append(event)).unit)
+            _ <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
+                withDispatch(ui) { dispatch =>
+                    dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, start(Drag.Point(1, 1))))
+                        .andThen(dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, start(Drag.Point(9, 9)))))
+                }
+            }
+            actualStarts      <- starts.get
+            actualResolutions <- resolutions.get
+        yield
+            assert(actualStarts.map(_.point) == Chunk(Present(Drag.Point(1, 1))))
+            assert(actualResolutions == Chunk(duplicate))
         end for
     }
 

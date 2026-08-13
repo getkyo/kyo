@@ -73,10 +73,12 @@ private[kyo] object DomBackend:
             // The drain carries the session's scroll sink: a handler calling UI.scrollIntoView scrolls the
             // local document, the browser-mount counterpart of the server session's WebSocket op.
             _ <- Fiber.init(UICommands.scrollSink.let(Present(scrollLocal)) {
-                Loop.foreach(Abort.runPartial[Closed](events.take).map {
-                    case Result.Success(eff) => eff.andThen(Loop.continue)
-                    case Result.Failure(_)   => Loop.done
-                })
+                DragCommands.resolveSink.let(Present(resolveLocal)) {
+                    Loop.foreach(Abort.runPartial[Closed](events.take).map {
+                        case Result.Success(eff) => eff.andThen(Loop.continue)
+                        case Result.Failure(_)   => Loop.done
+                    })
+                }
             })
             _ <- setupEventDelegation(dispatch.handle, events)
             _ <- Async.never
@@ -92,6 +94,19 @@ private[kyo] object DomBackend:
             val el = document.getElementById(id)
             if el != null then
                 discard(el.asInstanceOf[js.Dynamic].scrollIntoView(js.Dynamic.literal(behavior = "smooth", block = "start")))
+        }
+
+    /** Publishes a typed drag resolution for the local drag runtime without retaining listeners or
+      * session state. DomDragRuntime consumes this reserved document event.
+      */
+    private def resolveLocal(sessionId: String, decision: Drag.Decision)(using Frame): Unit < Async =
+        Sync.defer {
+            val detail = Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))
+            val event = js.Dynamic.newInstance(js.Dynamic.global.CustomEvent)(
+                "kyo:resolve-drag",
+                js.Dynamic.literal(detail = detail)
+            )
+            discard(document.asInstanceOf[js.Dynamic].dispatchEvent(event))
         }
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */

@@ -122,6 +122,8 @@ private[kyo] object ReactiveUI:
 
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
+    final private case class DragSession(event: Drag.Event, terminalResolved: Boolean)
+
     /** Walk a static UI tree. Collect reactive children, build handle. */
     private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false)(using Frame): (Seq[ReactiveUI], Handler) < Sync =
         ui match
@@ -260,14 +262,27 @@ private[kyo] object ReactiveUI:
     private def safeDispatch(handle: (Seq[String], UIEvent) => Boolean < Async, path: Seq[String], event: UIEvent)(using
         Frame
     ): Boolean < Async =
-        Abort.recover[Throwable](
-            onFail = err =>
-                Log.error(s"Handler error during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${err.getMessage}")
-                    .andThen(true), // continue bubbling
-            onPanic = thr =>
-                Log.error(s"Handler panic during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${thr.getMessage}")
-                    .andThen(true) // continue bubbling
-        )(handle(path, event))
+        DragCommands.current.use { context =>
+            val decisions = context.flatMap(_.decisions)
+            Abort.recover[Throwable](
+                onFail = err =>
+                    Log.error(s"Handler error during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${err.getMessage}")
+                        .andThen(markDecisionFailure(event, decisions))
+                        .andThen(true), // continue bubbling
+                onPanic = thr =>
+                    Log.error(s"Handler panic during ${event.getClass.getSimpleName} at ${path.mkString(".")}: ${thr.getMessage}")
+                        .andThen(markDecisionFailure(event, decisions))
+                        .andThen(true) // continue bubbling
+            )(handle(path, event))
+        }
+
+    private def markDecisionFailure(event: UIEvent, decisions: Maybe[AtomicRef[DragCommands.DecisionState]])(using
+        Frame
+    ): Unit < Async =
+        event match
+            case _: UIEvent.Drop     => failDecision(decisions, "The drop handler failed.")
+            case _: UIEvent.SortMove => failDecision(decisions, "The sort handler failed.")
+            case _                   => ()
 
     /** Read current checked value from Maybe[Bound[Boolean]]. */
     private def readChecked(checked: Maybe[Bound[Boolean]])(using Frame): Boolean < Sync =
@@ -578,9 +593,104 @@ private[kyo] object ReactiveUI:
                 val wheel = UI.WheelEvent(ev.deltaX, ev.deltaY, ev.targetId, ev.modifiers)
                 invoke(attrs.onScroll).andThen(invokeWith(attrs.onScrollEvt, wheel))
                     .andThen(keepBubbling(elem, attrs.onScroll.nonEmpty || attrs.onScrollEvt.nonEmpty))
+            case _: UIEvent.DragStart =>
+                if !isTarget then true
+                else
+                    DragCommands.current.use {
+                        case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), _)) =>
+                            invokeDrag(attrs.onDragStart, attrs.onDragStartEvt.map(_(value)), "drag start")
+                                .andThen(keepBubbling(elem, attrs.onDragStart.nonEmpty || attrs.onDragStartEvt.nonEmpty))
+                        case _ => true
+                    }
+            case _: UIEvent.DragEnd =>
+                if !isTarget then true
+                else
+                    DragCommands.current.use {
+                        case Present(DragCommands.Dispatch(DragCommands.Payload.End(value), _)) =>
+                            invokeDrag(attrs.onDragEnd, attrs.onDragEndEvt.map(_(value)), "drag end")
+                                .andThen(keepBubbling(elem, attrs.onDragEnd.nonEmpty || attrs.onDragEndEvt.nonEmpty))
+                        case _ => true
+                    }
+            case _: UIEvent.DragEnter => dispatchDragEvent(elem, attrs.onDragEnter, attrs.onDragEnterEvt, "drag enter")
+            case _: UIEvent.DragLeave => dispatchDragEvent(elem, attrs.onDragLeave, attrs.onDragLeaveEvt, "drag leave")
+            case _: UIEvent.DragOver  => dispatchDragEvent(elem, attrs.onDragOver, attrs.onDragOverEvt, "drag over")
+            case _: UIEvent.Drop =>
+                DragCommands.current.use {
+                    case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), decisions)) =>
+                        invokeDecision(attrs.onDrop, decisions, "The drop handler failed.")
+                            .andThen(invokeDecision(attrs.onDropEvt.map(_(value)), decisions, "The drop handler failed."))
+                            .andThen(keepBubbling(elem, attrs.onDrop.nonEmpty || attrs.onDropEvt.nonEmpty))
+                    case _ => true
+                }
+            case _: UIEvent.SortMove =>
+                DragCommands.current.use {
+                    case Present(DragCommands.Dispatch(DragCommands.Payload.Move(value), decisions)) =>
+                        invokeDecision(attrs.onSortMove, decisions, "The sort handler failed.")
+                            .andThen(invokeDecision(attrs.onSortMoveEvt.map(_(value)), decisions, "The sort handler failed."))
+                            .andThen(keepBubbling(elem, attrs.onSortMove.nonEmpty || attrs.onSortMoveEvt.nonEmpty))
+                    case _ => true
+                }
             case _ => true
         end match
     end dispatchToElement
+
+    private def invokeDrag(action: Maybe[Any < Async], typed: Maybe[Any < Async], label: String)(using Frame): Unit < Async =
+        def safe(handler: Maybe[Any < Async]): Unit < Async =
+            handler.fold((): Unit < Async) { effect =>
+                Abort.recover[Throwable](
+                    err => Log.error(s"Handler error during $label: ${err.getMessage}"),
+                    panic => Log.error(s"Handler panic during $label: ${panic.getMessage}")
+                )(effect.unit)
+            }
+        safe(action).andThen(safe(typed))
+    end invokeDrag
+
+    private def dispatchDragEvent(
+        elem: Element,
+        action: Maybe[Any < Async],
+        typed: Maybe[Drag.Event => Any < Async],
+        label: String
+    )(using Frame): Boolean < Async =
+        DragCommands.current.use {
+            case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), _)) =>
+                invokeDrag(action, typed.map(_(value)), label)
+                    .andThen(keepBubbling(elem, action.nonEmpty || typed.nonEmpty))
+            case _ => true
+        }
+
+    private def invokeDecision(
+        handler: Maybe[Drag.Decision < Async],
+        decisions: Maybe[AtomicRef[DragCommands.DecisionState]],
+        failure: String
+    )(using Frame): Unit < Async =
+        handler.fold((): Unit < Async) { effect =>
+            for
+                result <- Abort.run[Any](effect)
+                _ <- result match
+                    case Result.Success(decision) => recordDecision(decisions, decision)
+                    case Result.Failure(err) =>
+                        Log.error(s"Drag decision handler error: $err").andThen(failDecision(decisions, failure))
+                    case Result.Panic(panic) =>
+                        Log.error(s"Drag decision handler panic: ${panic.getMessage}").andThen(failDecision(decisions, failure))
+            yield ()
+        }
+
+    private def recordDecision(ref: Maybe[AtomicRef[DragCommands.DecisionState]], decision: Drag.Decision)(using
+        Frame
+    ): Unit < Sync =
+        ref.fold((): Unit < Sync)(_.getAndUpdate {
+            case failed: DragCommands.DecisionState.Failed     => failed
+            case rejected: DragCommands.DecisionState.Rejected => rejected
+            case _ =>
+                decision match
+                    case Drag.Decision.Accept         => DragCommands.DecisionState.Accepted
+                    case reject: Drag.Decision.Reject => DragCommands.DecisionState.Rejected(reject)
+        }.unit)
+
+    private def failDecision(ref: Maybe[AtomicRef[DragCommands.DecisionState]], reason: String)(using Frame): Unit < Sync =
+        ref.fold((): Unit < Sync)(_.getAndUpdate(_ =>
+            DragCommands.DecisionState.Failed(Drag.Decision.Reject(Drag.Rejection.Application(reason)))
+        ).unit)
 
     // ---- Subscribe ----
 
@@ -596,8 +706,128 @@ private[kyo] object ReactiveUI:
     def subscribe(rui: ReactiveUI, exchange: UIExchange)(using Frame): Subscription < (Async & Scope) =
         for
             signalChangeTime <- AtomicRef.init(Instant.Epoch)
+            dragSessions     <- AtomicRef.init(Map.empty[String, DragSession])
+            _                <- Scope.ensure(dragSessions.set(Map.empty))
             _                <- subscribeScoped(rui, exchange, signalChangeTime)
-        yield Subscription(rui.handle, signalChangeTime)
+        yield Subscription(dragHandle(rui.handle, dragSessions), signalChangeTime)
+
+    private def dragHandle(handle: Handler, sessions: AtomicRef[Map[String, DragSession]])(using Frame): Handler =
+        (path, event) =>
+            event match
+                case UIEvent.DragStart(_, data) =>
+                    sessions.get.map(_.contains(data.sessionId)).map {
+                        case true =>
+                            DragCommands.resolve(
+                                data.sessionId,
+                                Drag.Decision.Reject(Drag.Rejection.Application("A drag session with this identifier is already active."))
+                            ).andThen(true)
+                        case false =>
+                            val domain = Drag.Event(
+                                data.sessionId,
+                                data.domainItems,
+                                data.operation,
+                                data.sourceKey,
+                                Absent,
+                                Present(data.point),
+                                data.modifiers,
+                                Absent
+                            )
+                            sessions.getAndUpdate(_ + (data.sessionId -> DragSession(domain, terminalResolved = false))).unit
+                                .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                    DragCommands.Payload.Event(domain),
+                                    Absent
+                                ))) {
+                                    safeDispatch(handle, path, event)
+                                })
+                    }
+                case UIEvent.DragEnd(_, data) =>
+                    sessions.get.map(_.get(data.sessionId)).map {
+                        case Some(session) =>
+                            val finalEvent = session.event.copy(operation = data.operation)
+                            sessions.getAndUpdate(_ - data.sessionId).unit
+                                .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                    DragCommands.Payload.End(Drag.End(finalEvent, canceled = data.cancelled)),
+                                    Absent
+                                ))) {
+                                    safeDispatch(handle, path, event)
+                                })
+                        case None => true
+                    }
+                case target: UIEvent.DragEnter => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
+                case target: UIEvent.DragLeave => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
+                case target: UIEvent.DragOver  => dispatchTarget(handle, path, event, target.event, sessions, terminal = false)
+                case target: UIEvent.Drop      => dispatchTarget(handle, path, event, target.event, sessions, terminal = true)
+                case UIEvent.SortMove(_, sessionId, move) =>
+                    sessions.get.map(_.get(sessionId)).map {
+                        case Some(session) if !session.terminalResolved =>
+                            for
+                                decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
+                                _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
+                                    DragCommands.Payload.Move(move),
+                                    Present(decisions)
+                                ))) {
+                                    safeDispatch(handle, path, event)
+                                }
+                                decision <- finalDecision(decisions, "No sort handler accepted the move.")
+                                _        <- sessions.getAndUpdate(_ + (sessionId -> session.copy(terminalResolved = true)))
+                                _        <- DragCommands.resolve(sessionId, decision)
+                            yield true
+                        case _ => true
+                    }
+                case _ => safeDispatch(handle, path, event)
+
+    private def dispatchTarget(
+        handle: Handler,
+        path: Seq[String],
+        wire: UIEvent,
+        data: DragProtocol.TargetData,
+        sessions: AtomicRef[Map[String, DragSession]],
+        terminal: Boolean
+    )(using Frame): Boolean < Async =
+        sessions.get.map(_.get(data.sessionId)).map {
+            case Some(session) if !session.terminalResolved =>
+                val domain = session.event.copy(
+                    operation = data.operation,
+                    targetKey = data.targetKey,
+                    point = Present(data.point),
+                    modifiers = data.modifiers,
+                    position = data.position
+                )
+                if terminal then
+                    for
+                        decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
+                        _         <- sessions.getAndUpdate(_ + (data.sessionId -> session.copy(event = domain)))
+                        _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
+                            DragCommands.Payload.Event(domain),
+                            Present(decisions)
+                        ))) {
+                            safeDispatch(handle, path, wire)
+                        }
+                        decision <- finalDecision(decisions, "No drop handler accepted the operation.")
+                        _        <- sessions.getAndUpdate(_ + (data.sessionId -> DragSession(domain, terminalResolved = true)))
+                        _        <- DragCommands.resolve(data.sessionId, decision)
+                    yield true
+                else
+                    sessions.getAndUpdate(_ + (data.sessionId -> session.copy(event = domain))).unit
+                        .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(DragCommands.Payload.Event(domain), Absent))) {
+                            safeDispatch(handle, path, wire)
+                        })
+                end if
+            case None if terminal =>
+                DragCommands.resolve(
+                    data.sessionId,
+                    Drag.Decision.Reject(Drag.Rejection.Application("No drop handler accepted the operation."))
+                ).andThen(true)
+            case _ => true
+        }
+
+    private def finalDecision(ref: AtomicRef[DragCommands.DecisionState], emptyReason: String)(using Frame): Drag.Decision < Sync =
+        ref.get.map {
+            case DragCommands.DecisionState.None            => Drag.Decision.Reject(Drag.Rejection.Application(emptyReason))
+            case DragCommands.DecisionState.Accepted        => Drag.Decision.Accept
+            case DragCommands.DecisionState.Rejected(value) => value
+            case DragCommands.DecisionState.Failed(value)   => value
+        }
 
     // Each reactive region forks a Fiber.init (scoped to the enclosing Scope) running observe. Each
     // value opens a fresh per-value Scope; the region renders, re-walks, and forks its children INTO that

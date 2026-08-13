@@ -507,6 +507,61 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "drop decision reaches the WebSocket as one ResolveDrag frame".notNative in {
+        val start = UIEvent.DragStart(
+            Seq("0"),
+            DragProtocol.StartData(
+                "ws-drag",
+                Chunk.empty,
+                Drag.Operation.Move,
+                Present("source"),
+                Drag.Point(1, 1),
+                UI.Modifiers.none
+            )
+        )
+        val drop = UIEvent.Drop(
+            Seq("0"),
+            DragProtocol.TargetData(
+                "ws-drag",
+                Drag.Operation.Move,
+                Present("target"),
+                Drag.Point(2, 2),
+                UI.Modifiers.none,
+                Present(Drag.Position.On)
+            )
+        )
+        for
+            captured <- AtomicRef.init(Absent: Maybe[String])
+            ref      <- Signal.initRef("ready")
+            app = UI.div(
+                UI.div
+                    .dragSource(Drag.Source("source", Chunk.empty))
+                    .dropTarget(Drag.Target("target", Drag.Accept()))
+                    .onDrop(Drag.Decision.Accept),
+                ref.map(UI.span(_))
+            )
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    serverWs => UIServer.serveSession(serverWs, app),
+                    clientWs =>
+                        for
+                            _     <- clientWs.take()
+                            _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](start)))
+                            _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](drop)))
+                            frame <- clientWs.take()
+                            _ <- captured.set(frame match
+                                case HttpWebSocket.Payload.Text(data) => Present(data)
+                                case _                                => Absent)
+                        yield ()
+                )
+            }
+            actual <- captured.get
+        yield assert(actual.exists(data =>
+            Json.decode[HtmlOp](data) == Result.succeed(HtmlOp.ResolveDrag("ws-drag", Drag.Decision.Accept))
+        ))
+        end for
+    }
+
     // ==================== Leaf 6: scrollIntoView command over WS ====================
 
     // notNative: WS-behavior leaf; see class scaladoc for RI-001 rationale.
