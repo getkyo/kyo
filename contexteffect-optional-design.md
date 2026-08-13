@@ -82,35 +82,34 @@ an optional suspension whose tag has no region is answered `Absent`. The
 default returns to being ordinary code in `ContextEffect`, exactly as the old
 kernel's `getOrElse` was ordinary code over its map.
 
-### The marker is typed
+### The marker restricts the suspension, and carries nothing
 
-The unsound version of this proposal made `Optional` a bare marker and had the
-evaluator inject `Absent` into a continuation typed to receive `O[X]`, which
-nothing checks. Instead the marker names the operation it belongs to and
-declares the answer at that operation's own output type:
+A bare marker would be unsound: the evaluator would inject `Absent` into a
+continuation typed to receive `O[X]`, and nothing checks that `O[X]` admits it.
+The fix is not to give the marker a member, it is to constrain the suspension it
+may be mixed into, so the continuation *is* a `Maybe` consumer by construction:
 
 ```scala
 // KyoInternal.scala: replaces Defaulted
-private[kyo] trait Optional[O[_], X]:
-    self: Suspend[?, O, ?, X, ?, ?] =>
-    /** The answer when no region handles this operation. A constant, not a
-      * carried value: the compiler checks it against the operation's output
-      * type, which is what makes the find-miss injection sound. */
-    def absent: O[X]
+private[kyo] trait Optional[A]:
+    self: Suspend[?, Const[Maybe[A]], ?, ?, ?, ?] =>
+    // no members: the self-type is the proof. A suspension can only claim to be
+    // optional if its continuation already accepts Maybe[A], which is what makes
+    // the find-miss injection of Absent sound
 
 // Eval.scala, find-miss arm
-case o: Kyo.Optional[[X] =>> Any, Any] @unchecked =>
-    loop(resume(kyo.cont, Nested.lift(o.absent)), hs)
+case _: Kyo.Optional[?] =>
+    loop(resume(kyo.cont, Nested.lift(Absent)), hs)
 ```
 
-`absent` is a constant method, not a captured field: no allocation, and the JIT
-folds it. The erasure at the `Eval` match is the same erased-currency pattern
-every other arm uses; what matters is that *construction* is checked.
+Nothing is carried, nothing is allocated, and the evaluator answers one shared
+constant. `Absent <: Maybe[Nothing] <: Maybe[A]`, so the injection typechecks
+against every continuation the self-type permits.
 
 ### The effect's output gains room for absence
 
-For `absent: O[X]` to typecheck at the read site, the operation's output must
-admit it:
+For the self-type to be satisfiable at the read site, the operation's output
+must be the `Maybe`:
 
 ```scala
 abstract class ContextEffect[+A] extends ArrowEffect[Const[Unit], Const[Maybe[A]]]
@@ -131,13 +130,11 @@ treats as outside the supported path.
 private inline def optional[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(
     using inline _frame: Frame
 ): Maybe[A] < Any =
-    new Kyo.Suspend[Const[Unit], Const[Maybe[A]], E, Any, Maybe[A], Any]
-        with Kyo.Optional[Const[Maybe[A]], Any]:
-        def tag    = effectTag
-        def input  = ()
-        def frame  = _frame
-        def cont   = Arrow[Maybe[A]]   // identity, no cast: O[X] is already Maybe[A]
-        def absent = Absent            // checked against Const[Maybe[A]][Any]
+    new Kyo.Suspend[Const[Unit], Const[Maybe[A]], E, Any, Maybe[A], Any] with Kyo.Optional[A]:
+        def tag   = effectTag
+        def input = ()
+        def frame = _frame
+        def cont  = Arrow[Maybe[A]]    // identity, no cast: O[X] is already Maybe[A]
 ```
 
 ```scala
@@ -219,10 +216,11 @@ restoring named-argument parity.
 
 Two distinct claims, both now checked rather than asserted.
 
-**The injection fits the operation.** `absent: O[X]` is declared on the marker
-and implemented at the read site, so a suspension cannot claim to be optional
-unless its operation can express absence. The untyped version had no such
-check.
+**The injection fits the continuation.** The marker's self-type is
+`Suspend[?, Const[Maybe[A]], ?, ?, ?, ?]`, so a suspension cannot claim to be
+optional unless its continuation already consumes `Maybe[A]`. The evaluator's
+`Absent` fits every such continuation by subtyping, with no member on the
+marker and no cast at the injection.
 
 **Absence is distinguishable from a provided `Absent`.** This matters for
 `Local[Maybe[B]]`: provision answers `Maybe(value)`, and `Maybe(Absent)` is
@@ -250,8 +248,8 @@ bytecode pins, and the full fixture board.
 
 | file | change |
 |---|---|
-| `internal/KyoInternal.scala` | `Defaulted` → `Optional[O, X]` with `absent: O[X]`; TODO deleted |
-| `internal/Eval.scala` | find-miss arm answers `o.absent`; `Detached` arm unchanged |
+| `internal/KyoInternal.scala` | `Defaulted` → `Optional[A]`, no members, self-typed to a `Maybe`-consuming suspension; TODO deleted |
+| `internal/Eval.scala` | find-miss arm answers `Absent`; `Detached` arm unchanged |
 | `ContextEffect.scala` | output type gains `Maybe`; one `optional` primitive; four methods on old signatures; `undefined` deleted; provision encodes |
 | `ContextEffectTest.scala` | probe-behavior tests follow the new decode |
 | `kyo-kernel2/CONTRIBUTING.md` | the `ContextEffect` and find-miss descriptions |
