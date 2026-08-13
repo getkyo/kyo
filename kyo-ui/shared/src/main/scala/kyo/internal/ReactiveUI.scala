@@ -127,7 +127,6 @@ private[kyo] object ReactiveUI:
     final private case class DragSession(
         event: Drag.Event,
         terminalResolved: Boolean,
-        generation: Long,
         expiresAt: Instant,
         resolver: DragResolver
     )
@@ -735,7 +734,6 @@ private[kyo] object ReactiveUI:
         for
             signalChangeTime <- AtomicRef.init(Instant.Epoch)
             dragSessions     <- AtomicRef.init(Map.empty[String, DragSession])
-            generation       <- AtomicLong.init(0L)
             dragMutex        <- Meter.initMutex
             expiryWake       <- Channel.init[Unit](1)
             expiryWorkers    <- AtomicInt.init(0)
@@ -745,7 +743,7 @@ private[kyo] object ReactiveUI:
             }).unit
             _ <- subscribeScoped(rui, exchange, signalChangeTime)
         yield Subscription(
-            dragHandle(rui.handle, dragSessions, generation, dragMutex, expiryWake, dragLimits),
+            dragHandle(rui.handle, dragSessions, dragMutex, expiryWake, dragLimits),
             signalChangeTime,
             () => dragSessions.get.map(_.size),
             () => expiryWorkers.get
@@ -754,7 +752,6 @@ private[kyo] object ReactiveUI:
     private def dragHandle(
         handle: Handler,
         sessions: AtomicRef[Map[String, DragSession]],
-        generation: AtomicLong,
         mutex: Meter,
         expiryWake: Channel[Unit],
         limits: DragSessionLimits
@@ -762,7 +759,7 @@ private[kyo] object ReactiveUI:
         (path, event) =>
             if isDragEvent(event) then
                 Abort.runPartial[Closed](
-                    mutex.run(dragDispatch(handle, sessions, generation, expiryWake, limits, path, event))
+                    mutex.run(dragDispatch(handle, sessions, expiryWake, limits, path, event))
                 ).map {
                     case Result.Success(value) => value
                     case Result.Failure(_)     => true
@@ -777,7 +774,6 @@ private[kyo] object ReactiveUI:
     private def dragDispatch(
         handle: Handler,
         sessions: AtomicRef[Map[String, DragSession]],
-        generation: AtomicLong,
         expiryWake: Channel[Unit],
         limits: DragSessionLimits,
         path: Seq[String],
@@ -809,22 +805,19 @@ private[kyo] object ReactiveUI:
                                 Absent
                             )
                             Clock.now.map { now =>
-                                generation.incrementAndGet.map { nextGeneration =>
-                                    sessions.set(current + (data.sessionId -> DragSession(
-                                        domain,
-                                        terminalResolved = false,
-                                        nextGeneration,
-                                        now + limits.lifetime,
-                                        resolver
-                                    )))
-                                        .andThen(wakeExpiryScheduler(expiryWake))
-                                        .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
-                                            DragCommands.Payload.Event(domain),
-                                            Absent
-                                        ))) {
-                                            safeDispatch(handle, path, event)
-                                        })
-                                }
+                                sessions.set(current + (data.sessionId -> DragSession(
+                                    domain,
+                                    terminalResolved = false,
+                                    now + limits.lifetime,
+                                    resolver
+                                )))
+                                    .andThen(wakeExpiryScheduler(expiryWake))
+                                    .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
+                                        DragCommands.Payload.Event(domain),
+                                        Absent
+                                    ))) {
+                                        safeDispatch(handle, path, event)
+                                    })
                             }
                     }
                 }
