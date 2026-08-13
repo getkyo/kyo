@@ -34,24 +34,25 @@ claim-from-home argument, with a mixed-occupancy test in SafepointConcurrencyTes
 
 ## Implementing now
 
-### Exception enrichment (EffectTrace successor)
+### Exception enrichment: implemented, review passed, merge gated on the JMH A/B
 
-Context: kernel2 dropped the old kernel's always-on trace ring (16 frames recorded per
-step through Safepoint, per-platform pools). Failures currently carry only the physical
-stack. The design restores effect-level frames by reconstruction: at the few boundaries
-an exception crosses, walk the live continuation chain and handler stack (Transforms
-and suspensions already carry Frames) and splice synthesized frames into the
-exception, with a suppressed carrier for accumulation and idempotence. Also unblocks
-the five ignored fiberTrace tests (same walker over a fiber's residual), and includes
-the standalone fix for the Eval save/restore leak (an escaping throw currently leaves
-the thread's budget and armed bit as the aborted drive left them).
+Status: built end to end in an isolated worktree (branch worktree-agent-ab6a372849018a255,
+three commits), 650 tests passed with 21 new, the save/restore leak fixed with
+red-first tests, containment of walk failures added with a reproducing test. My
+review passed it without iteration: uniform guarded-arm shape preserving tailrec, one
+shared enrich helper, role-declared walk avoiding the dual-role double-count, no new
+public nouns, doctrine-conscious throughout. Nine design deviations, all local, all
+documented in the commit trail (notably: catching needed attach not just splice, the
+cap needed eviction against the left-deep chain shape map actually builds, and the
+design's own propagation invariant needed the containment fix).
 
-Status: an opus agent is implementing it end to end in an isolated worktree, taking
-the design's own recommendations as provisional defaults for the unruled points (each
-application recorded), full suite as the gate, JMH A/B only if the machine is
-uncontended. Workflow on completion, per your note: I review the work and iterate
-with the agent until the code is clean, elegant, and fully functional, then merge the
-changes into this branch. Design: `exception-enrichment-design.md`.
+Merge gate: the try-region allocation-neutrality claim is the one unvalidated piece;
+the agent correctly skipped the JMH A/B on a contended machine. Plan: once the
+machine frees, run the guard rows on the main tip and on the rebased branch, then
+merge. Discovery recorded from this work: kernel2 does not link on Scala.js today,
+pre-existing, three java.lang.Thread members used by shared Safepoint (threadId,
+isAlive, the constructor in tests); Native compiles clean. Folded into the JS,
+Native, and Wasm sweep item.
 
 ## Next up
 
@@ -129,8 +130,12 @@ the measurements are clean; I own this one.
 Context: kernel2 declares all four platforms with zero platform-specific sources, and
 only JVM has ever been compiled. The shared Safepoint uses AtomicReferenceArray,
 Thread.currentThread, and Thread.threadId(); whether every platform compiles and
-links is unverified and gates any platform-parity claim. Per your note: do it, folded
-into a bigger sweep rather than now.
+links is unverified and gates any platform-parity claim. Evidence so far, found
+during the enrichment work: JS does NOT link, pre-existing, exactly three missing
+java.lang.Thread members (threadId(), isAlive(), the constructor) all reached from
+shared Safepoint and its tests; Native compiles clean. Per your note: fixed in a
+bigger sweep rather than now; the fix shape is a platform seam for the thread
+identity Safepoint needs.
 
 ## Parked (your call to revive)
 
