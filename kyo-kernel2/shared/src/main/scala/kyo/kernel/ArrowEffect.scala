@@ -107,17 +107,23 @@ object ArrowEffect:
         end match
     end handleWith
 
+    /** Handles an effect with a resume-or-stop clause: the clause answers each operation (Loop.continue) or ends the region with a
+      * final value (Loop.done), and never receives the continuation, so the evaluator resumes the stored one in place.
+      */
     @nowarn("msg=anonymous")
-    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](inline _tag: Tag[E], v: A < (E & S))(
-        inline f: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), A] < S2
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), A] < S2
     )(using inline _frame: Frame): A < (S & S2) =
         v match
             case kyo: Kyo[?, ?] =>
                 // one allocation: the object is the handler and the region node
                 new Handler.Loop[I, O, E, A, S & S2] with Kyo.Handled[I, O, E, A, A, S & S2, Any]:
-                    def tag = _tag
+                    def tag = effectTag
                     @targetName("applyInput")
-                    def apply[X](input: I[X]) = f(input)
+                    def apply[X](input: I[X]) = handle(input)
                     val value                 = v
                     def handler               = this
                     def exit                  = Arrow[A]
@@ -128,97 +134,49 @@ object ArrowEffect:
         end match
     end handleLoop
 
-    @nowarn("msg=anonymous")
-    inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, B, S3](inline _tag: Tag[E], v: A < (E & S))(
-        inline f: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), A] < S2
-    )(inline cont: A => B < S3)(using inline _frame: Frame): B < (S & S2 & S3) =
-        v match
-            case kyo: Kyo[?, ?] =>
-                // one allocation: the object is the handler, the region node,
-                // and the region's exit arrow
-                new Arrow.Transform[A, B, S3] with Handler.Loop[I, O, E, A, S & S2] with Kyo.Handled[I, O, E, A, B, S & S2, S3]:
-                    self =>
-                    def tag     = _tag
-                    def frame   = _frame
-                    val value   = v
-                    def handler = this
-                    def exit    = this
-                    @targetName("applyInput")
-                    def apply[X](input: I[X]) = f(input)
-                    def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
-                        v2 match
-                            case kyo: Kyo[A, S4] @unchecked =>
-                                kyo.map(self.chain(next))
-                            case v2 =>
-                                val res  = Kyo.unnest(v2)
-                                val step = next.step
-                                step.head(cont(res), step.tail)
-            case v =>
-                // settled: the effect cannot occur, so the continuation
-                // applies strictly with no region node
-                cont(Kyo.unnest(v))
-        end match
-    end handleLoopWith
-
-    @nowarn("msg=anonymous")
-    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](inline _tag: Tag[E], state: State, v: A < (E & S))(
-        inline f: [X] => (I[X], State) => Loop.Outcome2[State, O[X] < (E & S & S2), A] < S2
+    /** The stateful resume-or-stop handler without a done transform: the final state is discarded and the region completes with the
+      * computation's own result.
+      */
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
+        inline effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (I[X], State) => Loop.Outcome2[State, O[X] < (E & S & S2), A] < S2
     )(using inline _frame: Frame): A < (S & S2) =
+        handleLoop[I, O, E, A, A, S, S2, State](effectTag, state, v)(handle, (_, v) => v)
+
+    /** The canonical stateful resume-or-stop handler. The clause advances the state and answers each operation; at normal completion
+      * `done` observes the final state and the result, and a clause's Loop.done(b) ends the region with `b` directly, bypassing `done`.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+        inline effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (I[X], State) => Loop.Outcome2[State, O[X] < (E & S & S2), B] < S2,
+        inline done: (State, A) => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
         v match
             case kyo: Kyo[?, ?] =>
                 val state0 = state
                 // one allocation: the object is the handler and the region node
-                new Handler.LoopState[I, O, E, A, S & S2, State] with Kyo.HandledState[I, O, E, A, A, S & S2, Any, State]:
-                    def tag                                 = _tag
-                    def apply[X](input: I[X], state: State) = f(input, state)
+                new Handler.LoopState[I, O, E, A, B, S & S2, State] with Kyo.HandledState[I, O, E, A, B, B, S & S2, Any, State]:
+                    def tag                                 = effectTag
+                    def apply[X](input: I[X], state: State) = handle(input, state)
+                    def applyDone(state: State, v: A)       = done(state, v)
                     val value                               = v
                     def handler                             = this
-                    def exit                                = Arrow[A]
+                    def exit                                = Arrow[B]
                     val state                               = state0
                 end new
             case v =>
-                // settled: the effect cannot occur, so the value passes through
-                // strictly with no region node; the cast only shrinks the row
-                v.asInstanceOf[A < (S & S2)]
+                // settled: the effect cannot occur, so done applies strictly to
+                // the initial state and the value; the unnest crosses to a function
+                done(state, Kyo.unnest(v))
         end match
     end handleLoop
-
-    @nowarn("msg=anonymous")
-    inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State, B, S3](
-        inline _tag: Tag[E],
-        state: State,
-        v: A < (E & S)
-    )(
-        inline f: [X] => (I[X], State) => Loop.Outcome2[State, O[X] < (E & S & S2), A] < S2
-    )(inline cont: A => B < S3)(using inline _frame: Frame): B < (S & S2 & S3) =
-        v match
-            case kyo: Kyo[?, ?] =>
-                val state0 = state
-                // one allocation: the object is the handler, the region node,
-                // and the region's exit arrow
-                new Arrow.Transform[A, B, S3] with Handler.LoopState[I, O, E, A, S & S2, State]
-                    with Kyo.HandledState[I, O, E, A, B, S & S2, S3, State]:
-                    self =>
-                    def tag                                 = _tag
-                    def frame                               = _frame
-                    val value                               = v
-                    def handler                             = this
-                    def exit                                = this
-                    val state                               = state0
-                    def apply[X](input: I[X], state: State) = f(input, state)
-                    def apply[C, S4](v2: A < S4, next: Arrow[B, C, S4]) =
-                        v2 match
-                            case kyo: Kyo[A, S4] @unchecked =>
-                                kyo.map(self.chain(next))
-                            case v2 =>
-                                val res  = Kyo.unnest(v2)
-                                val step = next.step
-                                step.head(cont(res), step.tail)
-                end new
-            case v =>
-                cont(Kyo.unnest(v))
-        end match
-    end handleLoopWith
 
     /** Answers the first operation of `E` and leaves.
       *
@@ -269,7 +227,7 @@ object ArrowEffect:
                     f[Any](kyo.input)
                 case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                     peel(kyo.value)
-                case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] @unchecked =>
                     peel(kyo.value)
                 case kyo: Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] @unchecked =>
                     peel(kyo.value)

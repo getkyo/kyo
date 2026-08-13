@@ -194,22 +194,22 @@ object Kyo:
         ) extends HandledFirst[I, O, E, A, B, C, S, S2, S3]
     end HandledFirst
 
-    trait HandledState[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State] extends Kyo[B, S & S2]:
+    trait HandledState[I[_], O[_], E <: ArrowEffect[I, O], A, B, +C, S, -S2, State] extends Kyo[C, S & S2]:
         def value: A < (E & S)
-        def handler: Handler.LoopState[I, O, E, A, S, State]
-        def exit: Arrow[A, B, S & S2]
+        def handler: Handler.LoopState[I, O, E, A, B, S, State]
+        def exit: Arrow[B, C, S & S2]
         def state: State
 
-        final def map[C, S3](f: Arrow[B, C, S3]): C < (S & S2 & S3) =
+        final def map[D, S3](f: Arrow[C, D, S3]): D < (S & S2 & S3) =
             val v  = value
             val h  = handler
             val st = state
             val e  = exit
-            if e eq Arrow[A] then
-                // the identity exit collapses: e meaning forces B = A
-                new HandledState.Impl[I, O, E, A, C, S, S2 & S3, State](v, h, f.asInstanceOf[Arrow[A, C, S & S2 & S3]], st)
+            if e eq Arrow[B] then
+                // the identity exit collapses: e meaning forces C = B
+                new HandledState.Impl[I, O, E, A, B, D, S, S2 & S3, State](v, h, f.asInstanceOf[Arrow[B, D, S & S2 & S3]], st)
             else
-                new Arrow.AndThen[A, B, C, S & S2 & S3](e, f) with HandledState[I, O, E, A, C, S, S2 & S3, State]:
+                new Arrow.AndThen[B, C, D, S & S2 & S3](e, f) with HandledState[I, O, E, A, B, D, S, S2 & S3, State]:
                     val value   = v
                     val handler = h
                     val state   = st
@@ -223,20 +223,20 @@ object Kyo:
     object HandledState:
         // not inline: only the evaluator constructs through this apply, and an
         // inline expansion buys nothing over a constructor call
-        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+        def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, C, S, S2, State](
             value: A < (E & S),
-            handler: Handler.LoopState[I, O, E, A, S, State],
-            exit: Arrow[A, B, S & S2],
+            handler: Handler.LoopState[I, O, E, A, B, S, State],
+            exit: Arrow[B, C, S & S2],
             state: State
-        ): HandledState[I, O, E, A, B, S, S2, State] =
+        ): HandledState[I, O, E, A, B, C, S, S2, State] =
             new Impl(value, handler, exit, state)
 
-        final class Impl[I[_], O[_], E <: ArrowEffect[I, O], A, +B, S, -S2, State](
+        final class Impl[I[_], O[_], E <: ArrowEffect[I, O], A, B, +C, S, -S2, State](
             val value: A < (E & S),
-            val handler: Handler.LoopState[I, O, E, A, S, State],
-            val exit: Arrow[A, B, S & S2],
+            val handler: Handler.LoopState[I, O, E, A, B, S, State],
+            val exit: Arrow[B, C, S & S2],
             val state: State
-        ) extends HandledState[I, O, E, A, B, S, S2, State]
+        ) extends HandledState[I, O, E, A, B, C, S, S2, State]
     end HandledState
 
 end Kyo

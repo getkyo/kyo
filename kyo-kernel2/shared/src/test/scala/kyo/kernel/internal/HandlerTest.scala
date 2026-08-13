@@ -37,9 +37,10 @@ class HandlerTest extends AnyFreeSpec:
 
     "a LoopState handler continues with the next state and the answer" in {
         val h =
-            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:
                 def tag                               = Tag[Ask]
                 def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+                def applyDone(state: Int, v: Int)     = v
         val outcome = h[Any]((), 7)
         (outcome: Any) match
             case c: Loop.Continue2[?, ?] =>
@@ -52,9 +53,10 @@ class HandlerTest extends AnyFreeSpec:
 
     "a LoopState handler is pure logic: distinct states through one instance" in {
         val h =
-            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Any, Int]:
+            new Handler.LoopState[Const[Unit], Const[Int], Ask, Int, Int, Any, Int]:
                 def tag                               = Tag[Ask]
                 def apply[X](input: Unit, state: Int) = Loop.continue(state + 1, state)
+                def applyDone(state: Int, v: Int)     = v
         val first  = h[Any]((), 0)
         val second = h[Any]((), 100)
         (first: Any, second: Any) match

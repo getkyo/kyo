@@ -95,7 +95,7 @@ object Eval:
                         // is the one place the kinds genuinely differ: different clause
                         // protocols, different spine effects, different continuations
                         cell.handler match
-                            case h: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] =>
+                            case h: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] =>
                                 val clause =
                                     try h(kyo.input, cell.state)
                                     catch case ex: Throwable => enrich(ex, v, hs)
@@ -174,7 +174,7 @@ object Eval:
                         loop(next, hs)
                 case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                     loop(kyo.value, hs.push(kyo))
-                case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] @unchecked =>
                     loop(kyo.value, hs.push(kyo))
                 case kyo: Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] @unchecked =>
                     loop(kyo.value, hs.push(kyo))
@@ -188,6 +188,14 @@ object Eval:
                                 // of the currency because it crosses to a function
                                 val next =
                                     try walk(hs.exit, h(Nested.unnest(v)))
+                                    catch case ex: Throwable => enrich(ex, v, hs)
+                                loop(next, hs.prev)
+                            case h: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] =>
+                                // normal completion of a stateful region: the done
+                                // transform observes the final state; a clause's
+                                // Loop.done reaches the exit directly and skips it
+                                val next =
+                                    try walk(hs.exit, h.applyDone(hs.state, Nested.unnest(v)))
                                     catch case ex: Throwable => enrich(ex, v, hs)
                                 loop(next, hs.prev)
                             case _ =>
@@ -204,14 +212,14 @@ object Eval:
     // evaluation loop so its hot arms stay small
     private def statePending(
         pending: Loop.Outcome2[Any, Any < Nothing, Any] < Any,
-        handler: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+        handler: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any],
         cell: Handlers,
         hsAll: Handlers,
         kCont: Arrow[Any, Any, Any]
     ): Any < Nothing =
         pending.map {
             case c: Loop.Continue2[Any, Any < Nothing] @unchecked =>
-                Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any](
+                Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any](
                     rebuild(hsAll, cell, walk(kCont, c._2)),
                     handler,
                     cell.exit,

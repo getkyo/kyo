@@ -19,8 +19,12 @@ object Handler:
         def apply[X](input: I[X]): Outcome[O[X] < (E & S), A] < S
     end Loop
 
-    trait LoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, State] extends Handler[I, O, E, A, S]:
-        def apply[X](input: I[X], state: State): Outcome2[State, O[X] < (E & S), A] < S
+    trait LoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handler[I, O, E, A, S]:
+        def apply[X](input: I[X], state: State): Outcome2[State, O[X] < (E & S), B] < S
+        // the done transform: runs at normal completion with the final state; a
+        // clause's Loop.done(b) bypasses it, exactly the old kernel's contract
+        def applyDone(state: State, v: A): B < S
+    end LoopState
 
     // answers one operation and leaves: the first clause takes the continuation
     // with the effect still in its row, the second is the region's result when

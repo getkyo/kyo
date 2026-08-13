@@ -71,7 +71,7 @@ object Handlers:
     end Node
 
     final private class StateNode(
-        handler: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+        handler: Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any],
         exit: Arrow[Any, Any, Any],
         override val state: Any,
         prev: Handlers
@@ -83,7 +83,7 @@ object Handlers:
         private[kernel] def rebuilt(value: Any < Nothing): Any < Nothing =
             new RebuiltStateNode(value, this)
         private[Handlers] def loopState =
-            handler.asInstanceOf[Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]]
+            handler.asInstanceOf[Handler.LoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]]
     end StateNode
 
     final private class FirstNode(
@@ -113,7 +113,7 @@ object Handlers:
     final private class RebuiltStateNode(
         val value: Any < Nothing,
         val cell: StateNode
-    ) extends Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any]:
+    ) extends Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any]:
         def handler = cell.loopState
         def exit    = cell.exit
         def state   = cell.state
@@ -148,7 +148,7 @@ object Handlers:
                 case kyo: RebuiltNode if kyo.cell.prev eq self => kyo.cell
                 case _                                         => new Node(kyo.handler, kyo.exit, self)
 
-        def push(kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any]): Handlers =
+        def push(kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any]): Handlers =
             kyo match
                 case kyo: RebuiltStateNode if kyo.cell.prev eq self => kyo.cell
                 case _                                              => new StateNode(kyo.handler, kyo.exit, kyo.state, self)
