@@ -299,8 +299,12 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
         val safeSourceConfig = DragProtocol.sourceConfig(safeSource, DragProtocol.Limits.default)
         val safeTargetConfig = DragProtocol.targetConfig(safeTarget, DragProtocol.Limits.default)
+        val safeSourceJson   = DragProtocol.encodedSourceConfig(safeSource, DragProtocol.Limits.default)
+        val safeTargetJson   = DragProtocol.encodedTargetConfig(safeTarget, DragProtocol.Limits.default)
         assert(safeSourceConfig.isSuccess)
         assert(safeTargetConfig.isSuccess)
+        assert(safeSourceJson == safeSourceConfig.map(Json.encode(_)))
+        assert(safeTargetJson == safeTargetConfig.map(Json.encode(_)))
         assert(DragProtocol.sourceConfig(unsafeSource, DragProtocol.Limits.default).isFailure)
         assert(DragProtocol.targetConfig(unsafeTarget, DragProtocol.Limits.default).isFailure)
         assert(DragProtocol.sourceConfig(tooMany, DragProtocol.Limits.default).isFailure)
@@ -328,6 +332,8 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         yield
             val sourceJson = htmlUnescape(attribute(sourceHtml, "data-kyo-drag-source"))
             val targetJson = htmlUnescape(attribute(targetHtml, "data-kyo-drop-target"))
+            assert(safeSourceJson == Result.succeed(sourceJson))
+            assert(safeTargetJson == Result.succeed(targetJson))
             assert(Json.decode[DragProtocol.SourceConfig](sourceJson) == safeSourceConfig)
             assert(Json.decode[DragProtocol.TargetConfig](targetJson) == safeTargetConfig)
             assert(sourceJson.contains(maxSafe.toString))

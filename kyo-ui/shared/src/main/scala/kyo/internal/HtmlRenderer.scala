@@ -430,14 +430,14 @@ private[kyo] object HtmlRenderer:
     end renderCommonAttrs
 
     private def encodedDragSource(source: Drag.Source)(using Frame): String =
-        DragProtocol.sourceConfig(source, DragProtocol.Limits.default) match
-            case Result.Success(config) => Json.encode(config)
-            case failure                => throw new IllegalArgumentException(s"Invalid drag source metadata: $failure")
+        DragProtocol.encodedSourceConfig(source, DragProtocol.Limits.default) match
+            case Result.Success(encoded) => encoded
+            case failure                 => throw new IllegalArgumentException(s"Invalid drag source metadata: $failure")
 
     private def encodedDropTarget(target: Drag.Target)(using Frame): String =
-        DragProtocol.targetConfig(target, DragProtocol.Limits.default) match
-            case Result.Success(config) => Json.encode(config)
-            case failure                => throw new IllegalArgumentException(s"Invalid drop target metadata: $failure")
+        DragProtocol.encodedTargetConfig(target, DragProtocol.Limits.default) match
+            case Result.Success(encoded) => encoded
+            case failure                 => throw new IllegalArgumentException(s"Invalid drop target metadata: $failure")
 
     // ---- Element-specific attributes ----
 

@@ -234,6 +234,12 @@ private[kyo] object DragProtocol:
 
     /** Validates and converts a domain drag source into its browser-bound representation. */
     private[kyo] def sourceConfig(source: Drag.Source, limits: Limits)(using Frame): Result[ValidationFailure, SourceConfig] =
+        sourceConfigAndJson(source, limits).map(_._1)
+
+    private def sourceConfigAndJson(
+        source: Drag.Source,
+        limits: Limits
+    )(using Frame): Result[ValidationFailure, (SourceConfig, String)] =
         validateIdentifier(source.key, "source.key", limits)
             .flatMap(_ => validateCount(source.items.size, "source.items", limits.maxItemCount))
             .flatMap(_ => validateAll(source.items)(validateDomainItem(_, limits)))
@@ -250,11 +256,24 @@ private[kyo] object DragProtocol:
                     source.activation
                 )
             )
-            .flatMap(config => validateEncodedAttribute(Json.encode(config), "dragSource", limits).map(_ => config))
-    end sourceConfig
+            .flatMap { config =>
+                val encoded = Json.encode(config)
+                validateEncodedAttribute(encoded, "dragSource", limits).map(_ => (config, encoded))
+            }
+    end sourceConfigAndJson
+
+    /** Converts and encodes a source once, validating the exact compact browser attribute value. */
+    private[kyo] def encodedSourceConfig(source: Drag.Source, limits: Limits)(using Frame): Result[ValidationFailure, String] =
+        sourceConfigAndJson(source, limits).map(_._2)
 
     /** Validates and converts domain target rules into their browser-bound representation. */
     private[kyo] def targetConfig(target: Drag.Target, limits: Limits)(using Frame): Result[ValidationFailure, TargetConfig] =
+        targetConfigAndJson(target, limits).map(_._1)
+
+    private def targetConfigAndJson(
+        target: Drag.Target,
+        limits: Limits
+    )(using Frame): Result[ValidationFailure, (TargetConfig, String)] =
         val accepts = target.accepts
         validateIdentifier(target.key, "target.key", limits)
             .flatMap(_ => validateOptionalText(target.label, "target.label", limits.maxNameLength))
@@ -284,8 +303,15 @@ private[kyo] object DragProtocol:
                     target.label
                 )
             )
-            .flatMap(config => validateEncodedAttribute(Json.encode(config), "dropTarget", limits).map(_ => config))
-    end targetConfig
+            .flatMap { config =>
+                val encoded = Json.encode(config)
+                validateEncodedAttribute(encoded, "dropTarget", limits).map(_ => (config, encoded))
+            }
+    end targetConfigAndJson
+
+    /** Converts and encodes a target once, validating the exact compact browser attribute value. */
+    private[kyo] def encodedTargetConfig(target: Drag.Target, limits: Limits)(using Frame): Result[ValidationFailure, String] =
+        targetConfigAndJson(target, limits).map(_._2)
 
     private def validateDomainItem(item: Drag.Item, limits: Limits): Result[ValidationFailure, Unit] =
         item match
