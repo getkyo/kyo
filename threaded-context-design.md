@@ -73,22 +73,27 @@ innermost-out threading a working copy (`value = working(tag); working =
 restore(tag, cell.saved)`), which handles same-tag nesting for free. Re-entry
 of a rebuilt node is an ordinary push and re-seeds.
 
-### Context effects stop being operations
+### Context effects stop being operations, and reads ride Defer
 
 With a queryable ctx in the loop, a context read is not an effect operation:
 it never dispatches to a handler, so `ContextEffect` returns to the old
 kernel's shape, `abstract class ContextEffect[+A] extends Effect`, not an
-ArrowEffect. The two suspension kinds it needs are answered by the evaluator
-as their own arms, before any spine walk:
+ArrowEffect. And a read needs no node kind of its own. The old kernel's reads
+were plain `KyoDefer`, because every `KyoDefer.apply(v, context)` received the
+threaded map; kernel2's equivalent is giving `Kyo.Defer` its value with ctx in
+hand:
 
 ```scala
-// read: one arm, no handler, no find
-case kyo: Kyo.ContextGet[?] =>
-    loop(resume(kyo.cont, Nested.lift(ctx.getOrElse(kyo.tag, kyo.default))), hs, ctx)
+sealed trait Defer[A, +B, -S] extends Kyo[B, S]:
+    def value(ctx: Context): A < S      // Effect.defer ignores it, reads use it
+    def cont: Arrow[A, B, S]
+
+// Eval's existing Defer arm, unchanged but for the argument
+val next = try walk(kyo.cont, kyo.value(ctx)) catch ...
 ```
 
-- `suspend(tag)` = `ContextGet` whose default is `bug("Unexpected pending context effect: ...")`.
-- `suspend(tag, default)` = `ContextGet` with the by-name default.
+- `suspend(tag)` = a Defer whose value is `ctx.getOrElse(tag, bug("Unexpected pending context effect: ..."))`.
+- `suspend(tag, default)` = the same with the by-name default.
 - `handle(tag, value)(v)` = a binding node: seed `value`, body, restore.
 - `handle(tag, ifUndefined, ifDefined)(v)` = the same node, entry value
   computed once at push from the outer entry: `ctx.get(tag)` present, apply
@@ -100,17 +105,26 @@ case kyo: Kyo.ContextGet[?] =>
 All six public signatures land on the old kernel's, with `default` keeping its
 name (nothing on the node is called `default` in user space).
 
-### Fork and detach
+### Fork: no detach, no node, no machinery
 
-`Effect.detach` returns, radically smaller: no transplant walk, no rebuilt
-provision cells. The child crosses as data paired with the inherited slice of
-the live map, and a fresh drive starts from that map instead of empty:
+`Effect.detach` does not come back. It existed only because the spine-held
+context was unreadable except by the evaluator, so crossing a fork boundary
+needed a suspension the evaluator answered by rebuilding cells. With a
+threaded map the old kernel's architecture applies verbatim
+(`Isolate.internal.runDetached`, origin/main Isolate.scala:228): the fork
+primitive is a plain Defer that hands the inherited slice to the fork site,
 
 ```scala
-// find-miss arm handled the old detach; now it is its own node kind
-case kyo: Kyo.Detach[?] =>
-    loop(resume(kyo.cont, Nested.lift(Kyo.Seeded(ctx.inherit, kyo.child))), hs, ctx)
+private[kyo] inline def runDetached[A, S](inline f: Context => A < S): A < S =
+    new Kyo.Defer[Unit, A, S]:
+        def value(ctx: Context) = f(ctx.inherit)
+        def cont = ...
 ```
+
+and the scheduler carries that map to a fresh drive: `Eval` and `Eval.partial`
+gain a seed parameter (`ctx: Context = Context.empty`), the direct analogue of
+the old kernel's `IOTask.context` feeding `handlePartial(..., context)`. The
+kernel keeps zero fork machinery beyond the `inherit` filter itself.
 
 `ctx.inherit` filters by tag, the old kernel's exact mechanism
 (`NoninheritableFlag` short-circuit included, if we keep that optimization):
@@ -140,8 +154,9 @@ level where it belongs.
 
 ## 3. What executes, per scenario
 
-- **`Local.get` under a `let`**: one `ContextGet` node, one map lookup, resume.
-  No handler clause, no outcome box. Old-kernel speed.
+- **`Local.get` under a `let`**: one Defer node, one map lookup, resume. No
+  handler clause, no outcome box. Old-kernel speed and old-kernel shape
+  (its reads were `KyoDefer`).
 - **`Var.set` at its own region** (no enclosing regions entered above): map
   update (`Map1`-`Map4` node) replaces a `StateNode` alloc. A tie.
 - **`Var.set` under N enclosing regions**: map update replaces N+1 cell
@@ -150,8 +165,9 @@ level where it belongs.
   zero writes either way.
 - **Foreign crossing / park / resume**: same rebuild walk as today; the
   rebuilt state node reads its entry from the captured map instead of the cell.
-- **Fork**: filter a persistent map, hand it to the child's drive. No walk of
-  the spine at all when nothing was entered (empty map short-circuit).
+- **Fork**: a Defer reads `ctx.inherit` (filter a persistent map), the fork
+  site seeds the child's drive with it. No walk of the spine at all; empty map
+  short-circuits to no cost.
 
 ## 4. What is deleted, what is added
 
@@ -170,10 +186,16 @@ Added:
 | piece | file |
 |---|---|
 | `Context` (old kernel's, minus the `inherit`-flag if we simplify) | internal/Context.scala (~50 lines) |
-| `ctx` loop variable + seed/restore/unwind/snapshot | Eval.scala |
-| `Kyo.ContextGet`, binding node, `Kyo.Detach`, seeded-drive entry | KyoInternal.scala |
+| `ctx` loop variable + seed/restore/unwind/snapshot; seed parameter on `Eval`/`Eval.partial` | Eval.scala |
+| `value(ctx)` on the existing `Defer` node; one new binding-node kind | KyoInternal.scala |
 | `saved` field on entry-owning cells | Handlers.scala |
-| `ContextEffect` on old-kernel signatures over ctx | ContextEffect.scala |
+| `ContextEffect` on old-kernel signatures over Defer reads; `runDetached` | ContextEffect.scala |
+
+`Effect.catching`'s guard rewraps `Defer` today by reading `kyo.value`
+structurally; with `value(ctx)` it delegates the accessor instead of reading
+it (`def value(ctx) = kyo.value(ctx)`), which is the same rewrap. A read
+riding the Defer arm also inherits the arm's budget reset, matching the old
+kernel, where every read was a suspension with safepoint handling.
 
 `HandledState` survives as the region-entry carrier for the initial state, but
 its cell stops carrying live state. `Handler.LoopState` keeps `apply` and
