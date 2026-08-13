@@ -248,6 +248,36 @@ object ArrowEffect:
         end match
     end handleFirst
 
+    /** Inspects the standing operation of `v`, the first suspension reachable by peeling region nodes, and invokes `f` with its input when
+      * the tag matches.
+      *
+      * Runs nothing: it enters no handler, applies no region's exit, steps no `Defer`, and touches no `Safepoint`. The walk stops at a
+      * `Defer` or at a settled value, so a consumer inspecting a remainder that will never be evaluated cannot run user code from it. The
+      * computation is left as it was, and the result is the side effect `f` produces.
+      */
+    private[kyo] inline def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        inline _tag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline f: [X] => I[X] => Unit
+    ): Unit =
+        // the peel crosses regions whose inner type is not the outer one, so the
+        // walk reads the erased currency, as the evaluator's own arms do
+        @tailrec def peel(v: Any < Nothing): Unit =
+            v match
+                case kyo: Kyo.Suspend[I, O, E, Any, Any, Any] @unchecked if kyo.tag <:< _tag =>
+                    f[Any](kyo.input)
+                case kyo: Kyo.Handled[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                    peel(kyo.value)
+                case kyo: Kyo.HandledState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any] @unchecked =>
+                    peel(kyo.value)
+                case kyo: Kyo.HandledFirst[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any, Any, Any] @unchecked =>
+                    peel(kyo.value)
+                case _ =>
+                    ()
+        peel(v)
+    end dispatchFirst
+
     /** Handles `E` with `f` and routes the non-fatal failures of one pass to `recover`.
       *
       * The recovery covers the handled computation, including the steps resumed after a foreign operation, and every invocation of `f`.

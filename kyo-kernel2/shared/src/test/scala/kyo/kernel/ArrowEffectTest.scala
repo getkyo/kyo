@@ -538,6 +538,79 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "dispatchFirst" - {
+        "runs the clause on the standing operation" in {
+            var seen = ""
+            ArrowEffect.dispatchFirst(Tag[Say], say("hello").map(_ => 1))([X] => input => seen = input)
+            assert(seen == "hello")
+        }
+
+        "reads the input of a mapped suspension through its root" in {
+            var seen = ""
+            ArrowEffect.dispatchFirst(Tag[Say], say("root").map(_ => 1).map(_ + 1))([X] => input => seen = input)
+            assert(seen == "root")
+        }
+
+        "peels a region node to reach the operation" in {
+            var seen   = ""
+            val region = ArrowEffect.handle(Tag[Ask], say("under").map(_ => ask))([X] => (_, cont) => cont(1))
+            ArrowEffect.dispatchFirst(Tag[Say], region)([X] => input => seen = input)
+            assert(seen == "under")
+        }
+
+        "peels a stateless and a stateful region node" in {
+            var seen = ""
+            val inner =
+                ArrowEffect.handleLoop(Tag[Ask], 0, say("deep").map(_ => ask))([X] => (_, state) => Loop.continue(state + 1, state))
+            val outer = ArrowEffect.handle(Tag[Ask], inner.asInstanceOf[Int < (Ask & Say)])([X] => (_, cont) => cont(1))
+            ArrowEffect.dispatchFirst(Tag[Say], outer)([X] => input => seen = input)
+            assert(seen == "deep")
+        }
+
+        "peels a first region node" in {
+            var seen = ""
+            val region =
+                ArrowEffect.handleFirst(Tag[Ask], say("first").map(_ => ask))([X] => (_, cont) => cont(1))(identity)
+            ArrowEffect.dispatchFirst(Tag[Say], region)([X] => input => seen = input)
+            assert(seen == "first")
+        }
+
+        "does nothing when the standing operation has another tag" in {
+            var ran = false
+            ArrowEffect.dispatchFirst(Tag[Ask], say("x").map(_ => 1))([X] => _ => ran = true)
+            assert(!ran)
+        }
+
+        "stops at a deferred step without running its body" in {
+            var ran   = false
+            var built = false
+            val v = Effect.defer {
+                built = true
+                say("hidden").map(_ => 1)
+            }
+            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => _ => ran = true)
+            assert(!ran)
+            assert(!built)
+        }
+
+        "stops at a settled value" in {
+            var ran          = false
+            val v: Int < Say = 42
+            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => _ => ran = true)
+            assert(!ran)
+        }
+
+        "leaves the computation as it was" in {
+            var seen                 = 0
+            val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
+            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => _ => seen += 1)
+            assert(seen == 1)
+            val sayHandled = ArrowEffect.handle(Tag[Say], v)([X] => (_, cont) => cont(()))
+            assert(ArrowEffect.handle(Tag[Ask], sayHandled)([X] => (_, cont) => cont(41)).eval == 42)
+            assert(seen == 1)
+        }
+    }
+
     "handleCatching" - {
         "answers operations when nothing fails" in {
             val v = ask.map(a => ask.map(b => a + b))
