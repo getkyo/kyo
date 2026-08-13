@@ -103,13 +103,6 @@ final case class ContainerNetworkMissingException(id: Container.Network.Id)(usin
 final case class ContainerVolumeMissingException(id: Container.Volume.Id)(using Frame)
     extends ContainerNotFoundException(s"Volume not found: ${id.value}") derives CanEqual
 
-/** The referenced exec session does not exist. The daemon reaps an exec session when its process exits (immediately when the runtime's
-  * exit-command delay is zero), so a follow-up exit-code read can find the session already gone. This is a session-level miss, distinct
-  * from the container being gone.
-  */
-final case class ContainerExecSessionMissingException(container: Container.Id, execId: String)(using Frame)
-    extends ContainerNotFoundException(s"Exec session not found: $execId (container ${container.value})") derives CanEqual
-
 // --- Conflict (state conflict) ---
 
 /** A resource exists but is in a state that prevents the requested operation.

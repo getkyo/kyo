@@ -377,8 +377,7 @@ final private[kyo] class ShellBackend(
             restartCount = dto.RestartCount,
             driver = dto.Driver,
             platform = platform,
-            networkSettings = buildNetworkSettings(dto.NetworkSettings, networks),
-            execIds = Chunk.from(dto.ExecIDs.getOrElse(Seq.empty))
+            networkSettings = buildNetworkSettings(dto.NetworkSettings, networks)
         )
     end mapInspectToInfo
 
@@ -2475,8 +2474,7 @@ private[kyo] object ShellBackend:
         RestartCount: Int = 0,
         Driver: String = "",
         Mounts: Option[Seq[InspectMountDto]] = None,
-        Platform: String = "",
-        ExecIDs: Option[Seq[String]] = None
+        Platform: String = ""
     ) derives Schema
 
     final private[internal] case class InspectStateJson(

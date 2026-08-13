@@ -23,10 +23,9 @@ private[internal] object ErrorClassification:
             case ResourceContext.Container(id) => ContainerMissingException(id)
             case ResourceContext.Image(ref) =>
                 ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
-            case ResourceContext.Network(id)           => ContainerNetworkMissingException(id)
-            case ResourceContext.Volume(id)            => ContainerVolumeMissingException(id)
-            case ResourceContext.ExecSession(cid, eid) => ContainerExecSessionMissingException(cid, eid)
-            case ResourceContext.Op(name)              => ContainerOperationException(s"Resource not found during $name", cause)
+            case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
+            case ResourceContext.Volume(id)  => ContainerVolumeMissingException(id)
+            case ResourceContext.Op(name)    => ContainerOperationException(s"Resource not found during $name", cause)
 
     /** Construct the appropriate "conflict" exception for a given context. */
     def conflictFor(ctx: ResourceContext)(using Frame): ContainerException =
