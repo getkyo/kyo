@@ -2,14 +2,48 @@ package kyo.internal
 
 import kyo.*
 
+/** Scalar browser byte quantity with rejecting wire decoding. */
+private[kyo] opaque type DragWireByteSize = ByteSize
+
+/** Construction, access, and scalar schema for browser byte quantities. */
+private[kyo] object DragWireByteSize:
+    private val maxBrowserSafeSize = ByteSize.fromBytes(9_007_199_254_740_991L)
+
+    /** Creates a wire byte quantity from an already-valid domain byte quantity. */
+    def apply(value: ByteSize): DragWireByteSize = value
+
+    extension (self: DragWireByteSize)
+        /** Returns the domain byte quantity. */
+        def value: ByteSize = self
+
+    private def fromRaw(value: Long): Result[String, DragWireByteSize] =
+        if value < 0 then Result.fail(s"negative byte size: $value")
+        else if value > maxBrowserSafeSize.toBytes then Result.fail(s"byte size exceeds browser safe integer maximum: $value")
+        else Result.succeed(ByteSize.fromBytes(value))
+
+    /** Scalar schema that rejects invalid browser byte quantities before constructing `ByteSize`. */
+    given Schema[DragWireByteSize] = Schema.init[DragWireByteSize](
+        writeFn = (value, writer) => writer.long(value.value.toBytes),
+        readFn = reader =>
+            kyo.internal.constructedOrThrow(
+                fromRaw(reader.long()),
+                "WireByteSize"
+            )(using reader.frame),
+        structure = Structure.Type.Primitive(
+            Structure.PrimitiveKind.Long,
+            Tag[DragWireByteSize].asInstanceOf[Tag[Any]]
+        )
+    )
+end DragWireByteSize
+
 /** Wire values exchanged while a browser drag session is active.
   *
   * An external drag must establish its session with `DragStart` before sending target movement or drop events. File chunks use canonical
   * RFC 4648 base64. Empty chunks are rejected because they make no streaming progress. Request identifier uniqueness and reuse require
   * session state and remain the responsibility of the Task 10 runtime.
   *
-  * `ByteSize` restores its nonnegative invariant while decoding. Browser file sizes must therefore be checked before encoding, while
-  * server-side read ceilings remain authoritative for every requested range and decoded chunk.
+  * Browser file sizes reject negative and unsafe integer wire values before conversion to `ByteSize`. Server-side read ceilings remain
+  * authoritative for every requested range and decoded chunk.
   */
 private[kyo] object DragProtocol:
 
@@ -18,12 +52,16 @@ private[kyo] object DragProtocol:
     /** Establishes a drag session and carries its transferable manifest exactly once. */
     final private[kyo] case class StartData(
         sessionId: String,
-        items: Chunk[Drag.Item],
+        items: Chunk[ItemData],
         operation: Drag.Operation,
         sourceKey: Maybe[String],
         point: Drag.Point,
         modifiers: UI.Modifiers
-    ) derives CanEqual, Schema
+    ) derives CanEqual, Schema:
+
+        /** Converts the validated wire manifest to domain drag items for handler dispatch. */
+        def domainItems: Chunk[Drag.Item] = items.map(_.toDomain)
+    end StartData
 
     /** Identifies an established drag session and carries only its current target state. */
     final private[kyo] case class TargetData(
@@ -44,9 +82,45 @@ private[kyo] object DragProtocol:
 
     // --- File transfer payloads ---
 
+    /** Browser-safe byte quantity that rejects invalid raw wire integers during schema decoding. */
+    private[kyo] type WireByteSize = DragWireByteSize
+
+    /** Constructor and accessor namespace for browser-safe wire byte quantities. */
+    private[kyo] val WireByteSize: DragWireByteSize.type = DragWireByteSize
+
+    import DragWireByteSize.*
+
+    /** Browser file metadata whose byte size is validated while decoding. */
+    final private[kyo] case class FileMetaData(
+        token: String,
+        name: String,
+        mediaType: String,
+        size: WireByteSize,
+        lastModified: Instant
+    ) derives CanEqual, Schema:
+
+        /** Converts validated wire metadata to domain file metadata. */
+        def toDomain: Drag.FileMeta = Drag.FileMeta(token, name, mediaType, size.value, lastModified)
+    end FileMetaData
+
+    /** Transfer item whose file byte quantities are validated while decoding. */
+    private[kyo] enum ItemData derives CanEqual, Schema:
+        case Text(representations: Map[String, String])
+        case Uri(value: String)
+        case File(meta: FileMetaData)
+        case Directory(token: String, name: String)
+
+        /** Converts a validated wire item to its domain representation. */
+        def toDomain: Drag.Item = this match
+            case Text(representations)  => Drag.Item.Text(representations)
+            case Uri(value)             => Drag.Item.Uri(value)
+            case File(meta)             => Drag.Item.File(meta.toDomain)
+            case Directory(token, name) => Drag.Item.Directory(token, name)
+    end ItemData
+
     /** Directory entry metadata returned by the browser. */
     private[kyo] enum EntryData derives CanEqual, Schema:
-        case File(meta: Drag.FileMeta)
+        case File(meta: FileMetaData)
         case Directory(token: String, name: String)
     end EntryData
 
@@ -207,9 +281,9 @@ private[kyo] object DragProtocol:
             .flatMap(_ => validateIdentifier(move.destination.collection, "destination", limits))
             .flatMap(_ => validateOptionalIdentifier(move.anchor, "anchor", limits))
 
-    private def validateItem(item: Drag.Item, limits: Limits): Result[ValidationFailure, Unit] =
+    private def validateItem(item: ItemData, limits: Limits): Result[ValidationFailure, Unit] =
         item match
-            case Drag.Item.Text(representations) =>
+            case ItemData.Text(representations) =>
                 validateCount(representations.size, "representations", limits.maxTextRepresentationCount)
                     .flatMap(_ =>
                         validateAll(representations) { case (mediaType, text) =>
@@ -217,10 +291,10 @@ private[kyo] object DragProtocol:
                                 .flatMap(_ => validateText(text, "text", limits.maxTextLength, allowEmpty = true))
                         }
                     )
-            case Drag.Item.Uri(value) =>
+            case ItemData.Uri(value) =>
                 validateText(value, "uri", limits.maxTextLength, allowEmpty = false)
-            case Drag.Item.File(meta) => validateFileMeta(meta, limits)
-            case Drag.Item.Directory(token, name) =>
+            case ItemData.File(meta) => validateFileMeta(meta, limits)
+            case ItemData.Directory(token, name) =>
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
     end validateItem
@@ -232,7 +306,7 @@ private[kyo] object DragProtocol:
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
 
-    private def validateFileMeta(meta: Drag.FileMeta, limits: Limits): Result[ValidationFailure, Unit] =
+    private def validateFileMeta(meta: FileMetaData, limits: Limits): Result[ValidationFailure, Unit] =
         validateIdentifier(meta.token, "token", limits)
             .flatMap(_ => validateText(meta.name, "name", limits.maxNameLength, allowEmpty = false))
             .flatMap(_ => validateMediaType(meta.mediaType, limits))
@@ -249,14 +323,45 @@ private[kyo] object DragProtocol:
 
     private def validateBase64(value: String, limits: Limits): Result[ValidationFailure, Unit] =
         validateText(value, "bytesBase64", limits.maxBase64Length, allowEmpty = false).flatMap { _ =>
-            Base64.decode(value) match
-                case Result.Success(bytes) if Base64.encode(bytes) == value =>
-                    val decodedSize = ByteSize.fromBytes(bytes.size.toLong)
+            val length = value.length
+            if length % 4 != 0 then Result.fail(ValidationFailure.InvalidBase64)
+            else
+                val padding =
+                    if value.charAt(length - 1) != '=' then 0
+                    else if value.charAt(length - 2) == '=' then 2
+                    else 1
+                val dataLength = length - padding
+                var index      = 0
+                var valid      = true
+                while index < dataLength && valid do
+                    valid = base64Value(value.charAt(index)) >= 0
+                    index += 1
+                while index < length && valid do
+                    valid = value.charAt(index) == '='
+                    index += 1
+                if valid && padding == 2 then
+                    valid = (base64Value(value.charAt(length - 3)) & 0x0f) == 0
+                else if valid && padding == 1 then
+                    valid = (base64Value(value.charAt(length - 2)) & 0x03) == 0
+                end if
+
+                if !valid then Result.fail(ValidationFailure.InvalidBase64)
+                else
+                    val decodedSize = ByteSize.fromBytes((length.toLong / 4L) * 3L - padding.toLong)
                     if decodedSize <= limits.maxDecodedChunkSize then Result.unit
                     else Result.fail(ValidationFailure.ChunkTooLarge(limits.maxDecodedChunkSize, decodedSize))
-                case _ => Result.fail(ValidationFailure.InvalidBase64)
+                end if
+            end if
         }
     end validateBase64
+
+    private def base64Value(char: Char): Int =
+        if char >= 'A' && char <= 'Z' then char - 'A'
+        else if char >= 'a' && char <= 'z' then char - 'a' + 26
+        else if char >= '0' && char <= '9' then char - '0' + 52
+        else if char == '+' then 62
+        else if char == '/' then 63
+        else -1
 
     private def validateMediaType(value: String, limits: Limits): Result[ValidationFailure, Unit] =
         validateText(value, "mediaType", limits.maxMediaTypeLength, allowEmpty = false).flatMap { _ =>

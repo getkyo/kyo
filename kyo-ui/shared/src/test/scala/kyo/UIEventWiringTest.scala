@@ -227,8 +227,8 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val startData = DragProtocol.StartData(
             sessionId = "session-1",
             items = Chunk(
-                Drag.Item.Text(Map("text/plain" -> "card")),
-                Drag.Item.Directory("dir-token", "assets")
+                DragProtocol.ItemData.Text(Map("text/plain" -> "card")),
+                DragProtocol.ItemData.Directory("dir-token", "assets")
             ),
             operation = Drag.Operation.Copy,
             sourceKey = Present("source"),

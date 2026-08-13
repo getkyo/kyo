@@ -128,11 +128,11 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             Seq("source"),
             DragProtocol.EndData("session-2", Drag.Operation.Link, cancelled = false)
         )
-        val file = Drag.FileMeta(
+        val file = DragProtocol.FileMetaData(
             token = "file-token",
             name = "notes.txt",
             mediaType = "text/plain",
-            size = 12.bytes,
+            size = DragProtocol.WireByteSize(12.bytes),
             lastModified = Instant.Epoch
         )
         val cases = Chunk[(DragProtocol.ClientMessage, String)](
@@ -187,6 +187,44 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         end match
     }
 
+    "wire file sizes reject unsafe raw values before ByteSize normalization" in {
+        def message(size: Long): String =
+            s"""{"FileEntries":{"requestId":"read-1","entries":[{"File":{"meta":{"token":"token","name":"file.bin","mediaType":"application/octet-stream","size":$size,"lastModified":"1970-01-01T00:00:00Z"}}}],"nextCursor":"cursor"}}"""
+
+        assert(Json.decode[DragProtocol.ClientMessage](message(-1)).isFailure)
+        assert(Json.decode[DragProtocol.ClientMessage](message(9_007_199_254_740_992L)).isFailure)
+
+        val zero    = Json.decode[DragProtocol.ClientMessage](message(0))
+        val maximum = Json.decode[DragProtocol.ClientMessage](message(9_007_199_254_740_991L))
+        assert(zero.isSuccess)
+        assert(maximum.isSuccess)
+
+        zero match
+            case Result.Success(
+                    message @ DragProtocol.ClientMessage.FileEntries(
+                        _,
+                        Chunk(DragProtocol.EntryData.File(meta)),
+                        _
+                    )
+                ) =>
+                assert(DragProtocol.validate(message, DragProtocol.Limits.default) == Result.succeed(message))
+                assert(meta.size.value == ByteSize.Zero)
+                assert(meta.toDomain == Drag.FileMeta("token", "file.bin", "application/octet-stream", ByteSize.Zero, Instant.Epoch))
+            case other => fail(s"expected decoded zero-sized file metadata, got $other")
+        end match
+
+        maximum match
+            case Result.Success(
+                    DragProtocol.ClientMessage.FileEntries(
+                        _,
+                        Chunk(DragProtocol.EntryData.File(meta)),
+                        _
+                    )
+                ) => assert(meta.size.value == ByteSize.fromBytes(9_007_199_254_740_991L))
+            case other => fail(s"expected decoded maximum-sized file metadata, got $other")
+        end match
+    }
+
     "DragProtocol.ClientMessage distinguishes UI events from file responses" in {
         val eventJson =
             """{"Event":{"value":{"DragEnd":{"path":["source"],"event":{"sessionId":"session-2","operation":{"Copy":{}},"cancelled":false}}}}}"""
@@ -220,7 +258,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             maxBase64Length = 12,
             maxDecodedChunkSize = 4.bytes
         )
-        val item = Drag.Item.Text(Map("text/plain" -> "text"))
+        val item = DragProtocol.ItemData.Text(Map("text/plain" -> "text"))
         val validStart = DragProtocol.ClientMessage.Event(
             UIEvent.DragStart(
                 Seq("root"),
@@ -239,7 +277,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 Seq("root"),
                 DragProtocol.StartData(
                     "session1",
-                    Chunk(Drag.Item.Text(Map("text/plain" -> "text", "image/png" -> "data"))),
+                    Chunk(DragProtocol.ItemData.Text(Map("text/plain" -> "text", "image/png" -> "data"))),
                     Drag.Operation.Copy,
                     Absent,
                     Drag.Point(0, 0),
@@ -257,6 +295,14 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         )
 
         assert(DragProtocol.validate(validStart, limits) == Result.succeed(validStart))
+        validStart match
+            case DragProtocol.ClientMessage.Event(UIEvent.DragStart(_, data)) =>
+                assert(data.domainItems == Chunk(
+                    Drag.Item.Text(Map("text/plain" -> "text")),
+                    Drag.Item.Text(Map("text/plain" -> "text"))
+                ))
+            case other => fail(s"expected validated drag start, got $other")
+        end match
         assert(DragProtocol.validate(validRepresentations, limits) == Result.succeed(validRepresentations))
         assert(DragProtocol.validate(validEntries, limits) == Result.succeed(validEntries))
         assert(
@@ -275,6 +321,12 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "not-base64!"), limits) ==
                 Result.fail(DragProtocol.ValidationFailure.InvalidBase64)
         )
+        Chunk("A", "AAA", "AA=A", "A===", "====", "AA!A").foreach { invalid =>
+            assert(
+                DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", invalid), limits) ==
+                    Result.fail(DragProtocol.ValidationFailure.InvalidBase64)
+            )
+        }
         assert(
             DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "AB=="), limits) ==
                 Result.fail(DragProtocol.ValidationFailure.InvalidBase64)
@@ -286,6 +338,10 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(
             DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "AAAAAAA="), limits) ==
                 Result.fail(DragProtocol.ValidationFailure.ChunkTooLarge(4.bytes, 5.bytes))
+        )
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "AAAAAA=="), limits) ==
+                Result.succeed(DragProtocol.ClientMessage.FileChunk("request1", "AAAAAA=="))
         )
         assert(
             DragProtocol.validate(
@@ -363,14 +419,55 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         )
         val invalidMediaType = DragProtocol.ClientMessage.FileEntries(
             "read-1",
-            Chunk(DragProtocol.EntryData.File(Drag.FileMeta("token", "file", "image/*", 1.bytes, Instant.Epoch))),
+            Chunk(DragProtocol.EntryData.File(DragProtocol.FileMetaData(
+                "token",
+                "file",
+                "image/*",
+                DragProtocol.WireByteSize(1.bytes),
+                Instant.Epoch
+            ))),
             Absent
         )
         val invalidTimestamp = DragProtocol.ClientMessage.FileEntries(
             "read-1",
-            Chunk(DragProtocol.EntryData.File(Drag.FileMeta("token", "file", "image/png", 1.bytes, Instant.Max))),
+            Chunk(DragProtocol.EntryData.File(DragProtocol.FileMetaData(
+                "token",
+                "file",
+                "image/png",
+                DragProtocol.WireByteSize(1.bytes),
+                Instant.Max
+            ))),
             Absent
         )
+
+        val finitePoint = DragProtocol.ClientMessage.Event(
+            UIEvent.DragOver(
+                Seq.empty,
+                DragProtocol.TargetData(
+                    "session",
+                    Drag.Operation.Copy,
+                    Absent,
+                    Drag.Point(Double.MaxValue, -Double.MaxValue),
+                    UI.Modifiers.none,
+                    Absent
+                )
+            )
+        )
+        val nonFinitePoints = Chunk(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity).map { coordinate =>
+            DragProtocol.ClientMessage.Event(
+                UIEvent.DragOver(
+                    Seq.empty,
+                    DragProtocol.TargetData(
+                        "session",
+                        Drag.Operation.Copy,
+                        Absent,
+                        Drag.Point(coordinate, 0),
+                        UI.Modifiers.none,
+                        Absent
+                    )
+                )
+            )
+        }
 
         assert(DragProtocol.validate(emptySession, limits) == Result.fail(DragProtocol.ValidationFailure.Empty("sessionId")))
         assert(DragProtocol.validate(emptyToken, limits) == Result.fail(DragProtocol.ValidationFailure.Empty("token")))
@@ -383,6 +480,12 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(
             DragProtocol.validate(invalidTimestamp, limits) == Result.fail(DragProtocol.ValidationFailure.InvalidTimestamp)
         )
+        assert(DragProtocol.validate(finitePoint, limits) == Result.succeed(finitePoint))
+        nonFinitePoints.foreach { message =>
+            assert(
+                DragProtocol.validate(message, limits) == Result.fail(DragProtocol.ValidationFailure.InvalidNumber("point.x"))
+            )
+        }
     }
 
     "drag HtmlOp cases round-trip through exact JSON wire representations" in {
