@@ -10,13 +10,13 @@ import scala.scalajs.js
 private[kyo] object DomBackend:
 
     private[kyo] trait MountDiagnostics:
-        def channelClosing(): Unit
+        def channelClosed(): Unit
         def drainInterrupting(): Unit
         def drainJoined(): Unit
     end MountDiagnostics
 
     private object NoMountDiagnostics extends MountDiagnostics:
-        def channelClosing(): Unit    = ()
+        def channelClosed(): Unit     = ()
         def drainInterrupting(): Unit = ()
         def drainJoined(): Unit       = ()
     end NoMountDiagnostics
@@ -100,7 +100,7 @@ private[kyo] object DomBackend:
             )
             // Finalizers are LIFO. Register the drain first, then the channel, then listeners, so teardown
             // removes callbacks before closing their queue and finally interrupts and joins the drain.
-            _ <- Scope.ensure(Sync.defer(diagnostics.channelClosing()).andThen(events.close).unit)
+            _ <- Scope.ensure(events.close.andThen(Sync.defer(diagnostics.channelClosed())).unit)
             _ <- setupEventDelegation(dispatch.handle, events)
             _ <- setupInputMasking()
             _ <- Async.never

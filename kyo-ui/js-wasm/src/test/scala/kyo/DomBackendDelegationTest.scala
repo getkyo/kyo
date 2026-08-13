@@ -39,14 +39,14 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 attempts += eventType
                 if eventType == failOnAdd then throw new scalajs.JavaScriptException(s"failed add: $eventType")
                 else
-                    added += ListenerCall(eventType, listener, options)
                     discard(originalAdd.call(body, eventType, listener, options))
+                    added += ListenerCall(eventType, listener, options)
                 end if
             )
             body.updateDynamic("removeEventListener")((eventType: String, listener: scalajs.Any, options: scalajs.Any) =>
+                discard(originalRemove.call(body, eventType, listener, options))
                 removed += ListenerCall(eventType, listener, options)
                 chronology += s"remove:$eventType"
-                discard(originalRemove.call(body, eventType, listener, options))
             )
             this
         end install
@@ -70,7 +70,7 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
             !call.options.asInstanceOf[scalajs.Dynamic].passive.asInstanceOf[Boolean]
 
     final private class LifecycleChronology(events: ArrayBuffer[String]) extends DomBackend.MountDiagnostics:
-        def channelClosing(): Unit    = events += "channel-close"
+        def channelClosed(): Unit     = events += "channel-close"
         def drainInterrupting(): Unit = events += "drain-interrupt"
         def drainJoined(): Unit       = events += "drain-joined"
     end LifecycleChronology
@@ -217,6 +217,45 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                     assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
                     assert(channelClose < interrupt)
                     assert(interrupt < joined)
+        }
+    }
+
+    "interrupts and joins an active delegated event handler during teardown" in {
+        val chronology = ArrayBuffer.empty[String]
+        Scope.acquireRelease(Sync.defer(new ListenerTracker(chronology = chronology).install()))(tracker =>
+            Sync.defer(tracker.restore())
+        ).map { tracker =>
+            for
+                entered   <- Latch.init(1)
+                blocker   <- Latch.init(1)
+                finalized <- Latch.init(1)
+                handler = Sync.ensure(finalized.release)(entered.release.andThen(blocker.await))
+                fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(
+                    UI.button("active").id("active-handler").onClick(handler),
+                    new LifecycleChronology(chronology)
+                )))
+                _ <- assertEventually(Sync.defer(tracker.added.size == 13))
+                _ <- Sync.defer {
+                    val button = dom.document.getElementById("active-handler")
+                    val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].MouseEvent)(
+                        "click",
+                        scalajs.Dynamic.literal(bubbles = true)
+                    )
+                    discard(button.asInstanceOf[scalajs.Dynamic].dispatchEvent(event))
+                }
+                _ <- entered.await
+                _ <- fiber.interrupt
+                _ <- finalized.await
+                _ <- fiber.getResult
+            yield
+                val channelClose = chronology.indexOf("channel-close")
+                val interrupt    = chronology.indexOf("drain-interrupt")
+                val joined       = chronology.indexOf("drain-joined")
+                assert(tracker.removed.size == 13)
+                assert(chronology.take(channelClose).size == 13)
+                assert(chronology.take(channelClose).forall(_.startsWith("remove:")))
+                assert(channelClose < interrupt)
+                assert(interrupt < joined)
         }
     }
 
