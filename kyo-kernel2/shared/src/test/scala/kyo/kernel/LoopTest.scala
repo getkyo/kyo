@@ -710,4 +710,48 @@ class LoopTest extends AnyFreeSpec:
             assert(counter == largeNumber)
         }
     }
+
+    "constructors" - {
+        "take the type arguments the old kernel's call sites pass" in {
+            val stated = Loop(1) { i =>
+                if i < 3 then Loop.continue[Int, Int, Any](i + 1)
+                else Loop.done[Int, Int](i * 10)
+            }
+            assert(stated.eval == 30)
+        }
+
+        "the no-state constructors take one type argument" in {
+            val indexed = Loop.indexed(idx => if idx < 3 then Loop.continue[Int] else Loop.done[Unit, Int](idx))
+            assert(indexed.eval == 3)
+        }
+
+        "a two-state outcome states its three type arguments" in {
+            val paired = Loop(1, 1) { (a, b) =>
+                if a < 4 then Loop.continue[Int, Int, Int](a + 1, b * 2)
+                else Loop.done[Int, Int, Int](b)
+            }
+            assert(paired.eval == 8)
+        }
+
+        "continue evaluates its state once, at construction" in {
+            var evaluated = 0
+            val outcome =
+                Loop.continue[Int, Unit, Any] {
+                    evaluated += 1
+                    evaluated
+                }
+            val state = outcome.asInstanceOf[Loop.Continue[Int]]
+            assert(state._1 == 1)
+            assert(state._1 == 1)
+            assert(evaluated == 1)
+        }
+
+        "a done payload that is a computation held as a value stays data" in {
+            val payload: Int < Any = (1: Int < Any).map(_ + 1)
+            val looped = Loop(0) { _ =>
+                Loop.done[Int, Int < Any](payload)
+            }
+            assert(looped.eval.eval == 2)
+        }
+    }
 end LoopTest

@@ -124,13 +124,25 @@ object Loop:
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
-            def _1 = ()
+            val _1 = ()
 
-    // The constructors return the lifted type: this kernel's `<` lower-bounds
-    // only Kyo, so a bare Outcome would not unify with an expected
-    // `Outcome[...] < S` and inference would pin the state types from the
-    // arguments instead of the expectation. The lift is free for Continue
-    // values and produces correct currency for boxed done payloads.
+    // The constructors return currency at the top row. A handler clause expects
+    // `Outcome[answer < row, result] < S`, its answer slot pending so a clause
+    // may answer effectfully, while most clauses answer with a settled value:
+    // only a `<`-shaped return unifies that expectation, since inference solves
+    // the answer type from the expected type instead of from the argument. The
+    // row is Any, which conforms wherever the site's row lands, so the type
+    // parameters are the old kernel's and its call sites keep working.
+    //
+    // A Continue extends nothing but Serializable and the runtime lift boxes
+    // only Boxed values, so the boxing arm is unreachable for every value the
+    // continue constructors build and the cast stands in for it. Each cast
+    // names its own result type: a shared helper taking the type from
+    // inference solves it to the Kyo member of the currency union at some
+    // sites, and the checkcast that produces fails when the loop runs.
+    // The done payloads keep the lift, since an arbitrary value may be a
+    // computation held as data and the box is what keeps the evaluator from
+    // reading it as a clause that suspended.
 
     /** Creates an outcome signaling continuation with no state value.
       *
@@ -140,7 +152,7 @@ object Loop:
       * @return
       *   An Outcome indicating continuation with Unit state
       */
-    inline def continue[A, S]: Outcome[Unit, A] < S = Nested.lift(_continueUnit)
+    inline def continue[A]: Outcome[Unit, A] < Any = _continueUnit.asInstanceOf[Outcome[Unit, A] < Any]
 
     /** Creates an outcome signaling continuation with a single state value.
       *
@@ -148,11 +160,12 @@ object Loop:
       *   The state value to continue with
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, O, S](inline v: A): Outcome[A, O] < S =
-        Nested.lift(
+    inline def continue[A, O, S](inline v: A): Outcome[A, O] < Any =
+        val outcome =
             new Continue[A]:
-                def _1 = v
-        )
+                val _1 = v
+        outcome.asInstanceOf[Outcome[A, O] < Any]
+    end continue
 
     /** Creates an outcome signaling continuation with two state values.
       *
@@ -162,12 +175,13 @@ object Loop:
       *   The second state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, O, S](inline v1: A, inline v2: B): Outcome2[A, B, O] < S =
-        Nested.lift(
+    inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] < Any =
+        val outcome =
             new Continue2[A, B]:
-                def _1 = v1
-                def _2 = v2
-        )
+                val _1 = v1
+                val _2 = v2
+        outcome.asInstanceOf[Outcome2[A, B, O] < Any]
+    end continue
 
     /** Creates an outcome signaling continuation with three state values.
       *
@@ -179,13 +193,14 @@ object Loop:
       *   The third state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, O, S](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < S =
-        Nested.lift( // TODO why call explicitly? also it can never be a nested computation? In fact, why is continue returnin ga computation? it seems it shouldn't
+    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < Any =
+        val outcome =
             new Continue3[A, B, C]:
-                def _1 = v1
-                def _2 = v2
-                def _3 = v3
-        )
+                val _1 = v1
+                val _2 = v2
+                val _3 = v3
+        outcome.asInstanceOf[Outcome3[A, B, C, O] < Any]
+    end continue
 
     /** Creates an outcome signaling continuation with four state values.
       *
@@ -199,18 +214,19 @@ object Loop:
       *   The fourth state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, D, O, S](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] < S =
-        Nested.lift(
+    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] < Any =
+        val outcome =
             new Continue4[A, B, C, D]:
-                def _1 = v1
-                def _2 = v2
-                def _3 = v3
-                def _4 = v4
-        )
+                val _1 = v1
+                val _2 = v2
+                val _3 = v3
+                val _4 = v4
+        outcome.asInstanceOf[Outcome4[A, B, C, D, O] < Any]
+    end continue
 
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
-    inline def done[A, S]: Outcome[A, Unit] < S = Nested.lift(())
+    inline def done[A]: Outcome[A, Unit] < Any = Nested.lift(())
 
     /** Creates an outcome signaling completion with a final value.
       *
@@ -218,7 +234,7 @@ object Loop:
       *   The final value
       */
     @targetName("done1")
-    inline def done[A, O, S](inline v: O): Outcome[A, O] < S = Nested.lift(v)
+    inline def done[A, O](inline v: O): Outcome[A, O] < Any = Nested.lift(v)
 
     /** Creates an outcome signaling completion with a final value for a two-state loop.
       *
@@ -226,7 +242,7 @@ object Loop:
       *   The final value
       */
     @targetName("done2")
-    inline def done[A, B, O, S](inline v: O): Outcome2[A, B, O] < S = Nested.lift(v)
+    inline def done[A, B, O](inline v: O): Outcome2[A, B, O] < Any = Nested.lift(v)
 
     /** Creates an outcome signaling completion with a final value for a three-state loop.
       *
@@ -234,7 +250,7 @@ object Loop:
       *   The final value
       */
     @targetName("done3")
-    inline def done[A, B, C, O, S](inline v: O): Outcome3[A, B, C, O] < S = Nested.lift(v)
+    inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] < Any = Nested.lift(v)
 
     /** Creates an outcome signaling completion with a final value for a four-state loop.
       *
@@ -242,7 +258,7 @@ object Loop:
       *   The final value
       */
     @targetName("done4")
-    inline def done[A, B, C, D, O, S](inline v: O): Outcome4[A, B, C, D, O] < S = Nested.lift(v)
+    inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] < Any = Nested.lift(v)
 
     /** Executes a loop with a single state value.
       *
