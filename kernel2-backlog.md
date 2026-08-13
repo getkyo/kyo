@@ -1,143 +1,157 @@
 # kernel2 backlog
 
-Improvements and themes in flight, each with its design in brief. Done work is removed
-once acked; full designs live in the linked docs. Last update: 2026-08-12.
+Queues: implementing, designing, awaiting ruling, next up, parked. Each item carries
+its own context so it reads without the linked docs; the docs carry the full designs.
+Done work is removed once acked. Last update: 2026-08-12.
 
-## 1. Bracket primitive
+## Implementing now (kernel2-impl agent)
 
-**Status: judgment pending (the next ruling).** Three candidate designs on disk, all
-carrying the fixed contract (use fully interruptible; no interruption between acquire
-finishing and use starting; release always executes on settle, unwind, and discard;
-release runs to completion) plus IOTask's R-B1/R-B2/R-B3.
+### Loop constructors return bare Outcome
 
-- `bracket-node-design.md`: `Kyo.Bracket` node; the node exists exactly when the
-  resource exists (acquire chains into one strict transform that reads the resource and
-  allocates obligation and node with no budget check between), so the acquire gap closes
-  by representation, no mask. Effectful acquire gap-free. Weakness: a captured
-  `Handler.Cont` continuation carrying a bracket segment is a value fork.
-- `bracket-handler-design.md`: `Handler.Bracket` kind; obligations are region state via
-  a register op; Scope becomes a direct instance. Needs a mask cell for the acquire gap
-  (a drive-local counter is broken across parks). Weakness: taxes `find` for every open
-  region's lifetime plus a registration round trip per resource.
-- `bracket-effect-design.md`: the expressivity probe. Verdict: not expressible in the
-  current algebra; the boundary is running releases at a truncation (knowing them is
-  expressible). Minimal kernel assist: a per-cell disposal hook over truncation-discarded
-  cells plus one catch site at the evaluator boundary; everything else in the sibling
-  designs is convenience.
+Context: `Loop.continue`/`Loop.done` are the constructors handler clauses use to answer
+an operation (continue with a new state and answer, or finish the region). In kernel2
+they return `Outcome[...] < S`, pending-wrapped, with an explicit `Nested.lift` and an
+extra type parameter on every constructor; your TODO at Loop.scala:183 asks why. The
+answer from the analysis: an inference workaround from the deleted lower-bound era that
+outlived its cause and broke signature parity with the old kernel.
 
-Decision axes: acquire-gap mechanism (representation vs mask machinery) and steady-state
-cost (node is free on the hot walk; handler taxes it). The ruling should decide the
-**shared walk**, since it has four consumers: bracket unwind, `Loop.done` truncation
-(R-B3), catching-as-a-region (theme 4), and enrichment frames (theme 3). Ruled already:
-bracket is NOT served via Isolate (the truncation hop is the inexpressible core).
+Design: bare `Outcome[...]` returns matching origin/main exactly; the lift moves to the
+use sites where the implicit conversion already fires; ten runner sites inside
+Loop.scala adjust; handler clause types are unchanged (they consume pending positions,
+bare values convert). Origin/main compiles 1,750 call sites over the same currency with
+a stricter lift; one compile settles the inference question and gates the change.
+(`kernel2-todos-design.md` section 4.)
 
-## 2. Isolate on kernel2
+### dispatchFirst
 
-**Status: design ruled (old kernel's Isolate as-is: Remove/Keep/Restore, State,
-Transform, capture/isolate/restore/nest); port not started.** The Join-effect
-substitution for `Transform[_]` was explored in full and set aside.
+Context: the old kernel has a `private[kyo]` sibling of handleFirst that IOTask uses
+for the interrupt-before-join cascade repair: look at the head of a computation, and if
+the standing suspension is a given effect, run a side-effecting inspection of its input
+without answering or changing anything. Kernel2 lacks it, and on kernel2 the standing
+suspension can be wrapped in region nodes, so a head test must peel them.
 
-Open design item (your FB): **encoding ContextEffect isolation in kernel2 — it is
-genuinely different here.** The old kernel's "simple state copying" category copied
-Context-map entries generically; kernel2 has no map, context effects are regions. Two
-candidate encodings:
-(a) boundary inheritance: the fork transplants context cells (Noninheritable skips),
-no Isolate instance involved, generic; (b) derived per-effect instances: for
-`E <: ContextEffect[A]`, capture = read the value, isolate = `ContextEffect.handle(tag,
-state)(v)` child-side, restore = identity — mechanical, expressible with the as-is
-interface today. Interacts with theme 6 (the Maybe-shaped ContextEffect answer changes
-the read capture uses) and with Noninheritable and union-on-nest semantics (Env).
+Design: a `private[kyo]` inline entry beside handleFirst that walks `Handled` /
+`HandledState` / `HandledFirst` values to the standing suspension, tests its tag, runs
+the given function on a match, stops at a `Defer` or settled value, returns Unit,
+computation untouched. (`iotask-kernel2-integration-r2.md` 5.5, origin/main
+ArrowEffect.scala as the contract reference.)
 
-Kernel prerequisite either way: the state-aware region exit (`done: (State, A) => B`),
-which also blocks `Var.runTuple`/`Emit.run`/`Check.runChunk` parity independently.
-Reference mechanics: `isolate-kernel2-design.md` (transplant walk, done-soundness
-finding, restore-must-ship-boxed, context-read cost and its library-only mitigation).
+## Designing now (context-isolation-design agent)
 
-## 3. Exception enrichment (EffectTrace successor)
+### ContextEffect isolation encoding
 
-**Status: designed; rulings 9.1-9.7 pending; unblocks the five ignored fiberTrace
-tests.** Design: reconstruct-at-throw — the live chain is the trace (Transforms and
-suspensions carry Frames, cells carry tags); a walk at the small set of kernel
-boundaries an exception crosses rebuilds the effect-level context, zero cost unless a
-failure happens. A suppressed carrier accumulates across nested drives; one splice at
-the outermost exit (synthesized frames first, kernel plumbing filtered, which also
-fixes the JS splice-position failures). Accumulate-at-catch is dominated: two catch
-sites exist module-wide and restoring per-transform catches is refused. Honest loss:
-pre-suspension history (the old 16-slot ring). Also found, pre-existing:
-`Eval.apply`/`partial` save/restore with no try/finally leaks budget and armed bit on
-escape. Full design: `exception-enrichment-design.md`; summary:
+Context: forking must carry context effects (Local, Env: scoped values, always safe to
+inherit) into the child. The old kernel did this generically: context values live in
+the Context map, and the fork copies entries (`Isolate.internal.runDetached`/
+`restoring`), with Noninheritable filtered out. Kernel2 deleted the map; context
+effects are ordinary regions on the handler stack, so the generic copy has no direct
+translation, and the Isolate design (kept as-is by ruling) needs a kernel2 encoding
+for its "simple state copying" category.
+
+Design in progress, two candidates plus better if found: (a) boundary inheritance: the
+fork transplants standing context cells into the child (Noninheritable skips); no
+instance involved; (b) derived per-effect instances over the as-is interface: capture =
+read the value, isolate = `ContextEffect.handle(tag, state)(v)` child-side, restore =
+identity, emitted mechanically by derive. The parity bar is the old kernel's exact
+semantics: inheritable/noninheritable, Env's union-on-nest, Local's merge, a mixed
+context-plus-stateful row through derive. Deliverable:
+`contexteffect-isolation-design.md`.
+
+## Awaiting your ruling
+
+### Bracket primitive
+
+Context: acquire/use/release with the fixed contract: use fully interruptible; no
+interruption between acquire finishing and use starting; release always executes
+(normal completion, exception unwind, and discard of an interrupted fiber's remainder)
+and runs to completion once started. Ruled already: not served via Isolate (release on
+a short-circuit that truncates the owning region is the inexpressible core). IOTask
+adds R-B1 (discard entry synchronous, Unit), R-B2 (a throw escaping a partial drive
+already ran what it unwound), R-B3 (a done-truncation runs the discarded regions'
+releases).
+
+Three designs on disk. `bracket-node-design.md`: a `Kyo.Bracket` node that exists
+exactly when the resource exists; acquire chains into one strict transform that reads
+the resource and allocates obligation and node with no budget check between, so the
+gap closes by representation, no mask, effectful acquire included; weakness: a
+captured continuation carrying a bracket segment is a value fork.
+`bracket-handler-design.md`: a handler kind whose region state accumulates
+obligations via a register op; Scope becomes a direct instance; needs a mask cell for
+the gap; weakness: taxes the handler-stack walk for every open region's lifetime plus
+a round trip per resource. `bracket-effect-design.md` (the probe): the contract is not
+expressible in the current algebra; the minimal kernel assist is a per-cell disposal
+hook over truncation-discarded regions plus one catch at the evaluator boundary;
+everything else in the siblings is convenience.
+
+The ruling should decide that shared disposal walk explicitly: its consumers are
+bracket unwind, R-B3 truncation, and enrichment frames (and the parked
+catching-as-region if ever revived). Decision axes: gap mechanism (representation vs
+mask) and steady-state cost (node free on the hot walk; handler taxes it).
+
+### Exception enrichment (EffectTrace successor)
+
+Context: kernel2 dropped the old kernel's always-on trace ring (16 frames recorded per
+step through Safepoint, per-platform pools). Failures currently carry only the physical
+stack. The design restores effect-level frames by reconstruction: at the few boundaries
+an exception crosses, walk the live continuation chain and handler stack (Transforms
+and suspensions already carry Frames; cells carry tags) and splice synthesized frames
+into the exception, with a suppressed carrier for accumulation and idempotence. Also
+unblocks the five ignored fiberTrace tests (same walker over a fiber's residual).
+
+Your FB, answered: **validated: no** — analysis-stage, no code written, no benchmark
+run; claims about the current sources are file:line-cited, behavioral claims are
+argued, not executed. **Performance: yes, it is the design's organizing constraint** —
+reconstruct-at-throw was chosen over the prototype's accumulate-at-catch precisely so
+the non-throwing path pays nothing (no recording, no carrier, no per-step work; the
+per-arm try regions are shaped to preserve tailrec and are argued allocation-neutral
+by inspection); the doc gates landing on a JMH A/B and its ruling 9.7 fixes the arm
+set before measuring so the A/B answers the right question. What remains unvalidated
+until implementation: the try-region neutrality claim and the walk's cost at an actual
+throw. Rulings 9.1-9.7 in `exception-enrichment-design.md`; summary in
 `backlog-sections/enrichment.md`.
 
-## 4. Effect.catching becomes a region
+## Next up (designed, blocked on the bracket ruling)
 
-**Status: designed; depends on the walk ruling (theme 1).** The guarded arrow-rewrite
-pays per resumed step (guard Transform + node re-allocation + step flatten) and cannot
-cover nested region interiors (pinned by test). A plain evaluator try cannot replace
-it (a guarded residual recovered in a second drive is pinned), so the scope must be a
-value: `Kyo.Caught` region node + a passive catch cell; catching becomes one
-allocation; `guarded` and its per-node-kind arms are deleted; the nested-interior hole
-closes. The failure path is the shared walk. Full design: `kernel2-todos-design.md`
-section 1.
+### Handlers cell layer
 
-## 5. Handlers cell layer
+Context, from the ground: `Handlers` is the evaluator's runtime stack of installed
+handler regions — a linked list the eval loop threads through evaluation. Each link
+("cell") is one active region: `Node` (stateless handler), `StateNode` (stateful),
+and since handleFirst landed, `FirstNode` (one-shot). Five operations walk this list:
+`find` (locate the handler for a suspension's tag — the hot one, once per answered
+operation), the settled-value pop, `rebuild` (turn a stack prefix back into a value
+when parking), `replace` (functional state update), and the isolate design adds a
+transplant walk. Today every one of these pattern-matches all cell kinds: seven live
+enumeration sites, and adding `FirstNode` touched all seven. Separately, `find` calls
+`handler.tag` through the handler object — a fresh anonymous class per handle call
+site, so that call is megamorphic by construction, on the hot path.
 
-**Status: designed; ready after theme 1 (Passive waits for the bracket ruling);
-JMH-gated.** Cell kinds are enumerated in seven live places (the FirstNode addition
-touched all seven). Design: `Cell(exit, prev)` base with `withPrev`/`rebuilt`;
-`Answering(tag, ...)` vs `Passive` under it; generic walks read the base; only
-operation dispatch stays per-kind. The hoisted tag turns `find`'s per-cell megamorphic
-`handler.tag` call into a field read — encapsulation and a hot-path win in one change
-(watch `sharedHandlerPaysDispatch`). Full design: `kernel2-todos-design.md` section 2.
+Design: a `Cell(exit, prev)` base class carrying what every walk needs (`withPrev`,
+`rebuilt`), with `Answering(tag, ...)` and `Passive` beneath it; the generic walks
+read the base and stop enumerating kinds; only operation dispatch stays per-kind. The
+tag becomes a field on the cell, turning find's megamorphic call into a field read —
+the encapsulation your Handlers.scala TODO asked for and a hot-path improvement in
+the same change. JMH-gated (`sharedHandlerPaysDispatch` is the row). `Passive` (cells
+that answer no operation) is only needed if the bracket ruling or a revived
+catching-as-region introduces one, hence queued behind it.
+(`kernel2-todos-design.md` section 2.)
 
-## 6. Defaulted redesign (optional context)
+### Small kernel items
 
-**Status: designed; ruling needed on the ContextEffect row change (parked task #31's
-discussion input).** `default: Any` is a scar from deleting the Context map. Design:
-`ContextEffect[+A] extends ArrowEffect[Const[Unit], Const[Maybe[A]]]` so answers carry
-their own definedness, plus a typed `Unhandled` marker (`unhandled: O[X]`) replacing
-`Defaulted` in the find-miss arm. Interacts with theme 2's ContextEffect encoding.
-Full design: `kernel2-todos-design.md` section 3.
+- save/restore try/finally in `Eval.apply`/`partial`: found by the enrichment
+  analysis, pre-existing: an escaping throw leaves the thread's budget and armed bit
+  as the aborted drive left them. Small, standalone fix.
 
-## 7. Loop constructors return bare Outcome
+## Parked (your call to revive)
 
-**Status: ready to implement; first in dependency order; compile-gated.** The
-`Outcome[..] < S` return type was an inference workaround from the lower-bound era; it
-broke signature parity and forced the explicit `Nested.lift`. Design: bare returns as
-origin/main; the lift moves to use sites where the conversion already fires; ten
-runner sites inside Loop.scala adjust. Origin/main's 1,750 call sites over the same
-currency with a stricter lift are the evidence; one compile settles it. Full design:
-`kernel2-todos-design.md` section 4.
+| item | one-line context | design |
+|---|---|---|
+| Effect.catching as a region | the guarded arrow-rewrite pays per resumed step and cannot cover nested region interiors; the redesign makes catching a region node with a passive cell | `kernel2-todos-design.md` section 1 |
+| Defaulted redesign | `default: Any` untyped probe replacing the old Context-map definedness check; redesign: Maybe-shaped ContextEffect answers plus a typed Unhandled marker (task #31) | `kernel2-todos-design.md` section 3 |
+| IOTask integration | the full scheduler port: boundary layer, park protocol, preemption wiring, field layout; rulings R1-R6 | `iotask-kernel2-integration-r2.md`; summary `backlog-sections/iotask.md` |
+| IOTask's small kernel asks | Eval.partial deadline (R1), settled-answer budget charge (R2, JMH-gated), Safepoint.stop cheap negative (R6) | same doc, section 9 |
 
-## 8. dispatchFirst
-
-**Status: specified; lands beside handleFirst.** Region-peeling `private[kyo]` entry:
-peels `Handled`/`HandledState` values, tests the standing suspension's tag, runs
-nothing, stops at a `Defer` or a settled value. Needed for IOTask's
-interrupt-before-join cascade repair. Spec: `iotask-kernel2-integration-r2.md` 5.5
-(ruling R5).
-
-## 9. IOTask integration
-
-**Status: designed (r2, self-contained, verified against current kernel); rulings
-R1-R6 pending; consumes themes 1, 3, 7, 8.** Core: the boundary layer installed
-outermost (prev is Empty) so a parked re-raise leaves a bare residual that
-`handlePartial` answers without nesting a new layer; the park must be written as a
-pending outcome (one character from the settled form, which spins); field layout at
-baseline-parity 32 bytes. Rulings: R1 Eval.partial deadline (JS/Wasm slicing), R2
-charge the settled-answer arm one budget step (JMH-gated), R3 abandoned releases
-synchronous Unit (recommended), R4 context as conditional-subclass def, R5
-dispatchFirst, R6 Safepoint.stop cheap negative. Full design:
-`iotask-kernel2-integration-r2.md`; summary: `backlog-sections/iotask.md`. Then tasks
-#9 (Sync.ensure/Scope tests) and #11 (green kyo-core).
-
-## 10. Small kernel items
-
-- Eval.partial deadline parameter (R1): one Long compare per 512 steps.
-- Settled-answer budget charge (R2): hot arm, JMH A/B gate.
-- Safepoint.stop early exit on a null probe (R6).
-- save/restore try/finally in Eval.apply/partial (enrichment finding 8).
-
-## 11. Standing / parked
+## Standing
 
 | item | pointer |
 |---|---|
