@@ -224,7 +224,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     // ---- Drag event wire round-trips ----
 
     "drag UIEvents round-trip through their exact JSON wire representations" in {
-        val eventData = DragProtocol.EventData(
+        val startData = DragProtocol.StartData(
             sessionId = "session-1",
             items = Chunk(
                 Drag.Item.Text(Map("text/plain" -> "card")),
@@ -232,6 +232,12 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             ),
             operation = Drag.Operation.Copy,
             sourceKey = Present("source"),
+            point = Drag.Point(12.5, 24.0),
+            modifiers = UI.Modifiers(ctrl = true, shift = true)
+        )
+        val targetData = DragProtocol.TargetData(
+            sessionId = "session-1",
+            operation = Drag.Operation.Copy,
             targetKey = Present("target"),
             point = Drag.Point(12.5, 24.0),
             modifiers = UI.Modifiers(ctrl = true, shift = true),
@@ -247,18 +253,18 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             operation = Drag.Operation.Move
         )
         val cases = Chunk[(UIEvent, String)](
-            UIEvent.DragStart(Seq("root", "source"), eventData) ->
-                """{"DragStart":{"path":["root","source"],"event":{"sessionId":"session-1","items":[{"Text":{"representations":{"text/plain":"card"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"operation":{"Copy":{}},"sourceKey":"source","targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
+            UIEvent.DragStart(Seq("root", "source"), startData) ->
+                """{"DragStart":{"path":["root","source"],"event":{"sessionId":"session-1","items":[{"Text":{"representations":{"text/plain":"card"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"operation":{"Copy":{}},"sourceKey":"source","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false}}}}""",
             UIEvent.DragEnd(Seq("root", "source"), endData) ->
                 """{"DragEnd":{"path":["root","source"],"event":{"sessionId":"session-1","operation":{"Move":{}},"cancelled":true}}}""",
-            UIEvent.DragEnter(Seq("root", "target"), eventData) ->
-                """{"DragEnter":{"path":["root","target"],"event":{"sessionId":"session-1","items":[{"Text":{"representations":{"text/plain":"card"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"operation":{"Copy":{}},"sourceKey":"source","targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
-            UIEvent.DragLeave(Seq("root", "target"), eventData) ->
-                """{"DragLeave":{"path":["root","target"],"event":{"sessionId":"session-1","items":[{"Text":{"representations":{"text/plain":"card"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"operation":{"Copy":{}},"sourceKey":"source","targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
-            UIEvent.DragOver(Seq("root", "target"), eventData) ->
-                """{"DragOver":{"path":["root","target"],"event":{"sessionId":"session-1","items":[{"Text":{"representations":{"text/plain":"card"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"operation":{"Copy":{}},"sourceKey":"source","targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
-            UIEvent.Drop(Seq("root", "target"), eventData) ->
-                """{"Drop":{"path":["root","target"],"event":{"sessionId":"session-1","items":[{"Text":{"representations":{"text/plain":"card"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"operation":{"Copy":{}},"sourceKey":"source","targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
+            UIEvent.DragEnter(Seq("root", "target"), targetData) ->
+                """{"DragEnter":{"path":["root","target"],"event":{"sessionId":"session-1","operation":{"Copy":{}},"targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
+            UIEvent.DragLeave(Seq("root", "target"), targetData) ->
+                """{"DragLeave":{"path":["root","target"],"event":{"sessionId":"session-1","operation":{"Copy":{}},"targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
+            UIEvent.DragOver(Seq("root", "target"), targetData) ->
+                """{"DragOver":{"path":["root","target"],"event":{"sessionId":"session-1","operation":{"Copy":{}},"targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
+            UIEvent.Drop(Seq("root", "target"), targetData) ->
+                """{"Drop":{"path":["root","target"],"event":{"sessionId":"session-1","operation":{"Copy":{}},"targetKey":"target","point":{"x":12.5,"y":24.0},"modifiers":{"ctrl":true,"alt":false,"shift":true,"meta":false},"position":{"Before":{}}}}}""",
             UIEvent.SortMove(Seq("board"), "session-1", move) ->
                 """{"SortMove":{"path":["board"],"sessionId":"session-1","move":{"keys":["alpha","beta","gamma"],"source":{"collection":"backlog"},"destination":{"collection":"done"},"anchor":"omega","position":{"After":{}},"operation":{"Move":{}}}}}"""
         )
@@ -267,6 +273,13 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             val encoded = Json.encode[UIEvent](event)
             assert(encoded == expected)
             assert(Json.decode[UIEvent](encoded) == Result.succeed(event))
+            event match
+                case _: UIEvent.DragEnter | _: UIEvent.DragLeave | _: UIEvent.DragOver | _: UIEvent.Drop =>
+                    assert(!encoded.contains("items"))
+                    assert(!encoded.contains("text/plain"))
+                    assert(!encoded.contains("card"))
+                case _ => succeed
+            end match
         }
     }
 

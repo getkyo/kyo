@@ -138,17 +138,21 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         val cases = Chunk[(DragProtocol.ClientMessage, String)](
             DragProtocol.ClientMessage.Event(event) ->
                 """{"Event":{"value":{"DragEnd":{"path":["source"],"event":{"sessionId":"session-2","operation":{"Link":{}},"cancelled":false}}}}}""",
-            DragProtocol.ClientMessage.FileChunk("read-1", Chunk[Byte](1, -2, 3), done = true) ->
-                """{"FileChunk":{"requestId":"read-1","bytes":[1,-2,3],"done":true}}""",
+            DragProtocol.ClientMessage.FileChunk("read-1", "AH+A/w==") ->
+                """{"FileChunk":{"requestId":"read-1","bytesBase64":"AH+A/w=="}}""",
+            DragProtocol.ClientMessage.FileReadComplete("read-1") ->
+                """{"FileReadComplete":{"requestId":"read-1"}}""",
             DragProtocol.ClientMessage.FileEntries(
                 "read-2",
                 Chunk(
                     DragProtocol.EntryData.File(file),
                     DragProtocol.EntryData.Directory("dir-token", "assets")
                 ),
-                done = false
+                Present("cursor-2")
             ) ->
-                """{"FileEntries":{"requestId":"read-2","entries":[{"File":{"meta":{"token":"file-token","name":"notes.txt","mediaType":"text/plain","size":12,"lastModified":"1970-01-01T00:00:00Z"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"done":false}}""",
+                """{"FileEntries":{"requestId":"read-2","entries":[{"File":{"meta":{"token":"file-token","name":"notes.txt","mediaType":"text/plain","size":12,"lastModified":"1970-01-01T00:00:00Z"}}},{"Directory":{"token":"dir-token","name":"assets"}}],"nextCursor":"cursor-2"}}""",
+            DragProtocol.ClientMessage.FileEntries("read-2", Chunk.empty, Absent) ->
+                """{"FileEntries":{"requestId":"read-2","entries":[]}}""",
             DragProtocol.ClientMessage.FileFailure(
                 "read-3",
                 DragProtocol.FileFailureData.LimitExceeded("entry limit")
@@ -161,12 +165,32 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             assert(encoded == expected)
             assert(Json.decode[DragProtocol.ClientMessage](encoded) == Result.succeed(message))
         }
+
+        val stream = Chunk(
+            DragProtocol.ClientMessage.FileChunk("read-1", "AH+A/w=="),
+            DragProtocol.ClientMessage.FileChunk("read-1", "Zm9v"),
+            DragProtocol.ClientMessage.FileReadComplete("read-1")
+        )
+        assert(stream.map(Json.encode[DragProtocol.ClientMessage]) == Chunk(
+            """{"FileChunk":{"requestId":"read-1","bytesBase64":"AH+A/w=="}}""",
+            """{"FileChunk":{"requestId":"read-1","bytesBase64":"Zm9v"}}""",
+            """{"FileReadComplete":{"requestId":"read-1"}}"""
+        ))
+        Base64.decode("AH+A/w==") match
+            case Result.Success(bytes) =>
+                assert(bytes.size == 4)
+                assert(bytes(0) == 0.toByte)
+                assert(bytes(1) == 127.toByte)
+                assert(bytes(2) == 128.toByte)
+                assert(bytes(3) == 255.toByte)
+            case other => fail(s"expected binary base64 payload, got $other")
+        end match
     }
 
     "DragProtocol.ClientMessage distinguishes UI events from file responses" in {
         val eventJson =
             """{"Event":{"value":{"DragEnd":{"path":["source"],"event":{"sessionId":"session-2","operation":{"Copy":{}},"cancelled":false}}}}}"""
-        val chunkJson = """{"FileChunk":{"requestId":"read-1","bytes":[7],"done":true}}"""
+        val chunkJson = """{"FileChunk":{"requestId":"read-1","bytesBase64":"Bw=="}}"""
 
         assert(
             Json.decode[DragProtocol.ClientMessage](eventJson) == Result.succeed(
@@ -177,8 +201,157 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         )
         assert(
             Json.decode[DragProtocol.ClientMessage](chunkJson) == Result.succeed(
-                DragProtocol.ClientMessage.FileChunk("read-1", Chunk[Byte](7), done = true)
+                DragProtocol.ClientMessage.FileChunk("read-1", "Bw==")
             )
+        )
+    }
+
+    "DragProtocol validation rejects malformed and oversized wire data" in {
+        val limits = DragProtocol.Limits(
+            maxIdentifierLength = 8,
+            maxItemCount = 2,
+            maxTextRepresentationCount = 2,
+            maxDirectoryEntryCount = 2,
+            maxTextLength = 4,
+            maxNameLength = 8,
+            maxMediaTypeLength = 16,
+            maxReasonLength = 8,
+            maxBase64Length = 12,
+            maxDecodedChunkSize = 4.bytes
+        )
+        val item = Drag.Item.Text(Map("text/plain" -> "text"))
+        val validStart = DragProtocol.ClientMessage.Event(
+            UIEvent.DragStart(
+                Seq("root"),
+                DragProtocol.StartData(
+                    "session1",
+                    Chunk(item, item),
+                    Drag.Operation.Copy,
+                    Present("source1"),
+                    Drag.Point(0, 0),
+                    UI.Modifiers.none
+                )
+            )
+        )
+        val validRepresentations = DragProtocol.ClientMessage.Event(
+            UIEvent.DragStart(
+                Seq("root"),
+                DragProtocol.StartData(
+                    "session1",
+                    Chunk(Drag.Item.Text(Map("text/plain" -> "text", "image/png" -> "data"))),
+                    Drag.Operation.Copy,
+                    Absent,
+                    Drag.Point(0, 0),
+                    UI.Modifiers.none
+                )
+            )
+        )
+        val validEntries = DragProtocol.ClientMessage.FileEntries(
+            "request1",
+            Chunk(
+                DragProtocol.EntryData.Directory("token1", "name1"),
+                DragProtocol.EntryData.Directory("token2", "name2")
+            ),
+            Present("cursor12")
+        )
+
+        assert(DragProtocol.validate(validStart, limits) == Result.succeed(validStart))
+        assert(DragProtocol.validate(validRepresentations, limits) == Result.succeed(validRepresentations))
+        assert(DragProtocol.validate(validEntries, limits) == Result.succeed(validEntries))
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "AH+A/w=="), limits) ==
+                Result.succeed(DragProtocol.ClientMessage.FileChunk("request1", "AH+A/w=="))
+        )
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("", "AH+A/w=="), limits) ==
+                Result.fail(DragProtocol.ValidationFailure.Empty("requestId"))
+        )
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", ""), limits) ==
+                Result.fail(DragProtocol.ValidationFailure.Empty("bytesBase64"))
+        )
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "not-base64!"), limits) ==
+                Result.fail(DragProtocol.ValidationFailure.InvalidBase64)
+        )
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "AB=="), limits) ==
+                Result.fail(DragProtocol.ValidationFailure.InvalidBase64)
+        )
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "AAAAAAAAAAAAAAAA"), limits) ==
+                Result.fail(DragProtocol.ValidationFailure.TooLong("bytesBase64", 12, 16))
+        )
+        assert(
+            DragProtocol.validate(DragProtocol.ClientMessage.FileChunk("request1", "AAAAAAA="), limits) ==
+                Result.fail(DragProtocol.ValidationFailure.ChunkTooLarge(4.bytes, 5.bytes))
+        )
+        assert(
+            DragProtocol.validate(
+                DragProtocol.ClientMessage.Event(
+                    UIEvent.DragStart(
+                        Seq("root"),
+                        DragProtocol.StartData(
+                            "session1",
+                            Chunk(item, item, item),
+                            Drag.Operation.Copy,
+                            Absent,
+                            Drag.Point(0, 0),
+                            UI.Modifiers.none
+                        )
+                    )
+                ),
+                limits
+            ) == Result.fail(DragProtocol.ValidationFailure.TooMany("items", 2, 3))
+        )
+        assert(
+            DragProtocol.validate(
+                DragProtocol.ClientMessage.FileEntries(
+                    "request1",
+                    Chunk.fill(3)(DragProtocol.EntryData.Directory("token", "name")),
+                    Present("cursor1")
+                ),
+                limits
+            ) == Result.fail(DragProtocol.ValidationFailure.TooMany("entries", 2, 3))
+        )
+    }
+
+    "DragProtocol validation enforces identifier, metadata, and reason boundaries" in {
+        val limits = DragProtocol.Limits.default
+        val emptySession = DragProtocol.ClientMessage.Event(
+            UIEvent.DragEnd(Seq("source"), DragProtocol.EndData("", Drag.Operation.Copy, cancelled = false))
+        )
+        val emptyToken = DragProtocol.ClientMessage.FileEntries(
+            "read-1",
+            Chunk(DragProtocol.EntryData.Directory("", "assets")),
+            Absent
+        )
+        val emptyCursor = DragProtocol.ClientMessage.FileEntries("read-1", Chunk.empty, Present(""))
+        val emptyReason = DragProtocol.ClientMessage.FileFailure(
+            "read-1",
+            DragProtocol.FileFailureData.Io("")
+        )
+        val invalidMediaType = DragProtocol.ClientMessage.FileEntries(
+            "read-1",
+            Chunk(DragProtocol.EntryData.File(Drag.FileMeta("token", "file", "image/*", 1.bytes, Instant.Epoch))),
+            Absent
+        )
+        val invalidTimestamp = DragProtocol.ClientMessage.FileEntries(
+            "read-1",
+            Chunk(DragProtocol.EntryData.File(Drag.FileMeta("token", "file", "image/png", 1.bytes, Instant.Max))),
+            Absent
+        )
+
+        assert(DragProtocol.validate(emptySession, limits) == Result.fail(DragProtocol.ValidationFailure.Empty("sessionId")))
+        assert(DragProtocol.validate(emptyToken, limits) == Result.fail(DragProtocol.ValidationFailure.Empty("token")))
+        assert(DragProtocol.validate(emptyCursor, limits) == Result.fail(DragProtocol.ValidationFailure.Empty("nextCursor")))
+        assert(DragProtocol.validate(emptyReason, limits) == Result.fail(DragProtocol.ValidationFailure.Empty("reason")))
+        assert(
+            DragProtocol.validate(invalidMediaType, limits) ==
+                Result.fail(DragProtocol.ValidationFailure.InvalidMediaType("image/*"))
+        )
+        assert(
+            DragProtocol.validate(invalidTimestamp, limits) == Result.fail(DragProtocol.ValidationFailure.InvalidTimestamp)
         )
     }
 
