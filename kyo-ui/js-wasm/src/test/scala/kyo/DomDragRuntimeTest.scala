@@ -179,6 +179,8 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     val nested   = fixture.querySelector("#nested").asInstanceOf[dom.Element]
                     discard(handle.dispatchEvent(dragEvent("dragstart", handle, transfer, 10, 20)))
                     assert(runtime.stateName == "Dragging")
+                    val domainItemsIdentity = runtime.domainItemsIdentity
+                    assert(domainItemsIdentity != 0)
                     assert(transfer.effectAllowed == "all")
                     assert(transfer.inspectData("text/plain") == "card")
                     assert(transfer.inspectData("text/html") == "<b>card</b>")
@@ -193,6 +195,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     discard(nested.dispatchEvent(over))
                     assert(over.defaultPrevented)
                     assert(transfer.dropEffect == "copy")
+                    assert(runtime.domainItemsIdentity == domainItemsIdentity)
 
                     val drop = dragEvent("drop", nested, transfer, 32, 42, ctrl = true)
                     discard(nested.dispatchEvent(drop))

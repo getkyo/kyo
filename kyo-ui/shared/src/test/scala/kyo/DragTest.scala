@@ -13,6 +13,11 @@ class DragTest extends kyo.test.Test[Any]:
     private def text(representations: (String, String)*): Item.Text =
         Item.Text(representations.iterator.map((media, value) => mediaType(media) -> value).toMap)
 
+    private def assertConstructorRejected[A: Schema](json: String)(using kyo.test.AssertScope): Unit =
+        Json.decode[A](json) match
+            case Result.Failure(_: ConstructorRejectedException) => ()
+            case other                                           => fail(s"expected constructor rejection, got $other")
+
     "MediaType" - {
         "parses and renders canonical exact media types" in {
             assert(MediaType.parse("  Application/Vnd.Kyo+Json  ").map(_.render) == Present("application/vnd.kyo+json"))
@@ -94,6 +99,48 @@ class DragTest extends kyo.test.Test[Any]:
             Json.decode[MediaTypePattern]("\"*/*\"") match
                 case Result.Failure(error: ConstructorRejectedException) => assert(error.typeName == "Drag.MediaTypePattern")
                 case other                                               => fail(s"expected constructor rejection, got $other")
+        }
+    }
+
+    "nested media type schemas" - {
+        "validate and normalize FileMeta media types" in {
+            val file = FileMeta("token", "file.txt", mediaType("text/plain"), ByteSize.Zero, Instant.Epoch)
+            val json = Json.encode(file)
+            assert(Json.decode[FileMeta](json.replace("text/plain", " TEXT/PLAIN ")).map(_.mediaType.render) ==
+                Result.succeed("text/plain"))
+            assertConstructorRejected[FileMeta](json.replace("text/plain", "text/*"))
+        }
+
+        "validate and normalize Item.Text representation keys" in {
+            val json = Json.encode[Item](text("text/plain" -> "value"))
+            Json.decode[Item](json.replace("text/plain", " TEXT/PLAIN ")) match
+                case Result.Success(Item.Text(representations)) =>
+                    assert(representations.keySet.map(_.render) == Set("text/plain"))
+                case other => fail(s"expected normalized text item, got $other")
+            end match
+            assertConstructorRejected[Item](json.replace("text/plain", "text/*"))
+        }
+
+        "validate and normalize Accept media type patterns" in {
+            val json = Json.encode(Accept.types(mediaTypePattern("image/*")))
+            assert(Json.decode[Accept](json.replace("image/*", " IMAGE/* ")).map(_.mediaTypes.map(_.render)) ==
+                Result.succeed(Set("image/*")))
+            assertConstructorRejected[Accept](json.replace("image/*", "*/*"))
+        }
+
+        "validate nested Source and Target media values" in {
+            val sourceJson = Json.encode(Source("source", Chunk(text("text/plain" -> "value"))))
+            Json.decode[Source](sourceJson.replace("text/plain", " TEXT/PLAIN ")) match
+                case Result.Success(Source(_, Chunk(Item.Text(representations)), _, _, _, _, _)) =>
+                    assert(representations.keySet.map(_.render) == Set("text/plain"))
+                case other => fail(s"expected normalized source, got $other")
+            end match
+            assertConstructorRejected[Source](sourceJson.replace("text/plain", "text/*"))
+
+            val targetJson = Json.encode(Target("target", Accept.types(mediaTypePattern("image/*"))))
+            assert(Json.decode[Target](targetJson.replace("image/*", " IMAGE/* ")).map(_.accepts.mediaTypes.map(_.render)) ==
+                Result.succeed(Set("image/*")))
+            assertConstructorRejected[Target](targetJson.replace("image/*", "*/*"))
         }
     }
 

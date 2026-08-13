@@ -350,6 +350,28 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "local dispatch rejects malformed drag-start media without invoking handlers" in {
+        val invalid = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData(
+                "invalid-media",
+                Chunk(DragProtocol.ItemData.Text(Map("text/*" -> "value"))),
+                Drag.Operation.Copy,
+                Absent,
+                Drag.Point(0, 0),
+                UI.Modifiers.none
+            )
+        )
+        for
+            calls <- AtomicInt.init(0)
+            _ <- withDispatch(UI.div.onDragStart((_: Drag.Event) => calls.incrementAndGet)) { dispatch =>
+                dispatch(Seq.empty, invalid)
+            }
+            count <- calls.get
+        yield assert(count == 0)
+        end for
+    }
+
     "unknown drop rejects without handlers and a known terminal event resolves only once" in {
         val target = DragProtocol.TargetData(
             "missing",

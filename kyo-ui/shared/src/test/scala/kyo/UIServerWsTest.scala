@@ -215,13 +215,13 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 assert(DragProtocol.validate(message, DragProtocol.Limits.default) == Result.succeed(message))
                 assert(meta.size.value == ByteSize.Zero)
                 assert(
-                    meta.toDomain == Drag.FileMeta(
+                    meta.toDomain() == Result.succeed(Drag.FileMeta(
                         "token",
                         "file.bin",
                         mediaType("application/octet-stream"),
                         ByteSize.Zero,
                         Instant.Epoch
-                    )
+                    ))
                 )
             case other => fail(s"expected decoded zero-sized file metadata, got $other")
         end match
@@ -310,10 +310,10 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(DragProtocol.validate(validStart, limits) == Result.succeed(validStart))
         validStart match
             case DragProtocol.ClientMessage.Event(UIEvent.DragStart(_, data)) =>
-                assert(data.domainItems == Chunk(
+                assert(data.domainItems() == Result.succeed(Chunk(
                     dragText("text/plain" -> "text"),
                     dragText("text/plain" -> "text")
-                ))
+                )))
             case other => fail(s"expected validated drag start, got $other")
         end match
         assert(DragProtocol.validate(validRepresentations, limits) == Result.succeed(validRepresentations))
@@ -428,10 +428,18 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             case other => fail(s"expected validated target config, got $other")
         end match
         assert(DragProtocol.validate(invalidExact, DragProtocol.Limits.default).isFailure)
+        invalidExact match
+            case DragProtocol.ClientMessage.Event(UIEvent.DragStart(_, data)) =>
+                assert(data.domainItems().isFailure)
+            case other => fail(s"expected invalid drag start, got $other")
+        end match
         start match
             case DragProtocol.ClientMessage.Event(UIEvent.DragStart(_, data)) =>
-                val text = data.domainItems.head.asInstanceOf[Drag.Item.Text]
-                assert(text.representations.keySet.map(_.render) == Set("text/plain"))
+                data.domainItems() match
+                    case Result.Success(items) =>
+                        val text = items.head.asInstanceOf[Drag.Item.Text]
+                        assert(text.representations.keySet.map(_.render) == Set("text/plain"))
+                    case other => fail(s"expected domain items, got $other")
             case other => fail(s"expected drag start, got $other")
         end match
     }
@@ -622,6 +630,46 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         yield assert(actual.exists(data =>
             Json.decode[HtmlOp](data) == Result.succeed(HtmlOp.ResolveDrag("ws-drag", Drag.Decision.Accept))
         ))
+        end for
+    }
+
+    "malformed drag-start media is rejected without invoking handlers or terminating the session".notNative in {
+        val invalidStart = UIEvent.DragStart(
+            Seq("0"),
+            DragProtocol.StartData(
+                "bad-media",
+                Chunk(DragProtocol.ItemData.Text(Map("text/*" -> "invalid"))),
+                Drag.Operation.Copy,
+                Absent,
+                Drag.Point(1, 1),
+                UI.Modifiers.none
+            )
+        )
+        for
+            starts <- AtomicInt.init(0)
+            ref    <- Signal.initRef("before")
+            app = UI.div(
+                UI.div.onDragStart((_: Drag.Event) => starts.incrementAndGet),
+                UI.button("Click").onClick(ref.set("after")),
+                ref.map(UI.span(_))
+            )
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    serverWs => UIServer.serveSession(serverWs, app),
+                    clientWs =>
+                        for
+                            _ <- clientWs.take()
+                            _ <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](invalidStart)))
+                            click = UIEvent.Click(Seq("1"), MouseEventData(UI.Modifiers.none, Absent))
+                            _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](click)))
+                            frame <- clientWs.take()
+                        yield frame match
+                            case HttpWebSocket.Payload.Text(data) => assert(data.contains("after"))
+                            case other                            => fail(s"expected reactive text frame, got $other")
+                )
+            }
+            count <- starts.get
+        yield assert(count == 0)
         end for
     }
 

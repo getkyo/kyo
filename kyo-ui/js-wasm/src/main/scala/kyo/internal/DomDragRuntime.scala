@@ -40,7 +40,8 @@ private[kyo] object DomDragRuntime:
 
     final private case class ProbeResult(manifest: Probe, allowed: Drag.AllowedOperations)
     final private case class Snapshot(
-        items: Chunk[DragProtocol.ItemData],
+        wireItems: Chunk[DragProtocol.ItemData],
+        domainItems: Chunk[Drag.Item],
         allowed: Drag.AllowedOperations,
         tokens: mutable.Map[String, js.Any]
     )
@@ -55,6 +56,7 @@ private[kyo] object DomDragRuntime:
         private[kyo] def stateName: String
         private[kyo] def activeSessionId: Maybe[String]
         private[kyo] def contextIdentity: Int
+        private[kyo] def domainItemsIdentity: Int
         private[kyo] def transitionCount: Int
         private[kyo] def fileToken(token: String): Maybe[js.Any]
     end Handle
@@ -70,7 +72,8 @@ private[kyo] object DomDragRuntime:
         val startedAt: Double,
         var operation: Drag.Operation,
         var target: Maybe[Located[ValidatedTarget]],
-        var items: Maybe[Chunk[DragProtocol.ItemData]]
+        var wireItems: Maybe[Chunk[DragProtocol.ItemData]],
+        var domainItems: Maybe[Chunk[Drag.Item]]
     ) derives CanEqual
 
     private enum State derives CanEqual:
@@ -120,7 +123,9 @@ private[kyo] object DomDragRuntime:
         private[kyo] def stateName: String              = state.productPrefix
         private[kyo] def activeSessionId: Maybe[String] = state.maybeContext.map(_.id)
         private[kyo] def contextIdentity: Int           = state.maybeContext.fold(0)(java.lang.System.identityHashCode)
-        private[kyo] def transitionCount: Int           = transitions
+        private[kyo] def domainItemsIdentity: Int =
+            state.maybeContext.flatMap(_.domainItems).fold(0)(java.lang.System.identityHashCode)
+        private[kyo] def transitionCount: Int = transitions
 
         private[kyo] def fileToken(token: String): Maybe[js.Any] =
             state.maybeContext.flatMap(context => Maybe.fromOption(context.tokens.get(token)))
@@ -225,22 +230,32 @@ private[kyo] object DomDragRuntime:
                     dataTransfer(event).foreach { transfer =>
                         transfer.updateDynamic("effectAllowed")(effectAllowed(source.config.operations))
                         preferred(source.config.operations, Absent, modifiers(event)).foreach { operation =>
-                            val id = token("drag")
-                            setInternalData(transfer, source.config)
-                            val preview = createPreview(source.element, source.config.preview, transfer)
-                            val context = SessionContext(
-                                id,
-                                Present(source),
-                                source.config.operations,
-                                mutable.Map.empty,
-                                preview,
-                                timing.nowMillis(),
+                            DragProtocol.StartData(
+                                "validation",
+                                source.config.items,
                                 operation,
-                                Absent,
-                                Present(source.config.items)
-                            )
-                            move(State.Dragging(context))
-                            emitStart(context, source.path, event)
+                                Present(source.config.key),
+                                Drag.Point(0, 0),
+                                UI.Modifiers.none
+                            ).domainItems(limits).foreach { domainItems =>
+                                val id = token("drag")
+                                setInternalData(transfer, source.config)
+                                val preview = createPreview(source.element, source.config.preview, transfer)
+                                val context = SessionContext(
+                                    id,
+                                    Present(source),
+                                    source.config.operations,
+                                    mutable.Map.empty,
+                                    preview,
+                                    timing.nowMillis(),
+                                    operation,
+                                    Absent,
+                                    Present(source.config.items),
+                                    Present(domainItems)
+                                )
+                                move(State.Dragging(context))
+                                emitStart(context, source.path, event)
+                            }
                         }
                     }
                 end if
@@ -288,7 +303,8 @@ private[kyo] object DomDragRuntime:
 
         private def externalDrop(event: dom.Event, context: SessionContext): Unit =
             dataTransfer(event).flatMap(snapshot).fold(discardContext(context)) { snapshot =>
-                context.items = Present(snapshot.items)
+                context.wireItems = Present(snapshot.wireItems)
+                context.domainItems = Present(snapshot.domainItems)
                 context.allowed = snapshot.allowed
                 context.tokens.addAll(snapshot.tokens)
                 asElement(event.target).flatMap(acceptedTarget(_, context, Absent, modifiers(event))).fold(discardContext(context)) {
@@ -320,7 +336,7 @@ private[kyo] object DomDragRuntime:
             if state.maybeContext.exists(_ eq context) then
                 context.preview.foreach(_.remove())
                 context.tokens.clear()
-                if context.items.nonEmpty then
+                if context.wireItems.nonEmpty then
                     val path = context.source.map(_.path).getOrElse(Seq.empty)
                     enqueue(UIEvent.DragEnd(path, DragProtocol.EndData(context.id, context.operation, cancelled)))
                 move(State.Idle)
@@ -353,6 +369,7 @@ private[kyo] object DomDragRuntime:
                     timing.nowMillis(),
                     operation,
                     Absent,
+                    Absent,
                     Absent
                 )
                 State.ExternalProbing(context, result.manifest)
@@ -364,7 +381,7 @@ private[kyo] object DomDragRuntime:
                 path,
                 DragProtocol.StartData(
                     context.id,
-                    context.items.getOrElse(Chunk.empty),
+                    context.wireItems.getOrElse(Chunk.empty),
                     context.operation,
                     sourceKey,
                     point(event),
@@ -397,7 +414,7 @@ private[kyo] object DomDragRuntime:
                 decodeTarget(current).foreach { target =>
                     val operation = preferred(context.allowed, Present(target.config.accept.operations), mods)
                     operation.foreach { selected =>
-                        val accepted = probe.fold(context.items.exists(accepts(target.config.accept, _)))(
+                        val accepted = probe.fold(context.domainItems.exists(accepts(target.config.accept, _)))(
                             acceptsProbe(target.config.accept, _)
                         )
                         if accepted then return Present(TargetMatch(target, selected))
@@ -408,8 +425,8 @@ private[kyo] object DomDragRuntime:
             Absent
         end acceptedTarget
 
-        private def accepts(accept: Drag.Accept, items: Chunk[DragProtocol.ItemData]): Boolean =
-            accept.maxItems.forall(items.size <= _) && items.forall(item => accept.accepts(item.toDomain))
+        private def accepts(accept: Drag.Accept, items: Chunk[Drag.Item]): Boolean =
+            accept.maxItems.forall(items.size <= _) && items.forall(accept.accepts)
         end accepts
 
         private def acceptsProbe(accept: Drag.Accept, probe: Probe): Boolean =
@@ -646,15 +663,19 @@ private[kyo] object DomDragRuntime:
             val allowed = allowedFromBrowser(
                 if js.isUndefined(transfer.effectAllowed) then "all" else transfer.effectAllowed.asInstanceOf[String]
             )
-            val start = UIEvent.DragStart(
-                Seq.empty,
-                DragProtocol.StartData("validation", result, Drag.Operation.Move, Absent, Drag.Point(0, 0), UI.Modifiers.none)
-            )
             if !valid then Absent
             else
-                DragProtocol.validate(DragProtocol.ClientMessage.Event(start), limits) match
-                    case Result.Success(_) if result.nonEmpty && allowed.values.nonEmpty => Present(Snapshot(result, allowed, tokens))
-                    case _                                                               => Absent
+                DragProtocol.StartData(
+                    "validation",
+                    result,
+                    Drag.Operation.Move,
+                    Absent,
+                    Drag.Point(0, 0),
+                    UI.Modifiers.none
+                ).domainItems(limits) match
+                    case Result.Success(domainItems) if result.nonEmpty && allowed.values.nonEmpty =>
+                        Present(Snapshot(result, domainItems, allowed, tokens))
+                    case _ => Absent
             end if
         end snapshot
 

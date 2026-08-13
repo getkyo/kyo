@@ -59,8 +59,9 @@ private[kyo] object DragProtocol:
         modifiers: UI.Modifiers
     ) derives CanEqual, Schema:
 
-        /** Converts the validated wire manifest to domain drag items for handler dispatch. */
-        def domainItems: Chunk[Drag.Item] = items.map(_.toDomain)
+        /** Validates and converts the wire manifest to domain drag items for handler dispatch. */
+        def domainItems(limits: Limits = Limits.default): Result[ValidationFailure, Chunk[Drag.Item]] =
+            validateItemsAndDomain(items, limits)
     end StartData
 
     /** Identifies an established drag session and carries only its current target state. */
@@ -99,9 +100,9 @@ private[kyo] object DragProtocol:
         lastModified: Instant
     ) derives CanEqual, Schema:
 
-        /** Converts validated wire metadata to domain file metadata. */
-        def toDomain: Drag.FileMeta =
-            Drag.FileMeta(token, name, Drag.MediaType.parse(mediaType).get, size.value, lastModified)
+        /** Validates and converts wire metadata to domain file metadata. */
+        def toDomain(limits: Limits = Limits.default): Result[ValidationFailure, Drag.FileMeta] =
+            validateFileMetaAndDomain(this, limits)
     end FileMetaData
 
     /** Transfer item whose file byte quantities are validated while decoding. */
@@ -111,14 +112,16 @@ private[kyo] object DragProtocol:
         case File(meta: FileMetaData)
         case Directory(token: String, name: String)
 
-        /** Converts a validated wire item to its domain representation. */
-        def toDomain: Drag.Item = this match
-            case Text(representations) =>
-                Drag.Item.Text(representations.iterator.map((mediaType, value) => Drag.MediaType.parse(mediaType).get -> value).toMap)
-            case Uri(value)             => Drag.Item.Uri(value)
-            case File(meta)             => Drag.Item.File(meta.toDomain)
-            case Directory(token, name) => Drag.Item.Directory(token, name)
+        /** Validates and converts a wire item to its domain representation. */
+        def toDomain(limits: Limits = Limits.default): Result[ValidationFailure, Drag.Item] =
+            validateItemAndDomain(this, limits)
     end ItemData
+
+    /** Protocol event whose wire values and drag domain payload have passed one authoritative conversion boundary. */
+    final private[kyo] case class ValidatedEvent(
+        wire: UIEvent,
+        startItems: Maybe[Chunk[Drag.Item]]
+    ) derives CanEqual
 
     /** Browser-bound drag source configuration with safe file byte quantities. */
     final private[kyo] case class SourceConfig(
@@ -274,7 +277,7 @@ private[kyo] object DragProtocol:
     ): Result[ValidationFailure, SourceConfig] =
         validateIdentifier(config.key, "source.key", limits)
             .flatMap(_ => validateCount(config.items.size, "source.items", limits.maxItemCount))
-            .flatMap(_ => validateAll(config.items)(validateItem(_, limits)))
+            .flatMap(_ => validateItemsAndDomain(config.items, limits).unit)
             .flatMap(_ => validateOptionalText(config.label, "source.label", limits.maxNameLength))
             .flatMap(_ => validatePreview(config.preview, limits))
             .flatMap(_ => validateEncodedAttribute(Json.encode(config), "dragSource", limits))
@@ -381,7 +384,7 @@ private[kyo] object DragProtocol:
                 validateText(value, "uri", limits.maxTextLength, allowEmpty = false)
             case Drag.Item.File(meta) =>
                 validateWireByteSize(meta.size, "file.size")
-                    .flatMap(_ => validateFileMeta(toFileMetaData(meta), limits))
+                    .flatMap(_ => validateFileMetaAndDomain(toFileMetaData(meta), limits).unit)
             case Drag.Item.Directory(token, name) =>
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
@@ -452,7 +455,7 @@ private[kyo] object DragProtocol:
     /** Validates an untrusted decoded browser message before runtime dispatch. */
     private[kyo] def validate(message: ClientMessage, limits: Limits): Result[ValidationFailure, ClientMessage] =
         val result = message match
-            case ClientMessage.Event(value) => validateEvent(value, limits)
+            case ClientMessage.Event(value) => validateEventAndDomain(value, limits).unit
             case ClientMessage.FileChunk(requestId, bytesBase64) =>
                 validateIdentifier(requestId, "requestId", limits).flatMap(_ => validateBase64(bytesBase64, limits))
             case ClientMessage.FileReadComplete(requestId) =>
@@ -470,37 +473,42 @@ private[kyo] object DragProtocol:
     private val browserTimestampMin = Instant.parse("0001-01-01T00:00:00Z").getOrThrow
     private val browserTimestampMax = Instant.parse("9999-12-31T23:59:59.999999999Z").getOrThrow
 
-    private def validateEvent(event: UIEvent, limits: Limits): Result[ValidationFailure, Unit] =
+    /** Validates an untrusted event and converts drag-start items exactly once. */
+    private[kyo] def validateEventAndDomain(event: UIEvent, limits: Limits): Result[ValidationFailure, ValidatedEvent] =
         validateCount(event.path.size, "path", limits.maxPathDepth)
             .flatMap(_ => validateAll(event.path)(validateIdentifier(_, "path", limits)))
             .flatMap { _ =>
                 event match
-                    case event: UIEvent.Click         => validateMouse(event.mouse, limits)
-                    case event: UIEvent.ClickSelf     => validateMouse(event.mouse, limits)
-                    case event: UIEvent.Input         => validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
-                    case event: UIEvent.Change        => validateText(event.value, "value", limits.maxTextLength, allowEmpty = true)
-                    case _: UIEvent.ChangeChecked     => Result.unit
-                    case event: UIEvent.ChangeNumeric => validateNumber(event.value, "value")
-                    case event: UIEvent.Submit        => validateMouse(event.mouse, limits)
-                    case event: UIEvent.KeyDown       => validateKeyboard(event.keyboard, limits)
-                    case event: UIEvent.KeyUp         => validateKeyboard(event.keyboard, limits)
-                    case event: UIEvent.Focus         => validateMouse(event.mouse, limits)
-                    case event: UIEvent.Blur          => validateMouse(event.mouse, limits)
+                    case event: UIEvent.Click     => validateMouse(event.mouse, limits).map(_ => Absent)
+                    case event: UIEvent.ClickSelf => validateMouse(event.mouse, limits).map(_ => Absent)
+                    case event: UIEvent.Input =>
+                        validateText(event.value, "value", limits.maxTextLength, allowEmpty = true).map(_ => Absent)
+                    case event: UIEvent.Change =>
+                        validateText(event.value, "value", limits.maxTextLength, allowEmpty = true).map(_ => Absent)
+                    case _: UIEvent.ChangeChecked     => Result.succeed(Absent)
+                    case event: UIEvent.ChangeNumeric => validateNumber(event.value, "value").map(_ => Absent)
+                    case event: UIEvent.Submit        => validateMouse(event.mouse, limits).map(_ => Absent)
+                    case event: UIEvent.KeyDown       => validateKeyboard(event.keyboard, limits).map(_ => Absent)
+                    case event: UIEvent.KeyUp         => validateKeyboard(event.keyboard, limits).map(_ => Absent)
+                    case event: UIEvent.Focus         => validateMouse(event.mouse, limits).map(_ => Absent)
+                    case event: UIEvent.Blur          => validateMouse(event.mouse, limits).map(_ => Absent)
                     case event: UIEvent.Scroll =>
                         validateNumber(event.deltaX, "deltaX")
                             .flatMap(_ => validateNumber(event.deltaY, "deltaY"))
                             .flatMap(_ => validateOptionalIdentifier(event.targetId, "targetId", limits))
-                    case event: UIEvent.Hover     => validateMouse(event.mouse, limits)
-                    case event: UIEvent.Unhover   => validateMouse(event.mouse, limits)
-                    case event: UIEvent.DragStart => validateStart(event.event, limits)
-                    case event: UIEvent.DragEnd   => validateEnd(event.event, limits)
-                    case event: UIEvent.DragEnter => validateTarget(event.event, limits)
-                    case event: UIEvent.DragLeave => validateTarget(event.event, limits)
-                    case event: UIEvent.DragOver  => validateTarget(event.event, limits)
-                    case event: UIEvent.Drop      => validateTarget(event.event, limits)
-                    case event: UIEvent.SortMove  => validateSortMove(event.sessionId, event.move, limits)
+                            .map(_ => Absent)
+                    case event: UIEvent.Hover     => validateMouse(event.mouse, limits).map(_ => Absent)
+                    case event: UIEvent.Unhover   => validateMouse(event.mouse, limits).map(_ => Absent)
+                    case event: UIEvent.DragStart => validateStartAndDomain(event.event, limits).map(Present(_))
+                    case event: UIEvent.DragEnd   => validateEnd(event.event, limits).map(_ => Absent)
+                    case event: UIEvent.DragEnter => validateTarget(event.event, limits).map(_ => Absent)
+                    case event: UIEvent.DragLeave => validateTarget(event.event, limits).map(_ => Absent)
+                    case event: UIEvent.DragOver  => validateTarget(event.event, limits).map(_ => Absent)
+                    case event: UIEvent.Drop      => validateTarget(event.event, limits).map(_ => Absent)
+                    case event: UIEvent.SortMove  => validateSortMove(event.sessionId, event.move, limits).map(_ => Absent)
             }
-    end validateEvent
+            .map(ValidatedEvent(event, _))
+    end validateEventAndDomain
 
     private def validateMouse(mouse: MouseEventData, limits: Limits): Result[ValidationFailure, Unit] =
         validateOptionalIdentifier(mouse.targetId, "targetId", limits)
@@ -509,12 +517,12 @@ private[kyo] object DragProtocol:
         validateIdentifier(keyboard.key, "key", limits)
             .flatMap(_ => validateOptionalIdentifier(keyboard.targetId, "targetId", limits))
 
-    private def validateStart(data: StartData, limits: Limits): Result[ValidationFailure, Unit] =
+    private def validateStartAndDomain(data: StartData, limits: Limits): Result[ValidationFailure, Chunk[Drag.Item]] =
         validateIdentifier(data.sessionId, "sessionId", limits)
             .flatMap(_ => validateCount(data.items.size, "items", limits.maxItemCount))
-            .flatMap(_ => validateAll(data.items)(validateItem(_, limits)))
             .flatMap(_ => validateOptionalIdentifier(data.sourceKey, "sourceKey", limits))
             .flatMap(_ => validatePoint(data.point))
+            .flatMap(_ => validateItemsAndDomain(data.items, limits))
 
     private def validateTarget(data: TargetData, limits: Limits): Result[ValidationFailure, Unit] =
         validateIdentifier(data.sessionId, "sessionId", limits)
@@ -532,37 +540,60 @@ private[kyo] object DragProtocol:
             .flatMap(_ => validateIdentifier(move.destination.collection, "destination", limits))
             .flatMap(_ => validateOptionalIdentifier(move.anchor, "anchor", limits))
 
-    private def validateItem(item: ItemData, limits: Limits): Result[ValidationFailure, Unit] =
+    private def validateItemsAndDomain(
+        items: Chunk[ItemData],
+        limits: Limits
+    ): Result[ValidationFailure, Chunk[Drag.Item]] =
+        val builder  = ChunkBuilder.init[Drag.Item]
+        val iterator = items.iterator
+        var result   = Result.unit: Result[ValidationFailure, Unit]
+        while iterator.hasNext && result.isSuccess do
+            result = validateItemAndDomain(iterator.next(), limits).map(builder.addOne).unit
+        result.map(_ => builder.result())
+    end validateItemsAndDomain
+
+    private def validateItemAndDomain(item: ItemData, limits: Limits): Result[ValidationFailure, Drag.Item] =
         item match
             case ItemData.Text(representations) =>
                 validateCount(representations.size, "representations", limits.maxTextRepresentationCount)
-                    .flatMap(_ =>
-                        validateAll(representations) { case (mediaType, text) =>
-                            validateMediaType(mediaType, limits)
-                                .flatMap(_ => validateText(text, "text", limits.maxTextLength, allowEmpty = true))
-                        }
-                    )
+                    .flatMap { _ =>
+                        val builder  = Map.newBuilder[Drag.MediaType, String]
+                        val iterator = representations.iterator
+                        var result   = Result.unit: Result[ValidationFailure, Unit]
+                        while iterator.hasNext && result.isSuccess do
+                            val (rawMediaType, text) = iterator.next()
+                            result = parseMediaType(rawMediaType, limits)
+                                .flatMap(mediaType =>
+                                    validateText(text, "text", limits.maxTextLength, allowEmpty = true)
+                                        .map(_ => builder += mediaType -> text)
+                                )
+                                .unit
+                        end while
+                        result.map(_ => Drag.Item.Text(builder.result()))
+                    }
             case ItemData.Uri(value) =>
-                validateText(value, "uri", limits.maxTextLength, allowEmpty = false)
-            case ItemData.File(meta) => validateFileMeta(meta, limits)
+                validateText(value, "uri", limits.maxTextLength, allowEmpty = false).map(_ => Drag.Item.Uri(value))
+            case ItemData.File(meta) => validateFileMetaAndDomain(meta, limits).map(Drag.Item.File(_))
             case ItemData.Directory(token, name) =>
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
-    end validateItem
+                    .map(_ => Drag.Item.Directory(token, name))
+    end validateItemAndDomain
 
     private def validateEntry(entry: EntryData, limits: Limits): Result[ValidationFailure, Unit] =
         entry match
-            case EntryData.File(meta) => validateFileMeta(meta, limits)
+            case EntryData.File(meta) => validateFileMetaAndDomain(meta, limits).unit
             case EntryData.Directory(token, name) =>
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
 
-    private def validateFileMeta(meta: FileMetaData, limits: Limits): Result[ValidationFailure, Unit] =
+    private def validateFileMetaAndDomain(meta: FileMetaData, limits: Limits): Result[ValidationFailure, Drag.FileMeta] =
         validateIdentifier(meta.token, "token", limits)
             .flatMap(_ => validateText(meta.name, "name", limits.maxNameLength, allowEmpty = false))
-            .flatMap(_ => validateMediaType(meta.mediaType, limits))
-            .flatMap { _ =>
-                if meta.lastModified >= browserTimestampMin && meta.lastModified <= browserTimestampMax then Result.unit
+            .flatMap(_ => parseMediaType(meta.mediaType, limits))
+            .flatMap { mediaType =>
+                if meta.lastModified >= browserTimestampMin && meta.lastModified <= browserTimestampMax then
+                    Result.succeed(Drag.FileMeta(meta.token, meta.name, mediaType, meta.size.value, meta.lastModified))
                 else Result.fail(ValidationFailure.InvalidTimestamp)
             }
 
@@ -615,9 +646,11 @@ private[kyo] object DragProtocol:
         else -1
 
     private def validateMediaType(value: String, limits: Limits): Result[ValidationFailure, Unit] =
+        parseMediaType(value, limits).unit
+
+    private def parseMediaType(value: String, limits: Limits): Result[ValidationFailure, Drag.MediaType] =
         validateText(value, "mediaType", limits.maxMediaTypeLength, allowEmpty = false).flatMap { _ =>
-            if Drag.MediaType.parse(value).nonEmpty then Result.unit
-            else Result.fail(ValidationFailure.InvalidMediaType(value))
+            Drag.MediaType.parse(value).toResult(Result.fail(ValidationFailure.InvalidMediaType(value)))
         }
 
     private def validatePoint(point: Drag.Point): Result[ValidationFailure, Unit] =

@@ -206,14 +206,22 @@ object Drag:
         mediaType: MediaType,
         size: ByteSize,
         lastModified: Instant
-    ) derives CanEqual, Schema
+    ) derives CanEqual
+
+    object FileMeta:
+        given Schema[FileMeta] = DragSchemas.fileMeta
+    end FileMeta
 
     /** One transferable value exposed by a browser drag. */
-    enum Item derives CanEqual, Schema:
+    enum Item derives CanEqual:
         case Text(representations: Map[MediaType, String])
         case Uri(value: String)
         case File(meta: FileMeta)
         case Directory(token: String, name: String)
+    end Item
+
+    object Item:
+        given Schema[Item] = DragSchemas.item
     end Item
 
     /** Declarative configuration attached to a draggable UI element.
@@ -263,13 +271,15 @@ object Drag:
         maxItems: Maybe[Int] = Absent,
         maxFileSize: Maybe[ByteSize] = Absent,
         directories: Boolean = false
-    ) derives CanEqual, Schema:
+    ) derives CanEqual:
 
         /** Evaluates the rules that can be determined from one transfer item. */
         def accepts(item: Item): Boolean = Drag.accepts(this, item)
     end Accept
 
     object Accept:
+        given Schema[Accept] = DragSchemas.accept
+
         /** Creates acceptance rules for one or more validated media type patterns. */
         def types(first: MediaTypePattern, rest: MediaTypePattern*): Accept =
             Accept(mediaTypes = rest.toSet + first)
@@ -335,7 +345,7 @@ object Drag:
 
     // --- Internal matching ---
 
-    private val uriMediaType = MediaType.parse("text/uri-list").get
+    private val uriMediaType: MediaType = "text/uri-list"
 
     private def accepts(accept: Accept, item: Item): Boolean =
         item match
@@ -379,3 +389,50 @@ object Drag:
     end isConcreteToken
 
 end Drag
+
+private object DragSchemas:
+    private given mediaTypeMap: Schema[Map[Drag.MediaType, String]] =
+        val valueSchema = summon[Schema[String]]
+        Schema.init[Map[Drag.MediaType, String]](
+            writeFn = (value, writer) =>
+                writer.mapStart(value.size)
+                value.iterator.zipWithIndex.foreach { case ((mediaType, text), index) =>
+                    writer.field(mediaType.render, index)
+                    valueSchema.serializeWrite(text, writer)
+                }
+                writer.mapEnd()
+            ,
+            readFn = reader =>
+                discard(reader.mapStart())
+                val builder = Map.newBuilder[Drag.MediaType, String]
+                var count   = 1
+                while reader.hasNextEntry() do
+                    reader.checkCollectionSize(count)
+                    val raw = reader.field()
+                    val mediaType = kyo.internal.constructedOrThrow(
+                        Drag.MediaType.parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
+                        "Drag.MediaType"
+                    )(using reader.frame)
+                    builder += mediaType -> valueSchema.serializeRead(reader)
+                    count += 1
+                end while
+                reader.mapEnd()
+                builder.result()
+            ,
+            absentDefaultValue = Maybe(Map.empty[Drag.MediaType, String]),
+            structure = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                summon[Schema[Drag.MediaType]].structure,
+                valueSchema.structure
+            )
+        )
+    end mediaTypeMap
+
+    private given mediaTypePatternSet: Schema[Set[Drag.MediaTypePattern]] =
+        Schema.setSchema(using summon[Schema[Drag.MediaTypePattern]])
+
+    val fileMeta: Schema[Drag.FileMeta] = Schema.derived
+    val item: Schema[Drag.Item]         = Schema.derived
+    val accept: Schema[Drag.Accept]     = Schema.derived
+end DragSchemas

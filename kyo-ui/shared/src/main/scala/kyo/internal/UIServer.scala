@@ -54,7 +54,7 @@ private[kyo] object UIServer:
                 _ <- UICommands.scrollSink.let(Present(scrollSink)) {
                     DragCommands.resolveSink.let(Present(resolveSink)) {
                         Async.race(
-                            ws.stream.foreach(payload => dispatchEvent(sub.handle, payload)),
+                            ws.stream.foreach(payload => dispatchEvent(sub.handleValidated, payload)),
                             ws.onPeerClose
                         )
                     }
@@ -100,13 +100,19 @@ private[kyo] object UIServer:
                 }
             end onChange
 
-    private def dispatchEvent(handle: (Seq[String], UIEvent) => Boolean < Async, payload: HttpWebSocket.Payload)(using
+    private def dispatchEvent(
+        handle: (Seq[String], DragProtocol.ValidatedEvent) => Boolean < Async,
+        payload: HttpWebSocket.Payload
+    )(using
         Frame
     ): Unit < Async =
         payload match
             case HttpWebSocket.Payload.Text(data) =>
                 Json.decode[UIEvent](data) match
-                    case Result.Success(event) => handle(event.path, event).unit
+                    case Result.Success(event) =>
+                        DragProtocol.validateEventAndDomain(event, DragProtocol.Limits.default) match
+                            case Result.Success(validated) => handle(event.path, validated).unit
+                            case _                         => ()
                     // A malformed inbound frame (DecodeException) is dropped: a buggy client must not be able to tear
                     // down the session. A Panic is a decoder defect, not bad input, and must propagate.
                     case Result.Failure(_) => ()
