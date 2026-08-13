@@ -365,6 +365,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
                 withDispatch(ui) { dispatch =>
                     dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target))
+                        .andThen(dispatch(Seq.empty, UIEvent.SortMove(Seq.empty, "missing-sort", move)))
                         .andThen(dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, knownStart)))
                         .andThen(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, knownTarget)))
                         .andThen(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, knownTarget)))
@@ -377,9 +378,10 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         yield
             assert(actualCalls == 1)
             assert(actual == Chunk(
-                "missing" -> noHandler,
-                "known"   -> Drag.Decision.Accept,
-                "no-sort" -> noSort
+                "missing"      -> noHandler,
+                "missing-sort" -> noSort,
+                "known"        -> Drag.Decision.Accept,
+                "no-sort"      -> noSort
             ))
         end for
     }
@@ -467,12 +469,12 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "duplicate drag start rejects without replacing the active session" in {
-        def start(point: Drag.Point) = DragProtocol.StartData(
+    "duplicate drag start preserves the active session and End allows identifier reuse" in {
+        def start(item: String, source: String, point: Drag.Point) = DragProtocol.StartData(
             "duplicate",
-            Chunk.empty,
+            Chunk(DragProtocol.ItemData.Text(Map("text/plain" -> item))),
             Drag.Operation.Copy,
-            Present("source"),
+            Present(source),
             point,
             UI.Modifiers.none
         )
@@ -481,18 +483,49 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         )
         for
             starts      <- AtomicRef.init(Chunk.empty[Drag.Event])
+            ends        <- AtomicRef.init(Chunk.empty[Drag.End])
             resolutions <- AtomicRef.init(Chunk.empty[Drag.Decision])
-            ui = UI.div.onDragStart((event: Drag.Event) => starts.getAndUpdate(_.append(event)).unit)
+            ui = UI.div
+                .onDragStart((event: Drag.Event) => starts.getAndUpdate(_.append(event)).unit)
+                .onDragEnd((end: Drag.End) => ends.getAndUpdate(_.append(end)).unit)
             _ <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
                 withDispatch(ui) { dispatch =>
-                    dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, start(Drag.Point(1, 1))))
-                        .andThen(dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, start(Drag.Point(9, 9)))))
+                    dispatch(Seq.empty, UIEvent.DragStart(Seq.empty, start("first", "source-1", Drag.Point(1, 1))))
+                        .andThen(dispatch(
+                            Seq.empty,
+                            UIEvent.DragStart(Seq.empty, start("second", "source-2", Drag.Point(9, 9)))
+                        ))
+                        .andThen(dispatch(
+                            Seq.empty,
+                            UIEvent.DragEnd(
+                                Seq.empty,
+                                DragProtocol.EndData("duplicate", Drag.Operation.Link, cancelled = false)
+                            )
+                        ))
+                        .andThen(dispatch(
+                            Seq.empty,
+                            UIEvent.DragStart(Seq.empty, start("third", "source-3", Drag.Point(3, 3)))
+                        ))
                 }
             }
             actualStarts      <- starts.get
+            actualEnds        <- ends.get
             actualResolutions <- resolutions.get
         yield
-            assert(actualStarts.map(_.point) == Chunk(Present(Drag.Point(1, 1))))
+            assert(actualStarts.map(_.point) == Chunk(Present(Drag.Point(1, 1)), Present(Drag.Point(3, 3))))
+            assert(actualEnds == Chunk(Drag.End(
+                Drag.Event(
+                    "duplicate",
+                    Chunk(Drag.Item.Text(Map("text/plain" -> "first"))),
+                    Drag.Operation.Link,
+                    Present("source-1"),
+                    Absent,
+                    Present(Drag.Point(1, 1)),
+                    UI.Modifiers.none,
+                    Absent
+                ),
+                canceled = false
+            )))
             assert(actualResolutions == Chunk(duplicate))
         end for
     }

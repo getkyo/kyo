@@ -772,6 +772,11 @@ private[kyo] object ReactiveUI:
                                 _        <- sessions.getAndUpdate(_ + (sessionId -> session.copy(terminalResolved = true)))
                                 _        <- DragCommands.resolve(sessionId, decision)
                             yield true
+                        case None =>
+                            DragCommands.resolve(
+                                sessionId,
+                                Drag.Decision.Reject(Drag.Rejection.Application("No sort handler accepted the move."))
+                            ).andThen(true)
                         case _ => true
                     }
                 case _ => safeDispatch(handle, path, event)
