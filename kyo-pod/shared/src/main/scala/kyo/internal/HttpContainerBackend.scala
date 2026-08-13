@@ -735,41 +735,86 @@ final private[kyo] class HttpContainerBackend(
         }
             .map { createResp =>
                 val execId = createResp.Id
-                // Start exec and collect output
-                val startBody = ExecStartRequest(Detach = false)
-                withErrorMapping(ctxContainer(id)) {
-                    HttpClient.postBinary(
-                        url(s"/exec/$execId/start"),
-                        Span.from(Json.encode(startBody).getBytes),
-                        headers = Seq("Content-Type" -> "application/json")
-                    )
-                }.map { outputBytes =>
-                    // Inspect exec for exit code
-                    val entries = demuxStream(outputBytes)
-                    val stdout  = entries.filter(_.source == LogEntry.Source.Stdout).map(_.content).toSeq.mkString("\n")
-                    val stderr  = entries.filter(_.source == LogEntry.Source.Stderr).map(_.content).toSeq.mkString("\n")
+                // Timestamp before the process runs, to bound the exec_died lookup below (1s buffer for clock skew).
+                Clock.now.map { startedAt =>
+                    val eventsSince = startedAt.toJava.getEpochSecond - 1
+                    // Start exec and collect output
+                    val startBody = ExecStartRequest(Detach = false)
                     withErrorMapping(ctxContainer(id)) {
-                        HttpClient.getJson[ExecInspectResponse](url(s"/exec/$execId/json"))
-                    }
-                        .map { inspectResp =>
-                            val exitCode = if inspectResp.ExitCode == 0 then ExitCode.Success else ExitCode.Failure(inspectResp.ExitCode)
-                            val result   = ExecResult(exitCode, stdout, stderr)
-                            exitCode match
-                                case ExitCode.Failure(code) if code == 125 || code == 126 || code == 127 =>
-                                    Abort.fail[ContainerException](
-                                        ContainerExecFailedException(
-                                            id,
-                                            command.args,
-                                            exitCode,
-                                            stderr
-                                        )
-                                    )
-                                case _ => result
-                            end match
+                        HttpClient.postBinary(
+                            url(s"/exec/$execId/start"),
+                            Span.from(Json.encode(startBody).getBytes),
+                            headers = Seq("Content-Type" -> "application/json")
+                        )
+                    }.map { outputBytes =>
+                        val entries = demuxStream(outputBytes)
+                        val stdout  = entries.filter(_.source == LogEntry.Source.Stdout).map(_.content).toSeq.mkString("\n")
+                        val stderr  = entries.filter(_.source == LogEntry.Source.Stderr).map(_.content).toSeq.mkString("\n")
+                        // Read the exit code via GET /exec/{id}/json. On podman with exit_command_delay=0 the daemon reaps the exec
+                        // session the instant the process exits, so this GET can 404 "no such exec session" — the session is gone,
+                        // not the container. Recover the exit code from the daemon's durable exec_died event in that case rather than
+                        // surfacing a spurious not-found. Docker never reaps sessions, so its inspect always succeeds and this path
+                        // is podman-at-delay-0 only. The exec-session context keeps a genuine session miss from being mislabeled as a
+                        // missing container.
+                        Abort.run[ContainerException] {
+                            withErrorMapping(ResourceContext.ExecSession(id, execId)) {
+                                HttpClient.getJson[ExecInspectResponse](url(s"/exec/$execId/json"))
+                            }
+                        }.map {
+                            case Result.Success(inspectResp) =>
+                                finishExec(id, command, stdout, stderr, exitCodeOf(inspectResp.ExitCode))
+                            case Result.Failure(_: ContainerExecSessionMissingException) =>
+                                recoverExecExitCode(id, execId, eventsSince).map(ec => finishExec(id, command, stdout, stderr, ec))
+                            case Result.Failure(other) => Abort.fail(other)
+                            case Result.Panic(ex) =>
+                                Abort.fail(ContainerBackendException(s"Exec inspect panicked for ${id.value}", ex))
                         }
+                    }
                 }
             }
     end exec
+
+    private def exitCodeOf(code: Int): ExitCode =
+        if code == 0 then ExitCode.Success else ExitCode.Failure(code)
+
+    /** Apply the shared exec post-processing: a 125/126/127 exit (command-not-found / not-executable / daemon exec setup failure)
+      * is a [[ContainerExecFailedException]], any other code is returned as the result.
+      */
+    private def finishExec(id: Container.Id, command: Command, stdout: String, stderr: String, exitCode: ExitCode)(using
+        Frame
+    ): Container.ExecResult < Abort[ContainerException] =
+        val result = ExecResult(exitCode, stdout, stderr)
+        exitCode match
+            case ExitCode.Failure(code) if code == 125 || code == 126 || code == 127 =>
+                Abort.fail[ContainerException](ContainerExecFailedException(id, command.args, exitCode, stderr))
+            case _ => result
+        end match
+    end finishExec
+
+    /** Recover an exec's exit code from the daemon's durable `exec_died` event, for the delay=0 case where the session was reaped
+      * before its exit code could be read. Filters libpod events to this container's `exec_died` since the exec started; the event
+      * carries the code in `Actor.Attributes.containerExitCode`. The event names the exec only on newer podman, so a same-container
+      * match prefers that id when present and otherwise takes the most recent event, which is exact for the sequential exec case.
+      * A genuine absence (no event at all) is a real exec-session miss, reported as such rather than as a missing container.
+      */
+    private def recoverExecExitCode(id: Container.Id, execId: String, since: Long)(using
+        Frame
+    ): ExitCode < (Async & Abort[ContainerException]) =
+        val filters = s"""{"container":["${id.value}"],"event":["exec_died"]}"""
+        withErrorMapping(ctxContainer(id)) {
+            HttpClient.getText(libpodUrl("/events", "stream" -> "false", "since" -> since.toString, "filters" -> filters))
+        }.map { body =>
+            val died = body.split("\n").iterator.filter(_.trim.nonEmpty).flatMap { line =>
+                Json.decode[ExecDiedEvent](line) match
+                    case Result.Success(ev) if ev.Action == "exec_died" => Some(ev)
+                    case _                                              => None
+            }.toList
+            val chosen = died.find(_.namesExec(execId)).orElse(died.sortBy(_.timeNano).lastOption)
+            chosen.flatMap(_.exitCode) match
+                case Some(code) => exitCodeOf(code)
+                case None       => Abort.fail[ContainerException](ContainerExecSessionMissingException(id, execId))
+        }
+    end recoverExecExitCode
 
     def execStream(id: Container.Id, command: Command)(
         using Frame
@@ -2595,6 +2640,22 @@ final private[kyo] class HttpContainerBackend(
 
     final private case class ExecInspectResponse(
         ExitCode: Int = 0
+    ) derives Schema
+
+    // libpod `exec_died` event (from GET /libpod/events). Extra event fields (Type, status, time, ...) are ignored by the decoder.
+    final private case class ExecDiedEvent(
+        Action: String = "",
+        Actor: ExecDiedActor = ExecDiedActor(),
+        timeNano: Long = 0L
+    ) derives Schema:
+        def exitCode: Option[Int] = Actor.Attributes.get("containerExitCode").flatMap(_.toIntOption)
+        def namesExec(eid: String): Boolean =
+            Actor.Attributes.get("execID").contains(eid) || Actor.Attributes.get("execId").contains(eid)
+    end ExecDiedEvent
+
+    final private case class ExecDiedActor(
+        ID: String = "",
+        Attributes: Map[String, String] = Map.empty
     ) derives Schema
 
     // --- DTOs for file stat ---

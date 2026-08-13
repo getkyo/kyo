@@ -24,6 +24,9 @@ private[kyo] object ResourceContext:
     final case class Volume(id: kyo.Container.Volume.Id) extends ResourceContext:
         def describe: String = s"volume ${id.value}"
 
+    final case class ExecSession(container: kyo.Container.Id, execId: String) extends ResourceContext:
+        def describe: String = s"exec session $execId of container ${container.value}"
+
     final case class Op(name: String) extends ResourceContext:
         def describe: String = s"operation $name"
 
