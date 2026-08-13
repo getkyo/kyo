@@ -25,35 +25,36 @@ class DragTest extends kyo.test.Test[Any]:
 
     "Accept" - {
         "matches an exact text representation" in {
-            val accept = Accept.types("application/x-card", "text/plain")
-            assert(accept.accepts(Item.Text(Map("application/x-card" -> "card"))) == Decision.Accept)
-            assert(accept.accepts(Item.Text(Map("application/x-other" -> "other"))) == Decision.Reject(Rejection.IncompatibleType))
+            val accept          = Accept.types("application/x-card", "text/plain")
+            val result: Boolean = accept.accepts(Item.Text(Map("application/x-card" -> "card")))
+            assert(result)
+            assert(!accept.accepts(Item.Text(Map("application/x-other" -> "other"))))
         }
 
         "normalizes configured and transferred media types" in {
             val accept = Accept.types("  APPLICATION/X-CARD  ", " Text/Plain ")
             assert(accept.mediaTypes == Set("application/x-card", "text/plain"))
-            assert(accept.accepts(Item.Text(Map(" APPLICATION/X-CARD " -> "card"))) == Decision.Accept)
+            assert(accept.accepts(Item.Text(Map(" APPLICATION/X-CARD " -> "card"))))
         }
 
         "matches a type wildcard" in {
             val accept = Accept.types("image/*")
-            assert(accept.accepts(Item.Text(Map("image/png" -> "png"))) == Decision.Accept)
-            assert(accept.accepts(Item.Text(Map("text/plain" -> "text"))) == Decision.Reject(Rejection.IncompatibleType))
+            assert(accept.accepts(Item.Text(Map("image/png" -> "png"))))
+            assert(!accept.accepts(Item.Text(Map("text/plain" -> "text"))))
         }
 
         "rejects text with no transfer representations" in {
-            assert(Accept().accepts(Item.Text(Map.empty)) == Decision.Reject(Rejection.IncompatibleType))
+            assert(!Accept().accepts(Item.Text(Map.empty)))
         }
 
         "does not enforce item count for a single item" in {
             val accept = Accept(maxItems = Present(0))
-            assert(accept.accepts(Item.Text(Map("text/plain" -> "text"))) == Decision.Accept)
+            assert(accept.accepts(Item.Text(Map("text/plain" -> "text"))))
         }
 
         "accepts URI items as text/uri-list" in {
-            assert(Accept.types("text/uri-list").accepts(Item.Uri("https://getkyo.io")) == Decision.Accept)
-            assert(Accept.types("text/plain").accepts(Item.Uri("https://getkyo.io")) == Decision.Reject(Rejection.IncompatibleType))
+            assert(Accept.types("text/uri-list").accepts(Item.Uri("https://getkyo.io")))
+            assert(!Accept.types("text/plain").accepts(Item.Uri("https://getkyo.io")))
         }
 
         "checks file media type and size" in {
@@ -64,15 +65,15 @@ class DragTest extends kyo.test.Test[Any]:
                 maxFileSize = Present(64.kib)
             )
             assert(accept.operations == AllowedOperations.copy)
-            assert(accept.accepts(file) == Decision.Reject(Rejection.FileTooLarge(64.kib, 65.kib)))
-            assert(Accept.types("application/x-other").accepts(file) == Decision.Reject(Rejection.IncompatibleType))
-            assert(Accept.types("application/*").accepts(file) == Decision.Accept)
+            assert(!accept.accepts(file))
+            assert(!Accept.types("application/x-other").accepts(file))
+            assert(Accept.types("application/*").accepts(file))
         }
 
         "checks directory acceptance" in {
             val directory = Item.Directory("token", "assets")
-            assert(Accept().accepts(directory) == Decision.Reject(Rejection.DirectoryNotAccepted))
-            assert(Accept(directories = true).accepts(directory) == Decision.Accept)
+            assert(!Accept().accepts(directory))
+            assert(Accept(directories = true).accepts(directory))
         }
     }
 

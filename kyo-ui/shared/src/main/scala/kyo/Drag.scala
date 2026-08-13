@@ -95,27 +95,7 @@ object Drag:
     ) derives CanEqual, Schema:
 
         /** Evaluates the rules that can be determined from one transfer item. */
-        def accepts(item: Item): Decision =
-            item match
-                case Item.Text(representations) =>
-                    if representations.isEmpty || !acceptsMediaTypes(mediaTypes, representations.keySet) then
-                        Decision.Reject(Rejection.IncompatibleType)
-                    else Decision.Accept
-                case Item.Uri(_) =>
-                    if acceptsMediaTypes(mediaTypes, Set(uriMediaType)) then Decision.Accept
-                    else Decision.Reject(Rejection.IncompatibleType)
-                case Item.File(meta) =>
-                    if !acceptsMediaTypes(mediaTypes, Set(meta.mediaType)) then
-                        Decision.Reject(Rejection.IncompatibleType)
-                    else
-                        maxFileSize match
-                            case Present(limit) if meta.size > limit =>
-                                Decision.Reject(Rejection.FileTooLarge(limit, meta.size))
-                            case _ => Decision.Accept
-                case Item.Directory(_, _) =>
-                    if directories then Decision.Accept
-                    else Decision.Reject(Rejection.DirectoryNotAccepted)
-        end accepts
+        def accepts(item: Item): Boolean = Drag.accepts(this, item)
     end Accept
 
     object Accept:
@@ -154,6 +134,21 @@ object Drag:
 
     private def normalizeMediaType(mediaType: String) =
         mediaType.trim.toLowerCase(Locale.ROOT)
+
+    private def accepts(accept: Accept, item: Item): Boolean =
+        item match
+            case Item.Text(representations) =>
+                representations.nonEmpty && acceptsMediaTypes(accept.mediaTypes, representations.keySet)
+            case Item.Uri(_) =>
+                acceptsMediaTypes(accept.mediaTypes, Set(uriMediaType))
+            case Item.File(meta) =>
+                acceptsMediaTypes(accept.mediaTypes, Set(meta.mediaType)) &&
+                (accept.maxFileSize match
+                    case Present(limit) => meta.size <= limit
+                    case Absent         => true)
+            case Item.Directory(_, _) =>
+                accept.directories
+    end accepts
 
     private def acceptsMediaTypes(accepted: Set[String], offered: Set[String]): Boolean =
         offered.nonEmpty &&
