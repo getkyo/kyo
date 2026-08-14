@@ -418,10 +418,9 @@ final private[kyo] class HttpContainerBackend(
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        // Container start can stall under daemon load (e.g. parallel test forks). The default
-        // HttpClient timeout (5s) is too tight for the cold-start path; raise it to at least
-        // 30s so the daemon has time to ack /start. `c.timeout.max(...)` preserves any caller
-        // override that already requests a longer ceiling.
+        // Container start can stall under daemon load; the default 5s HttpClient timeout is too tight
+        // for the cold-start path. Raise it to at least 30s so the daemon can ack /start;
+        // `c.timeout.max(...)` preserves any longer caller override.
         HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
             postUnitAccept304(s"/containers/${id.value}/start", ctxContainer(id))
         }
@@ -492,13 +491,11 @@ final private[kyo] class HttpContainerBackend(
         deleted.andThen(awaitRemoved(id))
     end remove
 
-    /** The DELETE acks the removal request, but on rootless podman the container's teardown (SIGKILL, conmon exit, cgroup and
-      * session-keyring release) can still be in flight when it returns. A caller that discharges its scope and immediately creates the next
-      * container then stacks not-yet-retired containers, and under sustained churn the per-user kernel keyring is exhausted
-      * (`runc create` fails "unable to create session key: disk quota exceeded"). Block on the daemon-authoritative
-      * `/wait?condition=removed` until the container is actually gone (a `Missing` reply means it already is). This gives `remove` the same
-      * "fully retired on return" post-condition the shell backend's `rm` has, and the backpressure that keeps container creation from
-      * outrunning retirement. Mirrors [[waitForExit]]'s `/wait` long-poll.
+    /** DELETE acks the removal request while teardown is still in flight on rootless podman, so block on the
+      * daemon-authoritative `/wait?condition=removed` until the container is actually gone (a `Missing` reply means it
+      * already is). This gives `remove` the shell backend's "fully retired on return" post-condition, so creation cannot
+      * outrun retirement and exhaust the per-user kernel keyring (`runc create` fails "unable to create session key: disk
+      * quota exceeded"). Mirrors [[waitForExit]]'s `/wait` long-poll.
       */
     private def awaitRemoved(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
         def waitForRemoved: Unit < (Async & Abort[ContainerException]) =

@@ -462,8 +462,8 @@ class BrowserDownloadTest extends BrowserTest:
     // and onDownload registers a single per-session dispatcher (a nested onDownload would REPLACE
     // recordDownloads' capture handler, not compose with it), so there is no in-body event to await for
     // "all three WillBegin drained". The bounded settle is an honest wait for that internal async drain,
-    // not a proxy for a different pipeline (an earlier file-existence barrier was reverted: file writes
-    // are a separate pipeline from event drain and could race it).
+    // not a proxy for a different pipeline (do not gate on file existence: file writes are a separate
+    // pipeline from event drain and can race it).
     "recordDownloads captures every DownloadEvent emitted during the body in arrival order" in {
         withBrowser {
             for

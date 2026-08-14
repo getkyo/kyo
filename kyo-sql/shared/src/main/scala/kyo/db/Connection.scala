@@ -216,7 +216,7 @@ object Connection:
       *
       * The producer calls [[claim]] the moment the connection is built ([[openSocket]] for a fresh connect, the ring poll for a pooled one) with
       * the close for the fd owner it holds; the acquire calls [[take]] as it registers the lease's own exit finalizer; the pool's orphan finalizer
-      * closes a connection [[claim]]ed but never [[take]]n, one an interrupt dropped between the two (the processSharedTransport fd-leak). [[take]]
+      * closes a connection [[claim]]ed but never [[take]]n, one an interrupt dropped between the two. [[take]]
       * and [[orphan]] read one flag, so exactly one of the lease's exit and the orphan close fires.
       */
     final private[kyo] class Custody(using AllowUnsafe):
@@ -386,7 +386,7 @@ object Connection:
         // Owns the connection across the connect join and the acquire->lease handover above this call. A finalizer on
         // the connect fiber closes a connection an interrupt drops before `body` runs. Once `body` has built the engine
         // connection it is claimed into the lease's `custodyLocal` custody, whose orphan finalizer closes it if the
-        // handover above openSocket is dropped (the processSharedTransport fd-leak). The claim closes the engine
+        // handover above openSocket is dropped. The claim closes the engine
         // connection `a`, the current fd owner: a TLS upgrade leaves the raw socket in a state whose close is a no-op,
         // so claiming the raw socket would leak the upgraded fd. On the success edge the value owns the socket.
         Scope.run {

@@ -775,7 +775,7 @@ class SqlConnectionCancelTest extends kyo.Test:
         }
     }
 
-    /** Reproduces the processSharedTransport fd-leak at the pool boundary rather than the io_uring driver: `open` produces
+    /** Reproduces the fd leak at the pool boundary rather than in the io_uring driver: `open` produces
       * a live connection and hands it back across an async join (connect -> the lease's exit finalizer, and the connect
       * budget's timeoutWithError). An interrupt landing after `open` completes but before the exit finalizer registers
       * drops the delivered connection with the continuation that would have owned it, so without a custody it is never

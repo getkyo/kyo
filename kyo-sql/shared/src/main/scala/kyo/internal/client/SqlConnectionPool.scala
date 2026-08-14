@@ -830,7 +830,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         // The permit is owned by the outer Scope.ensure in leaseScoped; the per-connection finalizer here owns only the
         // connection's fate, through the same decideExit a statement's lease uses. `withCustody` owns the acquire->lease
         // handover exactly as on the statement path, so a stream interrupted at the connect handover closes its
-        // connection rather than stranding it (the processSharedTransport fd-leak).
+        // connection rather than stranding it.
         Log.use { logger =>
             // Metrics owed once a connection is in hand: decideExit decrements leases_in_flight on every exit, so this
             // path must do the increment or N streams drive the gauge to -N.

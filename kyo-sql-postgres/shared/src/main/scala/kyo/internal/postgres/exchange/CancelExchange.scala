@@ -70,7 +70,7 @@ private[kyo] object CancelExchange:
     )(using Frame): A < (Async & Abort[SqlException]) =
         // The pool's cancel budget interrupts this via timeoutWithError. A finalizer on the connect fiber closes a
         // connection an interrupt drops before closingOnce below registers, so the sidecar socket is never stranded with
-        // an armed read (the processSharedTransport fd-leak). The close is unconditional: after a STARTTLS upgrade the
+        // an armed read. The close is unconditional: after a STARTTLS upgrade the
         // raw socket is Upgrading, whose close routes to upgradeAbandon and releases the upgraded fd, so this covers the
         // negotiate handover too. closingOnce owns the ordered close on the success edge.
         Scope.run {

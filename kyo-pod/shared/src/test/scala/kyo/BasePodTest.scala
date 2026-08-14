@@ -10,16 +10,10 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
 
     override def timeout = 60.seconds
 
-    // A per-process random token folded into every generated test resource name.
-    //
-    // Container-runtime suites are forked once per runtime (`#podman` / `#docker`, pinned via
-    // KYO_POD_RUNTIME) and those forks run concurrently on one machine, sharing its `/tmp`. A bare
-    // per-JVM counter resets to the same sequence in each fork, so both would emit `prefix-1`,
-    // `prefix-2`, … and collide on the same host bind-mount directories (one fork's rootful-docker
-    // cleanup then leaves a root-owned dir the other fork cannot write to or remove). The token
-    // disambiguates the forks (and any concurrent CI job on the same runner) so names stay unique
-    // on the shared filesystem. Hex of a random Long keeps it valid for container/volume/network
-    // names and host paths alike.
+    // A per-process random token folded into every generated test resource name. Per-runtime suites
+    // (`#podman` / `#docker`) fork concurrently on one machine sharing `/tmp`; a bare per-JVM counter
+    // would emit the same `prefix-N` in each fork and collide on host bind-mount dirs. Hex of a random
+    // Long disambiguates the forks (and concurrent CI jobs) and stays valid for container/volume/network names.
     private val runToken: String = java.lang.Long.toHexString(new java.util.Random().nextLong())
 
     private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -30,15 +24,13 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     def uniqueName(prefix: String): String =
         s"$prefix-$runToken-${nameCounter.incrementAndGet()}"
 
-    // Container ops contend on a single daemon, so leaves must run sequentially: the runBackends design (below)
-    // assumes "<=1 in-flight container op per daemon", which only holds with sequential leaves. kyo-test defaults to
-    // parallel leaves whereas the ScalaTest base ran them sequentially, so restore that. Without it, parallel leaves
-    // race the daemon and produce port conflicts, already-exists, image-pull, and backend errors.
+    // Container ops contend on a single daemon, so leaves must run sequentially: runBackends (below) assumes
+    // <=1 in-flight container op per daemon. Parallel leaves race the daemon and produce port conflicts,
+    // already-exists, image-pull, and backend errors.
     //
-    // Only the socket category is disabled. These suites reach the podman/docker daemon REST API over HttpClient, and
-    // those connections are Scope-closed on scope exit, but the NIO transport defers a connection's real fd close to its
-    // idle selector's next select(), which nothing wakes, so the fd outlives the run. That fix belongs to the transport
-    // (frozen for the kyo-net rewrite); the socket is an opaque socket:[inode] no allowlist can match. File-descriptor,
+    // Only the socket category is disabled: these suites reach the daemon REST API over HttpClient, and the NIO
+    // transport defers a connection's real fd close to its idle selector's next select(), which nothing wakes, so
+    // the fd outlives the run; the socket is an opaque socket:[inode] no allowlist can match. File-descriptor,
     // thread, and fiber detection stay on.
     override def config = super.config.sequential.leakCheckSockets(false)
 
@@ -49,17 +41,14 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     // still see the 5s default until they set their own via withConfig.
     // For tests that explicitly need a longer timeout (e.g. image pulls), use runBackendsLong /
     // runBackendLong which scope an even longer 5-minute timeout inside the test body.
-    // Ported from the ScalaTest base's `run` override to kyo-test's `aroundLeaf` hook.
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         HttpClient.withConfig(_.timeout(60.seconds))(body)
 
-    /** Fails the leaf if it leaves a container behind. Snapshots the daemon's container set (all states) around the body, running the body
-      * under its own `Scope` first so scope-managed containers are torn down; any container present afterward that was not present before is
-      * a resource the leaf failed to free. This is the container analogue of kyo-test's socket/fd/thread leak checks: an accumulating
-      * daemon-side resource that otherwise passes silently and, across a full container-test run, exhausts the rootless per-user kernel
-      * keyring (each `runc create` allocates a session key; once `kernel.keys.maxkeys` is hit `runc create` fails "unable to create session
-      * key: disk quota exceeded" and every later exec/top sees "container state improper"). Diff-based, so a container leaked by an earlier
-      * leaf is attributed to that leaf, not this one.
+    /** Fails the leaf if it leaves a container behind. Diffs the daemon's container set (all states) around the body,
+      * which runs under its own `Scope` first so scope-managed containers are torn down; any new container afterward is
+      * one the leaf failed to free. Left unchecked these accumulate and exhaust the rootless per-user kernel keyring
+      * (each `runc create` allocates a session key; at `kernel.keys.maxkeys` it fails "unable to create session key:
+      * disk quota exceeded"). Diff-based, so a container leaked by an earlier leaf is attributed to that leaf.
       */
     private def checkingContainerLeak(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using
         Frame,

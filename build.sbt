@@ -95,10 +95,10 @@ Global / concurrentRestrictions := {
     val cores       = java.lang.Runtime.getRuntime.availableProcessors()
     val isCI        = sys.env.contains("CI")
     val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
-    // Forked-test cap: how many forked test JVMs run concurrently. On CI we hard-cap at 2 so kyo-pod
-    // (which splits each suite into a podman fork and a docker fork via KYO_POD_RUNTIME pinning) ends
-    // up with at most one fork per daemon — strictly bounding container-daemon contention. Locally
-    // we allow up to half the cores for fast iteration; some same-daemon overlap is tolerable.
+    // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
+    // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
+    // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). CI caps at 2; locally cores/2.
     val forkLimit = if (isCI) 2 else 1 max cores / 2
     Seq(
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),

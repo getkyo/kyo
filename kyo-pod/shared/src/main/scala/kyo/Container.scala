@@ -477,11 +477,9 @@ object Container:
                     b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
                 }
             }.map { cid =>
-                // Capture the HttpClient active at registration time so the Scope.ensure teardown block
-                // uses the same client that created the container. The runner discharges Scope OUTSIDE any
-                // caller-scoped `HttpClient.let`, so by finalizer time the fiber-local would have unwound
-                // back to the process-shared default client, whose pool would then hold the teardown
-                // connections open past end-of-run and trip the leak check.
+                // Capture the HttpClient bound at registration: by finalizer time the fiber-local has
+                // unwound to the default client, and tearing down through a different client leaves the
+                // creating client's pooled connections open.
                 HttpClient.use { boundClient =>
                     Scope.ensure {
                         HttpClient.let(boundClient) {
@@ -512,11 +510,10 @@ object Container:
                                 // suite of scope-managed containers leaks daemon-side state until inspect/start latency
                                 // exceeds the test wrapper. Named volumes are unaffected.
                                 //
-                                // Under residual daemon load a single force-remove can hit a transient transport failure
-                                // (mapped to ContainerBackendException). Swallowing it here leaks the container and trips
-                                // the leak check, so retry the removal a few times before giving up; a genuinely-absent
-                                // container surfaces as ContainerMissingException, which Retry leaves to propagate and
-                                // logFailure treats as the desired end state.
+                                // Under residual daemon load a force-remove can hit a transient transport failure
+                                // (ContainerBackendException); it would leak the container daemon-side, so retry the
+                                // removal a few times. A genuinely-absent container surfaces as ContainerMissingException,
+                                // which Retry leaves to propagate and logFailure treats as the desired end state.
                                 val removeSchedule =
                                     Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
                                 Abort.run[ContainerException] {
