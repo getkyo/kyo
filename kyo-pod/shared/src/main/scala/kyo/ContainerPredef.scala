@@ -23,15 +23,12 @@ import kyo.*
   */
 object ContainerPredef:
 
-    /** A readiness [[Container.HealthCheck]] that runs `probe` from *inside* the container in a single bounded poll loop, rather than the
-      * host firing a fresh `exec` on every retry.
-      *
-      * On rootless podman every `exec` leaves a `conmon` that lingers for a fixed delay (~300s) after the exec exits and is not reaped when
-      * the container is removed. Polling a slow-booting database from the host at a sub-second cadence therefore piles up hundreds of
-      * orphaned `conmon` across a fixture suite and, on a loaded runner, exhausts the per-user process limit until `exec` and container
-      * `start` themselves begin to fail. Doing the poll loop inside the container collapses each fixture's readiness wait to a single
-      * `exec`. `budget` bounds the loop so a service that never comes up fails the check rather than hanging to the leaf timeout. The probe
-      * is treated as ready on exit code 0, so `probe` must be a command that connects and exits non-zero until the service answers.
+    /** A readiness [[Container.HealthCheck]] that runs `probe` from *inside* the container in one bounded poll loop,
+      * rather than the host firing a fresh `exec` per retry. Each host `exec` leaves a `conmon` that lingers ~300s on
+      * rootless podman, so a sub-second host-side poll across a fixture suite accumulates orphaned `conmon`; the
+      * in-container loop collapses each fixture's wait to a single `exec`. `budget` bounds the loop so a service that
+      * never comes up fails rather than hanging to the leaf timeout. Ready is exit code 0, so `probe` must exit
+      * non-zero until the service answers.
       */
     private[kyo] def readinessLoop(probe: Chunk[String], budget: Duration = 120.seconds): Container.HealthCheck =
         val quoted = probe.map(a => "'" + a.replace("'", "'\\''") + "'").mkString(" ")
@@ -40,56 +37,26 @@ object ContainerPredef:
         val cmd = Command("sh", "-c", script)
         new Container.HealthCheck:
             def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                // The probe blocks inside the container until the service answers, so the single exec must be allowed to outlast the
-                // caller's ambient HttpClient timeout, which is often the 5s default (predef fixtures are used far beyond the kyo-pod
-                // suite, e.g. kyo-sql, without a longer scoped timeout). Give the exec its own timeout covering the whole budget; on
-                // the shell backend the HttpClient config is inert. The in-container loop already retries the probe, so one exec suffices.
-                //
-                // A DB image forks heavily during init, and on a constrained rootless runner that burst can momentarily exhaust the
-                // host's fork capacity: the probe exec's own shell then reports "can't fork: Resource temporarily unavailable" and
-                // returns in milliseconds. That is host fork pressure, not a service-readiness failure, so retry the exec (waiting for
-                // the burst to pass) rather than failing the fixture. A genuinely-not-ready service still fails via the in-container
-                // budget, and a dead container still surfaces its exec failure.
-                val forkRetry = Schedule.fixed(2.seconds).take(20)
-                def attempt(remaining: Schedule): Unit < (Async & Abort[ContainerException]) =
-                    HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
-                        Abort.run[ContainerException](container.exec(cmd)).map {
-                            case Result.Success(r) if r.isSuccess => Kyo.unit
-                            case Result.Success(r) if isForkPressure(r.stdout) || isForkPressure(r.stderr) =>
-                                Clock.now.map { now =>
-                                    remaining.next(now) match
-                                        case Present((delay, next)) => Async.sleep(delay).andThen(attempt(next))
-                                        case Absent =>
-                                            healthFailure(
-                                                container,
-                                                s"readiness probe did not pass within ${budget.toSeconds}s",
-                                                r.stderr.trim
-                                            )
-                                }
-                            case Result.Success(r) =>
-                                healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", r.stderr.trim)
-                            case Result.Failure(cause) =>
-                                // The readiness exec itself failed: most often the service's own container exited mid-boot (a database
-                                // that OOM-exits or fails init), which the daemon reports as a not-running container. Capture why.
-                                healthFailure(container, s"readiness exec failed: ${cause.getMessage}", "")
-                            case Result.Panic(t) => Abort.panic(t)
-                        }
+                // The probe blocks inside the container until the service answers, so the exec must outlast the caller's
+                // ambient HttpClient timeout (often the 5s default; predef fixtures are reused beyond kyo-pod, e.g.
+                // kyo-sql, with no longer scoped timeout). Give it its own budget-covering timeout; the shell backend
+                // ignores the HttpClient config.
+                HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
+                    Abort.run[ContainerException](container.exec(cmd)).map {
+                        case Result.Success(r) if r.isSuccess => Kyo.unit
+                        case Result.Success(r) =>
+                            healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", r.stderr.trim)
+                        case Result.Failure(cause) =>
+                            // The readiness exec failed: usually the service's own container exited mid-boot (OOM or
+                            // failed init), which the daemon reports as a not-running container. Capture why.
+                            healthFailure(container, s"readiness exec failed: ${cause.getMessage}", "")
+                        case Result.Panic(t) => Abort.panic(t)
                     }
-                attempt(forkRetry)
+                }
             end check
             def schedule: Schedule = Schedule.done
         end new
     end readinessLoop
-
-    /** Host fork pressure signature: a rootless runner momentarily out of fork capacity makes an exec'd shell or a container's
-      * PID 1 report EAGAIN. Distinguishes the transient "retry me" condition from a real service or config failure.
-      */
-    private def isForkPressure(s: String): Boolean =
-        val l = s.toLowerCase
-        l.contains("resource temporarily unavailable") || l.contains("can't fork") || l.contains("cannot fork") || l.contains(
-            "failed to fork"
-        )
-    end isForkPressure
 
     /** Best-effort container post-mortem: its terminal state (status + exit code) and the tail of its own logs. A
       * flaky database fixture that dies or never becomes ready otherwise surfaces only as an opaque "already stopped"
@@ -442,7 +409,7 @@ object ContainerPredef:
                 .command(commandLine*)
                 // Run under an init process (catatonit as PID 1). mysqld is not init-aware: as PID 1 it does not reap the zombie children
                 // its subprocesses leave behind, so under a loaded CI runner the container wedges in `stopping`, the daemon reports "given
-                // PID did not die within timeout" on stop/remove, and the fixture leaks (a daemon-side leak the container leak check flags).
+                // PID did not die within timeout" on stop/remove, and the fixture leaks daemon-side.
                 // The init reaps those zombies and forwards signals to mysqld, so teardown completes.
                 .initProcess(true)
                 // Teardown SIGKILLs rather than graceful-stopping. The fixture is thrown away with its anonymous volume, so mysqld's graceful
