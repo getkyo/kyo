@@ -409,9 +409,9 @@ private[kyo] object SchemaSerializer:
         end if
     end readWithDiscriminatorField
 
-    /** Transforms a wrapper-format sealed trait value into flat discriminator format.
+    /** Transforms a materialized sealed trait value into flat discriminator format.
       *
-      * Wrapper format: `Record([("MTCircle", Record([("radius", 5.0)]))])` Flat format:
+      * Materialized form: `VariantCase("MTCircle", Record([("radius", 5.0)]))` Flat format:
       * `Record([("type", Str("MTCircle")), ("radius", 5.0)])`
       *
       * For case objects (variant value is an empty Record), produces: `Record([("type", Str("Active"))])`
@@ -422,10 +422,8 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            // Wrapper format: single-field Record where field name is variant name
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, innerValue) = fields.head
-                val wireName                  = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, innerValue) =>
+                val wireName = resolveWire(variantName)
                 innerValue match
                     case Structure.Value.Record(innerFields) =>
                         // Flatten: discriminator field + variant's fields at same level
@@ -437,7 +435,7 @@ private[kyo] object SchemaSerializer:
                         Structure.Value.Record(Chunk(discEntry))
                 end match
             case other =>
-                // Not a wrapper format, pass through unchanged
+                // Not a variant, pass through unchanged
                 other
     end flattenWithDiscriminator
 
@@ -450,7 +448,7 @@ private[kyo] object SchemaSerializer:
             throw RepresentationUnsupportedException(writer.codecName, representation)
     end requireTopLevelCapable
 
-    /** Adjacent: rewrite the single-field wrapper into a two-field object
+    /** Adjacent: rewrite the materialized VariantCase into a two-field object
       * `{tagKey: wireName, contentKey: payload}`. The payload passes through unchanged, so a
       * non-object payload (scalar/array/null) survives as the content value; an empty-payload variant
       * yields `{contentKey: {}}` (the precedent-consistent empty object).
@@ -462,9 +460,8 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, payload) = fields.head
-                val wireName               = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, payload) =>
+                val wireName = resolveWire(variantName)
                 Structure.Value.Record(Chunk(
                     (tagKey, Structure.Value.Str(wireName)),
                     (contentKey, payload)
@@ -472,7 +469,7 @@ private[kyo] object SchemaSerializer:
             case other => other
     end adjacentEncode
 
-    /** Tuple: rewrite the single-field wrapper into the two-element positional array
+    /** Tuple: rewrite the materialized VariantCase into the two-element positional array
       * `[wireName, payload]`. A non-object payload rides through as the second element.
       */
     private def tupleEncode(
@@ -480,14 +477,13 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, payload) = fields.head
-                val wireName               = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, payload) =>
+                val wireName = resolveWire(variantName)
                 Structure.Value.Sequence(Chunk(Structure.Value.Str(wireName), payload))
             case other => other
     end tupleEncode
 
-    /** TupleFlat: rewrite the single-field wrapper into the positional-flattened array
+    /** TupleFlat: rewrite the materialized VariantCase into the positional-flattened array
       * `[wireName, field0Value, field1Value, ...]`. The payload Record's field Chunk is in
       * declaration order, so each field value becomes its own element in that order; field names are
       * dropped. A field that is itself a record passes through as one nested element (not
@@ -498,9 +494,8 @@ private[kyo] object SchemaSerializer:
         resolveWire: String => String
     ): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                val (variantName, payload) = fields.head
-                val wireName               = resolveWire(variantName)
+            case Structure.Value.VariantCase(variantName, payload) =>
+                val wireName = resolveWire(variantName)
                 val fieldValues = payload match
                     case Structure.Value.Record(payloadFields) => payloadFields.map(_._2)
                     case _                                     => Chunk.empty
@@ -508,14 +503,13 @@ private[kyo] object SchemaSerializer:
             case other => other
     end tupleFlatEncode
 
-    /** Untagged: drop the wrapper entirely and emit the bare payload. The tag resolver is not
+    /** Untagged: drop the variant tag entirely and emit the bare payload. The tag resolver is not
       * consulted (there is no tag).
       */
     private def untaggedEncode(value: Structure.Value): Structure.Value =
         value match
-            case Structure.Value.Record(fields) if fields.size == 1 =>
-                fields.head._2
-            case other => other
+            case Structure.Value.VariantCase(_, payload) => payload
+            case other                                   => other
     end untaggedEncode
 
     /** Builds the variant forward resolver: explicit pair wins, then the renameAll
@@ -946,14 +940,13 @@ private[kyo] object SchemaSerializer:
                     writer.arrayEnd()
                 end if
             case Structure.Value.VariantCase(name, v) =>
-                // Shape-aware VariantCase: single-field object whose key is the variant name. Symmetric with reading a
-                // single-field object as a Record(name, value); the universal Structure.Value tree treats VariantCase
-                // and Record(<single field>) as the same wire shape; round-trips through the shape-aware identity
-                // Schema therefore canonicalize to Record on read.
-                writer.objectStart(name, 1)
-                writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                // Shape-aware VariantCase: on wire codecs the variantStart default writes the single-field object
+                // whose key is the variant name, symmetric with reading a single-field object as a Record(name, value).
+                // Wire round-trips through the shape-aware identity Schema therefore canonicalize to Record on read;
+                // a StructureValueWriter target keeps the VariantCase identity.
+                writer.variantStart(name, name, name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
                 writeStructureValue(writer, v)
-                writer.objectEnd()
+                writer.variantEnd()
             case Structure.Value.Str(s) => writer.string(s)
             case Structure.Value.Integer(l) =>
                 if l >= Int.MinValue && l <= Int.MaxValue then writer.int(l.toInt)

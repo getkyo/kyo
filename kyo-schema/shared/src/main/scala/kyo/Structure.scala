@@ -842,7 +842,11 @@ object Structure:
         /** Named fields of a product/case class, ordered by declaration. */
         case Record(fields: Chunk[(String, Value)])
 
-        /** Active variant of a sum type, carrying the variant name and its payload. */
+        /** Active variant of a sum type, carrying the variant name and its payload.
+          *
+          * Produced by `Structure.encode` for sealed traits, enums, and unions. Wire codecs write it as a single-field wrapper object
+          * (`{name: payload}`), so a Value round-tripped through a wire format reads back as the equivalent single-field Record.
+          */
         case VariantCase(name: String, value: Value)
 
         /** Elements of a collection in original order. */

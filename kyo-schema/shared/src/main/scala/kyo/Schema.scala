@@ -1588,6 +1588,14 @@ object Schema:
         def objectEnd(): Unit =
             delegate.objectEnd()
 
+        override def variantStart(name: String, variantName: String, variantNameBytes: Array[Byte], variantFieldId: Int): Unit =
+            beforeValue()
+            delegate.variantStart(name, variantName, variantNameBytes, variantFieldId)
+        end variantStart
+
+        override def variantEnd(): Unit =
+            delegate.variantEnd()
+
         def arrayStart(size: Int): Unit =
             beforeValue()
             delegate.arrayStart(size)

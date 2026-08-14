@@ -8,8 +8,8 @@ import kyo.Codec.Writer
   * Used by the structure subsystem to convert a typed Scala value into the universal Structure.Value representation via the standard Writer
   * protocol. The resulting tree can then be inspected, diffed, or transformed without knowledge of the original type.
   *
-  *   - Produces [[kyo.Structure.Value.Record]], [[kyo.Structure.Value.Sequence]], and typed primitive nodes (Str, Bool, Integer, Decimal,
-  *     BigNum, Bytes, Instant, Duration)
+  *   - Produces [[kyo.Structure.Value.Record]], [[kyo.Structure.Value.VariantCase]], [[kyo.Structure.Value.Sequence]], and typed primitive
+  *     nodes (Str, Bool, Integer, Decimal, BigNum, Bytes, Instant, Duration)
   *   - Maintains a stack of frames to track nested object/array construction
   *   - `result()` returns `Span.empty`; use `getResult` to obtain the built value tree
   *
@@ -27,6 +27,7 @@ final class StructureValueWriter extends Writer:
         fields: scala.collection.mutable.ListBuffer[(String, Structure.Value)]
     ) extends StackFrame
     private case class ArrayFrame(elements: scala.collection.mutable.ListBuffer[Structure.Value]) extends StackFrame
+    private case class VariantFrame(name: String, var value: Structure.Value)                     extends StackFrame
 
     private var stack: List[StackFrame]      = Nil
     private var resultValue: Structure.Value = Structure.Value.Null
@@ -37,6 +38,8 @@ final class StructureValueWriter extends Writer:
                 f.fields += ((f.currentField, dv))
             case (f: ArrayFrame) :: _ =>
                 f.elements += dv
+            case (f: VariantFrame) :: _ =>
+                f.value = dv
             case Nil =>
                 resultValue = dv
     end addValue
@@ -88,6 +91,18 @@ final class StructureValueWriter extends Writer:
         stack = ObjectFrame("", "", scala.collection.mutable.ListBuffer.empty) :: stack
 
     def mapEnd(): Unit = objectEnd()
+
+    override def variantStart(name: String, variantName: String, variantNameBytes: Array[Byte], variantFieldId: Int): Unit =
+        stack = VariantFrame(variantName, Structure.Value.Null) :: stack
+
+    override def variantEnd(): Unit =
+        stack match
+            case (f: VariantFrame) :: rest =>
+                stack = rest
+                addValue(Structure.Value.VariantCase(f.name, f.value))
+            case _ =>
+                bug("StructureValueWriter.variantEnd: no active variant frame")
+    end variantEnd
 
     def bytes(value: Span[Byte]): Unit            = addValue(Structure.Value.Bytes(value))
     def bigInt(value: BigInt): Unit               = addValue(Structure.Value.BigNum(BigDecimal(value)))

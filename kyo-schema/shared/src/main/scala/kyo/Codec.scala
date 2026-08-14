@@ -303,6 +303,19 @@ object Codec:
         def nil(): Unit
         def mapStart(size: Int): Unit
         def mapEnd(): Unit
+
+        /** Starts the active variant of a sum type; the variant payload is written next, followed by [[variantEnd]].
+          *
+          * The default writes the wrapper-object envelope (`{variantName: payload}`), so wire codecs represent sums exactly as before. A
+          * writer that models sums natively (StructureValueWriter) overrides both hooks to keep the variant identity instead.
+          */
+        def variantStart(name: String, variantName: String, variantNameBytes: Array[Byte], variantFieldId: Int): Unit =
+            objectStart(name, 1)
+            fieldBytes(variantNameBytes, variantFieldId)
+        end variantStart
+
+        /** Ends the variant started by [[variantStart]]. */
+        def variantEnd(): Unit = objectEnd()
         def bytes(value: Span[Byte]): Unit
         def bigInt(value: BigInt): Unit
         def bigDecimal(value: BigDecimal): Unit
