@@ -83,8 +83,10 @@ private[kyo] object UIServer:
                 parentContext: ReactiveRegion.ParentContext,
                 ui: UI
             )(using Frame): Unit < Async =
-                val suppressOwnBoundary = ReactiveRegion.owns(region, contentContext)
-                HtmlRenderer.renderRegionWithCss(ui, path, contentContext, region, parentContext, suppressOwnBoundary).map {
+                val boundaryMode =
+                    if ReactiveRegion.owns(region, contentContext) then ReactiveRegion.BoundaryMode.Suppress
+                    else ReactiveRegion.BoundaryMode.Emit
+                HtmlRenderer.renderRegionWithCss(ui, path, contentContext, region, parentContext, boundaryMode).map {
                     (html, rules) =>
                         val newRules = rules.filterNot(r => sentClasses.contains(r._1))
                         val replaceOp = region match

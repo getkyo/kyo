@@ -187,14 +187,16 @@ private[kyo] object DomBackend:
             Sync.defer(open).flatMap { isOpen =>
                 if !isOpen then Kyo.unit
                 else
-                    val suppressOwnBoundary = ReactiveRegion.owns(region, contentContext)
-                    HtmlRenderer.renderRegion(ui, path, contentContext, region, parentContext, suppressOwnBoundary).flatMap { html =>
+                    val boundaryMode =
+                        if ReactiveRegion.owns(region, contentContext) then ReactiveRegion.BoundaryMode.Suppress
+                        else ReactiveRegion.BoundaryMode.Emit
+                    HtmlRenderer.renderRegion(ui, path, contentContext, region, parentContext, boundaryMode).flatMap { html =>
                         Sync.defer(open).flatMap { stillOpen =>
                             if !stillOpen then Kyo.unit
                             else
                                 region match
                                     case ReactiveRegion.HtmlRange(regionId) =>
-                                        regions.replaceWith(regionId, html)(prepareRangePatch)(finishRangePatch)
+                                        regions.replaceWith(regionId, html)(tryMorphRange)(prepareRangePatch)(finishRangePatch)
                                     case svgRegion: ReactiveRegion.SvgElement =>
                                         replaceSvg(svgRegion, html)
                                 end match
@@ -202,6 +204,47 @@ private[kyo] object DomBackend:
                     }
             }
         end onChange
+
+        private def tryMorphRange(
+            oldElements: Seq[dom.Element],
+            newElements: Seq[dom.Element],
+            incomingRangesEmpty: Boolean
+        ): Boolean =
+            val active = document.activeElement
+            if active == null ||
+                (active eq document.body) ||
+                oldElements.size != 1 ||
+                newElements.size != 1 ||
+                (active ne oldElements.head) ||
+                !incomingRangesEmpty
+            then false
+            else
+                val fresh = newElements.head
+                if (active.tagName != "INPUT" && active.tagName != "TEXTAREA") || active.tagName != fresh.tagName then false
+                else
+                    var i = 0
+                    while i < fresh.attributes.length do
+                        val attribute = fresh.attributes(i)
+                        if active.getAttribute(attribute.name) != attribute.value then
+                            active.setAttribute(attribute.name, attribute.value)
+                        i += 1
+                    end while
+                    i = active.attributes.length - 1
+                    while i >= 0 do
+                        val name = active.attributes(i).name
+                        if !fresh.hasAttribute(name) then active.removeAttribute(name)
+                        i -= 1
+                    end while
+                    val value =
+                        if active.tagName == "TEXTAREA" then fresh.textContent
+                        else Maybe(fresh.getAttribute("value")).getOrElse("")
+                    val dynamic = active.asInstanceOf[scalajs.js.Dynamic]
+                    if dynamic.value.asInstanceOf[String] != value then dynamic.value = value
+                    applyJsPropsSync(active)
+                    true
+                end if
+            end if
+        end tryMorphRange
 
         private def prepareRangePatch(oldElements: Seq[dom.Element], newElements: Seq[dom.Element]): RangePatchState =
             val active = Maybe(document.activeElement).filter(el => (el ne document.body) && containsAny(oldElements, el))
@@ -252,7 +295,7 @@ private[kyo] object DomBackend:
                         applyJsPropsSync(newElement)
                         beginAnimationsSync(newElement)
                     }
-                    activePath.foreach(path => restoreFocus(path, selectionStart, selectionEnd))
+                    activePath.foreach(path => restoreSvgFocus(path, selectionStart, selectionEnd))
                     seedEnter(updated, oldEnter)
                     seedFocusAuto(updated, oldFocus)
                     spawnGhosts(ghosts)
@@ -269,20 +312,15 @@ private[kyo] object DomBackend:
         (asInt(dyn.selectionStart), asInt(dyn.selectionEnd))
     end readSelection
 
-    private def restoreFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
+    private def restoreSvgFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
         val located = document.querySelector(s"""[data-kyo-path="$capturedPath"]""")
         if located != null then
-            val focusTarget =
-                if located.hasAttribute("data-kyo-reactive") then
-                    val inner = located.querySelector("input,textarea,select,[contenteditable]")
-                    if inner != null then inner else located
-                else located
-            val _ = focusTarget.asInstanceOf[scalajs.js.Dynamic].focus()
+            val _ = located.asInstanceOf[scalajs.js.Dynamic].focus()
             (selStart, selEnd) match
-                case (Present(s), Present(e)) => setSelection(focusTarget, s, e)
+                case (Present(s), Present(e)) => setSelection(located, s, e)
                 case _                        => ()
         end if
-    end restoreFocus
+    end restoreSvgFocus
 
     /** The set of `data-kyo-path` values of every `data-kyo-focus-auto` element inside `root`, `root` itself included.
       *
@@ -447,28 +485,30 @@ private[kyo] object DomBackend:
     private def applyJsPropsSync(root: dom.Element): Unit =
         val propPrefix = "data-kyo-prop-"
         // CSS has no attribute-name-prefix selector, so `[data-kyo-prop-*]` is not a valid selector and
-        // throws SyntaxError. Collect the root plus every descendant and keep those carrying any
-        // data-kyo-prop-* attribute; the apply loop reads the prop name off each attribute.
-        val elements = root.querySelectorAll("*")
-        val self =
-            if hasAnyKyoProp(root) then
-                Seq(root)
-            else
-                Seq.empty
-        (self ++ (0 until elements.length).map(elements(_).asInstanceOf[dom.Element])).foreach { el =>
-            val attrNames = (0 until el.attributes.length).map(el.attributes(_).name)
-            val toRemove  = attrNames.filter(_.startsWith(propPrefix))
-            toRemove.foreach { attrName =>
-                val propName = attrName.stripPrefix(propPrefix)
-                val value    = el.getAttribute(attrName)
-                el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(propName)(value)
-            }
-            toRemove.foreach(el.removeAttribute)
-        }
-    end applyJsPropsSync
+        // throws SyntaxError. Visit the root and every descendant, reading property names directly from
+        // the live attribute map.
+        def applyElement(el: dom.Element): Unit =
+            var i = el.attributes.length - 1
+            while i >= 0 do
+                val attrName = el.attributes(i).name
+                if attrName.startsWith(propPrefix) then
+                    val propName = attrName.stripPrefix(propPrefix)
+                    val value    = el.getAttribute(attrName)
+                    el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(propName)(value)
+                    el.removeAttribute(attrName)
+                end if
+                i -= 1
+            end while
+        end applyElement
 
-    private def hasAnyKyoProp(el: dom.Element): Boolean =
-        (0 until el.attributes.length).exists(i => el.attributes(i).name.startsWith("data-kyo-prop-"))
+        applyElement(root)
+        val elements = root.querySelectorAll("*")
+        var i        = 0
+        while i < elements.length do
+            applyElement(elements(i).asInstanceOf[dom.Element])
+            i += 1
+        end while
+    end applyJsPropsSync
 
     /** Start every freshly-inserted SMIL animation under `root`.
       *

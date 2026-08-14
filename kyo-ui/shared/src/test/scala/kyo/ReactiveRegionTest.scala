@@ -45,4 +45,17 @@ class ReactiveRegionTest extends kyo.test.Test[Any]:
         assert(ReactiveRegion.from(Seq("0", "key"), svgContext = true) == ReactiveRegion.SvgElement(Seq("0", "key")))
     }
 
+    "table content reports rows only when an actual row is present" in {
+        import ReactiveRegion.TableContent
+        assert(ReactiveRegion.tableContent(UI.tr(UI.td("row"))) == TableContent.Rows)
+        assert(ReactiveRegion.tableContent(UI.tbody(UI.tr())) == TableContent.AuthoredSections)
+        assert(ReactiveRegion.tableContent(UI.fragment()) == TableContent.Other)
+        assert(ReactiveRegion.tableContent(UI.div("not a row")) == TableContent.Other)
+        val transparent = Signal.initConst(UI.tr()).render(identity)
+        assert(ReactiveRegion.tableContent(transparent) == TableContent.Transparent)
+        assert(
+            ReactiveRegion.tableContent(Seq(UI.tbody(UI.tr()), transparent)) == TableContent.AuthoredSections
+        )
+    }
+
 end ReactiveRegionTest

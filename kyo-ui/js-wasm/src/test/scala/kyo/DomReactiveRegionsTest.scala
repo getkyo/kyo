@@ -95,14 +95,35 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                 )
                 authored <- Sync.defer {
                     val section = root.querySelector("table > tbody")
-                    (section.id, section.getAttribute("class"))
+                    val walker  = dom.document.createTreeWalker(root, 128, null, false)
+                    val anchors = Iterator
+                        .continually(walker.nextNode())
+                        .takeWhile(_ != null)
+                        .filter(_.nodeValue.endsWith(One))
+                        .map(_.parentNode)
+                        .toSeq
+                    (
+                        id = section.id,
+                        className = section.getAttribute("class"),
+                        rangeHost = section.getAttribute("data-kyo-range-host"),
+                        anchorParents = anchors
+                    )
                 }
-                _ <- regions.replace(
+                _ <- regions.replaceWith(
                     One,
                     s"<tbody data-kyo-range-host='$One'><tr id='new-row'><td>new</td></tr></tbody>"
-                )
+                )((_, _, _) => false) { (oldRoots, newRoots) =>
+                    assert(oldRoots.map(_.id) == Seq("authored"))
+                    assert(newRoots.map(_.id) == Seq("new-row"))
+                } { (_, insertedRoots) =>
+                    assert(insertedRoots.map(_.id) == Seq("new-row"))
+                }
             yield
-                assert(authored == ("authored", "section"))
+                assert(authored.id == "authored")
+                assert(authored.className == "section")
+                assert(authored.rangeHost == null)
+                assert(authored.anchorParents.size == 2)
+                assert(authored.anchorParents.forall(_ eq root.querySelector("table")))
                 assert(root.querySelector("#section-row") == null)
                 val rows = root.querySelectorAll("table > tbody")
                 assert(rows.length == 1)
@@ -195,6 +216,21 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                     case other               => fail(s"Expected malformed replacement panic, got: $other")
                 assert(root.innerHTML == before)
                 assert(size == 1)
+        }
+    }
+
+    "unknown replacement reports the exact diagnostic without mutation" in {
+        val root   = host(s"<!--kyo-rs:$One--><span id='kept-unknown'>kept</span><!--kyo-re:$One-->")
+        val before = root.innerHTML
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                result  <- Fiber.initUnscoped(regions.replace(Two, "changed")).map(_.getResult)
+            yield
+                // KyoException.getMessage decorates the diagnostic with environment-aware formatting, so the
+                // full diagnostic (including the region id) is asserted as a substring, never by equality.
+                assertPanicContains(result, s"Unknown reactive range: $Two")
+                assert(root.innerHTML == before)
         }
     }
 

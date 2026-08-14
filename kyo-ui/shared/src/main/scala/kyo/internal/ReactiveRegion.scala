@@ -26,25 +26,74 @@ private[kyo] object ReactiveRegion:
     enum ParentContext derives CanEqual:
         case HtmlTable, Other
 
+    enum Namespace derives CanEqual:
+        case Html, Svg
+
+    enum BoundaryMode derives CanEqual:
+        case Emit, Suppress
+
     enum TableContent derives CanEqual:
-        case Rows, AuthoredSections, Transparent
+        case Rows, AuthoredSections, Transparent, Other
+
+    enum RenderHost derives CanEqual:
+        case HtmlComments(id: String, parentContext: ParentContext)
+        case HtmlTableBody(id: String)
+        case SvgGroup(path: Seq[String])
+    end RenderHost
 
     def tableContent(ui: UI): TableContent =
         ui match
-            case _: Tbody             => TableContent.AuthoredSections
-            case _: Reactive[?]       => TableContent.Transparent
-            case _: Foreach[?, ?]     => TableContent.Transparent
-            case KeyedChild(_, child) => tableContent(child)
-            case Fragment(children) if children.nonEmpty =>
-                val content = children.map(tableContent)
-                if content.forall(_ == TableContent.AuthoredSections) then TableContent.AuthoredSections
-                else if content.forall(_ == TableContent.Transparent) then TableContent.Transparent
-                else TableContent.Rows
-            case _ => TableContent.Rows
+            case _: Tbody                               => TableContent.AuthoredSections
+            case _: Tr                                  => TableContent.Rows
+            case _: Reactive[?]                         => TableContent.Transparent
+            case _: Foreach[?, ?]                       => TableContent.Transparent
+            case KeyedChild(_, child)                   => tableContent(child)
+            case Fragment(children) if children.isEmpty => TableContent.Other
+            case Fragment(children)                     => tableContent(children)
+            case _                                      => TableContent.Other
+    end tableContent
+
+    def tableContent(children: IterableOnce[UI]): TableContent =
+        val iterator    = children.iterator
+        var hasAuthored = false
+        var hasOther    = false
+        while iterator.hasNext do
+            tableContent(iterator.next()) match
+                case TableContent.Rows             => return TableContent.Rows
+                case TableContent.AuthoredSections => hasAuthored = true
+                case TableContent.Transparent      => ()
+                case TableContent.Other            => hasOther = true
+        end while
+        if hasOther then TableContent.Other
+        else if hasAuthored then TableContent.AuthoredSections
+        else TableContent.Transparent
     end tableContent
 
     final case class HtmlRange(id: String)         extends ReactiveRegion
     final case class SvgElement(path: Seq[String]) extends ReactiveRegion
+
+    def renderHost(region: ReactiveRegion, parentContext: ParentContext, content: TableContent): RenderHost =
+        region match
+            case HtmlRange(id) =>
+                (parentContext, content) match
+                    case (ParentContext.HtmlTable, TableContent.Rows) => RenderHost.HtmlTableBody(id)
+                    case _                                            => RenderHost.HtmlComments(id, parentContext)
+            case SvgElement(path) => RenderHost.SvgGroup(path)
+    end renderHost
+
+    def namespace(host: RenderHost): Namespace =
+        host match
+            case _: RenderHost.HtmlComments  => Namespace.Html
+            case _: RenderHost.HtmlTableBody => Namespace.Html
+            case _: RenderHost.SvgGroup      => Namespace.Svg
+    end namespace
+
+    def contentParent(host: RenderHost): ParentContext =
+        host match
+            case RenderHost.HtmlComments(_, parentContext) => parentContext
+            case _: RenderHost.HtmlTableBody               => ParentContext.Other
+            case _: RenderHost.SvgGroup                    => ParentContext.Other
+    end contentParent
 
     def from(path: Seq[String], svgContext: Boolean): ReactiveRegion =
         from(RegionIdentity.root(path), svgContext)
@@ -52,6 +101,16 @@ private[kyo] object ReactiveRegion:
     def from(identity: RegionIdentity, svgContext: Boolean): ReactiveRegion =
         if svgContext then SvgElement(identity.path)
         else HtmlRange(htmlId(identity))
+
+    def from(identity: RegionIdentity, namespace: Namespace): ReactiveRegion =
+        namespace match
+            case Namespace.Html => HtmlRange(htmlId(identity))
+            case Namespace.Svg  => SvgElement(identity.path)
+
+    def namespace(region: ReactiveRegion): Namespace =
+        region match
+            case _: HtmlRange  => Namespace.Html
+            case _: SvgElement => Namespace.Svg
 
     def owns(region: ReactiveRegion, identity: RegionIdentity): Boolean =
         region match

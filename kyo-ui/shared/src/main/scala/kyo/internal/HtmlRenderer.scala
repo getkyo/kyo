@@ -15,7 +15,16 @@ private[kyo] object HtmlRenderer:
     /** Render a UI tree to HTML with data-kyo-path attributes. */
     def render(ui: UI, path: Seq[String])(using Frame): String < Sync =
         val sb = new StringBuilder
-        renderTo(sb, ui, path, ReactiveRegion.RegionIdentity.root(path)).andThen(sb.toString)
+        renderTo(
+            sb,
+            ui,
+            path,
+            ReactiveRegion.RegionIdentity.root(path),
+            ReactiveRegion.Namespace.Html,
+            parentContext = ReactiveRegion.ParentContext.Other,
+            boundaryMode = ReactiveRegion.BoundaryMode.Emit
+        ).andThen(sb.toString)
+    end render
 
     private[kyo] def renderRegion(ui: UI, path: Seq[String])(using Frame): String < Sync =
         renderRegion(ui, path, ReactiveRegion.RegionIdentity.root(path))
@@ -27,7 +36,7 @@ private[kyo] object HtmlRenderer:
             context,
             ReactiveRegion.from(context, svgContext = false),
             ReactiveRegion.ParentContext.Other,
-            suppressRootHtmlBoundary = true
+            ReactiveRegion.BoundaryMode.Suppress
         )
 
     private[kyo] def renderRegion(
@@ -36,25 +45,11 @@ private[kyo] object HtmlRenderer:
         context: ReactiveRegion.RegionIdentity,
         region: ReactiveRegion,
         parentContext: ReactiveRegion.ParentContext,
-        suppressRootHtmlBoundary: Boolean
+        boundaryMode: ReactiveRegion.BoundaryMode
     )(using Frame): String < Sync =
-        val sb = new StringBuilder
-        val svg = region match
-            case _: ReactiveRegion.HtmlRange  => false
-            case _: ReactiveRegion.SvgElement => true
-        (region, parentContext, ReactiveRegion.tableContent(ui)) match
-            case (ReactiveRegion.HtmlRange(id), ReactiveRegion.ParentContext.HtmlTable, ReactiveRegion.TableContent.Rows) =>
-                w(sb, s"<tbody data-kyo-range-host=\"$id\">")
-                renderTo(sb, ui, path, context, svg, htmlParent = "tbody", suppressRootHtmlBoundary = suppressRootHtmlBoundary)
-                    .andThen(w(sb, "</tbody>"))
-                    .andThen(sb.toString)
-            case _ =>
-                val htmlParent = parentContext match
-                    case ReactiveRegion.ParentContext.HtmlTable => "table"
-                    case ReactiveRegion.ParentContext.Other     => ""
-                renderTo(sb, ui, path, context, svg, htmlParent = htmlParent, suppressRootHtmlBoundary = suppressRootHtmlBoundary)
-                    .andThen(sb.toString)
-        end match
+        val sb   = new StringBuilder
+        val host = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(ui))
+        renderHostedContent(sb, ui, path, context, host, boundaryMode).andThen(sb.toString)
     end renderRegion
 
     /** Render a UI tree to HTML, additionally collecting the CSS rule(s) for every pseudo-state
@@ -71,7 +66,16 @@ private[kyo] object HtmlRenderer:
     private[kyo] def renderWithCss(ui: UI, path: Seq[String])(using Frame): (String, Chunk[(String, String)]) < Sync =
         val sb  = new StringBuilder
         val css = new CssCollector
-        renderTo(sb, ui, path, ReactiveRegion.RegionIdentity.root(path), cssRules = Present(css))
+        renderTo(
+            sb,
+            ui,
+            path,
+            ReactiveRegion.RegionIdentity.root(path),
+            ReactiveRegion.Namespace.Html,
+            cssRules = Present(css),
+            parentContext = ReactiveRegion.ParentContext.Other,
+            boundaryMode = ReactiveRegion.BoundaryMode.Emit
+        )
             .andThen((sb.toString, Chunk.from(css)))
     end renderWithCss
 
@@ -91,7 +95,7 @@ private[kyo] object HtmlRenderer:
             context,
             ReactiveRegion.from(context, svgContext = false),
             ReactiveRegion.ParentContext.Other,
-            suppressRootHtmlBoundary = true
+            ReactiveRegion.BoundaryMode.Suppress
         )
 
     private[kyo] def renderRegionWithCss(
@@ -100,42 +104,49 @@ private[kyo] object HtmlRenderer:
         context: ReactiveRegion.RegionIdentity,
         region: ReactiveRegion,
         parentContext: ReactiveRegion.ParentContext,
-        suppressRootHtmlBoundary: Boolean
+        boundaryMode: ReactiveRegion.BoundaryMode
     )(using Frame): (String, Chunk[(String, String)]) < Sync =
-        val sb  = new StringBuilder
-        val css = new CssCollector
-        val svg = region match
-            case _: ReactiveRegion.HtmlRange  => false
-            case _: ReactiveRegion.SvgElement => true
-        val rendered = (region, parentContext, ReactiveRegion.tableContent(ui)) match
-            case (ReactiveRegion.HtmlRange(id), ReactiveRegion.ParentContext.HtmlTable, ReactiveRegion.TableContent.Rows) =>
+        val sb       = new StringBuilder
+        val css      = new CssCollector
+        val host     = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(ui))
+        val rendered = renderHostedContent(sb, ui, path, context, host, boundaryMode, Present(css))
+        rendered.andThen((sb.toString, Chunk.from(css)))
+    end renderRegionWithCss
+
+    private def renderHostedContent(
+        sb: StringBuilder,
+        ui: UI,
+        path: Seq[String],
+        context: ReactiveRegion.RegionIdentity,
+        host: ReactiveRegion.RenderHost,
+        boundaryMode: ReactiveRegion.BoundaryMode,
+        cssRules: Maybe[CssCollector] = Absent
+    )(using Frame): Unit < Sync =
+        host match
+            case ReactiveRegion.RenderHost.HtmlTableBody(id) =>
                 w(sb, s"<tbody data-kyo-range-host=\"$id\">")
                 renderTo(
                     sb,
                     ui,
                     path,
                     context,
-                    svg,
-                    cssRules = Present(css),
-                    htmlParent = "tbody",
-                    suppressRootHtmlBoundary = suppressRootHtmlBoundary
+                    ReactiveRegion.Namespace.Html,
+                    cssRules,
+                    ReactiveRegion.ParentContext.Other,
+                    boundaryMode
                 ).andThen(w(sb, "</tbody>"))
-            case _ =>
-                val htmlParent = parentContext match
-                    case ReactiveRegion.ParentContext.HtmlTable => "table"
-                    case ReactiveRegion.ParentContext.Other     => ""
+            case host =>
                 renderTo(
                     sb,
                     ui,
                     path,
                     context,
-                    svg,
-                    cssRules = Present(css),
-                    htmlParent = htmlParent,
-                    suppressRootHtmlBoundary = suppressRootHtmlBoundary
+                    ReactiveRegion.namespace(host),
+                    cssRules,
+                    ReactiveRegion.contentParent(host),
+                    boundaryMode
                 )
-        rendered.andThen((sb.toString, Chunk.from(css)))
-    end renderRegionWithCss
+    end renderHostedContent
 
     private[kyo] def wrapReactiveRegion(region: ReactiveRegion, innerHtml: String): String =
         region match
@@ -217,28 +228,25 @@ private[kyo] object HtmlRenderer:
         ui: UI,
         path: Seq[String],
         context: ReactiveRegion.RegionIdentity,
-        svg: Boolean = false,
+        namespace: ReactiveRegion.Namespace,
         cssRules: Maybe[CssCollector] = Absent,
-        htmlParent: String = "",
-        suppressRootHtmlBoundary: Boolean = false
+        parentContext: ReactiveRegion.ParentContext,
+        boundaryMode: ReactiveRegion.BoundaryMode
     )(using
         Frame
     ): Unit < Sync =
         ui match
             case dd: Dropdown =>
-                renderDropdown(sb, dd, path, cssRules)
+                renderBoundElementBoundary(sb, dd, context, namespace, parentContext, boundaryMode) {
+                    renderDropdown(sb, dd, path, cssRules)
+                }
             case elem: Element =>
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
-                val regionId =
-                    if !svg && !suppressRootHtmlBoundary && ReactiveUI.collectSignalRef(elem).nonEmpty then
-                        Present(ReactiveRegion.htmlId(context))
-                    else Absent
-                regionId.foreach(id => w(sb, s"<!--kyo-rs:$id-->"))
-                w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
-                renderCommonAttrs(sb, elem, cssRules)
-                renderEventAttr(sb, elem)
-                val rendered =
+                renderBoundElementBoundary(sb, elem, context, namespace, parentContext, boundaryMode) {
+                    w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
+                    renderCommonAttrs(sb, elem, cssRules)
+                    renderEventAttr(sb, elem)
                     for _ <- renderElementAttrs(sb, elem)
                     yield
                         if void then
@@ -258,21 +266,34 @@ private[kyo] object HtmlRenderer:
                             w(sb, ">")
                             // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be
                             // matched before SvgElement (ForeignObject IS an SvgElement).
-                            val childSvg = elem match
-                                case _: Svg.ForeignObject => false
-                                case _: Svg.SvgElement    => true
-                                case _                    => svg
+                            val childNamespace = elem match
+                                case _: Svg.ForeignObject => ReactiveRegion.Namespace.Html
+                                case _: Svg.SvgElement    => ReactiveRegion.Namespace.Svg
+                                case _                    => namespace
+                            val childParentContext = elem match
+                                case _: Table => ReactiveRegion.ParentContext.HtmlTable
+                                case _        => ReactiveRegion.ParentContext.Other
                             val textChild: Unit < Sync = elem match
                                 case t: Svg.Title => w(sb, esc(t.text)); Kyo.unit
                                 case d: Svg.Desc  => w(sb, esc(d.text)); Kyo.unit
                                 case _            => Kyo.unit
                             textChild.andThen(
                                 Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
-                                    renderTo(sb, child, path :+ i.toString, context.child(i.toString), childSvg, cssRules, tag)
+                                    renderTo(
+                                        sb,
+                                        child,
+                                        path :+ i.toString,
+                                        context.child(i.toString),
+                                        childNamespace,
+                                        cssRules,
+                                        childParentContext,
+                                        ReactiveRegion.BoundaryMode.Emit
+                                    )
                                 }.andThen(w(sb, s"</$tag>"))
                             )
                         end if
-                rendered.andThen(regionId.foreach(id => w(sb, s"<!--kyo-re:$id-->")))
+                    end for
+                }
 
             case UI.Ast.RawHtml(value) =>
                 w(sb, value)
@@ -290,49 +311,32 @@ private[kyo] object HtmlRenderer:
                     val childContext = child match
                         case kc: KeyedChild[?] => context.child(kc.key)
                         case _                 => context.child(i.toString)
-                    renderTo(sb, child, childPath, childContext, svg, cssRules, htmlParent)
+                    renderTo(sb, child, childPath, childContext, namespace, cssRules, parentContext, ReactiveRegion.BoundaryMode.Emit)
                 }
 
             case KeyedChild(_, child) =>
-                renderTo(sb, child, path, context, svg, cssRules, htmlParent)
+                renderTo(sb, child, path, context, namespace, cssRules, parentContext, boundaryMode)
 
             case r: Reactive[?] =>
-                val region = ReactiveRegion.from(context, svg)
-                region match
-                    case ReactiveRegion.SvgElement(regionPath) =>
-                        w(sb, openSvgRegion(regionPath))
-                        for current <- r.signal.current(using r.frame)
-                        yield renderTo(
-                            sb,
-                            current,
-                            path,
-                            context.transparent,
-                            svg,
-                            cssRules,
-                            htmlParent
-                        ).andThen(w(sb, "</g>"))
-                    case ReactiveRegion.HtmlRange(id) =>
-                        for current <- r.signal.current(using r.frame)
-                        yield
-                            val rowGroup = htmlParent == "table" && ReactiveRegion.tableContent(current) == ReactiveRegion.TableContent.Rows
-                            if rowGroup then w(sb, s"<tbody data-kyo-range-host=\"$id\">")
-                            w(sb, s"<!--kyo-rs:$id-->")
-                            renderTo(
-                                sb,
-                                current,
-                                path,
-                                context.transparent,
-                                svg,
-                                cssRules,
-                                if rowGroup then "tbody" else htmlParent
-                            ).andThen {
-                                w(sb, s"<!--kyo-re:$id-->")
-                                if rowGroup then w(sb, "</tbody>")
-                            }
-                end match
+                val region = ReactiveRegion.from(context, namespace)
+                for current <- r.signal.current(using r.frame)
+                yield
+                    val host = ReactiveRegion.renderHost(region, parentContext, ReactiveRegion.tableContent(current))
+                    openInitialHost(sb, host)
+                    renderTo(
+                        sb,
+                        current,
+                        path,
+                        context.transparent,
+                        ReactiveRegion.namespace(host),
+                        cssRules,
+                        ReactiveRegion.contentParent(host),
+                        ReactiveRegion.BoundaryMode.Emit
+                    ).andThen(closeInitialHost(sb, host))
+                end for
 
             case fe: Foreach[?, ?] @unchecked =>
-                val region = ReactiveRegion.from(context, svg)
+                val region = ReactiveRegion.from(context, namespace)
                 fe.applyTyped {
                     [T] =>
                         (signal, keyFn, renderFn) =>
@@ -344,46 +348,59 @@ private[kyo] object HtmlRenderer:
                                         case Absent     => i.toString
                                     (key, renderFn(i, item))
                                 }
-                                val content =
-                                    if rendered.isEmpty then ReactiveRegion.TableContent.Rows
-                                    else
-                                        val kinds = rendered.map((_, child) => ReactiveRegion.tableContent(child))
-                                        if kinds.forall(_ == ReactiveRegion.TableContent.AuthoredSections) then
-                                            ReactiveRegion.TableContent.AuthoredSections
-                                        else if kinds.forall(_ == ReactiveRegion.TableContent.Transparent) then
-                                            ReactiveRegion.TableContent.Transparent
-                                        else ReactiveRegion.TableContent.Rows
-                                        end if
-                                val rowGroup = region match
-                                    case _: ReactiveRegion.HtmlRange if htmlParent == "table" =>
-                                        content == ReactiveRegion.TableContent.Rows
-                                    case _ => false
-                                region match
-                                    case ReactiveRegion.SvgElement(regionPath) => w(sb, openSvgRegion(regionPath))
-                                    case ReactiveRegion.HtmlRange(id) =>
-                                        if rowGroup then w(sb, s"<tbody data-kyo-range-host=\"$id\">")
-                                        w(sb, s"<!--kyo-rs:$id-->")
-                                end match
+                                val content = ReactiveRegion.tableContent(rendered.iterator.map(_._2))
+                                val host    = ReactiveRegion.renderHost(region, parentContext, content)
+                                openInitialHost(sb, host)
                                 Kyo.foreachDiscard(rendered) { (key, child) =>
                                     renderTo(
                                         sb,
                                         child,
                                         path :+ key,
                                         context.child(key),
-                                        svg,
+                                        ReactiveRegion.namespace(host),
                                         cssRules,
-                                        if rowGroup then "tbody" else htmlParent
+                                        ReactiveRegion.contentParent(host),
+                                        ReactiveRegion.BoundaryMode.Emit
                                     )
-                                }.andThen {
-                                    region match
-                                        case _: ReactiveRegion.SvgElement => w(sb, "</g>")
-                                        case ReactiveRegion.HtmlRange(id) =>
-                                            w(sb, s"<!--kyo-re:$id-->")
-                                            if rowGroup then w(sb, "</tbody>")
-                                }
+                                }.andThen(closeInitialHost(sb, host))
                             end for
                 }
     end renderTo
+
+    private def renderBoundElementBoundary(
+        sb: StringBuilder,
+        elem: Element,
+        context: ReactiveRegion.RegionIdentity,
+        namespace: ReactiveRegion.Namespace,
+        parentContext: ReactiveRegion.ParentContext,
+        boundaryMode: ReactiveRegion.BoundaryMode
+    )(render: => Unit < Sync)(using Frame): Unit < Sync =
+        val host = (namespace, boundaryMode, ReactiveUI.collectSignalRef(elem)) match
+            case (ReactiveRegion.Namespace.Html, ReactiveRegion.BoundaryMode.Emit, Present(_)) =>
+                Present(
+                    ReactiveRegion.renderHost(
+                        ReactiveRegion.HtmlRange(ReactiveRegion.htmlId(context)),
+                        parentContext,
+                        ReactiveRegion.tableContent(elem)
+                    )
+                )
+            case _ => Absent
+        host.foreach(openInitialHost(sb, _))
+        render.andThen(host.foreach(closeInitialHost(sb, _)))
+    end renderBoundElementBoundary
+
+    private def openInitialHost(sb: StringBuilder, host: ReactiveRegion.RenderHost): Unit =
+        host match
+            case ReactiveRegion.RenderHost.HtmlComments(id, _) => w(sb, s"<!--kyo-rs:$id-->")
+            case ReactiveRegion.RenderHost.HtmlTableBody(id) =>
+                w(sb, s"<tbody data-kyo-range-host=\"$id\"><!--kyo-rs:$id-->")
+            case ReactiveRegion.RenderHost.SvgGroup(path) => w(sb, openSvgRegion(path))
+
+    private def closeInitialHost(sb: StringBuilder, host: ReactiveRegion.RenderHost): Unit =
+        host match
+            case ReactiveRegion.RenderHost.HtmlComments(id, _) => w(sb, s"<!--kyo-re:$id-->")
+            case ReactiveRegion.RenderHost.HtmlTableBody(id)   => w(sb, s"<!--kyo-re:$id--></tbody>")
+            case _: ReactiveRegion.RenderHost.SvgGroup         => w(sb, "</g>")
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
         ta.value match
@@ -817,7 +834,7 @@ private[kyo] object HtmlRenderer:
       * A mask is a display format, so a masked field has to show a masked value whoever set it. Client-side
       * enforcement only ever sees typing: a value bound to a [[SignalRef]], a server-side transform of what was
       * typed, and the initial render all reach the field without a `beforeinput` event. Formatting here covers
-      * every one of them at once, in both transports and on both the morph and the replace path, which no amount
+      * every one of them at once, in both transports and on initial and reactive-range renders, which no amount
       * of client-side patching would.
       *
       * A value the mask already formatted comes back unchanged, so the keystroke echo of a two-way binding still
@@ -1054,8 +1071,11 @@ private[kyo] object HtmlRenderer:
           |function kyoRangeFragmentRoots(fragment){
           |  var roots=[],node=fragment.firstChild;while(node){if(node.nodeType===1)roots.push(node);node=node.nextSibling;}return roots;
           |}
-          |function kyoRangeSyncHost(host,incoming,id){var names=[];for(var i=0;i<host.attributes.length;i++)names.push(host.attributes[i].name);
-          |  for(var i=0;i<names.length;i++)if(names[i]!=="data-kyo-range-host")host.removeAttribute(names[i]);
+          |function kyoRangeSemanticRoots(roots,id){
+          |  if(roots.length!==1||roots[0].tagName!=="TBODY"||roots[0].getAttribute("data-kyo-range-host")!==id)return roots;
+          |  var semantic=[],node=roots[0].firstChild;while(node){if(node.nodeType===1)semantic.push(node);node=node.nextSibling;}return semantic;
+          |}
+          |function kyoRangeSyncHost(host,incoming,id){for(var i=host.attributes.length-1;i>=0;i--){var name=host.attributes[i].name;if(name!=="data-kyo-range-host")host.removeAttribute(name);}
           |  for(var i=0;i<incoming.attributes.length;i++){var a=incoming.attributes[i];if(a.name!=="data-kyo-range-host")host.setAttribute(a.name,a.value);}
           |  host.setAttribute("data-kyo-range-host",id);
           |}
@@ -1092,9 +1112,8 @@ private[kyo] object HtmlRenderer:
           |function kyoRangeMorph(active,oldRoots,newRoots,incoming){
           |  if(!active||oldRoots.length!==1||newRoots.length!==1||active!==oldRoots[0]||incoming.size!==0)return false;
           |  if((active.tagName!=="INPUT"&&active.tagName!=="TEXTAREA")||active.tagName!==newRoots[0].tagName)return false;
-          |  var fresh=newRoots[0],names=[];for(var i=0;i<fresh.attributes.length;i++){var a=fresh.attributes[i];if(active.getAttribute(a.name)!==a.value)active.setAttribute(a.name,a.value);}
-          |  for(var i=0;i<active.attributes.length;i++)names.push(active.attributes[i].name);
-          |  for(var i=0;i<names.length;i++)if(!fresh.hasAttribute(names[i]))active.removeAttribute(names[i]);
+          |  var fresh=newRoots[0];for(var i=0;i<fresh.attributes.length;i++){var a=fresh.attributes[i];if(active.getAttribute(a.name)!==a.value)active.setAttribute(a.name,a.value);}
+          |  for(var i=active.attributes.length-1;i>=0;i--){var name=active.attributes[i].name;if(!fresh.hasAttribute(name))active.removeAttribute(name);}
           |  var value=active.tagName==="TEXTAREA"?fresh.textContent:(fresh.getAttribute("value")||"");if(value!==active.value)active.value=value;
           |  applyJsProps(active);return true;
           |}
@@ -1112,21 +1131,21 @@ private[kyo] object HtmlRenderer:
           |  var fragment=parser.createContextualFragment(html),incoming=kyoRangeScan(fragment),removed=[];
           |  __kyoRanges.forEach(function(pair,key){if(key!==id&&range.intersectsNode(pair.start))removed.push(key);});
           |  incoming.forEach(function(pair,key){if(__kyoRanges.has(key)&&removed.indexOf(key)<0)kyoRangeFail("duplicate id: "+key);});
-          |  var oldRoots=kyoRangeRoots(endpoints.start,endpoints.end),newRoots=kyoRangeFragmentRoots(fragment),active=document.activeElement;
-          |  if(kyoRangeMorph(active,oldRoots,newRoots,incoming))return;
+          |  var oldRoots=kyoRangeRoots(endpoints.start,endpoints.end),newRoots=kyoRangeFragmentRoots(fragment),newSemanticRoots=kyoRangeSemanticRoots(newRoots,id),active=document.activeElement;
+          |  if(kyoRangeMorph(active,oldRoots,newSemanticRoots,incoming))return;
           |  var inside=active&&active!==document.body&&kyoRangeContains(oldRoots,active);
           |  var activeLocator=inside?kyoRangeFocusLocator(oldRoots,active):null;
           |  var ss=inside&&typeof active.selectionStart==="number"?active.selectionStart:null;
           |  var se=inside&&typeof active.selectionEnd==="number"?active.selectionEnd:null;
-          |  var oldEnter=kyoEnterPathsRoots(oldRoots),ghosts=kyoLeavePrepareRoots(oldRoots,kyoLeavePathsRoots(newRoots));
+          |  var oldEnter=kyoEnterPathsRoots(oldRoots),ghosts=kyoLeavePrepareRoots(oldRoots,kyoLeavePathsRoots(newSemanticRoots));
           |  var oldFocus=kyoFocusPathsRoots(oldRoots);
           |  range.deleteContents();for(var i=0;i<removed.length;i++)__kyoRanges.delete(removed[i]);
-          |  var finalRoots=newRoots;if(synthetic&&newRoots.length===1&&newRoots[0].tagName==="TBODY"){
+          |  var finalRoots=newSemanticRoots;if(synthetic&&newRoots.length===1&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
           |    var incomingHost=newRoots[0];kyoRangeSyncHost(parent,incomingHost,id);while(incomingHost.firstChild)parent.insertBefore(incomingHost.firstChild,endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);
           |  }else if(synthetic){var table=parent.parentNode;if(!table)kyoRangeFail("table range host is detached: "+id);
           |    table.insertBefore(endpoints.start,parent);table.insertBefore(fragment,parent);table.insertBefore(endpoints.end,parent);table.removeChild(parent);
           |  }else{endpoints.end.parentNode.insertBefore(fragment,endpoints.end);if(newRoots.length&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
-          |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);}}
+          |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
           |  incoming.forEach(function(pair,key){__kyoRanges.set(key,pair);});
           |  for(var i=0;i<finalRoots.length;i++){applyJsProps(finalRoots[i]);ba(finalRoots[i]);}
           |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}
@@ -1156,32 +1175,8 @@ private[kyo] object HtmlRenderer:
            |  }else if(op.Replace){
            |    var p=op.Replace.path.join(".");
            |    var el=document.querySelector('[data-kyo-path="'+p+'"]');
-           |    // Two-way binding echoes each keystroke back as a Replace. An outerHTML replace of the focused field
-           |    // resets its caret (email/number inputs do not support selectionStart, so it cannot be restored),
-           |    // reversing typed text. So when the focused editable element is inside this Replace, MORPH it in place
-           |    // instead: sync attributes (the value attribute keeps mirroring the signal) but assign the live .value
-           |    // only on a genuine change. The user's own keystroke echo carries the value the field already holds, so
-           |    // .value is left alone and the caret is preserved; a submit-clear or external update carries a different
-           |    // value and is applied. Only morph the field's OWN value echo: its data-kyo-path equals this Replace's
-           |    // path. A larger subtree re-render (a foreach reorder, a `when` swap)
-           |    // has a shorter path and merely CONTAINS the focused field; that must fall through to the normal
-           |    // replace so focus-follows-item and structural changes still work.
-           |    var __ae=document.activeElement;
-           |    var __morphed=false;
-           |    if(el&&__ae&&(__ae.tagName==="INPUT"||__ae.tagName==="TEXTAREA")&&__ae.getAttribute("data-kyo-path")===p&&el.contains(__ae)){
-           |      var __t=document.createElement("template");__t.innerHTML=op.Replace.html.trim();
-           |      var __ni=__t.content.querySelector(__ae.tagName.toLowerCase());
-           |      if(__ni){
-           |        for(var __i=0;__i<__ni.attributes.length;__i++){var __a=__ni.attributes[__i];if(__ae.getAttribute(__a.name)!==__a.value)__ae.setAttribute(__a.name,__a.value);}
-           |        var __names=[];for(var __j=0;__j<__ae.attributes.length;__j++)__names.push(__ae.attributes[__j].name);
-           |        for(var __k=0;__k<__names.length;__k++){if(!__ni.hasAttribute(__names[__k]))__ae.removeAttribute(__names[__k]);}
-           |        var __nv=(__ae.tagName==="TEXTAREA")?__ni.textContent:(__ni.getAttribute("value")||"");
-           |        if(__nv!==__ae.value)__ae.value=__nv;
-           |        applyJsProps(__ae);
-           |        __morphed=true;
-           |      }
-           |    }
-           |    if(el&&!__morphed&&el.outerHTML!==op.Replace.html){
+           |    // Replace is the SVG-only, path-addressed operation. HTML boundaries use ReplaceRange above.
+           |    if(el&&el.outerHTML!==op.Replace.html){
            |      var ae=document.activeElement;
            |      var ap=ae&&ae!==document.body&&ae.getAttribute?ae.getAttribute("data-kyo-path"):null;
            |      var ss=(ae&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
@@ -1191,8 +1186,8 @@ private[kyo] object HtmlRenderer:
            |      var __fa=focusAutoPaths(el);
            |      el.outerHTML=op.Replace.html;
            |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
-           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null)kyoSetCaret(rf,ss,se);}}
-           |      // Seed AFTER focus/caret restore so a newly-appeared focus-auto element wins restore-to-trigger (the morph path never seeds).
+           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf){rf.focus();if(ss!==null)kyoSetCaret(rf,ss,se);}}
+           |      // Seed after focus/caret restore so a newly appeared focus-auto element wins restore-to-trigger.
            |      if(nel){kyoEnterSeed(nel,__en);seedFocusAuto(nel,__fa);}
            |      kyoSpawnGhosts(__gh);
            |    }
@@ -1249,25 +1244,12 @@ private[kyo] object HtmlRenderer:
            |}
            |// Apply data-kyo-prop-* HTML attributes as JS DOM properties then remove the attr.
            |// Mirrors DomBackend.applyJsPropsSync for the HTTP/JVM rendering path.
+           |function applyJsPropsElement(el,pfx){for(var i=el.attributes.length-1;i>=0;i--){var n=el.attributes[i].name;
+           |  if(n.indexOf(pfx)===0){el[n.slice(pfx.length)]=el.getAttribute(n);el.removeAttribute(n);}}
+           |}
            |function applyJsProps(root){
-           |  var pfx="data-kyo-prop-";
-           |  var els=root.querySelectorAll("[data-kyo-prop-indeterminate],[data-kyo-prop-checked]");
-           |  var list=[];
-           |  if(root.hasAttribute&&root.getAttribute){
-           |    var an=root.getAttributeNames?root.getAttributeNames():[];
-           |    for(var i=0;i<an.length;i++){if(an[i].indexOf(pfx)===0){list.push(root);break;}}
-           |  }
-           |  for(var i=0;i<els.length;i++)list.push(els[i]);
-           |  for(var j=0;j<list.length;j++){
-           |    var el=list[j];
-           |    var names=el.getAttributeNames?el.getAttributeNames():[];
-           |    var rem=[];
-           |    for(var k=0;k<names.length;k++){
-           |      var n=names[k];
-           |      if(n.indexOf(pfx)===0){el[n.slice(pfx.length)]=el.getAttribute(n);rem.push(n);}
-           |    }
-           |    for(var k=0;k<rem.length;k++)el.removeAttribute(rem[k]);
-           |  }
+           |  var pfx="data-kyo-prop-";applyJsPropsElement(root,pfx);var els=root.querySelectorAll("*");
+           |  for(var i=0;i<els.length;i++)applyJsPropsElement(els[i],pfx);
            |}
            |// Start freshly-inserted SMIL animations. Chart transition <animate> elements use
            |// begin="indefinite" so they do not auto-play against the shared document timeline (which would

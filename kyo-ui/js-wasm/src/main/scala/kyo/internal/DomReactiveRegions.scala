@@ -14,9 +14,11 @@ final private[kyo] class DomReactiveRegions private (
     private var open = true
 
     def replace(regionId: String, html: String)(using Frame): Unit < Sync =
-        replaceWith(regionId, html)((_, _) => ())((_, _) => ())
+        replaceWith(regionId, html)((_, _, _) => false)((_, _) => ())((_, _) => ())
 
     private[kyo] def replaceWith[A](regionId: String, html: String)(
+        tryMorph: (Seq[dom.Element], Seq[dom.Element], Boolean) => Boolean
+    )(
         before: (Seq[dom.Element], Seq[dom.Element]) => A
     )(
         after: (A, Seq[dom.Element]) => Unit
@@ -30,16 +32,19 @@ final private[kyo] class DomReactiveRegions private (
             range.setStartAfter(endpoints.start)
             range.setEndBefore(endpoints.end)
 
-            val syntheticHost = parent match
+            val liveHost = parent match
                 case element: dom.Element
                     if element.tagName == "TBODY" && element.getAttribute("data-kyo-range-host") == regionId =>
-                    Present(element)
-                case _ => Absent
-            val fragment = syntheticHost.fold(range.createContextualFragment(html)) { host =>
-                val parser = document.createRange()
-                parser.selectNode(host)
-                parser.createContextualFragment(html)
-            }
+                    val table = DomReactiveRegions.parent(element).getOrElse(fail(s"Reactive table range host is detached: $regionId"))
+                    DomReactiveRegions.LiveHost.Synthetic(element, table)
+                case _ => DomReactiveRegions.LiveHost.Siblings(parent)
+            val fragment = liveHost match
+                case DomReactiveRegions.LiveHost.Synthetic(host, _) =>
+                    val parser = document.createRange()
+                    parser.selectNode(host)
+                    parser.createContextualFragment(html)
+                case DomReactiveRegions.LiveHost.Siblings(_) =>
+                    range.createContextualFragment(html)
             val incoming = DomReactiveRegions.scan(document, fragment)
             val removed = ranges.iterator.collect {
                 case (id, nested) if id != regionId && intersects(range, nested.start) => id
@@ -50,42 +55,54 @@ final private[kyo] class DomReactiveRegions private (
                     fail(s"Duplicate reactive range id: $id")
             }
 
-            val oldElements = elementsBetween(endpoints)
-            val newElements = childElements(fragment)
-            val state       = before(oldElements, newElements)
-            range.deleteContents()
-            removed.foreach(ranges.remove)
-            val insertedRoots = syntheticHost match
-                case Present(host) if newElements.size == 1 && newElements.head.tagName == "TBODY" =>
-                    val incomingHost = newElements.head
-                    syncHostAttributes(host, incomingHost, regionId)
-                    var child = DomReactiveRegions.firstChild(incomingHost)
-                    while child.nonEmpty do
-                        val next = DomReactiveRegions.next(child.get)
-                        discard(host.insertBefore(child.get, endpoints.end))
-                        child = next
-                    end while
-                    elementsBetween(endpoints)
-                case Present(host) =>
-                    val table = DomReactiveRegions.parent(host).getOrElse(fail(s"Reactive table range host is detached: $regionId"))
-                    discard(table.insertBefore(endpoints.start, host))
-                    discard(table.insertBefore(fragment, host))
-                    discard(table.insertBefore(endpoints.end, host))
-                    discard(table.removeChild(host))
-                    newElements
-                case _ =>
-                    discard(parent.insertBefore(fragment, endpoints.end))
-                    newElements.headOption match
-                        case Some(host) if host.tagName == "TBODY" && host.getAttribute("data-kyo-range-host") == regionId =>
-                            DomReactiveRegions.firstChild(host) match
-                                case Present(first) => discard(host.insertBefore(endpoints.start, first))
-                                case Absent         => discard(host.appendChild(endpoints.start))
-                            discard(host.appendChild(endpoints.end))
-                        case _ => ()
-                    end match
-                    newElements
-            ranges.addAll(incoming)
-            after(state, insertedRoots)
+            val oldElements     = elementsBetween(endpoints)
+            val incomingContent = classifyIncoming(regionId, fragment)
+            val newElements     = incomingContent.semanticRoots
+            if !tryMorph(oldElements, newElements, incoming.isEmpty) then
+                val state = before(oldElements, newElements)
+                range.deleteContents()
+                removed.foreach(ranges.remove)
+                val insertedRoots = (liveHost, incomingContent) match
+                    case (
+                            DomReactiveRegions.LiveHost.Synthetic(host, _),
+                            DomReactiveRegions.IncomingContent.Synthetic(incomingHost, _)
+                        ) =>
+                        syncHostAttributes(host, incomingHost, regionId)
+                        var child = DomReactiveRegions.firstChild(incomingHost)
+                        while child.nonEmpty do
+                            val next = DomReactiveRegions.next(child.get)
+                            discard(host.insertBefore(child.get, endpoints.end))
+                            child = next
+                        end while
+                        elementsBetween(endpoints)
+                    case (
+                            DomReactiveRegions.LiveHost.Synthetic(host, table),
+                            DomReactiveRegions.IncomingContent.Semantic(roots)
+                        ) =>
+                        discard(table.insertBefore(endpoints.start, host))
+                        discard(table.insertBefore(fragment, host))
+                        discard(table.insertBefore(endpoints.end, host))
+                        discard(table.removeChild(host))
+                        roots
+                    case (
+                            DomReactiveRegions.LiveHost.Siblings(parent),
+                            DomReactiveRegions.IncomingContent.Synthetic(host, roots)
+                        ) =>
+                        discard(parent.insertBefore(fragment, endpoints.end))
+                        DomReactiveRegions.firstChild(host) match
+                            case Present(first) => discard(host.insertBefore(endpoints.start, first))
+                            case Absent         => discard(host.appendChild(endpoints.start))
+                        discard(host.appendChild(endpoints.end))
+                        roots
+                    case (
+                            DomReactiveRegions.LiveHost.Siblings(parent),
+                            DomReactiveRegions.IncomingContent.Semantic(roots)
+                        ) =>
+                        discard(parent.insertBefore(fragment, endpoints.end))
+                        roots
+                ranges.addAll(incoming)
+                after(state, insertedRoots)
+            end if
         }
     end replaceWith
 
@@ -138,9 +155,18 @@ final private[kyo] class DomReactiveRegions private (
         elements.toSeq
     end elementsBetween
 
-    private def childElements(fragment: dom.DocumentFragment): Seq[dom.Element] =
+    private def classifyIncoming(regionId: String, fragment: dom.DocumentFragment): DomReactiveRegions.IncomingContent =
+        val roots = childElements(fragment)
+        if roots.size == 1 && roots.head.tagName == "TBODY" && roots.head.getAttribute("data-kyo-range-host") == regionId then
+            val host = roots.head
+            DomReactiveRegions.IncomingContent.Synthetic(host, childElements(host))
+        else DomReactiveRegions.IncomingContent.Semantic(roots)
+        end if
+    end classifyIncoming
+
+    private def childElements(node: dom.Node): Seq[dom.Element] =
         val elements = mutable.ArrayBuffer.empty[dom.Element]
-        var current  = DomReactiveRegions.firstChild(fragment)
+        var current  = DomReactiveRegions.firstChild(node)
         while current.nonEmpty do
             current.get match
                 case element: dom.Element => elements += element
@@ -151,11 +177,13 @@ final private[kyo] class DomReactiveRegions private (
     end childElements
 
     private def syncHostAttributes(host: dom.Element, incoming: dom.Element, regionId: String): Unit =
-        val existing = (0 until host.attributes.length).map(i => host.attributes(i).name)
-        existing.foreach { name =>
+        var i = host.attributes.length - 1
+        while i >= 0 do
+            val name = host.attributes(i).name
             if name != "data-kyo-range-host" then host.removeAttribute(name)
-        }
-        var i = 0
+            i -= 1
+        end while
+        i = 0
         while i < incoming.attributes.length do
             val attribute = incoming.attributes(i)
             if attribute.name != "data-kyo-range-host" then host.setAttribute(attribute.name, attribute.value)
@@ -172,6 +200,19 @@ private[kyo] object DomReactiveRegions:
     private val EndPrefix   = "kyo-re:"
 
     final private case class Endpoints(start: dom.Comment, end: dom.Comment)
+
+    private enum LiveHost:
+        case Siblings(parent: dom.Node)
+        case Synthetic(host: dom.Element, table: dom.Node)
+
+    private enum IncomingContent:
+        case Semantic(roots: Seq[dom.Element])
+        case Synthetic(host: dom.Element, roots: Seq[dom.Element])
+
+        def semanticRoots: Seq[dom.Element] = this match
+            case Semantic(roots)     => roots
+            case Synthetic(_, roots) => roots
+    end IncomingContent
 
     def init(root: dom.Element)(using Frame): DomReactiveRegions < (Sync & Scope) =
         for

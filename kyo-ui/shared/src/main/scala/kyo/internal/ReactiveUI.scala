@@ -790,8 +790,50 @@ private[kyo] object ReactiveUI:
         private[kyo] def dragExpiryWorkerCount(using Frame): Int < Sync = dragExpiryWorkerCountFn()
     end Subscription
 
+    private enum OwnedFiberState derives CanEqual:
+        case Waiting
+        case Running(fiber: Fiber[Unit, Any])
+        case Closed
+    end OwnedFiberState
+
+    private def startOwnedFiber(task: => Unit < Async)(using Frame): Unit < (Async & Scope) =
+        for
+            state <- AtomicRef.init[OwnedFiberState](OwnedFiberState.Waiting)
+            start <- Promise.init[Unit, Any]
+            _     <- Scope.ensure(closeOwnedFiber(state))
+            fiber <- Fiber.initUnscoped(start.get.andThen(task))
+            _     <- installOwnedFiber(state, start, fiber)
+        yield ()
+    end startOwnedFiber
+
+    private def installOwnedFiber(
+        state: AtomicRef[OwnedFiberState],
+        start: Promise[Unit, Any],
+        fiber: Fiber[Unit, Any]
+    )(using Frame): Unit < Async =
+        state.get.flatMap {
+            case OwnedFiberState.Waiting =>
+                state.compareAndSet(OwnedFiberState.Waiting, OwnedFiberState.Running(fiber)).flatMap { installed =>
+                    if installed then start.completeUnitDiscard
+                    else installOwnedFiber(state, start, fiber)
+                }
+            case _: OwnedFiberState.Running =>
+                Abort.panic(IllegalStateException("Reactive observer fiber was installed twice"))
+            case OwnedFiberState.Closed =>
+                fiber.interrupt.andThen(fiber.getResult.unit)
+        }
+    end installOwnedFiber
+
+    private def closeOwnedFiber(state: AtomicRef[OwnedFiberState])(using Frame): Unit < Async =
+        state.getAndSet(OwnedFiberState.Closed).flatMap {
+            case OwnedFiberState.Running(fiber) => fiber.interrupt.andThen(fiber.getResult.unit)
+            case OwnedFiberState.Waiting        => ()
+            case OwnedFiberState.Closed         => ()
+        }
+    end closeOwnedFiber
+
     /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
-      * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber).
+      * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber and awaits its unwind).
       */
     def subscribe(
         rui: ReactiveUI,
@@ -805,9 +847,13 @@ private[kyo] object ReactiveUI:
             expiryWake       <- Channel.init[Unit](1)
             expiryWorkers    <- AtomicInt.init(0)
             _                <- Scope.ensure(dragSessions.set(Map.empty))
-            _ <- Fiber.init(Sync.ensure(expiryWorkers.set(0)) {
-                expiryWorkers.set(1).andThen(expiryScheduler(dragSessions, dragMutex, expiryWake))
-            }).unit
+            _ <- startOwnedFiber(
+                Abort.run[Any] {
+                    Sync.ensure(expiryWorkers.set(0)) {
+                        expiryWorkers.set(1).andThen(expiryScheduler(dragSessions, dragMutex, expiryWake))
+                    }
+                }.unit
+            )
             _ <- subscribeScoped(rui, exchange, signalChangeTime)
             validatedHandle = dragHandle(rui.handle, dragSessions, dragMutex, expiryWake, dragLimits)
         yield Subscription(
@@ -1055,21 +1101,17 @@ private[kyo] object ReactiveUI:
             case DragCommands.DecisionState.Failed(value)   => value
         }
 
-    // Each reactive region forks a Fiber.init (scoped to the enclosing Scope) running observe. Each
-    // value opens a fresh per-value Scope; the region renders, re-walks, and forks its children INTO that
-    // per-value Scope via the recursive subscribeScoped, so the next value (or an interrupt) closes them by
-    // cascade. A const node has no signal: it subscribes its children in the enclosing scope. The prior manual
-    // interrupt-old bookkeeping (a ref of live child fibers, interrupted one level per change) is gone; the
-    // per-value Scope does interrupt-old transitively (every descendant), fixing the climbing-waiters leak the
-    // one-level interrupt left.
+    // Each reactive region starts an observer fiber as one scoped resource. Its finalizer interrupts the observer and
+    // awaits the fiber's terminal result. Signal.observe runs each value in a fresh Scope on that same IOTask, so the
+    // task's cleanup barriers close and await the active value plus every nested Scope before getResult completes.
+    // Each value renders, re-walks, and starts its children in that Scope, so the next value or an interrupt closes them
+    // transitively. A const node has no signal: it subscribes its children in the enclosing scope.
     private def subscribeScoped(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
         Frame
     ): Unit < (Async & Scope) =
         if rui.isConst then
             Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime))
         else
-            // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
-            // that scope, so the next value (or an interrupt) tears them down by cascade.
             def renderValue(current: UI): Unit < (Async & Scope) =
                 for
                     now <- Clock.now
@@ -1089,12 +1131,8 @@ private[kyo] object ReactiveUI:
                     )
                     _ <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
                 yield ()
-            // Every region observes with observe: each value owns a fresh per-value Scope (renderValue forks its
-            // children into it), held open until the next change, then closed by cascade. SignalRef-bound element
-            // regions (normalize maps the bound leaf to the constant `ui`) ride the SignalRef's exact register-before-
-            // read observe: each ref edit is a distinct ref value that re-renders the region, with no deferred
-            // next-capture, no repair timer, and no idle re-render churn (an unchanged input never re-emits).
-            Fiber.init {
+
+            startOwnedFiber {
                 Abort.run[Throwable] {
                     rui.signal.observe(renderValue)
                 }.map { result =>
@@ -1106,7 +1144,7 @@ private[kyo] object ReactiveUI:
                             else Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", panic)
                     )
                 }
-            }.unit
+            }
         end if
     end subscribeScoped
 

@@ -184,6 +184,16 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(decoded == Result.Success(op))
     }
 
+    "HtmlOp.ReplaceRange has an exact stable JSON representation and round-trips" in {
+        val op      = HtmlOp.ReplaceRange("r000000010030", "<tbody><tr><td>x</td></tr></tbody>")
+        val encoded = Json.encode[HtmlOp](op)
+        assert(
+            encoded ==
+                """{"ReplaceRange":{"regionId":"r000000010030","html":"<tbody><tr><td>x</td></tr></tbody>"}}"""
+        )
+        assert(Json.decode[HtmlOp](encoded) == Result.Success(op))
+    }
+
     // ==================== Leaf 4: UIEvent JSON codec (cross-platform) ====================
 
     "UIEvent JSON round-trips through the wire codec" in {

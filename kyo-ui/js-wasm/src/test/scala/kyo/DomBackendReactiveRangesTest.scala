@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.UI.foreach
+import kyo.UI.foreachKeyed
 import kyo.internal.DomBackend
 import org.scalajs.dom
 import scala.scalajs.js as scalajs
@@ -44,9 +45,21 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             _       <- fiber.interrupt
             _       <- fiber.getResult
         yield
-            assert(initial == (1, 0, false))
-            assert(updated == (2, 0, false))
-            assert(cleared == (0, 0, false))
+            assert(initial.rows == 1)
+            assert(initial.groups == 3)
+            assert(initial.spans == 0)
+            assert(initial.anchorParent == "TBODY")
+            assert(!initial.staticCaptured)
+            assert(updated.rows == 2)
+            assert(updated.groups == 3)
+            assert(updated.spans == 0)
+            assert(updated.anchorParent == "TBODY")
+            assert(!updated.staticCaptured)
+            assert(cleared.rows == 0)
+            assert(cleared.groups == 2)
+            assert(cleared.spans == 0)
+            assert(cleared.anchorParent == "TABLE")
+            assert(!cleared.staticCaptured)
         end for
     }
 
@@ -83,6 +96,81 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
         yield
             assert(authored == ("local-nested-table", "kept"))
             assert(rowParent == "local-nested-table")
+    }
+
+    "local mixed authored sections and transparent rows retain table topology across updates" in {
+        for
+            outer <- Signal.initRef(0)
+            rows  <- Signal.initRef(Chunk("A"))
+            ui = UI.div(
+                UI.table(
+                    outer.map(_ =>
+                        UI.fragment(
+                            UI.tbody(UI.tr(UI.td("before"))).id("local-mixed-before"),
+                            rows.foreach(value => UI.tr(UI.td(value).id(s"local-mixed-$value"))),
+                            UI.tbody(UI.tr(UI.td("after"))).id("local-mixed-after")
+                        )
+                    )
+                ).id("local-mixed-table")
+            )
+            fiber    <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
+            _        <- assertEventually(Sync.defer(dom.document.getElementById("local-mixed-A") != null))
+            initial  <- Sync.defer(mixedTableTopology("local-mixed-table"))
+            _        <- rows.set(Chunk("A", "B"))
+            _        <- assertEventually(Sync.defer(dom.document.getElementById("local-mixed-B") != null))
+            inner    <- Sync.defer(mixedTableTopology("local-mixed-table"))
+            _        <- outer.getAndUpdate(_ + 1)
+            _        <- assertEventually(Sync.defer(dom.document.getElementById("local-mixed-B") != null))
+            repeated <- Sync.defer(mixedTableTopology("local-mixed-table"))
+            _        <- fiber.interrupt
+            _        <- fiber.getResult
+        yield
+            assert(initial == (3, "local-mixed-before", 1, "local-mixed-after", 0))
+            assert(inner == (3, "local-mixed-before", 2, "local-mixed-after", 0))
+            assert(repeated == inner)
+    }
+
+    "local mount preserves every exposed restricted parent keyed identity and nested JS properties" in {
+        for
+            rows       <- Signal.initRef(Chunk("A"))
+            nestedProp <- Signal.initRef(false)
+            ui = UI.div(
+                UI.table(UI.tbody(rows.foreach(value => UI.tr(UI.td(value).id(s"local-grouped-$value"))))).id("local-grouped"),
+                UI.table(UI.tbody(UI.tr(rows.foreach(value => UI.td(value).id(s"local-td-$value"))))).id("local-td-table"),
+                UI.table(UI.tbody(UI.tr(rows.foreach(value => UI.th(value).id(s"local-th-$value"))))).id("local-th-table"),
+                UI.ul(rows.foreach(value => UI.li(value).id(s"local-ul-$value"))).id("local-ul"),
+                UI.ol(rows.foreach(value => UI.li(value).id(s"local-ol-$value"))).id("local-ol"),
+                UI.select(rows.foreach(value => UI.option(value).value(value).id(s"local-option-$value"))).id("local-select"),
+                UI.div(rows.foreachKeyed(identity)(value => UI.button(value).id(s"local-keyed-$value"))).id("local-keyed"),
+                nestedProp.map(value => UI.div(UI.checkbox.id("local-nested-property").indeterminate(value)))
+            )
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
+            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-option-A") != null))
+            _     <- rows.set(Chunk("A", "B"))
+            _     <- nestedProp.set(true)
+            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-option-B") != null))
+            _ <- assertEventually(Sync.defer {
+                dom.document.getElementById("local-nested-property").asInstanceOf[scalajs.Dynamic].indeterminate.asInstanceOf[Boolean]
+            })
+            topology <- Sync.defer {
+                def count(selector: String) = dom.document.querySelectorAll(selector).length
+                val property                = dom.document.getElementById("local-nested-property")
+                (
+                    count("#local-grouped > tbody > tr"),
+                    count("#local-td-table > tbody > tr > td"),
+                    count("#local-th-table > tbody > tr > th"),
+                    count("#local-ul > li"),
+                    count("#local-ol > li"),
+                    count("#local-select > option"),
+                    count("#local-keyed > button"),
+                    property.asInstanceOf[scalajs.Dynamic].indeterminate.asInstanceOf[Boolean],
+                    property.getAttribute("data-kyo-prop-indeterminate"),
+                    count("span[data-kyo-reactive]")
+                )
+            }
+            _ <- fiber.interrupt
+            _ <- fiber.getResult
+        yield assert(topology == (2, 2, 2, 2, 2, 2, 2, true, null, 0))
     }
 
     "local mount updates directly nested logical ranges" in {
@@ -129,6 +217,80 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             _ <- assertEventually(Sync.defer {
                 val field = dom.document.getElementById("field")
                 field != null && field.getAttribute("value") == "updated"
+            })
+            _ <- fiber.interrupt
+            _ <- fiber.getResult
+        yield ()
+    }
+
+    "local own-bound text email and number inputs morph in place while focused" in {
+        for
+            text   <- Signal.initRef("one")
+            email  <- Signal.initRef("one@example.com")
+            number <- Signal.initRef("1")
+            ui = UI.div(
+                UI.input.id("morph-text").value(text),
+                UI.emailInput.id("morph-email").value(email),
+                UI.numberInput.id("morph-number").value(number)
+            )
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
+            _     <- assertEventually(Sync.defer(dom.document.getElementById("morph-number") != null))
+            original <- Sync.defer(
+                (
+                    dom.document.getElementById("morph-text"),
+                    dom.document.getElementById("morph-email"),
+                    dom.document.getElementById("morph-number")
+                )
+            )
+            _ <- Sync.defer {
+                val field = original._1.asInstanceOf[scalajs.Dynamic]
+                discard(field.focus())
+                discard(field.setSelectionRange(1, 1))
+            }
+            _ <- text.set("two")
+            _ <- assertEventually(Sync.defer(dom.document.getElementById("morph-text").getAttribute("value") == "two"))
+            textState <- Sync.defer(
+                (
+                    dom.document.getElementById("morph-text") eq original._1,
+                    dom.document.activeElement eq original._1,
+                    original._1.asInstanceOf[scalajs.Dynamic].selectionStart.asInstanceOf[Int]
+                )
+            )
+            _ <- Sync.defer(discard(original._2.asInstanceOf[scalajs.Dynamic].focus()))
+            _ <- email.set("two@example.com")
+            _ <- assertEventually(Sync.defer(dom.document.getElementById("morph-email").getAttribute("value") == "two@example.com"))
+            emailState <- Sync.defer(
+                (dom.document.getElementById("morph-email") eq original._2, dom.document.activeElement eq original._2)
+            )
+            _ <- Sync.defer(discard(original._3.asInstanceOf[scalajs.Dynamic].focus()))
+            _ <- number.set("2")
+            _ <- assertEventually(Sync.defer(dom.document.getElementById("morph-number").getAttribute("value") == "2"))
+            numberState <- Sync.defer(
+                (dom.document.getElementById("morph-number") eq original._3, dom.document.activeElement eq original._3)
+            )
+            _ <- fiber.interrupt
+            _ <- fiber.getResult
+        yield
+            assert(textState == (true, true, 1))
+            assert(emailState == (true, true))
+            assert(numberState == (true, true))
+    }
+
+    "bound Dropdown updates repeatedly inside its initial logical range" in {
+        for
+            selected <- Signal.initRef("a")
+            ui = UI.div(UI.dropdown("Alpha" -> "a", "Beta" -> "b").id("local-dropdown").value(selected))
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
+            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-dropdown-trigger") != null))
+            _     <- selected.set("b")
+            _ <- assertEventually(Sync.defer {
+                val trigger = dom.document.getElementById("local-dropdown-trigger")
+                trigger != null && trigger.textContent == "Beta ▾"
+            })
+            _ <- selected.set("a")
+            _ <- assertEventually(Sync.defer {
+                val trigger = dom.document.getElementById("local-dropdown-trigger")
+                trigger != null && trigger.textContent == "Alpha ▾"
             })
             _ <- fiber.interrupt
             _ <- fiber.getResult
@@ -253,22 +415,85 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
         yield assert(sourceAttribute == null)
     }
 
-    private def topology: (Int, Int, Boolean) =
+    "local synthetic host transition treats an authored tbody as the semantic lifecycle root" in {
+        for
+            section <- Signal.initRef(false)
+            content = section.map { authored =>
+                if authored then
+                    UI.tbody(UI.tr(UI.td("section")))
+                        .id("local-semantic-host")
+                        .tabIndex(-1)
+                        .focusAuto(true)
+                        .enterTransition("local-semantic-enter")
+                        .leaveTransition("local-semantic-leave")
+                        .jsProp("rangeprobe", "applied"): UI
+                else UI.tr(UI.td("row").id("local-semantic-row")): UI
+            }
+            ui = UI.div(
+                UI.table(content).id("local-semantic-table"),
+                UI.button("section").id("local-show-section").onClick(section.set(true)),
+                UI.button("row").id("local-show-row").onClick(section.set(false))
+            )
+            fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui)))
+            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-semantic-row") != null))
+            _     <- click("local-show-section")
+            _     <- assertEventually(Sync.defer(dom.document.getElementById("local-semantic-host") != null))
+            authoredState <- Sync.defer {
+                val authored = dom.document.getElementById("local-semantic-host")
+                (
+                    authored.asInstanceOf[scalajs.Dynamic].rangeprobe.asInstanceOf[String],
+                    authored.getAttribute("data-kyo-prop-rangeprobe"),
+                    dom.document.activeElement.id,
+                    authored.hasAttribute("data-kyo-range-host")
+                )
+            }
+            _          <- click("local-show-row")
+            _          <- assertEventually(Sync.defer(dom.document.getElementById("local-semantic-row") != null))
+            leaveGhost <- Sync.defer(dom.document.querySelector("[data-kyo-ghost]") != null)
+            _          <- fiber.interrupt
+            _          <- fiber.getResult
+        yield
+            assert(authoredState == ("applied", null, "local-semantic-host", false))
+            assert(leaveGhost)
+    }
+
+    private def topology: (rows: Int, groups: Int, spans: Int, anchorParent: String, staticCaptured: Boolean) =
         val table  = dom.document.getElementById("table")
         val groups = table.querySelectorAll(":scope > tbody")
-        val reactiveGroup = (0 until groups.length).iterator
-            .map(groups(_).asInstanceOf[dom.Element])
-            .find { group =>
-                (0 until group.childNodes.length).exists { i =>
-                    val child = group.childNodes(i)
-                    child.nodeType == 8 && child.nodeValue.startsWith("kyo-rs:")
-                }
-            }.get
+        val walker = dom.document.createTreeWalker(table, 128, null, false)
+        val anchor = Iterator
+            .continually(walker.nextNode())
+            .takeWhile(_ != null)
+            .find(_.nodeValue.startsWith("kyo-rs:"))
+            .get
+        val parent         = anchor.parentNode.asInstanceOf[dom.Element]
+        var current        = anchor.nextSibling
+        var staticCaptured = false
+        while current != null && !(current.nodeType == 8 && current.nodeValue.startsWith("kyo-re:")) do
+            if current.nodeType == 1 then
+                val element = current.asInstanceOf[dom.Element]
+                staticCaptured ||= element.id == "before" || element.id == "after" || element.querySelector("#before,#after") != null
+            current = current.nextSibling
+        end while
         (
-            reactiveGroup.children.length,
-            table.querySelectorAll("span[data-kyo-reactive]").length,
-            reactiveGroup.querySelector("#before,#after") != null
+            rows = table.querySelectorAll("[id^='row-']").length,
+            groups = groups.length,
+            spans = table.querySelectorAll("span[data-kyo-reactive]").length,
+            anchorParent = parent.tagName,
+            staticCaptured = staticCaptured
         )
     end topology
+
+    private def mixedTableTopology(id: String): (Int, String, Int, String, Int) =
+        val table  = dom.document.getElementById(id)
+        val bodies = table.querySelectorAll(":scope > tbody")
+        (
+            bodies.length,
+            bodies(0).asInstanceOf[dom.Element].id,
+            bodies(1).asInstanceOf[dom.Element].children.length,
+            bodies(2).asInstanceOf[dom.Element].id,
+            table.querySelectorAll(":scope > tbody > tbody").length
+        )
+    end mixedTableTopology
 
 end DomBackendReactiveRangesTest

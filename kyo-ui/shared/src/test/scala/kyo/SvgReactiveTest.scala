@@ -155,7 +155,7 @@ class SvgReactiveTest extends kyo.test.Test[Any]:
                 context,
                 region,
                 ReactiveRegion.ParentContext.Other,
-                suppressRootHtmlBoundary = false
+                ReactiveRegion.BoundaryMode.Emit
             )
         yield
             assert(html.contains("<g data-kyo-path=\"0.0\" data-kyo-reactive>"))
