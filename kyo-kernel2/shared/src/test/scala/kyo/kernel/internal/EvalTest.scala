@@ -37,17 +37,71 @@ class EvalTest extends AnyFreeSpec:
     def runVar[A, S](init: Int)(v: A < (VarE & S)): A < S =
         ArrowEffect.handleLoop(Tag[VarE], init, v)(
             [X] =>
-                (f, state) =>
+                (f, state, cont) =>
                     val v2 = f(state)
-                    Loop.continue(v2, v2)
+                    Loop.continue(v2, cont(v2))
         )
 
     def box[A](v: A): A < Any = v
 
     private val Period = 512
 
+    "a settled value evaluates to itself" in {
+        assert((42: Int < Any).eval == 42)
+    }
+
+    "drives a map chain" in {
+        assert((1: Int < Any).map(_ + 1).map(_ * 3).eval == 6)
+    }
+
+    "drives andThen and unit" in {
+        assert((1: Int < Any).andThen(2: Int < Any).eval == 2)
+        assert((1: Int < Any).unit.eval == ())
+    }
+
+    "evalNow is Present only for settled values" in {
+        assert((1: Int < Any).evalNow.contains(1))
+        assert(ask.evalNow.isEmpty)
+    }
+
     "a scope answers through its handler" in {
         assert(answerAsk(41)(ask.map(_ + 1)).eval == 42)
+    }
+
+    "an effectful answer on the settled outcome path" in {
+        val r = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([X] => _ => Loop.continue(Effect.defer(7)))
+        assert(r.eval == 8)
+    }
+
+    "a pending clause outcome resolves before the region continues" in {
+        def loop(i: Int): Int < Ask =
+            if i < 3 then ask.map(a => loop(i + a)) else i
+        val r = ArrowEffect.handleLoop(Tag[Ask], loop(0))([X] => _ => Effect.defer(Loop.continue(1)))
+        assert(r.eval == 3)
+    }
+
+    "a first-operation peel is handleLoop with Loop.done carrying the continuation" in {
+        val body = ask.map(a => ask.map(b => a + b))
+        def peel(v: Int < Ask): (Int => Int < Ask) < Any =
+            ArrowEffect.handleLoop(Tag[Ask], (), v)(
+                handle = [X] => (_, _, cont) => Loop.done(cont),
+                done = (_, a) => (_: Int) => (a: Int < Ask)
+            )
+        val k = peel(body).eval
+        val r = ArrowEffect.handleLoop(Tag[Ask], k(10))([X] => _ => Loop.continue(1))
+        assert(r.eval == 11)
+    }
+
+    "a nested eval shares the stack safely" in {
+        val inner = ArrowEffect.handleLoop(Tag[Ask], ask)([X] => _ => Loop.continue(5))
+        val r     = ArrowEffect.handleLoop(Tag[Ask], ask.map(a => a + inner.eval))([X] => _ => Loop.continue(1))
+        assert(r.eval == 6)
+    }
+
+    "a nested computation stays data until flattened" in {
+        val nested: (Int < Ask) < Any = kyo.Kyo.lift(ask.map(_ + 1))
+        val r                         = ArrowEffect.handleLoop(Tag[Ask], nested.flatten)([X] => _ => Loop.continue(1))
+        assert(r.eval == 2)
     }
 
     "scope exits run innermost first" in {
@@ -115,8 +169,8 @@ class EvalTest extends AnyFreeSpec:
     "a continue answer raising the effect is answered by the successor, which may done" in {
         val r = ArrowEffect.handleLoop(Tag[Ask], 0, ask.map(_ + 1))(
             [X] =>
-                (_, phase) =>
-                    if phase == 0 then Loop.continue(1, ask.map(_ + 100))
+                (_, phase, cont) =>
+                    if phase == 0 then Loop.continue(1, ask.map(a => cont(a + 100)))
                     else Loop.done(-2)
         )
         assert(r.eval == -2)
@@ -141,8 +195,8 @@ class EvalTest extends AnyFreeSpec:
             if n == 0 then 0 else ask.map(_ => go(n - 1))
         val r = ArrowEffect.handleLoop(Tag[Ask], 3, go(5))(
             [X] =>
-                (_, remaining) =>
-                    if remaining > 0 then Loop.continue(remaining - 1, 1)
+                (_, remaining, cont) =>
+                    if remaining > 0 then Loop.continue(remaining - 1, cont(1))
                     else Loop.done(-1)
         )
         assert(r.eval == -1)
@@ -151,7 +205,8 @@ class EvalTest extends AnyFreeSpec:
     "rejects a suspension no scope handles" in {
         val program: Int < (Ask & Say) = say("x").map(_ => ask)
         val r                          = answerAsk(41)(program)
-        intercept[IllegalStateException](r.asInstanceOf[Int < Any].eval)
+        val ex                         = intercept[kyo.bug.KyoBugException](r.asInstanceOf[Int < Any].eval)
+        assert(ex.getMessage.contains("unhandled suspension"))
     }
 
     "a clause may suspend before producing its outcome" in {
@@ -196,7 +251,7 @@ class EvalTest extends AnyFreeSpec:
             a + 1
         }
         val askScope = ArrowEffect.handleLoop(Tag[Ask], 0, program)(
-            [X] => (_, n) => say("pre").map(_ => Loop.continue(n + 1, n))
+            [X] => (_, n, cont) => say("pre").map(_ => Loop.continue(n + 1, cont(n)))
         )
         val r = ArrowEffect.handleLoop(Tag[Say], askScope)([X] => _ => Loop.done(-9))
         assert(r.eval == -9)
@@ -209,7 +264,8 @@ class EvalTest extends AnyFreeSpec:
         val sayInner                   = recordSay("inner", log)(program)
         val askScope =
             ArrowEffect.handleLoop(Tag[Ask], sayInner)([X] => _ => Loop.continue(say("c").map(_ => 41)))
-        intercept[IllegalStateException](askScope.asInstanceOf[Int < Any].eval)
+        val ex = intercept[kyo.bug.KyoBugException](askScope.asInstanceOf[Int < Any].eval)
+        assert(ex.getMessage.contains("unhandled suspension"))
         assert(log.toList == List("inner"))
     }
 
@@ -299,7 +355,7 @@ class EvalTest extends AnyFreeSpec:
     "a clause that suspends threads its new state into the resumed region" in {
         val v: (Int, Int) < (Say & Any) =
             ArrowEffect.handleLoop(Tag[Ask], 0, ask.map(a => ask.map(b => (a, b))))(
-                [X] => (_, state) => say("s").map(_ => Loop.continue(state + 1, state))
+                [X] => (_, state, cont) => say("s").map(_ => Loop.continue(state + 1, cont(state)))
             )
         val r = ArrowEffect.handle(Tag[Say], v)([X] => (_, cont) => cont(()))
         assert(r.eval == (0, 1))
@@ -329,7 +385,7 @@ class EvalTest extends AnyFreeSpec:
     "an interior stateful answer preserves the state of a stateful region above it" in {
         val inner: Int < VarE =
             ArrowEffect.handleLoop(Tag[Ask], 30, ask.map(a1 => varOp(_ + 5).map(v1 => ask.map(a2 => a1 * 10000 + v1 * 100 + a2))))(
-                [X] => (_, state) => Loop.continue(state + 1, state)
+                [X] => (_, state, cont) => Loop.continue(state + 1, cont(state))
             )
         assert(runVar(10)(inner).eval == 301531)
     }
@@ -343,7 +399,7 @@ class EvalTest extends AnyFreeSpec:
         }
         val sayScope: Int < Ask = recordSay("s", log)(program)
         val askScope: Int < VarE = ArrowEffect.handleLoop(Tag[Ask], 0, sayScope)(
-            [X] => (_, state) => varOp(_ + 1).map(_ => Loop.done(state - 100))
+            [X] => (_, state, cont) => varOp(_ + 1).map(_ => Loop.done(state - 100))
         )
         assert(runVar(5)(askScope).eval == -100)
         assert(!reached)
@@ -375,7 +431,7 @@ class EvalTest extends AnyFreeSpec:
         val depth = 32
         def build(level: Int): Int < Any =
             val inner: Int < Ask = if level == depth then ask else build(level + 1).asInstanceOf[Int < Ask]
-            ArrowEffect.handleLoop(Tag[Ask], level, inner)([X] => (_, s) => Loop.continue(s + 1, s))
+            ArrowEffect.handleLoop(Tag[Ask], level, inner)([X] => (_, s, cont) => Loop.continue(s + 1, cont(s)))
         assert(build(1).eval == depth)
     }
 
@@ -383,9 +439,9 @@ class EvalTest extends AnyFreeSpec:
         val log = ListBuffer[String]()
         val r = ArrowEffect.handleLoop(Tag[Ask], 0, ask.map(_ + 1))(
             [X] =>
-                (_, phase) =>
+                (_, phase, cont) =>
                     say("s").map { _ =>
-                        if phase == 0 then Loop.continue(1, ask.map(_ + 100))
+                        if phase == 0 then Loop.continue(1, ask.map(a => cont(a + 100)))
                         else Loop.done(-2)
                 }
         )
@@ -403,7 +459,7 @@ class EvalTest extends AnyFreeSpec:
         val varScope: Int < (Ask & Say) = runVar(0)(program)
         val sayScope: Int < Ask         = recordSay("s", log)(varScope)
         val askScope: Int < Any = ArrowEffect.handleLoop(Tag[Ask], 5, sayScope)(
-            [X] => (_, state) => Loop.done(state * 10)
+            [X] => (_, state, cont) => Loop.done(state * 10)
         )
         assert(askScope.eval == 50)
         assert(!reached)
@@ -413,10 +469,10 @@ class EvalTest extends AnyFreeSpec:
     "nested same-tag stateful regions keep independent states" in {
         val innerBody: Int < Ask = ask.map(a1 => ask.map(a2 => a1 * 100 + a2))
         val inner: Int < Any =
-            ArrowEffect.handleLoop(Tag[Ask], 10, innerBody)([X] => (_, state) => Loop.continue(state + 1, state))
+            ArrowEffect.handleLoop(Tag[Ask], 10, innerBody)([X] => (_, state, cont) => Loop.continue(state + 1, cont(state)))
         val outerBody: Int < Ask = ask.map(o1 => inner.map(r => ask.map(o2 => o1 * 1000000 + r * 100 + o2)))
         val outer: Int < Any =
-            ArrowEffect.handleLoop(Tag[Ask], 50, outerBody)([X] => (_, state) => Loop.continue(state + 1, state))
+            ArrowEffect.handleLoop(Tag[Ask], 50, outerBody)([X] => (_, state, cont) => Loop.continue(state + 1, cont(state)))
         assert(outer.eval == 50101151)
     }
 
@@ -435,7 +491,7 @@ class EvalTest extends AnyFreeSpec:
             varOp(_ + 2).map(_ => ask).map(_ => say("s")).map(_ => varOp(_ + 3)).map(v2 => ask.map(a2 => v2 * 100 + a2))
         val inner: Int < (VarE & Say) =
             ArrowEffect.handleLoop(Tag[Ask], 40, body)(
-                [X] => (_, state) => Loop.continue(state + 1, state)
+                [X] => (_, state, cont) => Loop.continue(state + 1, cont(state))
             )
         val v = ArrowEffect.handle(Tag[Say], runVar(0)(inner))(
             [X] => (_, cont) => cont(()).map(r1 => cont(()).map(r2 => r1 * 1000 + r2))
@@ -477,9 +533,9 @@ class EvalTest extends AnyFreeSpec:
         val depth = 1000000
         val r = ArrowEffect.handleLoop(Tag[Ask], depth, ask)(
             [X] =>
-                (_, n) =>
-                    if n == 0 then Loop.continue(0, 0)
-                    else Loop.continue(n - 1, ask.map(_ + 1))
+                (_, n, cont) =>
+                    if n == 0 then Loop.continue(0, cont(0))
+                    else Loop.continue(n - 1, ask.map(a => cont(a + 1)))
         )
         try assert(r.eval == depth)
         catch case e: StackOverflowError => fail(s"stack overflow settling $depth chained re-raised answers")

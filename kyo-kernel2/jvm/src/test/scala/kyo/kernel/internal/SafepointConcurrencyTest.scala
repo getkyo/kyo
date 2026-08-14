@@ -74,9 +74,6 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         assert(!Safepoint.stop(target))
     }
 
-    // Parked with the removal of Eval.partial: the preemptible evaluation entry
-    // returns with the IOTask integration design. Restore then.
-    /*
     "an evaluation yields to a stop requested from another thread" in {
         def burn(n: Int): Int < Any =
             if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
@@ -103,7 +100,6 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         target.join(10000)
         assert(yielded)
     }
-     */
 
     "a live thread that never evaluated is not stoppable" in {
         // the caller holds a claimed cell, so the probe reads a table with mixed

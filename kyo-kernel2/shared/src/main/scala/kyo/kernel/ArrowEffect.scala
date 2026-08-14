@@ -102,18 +102,21 @@ object ArrowEffect:
         inline done: (State, A) => B < (S & S2),
         inline handle: [C] => (I[C], State, O[C] => A < (E & S)) => Outcome2[State, A < (E & S), B] < S2
     )(using inline _frame: Frame): B < (S & S2) =
-        Loop(state, v) { (state, v) =>
+        def loop(state: State, v: A < (E & S)): B < (S & S2) =
             v match
                 case kyo: Kyo[?, ?] =>
-                    new Kyo.HandleCont[I, O, E, A, Outcome2[State, A < (E & S), B], S, S2]:
+                    new Kyo.HandleCont[I, O, E, A, B, S, S2]:
                         def tag   = effectTag
                         def value = v
                         def run[C](input: I[C], cont: O[C] => A < (E & S)) =
-                            handle[C](input, state, cont)
-                        def complete(v: A) = done(state, v).map(Loop.done(_))
+                            handle[C](input, state, cont).map {
+                                case c: Loop.Continue2[State, A < (E & S)] @unchecked => loop(c._1, c._2)
+                                case b                                                => b.asInstanceOf[B]
+                            }
+                        def complete(v: A) = done(state, v)
                 case v =>
-                    done(state, Kyo.unnest(v)).map(Loop.done(_))
-        }
+                    done(state, Kyo.unnest(v))
+        loop(state, v)
     end handleLoop
 
 end ArrowEffect

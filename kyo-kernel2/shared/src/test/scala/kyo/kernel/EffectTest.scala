@@ -90,10 +90,12 @@ class EffectTest extends AnyFreeSpec:
         }
 
         "failure in a map after a first region" in {
+            // a first-operation region is the stateful handleLoop with Loop.done
+            // carrying the resumed remainder out
             val region =
-                ArrowEffect.handleFirst(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                    [C] => (input, cont) => cont(input.toString),
-                    identity
+                ArrowEffect.handleLoop(Tag[TestEffect1], (), testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
+                    done = (_, a) => (a: String < TestEffect1),
+                    handle = [C] => (input, _, cont) => cont(input.toString).map(Loop.done(_))
                 )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -106,7 +108,7 @@ class EffectTest extends AnyFreeSpec:
 
         "failure in a map after a stateful region" in {
             val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)
+                [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
             )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -120,7 +122,7 @@ class EffectTest extends AnyFreeSpec:
             val effect = Effect.catching {
                 testEffect1(3).map { prefix =>
                     val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                        [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)
+                        [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
                     )
                     region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else prefix + s)
                 }
@@ -145,7 +147,7 @@ class EffectTest extends AnyFreeSpec:
         "catching catches past the budget inside a stateful region" in {
             val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
             val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, body)(
-                [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)
+                [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
             )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -170,7 +172,7 @@ class EffectTest extends AnyFreeSpec:
         "catching guards a stateful region across a park" in {
             val body = testEffect1(1).map(a => testEffect2("park").map(_ => testEffect1(2).map(b => a + b)))
             val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, body)(
-                [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)
+                [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
             )
             val effect = Effect.catching {
                 region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s)
@@ -184,7 +186,7 @@ class EffectTest extends AnyFreeSpec:
 
         "a stateful region threads state under catching" in {
             val region = ArrowEffect.handleLoop(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                [C] => (input, state) => Loop.continue(state + 1, (input * state).toString)
+                [C] => (input, state, cont) => Loop.continue(state + 1, cont((input * state).toString))
             )
             val effect = Effect.catching(region) {
                 case _: RuntimeException => "caught"

@@ -46,7 +46,7 @@ object `<` extends Implicits:
                         end if
                 end match
             end run
-            run(self, Arrow[B])
+            run(self: A < S, Arrow[B])
         end map
 
         @nowarn("msg=anonymous")
