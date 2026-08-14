@@ -54,10 +54,9 @@ runs:
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: |
-        # The Native link phase can overcommit the 16GB runner (a large sbt driver heap plus
-        # forked clang jobs), and the stock runner swap has been observed fully exhausted right
-        # before kernel OOM kills. Extra swap turns a marginal overcommit into slowdown instead
-        # of a SIGKILL. Best-effort: a runner that cannot host the file keeps its stock swap.
+        # The Native link phase can overcommit the 16GB runner (large sbt driver heap plus forked
+        # clang jobs); extra swap turns a marginal overcommit into slowdown instead of an OOM kill.
+        # Best-effort: a runner that cannot host the file keeps its stock swap.
         for dir in /mnt "${RUNNER_TEMP:-/tmp}"; do
           swapfile="$dir/kyo-swapfile"
           if sudo fallocate -l 8G "$swapfile" 2>/dev/null \
@@ -108,17 +107,6 @@ runs:
       shell: bash
       run: |
         bash scripts/apt-install.sh podman uidmap
-        # Pin podman to the ubuntu-noble build for run-to-run determinism. Some arm64 runner images
-        # ship podman 5.8.4 and others the noble 4.9.3; the intermittent container fork-EAGAIN only ever
-        # struck runners that also lacked cgroup controller delegation (fixed in the start step below),
-        # so both versions are healthy once delegated, but pinning removes the version variance itself.
-        # Best-effort: a runner that cannot downgrade keeps its version, so this never fails the build.
-        noble493="$(apt-cache madison podman 2>/dev/null | awk -F'|' '/4\.9\.3/{gsub(/ /,"",$2);print $2;exit}')"
-        if [ -n "$noble493" ] && [ "$(dpkg-query -W -f='${Version}' podman 2>/dev/null)" != "$noble493" ]; then
-          echo "pinning podman to noble $noble493 (was $(podman --version 2>/dev/null))"
-          sudo apt-get install -y --allow-downgrades "podman=$noble493" conmon catatonit ||
-            echo "podman pin to $noble493 failed; keeping $(podman --version 2>/dev/null), which the delegation fix still makes healthy"
-        fi
         # Install runc separately, and only when the runner has none. Ubuntu's runc package Conflicts
         # with Docker's containerd.io, so `apt-get install runc` resolves the conflict by REMOVING
         # containerd.io and docker-ce. That leaves no Docker daemon, which fails the `docker version`
@@ -136,13 +124,10 @@ runs:
       shell: bash
       run: |
         uid="$(id -u)"
-        # Root fix for the intermittent arm64 container fork-EAGAIN: guarantee cgroup controller
-        # delegation to the rootless user. Without the pids controller delegated, podman cannot create
-        # a per-container pids cgroup, so containers fall into a constrained shared scope and a fresh
-        # container's PID 1 (catatonit) fails to fork on an otherwise-idle runner. Some runner images
-        # delegate controllers to user slices by default and some do not; this drop-in makes it
-        # deterministic. It must be in place before the user manager starts, so write it, reload, then
-        # (re)start user@$uid.service to pick it up.
+        # Delegate cgroup controllers (notably pids) to the rootless user's systemd manager so podman
+        # can create per-container cgroups. Some runner images delegate to user slices by default and
+        # some do not; this drop-in makes it deterministic across images. It must be in place before
+        # the user manager starts, so write it, reload, then (re)start user@$uid.service to pick it up.
         sudo mkdir -p /etc/systemd/system/user@.service.d
         printf '[Service]\nDelegate=yes\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf >/dev/null
         sudo systemctl daemon-reload
@@ -157,21 +142,13 @@ runs:
           exit 1
         fi
         export XDG_RUNTIME_DIR="/run/user/$uid"
-        # Attribution: a runner whose user slice still lacks 'pids' here is the failing config. This
-        # line makes the delegation state greppable in the job log next to any container failure.
+        # Attribution: make the delegated controller set greppable in the job log next to any
+        # container failure (the 'pids' controller must be present for per-container cgroups).
         echo "podman cgroup delegation: user-$uid.slice controllers=[$(cat /sys/fs/cgroup/user.slice/user-$uid.slice/cgroup.controllers 2>/dev/null)]"
-        # Force the runc OCI runtime. The crun shipped on the runners fails to start containers with
-        # "crun: unknown version specified" (an OCI config version it rejects), which fails every
-        # kyo-pod container integration test. runc accepts the config podman writes, so the service and
-        # every container it starts use runc instead.
-        # Bound exit_command_delay. It defaults to 300s, so every exec's conmon lingers 5 minutes; over
-        # the kyo-pod container suite's many execs the conmons pile up (measured climbing past 200),
-        # and once that baseline is high a fresh container's PID 1 (catatonit) hits fork EAGAIN on an
-        # otherwise-idle runner, cascading into ~100 [podman] http failures. exit_command_delay=0 goes
-        # too far (it reaps the exec session before the HTTP backend reads its exit code); 30s reaps
-        # promptly enough to keep the conmon baseline low while still covering the exit-code read.
+        # Force the runc OCI runtime: the crun shipped on the runners rejects the OCI config version
+        # podman writes ("crun: unknown version specified") and fails every container test.
         mkdir -p "$HOME/.config/containers"
-        printf '[engine]\nruntime = "runc"\nexit_command_delay = 30\n' > "$HOME/.config/containers/containers.conf"
+        printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the
@@ -194,8 +171,7 @@ runs:
           exit 1
         fi
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-        # Attribution for the podman version variance across runner images (4.9.3 vs 5.8.4) and the
-        # resolved cgroup manager, next to any container failure in the log.
+        # Print podman version and cgroup manager so container failures in the log are attributable.
         echo "podman version: $(podman --version 2>/dev/null); cgroupManager: $(podman info --format '{{.Host.CgroupManager}}' 2>/dev/null)"
         podman info | grep -iE 'cgroup|rootless' || true
         podman version
@@ -203,8 +179,8 @@ runs:
         # pins runc, and a silent fall back to crun shows up downstream as "crun: unknown version
         # specified" on every kyo-pod container test, which this line attributes.
         podman info | grep -iE 'ociRuntime|runc|crun' || true
-        # docker is load-bearing too, and it has been removed out from under this step before, so name
-        # what broke rather than letting `set -e` end the step on a bare exit code.
+        # The kyo-pod suite also runs against docker, and installing ubuntu runc can remove docker-ce
+        # (containerd.io conflict). Fail with that diagnosis, not a bare exit code.
         if ! docker version; then
           echo "docker daemon unreachable. The kyo-pod suite runs its container cases against docker as" >&2
           echo "well as podman, so this is fatal. Check the apt output in the podman install step: the" >&2
