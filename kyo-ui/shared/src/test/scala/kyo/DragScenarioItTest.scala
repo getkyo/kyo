@@ -356,6 +356,46 @@ class DragScenarioItTest extends UITest:
         }
     }
 
+    "100 wire session iterations converge with alternating accept, reject, and cancel" in {
+        withBoard(board, Set.empty) { (state, dispatch, decisions) =>
+            for
+                _ <- Kyo.foreachDiscard(Chunk.from(0 until 100)) { iteration =>
+                    val session = s"stress-$iteration"
+                    for
+                        _ <- dispatch(Seq.empty, startEvent(session, "1", "Design the API"))
+                        _ <- iteration % 3 match
+                            case 0 =>
+                                // Accepted round trip there and back keeps the board convergent.
+                                dispatch(Seq.empty, sortEvent(session, move(Chunk("1"), "todo", "doing")))
+                                    .andThen(dispatch(Seq.empty, endEvent(session, cancelled = false)))
+                                    .andThen(dispatch(Seq.empty, startEvent(s"$session-back", "1", "Design the API")))
+                                    .andThen(dispatch(
+                                        Seq.empty,
+                                        sortEvent(s"$session-back", move(Chunk("1"), "doing", "todo", Present("2"), Drag.Position.Before))
+                                    ))
+                                    .andThen(dispatch(Seq.empty, endEvent(s"$session-back", cancelled = false))).unit
+                            case 1 =>
+                                // Rejected move leaves the board untouched.
+                                dispatch(Seq.empty, sortEvent(session, move(Chunk("1"), "todo", "archive")))
+                                    .andThen(dispatch(Seq.empty, endEvent(session, cancelled = false))).unit
+                            case _ =>
+                                // Cancelled drag never mutates.
+                                dispatch(Seq.empty, endEvent(session, cancelled = true)).unit
+                    yield ()
+                    end for
+                }
+                updated  <- state.get
+                resolved <- decisions.get
+            yield
+                assert(updated == board)
+                assert(resolved.count(_ == Drag.Decision.Accept) == 68)
+                assert(resolved.count {
+                    case Drag.Decision.Reject(_) => true
+                    case _                       => false
+                } == 33)
+        }
+    }
+
     // --- Embedded server-push runtime, real Chrome ---
 
     private def sortableApp(state: SignalRef[Chunk[String]])(using Frame): UI =

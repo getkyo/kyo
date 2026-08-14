@@ -1248,6 +1248,61 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "100 sensor lifecycle iterations leave zero resources" in {
+        Kyo.foreachDiscard(Chunk.from(0 until 100)) { iteration =>
+            sensorFixture { (root, runtime, events, hit, frames, timing) =>
+                Sync.defer {
+                    val itemA = root.querySelector("#item-a")
+                    val itemB = root.querySelector("#item-b")
+                    // Pointer cancel before and after the activation distance.
+                    discard(itemA.dispatchEvent(sensorEvent("pointerdown", itemA, 10, 10)))
+                    discard(itemA.dispatchEvent(sensorEvent("pointercancel", itemA)))
+                    discard(itemA.dispatchEvent(sensorEvent("pointerdown", itemA, 10, 10)))
+                    discard(itemA.dispatchEvent(sensorEvent("pointermove", itemA, 10, 30)))
+                    frames.flush()
+                    discard(itemA.dispatchEvent(sensorEvent("pointercancel", itemA)))
+                    assert(runtime.stateName == "Idle")
+                    // Touch hold cancelled by movement.
+                    discard(itemA.dispatchEvent(sensorEvent("touchstart", itemA, 10, 10)))
+                    discard(itemA.dispatchEvent(sensorEvent("touchmove", itemA, 40, 40)))
+                    assert(runtime.stateName == "Idle")
+                    // Keyboard Escape.
+                    discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                    discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Escape")))
+                    assert(runtime.stateName == "Idle")
+                    // Rejected then accepted keyboard drops.
+                    discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                    discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "ArrowDown")))
+                    discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                    events.collect { case e: UIEvent.SortMove => e }.lastOption.foreach { sort =>
+                        runtime.resolve(sort.sessionId, Drag.Decision.Reject(Drag.Rejection.Application("stress")))
+                    }
+                    assert(runtime.stateName == "Idle")
+                    discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Enter")))
+                    discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Home")))
+                    discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Enter")))
+                    events.collect { case e: UIEvent.SortMove => e }.lastOption.foreach { sort =>
+                        runtime.resolve(sort.sessionId, Drag.Decision.Accept)
+                    }
+                    assert(runtime.stateName == "Idle")
+                    // Source removal mid-session.
+                    discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                    itemA.remove()
+                    timing.checkAt(1000)
+                    assert(runtime.stateName == "Idle")
+                    assert(runtime.activeSessions == 0)
+                    assert(runtime.fileTokens == 0)
+                    assert(runtime.liveRegions == 0)
+                    assert(runtime.activeFrames == 0)
+                    assert(root.querySelectorAll("[data-kyo-drop-valid]").length == 0)
+                    assert(root.querySelectorAll("[data-kyo-drop-position]").length == 0)
+                    assert(dom.document.querySelectorAll("[data-kyo-drag-live]").length == 0)
+                    assert(dom.document.querySelectorAll("[data-kyo-drag-preview]").length == 0)
+                }
+            }
+        }.andThen(succeed)
+    }
+
     "sensor session cancels when the source is removed" in {
         sensorFixture { (root, runtime, events, hit, frames, timing) =>
             Sync.defer {

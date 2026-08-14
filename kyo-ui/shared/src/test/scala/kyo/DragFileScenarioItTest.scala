@@ -274,6 +274,48 @@ class DragFileScenarioItTest extends UITest:
         }
     }
 
+    "100 read lifecycle iterations leave no pending requests" in {
+        val bytes = content(200_000)
+        withService() { (service, requests, sent) =>
+            for
+                responder <- Fiber.initUnscoped(fileResponder(service, requests, "token-1", bytes))
+                _ <- Kyo.foreachDiscard(Chunk.from(0 until 100)) { iteration =>
+                    for
+                        cancelled <- Abort.run[Drag.FileError](Scope.run(
+                            service.readFile(meta, 64.kib).take(100).run
+                        ))
+                        completed <- Abort.run[Drag.FileError](Scope.run(
+                            service.readFile(meta.copy(size = ByteSize.fromBytes(1_000L)), 64.kib).run
+                        ))
+                        pending <- service.pendingCount
+                    yield
+                        assert(cancelled.map(_.size) == Result.succeed(100))
+                        assert(completed.map(_.size) == Result.succeed(200_000))
+                        assert(pending == 0)
+                }
+                _ <- responder.interrupt
+            yield succeed
+        }
+    }
+
+    "100 disconnect iterations fail pending reads and clear the map" in {
+        Kyo.foreachDiscard(Chunk.from(0 until 100)) { iteration =>
+            withService() { (service, _, _) =>
+                for
+                    reader <- Fiber.initUnscoped(Abort.run[Drag.FileError](Scope.run(
+                        service.readFile(meta, 64.kib).run
+                    )))
+                    _       <- assertEventually(service.pendingCount.map(_ == 1))
+                    _       <- service.close()
+                    result  <- reader.get
+                    pending <- service.pendingCount
+                yield
+                    assert(result == Result.fail(Drag.FileError.Disconnected))
+                    assert(pending == 0)
+            }
+        }.andThen(succeed)
+    }
+
     // --- Embedded runtime, real Chrome ---
 
     "an external file dropped on the served page reads back through the wire" in {
