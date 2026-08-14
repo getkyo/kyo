@@ -38,8 +38,9 @@ private[kyo] object SchemaSerializer:
       * are ever field ids come from `CodecMacro.fieldId(name).toString` or a Protobuf numeric tag, both
       * always ASCII decimal. Any other token, including a unicode name or a name made of unicode digits
       * (Arabic-Indic, fullwidth, ...), is a field NAME and must return -1 so it stays classified as a
-      * name. Accepting unicode digits here would misclassify such a name as an id. This is the same
-      * numeric-tag classification `matchField` does via `parsed.toInt`, without the throw on a non-id.
+      * name. Accepting unicode digits here would misclassify such a name as an id.
+      * `DiscriminatorReader.matchField` uses this for its numeric-tag fallback for the same reason:
+      * a plain field name must classify as a name without constructing a `NumberFormatException`.
       */
     private def wireFieldId(token: String): Int =
         if token.isEmpty then -1
@@ -1608,9 +1609,9 @@ private[kyo] object SchemaSerializer:
                     // Wire-format-agnostic fallback: when the underlying inner reader is wire-format-tagged
                     // (e.g. Protobuf, which reports fields by their numeric tag id), the buffered "name" is a
                     // numeric string. Match it against CodecMacro.fieldId(expected) to align with the way
-                    // the macro-generated case-class read body matches fields downstream.
-                    try parsed.toInt == CodecMacro.fieldId(expected)
-                    catch case _: NumberFormatException => false
+                    // the macro-generated case-class read body matches fields downstream. wireFieldId returns
+                    // -1 for a non-id token and fieldId is always positive, so a plain name never matches.
+                    wireFieldId(parsed) == CodecMacro.fieldId(expected)
                 end if
         end matchField
 
