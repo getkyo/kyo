@@ -511,7 +511,19 @@ object Container:
                                 // `/var/lib/mysql` volume the official MySQL image declares). Without it, a long-running
                                 // suite of scope-managed containers leaks daemon-side state until inspect/start latency
                                 // exceeds the test wrapper. Named volumes are unaffected.
-                                Abort.run[ContainerException](b.remove(cid, force = true, removeVolumes = true)).map(logFailure("remove"))
+                                //
+                                // Under residual daemon load a single force-remove can hit a transient transport failure
+                                // (mapped to ContainerBackendException). Swallowing it here leaks the container and trips
+                                // the leak check, so retry the removal a few times before giving up; a genuinely-absent
+                                // container surfaces as ContainerMissingException, which Retry leaves to propagate and
+                                // logFailure treats as the desired end state.
+                                val removeSchedule =
+                                    Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
+                                Abort.run[ContainerException] {
+                                    Retry[ContainerBackendException](removeSchedule) {
+                                        b.remove(cid, force = true, removeVolumes = true)
+                                    }
+                                }.map(logFailure("remove"))
                             }
                         }
                     }
