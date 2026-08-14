@@ -1249,7 +1249,20 @@ def reorder(items: SignalRef[Chunk[Task]]): UI =
 
 For multi-collection boards, `Sortable.moveGroups` locates the moving keys across an ordered set of named key collections and lands a selection spanning collections contiguously at the destination anchor, and `Sortable.expandSelection` implements the standard multi-select rule: when every dragged key is selected, the whole selection moves in visible order.
 
-Pointer drags, keyboard moves, and native HTML5 drags all reach the server as the same wire events, so one `onSortMove` handler covers every sensor, and the decision it returns resolves the client-side session either way. The [Kanban](shared/src/test/scala/demo/KanbanDemo.scala) and [InventoryGrid](shared/src/test/scala/demo/InventoryGridDemo.scala) demos are the working references: Kanban moves a multi-selection across lanes through one `moveGroups` reducer shared with its fallback arrow buttons, and InventoryGrid reorders rows and columns as two independent collections with a locked column, both proven end to end by `DragScenarioItTest`.
+**Dropped files and directories are read lazily.** A dropped `Drag.Item.File` carries metadata only; content stays in the browser until you ask for it. `Drag.DroppedFile.from(item)` gives a scoped handle whose `bytes(chunkSize)` streams the content in bounded requests over the session, `text(charset)` collects and decodes it, and `Drag.DroppedDirectory.from(item).entries(limits)` pages a directory under an explicit `Drag.DirectoryLimits` traversal budget. Reads fail with a typed `Drag.FileError` (`Disconnected`, `PermissionDenied`, `LimitExceeded`, ...), a consumer that stops early cancels its browser read through its `Scope`, and every pending read fails with `Disconnected` when the session closes:
+
+```scala
+def firstFileText(event: Drag.Event): String < (Async & Scope & Abort[Drag.FileError]) =
+    event.items.collectFirst { case file: Drag.Item.File => file } match
+        case Some(file) => Drag.DroppedFile.from(file).text()
+        case None       => Abort.fail(Drag.FileError.NotFound)
+```
+
+**Every sensor reaches the same handler.** Native HTML5 drags, pointer drags with an activation distance, touch drags with a hold delay, and keyboard sessions (Enter or Space to lift, orientation-aware arrows plus Home and End to place, Tab to change target, Enter to confirm, Escape to cancel) all emit the same wire events, so one `onSortMove` or `onDrop` handler covers every input. Sensor sessions announce pickup, placement, rejection, and success through a visually hidden live region, and mark transient state with the reserved `data-kyo-dragging`, `data-kyo-drop-valid`, and `data-kyo-drop-position` attributes. Elements marked `data-kyo-drag-selected="true"` move together with the dragged item in DOM order.
+
+**Local and server-push behave identically.** A locally mounted app runs the drag runtime in-process; a served page embeds the equivalent runtime in the page and exchanges the same wire events over the WebSocket, including lazy file reads. Both are `Scope`-owned: closing the mount scope or the server session removes every listener, timer, frame, preview node, and live region, cancels pending file reads, and revokes browser file tokens; the lifecycle stress suites pin those counts at zero after close.
+
+The [Kanban](shared/src/test/scala/demo/KanbanDemo.scala) and [InventoryGrid](shared/src/test/scala/demo/InventoryGridDemo.scala) demos are the working references: Kanban moves a multi-selection across lanes through one `moveGroups` reducer shared with its fallback arrow buttons, and InventoryGrid reorders rows and columns as two independent collections with a locked column, both proven end to end by `DragScenarioItTest`. Run them with `sbt 'kyo-uiJVM/Test/runMain demo.KanbanDemo'` and `sbt 'kyo-uiJVM/Test/runMain demo.InventoryGridDemo'`.
 
 ## Running a UI
 

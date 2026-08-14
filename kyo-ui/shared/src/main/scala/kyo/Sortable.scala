@@ -12,10 +12,14 @@ import Drag.Rejection
   *
   * Invalid requests return an application rejection without changing either input collection.
   * The engine does not render UI or perform effects, so callers can apply it consistently across
-  * presentation layers and platforms.
+  * presentation layers and platforms. [[moveBy]] works on typed values through a key projection,
+  * [[moveGroups]] applies one move across an ordered set of named collections, and
+  * [[expandSelection]] implements the standard multi-select rule. Keys passed as `locked` can
+  * neither move nor anchor a move.
   *
   * @see [[Drag.Move]] for move descriptions
   * @see [[Drag.Rejection]] for rejected requests
+  * @see [[Drag.Decision.fromResult]] for adapting results into handler decisions
   * @see [[Chunk]] for collection values
   */
 object Sortable:

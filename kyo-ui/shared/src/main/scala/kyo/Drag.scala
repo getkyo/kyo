@@ -11,10 +11,16 @@ import java.util.Locale
   *
   * Exact media types and target patterns are validated and normalized before they enter domain
   * values. Targets can accept an exact media type or a wildcard for every subtype of a type.
+  * [[Drag.Source.sortable]] and [[Drag.Target.sortable]] wire pure keyed reordering without an
+  * application payload, and [[Drag.Decision.fromResult]] adapts a move reducer result into the
+  * handler's decision. Dropped files and directories are read lazily over the session through
+  * [[Drag.DroppedFile]] and [[Drag.DroppedDirectory]], failing with a typed [[Drag.FileError]].
   *
   * @see [[Drag.Accept]] for per-item acceptance
   * @see [[Drag.Move]] for collection move descriptions
   * @see [[Drag.Decision]] for acceptance results
+  * @see [[Drag.DroppedFile]] for lazy dropped file reads
+  * @see [[kyo.Sortable]] for the pure move engine and its helpers
   */
 object Drag:
 
