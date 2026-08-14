@@ -1,5 +1,9 @@
 package kyo
 
+import demo.InventoryGridDemo
+import demo.InventoryGridDemo.Column
+import demo.InventoryGridDemo.Inventory
+import demo.InventoryGridDemo.Row
 import demo.KanbanDemo
 import demo.KanbanDemo.Board
 import demo.KanbanDemo.Card
@@ -214,6 +218,140 @@ class DragScenarioItTest extends kyo.test.Test[Any]:
                 Drag.Move(Chunk("1"), Drag.Location("todo"), Drag.Location("doing"), Absent, Drag.Position.After, Drag.Operation.Link)
             assert(KanbanDemo.applyMove(board, Set.empty, copy) == Result.fail(Drag.Rejection.Application("Kanban cards only move.")))
             assert(KanbanDemo.applyMove(board, Set.empty, link) == Result.fail(Drag.Rejection.Application("Kanban cards only move.")))
+        }
+    }
+
+    // --- Inventory scenarios ---
+
+    private val inventory = Inventory(
+        columns = Chunk(
+            Column("sku", "SKU"),
+            Column("name", "Name"),
+            Column("qty", "Quantity"),
+            Column("price", "Price")
+        ),
+        rows = Chunk(
+            Row("r1", Map("sku" -> "A-100", "name" -> "Anvil", "qty" -> "3", "price" -> "49.00")),
+            Row("r2", Map("sku" -> "B-200", "name" -> "Rope", "qty" -> "12", "price" -> "9.50")),
+            Row("r3", Map("sku" -> "C-300", "name" -> "Magnet", "qty" -> "7", "price" -> "19.95"))
+        )
+    )
+
+    private def withGrid[A](initial: Inventory, selected: Set[String])(
+        f: (SignalRef[Inventory], (Seq[String], UIEvent) => Boolean < Async, AtomicRef[Chunk[Drag.Decision]]) => A < (Async & Scope)
+    )(using Frame): A < Async =
+        Scope.run {
+            for
+                state     <- Signal.initRef(initial)
+                selection <- Signal.initRef(selected)
+                decisions <- AtomicRef.init(Chunk.empty[Drag.Decision])
+                root      <- ReactiveUI.normalize(InventoryGridDemo.gridView(state, selection), Seq.empty)
+                result <- DragCommands.resolveSink.let(
+                    Present((_, decision) => decisions.getAndUpdate(_.append(decision)).unit)
+                ) {
+                    ReactiveUI.subscribe(root, new NoopExchange).map(sub => f(state, sub.handle, decisions))
+                }
+            yield result
+        }
+
+    "inventory" - {
+
+        val Rows    = InventoryGridDemo.RowsCollection
+        val Columns = InventoryGridDemo.ColumnsCollection
+
+        "whole row moves vertically before the anchor row" in {
+            withGrid(inventory, Set.empty) { (state, dispatch, decisions) =>
+                for
+                    _        <- dispatch(Seq.empty, startEvent("grid-1", "r3", "Magnet"))
+                    _        <- dispatch(Seq.empty, sortEvent("grid-1", move(Chunk("r3"), Rows, Rows, Present("r1"), Drag.Position.Before)))
+                    updated  <- state.get
+                    resolved <- decisions.get
+                yield
+                    assert(updated.rows.map(_.id) == Chunk("r3", "r1", "r2"))
+                    assert(updated.columns.map(_.id) == Chunk("sku", "name", "qty", "price"))
+                    assert(resolved == Chunk(Drag.Decision.Accept))
+            }
+        }
+
+        "selected rows move together in visible order" in {
+            withGrid(inventory, Set("r1", "r2")) { (state, dispatch, decisions) =>
+                for
+                    _        <- dispatch(Seq.empty, startEvent("grid-2", "r2", "Rope"))
+                    _        <- dispatch(Seq.empty, sortEvent("grid-2", move(Chunk("r2"), Rows, Rows, Present("r3"), Drag.Position.After)))
+                    updated  <- state.get
+                    resolved <- decisions.get
+                yield
+                    assert(updated.rows.map(_.id) == Chunk("r3", "r1", "r2"))
+                    assert(resolved == Chunk(Drag.Decision.Accept))
+            }
+        }
+
+        "whole column moves horizontally and cells follow the column order" in {
+            withGrid(inventory, Set.empty) { (state, dispatch, decisions) =>
+                for
+                    _ <- dispatch(Seq.empty, startEvent("grid-3", "qty", "Quantity"))
+                    _ <- dispatch(
+                        Seq.empty,
+                        sortEvent("grid-3", move(Chunk("qty"), Columns, Columns, Present("name"), Drag.Position.Before))
+                    )
+                    updated  <- state.get
+                    resolved <- decisions.get
+                yield
+                    assert(updated.columns.map(_.id) == Chunk("sku", "qty", "name", "price"))
+                    assert(updated.rows.map(_.id) == Chunk("r1", "r2", "r3"))
+                    assert(resolved == Chunk(Drag.Decision.Accept))
+            }
+        }
+
+        "a row dragged onto the column collection resolves Reject without mutation" in {
+            withGrid(inventory, Set.empty) { (state, dispatch, decisions) =>
+                for
+                    _ <- dispatch(Seq.empty, startEvent("grid-4", "r1", "Anvil"))
+                    _ <- dispatch(Seq.empty, sortEvent("grid-4", move(Chunk("r1"), Rows, Columns, Present("name"), Drag.Position.After)))
+                    updated  <- state.get
+                    resolved <- decisions.get
+                yield
+                    assert(updated == inventory)
+                    assert(resolved == Chunk(
+                        Drag.Decision.Reject(Drag.Rejection.Application("Rows and columns cannot be mixed."))
+                    ))
+            }
+        }
+
+        "the locked SKU column can neither move nor anchor a move" in {
+            val movedLocked =
+                InventoryGridDemo.applyMove(inventory, Set.empty, move(Chunk("sku"), Columns, Columns, Present("price")))
+            val anchoredOnIt =
+                InventoryGridDemo.applyMove(
+                    inventory,
+                    Set.empty,
+                    move(Chunk("name"), Columns, Columns, Present("sku"), Drag.Position.Before)
+                )
+            assert(movedLocked == Result.fail(Drag.Rejection.Application("The SKU column is locked.")))
+            assert(anchoredOnIt == Result.fail(Drag.Rejection.Application("The SKU column is locked.")))
+        }
+
+        "keyboard-originated column move commits through the same wire event" in {
+            withGrid(inventory, Set.empty) { (state, dispatch, decisions) =>
+                for
+                    _ <- dispatch(Seq.empty, startEvent("grid-5", "price", "Price"))
+                    _ <- dispatch(
+                        Seq.empty,
+                        sortEvent("grid-5", move(Chunk("price"), Columns, Columns, Present("name"), Drag.Position.Before))
+                    )
+                    updated  <- state.get
+                    resolved <- decisions.get
+                yield
+                    assert(updated.columns.map(_.id) == Chunk("sku", "price", "name", "qty"))
+                    assert(resolved == Chunk(Drag.Decision.Accept))
+            }
+        }
+
+        "programmatic movement uses the same Drag.Move reducer" in {
+            val programmatic =
+                InventoryGridDemo.applyMove(inventory, Set.empty, move(Chunk("r2"), Rows, Rows, Present("r1"), Drag.Position.Before))
+            assert(programmatic.map(_.rows.map(_.id)) == Result.succeed(Chunk("r2", "r1", "r3")))
+            assert(programmatic.map(_.columns) == Result.succeed(inventory.columns))
         }
     }
 end DragScenarioItTest
