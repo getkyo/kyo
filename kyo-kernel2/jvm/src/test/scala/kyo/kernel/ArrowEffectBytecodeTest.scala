@@ -28,14 +28,16 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
 
     "suspendWith" in {
         val sizes = methodBytecodeSize[TestSuspendWith]
-        assert(sizes == Map("test" -> 16))
+        // suspendWith is suspend followed by map: the call site carries map's
+        // per-site transform step (run) and its arrow accessor beside the body
+        assert(sizes == Map("test" -> 39, "arrow" -> 9, "run" -> 114))
     }
 
     "handle" in {
         val sizes = methodBytecodeSize[TestHandle]
-        // the handler, region node, and exit arrow fuse into one anonymous class,
-        // so the call site is a single allocation and no lifted loop method exists
-        assert(sizes == Map("test" -> 42))
+        // the deep handler lifts its re-handling recursion into one loop method
+        // that allocates the region node; the call site just enters it
+        assert(sizes == Map("test" -> 6, "loop" -> 43))
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

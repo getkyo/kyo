@@ -6,6 +6,7 @@ import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.Loop.Outcome
 import scala.annotation.static
+import scala.annotation.tailrec
 
 sealed trait Boxed
 
@@ -53,6 +54,17 @@ object Kyo:
 
         def value: A < S
         def cont: Arrow[A, B, S]
+
+        // renders the pending operation's origin, not the latest transformation:
+        // the walk is iterative because a deferred chain can be arbitrarily deep
+        final override def toString: String =
+            @tailrec def origin(v: Any): String =
+                v match
+                    case d: Defer[?, ?, ?] => origin(d.value)
+                    case kyo: Kyo[?, ?]    => kyo.toString
+                    case v                 => s"Kyo(Defer($v))"
+            origin(this.value)
+        end toString
     end Defer
 
     abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
@@ -61,6 +73,9 @@ object Kyo:
         def tag: Tag[E]
         def input: I[X]
         def frame: Frame
+
+        final override def toString: String =
+            s"Kyo(${tag.show}, Input($input), ${frame.position.show}, ${frame.snippetShort})"
     end Suspend
 
     abstract class HandleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2] extends Kyo[B, S & S2]:
@@ -71,6 +86,8 @@ object Kyo:
 
         def run[X](input: I[X], cont: O[X] => A < (E & S)): B < (S & S2)
         def complete(v: A): B < (S & S2)
+
+        final override def toString: String = s"Kyo(HandleCont(${tag.show}, $value))"
     end HandleCont
 
     abstract class HandleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, S]:
@@ -81,5 +98,7 @@ object Kyo:
 
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B] < S
         def complete(v: A): B < S
+
+        final override def toString: String = s"Kyo(HandleLoop(${tag.show}, $value))"
     end HandleLoop
 end Kyo

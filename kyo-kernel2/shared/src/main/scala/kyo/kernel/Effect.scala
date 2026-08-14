@@ -6,6 +6,7 @@ import kyo.kernel.`<`.fromKyo
 import kyo.kernel.Implicits.liftInternal
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 abstract class Effect private[kernel] ()
@@ -25,11 +26,15 @@ object Effect:
         f(ex)
     end recover
 
+    abstract private[kyo] class Guard[In, B, S] extends Arrow.Transform[In, B, S]:
+        def wrapped: Arrow[In, B, S]
+
     @nowarn("msg=anonymous")
     private def guarded[B, S](v: B < S, f: Throwable => B < S, _frame: Frame): B < S =
-        def guard[In](cont: Arrow[In, B, S]): Arrow.Transform[In, B, S] =
-            new Arrow.Transform[In, B, S]:
-                def frame = _frame
+        def guard[In](cont: Arrow[In, B, S]): Guard[In, B, S] =
+            new Guard[In, B, S]:
+                def frame   = _frame
+                def wrapped = cont
                 def apply[C, S3](v2: In < S3, next: Arrow[B, C, S3]) =
                     val w =
                         try
@@ -56,7 +61,21 @@ object Effect:
                 end apply
         (v: @unchecked) match
             case kyo: Kyo.Defer[Any, B, S] @unchecked =>
-                Kyo.defer(kyo.value, guard(kyo.cont))
+                // the drive applies each layer's continuation directly, so the
+                // guard covers the whole value spine, one guard per layer,
+                // innermost first
+                @tailrec def collect(cur: Any, acc: List[Arrow[Any, B, S]]): (Any, List[Arrow[Any, B, S]]) =
+                    cur match
+                        case d: Kyo.Defer[Any, Any, S] @unchecked =>
+                            collect(d.value, d.cont.asInstanceOf[Arrow[Any, B, S]] :: acc)
+                        case base =>
+                            (base, acc)
+                val (base, conts) = collect(kyo, Nil)
+                conts
+                    .foldLeft(base) { (acc, cont) =>
+                        Kyo.defer(acc.asInstanceOf[Any < S], guard(cont))
+                    }
+                    .asInstanceOf[B < S]
             case v =>
                 v
         end match

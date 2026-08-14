@@ -143,9 +143,9 @@ class KyoInternalTest extends AnyFreeSpec:
             end match
         }
 
-        "eval answers the region in place" in {
+        "eval answers the region in place and completes the settled value" in {
             val n = loopNode(ask.map(_ + 1), Loop.continue(41))
-            assert((n: Int < Any).eval == 42)
+            assert((n: Int < Any).eval == 420)
         }
 
         "eval ends the region at a done outcome" in {
@@ -157,6 +157,14 @@ class KyoInternalTest extends AnyFreeSpec:
             val n = loopNode((41: Int < Ask).map(_ + 1), Loop.continue(0))
             assert((n: Int < Any).eval == 420)
         }
+    }
+
+    "nodes render diagnostically" in {
+        assert(Effect.defer(42).toString.startsWith("Kyo(Defer("))
+        val mapped = ask.map(_ + 1).toString
+        assert(mapped.startsWith("Kyo(") && mapped.contains("Ask"))
+        val region = ArrowEffect.handleLoop(Tag[Ask], ask)([X] => _ => Loop.continue(1)).toString
+        assert(region.startsWith("Kyo(HandleLoop(") && region.contains("Ask"))
     }
 
     "Nested" - {

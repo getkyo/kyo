@@ -47,6 +47,11 @@ object Arrow:
         def head: Transform[A, X, S]
         def tail: Arrow[X, B, S]
         final def step = this
+
+        // renders the shape plus the first transform's frame only: composed
+        // chains can be arbitrarily large and walking them from toString has
+        // broken tools that stringify values, like kyo-test
+        override def toString: String = s"Arrow.Step(${head.frameInfo})"
     end Step
 
     object Step:
@@ -65,6 +70,12 @@ object Arrow:
         final def tail = Arrow[B]
 
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
+
+        final private[kyo] def frameInfo: String =
+            if this eq identity then "identity"
+            else s"${frame.position.show}, ${frame.snippetShort}"
+
+        override def toString: String = s"Arrow($frameInfo)"
     end Transform
 
     private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
@@ -72,6 +83,8 @@ object Arrow:
             override def initialValue() = new ArrayDeque
 
     class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
+
+        override def toString: String = s"Arrow.AndThen($a, $b)"
 
         def step =
             val buffer = scratch.get

@@ -5,6 +5,7 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
+import kyo.kernel.Effect
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 import scala.util.control.NonFatal
@@ -48,6 +49,18 @@ private[kyo] object EffectTrace:
       */
     def attach(ex: Throwable, v: Any, stack: Stack, base: Int): Unit =
         reconstruct(ex) { builder =>
+            builder.value(v)
+            builder.entries(stack, base)
+        }
+
+    /** The settle boundary: the throw crossed a frame that continues an answered operation, so the operation's suspension leads the
+      * reconstruction as the innermost element.
+      */
+    def attach(ex: Throwable, suspended: Kyo.Suspend[?, ?, ?, ?, ?, ?] | Null, v: Any, stack: Stack, base: Int): Unit =
+        reconstruct(ex) { builder =>
+            suspended match
+                case suspended: Kyo.Suspend[?, ?, ?, ?, ?, ?] => builder.value(suspended)
+                case null                                     => ()
             builder.value(v)
             builder.entries(stack, base)
         }
@@ -197,12 +210,16 @@ private[kyo] object EffectTrace:
                 case _ => ()
         end value
 
-        /** The pending continuation of the drive, innermost first: every entry from the stack's top down to the drive's base. */
+        /** The pending continuation of the drive, innermost first: every entry from the stack's top down to the drive's base. Entries the
+          * cap keeps the sweep from reaching are counted as dropped.
+          */
         def entries(stack: Stack, base: Int): Unit =
             @tailrec def loop(i: Int): Unit =
-                if !full && i >= base then
-                    value(stack(i))
-                    loop(i - 1)
+                if i >= base then
+                    if full then dropped += i - base + 1
+                    else
+                        value(stack(i))
+                        loop(i - 1)
             loop(stack.size - 1)
         end entries
 
@@ -232,6 +249,8 @@ private[kyo] object EffectTrace:
                     case at: Arrow.AndThen[?, ?, ?, ?] =>
                         push(at.b)
                         push(at.a)
+                    case g: Effect.Guard[?, ?, ?] =>
+                        push(g.wrapped)
                     case t: Arrow.Transform[?, ?, ?] =>
                         frame(t.frame)
                     case s: Arrow.Step[?, ?, ?] =>
