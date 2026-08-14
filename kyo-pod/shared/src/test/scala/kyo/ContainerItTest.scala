@@ -32,6 +32,18 @@ class ContainerItTest extends BasePodTest:
             assertRuns(alpine)
         }
 
+        // Regression: podman's docker-compat create mistranslates an explicit HostConfig.PidsLimit:0
+        // (sent when no maxProcesses was configured) into cgroup pids.max=1, so an init-process
+        // container's PID 1 (catatonit) could not fork its command ("failed to spawn pid1"). With no
+        // pids limit configured the field must be omitted; then the container can spawn children.
+        "init-process container without a pids limit can fork its command" - runBackends {
+            val forking = Container.Config(ContainerImage("alpine", "latest"))
+                .command("sh", "-c", "for i in $(seq 1 16); do sleep infinity & done; trap 'exit 0' TERM; wait")
+                .initProcess(true)
+                .stopTimeout(0.seconds)
+            assertRuns(forking)
+        }
+
         "withBackendConfig(_.UnixSocket) uses http backend" - runRuntimes { runtime =>
             ContainerRuntime.findSocket(runtime) match
                 case Some(socketPath) =>

@@ -7,6 +7,7 @@ import kyo.internal.ContainerBackend.parseInstant
 import kyo.internal.ContainerBackend.parseInstantOrEpoch
 import kyo.internal.ContainerBackend.parseState
 import kyo.internal.ResourceContext
+import kyo.schema.omit
 
 /** HTTP-based container backend that talks to Docker/Podman API via Unix domain socket.
   *
@@ -376,7 +377,7 @@ final private[kyo] class HttpContainerBackend(
             MemorySwap = config.memorySwap.getOrElse(0L),
             NanoCPUs = config.cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
             CpusetCpus = config.cpuAffinity.getOrElse(""),
-            PidsLimit = config.maxProcesses.getOrElse(0L),
+            PidsLimit = config.maxProcesses.filter(_ > 0),
             Privileged = config.privileged,
             CapAdd = config.addCapabilities.toSeq.map(_.cliName),
             CapDrop = config.dropCapabilities.toSeq.map(_.cliName),
@@ -1276,7 +1277,7 @@ final private[kyo] class HttpContainerBackend(
             MemorySwap = memorySwap.getOrElse(0L),
             NanoCPUs = cpuLimit.map(c => (c * 1e9).toLong).getOrElse(0L),
             CpusetCpus = cpuAffinity.getOrElse(""),
-            PidsLimit = maxProcesses.getOrElse(0L),
+            PidsLimit = maxProcesses.filter(_ > 0),
             RestartPolicy = restartPol.getOrElse(RestartPolicyEntry("", 0))
         )
         val jsonBody = Json.encode(body)
@@ -2317,7 +2318,10 @@ final private[kyo] class HttpContainerBackend(
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        PidsLimit: Long = 0,
+        // Podman's docker-compat create translates an explicit PidsLimit:0 into cgroup pids.max=1
+        // (docker treats 0 as unlimited), so the container's PID 1 cannot fork. Omit the field when
+        // no limit is configured so podman applies its default (unlimited), matching the CLI.
+        @omit PidsLimit: Maybe[Long] = Absent,
         Privileged: Boolean = false,
         CapAdd: Seq[String] = Seq.empty,
         CapDrop: Seq[String] = Seq.empty,
@@ -2359,7 +2363,9 @@ final private[kyo] class HttpContainerBackend(
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
         CpusetCpus: String = "",
-        PidsLimit: Long = 0,
+        // See HostConfig.PidsLimit: an explicit 0 is mistranslated to pids.max=1 by podman's
+        // docker-compat update. Omit when no limit is configured.
+        @omit PidsLimit: Maybe[Long] = Absent,
         RestartPolicy: RestartPolicyEntry = RestartPolicyEntry()
     ) derives Schema
 
