@@ -190,6 +190,58 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(completed.complete(Result.succeed(1)))
             assert(completed.fired == 0)
         }
+
+        "deferred publication propagates interruption immediately and completes once" in {
+            final class DeferredPromise extends IOPromise[Nothing, Int]:
+                override protected def deferInterruptCompletion(): Boolean = true
+                def publishInterrupt(): Unit                               = finishInterrupt()
+
+            val error        = Result.Panic(new Exception("interrupted"))
+            val promise      = new DeferredPromise
+            val child        = new IOPromise[Nothing, Unit]()
+            var interrupted  = 0
+            var completed    = 0
+            var lateComplete = 0
+            promise.interrupts(child)
+            promise.onInterrupt(_ => interrupted += 1)
+            promise.onComplete(_ => completed += 1)
+
+            assert(promise.interrupt(error))
+            assert(interrupted == 1)
+            assert(child.done())
+            assert(!promise.done())
+            assert(promise.poll().isEmpty)
+            assert(promise.waiters() == 1)
+            assert(!promise.interrupt(Result.Panic(new Exception("again"))))
+
+            promise.onInterrupt(_ => interrupted += 1)
+            promise.onComplete(_ => lateComplete += 1)
+            assert(interrupted == 2)
+            assert(completed == 0)
+            assert(lateComplete == 0)
+            assert(promise.waiters() == 2)
+
+            promise.publishInterrupt()
+            promise.publishInterrupt()
+            assert(promise.done())
+            assert(promise.poll().contains(error))
+            assert(completed == 1)
+            assert(lateComplete == 1)
+            assert(promise.waiters() == 0)
+        }
+
+        "plain promise interruption remains immediately visible" in {
+            val promise   = new IOPromise[Nothing, Int]()
+            val error     = Result.Panic(new Exception("interrupted"))
+            var completed = 0
+            promise.onComplete(_ => completed += 1)
+
+            assert(promise.interrupt(error))
+            assert(promise.done())
+            assert(promise.poll().contains(error))
+            assert(completed == 1)
+            assert(promise.waiters() == 0)
+        }
     }
 
     "onComplete" - {

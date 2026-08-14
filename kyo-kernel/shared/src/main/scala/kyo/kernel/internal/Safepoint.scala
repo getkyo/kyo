@@ -49,6 +49,10 @@ final class Safepoint private () extends Trace.Owner with Serializable:
 
     private[kyo] def getInterceptor(): Interceptor = interceptor
 
+    private[kyo] def findInterceptor[A](f: Interceptor => Maybe[A]): Maybe[A] =
+        if isNull(interceptor) then Absent
+        else interceptor.find(f)
+
     private[kernel] def setInterceptor(newInterceptor: Interceptor): Unit =
         interceptor = newInterceptor
         state = state.withInterceptor(newInterceptor != null)
@@ -102,7 +106,19 @@ object Safepoint:
         def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit
         def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit
         def enter(frame: Frame, value: Any): Boolean
+
+        private[kyo] def find[A](f: Interceptor => Maybe[A]): Maybe[A] =
+            f(this)
     end Interceptor
+
+    final private[kyo] class CompositeInterceptor(primary: Interceptor, previous: Interceptor) extends Interceptor:
+        def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = primary.addFinalizer(f)
+        def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = primary.removeFinalizer(f)
+        def enter(frame: Frame, value: Any): Boolean            = primary.enter(frame, value) && previous.enter(frame, value)
+        override private[kyo] def find[A](f: Interceptor => Maybe[A]): Maybe[A] =
+            val found = primary.find(f)
+            if found.isEmpty then previous.find(f) else found
+    end CompositeInterceptor
 
     @nowarn("msg=anonymous")
     private[kyo] inline def immediate[A, S](p: Interceptor)(inline v: => A < S)(
@@ -111,12 +127,7 @@ object Safepoint:
         val prev = safepoint.interceptor
         val np =
             if isNull(prev) || (prev eq p) then p
-            else
-                new Interceptor:
-                    override def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = p.addFinalizer(f)
-                    override def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = p.removeFinalizer(f)
-                    def enter(frame: Frame, value: Any) =
-                        p.enter(frame, value) && prev.enter(frame, value)
+            else CompositeInterceptor(p, prev)
         safepoint.setInterceptor(np)
         try v
         finally safepoint.setInterceptor(prev)
