@@ -164,13 +164,14 @@ runs:
         # "crun: unknown version specified" (an OCI config version it rejects), which fails every
         # kyo-pod container integration test. runc accepts the config podman writes, so the service and
         # every container it starts use runc instead.
-        # Keep podman's default cleanup behavior (no exit_command_delay override): forcing
-        # exit_command_delay=0 reaped exec sessions before the HTTP backend could read their exit code.
-        # The rootless-runner container fork-EAGAIN that once looked like conmon/heap exhaustion was in
-        # fact the missing cgroup delegation handled above; with delegation each container gets its own
-        # pids cgroup, so lingering exec conmons on the host no longer starve a fresh container's forks.
+        # Bound exit_command_delay. It defaults to 300s, so every exec's conmon lingers 5 minutes; over
+        # the kyo-pod container suite's many execs the conmons pile up (measured climbing past 200),
+        # and once that baseline is high a fresh container's PID 1 (catatonit) hits fork EAGAIN on an
+        # otherwise-idle runner, cascading into ~100 [podman] http failures. exit_command_delay=0 goes
+        # too far (it reaps the exec session before the HTTP backend reads its exit code); 30s reaps
+        # promptly enough to keep the conmon baseline low while still covering the exit-code read.
         mkdir -p "$HOME/.config/containers"
-        printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
+        printf '[engine]\nruntime = "runc"\nexit_command_delay = 30\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the
