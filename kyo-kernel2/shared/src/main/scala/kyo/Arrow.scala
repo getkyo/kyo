@@ -10,6 +10,10 @@ import scala.collection.mutable.ArrayDeque
 sealed abstract class Arrow[-A, +B, -S]:
     self =>
 
+    def apply(v: A): B < S =
+        val s = this.step
+        s.head(v, s.tail)
+
     def step: Arrow.Step[A, B, S]
 
     def isIdentity: Boolean = self eq Arrow.identity

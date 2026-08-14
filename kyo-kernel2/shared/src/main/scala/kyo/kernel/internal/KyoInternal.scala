@@ -63,14 +63,14 @@ object Kyo:
         def frame: Frame
     end Suspend
 
-    abstract class HandleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, S]:
+    abstract class HandleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2] extends Kyo[B, S & S2]:
         self =>
 
         def tag: Tag[E]
         def value: A < (E & S)
 
-        def run[X](input: I[X], cont: O[X] => A < (E & S)): B < S
-        def complete(v: A): B < S
+        def run[X](input: I[X], cont: O[X] => A < (E & S)): B < (S & S2)
+        def complete(v: A): B < (S & S2)
     end HandleCont
 
     abstract class HandleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, S]:

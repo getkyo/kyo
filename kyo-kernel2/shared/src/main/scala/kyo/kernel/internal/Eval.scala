@@ -37,7 +37,7 @@ object Eval:
                                     case b =>
                                         stack.truncate(i)
                                         Nested.lift(b)
-                    case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                    case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                         val seg = stack.copyFrom(i + 1)
                         val out = h.run(kyo.input, o => rebuild(seg, Nested.lift(o)))
                         stack.truncate(i)
@@ -66,7 +66,7 @@ object Eval:
                     case a: Arrow[Any, Any, Nothing] @unchecked =>
                         val step = a.step
                         step.head(settled, step.tail)
-                    case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                    case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                         h.complete(Nested.unnest[Any](settled))
                     case h: Kyo.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                         h.complete(Nested.unnest[Any](settled))
@@ -90,7 +90,7 @@ object Eval:
                         val i = stack.find(kyo.tag.erased, base)
                         if i >= 0 then cur = dispatch(kyo, i)
                         else unhandled(kyo)
-                    case kyo: Kyo.HandleCont[?, ?, ?, ?, ?, ?] =>
+                    case kyo: Kyo.HandleCont[?, ?, ?, ?, ?, ?, ?] =>
                         stack.push(kyo, kyo.tag.erased)
                         cur = kyo.value
                     case kyo: Kyo.HandleLoop[?, ?, ?, ?, ?, ?] =>
@@ -139,8 +139,8 @@ object Eval:
                     seg(i) match
                         case a: Arrow[Any, Any, Nothing] @unchecked =>
                             Kyo.defer(acc, a)
-                        case hc: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                            new Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]:
+                        case hc: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                            new Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
                                 def tag                                            = hc.tag
                                 def value                                          = acc
                                 def run[X](input: Any, cont: Any => Any < Nothing) = hc.run(input, cont)
