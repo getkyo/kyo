@@ -106,7 +106,7 @@ object InventoryGridDemo extends KyoApp:
             yield decision
         div.onSortMove(commit)(
             UI.table.id("inventory").style(tableStyle)(
-                tr.dropTarget(Drag.Target.sortable(ColumnsCollection, Present("Columns")))(
+                tr.dropTarget(Drag.Target.sortable(ColumnsCollection, Present("Columns"), Drag.Orientation.Horizontal))(
                     th.style(headerStyle)("Select"),
                     state.map(_.columns).foreachKeyed(_.id)(headerCell)
                 ),

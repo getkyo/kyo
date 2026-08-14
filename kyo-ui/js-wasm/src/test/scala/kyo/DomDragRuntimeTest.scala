@@ -104,20 +104,20 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
         case other                 => throw new AssertionError(s"expected success, got $other")
 
     final private class FakeTiming(var now: Double = 0d) extends DomDragRuntime.Timing:
-        private var callback: () => Unit = () => ()
-        var activeTimers                 = 0
+        private var callbacks: List[() => Unit] = Nil
+        var activeTimers                        = 0
 
         def nowMillis(): Double = now
 
         def every(millis: Int)(run: () => Unit): DomDragRuntime.CancelTimer =
-            callback = run
+            callbacks = callbacks :+ run
             activeTimers += 1
             () => activeTimers -= 1
         end every
 
         def checkAt(value: Double): Unit =
             now = value
-            callback()
+            callbacks.foreach(_())
     end FakeTiming
 
     final private class MountedDiagnostics extends DomBackend.MountDiagnostics:
@@ -946,6 +946,324 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
             }
         yield ()
         end for
+    }
+
+    // --- Sensor sessions (pointer, touch, keyboard) ---
+
+    final private class FakeHit extends DomDragRuntime.Hit:
+        private val assigned        = scalajs.Dictionary.empty[DomDragRuntime.Rect]
+        var stack: Seq[dom.Element] = Seq.empty
+
+        def at(elements: dom.Element*): Unit = stack = elements.toSeq
+
+        def assign(element: dom.Element, value: DomDragRuntime.Rect): dom.Element =
+            element.setAttribute("data-test-rect-id", assigned.size.toString)
+            assigned(element.getAttribute("data-test-rect-id")) = value
+            element
+        end assign
+
+        def elementsAt(x: Double, y: Double): Seq[dom.Element] = stack
+
+        def rect(element: dom.Element): DomDragRuntime.Rect =
+            val id = element.getAttribute("data-test-rect-id")
+            if id == null then DomDragRuntime.Rect(0, 0, 0, 0)
+            else assigned.getOrElse(id, DomDragRuntime.Rect(0, 0, 0, 0))
+        end rect
+    end FakeHit
+
+    final private class FakeFrames extends DomDragRuntime.Frames:
+        private var queue = List.empty[() => Unit]
+        var active        = 0
+        def request(run: () => Unit): DomDragRuntime.CancelTimer =
+            queue = queue :+ run
+            active += 1
+            new DomDragRuntime.CancelTimer:
+                def cancel(): Unit = active -= 1
+        end request
+        def flush(): Unit =
+            val pending = queue
+            queue = List.empty
+            pending.foreach { run =>
+                active -= 1
+                run()
+            }
+        end flush
+    end FakeFrames
+
+    private def sensorEvent(
+        eventType: String,
+        target: dom.Element,
+        x: Double = 0,
+        y: Double = 0,
+        pointerId: Double = 1,
+        key: String = "",
+        shift: Boolean = false
+    ): dom.Event =
+        val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].Event)(
+            eventType,
+            scalajs.Dynamic.literal(bubbles = true, cancelable = true)
+        ).asInstanceOf[dom.Event]
+        val dyn = event.asInstanceOf[scalajs.Dynamic]
+        val obj = scalajs.Dynamic.global.Object
+        def prop(name: String, value: scalajs.Any): Unit =
+            discard(obj.defineProperty(dyn, name, scalajs.Dynamic.literal(value = value, configurable = true)))
+        prop("clientX", x)
+        prop("clientY", y)
+        prop("pointerId", pointerId)
+        prop("key", key)
+        prop("shiftKey", shift)
+        prop("ctrlKey", false)
+        prop("altKey", false)
+        prop("metaKey", false)
+        event
+    end sensorEvent
+
+    private def sortableFixtureHtml: String =
+        val sourceA = success(DragProtocol.encodedSourceConfig(Drag.Source.sortable("a", Present("Item A")), DragProtocol.Limits.default))
+        val sourceB = success(DragProtocol.encodedSourceConfig(Drag.Source.sortable("b", Present("Item B")), DragProtocol.Limits.default))
+        val sourceC = success(DragProtocol.encodedSourceConfig(Drag.Source.sortable("c", Present("Item C")), DragProtocol.Limits.default))
+        val listOne =
+            success(DragProtocol.encodedTargetConfig(Drag.Target.sortable("list-one", Present("List one")), DragProtocol.Limits.default))
+        val listTwo =
+            success(DragProtocol.encodedTargetConfig(Drag.Target.sortable("list-two", Present("List two")), DragProtocol.Limits.default))
+        s"""<ul id="one" data-kyo-path="root.one" data-kyo-drop-target='$listOne' data-kyo-drop-target-key="list-one">
+           |<li id="item-a" tabindex="0" data-kyo-path="root.one.a" data-kyo-drag-source='$sourceA' data-kyo-drag-source-key="a">A</li>
+           |<li id="item-b" tabindex="0" data-kyo-path="root.one.b" data-kyo-drag-source='$sourceB' data-kyo-drag-source-key="b">B</li>
+           |</ul>
+           |<ul id="two" data-kyo-path="root.two" data-kyo-drop-target='$listTwo' data-kyo-drop-target-key="list-two">
+           |<li id="item-c" tabindex="0" data-kyo-path="root.two.c" data-kyo-drag-source='$sourceC' data-kyo-drag-source-key="c">C</li>
+           |</ul>""".stripMargin
+    end sortableFixtureHtml
+
+    private def sensorFixture[A](
+        f: (dom.Element, DomDragRuntime.Handle, ArrayBuffer[UIEvent], FakeHit, FakeFrames, FakeTiming) => A < (Async & Scope)
+    ): A < Async =
+        Scope.run {
+            for
+                root <- Sync.defer {
+                    val root = dom.document.createElement("div")
+                    root.innerHTML = sortableFixtureHtml
+                    discard(dom.document.body.appendChild(root))
+                    root
+                }
+                events = ArrayBuffer.empty[UIEvent]
+                hit    = new FakeHit
+                frames = new FakeFrames
+                timing = new FakeTiming
+                runtime <- DomDragRuntime.install(root, event => events += event, timing, hit, frames)
+                result  <- f(root, runtime, events, hit, frames, timing)
+                _       <- Sync.defer(root.remove())
+            yield result
+        }
+
+    "sensor pointer lift requires the activation distance" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                discard(itemA.dispatchEvent(sensorEvent("pointerdown", itemA, 10, 10)))
+                assert(runtime.stateName == "PendingPointer")
+                discard(itemA.dispatchEvent(sensorEvent("pointermove", itemA, 12, 12)))
+                frames.flush()
+                assert(runtime.stateName == "PendingPointer")
+                assert(events.isEmpty)
+                discard(itemA.dispatchEvent(sensorEvent("pointermove", itemA, 10, 18)))
+                frames.flush()
+                assert(runtime.stateName == "Dragging")
+                assert(itemA.getAttribute("data-kyo-dragging") == "true")
+                assert(events.size == 1)
+                assert(events.head.isInstanceOf[UIEvent.DragStart])
+                assert(runtime.liveRegions == 1)
+            }
+        }
+    }
+
+    "sensor pointerup before the activation distance returns to Idle without events" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                discard(itemA.dispatchEvent(sensorEvent("pointerdown", itemA, 10, 10)))
+                discard(itemA.dispatchEvent(sensorEvent("pointerup", itemA, 11, 11)))
+                assert(runtime.stateName == "Idle")
+                assert(events.isEmpty)
+                assert(runtime.liveRegions == 0)
+            }
+        }
+    }
+
+    "sensor pointer drop emits a SortMove anchored by the rect midpoint" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                val itemB = hit.assign(root.querySelector("#item-b"), DomDragRuntime.Rect(0, 40, 100, 20))
+                val one   = root.querySelector("#one")
+                discard(itemA.dispatchEvent(sensorEvent("pointerdown", itemA, 10, 10)))
+                discard(itemA.dispatchEvent(sensorEvent("pointermove", itemA, 10, 30)))
+                frames.flush()
+                assert(runtime.stateName == "Dragging")
+                hit.at(itemB, one)
+                // 44 is above the midpoint (50) of item-b's rect, so placement is Before.
+                discard(itemA.dispatchEvent(sensorEvent("pointermove", itemA, 10, 44)))
+                frames.flush()
+                assert(itemB.getAttribute("data-kyo-drop-position") == "before")
+                assert(one.getAttribute("data-kyo-drop-valid") == "true")
+                discard(itemA.dispatchEvent(sensorEvent("pointerup", itemA, 10, 44)))
+                assert(runtime.stateName == "AwaitingDecision")
+                val sort = events.collect { case e: UIEvent.SortMove => e }
+                assert(sort.size == 1)
+                assert(sort.head.move == Drag.Move(
+                    Chunk("a"),
+                    Drag.Location("list-one"),
+                    Drag.Location("list-one"),
+                    Present("b"),
+                    Drag.Position.Before,
+                    Drag.Operation.Move
+                ))
+                runtime.resolve(sort.head.sessionId, Drag.Decision.Accept)
+                assert(runtime.stateName == "Idle")
+                assert(itemA.getAttribute("data-kyo-dragging") == null)
+                assert(itemB.getAttribute("data-kyo-drop-position") == null)
+                assert(one.getAttribute("data-kyo-drop-valid") == null)
+                assert(runtime.liveRegions == 0)
+                assert(runtime.activeSessions == 0)
+            }
+        }
+    }
+
+    "sensor touch lifts after the hold delay and movement cancels the hold" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                discard(itemA.dispatchEvent(sensorEvent("touchstart", itemA, 10, 10)))
+                assert(runtime.stateName == "PendingTouch")
+                discard(itemA.dispatchEvent(sensorEvent("touchmove", itemA, 40, 40)))
+                assert(runtime.stateName == "Idle")
+                assert(events.isEmpty)
+                discard(itemA.dispatchEvent(sensorEvent("touchstart", itemA, 10, 10)))
+                timing.checkAt(DomDragRuntime.touchHoldDelayMs.toDouble + 1)
+                assert(runtime.stateName == "Dragging")
+                assert(events.size == 1)
+                assert(events.head.isInstanceOf[UIEvent.DragStart])
+            }
+        }
+    }
+
+    "keyboard pickup navigates with arrows and confirms with Enter" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                val itemB = root.querySelector("#item-b")
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                assert(runtime.stateName == "Dragging")
+                assert(events.size == 1)
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "ArrowDown")))
+                assert(itemB.getAttribute("data-kyo-drop-position") == "after")
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                assert(runtime.stateName == "AwaitingDecision")
+                val sort = events.collect { case e: UIEvent.SortMove => e }
+                assert(sort.size == 1)
+                assert(sort.head.move.keys == Chunk("a"))
+                assert(sort.head.move.anchor == Present("b"))
+                assert(sort.head.move.position == Drag.Position.After)
+                runtime.resolve(sort.head.sessionId, Drag.Decision.Accept)
+                assert(runtime.stateName == "Idle")
+                assert(dom.document.activeElement eq itemA)
+            }
+        }
+    }
+
+    "keyboard Home and End move to the collection edges" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemB = root.querySelector("#item-b")
+                val itemA = root.querySelector("#item-a")
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Enter")))
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Home")))
+                assert(itemA.getAttribute("data-kyo-drop-position") == "before")
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "End")))
+                assert(itemA.getAttribute("data-kyo-drop-position") == "after")
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Escape")))
+                assert(runtime.stateName == "Idle")
+            }
+        }
+    }
+
+    "keyboard Tab traverses to the next target and Escape cancels with a wire DragEnd" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                val two   = root.querySelector("#two")
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Tab")))
+                assert(two.getAttribute("data-kyo-drop-valid") == "true")
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Escape")))
+                assert(runtime.stateName == "Idle")
+                assert(two.getAttribute("data-kyo-drop-valid") == null)
+                val ends = events.collect { case e: UIEvent.DragEnd => e }
+                assert(ends.size == 1)
+                assert(ends.head.event.cancelled)
+                assert(runtime.liveRegions == 0)
+            }
+        }
+    }
+
+    "sensor announcements cover pickup, movement, rejection, and success" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                val itemB = root.querySelector("#item-b")
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                val region = dom.document.querySelector("[data-kyo-drag-live]")
+                assert(region != null)
+                assert(region.getAttribute("aria-live") == "assertive")
+                assert(region.textContent.contains("Item A"))
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "ArrowDown")))
+                assert(region.textContent.contains("Item B") || region.textContent.contains("after"))
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                val sort = events.collect { case e: UIEvent.SortMove => e }
+                runtime.resolve(sort.head.sessionId, Drag.Decision.Reject(Drag.Rejection.Application("locked")))
+                assert(runtime.stateName == "Idle")
+                assert(runtime.liveRegions == 0)
+            }
+        }
+    }
+
+    "sensor multi-selection snapshots selected keys in DOM order" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                val itemB = root.querySelector("#item-b")
+                itemA.setAttribute("data-kyo-drag-selected", "true")
+                itemB.setAttribute("data-kyo-drag-selected", "true")
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Enter")))
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Tab")))
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Enter")))
+                val sort = events.collect { case e: UIEvent.SortMove => e }
+                assert(sort.size == 1)
+                assert(sort.head.move.keys == Chunk("a", "b"))
+                assert(sort.head.move.destination == Drag.Location("list-two"))
+                discard(itemB.dispatchEvent(sensorEvent("keydown", itemB, key = "Escape")))
+                runtime.resolve(sort.head.sessionId, Drag.Decision.Accept)
+                assert(runtime.activeSessions == 0)
+            }
+        }
+    }
+
+    "sensor session cancels when the source is removed" in {
+        sensorFixture { (root, runtime, events, hit, frames, timing) =>
+            Sync.defer {
+                val itemA = root.querySelector("#item-a")
+                discard(itemA.dispatchEvent(sensorEvent("keydown", itemA, key = "Enter")))
+                assert(runtime.stateName == "Dragging")
+                itemA.remove()
+                timing.checkAt(1000)
+                assert(runtime.stateName == "Idle")
+                val ends = events.collect { case e: UIEvent.DragEnd => e }
+                assert(ends.size == 1)
+                assert(ends.head.event.cancelled)
+                assert(runtime.liveRegions == 0)
+                assert(runtime.activeFrames == 0)
+            }
+        }
     }
 
 end DomDragRuntimeTest

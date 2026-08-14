@@ -480,7 +480,9 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         val target = DragProtocol.TargetConfig(
             "target",
             DragProtocol.AcceptConfig(Set(" IMAGE/* "), Drag.AllowedOperations.all, Absent, Absent, directories = false),
-            Absent
+            Absent,
+            Drag.Orientation.Vertical,
+            Drag.Collision.ClosestEdge
         )
         val collidingTarget = DragProtocol.TargetConfig(
             "target",
@@ -491,7 +493,9 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                 Absent,
                 directories = false
             ),
-            Absent
+            Absent,
+            Drag.Orientation.Vertical,
+            Drag.Collision.ClosestEdge
         )
         val invalidExact = DragProtocol.ClientMessage.Event(
             UIEvent.DragStart(

@@ -315,16 +315,19 @@ object Drag:
     final case class Target(
         key: String,
         accepts: Accept,
-        label: Maybe[String] = Absent
+        label: Maybe[String] = Absent,
+        orientation: Orientation = Orientation.Vertical,
+        collision: Collision = Collision.ClosestEdge
     ) derives CanEqual, Schema
 
     object Target:
         /** Creates a target for pure keyed reordering that accepts only the reserved sortable media
           * type. The target `key` names the collection: it is the value sort moves carry in
-          * [[Location.collection]] for this container.
+          * [[Location.collection]] for this container. `orientation` drives sensor placement: it
+          * selects the axis for before/after midpoint tests and keyboard arrow navigation.
           */
-        def sortable(collection: String, label: Maybe[String] = Absent): Target =
-            Target(collection, Accept.types(MediaTypePattern.exact(sortableMediaType)), label)
+        def sortable(collection: String, label: Maybe[String] = Absent, orientation: Orientation = Orientation.Vertical): Target =
+            Target(collection, Accept.types(MediaTypePattern.exact(sortableMediaType)), label, orientation)
     end Target
 
     /** Per-item rules declared by a drop target.
@@ -426,6 +429,12 @@ object Drag:
     // --- Internal matching ---
 
     private val sortableMediaType: MediaType = "application/x-kyo-sortable"
+
+    /** True when the acceptance rules admit the reserved sortable payload; sensor runtimes use this
+      * to route drops as semantic sort moves instead of plain drops.
+      */
+    private[kyo] def acceptsSortablePayload(accept: Accept): Boolean =
+        accept.mediaTypes.contains(MediaTypePattern.exact(sortableMediaType))
 
     private val uriMediaType: MediaType = "text/uri-list"
 

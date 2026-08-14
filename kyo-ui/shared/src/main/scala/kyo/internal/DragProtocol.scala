@@ -176,7 +176,9 @@ private[kyo] object DragProtocol:
     final private[kyo] case class TargetConfig(
         key: String,
         accepts: AcceptConfig,
-        label: Maybe[String]
+        label: Maybe[String],
+        orientation: Drag.Orientation,
+        collision: Drag.Collision
     ) derives CanEqual, Schema
 
     /** Decoded target configuration paired with its validated domain acceptance rules. */
@@ -361,7 +363,9 @@ private[kyo] object DragProtocol:
                         maxFileSize,
                         accepts.directories
                     ),
-                    target.label
+                    target.label,
+                    target.orientation,
+                    target.collision
                 )
             )
             .flatMap { config =>

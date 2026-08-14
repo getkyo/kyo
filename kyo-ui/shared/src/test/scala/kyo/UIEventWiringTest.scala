@@ -140,7 +140,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val expectedSourceJson =
             """{"key":"source\"&<key>","items":[{"Text":{"representations":{"text/plain":"card\"&<text>"}}}],"operations":{"values":[{"Copy":{}}]},"label":"source\"&<label>","handle":true,"preview":{"Label":{"value":"preview\"&<label>"}},"activation":{"Both":{}}}"""
         val expectedTargetJson =
-            """{"key":"target\"&<key>","accepts":{"mediaTypes":["text/plain"],"operations":{"values":[{"Copy":{}}]},"maxItems":2,"directories":true},"label":"target\"&<label>"}"""
+            """{"key":"target\"&<key>","accepts":{"mediaTypes":["text/plain"],"operations":{"values":[{"Copy":{}}]},"maxItems":2,"directories":true},"label":"target\"&<label>","orientation":{"Vertical":{}},"collision":{"ClosestEdge":{}}}"""
 
         assert(ui.attrs.dragSource == Present(source))
         assert(ui.attrs.dropTarget == Present(target))
@@ -977,7 +977,9 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val invalidTargetMedia = DragProtocol.TargetConfig(
             "media",
             DragProtocol.AcceptConfig(Set("not-a-media-type"), Drag.AllowedOperations.all, Absent, Absent, directories = false),
-            Absent
+            Absent,
+            Drag.Orientation.Vertical,
+            Drag.Collision.ClosestEdge
         )
         val invalidTargetCount = Drag.Target(
             "count",
