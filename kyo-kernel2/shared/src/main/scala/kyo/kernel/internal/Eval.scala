@@ -84,14 +84,30 @@ object Eval:
                     throw ex
 
         def settle(f: Stack.Entry, settled: Any < Nothing): Any < Nothing =
+            var applied: Any = f
             try
                 f match
-                    case at: Arrow.AndThen[?, ?, ?, ?] =>
-                        stack.push(at.b)
-                        stack.push(at.a)
-                        settled
                     case a: Arrow[Any, Any, Nothing] @unchecked =>
-                        val step = a.step
+                        // the contiguous arrow run below rides in the tail, so the whole
+                        // run applies through the nested protocol in one iteration and a
+                        // pending value mid-run carries the unconsumed rest by reference.
+                        // The fold runs upward so each transform chains as a right-nested
+                        // Step; the run stops at the base and at region entries
+                        val top = stack.size
+                        var i   = top
+                        while i > base && stack(i - 1).isInstanceOf[Arrow[?, ?, ?]] do i -= 1
+                        var whole = a
+                        if i < top then
+                            var acc = stack(i).asInstanceOf[Arrow[Any, Any, Nothing]]
+                            var j   = i + 1
+                            while j < top do
+                                acc = stack(j).asInstanceOf[Arrow[Any, Any, Nothing]].chain(acc)
+                                j += 1
+                            stack.truncate(i)
+                            whole = a.chain(acc)
+                            applied = whole
+                        end if
+                        val step = whole.step
                         step.head(settled, step.tail)
                     case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                         h.complete(Nested.unnest[Any](settled))
@@ -101,8 +117,10 @@ object Eval:
                         bug(s"eval stack corruption: cannot settle a value against frame $f")
             catch
                 case ex: Throwable =>
-                    EffectTrace.attach(ex, suspended, f, stack, base)
+                    EffectTrace.attach(ex, suspended, applied, stack, base)
                     throw ex
+            end try
+        end settle
 
         var cur: Any < Nothing = v
         var running            = true
