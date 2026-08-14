@@ -208,7 +208,10 @@ object Scope:
                                                 .map(promise.becomeDiscard)
                             }
 
-                        def await(using Frame): Unit < Async = promise.get
+                        // Awaits through a masked view: joining the promise directly would register the awaiting
+                        // fiber's interrupt cascade on it, and an interrupt landing mid-drain would follow the
+                        // link into the finalizer fiber and abandon the finalizers that have not run yet.
+                        def await(using Frame): Unit < Async = promise.mask.map(_.get)
                 end init
             end Unsafe
         end Awaitable

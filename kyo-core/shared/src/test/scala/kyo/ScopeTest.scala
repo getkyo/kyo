@@ -536,6 +536,32 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
+        "interrupt during an in-flight finalizer drain still runs remaining finalizers" in {
+            for
+                drainStarted <- Promise.init[Unit, Any]
+                releaseDrain <- Promise.init[Unit, Any]
+                events       <- AtomicRef.init(Chunk.empty[String])
+                fiber <- Fiber.initUnscoped(Scope.run {
+                    Scope.ensure(events.updateAndGet(_.append("first")).unit)
+                        .andThen(Scope.ensure(
+                            drainStarted.completeUnitDiscard
+                                .andThen(releaseDrain.get)
+                                .andThen(events.updateAndGet(_.append("second")).unit)
+                        ))
+                        .andThen(42)
+                })
+                _           <- drainStarted.get
+                interrupted <- fiber.interrupt
+                _           <- releaseDrain.completeUnit
+                result      <- fiber.getResult
+                order       <- events.get
+            yield
+                assert(interrupted)
+                assert(result.isPanic)
+                assert(order == Chunk("second", "first"))
+            end for
+        }
+
         "finds the owning task through a propagated interceptor chain" in {
             val passthrough = new Safepoint.Interceptor:
                 def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = ()
