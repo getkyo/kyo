@@ -91,45 +91,6 @@ object ContainerPredef:
         )
     end isForkPressure
 
-    /** Create a scoped fixture container, retrying create+start+health through transient host fork pressure.
-      *
-      * A DB image's init fork burst can momentarily exhaust a constrained rootless runner's fork capacity: the container's own PID 1
-      * (catatonit) then fails to spawn the entrypoint and the container dies at start, which no health-check retry can recover. Because
-      * [[Container.initUnscoped]] force-removes a container that fails to start or pass its health check, re-running it after a short wait
-      * (once the burst has passed) starts cleanly. On success the container is registered for force-removal on the surrounding `Scope`,
-      * matching [[Container.init]]'s teardown contract. Non-fork failures propagate on the first attempt.
-      */
-    private[kyo] def initWithForkRetry(config: Container.Config)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
-        val schedule = Schedule.fixed(3.seconds).take(10)
-        def forkText(e: Throwable): String =
-            val self =
-                try Option(e.getMessage).getOrElse("")
-                catch case scala.util.control.NonFatal(_) => ""
-            val cause = Option(e.getCause).filter(_ ne e).fold("")(forkText)
-            s"$self $cause"
-        end forkText
-        def go(remaining: Schedule): Container < (Async & Abort[ContainerException]) =
-            Abort.run[ContainerException](Container.initUnscoped(config)).map {
-                case Result.Success(c) => c
-                case Result.Failure(e) if isForkPressure(forkText(e)) =>
-                    Clock.now.map { now =>
-                        remaining.next(now) match
-                            case Present((delay, next)) => Async.sleep(delay).andThen(go(next))
-                            case Absent                 => Abort.fail[ContainerException](e)
-                    }
-                case Result.Failure(e) => Abort.fail[ContainerException](e)
-                case Result.Panic(t)   => Abort.panic[ContainerException](t)
-            }
-        go(schedule).map { c =>
-            // Bind the creating client for teardown (see Container.init) and reap the fixture's anonymous volumes.
-            HttpClient.use { boundClient =>
-                Scope.ensure {
-                    HttpClient.let(boundClient)(Abort.run[ContainerException](c.remove(force = true, removeVolumes = true)).unit)
-                }.andThen(c)
-            }
-        }
-    end initWithForkRetry
-
     /** Best-effort container post-mortem: its terminal state (status + exit code) and the tail of its own logs. A
       * flaky database fixture that dies or never becomes ready otherwise surfaces only as an opaque "already stopped"
       * or "readiness did not pass"; the container's own stderr is what names the cause (an OOM-exit, a failed init, a
@@ -269,7 +230,7 @@ object ContainerPredef:
 
         /** Start a Postgres container scoped to the surrounding `Scope` — it is stopped and removed when the scope closes. */
         def init(config: Config = Config.default)(using Frame): Postgres < (Async & Abort[ContainerException] & Scope) =
-            initWithForkRetry(buildContainerConfig(config)).map(c => new Postgres(c, config))
+            Container.init(buildContainerConfig(config)).map(c => new Postgres(c, config))
 
         /** Start a Postgres container without scope-managed cleanup. The caller is responsible for stopping it. */
         def initUnscoped(config: Config = Config.default)(using Frame): Postgres < (Async & Abort[ContainerException]) =
@@ -402,7 +363,7 @@ object ContainerPredef:
           */
         def init(config: Config = Config.default)(using Frame): MySQL < (Async & Abort[ContainerException] & Scope) =
             validateConfig(config).andThen {
-                initWithForkRetry(buildContainerConfig(config)).map(c => new MySQL(c, config))
+                Container.init(buildContainerConfig(config)).map(c => new MySQL(c, config))
             }
 
         /** Start a MySQL container without scope-managed cleanup. The caller is responsible for stopping it. Fails with
@@ -580,7 +541,7 @@ object ContainerPredef:
 
         /** Start a MongoDB container scoped to the surrounding `Scope` — it is stopped and removed when the scope closes. */
         def init(config: Config = Config.default)(using Frame): MongoDB < (Async & Abort[ContainerException] & Scope) =
-            initWithForkRetry(buildContainerConfig(config)).map(c => new MongoDB(c, config))
+            Container.init(buildContainerConfig(config)).map(c => new MongoDB(c, config))
 
         /** Start a MongoDB container without scope-managed cleanup. The caller is responsible for stopping it. */
         def initUnscoped(config: Config = Config.default)(using Frame): MongoDB < (Async & Abort[ContainerException]) =
