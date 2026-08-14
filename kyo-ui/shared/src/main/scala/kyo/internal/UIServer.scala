@@ -114,17 +114,27 @@ private[kyo] object UIServer:
     )(using
         Frame
     ): Unit < Async =
+        def dispatch(event: UIEvent): Unit < Async =
+            DragProtocol.validateEventAndDomain(event, DragProtocol.Limits.default) match
+                case Result.Success(validated) => handle(event.path, validated).unit
+                case _                         => ()
         payload match
             case HttpWebSocket.Payload.Text(data) =>
                 Json.decode[UIEvent](data) match
-                    case Result.Success(event) =>
-                        DragProtocol.validateEventAndDomain(event, DragProtocol.Limits.default) match
-                            case Result.Success(validated) => handle(event.path, validated).unit
-                            case _                         => ()
-                    // A malformed inbound frame (DecodeException) is dropped: a buggy client must not be able to tear
-                    // down the session. A Panic is a decoder defect, not bad input, and must propagate.
-                    case Result.Failure(_) => ()
-                    case Result.Panic(ex)  => Abort.panic(ex)
+                    case Result.Success(event) => dispatch(event)
+                    // Not a bare event: the drag runtime posts ClientMessage envelopes; unwrap Event values and
+                    // leave file transfer messages to the file service. A malformed inbound frame is dropped: a
+                    // buggy client must not be able to tear down the session. A Panic is a decoder defect, not
+                    // bad input, and must propagate.
+                    case Result.Failure(_) =>
+                        Json.decode[DragProtocol.ClientMessage](data) match
+                            case Result.Success(DragProtocol.ClientMessage.Event(event)) => dispatch(event)
+                            case Result.Success(_)                                       => ()
+                            case Result.Failure(_)                                       => ()
+                            case Result.Panic(ex)                                        => Abort.panic(ex)
+                    case Result.Panic(ex) => Abort.panic(ex)
             case HttpWebSocket.Payload.Binary(_) => ()
+        end match
+    end dispatchEvent
 
 end UIServer

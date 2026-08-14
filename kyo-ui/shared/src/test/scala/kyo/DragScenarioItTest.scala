@@ -7,6 +7,7 @@ import demo.InventoryGridDemo.Row
 import demo.KanbanDemo
 import demo.KanbanDemo.Board
 import demo.KanbanDemo.Card
+import kyo.UI.foreachKeyed
 import kyo.internal.DragCommands
 import kyo.internal.DragProtocol
 import kyo.internal.ReactiveRegion
@@ -21,7 +22,7 @@ import kyo.internal.UIExchange
   * decisions resolved through DragCommands. The pointer and keyboard sensors both emit the same wire events, so the
   * scenarios cover every sensor path the server can observe.
   */
-class DragScenarioItTest extends kyo.test.Test[Any]:
+class DragScenarioItTest extends UITest:
 
     override def config = super.config.sequential
 
@@ -353,5 +354,89 @@ class DragScenarioItTest extends kyo.test.Test[Any]:
             assert(programmatic.map(_.rows.map(_.id)) == Result.succeed(Chunk("r2", "r1", "r3")))
             assert(programmatic.map(_.columns) == Result.succeed(inventory.columns))
         }
+    }
+
+    // --- Embedded server-push runtime, real Chrome ---
+
+    private def sortableApp(state: SignalRef[Chunk[String]])(using Frame): UI =
+        val commit: Drag.Move => Drag.Decision < Async = m =>
+            state.get.map { current =>
+                Drag.Decision.fromResult(Sortable.move(current, current, m).map(_._1))(updated => state.set(updated))
+            }
+        UI.div.onSortMove(commit)(
+            UI.ul.id("list").dropTarget(Drag.Target.sortable("list"))(
+                state.map(identity).foreachKeyed(identity)(k =>
+                    UI.li(k).id(s"it-$k").tabIndex(0).dragSource(Drag.Source.sortable(k, Present(k)))
+                )
+            ),
+            state.map(items => UI.span(items.mkString(",")).id("order"))
+        )
+    end sortableApp
+
+    private val pointerDragJs =
+        """(function(){
+          |function fire(el,t,x,y){el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1}));}
+          |var a=document.getElementById("it-a");
+          |var c=document.getElementById("it-c");
+          |var ar=a.getBoundingClientRect();var cr=c.getBoundingClientRect();
+          |fire(a,"pointerdown",ar.left+4,ar.top+4);
+          |fire(a,"pointermove",ar.left+4,ar.top+24);
+          |fire(a,"pointermove",cr.left+4,cr.top+cr.height*0.8);
+          |return true;})()""".stripMargin
+
+    private val pointerDropJs =
+        """(function(){
+          |function fire(el,t,x,y){el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1}));}
+          |var c=document.getElementById("it-c");var cr=c.getBoundingClientRect();
+          |fire(c,"pointerup",cr.left+4,cr.top+cr.height*0.8);
+          |return true;})()""".stripMargin
+
+    "embedded pointer drag reorders the served list" in {
+        for
+            state <- Signal.initRef(Chunk("a", "b", "c"))
+            _ <- withUI(sortableApp(state)) {
+                for
+                    _ <- Browser.evalBoolean(pointerDragJs)
+                    // The runtime coalesces moves on an animation frame; the CDP round trip between the two
+                    // evals guarantees at least one frame has run before the drop.
+                    _ <- Browser.evalBoolean(pointerDropJs)
+                    _ <- Browser.assertText(Browser.Selector.id("order"), "b,c,a")
+                yield ()
+            }
+            order <- state.get
+        yield assert(order == Chunk("b", "c", "a"))
+    }
+
+    "embedded keyboard drag matches the pointer result" in {
+        for
+            state <- Signal.initRef(Chunk("a", "b", "c"))
+            _ <- withUI(sortableApp(state)) {
+                for
+                    _ <- Browser.click(Browser.Selector.id("it-a"))
+                    _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.Enter)
+                    _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.ArrowDown)
+                    _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.ArrowDown)
+                    _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.Enter)
+                    _ <- Browser.assertText(Browser.Selector.id("order"), "b,c,a")
+                yield ()
+            }
+            order <- state.get
+        yield assert(order == Chunk("b", "c", "a"))
+    }
+
+    "embedded Escape leaves the server state unchanged" in {
+        for
+            state <- Signal.initRef(Chunk("a", "b", "c"))
+            _ <- withUI(sortableApp(state)) {
+                for
+                    _ <- Browser.click(Browser.Selector.id("it-a"))
+                    _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.Enter)
+                    _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.ArrowDown)
+                    _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.Escape)
+                    _ <- Browser.assertText(Browser.Selector.id("order"), "a,b,c")
+                yield ()
+            }
+            order <- state.get
+        yield assert(order == Chunk("a", "b", "c"))
     }
 end DragScenarioItTest

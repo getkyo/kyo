@@ -1168,9 +1168,15 @@ private[kyo] object HtmlRenderer:
            |$reactiveRangesJs
            |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
            |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
+           |${DragClientJs.script(basePath)}
+           |var __dragRt=installDragRuntime(function(m){post(m);},{onClose:function(c){__dragCleanup=c;}});
+           |var __dragCleanup=__dragRt.cleanup;
+           |ws.onclose=function(){if(__dragCleanup){__dragCleanup();__dragCleanup=null;}};
            |ws.onmessage=function(e){
            |  var op=JSON.parse(e.data);
-           |  if(op.ReplaceRange){
+           |  if(op.ResolveDrag){
+           |    try{__dragRt.resolve(op.ResolveDrag.sessionId,op.ResolveDrag.decision);}catch(error){kyoClientError(error);}
+           |  }else if(op.ReplaceRange){
            |    try{kyoRangeReplace(op.ReplaceRange.regionId,op.ReplaceRange.html);}catch(error){kyoClientError(error);}
            |  }else if(op.Replace){
            |    var p=op.Replace.path.join(".");
