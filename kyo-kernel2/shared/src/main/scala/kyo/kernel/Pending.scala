@@ -13,9 +13,7 @@ object `<` extends Implicits:
 
     // the representation stays sealed: nodes convert privately instead of
     // publishing Kyo as a subtype of < through a lower bound
-    implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
-
-    private val unitValue: Unit < Any = ()
+    implicit inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
 
     extension [A, S](self: A < S)
 
@@ -39,7 +37,7 @@ object `<` extends Implicits:
                         val res  = Kyo.unnest(v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, arrow.chain(next))
+                            Kyo.defer(v, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head(f(res), step.tail)
@@ -48,7 +46,7 @@ object `<` extends Implicits:
                         end if
                 end match
             end run
-            run(self: A < S, Arrow[B])
+            run(self, Arrow[B])
         end map
 
         @nowarn("msg=anonymous")
@@ -67,7 +65,7 @@ object `<` extends Implicits:
                         val res  = Kyo.unnest(v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, arrow.chain(next))
+                            Kyo.defer(v, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head(f(res), step.tail)
@@ -94,7 +92,7 @@ object `<` extends Implicits:
                         // the value is discarded, so it stays boxed
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, arrow)
+                            Kyo.defer(v, arrow)
                         else
                             val step = next.step
                             val out  = step.head(f, step.tail)
@@ -121,10 +119,10 @@ object `<` extends Implicits:
                         // the value is discarded, so it stays boxed
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, arrow)
+                            Kyo.defer(v, arrow)
                         else
                             val step = next.step
-                            val out  = step.head(`<`.unitValue, step.tail)
+                            val out  = step.head((), step.tail)
                             Safepoint.exit(slot)
                             out
                         end if
@@ -282,7 +280,7 @@ object `<` extends Implicits:
                         val res  = Kyo.unnest(v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Kyo.Defer(v, arrow)
+                            Kyo.defer(v, arrow)
                         else
                             val step = next.step
                             val out  = step.head(res, step.tail)

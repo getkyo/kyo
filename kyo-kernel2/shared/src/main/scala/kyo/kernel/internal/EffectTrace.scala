@@ -12,15 +12,10 @@ import scala.util.control.NoStackTrace
 
 /** The effect-level frames of a failure, carried as a suppressed exception on the failure itself.
   *
-  * The frames are not recorded while the computation runs. They are reconstructed at the boundary the exception crosses, from the
-  * continuation chain and the region stack the evaluator is already holding, so nothing is paid when nothing throws. The carrier exists for
-  * three reasons and no others: its presence among `getSuppressed` marks an exception as already enriched, it accumulates the
-  * reconstructions of every boundary an exception crosses, and `getMessage` renders them for a reader that would rather not parse a stack
-  * trace.
-  *
-  * The elements are already synthesized: a reconstruction is written once and never revised, so there is no cursor. `physical` is the
-  * exception's own stack trace with the kernel's plumbing filtered out, captured the first time the trace is spliced so a second splice at
-  * an outer boundary rewrites rather than duplicates.
+  * The frames are not recorded while the computation runs. They are reconstructed at the boundary the exception crosses, from the failing
+  * value and the drive stack the evaluator is already holding, so nothing is paid when nothing throws. The carrier exists for three reasons
+  * and no others: its presence among `getSuppressed` marks an exception as already enriched, it accumulates the reconstructions of every
+  * boundary an exception crosses, and `getMessage` renders them for a reader that would rather not parse a stack trace.
   */
 final private[kyo] class EffectTrace extends Exception(null, null, false, false):
 
@@ -45,16 +40,16 @@ private[kyo] object EffectTrace:
 
     private val noElements = new Array[StackTraceElement](0)
 
-    /** Reconstructs the frames around a failing node and appends them to the exception's carrier.
+    /** Reconstructs the frames around a failing value and appends them to the exception's carrier.
       *
-      * `v` is the value the evaluator was dispatching and `hs` its region stack, both ordinary parameters of the loop that caught the
-      * throw. A fatal error is returned unmodified: the test lives here rather than in a catch guard so that every guarded arm rethrows
-      * unconditionally and propagation is the same for every exception.
+      * `v` is what the evaluator was working on when the throw crossed it, either the current node or the frame just popped, and the sweep
+      * over the drive stack from its top down to `base` adds the pending continuation of the whole drive: user transforms with their source
+      * positions and handle frames as region labels.
       */
-    def attach(ex: Throwable, v: Any, hs: Handlers): Unit =
+    def attach(ex: Throwable, v: Any, stack: Stack, base: Int): Unit =
         reconstruct(ex) { builder =>
-            builder.node(v)
-            builder.cells(hs)
+            builder.value(v)
+            builder.entries(stack, base)
         }
 
     /** The frame-only boundary: `Effect.catching`'s outer arm, where the guarded computation has already been consumed and only the
@@ -75,7 +70,7 @@ private[kyo] object EffectTrace:
 
     /** Runs one reconstruction into the exception's carrier.
       *
-      * A fatal error is returned unmodified: the test lives here rather than in a catch guard so that every guarded arm rethrows
+      * A fatal error is returned unmodified: the test lives here rather than in a catch guard so that every guarded site rethrows
       * unconditionally and propagation is the same for every exception. A non-fatal failure of the walk itself is dropped, because an
       * exception raised while describing a failure would replace the failure, which is strictly worse than describing nothing.
       */
@@ -93,9 +88,8 @@ private[kyo] object EffectTrace:
     /** Writes the accumulated frames into the exception's stack trace, synthesized frames first, then the physical trace with the kernel's
       * plumbing removed.
       *
-      * Leading with the synthesized frames means there is no splice position to locate, which is what the old kernel searched for by
-      * matching file name and line number and what made that search fail on JS. `NoStackTrace` keeps its carrier and skips the splice: the
-      * frames stay readable as data on a value that deliberately has no stack.
+      * Leading with the synthesized frames means there is no splice position to locate. `NoStackTrace` keeps its carrier and skips the
+      * splice: the frames stay readable as data on a value that deliberately has no stack.
       */
     def splice(ex: Throwable): Unit =
         if NonFatal(ex) && !ex.isInstanceOf[NoStackTrace] then
@@ -117,13 +111,11 @@ private[kyo] object EffectTrace:
 
     /** The kernel's own frames, which say only that a computation was being evaluated.
       *
-      * The per-site `Arrow.Transform` a user's `map` mints is an anonymous class in the user's own compilation unit carrying the user's line
-      * numbers, so it is the most informative physical frame present and is never filtered.
+      * The per-site `Arrow.Transform` a user's `map` mints is an anonymous class in the user's own compilation unit carrying the user's
+      * line numbers, so it is the most informative physical frame present and is never filtered.
       */
     private def isPlumbing(e: StackTraceElement): Boolean =
-        val cls = e.getClassName
-        cls.startsWith("kyo.kernel.") || cls.startsWith("kyo.Arrow")
-    end isPlumbing
+        e.getClassName.startsWith("kyo.kernel.") || e.getClassName.startsWith("kyo.Arrow")
 
     private def find(ex: Throwable): Maybe[EffectTrace] =
         val suppressed = ex.getSuppressed
@@ -147,7 +139,7 @@ private[kyo] object EffectTrace:
     /** The reconstruction walk.
       *
       * The cap is the walk's stack-safe carrier: emission stops at it and the worklist never holds more than that many arrows, so a chain or
-      * a region stack of any depth is bounded, and nothing recurses on the Java stack. The worklist is local rather than
+      * a drive stack of any depth is bounded, and nothing recurses on the Java stack. The worklist is local rather than
       * `Arrow.AndThen.step`'s shared scratch, and `step` is never called: it clears a buffer another in-flight step on this thread may own
       * and mints a `Step` per node in the chain, on a path that is already handling a failure.
       */
@@ -177,7 +169,7 @@ private[kyo] object EffectTrace:
                 end if
         end frame
 
-        /** Emits one region label. A handler cell carries no source position, only the effect it answers. */
+        /** Emits one region label. A handle frame carries no source position, only the effect it answers. */
         def region[E](tag: Tag[E]): Unit =
             if full then dropped += 1
             else
@@ -187,38 +179,32 @@ private[kyo] object EffectTrace:
             end if
         end region
 
-        /** The value role.
-          *
-          * `map` mints objects that are simultaneously an `Arrow.AndThen` and a `Kyo` node, so the walk is entered with a declared role and
-          * matches only the shapes of that role. As a value, the object is its node: the operation's own frame and its pending
-          * continuation. Conflating the two roles double-counts.
+        /** One value in either of its roles. The roles are structurally disjoint in this kernel: arrows are never nodes and nodes are never
+          * arrows, so a single dispatch cannot double-count.
           */
-        def node(v: Any): Unit =
+        def value(v: Any): Unit =
             v match
-                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] @unchecked =>
+                case a: Arrow[?, ?, ?] =>
+                    arrow(a)
+                case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
                     frame(s.frame)
-                    arrow(s.cont)
-                case d: Kyo.Defer[?, ?, ?] @unchecked =>
+                case d: Kyo.Defer[?, ?, ?] =>
                     arrow(d.cont)
-                case h: Kyo.Handled[?, ?, ?, ?, ?, ?, ?] @unchecked =>
-                    region(h.handler.tag)
-                    arrow(h.exit)
-                case h: Kyo.HandledState[?, ?, ?, ?, ?, ?, ?, ?, ?] @unchecked =>
-                    region(h.handler.tag)
-                    arrow(h.exit)
-                case h: Kyo.HandledFirst[?, ?, ?, ?, ?, ?, ?, ?, ?] @unchecked =>
-                    region(h.handler.tag)
-                    arrow(h.exit)
+                case h: Kyo.HandleCont[?, ?, ?, ?, ?, ?] =>
+                    region(h.tag)
+                case h: Kyo.HandleLoop[?, ?, ?, ?, ?, ?] =>
+                    region(h.tag)
                 case _ => ()
-        end node
+        end value
 
-        /** The regions, innermost first: the label of each entered handler and the steps its exit would have run. */
-        @tailrec def cells(hs: Handlers): Unit =
-            if !full && (hs ne Handlers.Empty) then
-                region(hs.tag)
-                arrow(hs.exit)
-                cells(hs.prev)
-        end cells
+        /** The pending continuation of the drive, innermost first: every entry from the stack's top down to the drive's base. */
+        def entries(stack: Stack, base: Int): Unit =
+            @tailrec def loop(i: Int): Unit =
+                if !full && i >= base then
+                    value(stack(i))
+                    loop(i - 1)
+            loop(stack.size - 1)
+        end entries
 
         /** The arrow role: the steps of one chain, in the order they would have run. */
         def arrow(a: Arrow[?, ?, ?]): Unit =

@@ -4,7 +4,7 @@ import kyo.Render
 import kyo.kernel.internal.*
 import scala.language.implicitConversions
 
-private[kernel] trait Implicits:
+trait Implicits:
 
     // the evidence is the lint alone, resolved where the conversion is written
     // and baked, so a generic context is waived and stays sound through the

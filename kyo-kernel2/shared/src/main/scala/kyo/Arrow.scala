@@ -1,8 +1,7 @@
 package kyo
 
-import kyo.kernel.*
-import kyo.kernel.`<`.fromKyo
-import kyo.kernel.Implicits.liftInternal
+import kyo.Frame
+import kyo.kernel.<
 import scala.annotation.nowarn
 import scala.annotation.static
 import scala.annotation.tailrec
@@ -11,9 +10,9 @@ import scala.collection.mutable.ArrayDeque
 sealed abstract class Arrow[-A, +B, -S]:
     self =>
 
-    def apply(v: A): B < S
-
     def step: Arrow.Step[A, B, S]
+
+    def isIdentity: Boolean = self eq Arrow.identity
 
     final def chain[C, S2](next: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
         if self eq Arrow.identity then next.asInstanceOf[Arrow[A, C, S & S2]]
@@ -28,7 +27,7 @@ end Arrow
 
 object Arrow:
 
-    def apply[A]: Arrow.Step[A, A, Any] = identity.asInstanceOf[Arrow.Step[A, A, Any]]
+    def apply[A]: Arrow[A, A, Any] = identity.asInstanceOf[Arrow[A, A, Any]]
 
     @static private val identity: Transform[Any, Any, Any] =
         new Transform[Any, Any, Any]:
@@ -39,20 +38,11 @@ object Arrow:
                     val step = next.step
                     step.head(v, step.tail)
 
-    @static private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
-        new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
-            override def initialValue() = new ArrayDeque
-
     abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
         type X
         def head: Transform[A, X, S]
         def tail: Arrow[X, B, S]
         final def step = this
-
-        // renders the shape plus the first transform's frame only: composed
-        // chains can be arbitrarily large and walking them from toString has
-        // broken tools that stringify values, like kyo-test
-        override def toString: String = s"Arrow.Step(${head.frameInfo})"
     end Step
 
     object Step:
@@ -60,35 +50,24 @@ object Arrow:
         private[Arrow] def apply[A, B, C, S](h: Transform[A, B, S], t: Arrow[B, C, S]): Step[A, C, S] =
             new Step[A, C, S]:
                 type X = B
-                val head        = h
-                val tail        = t
-                def apply(v: A) = head(v, tail)
+                val head = h
+                val tail = t
     end Step
 
     abstract class Transform[-A, B, -S] extends Step[A, B, S]:
         type X = B
         def frame: Frame
         final def head = this
-        final def tail = identity.asInstanceOf[Step[B, B, S]]
-
-        final def apply(v: A) =
-            apply(v, Arrow[B])
+        final def tail = Arrow[B]
 
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
-
-        private[Arrow] def frameInfo: String =
-            if this eq identity then "identity"
-            else s"${frame.position.show}, ${frame.snippetShort}"
-
-        override def toString: String = s"Arrow($frameInfo)"
     end Transform
 
-    private[kyo] class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
+    private val scratch: ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]] =
+        new ThreadLocal[ArrayDeque[Arrow[?, ?, ?]]]:
+            override def initialValue() = new ArrayDeque
 
-        def apply(v: A) =
-            this.step(v)
-
-        override def toString: String = s"Arrow.AndThen($a, $b)"
+    class AndThen[-A, B, +C, -S](val a: Arrow[A, B, S], val b: Arrow[B, C, S]) extends Arrow[A, C, S]:
 
         def step =
             val buffer = scratch.get

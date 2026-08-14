@@ -1,8 +1,8 @@
-package kyo.kernel3.internal
+package kyo.kernel.internal
 
 import java.util.Arrays
+import kyo.Arrow
 import kyo.Tag
-import kyo.kernel3.*
 import scala.annotation.tailrec
 
 final private[internal] class Stack:
