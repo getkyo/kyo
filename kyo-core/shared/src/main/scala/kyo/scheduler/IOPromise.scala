@@ -248,7 +248,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
             }
 
     final private def mergeInterrupting(error: Error[E], callbacks: Pending[E, A]): Unit =
-        mergeRetainedInterrupting(callbacks.requestInterrupt(error))
+        mergeRetainedInterrupting(Pending.requestInterrupt(callbacks, error))
 
     @tailrec
     final private def mergeRetainedInterrupting(retained: Pending[E, A]): Unit =
@@ -383,7 +383,13 @@ private[kyo] object IOPromise:
 
         def waiters: Int
         def interrupt(v: Error[E]): Pending[E, A]
-        def requestInterrupt(v: Error[E]): Pending[E, A]
+
+        /** One step of the deferred-interrupt walk: perform this wrapper's side effect (cascade or
+          * notification), record any completion callback to retain in `retained`, and return the next
+          * link. Driven by [[Pending.requestInterrupt]]'s tail-recursive loop, never self-recursive,
+          * so arbitrarily long waiter chains use constant stack.
+          */
+        def requestInterrupt(v: Error[E], retained: Pending.Retained[E, A]): Pending[E, A]
         def removeInterrupt(other: IOPromise[?, ?]): Pending[E, A]
         def run(v: Result[E, A]): Pending[E, A]
 
@@ -393,8 +399,9 @@ private[kyo] object IOPromise:
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def requestInterrupt(error: Error[E]) =
-                    self.requestInterrupt(error).onComplete(f)
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
+                    retained.add(f)
+                    self
                 def removeInterrupt(other: IOPromise[?, ?]) =
                     self.removeInterrupt(other).onComplete(f)
                 def run(v: Result[E, A]) =
@@ -413,13 +420,13 @@ private[kyo] object IOPromise:
                     discard(p.interrupt(ex))
                     self
                 end interrupt
-                def requestInterrupt(error: Error[E]) =
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
                     val propagated =
                         error match
                             case panic: Result.Panic => panic
                             case _                   => interruptPanic
                     discard(p.interrupt(propagated))
-                    self.requestInterrupt(error)
+                    self
                 end requestInterrupt
                 def removeInterrupt(other: IOPromise[?, ?]) =
                     if p eq other then self
@@ -433,9 +440,9 @@ private[kyo] object IOPromise:
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def requestInterrupt(error: Error[E]) =
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
                     eval(discard(f(error)))
-                    self.requestInterrupt(error)
+                    self
                 def removeInterrupt(other: IOPromise[?, ?]) =
                     self.removeInterrupt(other).onInterrupt(f)
                 def waiters: Int = self.waiters + 1
@@ -460,9 +467,11 @@ private[kyo] object IOPromise:
                     case p: Pending[E, A]          => removeInterruptsLoop(p.removeInterrupt(other), other)
 
             new Pending[E, A]:
-                def waiters: Int                            = self.waiters + tail.waiters
-                def interrupt(error: Error[E])              = interruptLoop(self, error)
-                def requestInterrupt(error: Error[E])       = self.requestInterrupt(error).merge(tail.requestInterrupt(error))
+                def waiters: Int               = self.waiters + tail.waiters
+                def interrupt(error: Error[E]) = interruptLoop(self, error)
+                def requestInterrupt(error: Error[E], retained: Pending.Retained[E, A]) =
+                    Pending.requestInterruptLoop(self, error, retained)
+                    tail
                 def removeInterrupt(other: IOPromise[?, ?]) = removeInterruptsLoop(self, other)
                 def run(v: Result[E, A])                    = runLoop(self, v)
             end new
@@ -490,12 +499,44 @@ private[kyo] object IOPromise:
 
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
+
+        /** Collects the completion callbacks a deferred interrupt retains, in walk order. */
+        final class Retained[E, A]:
+            private val callbacks                 = ChunkBuilder.init[Result[E, A] => Any]
+            def add(f: Result[E, A] => Any): Unit = callbacks.addOne(f)
+
+            /** Rebuilds the retained chain so a later flush runs callbacks in the original order. */
+            def result(): Pending[E, A] =
+                val collected            = callbacks.result()
+                var chain: Pending[E, A] = Pending()
+                var index                = collected.size - 1
+                while index >= 0 do
+                    chain = chain.onComplete(collected(index))
+                    index -= 1
+                chain
+            end result
+        end Retained
+
+        /** Walks a whole waiter chain one requestInterrupt step at a time with constant stack. */
+        @tailrec private[IOPromise] def requestInterruptLoop[E, A](
+            p: Pending[E, A],
+            error: Error[E],
+            retained: Retained[E, A]
+        ): Unit =
+            if !(p eq Pending.Empty) then requestInterruptLoop(p.requestInterrupt(error, retained), error, retained)
+
+        /** Fires cascades and interrupt notifications now and returns the retained completion chain. */
+        private[IOPromise] def requestInterrupt[E, A](callbacks: Pending[E, A], error: Error[E]): Pending[E, A] =
+            val retained = new Retained[E, A]
+            requestInterruptLoop(callbacks, error, retained)
+            retained.result()
+        end requestInterrupt
         case object Empty extends Pending[Nothing, Nothing]:
-            def waiters: Int                            = 0
-            def interrupt(v: Error[Nothing])            = this
-            def requestInterrupt(v: Error[Nothing])     = this
-            def removeInterrupt(other: IOPromise[?, ?]) = this
-            def run(v: Result[Nothing, Nothing])        = this
+            def waiters: Int                                                                      = 0
+            def interrupt(v: Error[Nothing])                                                      = this
+            def requestInterrupt(v: Error[Nothing], retained: Pending.Retained[Nothing, Nothing]) = this
+            def removeInterrupt(other: IOPromise[?, ?])                                           = this
+            def run(v: Result[Nothing, Nothing])                                                  = this
         end Empty
     end Pending
 
