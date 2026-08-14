@@ -90,12 +90,11 @@ class EvalTest extends AnyFreeSpec:
     "stateful handleLoop threads state at the edge" in {
         def loop(i: Int, acc: List[Int]): List[Int] < Ask =
             if i < 3 then ask.map(a => loop(i + 1, a :: acc)) else acc.reverse
-        def run(v: List[Int] < Ask): (Int, List[Int]) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], 10, v)(
-                handle = [C] => (_, state, cont) => Loop.continue(state + 1, cont(state)),
-                done = (state, a) => (state, a)
-            )
-        assert(run(loop(0, Nil)).eval == (13, List(10, 11, 12)))
+        val r = ArrowEffect.handleLoop(Tag[Ask], 10, loop(0, Nil))(
+            handle = [C] => (_, state, cont) => Loop.continue(state + 1, cont(state)),
+            done = (state, a) => (state, a)
+        )
+        assert(r.eval == (13, List(10, 11, 12)))
     }
 
     "stateful handleLoop without done discards the state" in {
@@ -108,12 +107,11 @@ class EvalTest extends AnyFreeSpec:
     "foreign operations cross an inner region" in {
         val body  = say("a").andThen(ask).map(i => say(s"b$i").andThen(i + 1))
         val inner = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(7))
-        def run(v: Int < Say): (List[String], Int) < Any =
-            ArrowEffect.handleLoop(Tag[Say], List.empty[String], v)(
-                handle = [C] => (s, acc, cont) => Loop.continue(s :: acc, cont(())),
-                done = (acc, a) => (acc.reverse, a)
-            )
-        assert(run(inner).eval == (List("a", "b7"), 8))
+        val r = ArrowEffect.handleLoop(Tag[Say], List.empty[String], inner)(
+            handle = [C] => (s, acc, cont) => Loop.continue(s :: acc, cont(())),
+            done = (acc, a) => (acc.reverse, a)
+        )
+        assert(r.eval == (List("a", "b7"), 8))
     }
 
     "the innermost region of a tag answers" in {

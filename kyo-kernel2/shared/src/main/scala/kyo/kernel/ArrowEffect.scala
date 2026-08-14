@@ -68,7 +68,7 @@ object ArrowEffect:
     )(
         inline handle: [C] => (I[C], State, O[C] => A < (E & S & S2)) => Outcome2[State, A < (E & S & S2), A] < S2
     )(using inline _frame: Frame): A < (S & S2) =
-        handleLoop[I, O, E, A, A, S, S2, State](effectTag, state, v)(handle, (_, v) => v)
+        handleLoop[I, O, E, A, A, S, S2, State](effectTag, state, v)(done = (_, v) => v, handle = handle)
 
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
@@ -76,8 +76,8 @@ object ArrowEffect:
         state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], State, O[C] => A < (E & S & S2)) => Outcome2[State, A < (E & S & S2), B] < S2,
-        inline done: (State, A) => B < (S & S2)
+        inline done: (State, A) => B < (S & S2),
+        inline handle: [C] => (I[C], State, O[C] => A < (E & S & S2)) => Outcome2[State, A < (E & S & S2), B] < S2
     )(using inline _frame: Frame): B < (S & S2) =
         def loop(state: State, v: A < (E & S & S2)): B < (S & S2) =
             new Kyo.HandleCont[I, O, E, A, B, S & S2]:
