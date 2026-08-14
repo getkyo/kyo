@@ -45,20 +45,63 @@ object ContainerPredef:
                 // suite, e.g. kyo-sql, without a longer scoped timeout). Give the exec its own timeout covering the whole budget; on
                 // the shell backend the HttpClient config is inert. The in-container loop already retries the probe, so one exec suffices.
                 HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
-                    container.exec(cmd).map { r =>
-                        if r.isSuccess then Kyo.unit
-                        else
-                            Abort.fail[ContainerException](ContainerHealthCheckException(
-                                container.id,
-                                s"readiness probe did not pass within ${budget.toSeconds}s",
-                                attempts = 1,
-                                lastError = r.stderr.trim
-                            ))
+                    Abort.run[ContainerException](container.exec(cmd)).map {
+                        case Result.Success(r) if r.isSuccess => Kyo.unit
+                        case Result.Success(r) =>
+                            healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", r.stderr.trim)
+                        case Result.Failure(cause) =>
+                            // The readiness exec itself failed: most often the service's own container exited mid-boot (a database
+                            // that OOM-exits or fails init), which the daemon reports as a not-running container. Capture why.
+                            healthFailure(container, s"readiness exec failed: ${cause.getMessage}", "")
+                        case Result.Panic(t) => Abort.panic(t)
                     }
                 }
             def schedule: Schedule = Schedule.done
         end new
     end readinessLoop
+
+    /** Best-effort container post-mortem: its terminal state (status + exit code) and the tail of its own logs. A
+      * flaky database fixture that dies or never becomes ready otherwise surfaces only as an opaque "already stopped"
+      * or "readiness did not pass"; the container's own stderr is what names the cause (an OOM-exit, a failed init, a
+      * bad config). Both reads are guarded so a container that was already reaped yields a placeholder rather than
+      * masking the original failure with a secondary error.
+      */
+    private[kyo] def postMortem(container: Container)(using Frame): String < Async =
+        Abort.run[ContainerException](container.inspect).map { infoR =>
+            Abort.run[ContainerException](container.logsText(tail = 40)).map { logsR =>
+                val st = infoR match
+                    case Result.Success(i) => s"container state=${i.state} exitCode=${i.exitCode}"
+                    case _                 => "container state=unavailable"
+                val lg = logsR match
+                    case Result.Success(t) if t.trim.nonEmpty => s"; log tail: ${t.trim.linesIterator.toList.takeRight(20).mkString(" ⏎ ")}"
+                    case _                                    => "; logs unavailable"
+                s"$st$lg"
+            }
+        }
+
+    /** Raise a [[ContainerHealthCheckException]] enriched with the container's [[postMortem]]. Used by the predef
+      * fixtures so a flaky DB failure on a constrained runner is self-diagnosing rather than an opaque abort.
+      */
+    private[kyo] def healthFailure(container: Container, reason: String, probeError: String)(using
+        Frame
+    ): Nothing < (Async & Abort[ContainerException]) =
+        postMortem(container).map { diag =>
+            val detail = Chunk(probeError, diag).filter(_.nonEmpty).mkString(" | ")
+            Abort.fail[ContainerException](ContainerHealthCheckException(container.id, reason, attempts = 1, lastError = detail))
+        }
+
+    /** Run a fixture container operation, and on an abort (e.g. the container died and the daemon reports it not
+      * running) re-raise it enriched with the container's [[postMortem]]. Successful results (including a query that
+      * ran but returned a non-zero exit) pass through unchanged for the caller to assert on.
+      */
+    private[kyo] def withPostMortem[A](container: Container, op: String)(body: => A < (Async & Abort[ContainerException]))(using
+        Frame
+    ): A < (Async & Abort[ContainerException]) =
+        Abort.run[ContainerException](body).map {
+            case Result.Success(a)     => a
+            case Result.Failure(cause) => healthFailure(container, s"$op failed: ${cause.getMessage}", "")
+            case Result.Panic(t)       => Abort.panic(t)
+        }
 
     // =============================================================================================
     // Postgres
@@ -100,7 +143,7 @@ object ContainerPredef:
           * tuples-only — convenient for parsing single scalar results.
           */
         def psql(sql: String)(using Frame): Container.ExecResult < (Async & Abort[ContainerException]) =
-            container.exec(
+            withPostMortem(container, "psql")(container.exec(
                 "psql",
                 "-U",
                 config.username,
@@ -108,7 +151,7 @@ object ContainerPredef:
                 config.database,
                 "-tAc",
                 sql
-            )
+            ))
     end Postgres
 
     object Postgres:
@@ -225,7 +268,7 @@ object ContainerPredef:
             val args = Chunk("mysql", "-h", "127.0.0.1", "-u", config.username) ++
                 (if config.password.nonEmpty then Chunk(s"-p${config.password}") else Chunk.empty) ++
                 Chunk(config.database, "-N", "-e", sql)
-            container.exec(Command(args*))
+            withPostMortem(container, "mysql")(container.exec(Command(args*)))
         end mysql
     end MySQL
 
@@ -420,7 +463,7 @@ object ContainerPredef:
 
         /** Run `mongosh --quiet --eval "<eval>"` against this container, returning the raw exec result. */
         def mongosh(eval: String)(using Frame): Container.ExecResult < (Async & Abort[ContainerException]) =
-            container.exec("mongosh", "--quiet", "--eval", eval)
+            withPostMortem(container, "mongosh")(container.exec("mongosh", "--quiet", "--eval", eval))
     end MongoDB
 
     object MongoDB:
