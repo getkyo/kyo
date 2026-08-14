@@ -12,11 +12,22 @@ object Eval:
     def apply[A, S](v: A < S): A < S =
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
-        try run(v, slot)
+        try run(v, slot, partial = false)
         finally Safepoint.restore(slot, saved)
     end apply
 
-    private def run[A, S](v: A < S, slot: Safepoint.Slot): A < S =
+    def partial[A, S](v: A < S): A < S =
+        val slot = Safepoint.get()
+        if Safepoint.consumeStopped(slot) then v
+        else
+            val saved = Safepoint.save(slot)
+            Safepoint.arm(slot)
+            try run(v, slot, partial = true)
+            finally Safepoint.restore(slot, saved)
+        end if
+    end partial
+
+    private def run[A, S](v: A < S, slot: Safepoint.Slot, partial: Boolean): A < S =
         val stack = Stack.current()
         val base  = stack.size
 
@@ -83,13 +94,21 @@ object Eval:
             while running do
                 cur match
                     case kyo: Kyo.Defer[?, ?, ?] =>
-                        Safepoint.reset(slot)
-                        stack.push(kyo.cont)
-                        cur = kyo.value
+                        if partial && Safepoint.consumeStopped(slot) then
+                            cur = rebuild(stack.copyFrom(base), kyo)
+                            running = false
+                        else
+                            Safepoint.reset(slot)
+                            stack.push(kyo.cont)
+                            cur = kyo.value
                     case kyo: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
                         val i = stack.find(kyo.tag.erased, base)
                         if i >= 0 then cur = dispatch(kyo, i)
+                        else if partial then
+                            cur = rebuild(stack.copyFrom(base), kyo)
+                            running = false
                         else unhandled(kyo)
+                        end if
                     case kyo: Kyo.HandleCont[?, ?, ?, ?, ?, ?, ?] =>
                         stack.push(kyo, kyo.tag.erased)
                         cur = kyo.value

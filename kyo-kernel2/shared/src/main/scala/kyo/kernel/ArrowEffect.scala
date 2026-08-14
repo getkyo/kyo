@@ -41,11 +41,15 @@ object ArrowEffect:
     )(
         inline handle: [C] => I[C] => Outcome[O[C] < (E & S & S2), A] < S2
     )(using inline _frame: Frame): A < (S & S2) =
-        new Kyo.HandleLoop[I, O, E, A, A, S & S2]:
-            def tag                 = effectTag
-            def value               = v
-            def run[C](input: I[C]) = handle[C](input)
-            def complete(v: A)      = Nested.lift(v)
+        v match
+            case kyo: Kyo[?, ?] =>
+                new Kyo.HandleLoop[I, O, E, A, A, S & S2]:
+                    def tag                 = effectTag
+                    def value               = v
+                    def run[C](input: I[C]) = handle[C](input)
+                    def complete(v: A)      = Nested.lift(v)
+            case v =>
+                v.asInstanceOf[A < (S & S2)]
 
     @nowarn("msg=anonymous")
     inline def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
@@ -55,14 +59,30 @@ object ArrowEffect:
         inline handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
         def loop(v: A < (E & S & S2)): A < (S & S2) =
-            new Kyo.HandleCont[I, O, E, A, A, S & S2, Any]:
-                def tag   = effectTag
-                def value = v
-                def run[C](input: I[C], cont: O[C] => A < (E & S & S2)) =
-                    loop(handle[C](input, cont))
-                def complete(v: A) = Nested.lift(v)
+            v match
+                case kyo: Kyo[?, ?] =>
+                    new Kyo.HandleCont[I, O, E, A, A, S & S2, Any]:
+                        def tag   = effectTag
+                        def value = v
+                        def run[C](input: I[C], cont: O[C] => A < (E & S & S2)) =
+                            loop(handle[C](input, cont))
+                        def complete(v: A) = Nested.lift(v)
+                case v =>
+                    v.asInstanceOf[A < (S & S2)]
         loop(v)
     end handle
+
+    private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        inline v: => A < (E & S)
+    )(
+        inline handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2)
+    )(
+        inline recover: Throwable => A < (S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
+        ArrowEffect.handle[I, O, E, A, S & S2, Any](effectTag, Effect.catching(v)(recover))(
+            [C] => (input, cont) => Effect.catching(handle[C](input, cont))(recover)
+        )
 
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
         inline effectTag: Tag[E],
@@ -83,12 +103,16 @@ object ArrowEffect:
         inline handle: [C] => (I[C], State, O[C] => A < (E & S)) => Outcome2[State, A < (E & S), B] < S2
     )(using inline _frame: Frame): B < (S & S2) =
         Loop(state, v) { (state, v) =>
-            new Kyo.HandleCont[I, O, E, A, Outcome2[State, A < (E & S), B], S, S2]:
-                def tag   = effectTag
-                def value = v
-                def run[C](input: I[C], cont: O[C] => A < (E & S)) =
-                    handle[C](input, state, cont)
-                def complete(v: A) = done(state, v).map(Loop.done(_))
+            v match
+                case kyo: Kyo[?, ?] =>
+                    new Kyo.HandleCont[I, O, E, A, Outcome2[State, A < (E & S), B], S, S2]:
+                        def tag   = effectTag
+                        def value = v
+                        def run[C](input: I[C], cont: O[C] => A < (E & S)) =
+                            handle[C](input, state, cont)
+                        def complete(v: A) = done(state, v).map(Loop.done(_))
+                case v =>
+                    done(state, Kyo.unnest(v)).map(Loop.done(_))
         }
     end handleLoop
 
