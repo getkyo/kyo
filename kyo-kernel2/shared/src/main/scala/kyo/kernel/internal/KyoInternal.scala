@@ -87,6 +87,11 @@ object Kyo:
         def run[X](input: I[X], cont: O[X] => A < (E & S)): B < (S & S2)
         def complete(v: A): B < (S & S2)
 
+        /** A deep region stays installed while its clause result runs, so a re-raise dispatches back to it and the region itself
+          * discharges the effect from the result's row.
+          */
+        def deep: Boolean = false
+
         final override def toString: String = s"Kyo(HandleCont(${tag.show}, $value))"
     end HandleCont
 

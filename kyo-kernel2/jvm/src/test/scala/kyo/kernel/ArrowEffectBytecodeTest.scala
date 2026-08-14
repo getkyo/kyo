@@ -35,9 +35,9 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
 
     "handle" in {
         val sizes = methodBytecodeSize[TestHandle]
-        // the deep handler lifts its re-handling recursion into one loop method
-        // that allocates the region node; the call site just enters it
-        assert(sizes == Map("test" -> 6, "loop" -> 43))
+        // the deep region is one node that stays installed, so the call site is a
+        // single allocation with the settled check and no lifted loop method
+        assert(sizes == Map("test" -> 33))
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

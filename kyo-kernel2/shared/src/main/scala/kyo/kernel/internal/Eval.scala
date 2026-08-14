@@ -67,7 +67,8 @@ object Eval:
                     case h: Kyo.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                         val seg = stack.copyFrom(i + 1)
                         val out = h.run(kyo.input, o => rebuild(seg, 0, Nested.lift(o)))
-                        stack.truncate(i)
+                        if h.deep then stack.truncate(i + 1)
+                        else stack.truncate(i)
                         out
                     case f =>
                         bug(s"eval stack corruption: found $f where a handler was expected")
@@ -234,6 +235,7 @@ object Eval:
                     def value                                          = acc
                     def run[X](input: Any, cont: Any => Any < Nothing) = hc.run(input, cont)
                     def complete(v: Any)                               = hc.complete(v)
+                    override def deep                                  = hc.deep
             case hl: Kyo.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                 new Kyo.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]:
                     def tag                = hl.tag

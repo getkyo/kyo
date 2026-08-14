@@ -80,18 +80,24 @@ object ArrowEffect:
     )(
         inline handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
-        def loop(v: A < (E & S & S2)): A < (S & S2) =
-            v match
-                case kyo: Kyo[?, ?] =>
-                    new Kyo.HandleCont[I, O, E, A, A, S & S2, Any]:
+        v match
+            case kyo: Kyo[?, ?] =>
+                // rows: the node's S is S & S2 and its S2 is E, so run's continuation
+                // and result sit at exactly the clause's row. The deep region stays
+                // installed while its clause result runs, which is what discharges E:
+                // hence the one cast at the node's own row
+                val region =
+                    new Kyo.HandleCont[I, O, E, A, A, S & S2, E]:
                         def tag   = effectTag
                         def value = v
                         def run[C](input: I[C], cont: O[C] => A < (E & S & S2)) =
-                            loop(handle[C](input, cont))
+                            handle[C](input, cont)
                         def complete(v: A) = Nested.lift(v)
-                case v =>
-                    v.asInstanceOf[A < (S & S2)]
-        loop(v)
+                        override def deep  = true
+                region.asInstanceOf[A < (S & S2)]
+            case v =>
+                v.asInstanceOf[A < (S & S2)]
+        end match
     end handle
 
     private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
