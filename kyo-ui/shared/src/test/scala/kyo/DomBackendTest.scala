@@ -28,15 +28,14 @@ class DomBackendTest extends UITest:
         }
     }
 
-    "empty reactive renders as placeholder span with data-kyo-path" in {
+    "empty reactive remains updateable without an element placeholder" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
                 UI.when(show)(UI.span("content").id("content"))
             )
         withUI(app) {
-            // When signal is false, show is absent; placeholder span should exist in DOM
-            // (kyo-ui uses a placeholder span so the path anchor is preserved)
+            // The empty logical range has no element content.
             Browser.assertNotExists(Selector.id("content")).unit
         }
     }

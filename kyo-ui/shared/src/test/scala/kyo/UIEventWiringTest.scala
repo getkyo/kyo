@@ -4,6 +4,7 @@ import kyo.internal.DragCommands
 import kyo.internal.DragProtocol
 import kyo.internal.HtmlRenderer
 import kyo.internal.MouseEventData
+import kyo.internal.ReactiveRegion
 import kyo.internal.ReactiveUI
 import kyo.internal.UIEvent
 import kyo.internal.UIExchange
@@ -30,7 +31,16 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
     /** Minimal UIExchange stub that discards onChange notifications. */
     private class NoopExchange extends UIExchange:
-        def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async = ()
+        def onChange(
+            region: ReactiveRegion,
+            path: Seq[String],
+            context: ReactiveRegion.RegionIdentity,
+            parentContext: ReactiveRegion.ParentContext,
+            ui: UI
+        )(using
+            Frame
+        ): Unit < Async = ()
+    end NoopExchange
 
     /** Normalize a UI, subscribe it with a NoopExchange, and return the dispatch handle. The dispatch handle re-reads
       * the current signal state on each event, so it stays valid after the subscription's Scope closes; these tests

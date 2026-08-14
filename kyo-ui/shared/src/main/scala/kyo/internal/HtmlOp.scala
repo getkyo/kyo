@@ -9,10 +9,11 @@ private[kyo] object HtmlOp:
 
     // --- Rendering operations ---
 
-    case class Replace(path: Seq[String], html: String) extends HtmlOp derives Schema
-    case class Remove(path: Seq[String])                extends HtmlOp derives Schema
-    case class InjectCss(css: String)                   extends HtmlOp derives Schema
-    case class ScrollIntoView(id: String)               extends HtmlOp derives Schema
+    case class Replace(path: Seq[String], html: String)     extends HtmlOp derives Schema
+    case class ReplaceRange(regionId: String, html: String) extends HtmlOp derives Schema
+    case class Remove(path: Seq[String])                    extends HtmlOp derives Schema
+    case class InjectCss(css: String)                       extends HtmlOp derives Schema
+    case class ScrollIntoView(id: String)                   extends HtmlOp derives Schema
 
     // --- Drag operations ---
 

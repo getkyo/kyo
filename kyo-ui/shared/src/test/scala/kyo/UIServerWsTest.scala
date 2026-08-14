@@ -118,7 +118,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                             // Dispatch a Click on the button (path Seq("0"): first child of the div).
                             clickEvent = UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent))
                             _ <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](clickEvent)))
-                            // The next frame must be an HtmlOp.Replace containing "after".
+                            // The next frame must replace the HTML logical range with "after".
                             frame <- clientWs.take()
                             text = frame match
                                 case HttpWebSocket.Payload.Text(data) => Present(data)
@@ -131,8 +131,8 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         yield capturedData match
             case Present(data) =>
                 Json.decode[HtmlOp](data) match
-                    case Result.Success(HtmlOp.Replace(_, html)) => assert(html.contains("after"))
-                    case other                                   => fail(s"expected HtmlOp.Replace with 'after', got: $other")
+                    case Result.Success(HtmlOp.ReplaceRange(_, html)) => assert(html.contains("after"))
+                    case other                                        => fail(s"expected HtmlOp.ReplaceRange with 'after', got: $other")
             case Absent => fail("client did not receive a second frame after the click")
         end for
     }

@@ -11,7 +11,10 @@ private[kyo] case class ReactiveUI(
     isConst: Boolean,
     children: Seq[ReactiveUI],
     handle: (Seq[String], UIEvent) => Boolean < Async,
-    svgContext: Boolean = false
+    region: ReactiveRegion,
+    contentContext: ReactiveRegion.RegionIdentity,
+    parentContext: ReactiveRegion.ParentContext,
+    discoverContentRootBound: Boolean
 )
 
 private[kyo] object ReactiveUI:
@@ -23,40 +26,56 @@ private[kyo] object ReactiveUI:
         signal: Signal[UI],
         isConst: Boolean,
         children: Seq[ReactiveUI],
-        svgContext: Boolean = false
+        svgContext: Boolean,
+        regionIdentity: ReactiveRegion.RegionIdentity,
+        contentContext: ReactiveRegion.RegionIdentity,
+        parentContext: ReactiveRegion.ParentContext
     )(
         handle: (Seq[String], UIEvent) => Boolean < Async
     ): ReactiveUI =
-        ReactiveUI(path, signal, isConst, children, handle, svgContext)
-
-    /** Locate the ReactiveUI node at `path` in the resolved tree. Used by the exchanges to look up the
-      * recorded svgContext flag so an empty placeholder uses the correct (<g> vs <span>) tag.
-      */
-    private[kyo] def findNode(root: ReactiveUI, path: Seq[String]): Maybe[ReactiveUI] =
-        if root.path == path then Present(root)
-        else
-            root.children.foldLeft(Absent: Maybe[ReactiveUI]) { (acc, child) =>
-                if acc.nonEmpty then acc else findNode(child, path)
-            }
+        ReactiveUI(
+            path,
+            signal,
+            isConst,
+            children,
+            handle,
+            ReactiveRegion.from(regionIdentity, svgContext),
+            contentContext,
+            parentContext,
+            discoverContentRootBound = true
+        )
 
     def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
+        normalizeAt(ui, path, svg, ReactiveRegion.RegionIdentity.root(path), ReactiveRegion.ParentContext.Other)
+
+    private def normalizeAt(
+        ui: UI,
+        path: Seq[String],
+        svg: Boolean,
+        regionIdentity: ReactiveRegion.RegionIdentity,
+        parentContext: ReactiveRegion.ParentContext
+    ): ReactiveUI < Sync =
         given Frame = ui.frame
         ui match
             case ui: Reactive[?] =>
+                val contentContext = regionIdentity.transparent
                 for
-                    current   <- ui.signal.current
-                    (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, ui.signal, isConst = false, kids, svgContext = svg) {
+                    current <- ui.signal.current
+                    contentParentContext = nestedParentContext(parentContext, current)
+                    (kids, _) <- walkStatic(current, path, svg, contentContext, contentParentContext)
+                yield init(path, ui.signal, isConst = false, kids, svg, regionIdentity, contentContext, parentContext) {
                     (targetPath, event) =>
                         for
-                            currentUI     <- ui.signal.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            currentUI <- ui.signal.current
+                            contentParentContext = nestedParentContext(parentContext, currentUI)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, contentContext, contentParentContext)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
                 end for
 
             case ui: Foreach[?, ?] @unchecked =>
+                val contentContext = regionIdentity
                 val sig =
                     ui.signal.map { items =>
                         val arr = items.toSeq.zipWithIndex.map { (item, i) =>
@@ -66,13 +85,15 @@ private[kyo] object ReactiveUI:
                         Fragment[UI](Chunk.from(arr)): UI
                     }
                 for
-                    current   <- sig.current
-                    (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, sig, isConst = false, kids, svgContext = svg) {
+                    current <- sig.current
+                    contentParentContext = nestedParentContext(parentContext, current)
+                    (kids, _) <- walkStatic(current, path, svg, contentContext, contentParentContext)
+                yield init(path, sig, isConst = false, kids, svg, regionIdentity, contentContext, parentContext) {
                     (targetPath, event) =>
                         for
-                            currentUI     <- sig.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            currentUI <- sig.current
+                            contentParentContext = nestedParentContext(parentContext, currentUI)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, contentContext, contentParentContext)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
@@ -90,8 +111,18 @@ private[kyo] object ReactiveUI:
                 // re-renders without the value-dedup ever suppressing a real edit. An element with no bound ref is const.
                 val (elementSignal, isConstNode) =
                     collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
-                for (kids, hdl) <- walkStatic(ui, path, svg)
-                yield ReactiveUI(path, elementSignal, isConst = isConstNode, kids, hdl, svgContext = svg)
+                for (kids, hdl) <- walkStatic(ui, path, svg, regionIdentity, parentContext, discoverRootBound = false)
+                yield ReactiveUI(
+                    path,
+                    elementSignal,
+                    isConst = isConstNode,
+                    kids,
+                    hdl,
+                    ReactiveRegion.from(regionIdentity, svg),
+                    regionIdentity,
+                    parentContext,
+                    discoverContentRootBound = false
+                )
 
             case ui =>
                 // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
@@ -99,14 +130,24 @@ private[kyo] object ReactiveUI:
                 // Reactive or Foreach (also handled above). If a new UI subtype is added, the
                 // exhaustiveness checker will NOT warn here; any new type that is interactive must
                 // be added as an explicit case above before this catch-all.
-                ReactiveUI(path, Signal.initConst(ui), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
+                ReactiveUI(
+                    path,
+                    Signal.initConst(ui),
+                    isConst = true,
+                    Seq.empty,
+                    (_, _) => true,
+                    ReactiveRegion.from(regionIdentity, svg),
+                    regionIdentity,
+                    parentContext,
+                    discoverContentRootBound = false
+                )
         end match
-    end normalize
+    end normalizeAt
 
     /** Returns the element's single SignalRef-bound attribute (its `.value` or `.checked`), if any, so the element can be made reactive over
       * it (its HTML re-renders when that signal changes). An element binds at most one such ref.
       */
-    private def collectSignalRef(elem: Element): Maybe[Signal[?]] =
+    private[kyo] def collectSignalRef(elem: Element): Maybe[Signal[?]] =
         def refOf(v: Maybe[Bound[?]]): Maybe[Signal[?]] = v match
             case Present(Bound.Ref(ref)) => Present(ref)
             case _                       => Absent
@@ -119,6 +160,11 @@ private[kyo] object ReactiveUI:
             case _                => Absent
         end match
     end collectSignalRef
+
+    private def nestedParentContext(parentContext: ReactiveRegion.ParentContext, current: UI): ReactiveRegion.ParentContext =
+        (parentContext, ReactiveRegion.tableContent(current)) match
+            case (ReactiveRegion.ParentContext.HtmlTable, ReactiveRegion.TableContent.Rows) => ReactiveRegion.ParentContext.Other
+            case _                                                                          => parentContext
 
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
@@ -142,8 +188,19 @@ private[kyo] object ReactiveUI:
     end DragSessionLimits
 
     /** Walk a static UI tree. Collect reactive children, build handle. */
-    private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false)(using Frame): (Seq[ReactiveUI], Handler) < Sync =
+    private def walkStatic(
+        ui: UI,
+        basePath: Seq[String],
+        svg: Boolean = false,
+        context: ReactiveRegion.RegionIdentity,
+        parentContext: ReactiveRegion.ParentContext,
+        discoverRootBound: Boolean = true
+    )(using Frame): (Seq[ReactiveUI], Handler) < Sync =
         ui match
+            case elem: Element if discoverRootBound && collectSignalRef(elem).nonEmpty =>
+                for rui <- normalizeAt(elem, basePath, svg, context, parentContext)
+                yield (Seq(rui), rui.handle)
+
             case elem: Element =>
                 // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be matched
                 // before SvgElement (ForeignObject IS an SvgElement).
@@ -151,19 +208,23 @@ private[kyo] object ReactiveUI:
                     case _: Svg.ForeignObject => false
                     case _: Svg.SvgElement    => true
                     case _                    => svg
+                val childParentContext = elem match
+                    case _: Table => ReactiveRegion.ParentContext.HtmlTable
+                    case _        => ReactiveRegion.ParentContext.Other
                 for childWalks <- Kyo.foreach(elem.children.toSeq.zipWithIndex) { (child, i) =>
-                        val childPath = basePath :+ i.toString
+                        val childPath    = basePath :+ i.toString
+                        val childContext = context.child(i.toString)
                         child match
                             case _: Reactive[?] | _: Foreach[?, ?] =>
-                                for rui <- normalize(child, childPath, childSvg)
+                                for rui <- normalizeAt(child, childPath, childSvg, childContext, childParentContext)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case childElem: Element if collectSignalRef(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
-                                for rui <- normalize(childElem, childPath, childSvg)
+                                for rui <- normalizeAt(childElem, childPath, childSvg, childContext, childParentContext)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case _ =>
-                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg)
+                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg, childContext, childParentContext)
                                 yield (innerKids, Seq((i, innerHandle)))
                         end match
                     }
@@ -180,10 +241,13 @@ private[kyo] object ReactiveUI:
                         val childPath = child match
                             case kc: KeyedChild[?] => basePath :+ kc.key
                             case _                 => basePath :+ i.toString
+                        val childContext = child match
+                            case kc: KeyedChild[?] => context.child(kc.key)
+                            case _                 => context.child(i.toString)
                         val inner = child match
                             case kc: KeyedChild[?] => kc.child
                             case _                 => child
-                        walkStatic(inner, childPath, svg)
+                        walkStatic(inner, childPath, svg, childContext, parentContext)
                     }
                 yield
                     val allKids    = childWalks.flatMap(_._1)
@@ -205,7 +269,7 @@ private[kyo] object ReactiveUI:
                 // (not as a child of an Element), normalize it at basePath so subscribeNode
                 // sets up a subscription for it. This handles the case where an outer reactive's
                 // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }).
-                for rui <- normalize(ui, basePath, svg)
+                for rui <- normalizeAt(ui, basePath, svg, context, parentContext)
                 yield (Seq(rui), rui.handle)
 
             case _ =>
@@ -1008,11 +1072,22 @@ private[kyo] object ReactiveUI:
             // that scope, so the next value (or an interrupt) tears them down by cascade.
             def renderValue(current: UI): Unit < (Async & Scope) =
                 for
-                    now          <- Clock.now
-                    _            <- signalChangeTime.set(now)
-                    _            <- exchange.onChange(rui.path, current)
-                    (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
-                    _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
+                    now <- Clock.now
+                    _   <- signalChangeTime.set(now)
+                    _   <- exchange.onChange(rui.region, rui.path, rui.contentContext, rui.parentContext, current)
+                    svgContext = rui.region match
+                        case _: ReactiveRegion.HtmlRange  => false
+                        case _: ReactiveRegion.SvgElement => true
+                    contentParentContext = nestedParentContext(rui.parentContext, current)
+                    (newKids, _) <- walkStatic(
+                        current,
+                        rui.path,
+                        svgContext,
+                        rui.contentContext,
+                        contentParentContext,
+                        discoverRootBound = rui.discoverContentRootBound
+                    )
+                    _ <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
                 yield ()
             // Every region observes with observe: each value owns a fresh per-value Scope (renderValue forks its
             // children into it), held open until the next change, then closed by cascade. SignalRef-bound element

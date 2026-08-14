@@ -849,6 +849,20 @@ class HtmlRendererTest extends UITest:
             assert(page.contains("__q.push"))
             assert(page.contains("ws.readyState===1"))
         }
+
+        "rendered page boots one live range registry and parses replacements in parent context" in {
+            val page = kyo.internal.HtmlRenderer.renderPage(
+                "t",
+                "<!--kyo-rs:r--><!--kyo-re:r-->",
+                "",
+                "/app"
+            )
+            assert(page.contains("var __kyoRanges=kyoRangeScan(document.body)"))
+            assert(page.contains("parser.createContextualFragment(html)"))
+            assert(page.contains("if(op.ReplaceRange)"))
+            assert(page.contains("range.deleteContents()"))
+            assert(page.contains("__kyoRanges.clear()"))
+        }
     }
 
 end HtmlRendererTest

@@ -1,0 +1,242 @@
+package kyo.internal
+
+import kyo.*
+import org.scalajs.dom
+import scala.collection.mutable
+import scala.scalajs.js
+
+/** Mount-scoped registry of live HTML reactive range anchors. */
+final private[kyo] class DomReactiveRegions private (
+    private val document: dom.Document,
+    private val ranges: mutable.HashMap[String, DomReactiveRegions.Endpoints]
+):
+
+    private var open = true
+
+    def replace(regionId: String, html: String)(using Frame): Unit < Sync =
+        replaceWith(regionId, html)((_, _) => ())((_, _) => ())
+
+    private[kyo] def replaceWith[A](regionId: String, html: String)(
+        before: (Seq[dom.Element], Seq[dom.Element]) => A
+    )(
+        after: (A, Seq[dom.Element]) => Unit
+    )(using Frame): Unit < Sync =
+        Sync.defer {
+            ensureOpen()
+            if !ReactiveRegion.isValidHtmlId(regionId) then fail(s"Malformed reactive range id: $regionId")
+            val endpoints = ranges.getOrElse(regionId, fail(s"Unknown reactive range: $regionId"))
+            val parent    = validatedParent(regionId, endpoints)
+            val range     = document.createRange()
+            range.setStartAfter(endpoints.start)
+            range.setEndBefore(endpoints.end)
+
+            val syntheticHost = parent match
+                case element: dom.Element
+                    if element.tagName == "TBODY" && element.getAttribute("data-kyo-range-host") == regionId =>
+                    Present(element)
+                case _ => Absent
+            val fragment = syntheticHost.fold(range.createContextualFragment(html)) { host =>
+                val parser = document.createRange()
+                parser.selectNode(host)
+                parser.createContextualFragment(html)
+            }
+            val incoming = DomReactiveRegions.scan(document, fragment)
+            val removed = ranges.iterator.collect {
+                case (id, nested) if id != regionId && intersects(range, nested.start) => id
+            }.toSet
+
+            incoming.keysIterator.foreach { id =>
+                if ranges.contains(id) && !removed.contains(id) then
+                    fail(s"Duplicate reactive range id: $id")
+            }
+
+            val oldElements = elementsBetween(endpoints)
+            val newElements = childElements(fragment)
+            val state       = before(oldElements, newElements)
+            range.deleteContents()
+            removed.foreach(ranges.remove)
+            val insertedRoots = syntheticHost match
+                case Present(host) if newElements.size == 1 && newElements.head.tagName == "TBODY" =>
+                    val incomingHost = newElements.head
+                    syncHostAttributes(host, incomingHost, regionId)
+                    var child = DomReactiveRegions.firstChild(incomingHost)
+                    while child.nonEmpty do
+                        val next = DomReactiveRegions.next(child.get)
+                        discard(host.insertBefore(child.get, endpoints.end))
+                        child = next
+                    end while
+                    elementsBetween(endpoints)
+                case Present(host) =>
+                    val table = DomReactiveRegions.parent(host).getOrElse(fail(s"Reactive table range host is detached: $regionId"))
+                    discard(table.insertBefore(endpoints.start, host))
+                    discard(table.insertBefore(fragment, host))
+                    discard(table.insertBefore(endpoints.end, host))
+                    discard(table.removeChild(host))
+                    newElements
+                case _ =>
+                    discard(parent.insertBefore(fragment, endpoints.end))
+                    newElements.headOption match
+                        case Some(host) if host.tagName == "TBODY" && host.getAttribute("data-kyo-range-host") == regionId =>
+                            DomReactiveRegions.firstChild(host) match
+                                case Present(first) => discard(host.insertBefore(endpoints.start, first))
+                                case Absent         => discard(host.appendChild(endpoints.start))
+                            discard(host.appendChild(endpoints.end))
+                        case _ => ()
+                    end match
+                    newElements
+            ranges.addAll(incoming)
+            after(state, insertedRoots)
+        }
+    end replaceWith
+
+    private[kyo] def size(using Frame): Int < Sync =
+        Sync.defer(ranges.size)
+
+    private[kyo] def contains(regionId: String)(using Frame): Boolean < Sync =
+        Sync.defer(ranges.contains(regionId))
+
+    private[kyo] def close(using Frame): Unit < Sync =
+        Sync.defer {
+            if open then
+                open = false
+                ranges.clear()
+        }
+
+    private def ensureOpen()(using Frame): Unit =
+        if !open then fail("Reactive range registry is closed")
+
+    private def validatedParent(regionId: String, endpoints: DomReactiveRegions.Endpoints)(using Frame): dom.Node =
+        if endpoints.start.data != s"${DomReactiveRegions.StartPrefix}$regionId" ||
+            endpoints.end.data != s"${DomReactiveRegions.EndPrefix}$regionId"
+        then fail(s"Reactive range markers are corrupted: $regionId")
+        (DomReactiveRegions.parent(endpoints.start), DomReactiveRegions.parent(endpoints.end)) match
+            case (Present(startParent), Present(endParent)) if startParent eq endParent =>
+                var current = DomReactiveRegions.next(endpoints.start)
+                while current.nonEmpty && (current.get ne endpoints.end) do
+                    current = DomReactiveRegions.next(current.get)
+                if current.isEmpty then fail(s"Reactive range end is not after its start: $regionId")
+                startParent
+            case _ => fail(s"Reactive range anchors are no longer siblings: $regionId")
+        end match
+    end validatedParent
+
+    private def fail(message: String)(using Frame): Nothing =
+        throw UIException(message)
+
+    private def intersects(range: dom.Range, node: dom.Node): Boolean =
+        range.asInstanceOf[js.Dynamic].intersectsNode(node).asInstanceOf[Boolean]
+
+    private def elementsBetween(endpoints: DomReactiveRegions.Endpoints): Seq[dom.Element] =
+        val elements = mutable.ArrayBuffer.empty[dom.Element]
+        var current  = DomReactiveRegions.next(endpoints.start)
+        while current.nonEmpty && (current.get ne endpoints.end) do
+            current.get match
+                case element: dom.Element => elements += element
+                case _                    => ()
+            current = DomReactiveRegions.next(current.get)
+        end while
+        elements.toSeq
+    end elementsBetween
+
+    private def childElements(fragment: dom.DocumentFragment): Seq[dom.Element] =
+        val elements = mutable.ArrayBuffer.empty[dom.Element]
+        var current  = DomReactiveRegions.firstChild(fragment)
+        while current.nonEmpty do
+            current.get match
+                case element: dom.Element => elements += element
+                case _                    => ()
+            current = DomReactiveRegions.next(current.get)
+        end while
+        elements.toSeq
+    end childElements
+
+    private def syncHostAttributes(host: dom.Element, incoming: dom.Element, regionId: String): Unit =
+        val existing = (0 until host.attributes.length).map(i => host.attributes(i).name)
+        existing.foreach { name =>
+            if name != "data-kyo-range-host" then host.removeAttribute(name)
+        }
+        var i = 0
+        while i < incoming.attributes.length do
+            val attribute = incoming.attributes(i)
+            if attribute.name != "data-kyo-range-host" then host.setAttribute(attribute.name, attribute.value)
+            i += 1
+        end while
+        host.setAttribute("data-kyo-range-host", regionId)
+    end syncHostAttributes
+
+end DomReactiveRegions
+
+private[kyo] object DomReactiveRegions:
+
+    private val StartPrefix = "kyo-rs:"
+    private val EndPrefix   = "kyo-re:"
+
+    final private case class Endpoints(start: dom.Comment, end: dom.Comment)
+
+    def init(root: dom.Element)(using Frame): DomReactiveRegions < (Sync & Scope) =
+        for
+            registry <- Sync.defer(new DomReactiveRegions(ownerDocument(root), scan(ownerDocument(root), root)))
+            _        <- Scope.ensure(registry.close)
+        yield registry
+
+    private def scan(document: dom.Document, root: dom.Node)(using Frame): mutable.HashMap[String, Endpoints] =
+        val found  = mutable.HashMap.empty[String, Endpoints]
+        val seen   = mutable.HashSet.empty[String]
+        val open   = mutable.ArrayBuffer.empty[(String, dom.Comment)]
+        val walker = commentWalker(document, root)
+        var next   = nextComment(walker)
+        while next.nonEmpty do
+            val comment = next.get
+            val value   = comment.data
+            if value.startsWith(StartPrefix) then
+                val id = value.substring(StartPrefix.length)
+                if !ReactiveRegion.isValidHtmlId(id) then fail(s"Malformed reactive range id: $id")
+                if seen.contains(id) then fail(s"Duplicate reactive range id: $id")
+                seen += id
+                open += ((id, comment))
+            else if value.startsWith(EndPrefix) then
+                val id = value.substring(EndPrefix.length)
+                if !ReactiveRegion.isValidHtmlId(id) then fail(s"Malformed reactive range id: $id")
+                if open.isEmpty then fail(s"Reactive range end marker has no start: $id")
+                val (expected, start) = open.last
+                if id != expected then fail(s"Crossed reactive ranges: expected $expected, found $id")
+                discard(open.remove(open.length - 1))
+                (parent(start), parent(comment)) match
+                    case (Present(startParent), Present(endParent)) if startParent eq endParent =>
+                        found(id) = Endpoints(start, comment)
+                    case _ => fail(s"Reactive range anchors are not siblings: $id")
+                end match
+            end if
+            next = nextComment(walker)
+        end while
+        if open.nonEmpty then fail(s"Reactive range start marker has no end: ${open.last._1}")
+        found
+    end scan
+
+    private def nextComment(walker: dom.TreeWalker): Maybe[dom.Comment] =
+        val node = walker.nextNode()
+        if node == null then Absent else Present(node.asInstanceOf[dom.Comment])
+
+    private def parent(node: dom.Node): Maybe[dom.Node] =
+        val value = node.parentNode
+        if value == null then Absent else Present(value)
+
+    private def firstChild(node: dom.Node): Maybe[dom.Node] =
+        val value = node.firstChild
+        if value == null then Absent else Present(value)
+
+    private def next(node: dom.Node): Maybe[dom.Node] =
+        val value = node.nextSibling
+        if value == null then Absent else Present(value)
+
+    private def ownerDocument(node: dom.Node): dom.Document =
+        val value = node.ownerDocument
+        if value == null then dom.document else value
+
+    private def commentWalker(document: dom.Document, root: dom.Node): dom.TreeWalker =
+        document.createTreeWalker(root, 128, null, false)
+
+    private def fail(message: String)(using Frame): Nothing =
+        throw UIException(message)
+
+end DomReactiveRegions

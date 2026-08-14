@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.HtmlRenderer
+import kyo.internal.ReactiveRegion
 import kyo.internal.ReactiveUI
 import kyo.internal.UICommands
 import kyo.internal.UIExchange
@@ -276,7 +277,13 @@ object UI:
                 Channel.use[Unit](256) { channel =>
                     val exchange =
                         new UIExchange:
-                            def onChange(path: Seq[String], changedUI: UI)(using Frame): Unit < Async =
+                            def onChange(
+                                region: ReactiveRegion,
+                                path: Seq[String],
+                                contentContext: ReactiveRegion.RegionIdentity,
+                                parentContext: ReactiveRegion.ParentContext,
+                                changedUI: UI
+                            )(using Frame): Unit < Async =
                                 // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
                                 Abort.runPartial[Closed](channel.put(())).unit
                     // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,
@@ -1286,10 +1293,8 @@ object UI:
             def apply(cs: HtmlChildVal*): Table = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Table
 
-        /** Explicit table row group. The HTML parser only synthesizes an implicit `<tbody>` while PARSING row
-          * content; rows patched into a live table programmatically (a reactive region between comment markers)
-          * become direct `<table>` children, which renders fine but breaks `tbody`-scoped selectors and
-          * semantics. Wrap a row region in `UI.tbody` to get a real row group.
+        /** Explicit table row group for authored table structure and styling. Reactive rows placed directly under
+          * [[Table]] receive their own legal row-group host automatically.
           */
         final case class Tbody(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
