@@ -1048,6 +1048,82 @@ class StructureTest extends kyo.test.Test[Any]:
             }
         }
 
+        // Structure.encode must emit Value.MapEntries for maps, matching the Value ADT's documented
+        // intent, so map entries stay distinguishable from product fields and pair lists.
+        "Structure.encode map encoding" - {
+
+            "Map[String, V] encodes as MapEntries with Str keys" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                assert(encoded == Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Str("a"), Structure.Value.Integer(1L)),
+                    (Structure.Value.Str("b"), Structure.Value.Integer(2L))
+                )))
+            }
+
+            "Map[Int, V] encodes as MapEntries with Integer keys" in {
+                val encoded = Structure.encode(Map(1 -> "x", 2 -> "y"))
+                assert(encoded == Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Integer(1L), Structure.Value.Str("x")),
+                    (Structure.Value.Integer(2L), Structure.Value.Str("y"))
+                )))
+            }
+
+            "Dict[String, V] encodes as MapEntries with Str keys" in {
+                val encoded = Structure.encode(Dict("a" -> 1, "b" -> 2))
+                assert(encoded == Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Str("a"), Structure.Value.Integer(1L)),
+                    (Structure.Value.Str("b"), Structure.Value.Integer(2L))
+                )))
+            }
+
+            "PathSegment.Field navigates a Str-keyed MapEntries entry" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                assert(Structure.Path.field("b").get(encoded) == Result.succeed(Chunk(Structure.Value.Integer(2L))))
+            }
+
+            "PathSegment.Field sets a Str-keyed MapEntries entry preserving order" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                val updated = Structure.Path.field("a").set(encoded, Structure.Value.Integer(10L))
+                assert(updated == Result.succeed(Structure.Value.MapEntries(Chunk(
+                    (Structure.Value.Str("a"), Structure.Value.Integer(10L)),
+                    (Structure.Value.Str("b"), Structure.Value.Integer(2L))
+                ))))
+            }
+
+            "PathSegment.Each walks MapEntries values" in {
+                val encoded = Structure.encode(Map("a" -> 1, "b" -> 2))
+                val path    = Structure.Path.root / Structure.PathSegment.Each
+                assert(path.get(encoded) == Result.succeed(Chunk(Structure.Value.Integer(1L), Structure.Value.Integer(2L))))
+            }
+
+            "Structure.decode round-trips a string-keyed map" in {
+                val m = Map("a" -> 1, "b" -> 2, "c" -> 3)
+                assert(Structure.decode[Map[String, Int]](Structure.encode(m)) == Result.succeed(m))
+            }
+
+            "Structure.decode round-trips an int-keyed map" in {
+                val m = Map(1 -> "x", 2 -> "y")
+                assert(Structure.decode[Map[Int, String]](Structure.encode(m)) == Result.succeed(m))
+            }
+
+            "Structure.decode round-trips maps nested in a product with a renamed sibling schema" in {
+                // The #1741 shape: a Map field under a schema carrying a field transform.
+                val m                  = Map("tierA" -> 1, "tierB" -> 2)
+                given Schema[MTPerson] = Schema[MTPerson].rename("name", "full_name")
+                val encoded            = Structure.encode(m)
+                assert(Structure.decode[Map[String, Int]](encoded) == Result.succeed(m))
+            }
+
+            "Structure.decode accepts the legacy Record spelling for a string-keyed map" in {
+                // Trees built before MapEntries production (or hand-built) still decode.
+                val legacy = Structure.Value.Record(Chunk(
+                    ("a", Structure.Value.Integer(1L)),
+                    ("b", Structure.Value.Integer(2L))
+                ))
+                assert(Structure.decode[Map[String, Int]](legacy) == Result.succeed(Map("a" -> 1, "b" -> 2)))
+            }
+        }
+
         "Structure.Path variant" - {
 
             "variant get" in {

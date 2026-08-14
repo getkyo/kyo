@@ -1596,6 +1596,16 @@ object Schema:
         override def variantEnd(): Unit =
             delegate.variantEnd()
 
+        override def mapEntriesStart(size: Int): Unit =
+            beforeValue()
+            delegate.mapEntriesStart(size)
+        end mapEntriesStart
+
+        override def mapEntryStart(): Unit = delegate.mapEntryStart()
+        override def mapEntryValue(): Unit = delegate.mapEntryValue()
+        override def mapEntryEnd(): Unit   = delegate.mapEntryEnd()
+        override def mapEntriesEnd(): Unit = delegate.mapEntriesEnd()
+
         def arrayStart(size: Int): Unit =
             beforeValue()
             delegate.arrayStart(size)
@@ -3013,16 +3023,15 @@ object Schema:
         lazy val vSchema = vSchema0
         Schema.init[Map[K, V]](
             writeFn = (value, writer) =>
-                writer.arrayStart(value.size)
+                writer.mapEntriesStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.objectStart("", 2)
-                    writer.field("key", 1)
+                    writer.mapEntryStart()
                     kSchema.serializeWrite(k, writer)
-                    writer.field("value", 2)
+                    writer.mapEntryValue()
                     vSchema.serializeWrite(v, writer)
-                    writer.objectEnd()
+                    writer.mapEntryEnd()
                 }
-                writer.arrayEnd()
+                writer.mapEntriesEnd()
             ,
             readFn = reader =>
                 discard(reader.arrayStart())
@@ -3254,16 +3263,15 @@ object Schema:
         lazy val vSchema = vSchema0
         Schema.init[Dict[K, V]](
             writeFn = (value, writer) =>
-                writer.arrayStart(value.size)
+                writer.mapEntriesStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.objectStart("", 2)
-                    writer.field("key", 1)
+                    writer.mapEntryStart()
                     kSchema.serializeWrite(k, writer)
-                    writer.field("value", 2)
+                    writer.mapEntryValue()
                     vSchema.serializeWrite(v, writer)
-                    writer.objectEnd()
+                    writer.mapEntryEnd()
                 }
-                writer.arrayEnd()
+                writer.mapEntriesEnd()
             ,
             readFn = reader =>
                 discard(reader.arrayStart())
@@ -3365,16 +3373,15 @@ object Schema:
         lazy val vSchema = vSchema0
         Schema.init[OrderedDict[K, V]](
             writeFn = (value, writer) =>
-                writer.arrayStart(value.size)
+                writer.mapEntriesStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.objectStart("", 2)
-                    writer.field("key", 1)
+                    writer.mapEntryStart()
                     kSchema.serializeWrite(k, writer)
-                    writer.field("value", 2)
+                    writer.mapEntryValue()
                     vSchema.serializeWrite(v, writer)
-                    writer.objectEnd()
+                    writer.mapEntryEnd()
                 }
-                writer.arrayEnd()
+                writer.mapEntriesEnd()
             ,
             readFn = reader =>
                 discard(reader.arrayStart())

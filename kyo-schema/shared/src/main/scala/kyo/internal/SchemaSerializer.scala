@@ -856,18 +856,17 @@ private[kyo] object SchemaSerializer:
     /** Writes a Structure.Value tree to a Writer. Reverse of StructureValueWriter.
       *
       * `shape` is an optional type hint carried down from the originating Schema's structure. It
-      * exists to break a genuine ambiguity in `Structure.Value`: `StructureValueWriter` materializes
-      * both a product and a string-keyed map as `Record` (`mapStart`/`mapEnd` build the same
-      * `ObjectFrame` as `objectStart`/`objectEnd`), so replaying a `Record` with no further
-      * information cannot tell the two apart. That is harmless for a self-describing codec, where an
-      * object and a map write identically, but Protobuf's wire encoding of the two is NOT
-      * interchangeable: an object is one nested sub-message under the field's own number, while a map
-      * is a REPEATED MapEntry sub-message per entry (key at field 1, value at field 2) under that
-      * same number. Replaying a map with object framing corrupts the wire (each entry key becomes a
-      * bogus hash-derived field number instead of a MapEntry key). When `shape` resolves to
-      * `Mapping`, the `Record` writes as a map; otherwise (no hint, or a genuine `Product`) it writes
-      * as an object, matching the shape-free behavior every caller other than `writeWithTransforms`
-      * still relies on.
+      * exists to break an ambiguity for `Record` trees that spell a map: a wire-decoded or hand-built
+      * tree carries a string-keyed map as `Record` (only `Structure.encode` produces `MapEntries`),
+      * so replaying such a `Record` with no further information cannot tell it from a product. That
+      * is harmless for a self-describing codec, where an object and a map write identically, but
+      * Protobuf's wire encoding of the two is NOT interchangeable: an object is one nested
+      * sub-message under the field's own number, while a map is a REPEATED MapEntry sub-message per
+      * entry (key at field 1, value at field 2) under that same number. Replaying a map with object
+      * framing corrupts the wire (each entry key becomes a bogus hash-derived field number instead of
+      * a MapEntry key). When `shape` resolves to `Mapping`, the `Record` writes as a map; otherwise
+      * (no hint, or a genuine `Product`) it writes as an object, matching the shape-free behavior
+      * every caller other than `writeWithTransforms` still relies on.
       */
     def writeStructureValue(writer: Writer, value: Structure.Value, shape: Maybe[Structure.Type] = Maybe.empty): Unit =
         value match
@@ -906,9 +905,11 @@ private[kyo] object SchemaSerializer:
                 elements.foreach(e => writeStructureValue(writer, e, elemShape))
                 writer.arrayEnd()
             case Structure.Value.MapEntries(entries) =>
-                // Shape-aware MapEntries:
-                //   * all-String keys -> JSON object with each key as a field; round-trips through the universal Record shape.
-                //   * mixed/non-String keys -> array-of-pairs; non-String keys are inexpressible as JSON field names.
+                // Shape-aware MapEntries, matching the typed map schemas' wire spelling exactly so the
+                // transform-replay path is byte-identical with the raw write path:
+                //   * all-String keys -> map framing with each key as a field (a JSON object).
+                //   * mixed/non-String keys -> the mapEntriesStart envelope (array of {key, value}
+                //     records on wire codecs); non-String keys are inexpressible as JSON field names.
                 val (keyShape, valueShape) = shape.map(unwrapOptionalShape) match
                     case Maybe.Present(Structure.Type.Mapping(_, _, k, v)) =>
                         (Maybe(unwrapOptionalShape(k)), Maybe(unwrapOptionalShape(v)))
@@ -930,14 +931,15 @@ private[kyo] object SchemaSerializer:
                     }
                     writer.mapEnd()
                 else
-                    writer.arrayStart(entries.size)
+                    writer.mapEntriesStart(entries.size)
                     entries.foreach { (k, v) =>
-                        writer.arrayStart(2)
+                        writer.mapEntryStart()
                         writeStructureValue(writer, k, keyShape)
+                        writer.mapEntryValue()
                         writeStructureValue(writer, v, valueShape)
-                        writer.arrayEnd()
+                        writer.mapEntryEnd()
                     }
-                    writer.arrayEnd()
+                    writer.mapEntriesEnd()
                 end if
             case Structure.Value.VariantCase(name, v) =>
                 // Shape-aware VariantCase: on wire codecs the variantStart default writes the single-field object
