@@ -67,7 +67,7 @@ object Kyo:
         end toString
     end Defer
 
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
+    trait Suspend[I[_], O[_], E <: ArrowEffect[I, O], X, +A, -S] extends Kyo[A, S]:
         self =>
 
         def tag: Tag[E]

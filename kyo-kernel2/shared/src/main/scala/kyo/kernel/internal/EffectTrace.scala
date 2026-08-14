@@ -192,8 +192,8 @@ private[kyo] object EffectTrace:
             end if
         end region
 
-        /** One value in either of its roles. The roles are structurally disjoint in this kernel: arrows are never nodes and nodes are never
-          * arrows, so a single dispatch cannot double-count.
+        /** One value in either of its roles. A fused suspendWith node is both an arrow and a suspension; the arrow arm claims it, and both
+          * halves carry the same frame, so the rendering is the same either way.
           */
         def value(v: Any): Unit =
             v match

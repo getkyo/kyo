@@ -140,6 +140,15 @@ object Eval:
                         val i = stack.find(kyo.tag.erased, base)
                         if i >= 0 then
                             suspended = kyo
+                            kyo match
+                                case cont: Arrow[?, ?, ?] =>
+                                    // a fused suspendWith node is its own continuation:
+                                    // it rides the interior as an arrow so the answer
+                                    // resumes through it
+                                    stack.push(cont)
+                                case _ =>
+                                    ()
+                            end match
                             cur = dispatch(kyo, i)
                         else if partial then
                             cur = rebuild(stack.copyFrom(base), 0, kyo)

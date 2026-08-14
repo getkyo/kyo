@@ -1,5 +1,6 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Frame
 import kyo.Tag
 import kyo.kernel.`<`.fromKyo
@@ -24,6 +25,7 @@ object ArrowEffect:
             def input = v
             def frame = _frame
 
+    @nowarn("msg=anonymous")
     inline def suspendWith[C](
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O], B, S](
@@ -32,7 +34,27 @@ object ArrowEffect:
     )(
         inline f: O[C] => B < S
     ): B < (E & S) =
-        suspend(effectTag, v).map(f)
+        new Arrow.Transform[O[C], B, S] with Kyo.Suspend[I, O, E, C, B, E & S]:
+            def tag   = effectTag
+            def input = v
+            def frame = _frame
+            def apply[C2, S2](v2: O[C] < S2, next: Arrow[B, C2, S2]): C2 < (S & S2) =
+                v2 match
+                    case kyo: Kyo[O[C], S2] @unchecked =>
+                        kyo.map(this.chain(next))
+                    case v2 =>
+                        val res  = Kyo.unnest(v2)
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Kyo.defer(v2, this.chain(next))
+                        else
+                            val step = next.step
+                            val out  = step.head(f(res), step.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
+                end match
+            end apply
 
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
