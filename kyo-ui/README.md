@@ -1207,6 +1207,44 @@ val pixelForRevenue: Double < Sync =
 
 For a live chart these scales reflect the signal value at call time and do not update on later emissions; call `.lowerWithScales` again to recompute.
 
+## Drag and drop
+
+Any interactive element opts into dragging with `.dragSource` and into receiving drops with `.dropTarget`. A `Drag.Source` names the element with a stable key and declares the typed payload it carries: `Drag.Item.Text` maps media types to representations, and `Drag.Item.Uri`, `Drag.Item.File`, and `Drag.Item.Directory` model native payloads arriving from outside the page. A `Drag.Target` declares what it accepts through `Drag.Accept`, which constrains media types, operations, item counts, and file sizes before your handler ever runs:
+
+```scala doctest:setup
+val textPlain: Drag.MediaType = Drag.MediaType.parse("text/plain").get
+
+val textOnly: Drag.Accept = Drag.Accept.types(Drag.MediaTypePattern.exact(textPlain))
+```
+
+```scala
+val card: UI = li("Anvil").dragSource(
+    Drag.Source("card-1", Chunk(Drag.Item.Text(Map(textPlain -> "Anvil"))), label = Present("Anvil"))
+)
+
+val bin: UI = ul.dropTarget(Drag.Target("bin", textOnly, Present("Bin")))(card)
+    .onDrop((event: Drag.Event) => Drag.Decision.Accept)
+```
+
+Drop and sort handlers return a `Drag.Decision`: `Accept` commits, `Reject` carries a typed `Drag.Rejection` explaining why (`IncompatibleType`, `TooManyItems`, `FileTooLarge`, or an application reason). Constraint failures reject before dispatch, so a handler only sees payloads its target declared acceptable.
+
+**Sortable collections** build on the same wiring. A reorder arrives as one semantic `Drag.Move`: the moving keys, the source and destination collection names, an optional anchor key, and a `Before`/`After` position. The pure `Sortable.move` engine applies a move to keyed collections and validates it (missing keys, duplicate keys, anchors inside the selection, unsupported operations), so state management stays a total function you can also call programmatically:
+
+```scala
+def reorder(items: SignalRef[Chunk[String]]): UI =
+    ul.onSortMove { (move: Drag.Move) =>
+        items.get.map { current =>
+            Sortable.move(current, current, move).fold(
+                updated => items.set(updated._1).andThen(Drag.Decision.Accept),
+                rejected => Drag.Decision.Reject(rejected),
+                _ => Drag.Decision.Reject(Drag.Rejection.Application("Move failed."))
+            )
+        }
+    }(span("items render here"))
+```
+
+Pointer drags, keyboard moves, and native HTML5 drags all reach the server as the same wire events, so one `onSortMove` handler covers every sensor, and the decision it returns resolves the client-side session either way. The [Kanban](shared/src/test/scala/demo/KanbanDemo.scala) and [InventoryGrid](shared/src/test/scala/demo/InventoryGridDemo.scala) demos are the working references: Kanban moves a multi-selection across lanes through one reducer shared with its fallback arrow buttons, and InventoryGrid reorders rows and columns as two independent collections with a locked column, both proven end to end by `DragScenarioItTest`.
+
 ## Running a UI
 
 The same `UI` value plugs into different targets. The runner picks the transport; the UI shape is unchanged.
@@ -1805,7 +1843,8 @@ This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_
 
 Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-uiJVM/Test/runMain demo.<NameDemo>'`; the server-push demos print a `localhost` URL to open.
 
-- [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: add, move, and delete cards across columns.
+- [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: [drag](#drag-and-drop) cards across columns, move a multi-selection together, or use the arrow-button fallback, all through one `Sortable.move`-based reducer.
+- [**InventoryGrid**](shared/src/test/scala/demo/InventoryGridDemo.scala): inventory table with independently [sortable](#drag-and-drop) rows and columns over one state ref, a locked SKU column, and multi-row selection.
 - [**Signup**](shared/src/test/scala/demo/SignupDemo.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
 - [**Dashboard**](shared/src/test/scala/demo/DashboardDemo.scala): live metrics pushed over the WebSocket from a background fiber, with no client code.
 - [**Search**](shared/src/test/scala/demo/SearchDemo.scala): live Wikipedia search via `HttpClient`, with loading and error states.
