@@ -426,6 +426,82 @@ object Drag:
             )
     end Decision
 
+    // --- Dropped file and directory handles ---
+
+    /** Typed failure for a lazy dropped file or directory read. */
+    enum FileError derives CanEqual:
+        case InvalidToken
+        case PermissionDenied
+        case NotFound
+        case Disconnected
+        case LimitExceeded(reason: String)
+        case Io(reason: String)
+    end FileError
+
+    /** Explicit traversal budget for a dropped directory read; every limit must be positive. */
+    final case class DirectoryLimits(
+        maxDepth: Int,
+        maxEntries: Int,
+        maxSize: ByteSize
+    ) derives CanEqual
+
+    /** One entry of a dropped directory page. */
+    enum DirectoryEntry derives CanEqual:
+        case File(file: DroppedFile)
+        case Directory(directory: DroppedDirectory)
+    end DirectoryEntry
+
+    /** Scoped handle to a dropped file; content is read lazily over the session in bounded chunks. */
+    opaque type DroppedFile = FileMeta
+
+    object DroppedFile:
+        private[kyo] def apply(meta: FileMeta): DroppedFile = meta
+
+        /** The lazy handle for a dropped file item. */
+        def from(item: Item.File): DroppedFile = item.meta
+    end DroppedFile
+
+    extension (file: DroppedFile)
+        /** The validated browser metadata for this file. */
+        def metadata: FileMeta = file
+
+        /** Streams the file content in `chunkSize` requests through the session's read service. */
+        def bytes(chunkSize: ByteSize = 64.kib)(using Frame): Stream[Byte, Async & Scope & Abort[FileError]] =
+            Stream.unwrap(internal.DragFiles.use(service => service.readFile(file, chunkSize)))
+
+        /** Reads the whole file and decodes it with `charset`. */
+        def text(charset: String = "UTF-8")(using Frame): String < (Async & Scope & Abort[FileError]) =
+            bytes().run.map(chunk => new String(chunk.toArray, charset))
+    end extension
+
+    /** Scoped handle to a dropped directory; entries are paged lazily over the session. */
+    opaque type DroppedDirectory = Item.Directory
+
+    object DroppedDirectory:
+        private[kyo] def apply(item: Item.Directory): DroppedDirectory = item
+
+        /** The lazy handle for a dropped directory item. */
+        def from(item: Item.Directory): DroppedDirectory = item
+    end DroppedDirectory
+
+    extension (directory: DroppedDirectory)
+        /** The directory name reported by the browser. */
+        def name: String = (directory: Item.Directory).name
+
+        /** Streams the directory entries under the given traversal budget. Malformed entries are dropped. */
+        def entries(limits: DirectoryLimits)(using Frame): Stream[DirectoryEntry, Async & Scope & Abort[FileError]] =
+            Stream.unwrap(internal.DragFiles.use { service =>
+                service.readDirectory((directory: Item.Directory).token, limits)
+                    .map {
+                        case internal.DragProtocol.EntryData.File(meta) =>
+                            internal.DragProtocol.domainFileMeta(meta).map(value => DirectoryEntry.File(DroppedFile(value)))
+                        case internal.DragProtocol.EntryData.Directory(token, entryName) =>
+                            Present(DirectoryEntry.Directory(DroppedDirectory(Item.Directory(token, entryName))))
+                    }
+                    .collectPure(identity)
+            })
+    end extension
+
     // --- Internal matching ---
 
     private val sortableMediaType: MediaType = "application/x-kyo-sortable"

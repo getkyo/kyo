@@ -51,12 +51,19 @@ private[kyo] object UIServer:
                     Abort.runPartial[Closed](
                         ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))))
                     ).unit
+                files <- DragFiles.Service.init(op =>
+                    Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
+                )
+                // Peer close (or any session end) fails every pending file read with Disconnected.
+                _ <- Scope.ensure(files.close())
                 _ <- UICommands.scrollSink.let(Present(scrollSink)) {
                     DragCommands.resolveSink.let(Present(resolveSink)) {
-                        Async.race(
-                            ws.stream.foreach(payload => dispatchEvent(sub.handleValidated, payload)),
-                            ws.onPeerClose
-                        )
+                        DragFiles.local.let(Present(files)) {
+                            Async.race(
+                                ws.stream.foreach(payload => dispatchEvent(sub.handleValidated, files, payload)),
+                                ws.onPeerClose
+                            )
+                        }
                     }
                 }
             yield ()
@@ -110,12 +117,19 @@ private[kyo] object UIServer:
 
     private def dispatchEvent(
         handle: (Seq[String], DragProtocol.ValidatedEvent) => Boolean < Async,
+        files: DragFiles.Service,
         payload: HttpWebSocket.Payload
     )(using
         Frame
     ): Unit < Async =
         def dispatch(event: UIEvent): Unit < Async =
             DragProtocol.validateEventAndDomain(event, DragProtocol.Limits.default) match
+                // Drop and sort dispatch forks: their handlers may await lazy file reads served by later
+                // frames on this same socket loop, so running them inline would deadlock the session. The
+                // client models concurrent decisions (AwaitingDecisionAfterEnd), and session close unblocks
+                // a forked handler because the file service fails its pending reads with Disconnected.
+                case Result.Success(validated: (DragProtocol.ValidatedEvent.Drop | DragProtocol.ValidatedEvent.SortMove)) =>
+                    Fiber.initUnscoped(handle(event.path, validated).unit).unit
                 case Result.Success(validated) => handle(event.path, validated).unit
                 case _                         => ()
         payload match
@@ -123,15 +137,18 @@ private[kyo] object UIServer:
                 Json.decode[UIEvent](data) match
                     case Result.Success(event) => dispatch(event)
                     // Not a bare event: the drag runtime posts ClientMessage envelopes; unwrap Event values and
-                    // leave file transfer messages to the file service. A malformed inbound frame is dropped: a
-                    // buggy client must not be able to tear down the session. A Panic is a decoder defect, not
-                    // bad input, and must propagate.
+                    // route validated file transfer responses to the session's read service. A malformed inbound
+                    // frame is dropped: a buggy client must not be able to tear down the session. A Panic is a
+                    // decoder defect, not bad input, and must propagate.
                     case Result.Failure(_) =>
                         Json.decode[DragProtocol.ClientMessage](data) match
                             case Result.Success(DragProtocol.ClientMessage.Event(event)) => dispatch(event)
-                            case Result.Success(_)                                       => ()
-                            case Result.Failure(_)                                       => ()
-                            case Result.Panic(ex)                                        => Abort.panic(ex)
+                            case Result.Success(message) =>
+                                DragProtocol.validate(message, DragProtocol.Limits.default) match
+                                    case Result.Success(validated) => files.deliver(validated)
+                                    case _                         => ()
+                            case Result.Failure(_) => ()
+                            case Result.Panic(ex)  => Abort.panic(ex)
                     case Result.Panic(ex) => Abort.panic(ex)
             case HttpWebSocket.Payload.Binary(_) => ()
         end match

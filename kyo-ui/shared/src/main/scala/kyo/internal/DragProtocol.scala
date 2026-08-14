@@ -719,6 +719,10 @@ private[kyo] object DragProtocol:
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
 
+    /** The validated domain metadata for one wire file entry, absent when the entry is malformed. */
+    private[kyo] def domainFileMeta(meta: FileMetaData): Maybe[Drag.FileMeta] =
+        validateFileMetaAndDomain(meta, Limits.default).toMaybe
+
     private def validateFileMetaAndDomain(meta: FileMetaData, limits: Limits): Result[ValidationFailure, Drag.FileMeta] =
         validateIdentifier(meta.token, "token", limits)
             .flatMap(_ => validateText(meta.name, "name", limits.maxNameLength, allowEmpty = false))

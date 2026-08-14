@@ -1176,6 +1176,8 @@ private[kyo] object HtmlRenderer:
            |  var op=JSON.parse(e.data);
            |  if(op.ResolveDrag){
            |    try{__dragRt.resolve(op.ResolveDrag.sessionId,op.ResolveDrag.decision);}catch(error){kyoClientError(error);}
+           |  }else if(op.ReadDropFile||op.ReadDropDirectory||op.CancelDropRead){
+           |    try{__dragRt.serveDropRead(op);}catch(error){kyoClientError(error);}
            |  }else if(op.ReplaceRange){
            |    try{kyoRangeReplace(op.ReplaceRange.regionId,op.ReplaceRange.html);}catch(error){kyoClientError(error);}
            |  }else if(op.Replace){

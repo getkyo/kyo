@@ -161,10 +161,58 @@ private[kyo] object DragClientJs:
            |    ev(changed?"DragEnter":"DragOver",t.path,{event:{sessionId:ctx.id,operation:ctx.op,targetKey:t.key,point:pt(e),modifiers:mods(e),position:{Inside:{}}}});}}
            |function onDropNative(e){if(phase!=="Dragging"||!ctx)return;var t=tgtAt(e.target);if(!t)return;e.preventDefault();ctx.target=t;ctx.last=pt(e);drop();}
            |function onDragEndNative(e){if(!ctx)return;if(phase==="Dragging")finish(true);else if(phase==="AwaitingDecision")phase="AwaitingDecisionAfterEnd";}
+           |// External native drops: snapshot files behind session tokens and serve lazy reads over the wire.
+           |var tokens={},cancelledReads={};
+           |function newToken(p){var t=sid(p);return t;}
+           |function fileItems(dt){var out=[];if(!dt||!dt.files)return out;
+           |  for(var i=0;i<dt.files.length;i++){var f=dt.files[i];var t=newToken("file");tokens[t]=f;
+           |    out.push({File:{meta:{token:t,name:f.name||"file",mediaType:f.type||"application/octet-stream",size:f.size,lastModified:new Date(f.lastModified||0).toISOString()}}});}
+           |  return out;}
+           |function onDropExternal(e){if(phase!=="Idle")return false;var t=tgtAt(e.target);if(!t)return false;
+           |  var its=fileItems(e.dataTransfer);if(!its.length)return false;e.preventDefault();
+           |  ctx={id:sid("drag"),src:null,op:{Copy:{}},keyboard:false,pointerId:null,last:pt(e),target:t,anchor:null,after:false,slot:0,
+           |       collection:null,keys:[],region:null,preview:null};
+           |  phase="AwaitingDecisionAfterEnd";
+           |  ev("DragStart",[],{event:{sessionId:ctx.id,items:its,operation:{Copy:{}},point:pt(e),modifiers:mods(e)}});
+           |  ev("Drop",t.path,{event:{sessionId:ctx.id,operation:{Copy:{}},targetKey:t.key,point:pt(e),modifiers:mods(e),position:{Inside:{}}}});
+           |  return true;}
+           |function b64(buf){var bytes=new Uint8Array(buf);var bin="";for(var i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin);}
+           |function failRead(id,failure){var f={};f[failure]={};post({FileFailure:{requestId:id,failure:f}});}
+           |function serveFileRead(op){var id=op.requestId;var f=tokens[op.token];
+           |  if(!f||typeof f.slice!=="function")return failRead(id,"InvalidToken");
+           |  var offset=op.offset,max=op.maxSize;
+           |  if(offset>=f.size)return post({FileReadComplete:{requestId:id}});
+           |  var blob=f.slice(offset,Math.min(f.size,offset+max));
+           |  blob.arrayBuffer().then(function(buf){
+           |    if(cancelledReads[id]){delete cancelledReads[id];return;}
+           |    post({FileChunk:{requestId:id,bytesBase64:b64(buf)}});
+           |  }).catch(function(){failRead(id,"Io");});}
+           |function serveDirectoryRead(op){var id=op.requestId;var entry=tokens[op.token];
+           |  if(!entry||!entry.createReader)return failRead(id,"InvalidToken");
+           |  var reader=entry.createReader();var out=[];
+           |  function page(){reader.readEntries(function(list){
+           |    if(cancelledReads[id]){delete cancelledReads[id];return;}
+           |    if(!list.length||out.length>=op.maxEntries){
+           |      post({FileEntries:{requestId:id,entries:out.slice(0,op.maxEntries),nextCursor:null}});return;}
+           |    var i=0;function next(){
+           |      if(i>=list.length){page();return;}
+           |      var en=list[i++];
+           |      if(en.isDirectory){var t=newToken("directory");tokens[t]=en;out.push({Directory:{token:t,name:en.name||"directory"}});next();}
+           |      else en.file(function(fl){var t=newToken("file");tokens[t]=fl;
+           |        out.push({File:{meta:{token:t,name:fl.name||"file",mediaType:fl.type||"application/octet-stream",size:fl.size,lastModified:new Date(fl.lastModified||0).toISOString()}}});next();},
+           |        function(){next();});}
+           |    next();
+           |  },function(){failRead(id,"PermissionDenied");});}
+           |  page();}
+           |function onDropAny(e){if(phase==="Idle"){onDropExternal(e);}else{onDropNative(e);}}
+           |function serveDropRead(op){
+           |  if(op.ReadDropFile)serveFileRead(op.ReadDropFile);
+           |  else if(op.ReadDropDirectory)serveDirectoryRead(op.ReadDropDirectory);
+           |  else if(op.CancelDropRead)cancelledReads[op.CancelDropRead.requestId]=true;}
            |function resolve(sessionId,decision){if(closed||!ctx||ctx.id!==sessionId)return;
            |  if(decision.Reject){var r=decision.Reject.rejection||{};var reason=r.Application?r.Application.reason:"rejected";say("Move rejected: "+reason);finish(true);return;}
            |  if(phase==="AwaitingDecision"||phase==="AwaitingDecisionAfterEnd"){say(label(ctx.src)+" dropped.");finish(false);}}
-           |var caps=[["dragstart",onDragStart],["dragover",onDragOverNative],["drop",onDropNative],["dragend",onDragEndNative],
+           |var caps=[["dragstart",onDragStart],["dragover",onDragOverNative],["drop",onDropAny],["dragend",onDragEndNative],
            |  ["pointerdown",onPointerDown],["pointermove",onPointerMove],["pointerup",onPointerUp],["pointercancel",onPointerCancel],
            |  ["touchstart",onTouchStart],["touchmove",onTouchMove],["touchend",onTouchEnd],["touchcancel",onTouchEnd],
            |  ["keydown",onKeyDown]];
@@ -172,9 +220,10 @@ private[kyo] object DragClientJs:
            |function cleanup(){if(closed)return;closed=true;
            |  if(holdTimer){clearTimeout(holdTimer);holdTimer=null;}
            |  if(ctx)finish(true);
+           |  tokens={};cancelledReads={};
            |  for(var ci=0;ci<caps.length;ci++)document.removeEventListener(caps[ci][0],caps[ci][1],true);}
            |window.addEventListener("pagehide",cleanup);
            |if(lifecycle&&lifecycle.onClose)lifecycle.onClose(cleanup);
-           |return {resolve:resolve,cleanup:cleanup};
+           |return {resolve:resolve,cleanup:cleanup,serveDropRead:serveDropRead};
            |}""".stripMargin
 end DragClientJs
