@@ -88,7 +88,88 @@ object Sortable:
         end if
     end move
 
+    /** Expands dragged keys to the whole selection when every dragged key is selected.
+      *
+      * The expanded keys keep `visible` order, so a multi-selection always moves in the order the
+      * user sees. When any dragged key is outside the selection, the dragged keys pass through
+      * unchanged. This is the standard multi-select rule shared by the demo applications.
+      */
+    def expandSelection(visible: Chunk[String], selected: Set[String], keys: Chunk[String]): Chunk[String] =
+        if keys.nonEmpty && keys.forall(selected.contains) then visible.filter(selected.contains)
+        else keys
+
+    /** Applies a sortable move to typed collections, projecting keys with `key`.
+      *
+      * Delegates validation and ordering to [[move]] and rebuilds the typed collections from the
+      * updated key order, carrying source values across collections. Keys in `locked` can neither
+      * move nor anchor a move.
+      */
+    def moveBy[A](
+        source: Chunk[A],
+        destination: Chunk[A],
+        move: Drag.Move,
+        locked: Set[String] = Set.empty
+    )(key: A => String): Result[Drag.Rejection, (Chunk[A], Chunk[A])] =
+        if touchesLocked(locked, move) then rejectWith("Locked keys cannot move or anchor a move.")
+        else
+            Sortable.move(source.map(key), destination.map(key), move).map { (updatedSource, updatedDestination) =>
+                val byKey = source.concat(destination).map(a => key(a) -> a).toMap
+                (updatedSource.map(byKey), updatedDestination.map(byKey))
+            }
+
+    /** Applies a sortable move across an ordered set of named key collections.
+      *
+      * The moving keys are located in whichever collections hold them; each per-collection group is
+      * applied through [[move]] in collection order, threading the anchor so keys spanning several
+      * collections land contiguously at the destination. The result preserves the input collection
+      * order. Keys in `locked` can neither move nor anchor a move.
+      */
+    def moveGroups(
+        collections: Chunk[(String, Chunk[String])],
+        move: Drag.Move,
+        locked: Set[String] = Set.empty
+    ): Result[Drag.Rejection, Chunk[(String, Chunk[String])]] =
+        val destination = move.destination.collection
+        if !collections.exists(_._1 == destination) then rejectWith(s"Unknown collection: $destination")
+        else if touchesLocked(locked, move) then rejectWith("Locked keys cannot move or anchor a move.")
+        else if move.keys.isEmpty then rejectWith("At least one item must move.")
+        else if move.keys.toSet.size != move.keys.size then rejectWith("Moving item keys must be unique.")
+        else
+            val moving = move.keys.toSet
+            if !move.keys.forall(k => collections.exists(_._2.contains(k))) then
+                rejectWith("Every moving item must exist in the source collections.")
+            else if move.anchor.exists(moving.contains) then
+                rejectWith("The destination is part of the moving selection.")
+            else
+                val groups = collections.map((name, keys) => name -> keys.filter(moving.contains)).filter(_._2.nonEmpty)
+                val start  = collections.toMap
+                val applied = groups.foldLeft(
+                    Result.succeed[Drag.Rejection, (Map[String, Chunk[String]], Maybe[String], Drag.Position)](
+                        (start, move.anchor, move.position)
+                    )
+                ) { case (acc, (name, keys)) =>
+                    acc.flatMap { (state, anchor, position) =>
+                        val group = Drag.Move(keys, Drag.Location(name), move.destination, anchor, position, move.operation)
+                        Sortable.move(state(name), state(destination), group).map { (src, dst) =>
+                            val updated =
+                                if name == destination then state.updated(name, src)
+                                else state.updated(name, src).updated(destination, dst)
+                            (updated, Present(keys.last), Drag.Position.After)
+                        }
+                    }
+                }
+                applied.map((state, _, _) => collections.map((name, _) => name -> state(name)))
+            end if
+        end if
+    end moveGroups
+
     // --- Internal operations ---
+
+    private def touchesLocked(locked: Set[String], move: Drag.Move): Boolean =
+        locked.nonEmpty && (move.keys.exists(locked.contains) || move.anchor.exists(locked.contains))
+
+    private def rejectWith[A](reason: String): Result[Drag.Rejection, A] =
+        Result.Failure(Rejection.Application(reason))
 
     private def insert(
         base: Chunk[String],

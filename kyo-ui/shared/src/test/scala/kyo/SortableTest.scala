@@ -342,4 +342,166 @@ class SortableTest extends kyo.test.Test[Any]:
         }
     }
 
+    "expandSelection" - {
+        "expands to the whole selection in visible order when every dragged key is selected" in {
+            val expanded = Sortable.expandSelection(Chunk("a", "b", "c", "d"), Set("d", "a"), Chunk("d"))
+            assert(expanded == Chunk("a", "d"))
+        }
+
+        "keeps the dragged keys when any dragged key is outside the selection" in {
+            val expanded = Sortable.expandSelection(Chunk("a", "b", "c"), Set("a"), Chunk("b"))
+            assert(expanded == Chunk("b"))
+        }
+
+        "keeps empty dragged keys empty" in {
+            assert(Sortable.expandSelection(Chunk("a", "b"), Set("a"), Chunk.empty) == Chunk.empty)
+        }
+    }
+
+    "moveBy" - {
+        case class Item(id: String, label: String) derives CanEqual
+
+        val items = Chunk(Item("a", "Anvil"), Item("b", "Rope"), Item("c", "Magnet"))
+
+        "reorders typed values within one collection" in {
+            val request = move(Chunk("c"), Present("a"), Position.Before, source = sourceLocation, destination = sourceLocation)
+            val result  = Sortable.moveBy(items, items, request)(_.id)
+            assert(result == Result.Success((
+                Chunk(Item("c", "Magnet"), Item("a", "Anvil"), Item("b", "Rope")),
+                Chunk(Item("c", "Magnet"), Item("a", "Anvil"), Item("b", "Rope"))
+            )))
+        }
+
+        "moves typed values across collections carrying the source values" in {
+            val destination = Chunk(Item("x", "Crate"))
+            val request     = move(Chunk("b"), Absent, Position.After)
+            val result      = Sortable.moveBy(items, destination, request)(_.id)
+            assert(result == Result.Success((
+                Chunk(Item("a", "Anvil"), Item("c", "Magnet")),
+                Chunk(Item("x", "Crate"), Item("b", "Rope"))
+            )))
+        }
+
+        "rejects a locked moving key without mutation" in {
+            val request = move(Chunk("a"), Absent, Position.After, source = sourceLocation, destination = sourceLocation)
+            val result  = Sortable.moveBy(items, items, request, locked = Set("a"))(_.id)
+            assert(result == Result.Failure(Rejection.Application("Locked keys cannot move or anchor a move.")))
+        }
+
+        "rejects a locked anchor without mutation" in {
+            val request = move(Chunk("b"), Present("a"), Position.Before, source = sourceLocation, destination = sourceLocation)
+            val result  = Sortable.moveBy(items, items, request, locked = Set("a"))(_.id)
+            assert(result == Result.Failure(Rejection.Application("Locked keys cannot move or anchor a move.")))
+        }
+
+        "propagates engine rejections unchanged" in {
+            val request = move(Chunk("missing"), Absent, Position.After)
+            val result  = Sortable.moveBy(items, Chunk.empty[Item], request)(_.id)
+            assert(result == Result.Failure(Rejection.Application("Every moving item must exist in the source collection.")))
+        }
+    }
+
+    "moveGroups" - {
+        val lanes = Chunk(
+            "todo"  -> Chunk("1", "2"),
+            "doing" -> Chunk("3"),
+            "done"  -> Chunk("4")
+        )
+
+        def laneMove(
+            keys: Chunk[String],
+            source: String,
+            destination: String,
+            anchor: Maybe[String] = Absent,
+            position: Position = Position.After
+        ): Move =
+            Move(keys, Location(source), Location(destination), anchor, position, Operation.Move)
+
+        "reorders within one group" in {
+            val result = Sortable.moveGroups(lanes, laneMove(Chunk("2"), "todo", "todo", Present("1"), Position.Before))
+            assert(result == Result.Success(Chunk(
+                "todo"  -> Chunk("2", "1"),
+                "doing" -> Chunk("3"),
+                "done"  -> Chunk("4")
+            )))
+        }
+
+        "moves keys spanning groups contiguously at the destination anchor" in {
+            val result = Sortable.moveGroups(lanes, laneMove(Chunk("2", "3"), "doing", "done", Present("4"), Position.Before))
+            assert(result == Result.Success(Chunk(
+                "todo"  -> Chunk("1"),
+                "doing" -> Chunk.empty[String],
+                "done"  -> Chunk("2", "3", "4")
+            )))
+        }
+
+        "rejects an unknown destination group" in {
+            val result = Sortable.moveGroups(lanes, laneMove(Chunk("1"), "todo", "archive"))
+            assert(result == Result.Failure(Rejection.Application("Unknown collection: archive")))
+        }
+
+        "rejects a key missing from every group" in {
+            val result = Sortable.moveGroups(lanes, laneMove(Chunk("9"), "todo", "done"))
+            assert(result == Result.Failure(Rejection.Application("Every moving item must exist in the source collections.")))
+        }
+
+        "rejects an anchor inside the moving keys across groups" in {
+            val result = Sortable.moveGroups(lanes, laneMove(Chunk("1", "3"), "todo", "done", Present("3"), Position.Before))
+            assert(result == Result.Failure(Rejection.Application("The destination is part of the moving selection.")))
+        }
+
+        "rejects locked keys and locked anchors" in {
+            val moved = Sortable.moveGroups(lanes, laneMove(Chunk("1"), "todo", "done"), locked = Set("1"))
+            val anchored =
+                Sortable.moveGroups(lanes, laneMove(Chunk("1"), "todo", "done", Present("4"), Position.Before), locked = Set("4"))
+            assert(moved == Result.Failure(Rejection.Application("Locked keys cannot move or anchor a move.")))
+            assert(anchored == Result.Failure(Rejection.Application("Locked keys cannot move or anchor a move.")))
+        }
+
+        "rejects duplicate moving keys" in {
+            val result = Sortable.moveGroups(lanes, laneMove(Chunk("1", "1"), "todo", "done"))
+            assert(result == Result.Failure(Rejection.Application("Moving item keys must be unique.")))
+        }
+    }
+
+    "Decision.fromResult" - {
+        "commits and accepts on success" in {
+            for
+                committed <- AtomicRef.init(Absent: Maybe[Int])
+                decision  <- Decision.fromResult(Result.succeed[Rejection, Int](42))(v => committed.set(Present(v)))
+                value     <- committed.get
+            yield
+                assert(decision == Decision.Accept)
+                assert(value == Present(42))
+        }
+
+        "rejects without committing on failure" in {
+            for
+                committed <- AtomicRef.init(false)
+                decision  <- Decision.fromResult(Result.fail[Rejection, Int](Rejection.Application("no")))(_ => committed.set(true))
+                value     <- committed.get
+            yield
+                assert(decision == Decision.Reject(Rejection.Application("no")))
+                assert(!value)
+        }
+    }
+
+    "sortable constructors" - {
+        "a sortable source payload is accepted by a sortable target" in {
+            val source = Source.sortable("card-1", Present("Card one"))
+            val target = Target.sortable("lane", Present("Lane"))
+            assert(source.key == "card-1")
+            assert(source.label == Present("Card one"))
+            assert(target.key == "lane")
+            assert(source.items.size == 1)
+            assert(source.items.forall(target.accepts.accepts))
+        }
+
+        "a sortable target rejects plain text payloads" in {
+            val target = Target.sortable("lane")
+            val plain  = Item.Text(Map(MediaType.parse("text/plain").get -> "value"))
+            assert(!target.accepts.accepts(plain))
+        }
+    }
+
 end SortableTest

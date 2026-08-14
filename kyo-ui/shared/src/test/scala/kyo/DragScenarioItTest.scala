@@ -191,7 +191,7 @@ class DragScenarioItTest extends kyo.test.Test[Any]:
                 yield
                     assert(updated == board)
                     assert(resolved == Chunk(
-                        Drag.Decision.Reject(Drag.Rejection.Application("Unknown lane: archive"))
+                        Drag.Decision.Reject(Drag.Rejection.Application("Unknown collection: archive"))
                     ))
             }
         }
@@ -327,8 +327,8 @@ class DragScenarioItTest extends kyo.test.Test[Any]:
                     Set.empty,
                     move(Chunk("name"), Columns, Columns, Present("sku"), Drag.Position.Before)
                 )
-            assert(movedLocked == Result.fail(Drag.Rejection.Application("The SKU column is locked.")))
-            assert(anchoredOnIt == Result.fail(Drag.Rejection.Application("The SKU column is locked.")))
+            assert(movedLocked == Result.fail(Drag.Rejection.Application("Locked keys cannot move or anchor a move.")))
+            assert(anchoredOnIt == Result.fail(Drag.Rejection.Application("Locked keys cannot move or anchor a move.")))
         }
 
         "keyboard-originated column move commits through the same wire event" in {

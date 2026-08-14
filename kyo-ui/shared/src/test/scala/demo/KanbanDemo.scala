@@ -15,10 +15,11 @@ import kyo.UI.Ast.HtmlContent
   * between the three columns, walk it with the ◀/▶ buttons, or remove it with ✕. Ticking the checkbox on several cards moves them together
   * on the next drag or arrow press, in board-visible order.
   *
-  * Demonstrates: `dragSource`/`dropTarget`/`onSortMove` sortable wiring over one `SignalRef[Board]` source of truth, a single total
-  * [[applyMove]] reducer built on [[kyo.Sortable.move]] (drag, keyboard, and the arrow fallback controls all route through it),
-  * a `SignalRef[Set[String]]` multi-selection, keyed list rendering with `foreachKeyed`, reactive per-column counts, `when` empty-state
-  * placeholders, and two-way `value` binding on the new-card input.
+  * Demonstrates: `Drag.Source.sortable`/`Drag.Target.sortable`/`onSortMove` wiring over one `SignalRef[Board]` source of truth, a
+  * single total [[applyMove]] reducer built on [[kyo.Sortable.moveGroups]] and [[kyo.Sortable.expandSelection]] (drag, keyboard, and
+  * the arrow fallback controls all route through it via [[Drag.Decision.fromResult]]), a `SignalRef[Set[String]]` multi-selection,
+  * keyed list rendering with `foreachKeyed`, reactive per-column counts, `when` empty-state placeholders, and two-way `value` binding
+  * on the new-card input.
   */
 object KanbanDemo extends KyoApp:
 
@@ -31,9 +32,6 @@ object KanbanDemo extends KyoApp:
     val DoneLane  = "done"
 
     private val laneIds = Chunk(TodoLane, DoingLane, DoneLane)
-
-    private val textPlain        = Drag.MediaType.parse("text/plain").get
-    private val textPlainPattern = Drag.MediaTypePattern.exact(textPlain)
 
     private val seed = Board(
         todo = Chunk(Card("1", "Design the API"), Card("2", "Write the README")),
@@ -49,58 +47,25 @@ object KanbanDemo extends KyoApp:
             case DoneLane  => b.done
             case _         => Chunk.empty
 
-    private def withLanes(cardsById: Map[String, Card], lanes: Map[String, Chunk[String]]): Board =
-        def cards(lane: String): Chunk[Card] = lanes(lane).map(cardsById)
-        Board(cards(TodoLane), cards(DoingLane), cards(DoneLane))
-
     private def visibleCards(b: Board): Chunk[Card] =
         b.todo.concat(b.doing).concat(b.done)
 
-    private def reject(reason: String): Result[Drag.Rejection, Board] =
-        Result.fail(Drag.Rejection.Application(reason))
-
     /** The one total move reducer: drag, keyboard, and the arrow controls all commit through it.
       *
-      * When every dragged key is selected, the whole selection moves in board-visible order. Cards are located by key
-      * across all lanes, and each per-lane group is applied through [[kyo.Sortable.move]], threading the anchor so a
-      * selection spanning lanes lands contiguously at the destination. Invalid moves return a typed rejection and the
-      * board is untouched.
+      * [[kyo.Sortable.expandSelection]] moves the whole selection in board-visible order when every dragged card is
+      * selected, and [[kyo.Sortable.moveGroups]] locates cards across lanes and lands a selection spanning lanes
+      * contiguously at the destination anchor. Invalid moves return a typed rejection and the board is untouched.
       */
     def applyMove(board: Board, selected: Set[String], move: Drag.Move): Result[Drag.Rejection, Board] =
-        val destLane = move.destination.collection
-        if !laneIds.contains(destLane) then reject(s"Unknown lane: $destLane")
-        else if move.operation != Drag.Operation.Move then reject("Kanban cards only move.")
+        if move.operation != Drag.Operation.Move then Result.fail(Drag.Rejection.Application("Kanban cards only move."))
         else
-            val visible = visibleCards(board).map(_.id)
-            val effective =
-                if move.keys.nonEmpty && move.keys.forall(selected.contains) then visible.filter(selected.contains)
-                else move.keys
-            if effective.isEmpty then reject("At least one item must move.")
-            else if !effective.forall(visible.contains) then reject("Every moving card must exist on the board.")
-            else if move.anchor.exists(effective.contains) then reject("The destination is part of the moving selection.")
-            else
-                val cardsById = visibleCards(board).map(c => c.id -> c).toMap
-                val moving    = effective.toSet
-                val groups    = laneIds.map(l => l -> laneCards(board, l).map(_.id).filter(moving.contains)).filter(_._2.nonEmpty)
-                val start     = laneIds.map(l => l -> laneCards(board, l).map(_.id)).toMap
-                val applied = groups.foldLeft(
-                    Result.succeed[Drag.Rejection, (Map[String, Chunk[String]], Maybe[String], Drag.Position)](
-                        (start, move.anchor, move.position)
-                    )
-                ) { case (acc, (lane, keys)) =>
-                    acc.flatMap { (lanes, anchor, position) =>
-                        val group = Drag.Move(keys, Drag.Location(lane), Drag.Location(destLane), anchor, position, Drag.Operation.Move)
-                        Sortable.move(lanes(lane), lanes(destLane), group).map { (src, dst) =>
-                            val updated =
-                                if lane == destLane then lanes.updated(lane, src)
-                                else lanes.updated(lane, src).updated(destLane, dst)
-                            (updated, Present(keys.last), Drag.Position.After)
-                        }
-                    }
-                }
-                applied.map((lanes, _, _) => withLanes(cardsById, lanes))
-            end if
-        end if
+            val cardsById = visibleCards(board).map(c => c.id -> c).toMap
+            val effective = Sortable.expandSelection(visibleCards(board).map(_.id), selected, move.keys)
+            val lanes     = laneIds.map(lane => lane -> laneCards(board, lane).map(_.id))
+            Sortable.moveGroups(lanes, move.copy(keys = effective)).map { updated =>
+                val byLane = updated.toMap
+                Board(byLane(TodoLane).map(cardsById), byLane(DoingLane).map(cardsById), byLane(DoneLane).map(cardsById))
+            }
     end applyMove
 
     /** The [[Drag.Move]] the ◀/▶ controls issue: one lane toward `dir` (-1 left, +1 right), `Absent` when already at the end. */
@@ -146,11 +111,7 @@ object KanbanDemo extends KyoApp:
         delete: Card => Any < Async
     ): HtmlContent =
         li.style(cardStyle)
-            .dragSource(Drag.Source(
-                c.id,
-                Chunk(Drag.Item.Text(Map(textPlain -> c.title))),
-                label = Present(c.title)
-            ))(
+            .dragSource(Drag.Source.sortable(c.id, Present(c.title)))(
                 checkbox.id(s"select-${c.id}")
                     .onChange(on => selection.updateAndGet(s => if on then s + c.id else s - c.id).unit)
                     .checked(selection.map(_.contains(c.id))),
@@ -178,7 +139,7 @@ object KanbanDemo extends KyoApp:
             ),
             when(cards.map(_.isEmpty))(p("Nothing here").style(Style.color(Color.white).italic.fontSize(13.px))),
             ul.style(cardListStyle)
-                .dropTarget(Drag.Target(lane, Drag.Accept.types(textPlainPattern), Present(title)))(
+                .dropTarget(Drag.Target.sortable(lane, Present(title)))(
                     cards.foreachKeyed(_.id)(c => cardRow(c, selection, left, right, delete))
                 )
         )
@@ -187,25 +148,17 @@ object KanbanDemo extends KyoApp:
     def boardView(state: SignalRef[Board], selection: SignalRef[Set[String]])(using Frame): UI =
         val commit: Drag.Move => Drag.Decision < Async = move =>
             for
-                sel     <- selection.get
-                current <- state.get
-                decided: (Drag.Decision < Async) = applyMove(current, sel, move) match
-                    case Result.Success(next)     => state.set(next).andThen(Drag.Decision.Accept)
-                    case Result.Failure(rejected) => Drag.Decision.Reject(rejected)
-                    case _: Result.Panic          => Drag.Decision.Reject(Drag.Rejection.Application("Kanban move failed."))
-                decision <- decided
+                sel      <- selection.get
+                current  <- state.get
+                decision <- Drag.Decision.fromResult(applyMove(current, sel, move))(next => state.set(next))
             yield decision
+        // The arrow controls route through the same commit function as drags, so a rejected move
+        // follows the same decision path instead of being silently swallowed.
         val shiftVia = (dir: Int) =>
             (c: Card) =>
-                for
-                    sel     <- selection.get
-                    current <- state.get
-                    committed: (Unit < Async) = shiftMove(current, c.id, dir) match
-                        case Present(move) =>
-                            applyMove(current, sel, move).fold(next => state.set(next).unit, _ => (), _ => ())
-                        case Absent => ()
-                    _ <- committed
-                yield ()
+                state.get.map { current =>
+                    shiftMove(current, c.id, dir).fold[Unit < Async](())(move => commit(move).unit)
+                }
         val delete = (c: Card) =>
             state.updateAndGet(b =>
                 Board(

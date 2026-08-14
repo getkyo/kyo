@@ -17,8 +17,9 @@ import kyo.UI.Ast.HtmlContent
   * visible order. The SKU column is locked: it can neither move nor anchor a move.
   *
   * Demonstrates: two sortable collections over one state ref, a single total [[applyMove]] reducer built on
-  * [[kyo.Sortable.move]] shared by pointer, keyboard, and programmatic movement, application-level locking through a
-  * typed rejection, and `foreachKeyed` rendering for both axes.
+  * [[kyo.Sortable.moveBy]] and [[kyo.Sortable.expandSelection]] shared by pointer, keyboard, and programmatic
+  * movement, declarative locking through the `locked` set, `Drag.Source.sortable`/`Drag.Target.sortable` payloads,
+  * and `foreachKeyed` rendering for both axes.
   */
 object InventoryGridDemo extends KyoApp:
 
@@ -32,9 +33,6 @@ object InventoryGridDemo extends KyoApp:
 
     /** The locked column: it can neither move nor anchor a move. */
     val LockedColumn = "sku"
-
-    private val textPlain        = Drag.MediaType.parse("text/plain").get
-    private val textPlainPattern = Drag.MediaTypePattern.exact(textPlain)
 
     private val seed = Inventory(
         columns = Chunk(
@@ -50,41 +48,27 @@ object InventoryGridDemo extends KyoApp:
         )
     )
 
-    private def reject(reason: String): Result[Drag.Rejection, Inventory] =
-        Result.fail(Drag.Rejection.Application(reason))
-
     /** The one total move reducer shared by pointer drags, keyboard moves, and programmatic movement.
       *
-      * Rows reorder within `inventory-rows` (a selection of rows moves together in visible order), columns reorder
-      * within `inventory-columns`, and the two collections never mix. The locked SKU column can neither move nor
-      * anchor a move. Invalid moves return a typed rejection and the inventory is untouched.
+      * Rows reorder within `inventory-rows` ([[kyo.Sortable.expandSelection]] moves a row selection together in
+      * visible order), columns reorder within `inventory-columns` with the SKU column locked through the
+      * [[kyo.Sortable.moveBy]] `locked` set, and the two collections never mix. Invalid moves return a typed
+      * rejection and the inventory is untouched.
       */
     def applyMove(inventory: Inventory, selectedRows: Set[String], move: Drag.Move): Result[Drag.Rejection, Inventory] =
-        val source      = move.source.collection
-        val destination = move.destination.collection
-        (source, destination) match
+        (move.source.collection, move.destination.collection) match
             case (RowsCollection, RowsCollection) =>
-                val visible = inventory.rows.map(_.id)
-                val effective =
-                    if move.keys.nonEmpty && move.keys.forall(selectedRows.contains) then visible.filter(selectedRows.contains)
-                    else move.keys
-                val rowsById = inventory.rows.map(r => r.id -> r).toMap
-                Sortable.move(visible, visible, move.copy(keys = effective)).map { (updated, _) =>
-                    inventory.copy(rows = updated.map(rowsById))
-                }
+                val effective = Sortable.expandSelection(inventory.rows.map(_.id), selectedRows, move.keys)
+                Sortable.moveBy(inventory.rows, inventory.rows, move.copy(keys = effective))(_.id)
+                    .map((updated, _) => inventory.copy(rows = updated))
             case (ColumnsCollection, ColumnsCollection) =>
-                if move.keys.contains(LockedColumn) || move.anchor.contains(LockedColumn) then
-                    reject("The SKU column is locked.")
-                else
-                    val visible     = inventory.columns.map(_.id)
-                    val columnsById = inventory.columns.map(c => c.id -> c).toMap
-                    Sortable.move(visible, visible, move).map { (updated, _) =>
-                        inventory.copy(columns = updated.map(columnsById))
-                    }
+                Sortable.moveBy(inventory.columns, inventory.columns, move, locked = Set(LockedColumn))(_.id)
+                    .map((updated, _) => inventory.copy(columns = updated))
             case (RowsCollection, ColumnsCollection) | (ColumnsCollection, RowsCollection) =>
-                reject("Rows and columns cannot be mixed.")
-            case _ =>
-                reject(s"Unknown collection: ${if source == RowsCollection || source == ColumnsCollection then destination else source}")
+                Result.fail(Drag.Rejection.Application("Rows and columns cannot be mixed."))
+            case (source, destination) =>
+                val unknown = if source == RowsCollection || source == ColumnsCollection then destination else source
+                Result.fail(Drag.Rejection.Application(s"Unknown collection: $unknown"))
         end match
     end applyMove
 
@@ -99,19 +83,11 @@ object InventoryGridDemo extends KyoApp:
         else
             th.id(s"col-${c.id}")
                 .style(headerStyle)
-                .dragSource(Drag.Source(
-                    c.id,
-                    Chunk(Drag.Item.Text(Map(textPlain -> c.title))),
-                    label = Present(c.title)
-                ))(c.title)
+                .dragSource(Drag.Source.sortable(c.id, Present(c.title)))(c.title)
 
     private def rowCells(r: Row, columns: Chunk[Column], selection: SignalRef[Set[String]]): HtmlContent =
         tr.id(s"row-${r.id}")
-            .dragSource(Drag.Source(
-                r.id,
-                Chunk(Drag.Item.Text(Map(textPlain -> r.cells.getOrElse("name", r.id)))),
-                label = Present(r.cells.getOrElse("name", r.id))
-            ))(
+            .dragSource(Drag.Source.sortable(r.id, Present(r.cells.getOrElse("name", r.id))))(
                 td.style(cellStyle)(
                     checkbox.id(s"select-${r.id}")
                         .onChange(on => selection.updateAndGet(s => if on then s + r.id else s - r.id).unit)
@@ -124,21 +100,17 @@ object InventoryGridDemo extends KyoApp:
     def gridView(state: SignalRef[Inventory], selection: SignalRef[Set[String]])(using Frame): UI =
         val commit: Drag.Move => Drag.Decision < Async = move =>
             for
-                sel     <- selection.get
-                current <- state.get
-                decided: (Drag.Decision < Async) = applyMove(current, sel, move) match
-                    case Result.Success(next)     => state.set(next).andThen(Drag.Decision.Accept)
-                    case Result.Failure(rejected) => Drag.Decision.Reject(rejected)
-                    case _: Result.Panic          => Drag.Decision.Reject(Drag.Rejection.Application("Inventory move failed."))
-                decision <- decided
+                sel      <- selection.get
+                current  <- state.get
+                decision <- Drag.Decision.fromResult(applyMove(current, sel, move))(next => state.set(next))
             yield decision
         div.onSortMove(commit)(
             UI.table.id("inventory").style(tableStyle)(
-                tr.dropTarget(Drag.Target(ColumnsCollection, Drag.Accept.types(textPlainPattern), Present("Columns")))(
+                tr.dropTarget(Drag.Target.sortable(ColumnsCollection, Present("Columns")))(
                     th.style(headerStyle)("Select"),
                     state.map(_.columns).foreachKeyed(_.id)(headerCell)
                 ),
-                tbody.dropTarget(Drag.Target(RowsCollection, Drag.Accept.types(textPlainPattern), Present("Rows")))(
+                tbody.dropTarget(Drag.Target.sortable(RowsCollection, Present("Rows")))(
                     state.render(inv => fragment(inv.rows.map(r => rowCells(r, inv.columns, selection): HtmlContent)*))
                 )
             )

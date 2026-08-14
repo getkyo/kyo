@@ -1228,22 +1228,28 @@ val bin: UI = ul.dropTarget(Drag.Target("bin", textOnly, Present("Bin")))(card)
 
 Drop and sort handlers return a `Drag.Decision`: `Accept` commits, `Reject` carries a typed `Drag.Rejection` explaining why (`IncompatibleType`, `TooManyItems`, `FileTooLarge`, or an application reason). Constraint failures reject before dispatch, so a handler only sees payloads its target declared acceptable.
 
-**Sortable collections** build on the same wiring. A reorder arrives as one semantic `Drag.Move`: the moving keys, the source and destination collection names, an optional anchor key, and a `Before`/`After` position. The pure `Sortable.move` engine applies a move to keyed collections and validates it (missing keys, duplicate keys, anchors inside the selection, unsupported operations), so state management stays a total function you can also call programmatically:
+**Sortable collections** build on the same wiring, without the payload ceremony: `Drag.Source.sortable(key)` and `Drag.Target.sortable(collection)` carry a reserved internal media type, so pure reordering never invents an application payload. The target's `collection` name is the contract: it is exactly the value sort moves carry in `Drag.Location.collection` for that container.
+
+A reorder arrives as one semantic `Drag.Move`: the moving keys, the source and destination collection names, an optional anchor key, and a `Before`/`After` position. The pure `Sortable` engine applies and validates it (missing keys, duplicate keys, anchors inside the selection, unsupported operations), so state management stays a total function you can also call programmatically. `Sortable.moveBy` works on your typed values directly, `locked` keys can neither move nor anchor a move, and `Drag.Decision.fromResult` turns the reducer result into the handler's decision, committing only on success:
+
+```scala doctest:setup
+case class Task(id: String, title: String)
+```
 
 ```scala
-def reorder(items: SignalRef[Chunk[String]]): UI =
+def reorder(items: SignalRef[Chunk[Task]]): UI =
     ul.onSortMove { (move: Drag.Move) =>
         items.get.map { current =>
-            Sortable.move(current, current, move).fold(
-                updated => items.set(updated._1).andThen(Drag.Decision.Accept),
-                rejected => Drag.Decision.Reject(rejected),
-                _ => Drag.Decision.Reject(Drag.Rejection.Application("Move failed."))
-            )
+            Drag.Decision.fromResult(
+                Sortable.moveBy(current, current, move, locked = Set("pinned"))(_.id)
+            )((updated, _) => items.set(updated))
         }
     }(span("items render here"))
 ```
 
-Pointer drags, keyboard moves, and native HTML5 drags all reach the server as the same wire events, so one `onSortMove` handler covers every sensor, and the decision it returns resolves the client-side session either way. The [Kanban](shared/src/test/scala/demo/KanbanDemo.scala) and [InventoryGrid](shared/src/test/scala/demo/InventoryGridDemo.scala) demos are the working references: Kanban moves a multi-selection across lanes through one reducer shared with its fallback arrow buttons, and InventoryGrid reorders rows and columns as two independent collections with a locked column, both proven end to end by `DragScenarioItTest`.
+For multi-collection boards, `Sortable.moveGroups` locates the moving keys across an ordered set of named key collections and lands a selection spanning collections contiguously at the destination anchor, and `Sortable.expandSelection` implements the standard multi-select rule: when every dragged key is selected, the whole selection moves in visible order.
+
+Pointer drags, keyboard moves, and native HTML5 drags all reach the server as the same wire events, so one `onSortMove` handler covers every sensor, and the decision it returns resolves the client-side session either way. The [Kanban](shared/src/test/scala/demo/KanbanDemo.scala) and [InventoryGrid](shared/src/test/scala/demo/InventoryGridDemo.scala) demos are the working references: Kanban moves a multi-selection across lanes through one `moveGroups` reducer shared with its fallback arrow buttons, and InventoryGrid reorders rows and columns as two independent collections with a locked column, both proven end to end by `DragScenarioItTest`.
 
 ## Running a UI
 

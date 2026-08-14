@@ -295,6 +295,15 @@ object Drag:
         activation: Activation = Activation.Both
     ) derives CanEqual, Schema
 
+    object Source:
+        /** Creates a source for pure keyed reordering: the payload is the reserved sortable media
+          * type carrying the key, so no application media type is involved. Pair with
+          * [[Target.sortable]] on the receiving collection.
+          */
+        def sortable(key: String, label: Maybe[String] = Absent): Source =
+            Source(key, Chunk(Item.Text(Map(sortableMediaType -> key))), label = label)
+    end Source
+
     /** Declarative configuration attached to a drop-target UI element.
       *
       * `key` is the stable element identity exposed to drag events. `accepts` describes the item,
@@ -308,6 +317,15 @@ object Drag:
         accepts: Accept,
         label: Maybe[String] = Absent
     ) derives CanEqual, Schema
+
+    object Target:
+        /** Creates a target for pure keyed reordering that accepts only the reserved sortable media
+          * type. The target `key` names the collection: it is the value sort moves carry in
+          * [[Location.collection]] for this container.
+          */
+        def sortable(collection: String, label: Maybe[String] = Absent): Target =
+            Target(collection, Accept.types(MediaTypePattern.exact(sortableMediaType)), label)
+    end Target
 
     /** Per-item rules declared by a drop target.
       *
@@ -392,7 +410,22 @@ object Drag:
         case Reject(rejection: Rejection)
     end Decision
 
+    object Decision:
+        /** Adapts a pure move reducer result into a decision: commits the updated value and accepts
+          * on success, rejects with the typed rejection on failure. The commit effect runs only on
+          * success.
+          */
+        def fromResult[A, S](result: Result[Rejection, A])(commit: A => Any < S)(using Frame): Decision < S =
+            result.fold[Decision < S](
+                value => commit(value).andThen(Decision.Accept: Decision),
+                rejection => Decision.Reject(rejection),
+                _ => Decision.Reject(Rejection.Application("The move could not be applied."))
+            )
+    end Decision
+
     // --- Internal matching ---
+
+    private val sortableMediaType: MediaType = "application/x-kyo-sortable"
 
     private val uriMediaType: MediaType = "text/uri-list"
 
