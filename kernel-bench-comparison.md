@@ -100,6 +100,46 @@ by one arrow per level, so the copies sum to O(n^2). Any workload shaped like
 a for comprehension with a trailing map after a recursive effect step hits
 this. This is the single most important performance item for the new kernel.
 
+## After the settle fusion fix (`5ee220610d`)
+
+The settle arm now gathers the contiguous arrow run into the tail and applies
+it through the nested protocol (`bench-results/new-kernel2-fusion.*`). Updated
+new-kernel2 numbers, other columns unchanged:
+
+| benchmark | old-kernel | prev-kernel2 | new-kernel2 (fusion) |
+|---|---|---|---|
+| evalFixedOverhead | 0.009 / 0 | 0.002 / 0 | 0.002 / 0 |
+| fusionAllocatesNothing | 0.837 / 0 | 0.585 / 0 | 0.580 / 0 |
+| fusionPastBudgetPaysRescuesOnly | 49.0 / 1128 | 34.8 / 448 | 33.2 / 688 |
+| uncachedValuesPayBoxingOnly | 75.4 / 141.8K | 37.8 / 155.2K | 33.9 / 155.4K |
+| userTypesSkipKernelWrapping | 44.0 / 177.1K | 33.8 / 176.6K | 33.8 / 176.9K |
+| inlineLimitCostsTimeNotAllocation | 346.4 / 724.4K | 229.3 / 735.6K | 249.3 / 740.1K |
+| inlineLimitKeepsZeroAllocation | 2.21 / 0 | 1.66 / 0 | 1.60 / 0 |
+| deepRecursionPaysRescuesOnly | 55.7 / 2128 | 54.1 / 912 | 55.6 / 912 |
+| idleHandlerAddsNothing | 49.0 / 1224 | 33.5 / 496 | 33.2 / 728 |
+| trailingMapsStayLinear | 567553 / 1601M | 350.9 / 2161.4K | 782.8 / 3601.5K |
+| continuationBodiesFuse | 25.0 / 56.1K | 27.3 / 64.1K | 55.1 / 136.2K |
+| handleLoopAnswersInPlace | 135.5 / 960.1K | 80.4 / 640.1K | 171.0 / 640.1K |
+| fusionAfterSuspensionRunOnly | 0.290 / 0 | 0.522 / 48 | 0.967 / 2672 |
+| fusionAfterSuspension | 88.4 / 408.4K | 157.5 / 472.5K | 250.7 / 1065.1K |
+| sharedHandlerPaysDispatch | 137.1 / 240.4K | 154.6 / 240.4K | 397.6 / 1362.2K |
+| foreignCrossingsPayRotation | 328.4 / 1680.2K | 349.2 / 1520.3K | 1041.1 / 3280.4K |
+| statefulAnswersPaySuccessor | 155.4 / 1040.1K | 118.3 / 1118.2K | 359.5 / 1360.2K |
+| suspensionBaseline | 130.1 / 560.1K | 81.5 / 640.1K | 354.2 / 1360.2K |
+| partialSuspensionBaseline | (no partial mode) | 82.1 / 640.1K | 364.1 / 1360.2K |
+| suspensionFusesContinuation | 71.0 / 240.1K | 27.5 / 240.1K | 347.5 / 1360.2K |
+
+The quadratic is gone: the first merged application reattaches the unconsumed
+run to the pending suspension by reference, so the accumulated remainder
+thereafter occupies one chained stack entry and every capture copies O(1)
+entries. 78ns and 360 B per level, linear, 2.2x prev-kernel2's constant.
+Long-run replay shapes gained up to 10%. The suspension rows barely moved:
+their interiors hold one or two arrows, so their remaining gap is capture
+machinery per answered operation, not replay. One regression:
+fusionAfterSuspensionRunOnly pays a per-operation re-gather of its 50-entry
+captured chain (+1.1KB/op), which is the concrete case for merging on descent
+instead of at settle.
+
 ## Directions (not yet done)
 
 - Share captured segments instead of copying per operation: the capture is
