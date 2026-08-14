@@ -44,21 +44,52 @@ object ContainerPredef:
                 // caller's ambient HttpClient timeout, which is often the 5s default (predef fixtures are used far beyond the kyo-pod
                 // suite, e.g. kyo-sql, without a longer scoped timeout). Give the exec its own timeout covering the whole budget; on
                 // the shell backend the HttpClient config is inert. The in-container loop already retries the probe, so one exec suffices.
-                HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
-                    Abort.run[ContainerException](container.exec(cmd)).map {
-                        case Result.Success(r) if r.isSuccess => Kyo.unit
-                        case Result.Success(r) =>
-                            healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", r.stderr.trim)
-                        case Result.Failure(cause) =>
-                            // The readiness exec itself failed: most often the service's own container exited mid-boot (a database
-                            // that OOM-exits or fails init), which the daemon reports as a not-running container. Capture why.
-                            healthFailure(container, s"readiness exec failed: ${cause.getMessage}", "")
-                        case Result.Panic(t) => Abort.panic(t)
+                //
+                // A DB image forks heavily during init, and on a constrained rootless runner that burst can momentarily exhaust the
+                // host's fork capacity: the probe exec's own shell then reports "can't fork: Resource temporarily unavailable" and
+                // returns in milliseconds. That is host fork pressure, not a service-readiness failure, so retry the exec (waiting for
+                // the burst to pass) rather than failing the fixture. A genuinely-not-ready service still fails via the in-container
+                // budget, and a dead container still surfaces its exec failure.
+                val forkRetry = Schedule.fixed(2.seconds).take(20)
+                def attempt(remaining: Schedule): Unit < (Async & Abort[ContainerException]) =
+                    HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
+                        Abort.run[ContainerException](container.exec(cmd)).map {
+                            case Result.Success(r) if r.isSuccess => Kyo.unit
+                            case Result.Success(r) if isForkPressure(r.stdout) || isForkPressure(r.stderr) =>
+                                Clock.now.map { now =>
+                                    remaining.next(now) match
+                                        case Present((delay, next)) => Async.sleep(delay).andThen(attempt(next))
+                                        case Absent =>
+                                            healthFailure(
+                                                container,
+                                                s"readiness probe did not pass within ${budget.toSeconds}s",
+                                                r.stderr.trim
+                                            )
+                                }
+                            case Result.Success(r) =>
+                                healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", r.stderr.trim)
+                            case Result.Failure(cause) =>
+                                // The readiness exec itself failed: most often the service's own container exited mid-boot (a database
+                                // that OOM-exits or fails init), which the daemon reports as a not-running container. Capture why.
+                                healthFailure(container, s"readiness exec failed: ${cause.getMessage}", "")
+                            case Result.Panic(t) => Abort.panic(t)
+                        }
                     }
-                }
+                attempt(forkRetry)
+            end check
             def schedule: Schedule = Schedule.done
         end new
     end readinessLoop
+
+    /** Host fork pressure signature: a rootless runner momentarily out of fork capacity makes an exec'd shell or a container's
+      * PID 1 report EAGAIN. Distinguishes the transient "retry me" condition from a real service or config failure.
+      */
+    private def isForkPressure(s: String): Boolean =
+        val l = s.toLowerCase
+        l.contains("resource temporarily unavailable") || l.contains("can't fork") || l.contains("cannot fork") || l.contains(
+            "failed to fork"
+        )
+    end isForkPressure
 
     /** Best-effort container post-mortem: its terminal state (status + exit code) and the tail of its own logs. A
       * flaky database fixture that dies or never becomes ready otherwise surfaces only as an opaque "already stopped"
