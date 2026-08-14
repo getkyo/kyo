@@ -242,8 +242,8 @@ class KernelBench:
         ArrowEffect.handle(Tag[Ask], loop(0))([X] => (_, cont) => cont(1)).eval
     end suspensionBaseline
 
-    /** suspendWith: the suspension is its own continuation, one object per operation. Expect
-      * suspensionBaseline semantics at roughly a third of the allocation.
+    /** suspendWith: suspend followed by map, so the operation carries its continuation as a
+      * deferred step. Expect suspensionBaseline semantics.
       */
     @Benchmark
     def suspensionFusesContinuation: Int =
@@ -326,7 +326,7 @@ class KernelBench:
         def loop0(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop0(i + a))
-        ArrowEffect.handleLoop(Tag[Ask], 0, loop0(0))([X] => (_, state) => Loop.continue(state + 1, 1)).eval
+        ArrowEffect.handleLoop(Tag[Ask], 0, loop0(0))([X] => (_, state, cont) => Loop.continue(state + 1, cont(1))).eval
     end statefulAnswersPaySuccessor
 
     /** Issue 531's shape: a for comprehension leaves a trailing map after each recursive effect
