@@ -81,10 +81,10 @@ jobs:
       JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       # Run kyo-schema-tests' native link+test in its own sbt driver (via testKyo --only) instead of the
-      # aggregate: its whole-program optimize needs a full, fresh heap, while the aggregate driver is
-      # heap-capped for container/browser fork headroom and has accumulated ~10 prior modules. ci-test.sh
-      # honors this only for the Native target; the aggregate run then excludes it via testKyo --exclude,
-      # so each module is linked and run exactly once.
+      # aggregate: its whole-program optimize needs a full ~12G heap, while the aggregate driver is
+      # heap-capped for container/browser fork headroom and would OOM linking it. ci-test.sh honors this
+      # only for the Native target; the aggregate run then excludes it via testKyo --exclude, so each
+      # module is linked and run exactly once.
       NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema-tests' || '' }}"
       # Cap the isolated heavy-module link+test driver to 2 CPUs (-XX:ActiveProcessorCount). The
       # scala-native toolchain sizes its optimizer pool and its concurrent clang forks from
