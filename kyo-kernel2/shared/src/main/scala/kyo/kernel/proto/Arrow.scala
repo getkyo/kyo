@@ -24,8 +24,7 @@ end Arrow
 
 object Arrow:
 
-    // TODO does @static help here? can we avoid accessing $MODULE?
-    def apply[A]: Transform[A, A, Any] = Identity.asInstanceOf[Transform[A, A, Any]]
+    inline def apply[A]: Transform[A, A, Any] = (Identity: Transform[Any, Any, Any]).asInstanceOf[Transform[A, A, Any]]
 
     sealed abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
         type X
@@ -58,7 +57,6 @@ object Arrow:
 
     end Transform
 
-    // TODO does @static help here? can we avoid accessing $MODULE?
     object Identity extends Transform[Any, Any, Any]:
         def frame                                       = Frame.internal
         override def chain[C, S2](f: Arrow[Any, C, S2]) = f

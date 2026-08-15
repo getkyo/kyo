@@ -3,6 +3,7 @@ package kyo.kernel.proto
 import java.util.Arrays
 import kyo.Span
 import kyo.Tag
+import scala.annotation.static
 import scala.annotation.tailrec
 
 final private[proto] class Stack:
@@ -101,11 +102,10 @@ end Stack
 
 private[proto] object Stack:
 
-    // TODO does @static help here
-    private val local: ThreadLocal[Stack] =
+    @static private val local: ThreadLocal[Stack] =
         new ThreadLocal[Stack]:
             override def initialValue() = new Stack
 
-    def current(): Stack = local.get()
+    @static def current(): Stack = local.get()
 
 end Stack

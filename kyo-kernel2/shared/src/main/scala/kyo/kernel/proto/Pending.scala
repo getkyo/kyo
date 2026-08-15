@@ -24,21 +24,18 @@ object `<`:
                     def apply[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
                         run(v, next)
             def run[C, S3](v: A < S3, next: Arrow[B, C, S3]): C < (S & S2 & S3) =
-                v match
-                    case v: Arrow[Any, A, S3] @unchecked =>
-                        v.chain(arrow.chain(next)) // TODO avoid arrow.chain(next) repetition in the bytecode. Can we move Safepoint.enter to this branch as well? we'd need to have benchamnrks to test so let's keep as is for now
-                    case v: A =>
-                        val res  = v.asInstanceOf[A]
-                        val slot = Safepoint.get()
-                        if !Safepoint.enter(slot) then
-                            Arrow.Bind(v, arrow.chain(next))
-                        else
-                            val step = next.step
-                            val out  = step.head(f(res), step.tail)
-                            Safepoint.exit(slot)
-                            out
-                        end if
-                end match
+                val slot = Safepoint.get()
+                if v.isInstanceOf[Arrow[?, ?, ?]] || !Safepoint.enter(slot) then
+                    val k = arrow.chain(next)
+                    v match
+                        case v: Arrow[Any, A, S3] @unchecked => v.chain(k)
+                        case v                               => Arrow.Bind(v.asInstanceOf[A], k)
+                else
+                    val step = next.step
+                    val out  = step.head(f(v.asInstanceOf[A]), step.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
             end run
             run(self: A < S, Arrow[B])
 
