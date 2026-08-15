@@ -1,9 +1,6 @@
 package kyo.kernel.proto
 
 import kyo.Const
-import kyo.Loop
-import kyo.Loop.Outcome
-import kyo.Loop.Outcome2
 import kyo.Tag
 import kyo.kernel.proto.Arrow.Bind
 import kyo.kernel.proto.Arrow.Identity
@@ -16,14 +13,8 @@ class EvalTest extends AnyFreeSpec:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    def continue[A, O](v: A): Outcome[A, O] < Any =
-        Loop.continue[A, O, Any](v).asInstanceOf[Outcome[A, O] < Any]
-
-    def continue2[State, A, O](s: State, v: A): Outcome2[State, A, O] < Any =
-        Loop.continue[State, A, O](s, v).asInstanceOf[Outcome2[State, A, O] < Any]
-
     def answerAsk[A](value: Int)(v: A < Ask): A < Any =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => continue(value), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
     "a settled value evaluates to itself" in {
         assert(Eval(42: Int < Any) == 42)
@@ -129,7 +120,7 @@ class EvalTest extends AnyFreeSpec:
     "a throw inside a region leaves no findable handler behind" in {
         def stateful[A](v: A < Ask): A < Any =
             ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
-                [C] => (st, _) => continue2(st + 1, st),
+                [C] => (st, _) => Loop.continue(st + 1, st),
                 (_, a) => a
             )
         intercept[RuntimeException](Eval(stateful(ask.map(_ => (throw new RuntimeException("boom")): Int))))

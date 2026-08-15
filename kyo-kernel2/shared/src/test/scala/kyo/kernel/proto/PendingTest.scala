@@ -1,8 +1,6 @@
 package kyo.kernel.proto
 
 import kyo.Const
-import kyo.Loop
-import kyo.Loop.Outcome
 import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -17,14 +15,11 @@ class PendingTest extends AnyFreeSpec:
     sealed trait Give extends ArrowEffect[Const[Unit], Const[Int < Ask]]
     def give: (Int < Ask) < Give = ArrowEffect.suspend[Any](Tag[Give], ())
 
-    def continue[A, O](v: A): Outcome[A, O] < Any =
-        Loop.continue[A, O, Any](v).asInstanceOf[Outcome[A, O] < Any]
-
     def answerAsk[A](value: Int)(v: A < Ask): A < Any =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => continue(value), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
     def answerSay[A](v: A < Say): A < Any =
-        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => continue(()), a => a)
+        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue(()), a => a)
 
     def settled[A](v: A): A < Any = v
 
@@ -70,14 +65,14 @@ class PendingTest extends AnyFreeSpec:
     "a handler applies done to a settled payload without driving it" in {
         val outer: (Unit < Say) < Ask = settled(say("x"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => continue(1), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue(1), a => settled(a))
         val payload: Unit < Say = Eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
                 s =>
                     seen = s
-                    continue(())
+                    Loop.continue(())
             ,
             a => a
         )
@@ -88,14 +83,14 @@ class PendingTest extends AnyFreeSpec:
     "a region returns a foreign payload untouched" in {
         val body: (Unit < Say) < Ask = after(say("y"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => continue(1), a => settled(a))
+            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(1), a => settled(a))
         val payload: Unit < Say = Eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
                 s =>
                     seen = s
-                    continue(())
+                    Loop.continue(())
             ,
             a => a
         )
@@ -106,7 +101,7 @@ class PendingTest extends AnyFreeSpec:
     "an answer can be a computation value" in {
         val inner: Int < Ask = ask
         val body: Int < Give = give.map(_ => 5)
-        val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => continue(settled(inner)), a => a)
+        val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue(settled(inner)), a => a)
         assert(Eval(r) == 5)
     }
 
@@ -157,7 +152,7 @@ class PendingTest extends AnyFreeSpec:
             got = c
             3
         }
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => continue(settled(inner)), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue(settled(inner)), a => a)
         assert(Eval(r) == 3)
         assert(Eval(answerAsk(41)(got.map(_ + 1))) == 42)
     }

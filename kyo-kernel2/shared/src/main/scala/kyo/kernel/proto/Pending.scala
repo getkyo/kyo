@@ -1,8 +1,6 @@
 package kyo.kernel.proto
 
 import kyo.Frame
-import kyo.Loop.Outcome
-import kyo.Loop.Outcome2
 import kyo.Span
 import kyo.Tag
 import scala.annotation.nowarn

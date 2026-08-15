@@ -1,6 +1,5 @@
 package kyo.kernel.proto
 
-import kyo.Loop
 import kyo.bug
 import kyo.kernel.proto.Arrow.*
 

@@ -1,10 +1,10 @@
 package kyo.kernel.proto
 
 import kyo.Frame
-import kyo.Loop.Outcome
-import kyo.Loop.Outcome2
 import kyo.Span
 import kyo.Tag
+import kyo.kernel.proto.Loop.Outcome
+import kyo.kernel.proto.Loop.Outcome2
 import scala.annotation.nowarn
 import scala.language.implicitConversions
 import scala.runtime.AbstractFunction1
