@@ -65,7 +65,13 @@ object Arrow:
             else
                 v match
                     case v: Arrow[Any, Any, S2] @unchecked => v.chain(next)
-                    case v                                 => Bind(v, next)
+                    case v =>
+                        next match
+                            case next: Defer[?, ?, ?] =>
+                                Bind(v, next.asInstanceOf[Arrow[Any, C, S2]])
+                            case next =>
+                                val s = next.step
+                                s.head(v.asInstanceOf[Any < S2], s.tail)
 
     end Identity
 
@@ -95,11 +101,21 @@ object Arrow:
     ) extends Defer[Any, B, S]
 
     abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Defer[Any, B, E & S]:
+        self =>
+
         def tag: Tag[E]
         def input: I[A]
         def cont(v: O[A]): B < S
 
         final override def apply(v: Any) = cont(v.asInstanceOf[O[A]])
+
+        override def chain[C, S2](f: Arrow[B, C, S2]): Arrow[Any, C, E & S & S2] =
+            if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2]]
+            else
+                new Suspend[I, O, E, A, C, S & S2]:
+                    def tag           = self.tag
+                    def input         = self.input
+                    def cont(v: O[A]) = Identity(self.cont(v), f.asInstanceOf[Arrow[Any, C, S & S2]])
     end Suspend
 
     abstract class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Defer[Any, C, S]:
