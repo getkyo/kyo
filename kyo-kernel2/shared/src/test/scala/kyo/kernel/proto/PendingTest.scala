@@ -70,7 +70,7 @@ class PendingTest extends AnyFreeSpec:
     "a handler applies done to a settled payload without driving it" in {
         val outer: (Unit < Say) < Ask = settled(say("x"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => continue(1), a => a)
+            ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => continue(1), a => settled(a))
         val payload: Unit < Say = Eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
@@ -88,7 +88,7 @@ class PendingTest extends AnyFreeSpec:
     "a region returns a foreign payload untouched" in {
         val body: (Unit < Say) < Ask = after(say("y"): Unit < Say)
         val handled: (Unit < Say) < Any =
-            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => continue(1), a => a)
+            ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => continue(1), a => settled(a))
         val payload: Unit < Say = Eval(handled)
         var seen                = ""
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
@@ -106,7 +106,7 @@ class PendingTest extends AnyFreeSpec:
     "an answer can be a computation value" in {
         val inner: Int < Ask = ask
         val body: Int < Give = give.map(_ => 5)
-        val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => continue(inner), a => a)
+        val r: Int < Any     = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => continue(settled(inner)), a => a)
         assert(Eval(r) == 5)
     }
 
@@ -119,7 +119,7 @@ class PendingTest extends AnyFreeSpec:
 
     "mapping over a payload derives a new payload" in {
         val inner: Int < Ask           = ask
-        val derived: (Int < Ask) < Any = settled(inner).map(c => c.map(_ * 2))
+        val derived: (Int < Ask) < Any = settled(inner).map(c => settled(c.map(_ * 2)))
         val payload: Int < Ask         = Eval(derived)
         assert(Eval(answerAsk(21)(payload)) == 42)
     }
@@ -127,7 +127,7 @@ class PendingTest extends AnyFreeSpec:
     "a payload handles inside map" in {
         def deliver[B](f: Int => B): B < Ask = ask.map(a => f(a))
         val comp: (Int < Say) < Ask          = deliver(a => say("s").map(_ => a + 1))
-        val handled: (Int < Any) < Any       = answerAsk(10)(comp.map(c => answerSay[Int](c)))
+        val handled: (Int < Any) < Any       = answerAsk(10)(comp.map(c => settled(answerSay[Int](c))))
         assert(Eval(Eval(handled)) == 11)
     }
 

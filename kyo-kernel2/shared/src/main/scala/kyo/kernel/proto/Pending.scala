@@ -10,9 +10,12 @@ import scala.language.implicitConversions
 
 opaque type <[+A, -S] = A | Arrow[Any, A, S]
 
+final private[proto] case class Nested[+A](value: A)
+
 object `<`:
     implicit def lift[A, S](v: Arrow[Any, A, S]): A < S = v
-    implicit def liftValue[A](v: A): A < Any            = v
+
+    implicit inline def liftValue[A: CanLift](v: A): A < Any = CanLift.lift[A, Any](v)
 
     extension [A, S](self: A < S)
 

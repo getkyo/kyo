@@ -34,7 +34,7 @@ object Eval:
                         case p: Arrow[Any, Any, S2] @unchecked =>
                             Chain(p, this.chain(next))
                         case o =>
-                            Identity(s(o), next)
+                            Identity(s(o).asInstanceOf[Any < S2], next)
 
         var cur: Any = v
         var running  = true
