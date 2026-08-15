@@ -22,7 +22,7 @@ object Eval:
                 var acc = stack(i).asInstanceOf[Arrow[Any, Any, Any]]
                 var j   = i + 1
                 while j < top do
-                    acc = Chain(stack(j).asInstanceOf[Arrow[Any, Any, Any]], acc)
+                    acc = stack(j).asInstanceOf[Arrow[Any, Any, Any]].chain(acc)
                     j += 1
                 stack.truncate(i)
                 acc
@@ -61,10 +61,10 @@ object Eval:
                                 if j == top then
                                     if i + 1 == top then cur = hc.run(s.input, s)
                                     else
-                                        var k = stack(i + 1).asInstanceOf[Arrow[Any, Any, Any]]
-                                        var m = i + 2
+                                        var k: Arrow[Any, Any, Any] = Arrow[Any]
+                                        var m                       = i + 1
                                         while m < top do
-                                            k = Chain(stack(m).asInstanceOf[Arrow[Any, Any, Any]], k)
+                                            k = stack(m).asInstanceOf[Arrow[Any, Any, Any]].chain(k)
                                             m += 1
                                         stack.truncate(i + 1)
                                         val cont = k
