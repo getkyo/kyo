@@ -43,14 +43,25 @@ object Eval:
                         if i < 0 then bug(s"unhandled suspension: $s")
                         stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]].handler match
                             case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                var k: Arrow[Any, Any, Any] = Arrow[Any]
-                                var j                       = i + 1
-                                while j < stack.size do
-                                    k = stack(j).asInstanceOf[Arrow[Any, Any, Any]].chain(k)
-                                    j += 1
-                                stack.truncate(i + 1)
-                                val cont = k
-                                cur = hc.run(s.input, o => Bind(o, cont))
+                                val top = stack.size
+                                var j   = i + 1
+                                while j < top && !stack.marked(j) do j += 1
+                                if j == top then
+                                    var k: Arrow[Any, Any, Any] = Arrow[Any]
+                                    var m                       = i + 1
+                                    while m < top do
+                                        k = stack(m).asInstanceOf[Arrow[Any, Any, Any]].chain(k)
+                                        m += 1
+                                    stack.truncate(i + 1)
+                                    val cont = k
+                                    cur = hc.run(s.input, o => Bind(o, cont))
+                                else
+                                    val entries = stack.copyEntries(i + 1)
+                                    val tags    = stack.copyTags(i + 1)
+                                    val states  = stack.copyStates(i + 1)
+                                    stack.truncate(i + 1)
+                                    cur = hc.run(s.input, o => Arrow.Eval(entries, tags, states, o.asInstanceOf[Any < Any]))
+                                end if
                             case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                                 hl.run(s.input) match
                                     case out: Arrow[?, ?, ?] => ???

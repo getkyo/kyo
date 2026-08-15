@@ -202,13 +202,51 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
-    "a handle capture crossing an inner region" ignore {
+    "a handle capture crossing an inner region" in {
         val inner: Int < Say = ArrowEffect.handleLoop(
             Tag[Ask],
             ask.map(a => say("x").map(_ => ask.map(b => a + b)))
         )([C] => _ => continue(1), a => a)
         val r: Int < Any = ArrowEffect.handle(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
         assert(Eval(r) == 2)
+    }
+
+    "a crossed region resumes without re-running its body" in {
+        var runs = 0
+        val inner: Int < Say = ArrowEffect.handleLoop(
+            Tag[Ask],
+            ask.map { a =>
+                runs += 1
+                if runs > 1 then throw new IllegalStateException("body re-ran")
+                say("x").map(_ => a + 1)
+            }
+        )([C] => _ => continue(1), a => a)
+        val r: Int < Any = ArrowEffect.handle(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
+        assert(Eval(r) == 2)
+        assert(runs == 1)
+    }
+
+    "a crossed stateful region resumes with its in-flight state" in {
+        val inner: Int < Say = ArrowEffect.handleLoopState(
+            Tag[Ask],
+            10,
+            ask.map(a => say("x").map(_ => ask.map(b => a * 100 + b)))
+        )([C] => (s, _) => continue2(s + 1, s), (_, a) => a)
+        val r: Int < Any = ArrowEffect.handle(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
+        assert(Eval(r) == 1011)
+    }
+
+    "each shot of a multi-shot capture resumes from capture-time state" in {
+        val inner: Int < Say = ArrowEffect.handleLoopState(
+            Tag[Ask],
+            0,
+            ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b)))
+        )([C] => (s, _) => continue2(s + 1, s), (_, a) => a)
+        val r: Int < Any = ArrowEffect.handle(Tag[Say], inner)(
+            [C] => (_, cont) => cont(()).map(r1 => cont(()).map(r2 => r1 * 100 + r2)),
+            a => a
+        )
+        assert(Eval(r) == 101)
     }
 
     "a map after the region applies to the result" in {
