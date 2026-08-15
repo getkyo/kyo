@@ -244,6 +244,13 @@ else rm -f "'"$SELFDIR"'/rpc"; echo "Tests: succeeded 100, failed 0"; exit 0; fi
     nat "Native FAILED without rpc crash stays a failure" 1 'echo "  - t *** FAILED *** (15 seconds)"
 echo "Exception in thread \"main\" java.lang.RuntimeException: oops"; exit 1'
 
+    # A nonzero exit or watchdog kill with a link/optimize phase after the last passing suite is a
+    # module cut short (a mid-run link OOM is exit 137), not a post-suite shutdown crash: it fails.
+    nat "Native link OOM (exit 137) after a suite passes is a failure" 1 'echo "Tests: succeeded 64, failed 0"
+echo "[info] Generating intermediate code (5000 ms)"; exit 137'
+    nat "Native watchdog kill mid-optimize after a suite is a failure" 1 'echo "Tests: succeeded 64, failed 0"
+echo "[info] Optimizing (debug mode) (4000 ms)"; sleep 600'
+
     # 21-22: argument validation exits 2 before any sbt.
     run_runner Frob test 'exit 0'
     if exit_is 2 && calls_count 0; then record ok "unknown platform exits 2 before any sbt"
@@ -259,7 +266,7 @@ echo "Exception in thread \"main\" java.lang.RuntimeException: oops"; exit 1'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 25 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 27 ]
     exit $?
 fi
 
@@ -384,7 +391,7 @@ crashed_native_runner() {
         && grep -qE 'scala\.scalanative\.testinterface\.NativeRPC' "$LOG"
 }
 
-# 0 pass, 1 real failure, 2 no test output.
+# 0 pass, 1 real failure, 2 no test output. Called only after a nonzero exit or a watchdog kill.
 check_log() {
     if crashed_native_runner; then
         log "native test runner crashed mid-RPC (errno 104): retrying"
@@ -397,20 +404,30 @@ check_log() {
         log "tests FAILED (individual test failures detected)"; return 1
     fi
     if grep -qE "Tests:" "$LOG"; then
-        if [ "$watchdog_killed" -eq 1 ]; then
-            last_test_line=$(grep -nE "Tests:" "$LOG" | tail -1 | cut -d: -f1)
-            if [ -n "$last_test_line" ]; then
-                post_test=$(tail -n +$((last_test_line + 1)) "$LOG" \
-                    | grep -E "compiling [0-9]+ Scala source|Linking native code|^\[info\] [A-Z][a-zA-Z]+(Test|Suite):" \
-                    | head -1)
-                if [ -n "$post_test" ]; then
-                    log "watchdog killed mid-run: $post_test"; return 1
-                fi
-            fi
-            log "watchdog killed after final Tests: line: tolerating shutdown hang"
-            return 0
+        # At least one suite passed and none failed, yet the process still died (nonzero exit or a
+        # watchdog kill). That is tolerable only as a shutdown crash/hang AFTER the last suite, with
+        # nothing left running. Each module now links inside the run, so a later module's compile,
+        # link, or optimize, or a driver OOM-kill mid-optimize (exit 137), after an earlier module's
+        # Tests: line means real work was cut short. Scan the region after the last Tests: line for any
+        # work-in-progress marker and fail the run when one is present, on BOTH the watchdog and the
+        # self-exit paths. Bare "[error]" is deliberately excluded so a genuine post-suite shutdown
+        # crash stays tolerated.
+        last_test_line=$(grep -nE "Tests:" "$LOG" | tail -1 | cut -d: -f1)
+        post_test=""
+        if [ -n "$last_test_line" ]; then
+            post_test=$(tail -n +$((last_test_line + 1)) "$LOG" \
+                | grep -E "compiling [0-9]+ Scala source|Linking \(|Linking native code|Discovered [0-9]+ classes|Optimizing|Generating intermediate code|Compiling to native code|Produced [0-9]+ (LLVM IR )?files|Test / nativeLink|^\[info\] [A-Z][a-zA-Z]+(Test|Suite):" \
+                | head -1)
         fi
-        log "0 test failures: tolerating non-zero exit"; return 0
+        if [ -n "$post_test" ]; then
+            log "process died with work in progress after the last suite: $post_test"; return 1
+        fi
+        if [ "$watchdog_killed" -eq 1 ]; then
+            log "watchdog killed after the final Tests: line: tolerating shutdown hang"
+        else
+            log "0 test failures and nothing in progress after the last suite: tolerating non-zero exit"
+        fi
+        return 0
     fi
     return 2
 }

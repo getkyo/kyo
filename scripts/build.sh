@@ -281,7 +281,17 @@ run_in_container() {
         envs+=(-e CI=true -e SBT_TASK_LIMIT=1
                -e "JAVA_OPTS=$CI_DRIVER_OPTS"
                -e "JVM_OPTS=$CI_DRIVER_OPTS")
+        # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging
+        # (the heavy module links+tests in its own driver, the rest run capped) instead of linking
+        # the heavy module in the capped aggregate. Native target only, matching the workflow's
+        # `matrix.target == 'Native'` gate; a host value wins (set NATIVE_HEAVY= to disable).
+        if [ "$platform" = Native ]; then
+            envs+=(-e "NATIVE_HEAVY=${NATIVE_HEAVY-kyo-schema-tests}"
+                   -e "NATIVE_LINK_CPUS=${NATIVE_LINK_CPUS-2}")
+        fi
     fi
+    # Forward a host override of the native-run stale-output watchdog into any container run.
+    [ -n "${STALE_TIMEOUT:-}" ] && envs+=(-e "STALE_TIMEOUT=$STALE_TIMEOUT")
     # Raw mode runs the arbitrary sbt command (passed via the environment to avoid host-side quoting);
     # otherwise the inner command is the standard per-platform ci-test.sh runner.
     local inner
