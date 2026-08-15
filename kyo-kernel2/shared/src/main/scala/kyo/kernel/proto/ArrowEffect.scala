@@ -36,7 +36,7 @@ object ArrowEffect:
         new Suspend[I, O, E, C, B, S]:
             def tag                  = effectTag
             def input                = input0
-            def cont(v: O[C]): B < S = f(Nested.unnest[O[C]](v))
+            def cont(v: O[C]): B < S = f(Nested.strip[O[C]](v))
     end suspendWith
 
     @nowarn("msg=anonymous")
@@ -55,10 +55,10 @@ object ArrowEffect:
                         new Handler.HandleCont[I, O, E, A, B, S]:
                             def tag                                            = effectTag
                             def run[C](input: I[C], cont: O[C] => A < (E & S)) = f[C](input, cont)
-                            def complete(a: A)                                 = done(Nested.unnest[A](a))
+                            def complete(a: A)                                 = done(Nested.strip[A](a))
                     def cont = Arrow[B]
             case a =>
-                done(Nested.unnest[A](a))
+                done(Nested.strip[A](a))
     end handle
 
     @nowarn("msg=anonymous")
@@ -77,10 +77,10 @@ object ArrowEffect:
                         new Handler.HandleLoop[I, O, E, A, B, S]:
                             def tag                 = effectTag
                             def run[C](input: I[C]) = f[C](input)
-                            def complete(a: A)      = done(Nested.unnest[A](a))
+                            def complete(a: A)      = done(Nested.strip[A](a))
                     def cont = Arrow[B]
             case a =>
-                done(Nested.unnest[A](a))
+                done(Nested.strip[A](a))
     end handleLoop
 
     @nowarn("msg=anonymous")
@@ -101,10 +101,10 @@ object ArrowEffect:
                             def tag                            = effectTag
                             def initialState                   = state
                             def run[C](st: State, input: I[C]) = f[C](st, input)
-                            def complete(st: State, a: A)      = done(st, Nested.unnest[A](a))
+                            def complete(st: State, a: A)      = done(st, Nested.strip[A](a))
                     def cont = Arrow[B]
             case a =>
-                done(state, Nested.unnest[A](a))
+                done(state, Nested.strip[A](a))
     end handleLoopState
 
 end ArrowEffect
