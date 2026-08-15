@@ -1,0 +1,94 @@
+# Temporary diagnostic workflow for https://github.com/getkyo/kyo/issues/1881.
+# Probes the podman installations on the new runner images (20260810.x) with a
+# minimal create + start + exec cycle across candidate configurations, so the
+# setup-action fix is based on evidence instead of guesses. Delete this file
+# once the fix lands.
+name: podman-probe
+on:
+  push:
+    branches:
+      - ci/podman-runner-image-probe
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        config: [image-default, image-runc, image-crun, apt-runc]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Baseline inventory
+        run: |
+          echo "== PATH: $PATH"
+          command -v podman && podman --version || echo "no podman on image"
+          for tool in crun runc conmon pasta slirp4netns netavark; do
+            printf '%s: ' "$tool"
+            command -v "$tool" >/dev/null 2>&1 && { command -v "$tool"; "$tool" --version 2>/dev/null | head -1; } || echo missing
+          done
+          echo "== /usr/local contents related to containers:"
+          ls -l /usr/local/bin /usr/local/lib /usr/local/libexec 2>/dev/null | grep -iE 'podman|conmon|crun|runc|netavark|pasta|aardvark' || echo none
+          find /usr/local -maxdepth 4 -iname '*podman*' -o -iname '*conmon*' -o -iname '*crun*' -o -iname '*netavark*' -o -iname '*pasta*' -o -iname '*aardvark*' 2>/dev/null | head -30 || true
+      - name: Prepare config ${{ matrix.config }}
+        run: |
+          set -x
+          case '${{ matrix.config }}' in
+            apt-runc)
+              # Force the coherent Ubuntu apt stack: remove the image's shadow binary first.
+              sudo rm -f /usr/local/bin/podman
+              sudo apt-get update
+              sudo apt-get install -y -o Acquire::Retries=3 podman uidmap
+              mkdir -p "$HOME/.config/containers"
+              printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
+              ;;
+            image-default)
+              # Use the image's podman exactly as shipped. Install nothing, pin nothing.
+              rm -f "$HOME/.config/containers/containers.conf"
+              ;;
+            image-runc)
+              mkdir -p "$HOME/.config/containers"
+              printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
+              ;;
+            image-crun)
+              mkdir -p "$HOME/.config/containers"
+              printf '[engine]\nruntime = "crun"\n' > "$HOME/.config/containers/containers.conf"
+              ;;
+          esac
+          command -v podman
+          podman --version
+      - name: Probe create + start + exec
+        run: |
+          uid="$(id -u)"
+          sudo loginctl enable-linger "$uid"
+          for _ in $(seq 1 20); do [ -d "/run/user/$uid" ] && break; sleep 1; done
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
+          sock="$XDG_RUNTIME_DIR/podman/podman.sock"
+          nohup podman system service --time=0 "unix://$sock" > /tmp/podman.log 2>&1 &
+          for _ in $(seq 1 30); do [ -S "$sock" ] && break; sleep 1; done
+          [ -S "$sock" ] || { echo "service socket never appeared"; cat /tmp/podman.log; exit 1; }
+          podman info 2>/dev/null | grep -iE 'ociRuntime|name: |path: |rootlessNetworkCmd|cgroupManager|cgroupVersion' || true
+          set +e
+          fail=0
+          podman pull -q docker.io/library/alpine:3
+          podman create --name probe docker.io/library/alpine:3 sleep 300 || fail=1
+          podman start probe || fail=1
+          sleep 3
+          state="$(podman inspect --format '{{.State.Status}} exit={{.State.ExitCode}} err={{.State.Error}}' probe)"
+          echo "state after 3s: $state"
+          case "$state" in running*) ;; *) fail=1 ;; esac
+          podman exec probe echo cli-exec-ok || fail=1
+          # The kyo-pod tests go through the HTTP API, so probe exec creation there too.
+          api="$(curl -s -w '\nHTTP %{http_code}' --unix-socket "$sock" -X POST http://d/v1.40/containers/probe/exec \
+            -H 'Content-Type: application/json' -d '{"Cmd":["echo","api-exec-ok"],"AttachStdout":true}')"
+          echo "api exec create: $api"
+          echo "$api" | grep -q 'HTTP 201' || fail=1
+          if [ "$fail" -ne 0 ]; then
+            echo "== PROBE FAILED, diagnostics:"
+            podman inspect probe || true
+            podman logs probe || true
+            echo "== service log:"
+            cat /tmp/podman.log || true
+            exit 1
+          fi
+          echo "== PROBE OK: config=${{ matrix.config }} os=${{ matrix.os }}"
