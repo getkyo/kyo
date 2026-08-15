@@ -24,6 +24,7 @@ end Arrow
 
 object Arrow:
 
+    // TODO does @static help here? can we avoid accessing $MODULE?
     def apply[A]: Transform[A, A, Any] = Identity.asInstanceOf[Transform[A, A, Any]]
 
     sealed abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
@@ -57,6 +58,7 @@ object Arrow:
 
     end Transform
 
+    // TODO does @static help here? can we avoid accessing $MODULE?
     object Identity extends Transform[Any, Any, Any]:
         def frame                                       = Frame.internal
         override def chain[C, S2](f: Arrow[Any, C, S2]) = f
@@ -83,17 +85,17 @@ object Arrow:
         def apply(v: A) = Bind(v, this)
     end Defer
 
-    class Chain[A, XX, +B, -S](
+    final class Chain[A, XX, +B, -S](
         val a: Arrow[A, XX, S],
         val b: Arrow[XX, B, S]
     ) extends Defer[A, B, S]
 
-    class Bind[A, +B, -S](
+    final class Bind[A, +B, -S](
         val value: A,
         val cont: Arrow[A, B, S]
     ) extends Defer[Any, B, S]
 
-    private[proto] class Eval[+A, +B, -S](
+    final private[proto] class Eval[+A, +B, -S](
         val entries: Span[Arrow[?, ?, ?]],
         val tags: Span[AnyRef],
         val states: Span[AnyRef],

@@ -101,6 +101,7 @@ end Stack
 
 private[proto] object Stack:
 
+    // TODO does @static help here
     private val local: ThreadLocal[Stack] =
         new ThreadLocal[Stack]:
             override def initialValue() = new Stack
