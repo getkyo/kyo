@@ -17,7 +17,15 @@ final private[proto] case class Nested[+A](value: A) extends Boxed
 
 object Nested:
 
-    @static private[kyo] def strip[A](v: Any): A =
+    /** The runtime arm the lift emission calls when a value of the type could be a computation. A monomorphic bridge rather than the box
+      * directly: the emission lands at every generic lift site, and the shortest call keeps those sites inside the JIT's inline budget.
+      */
+    @static def box[A, S](v: A): A < S =
+        v match
+            case v: Boxed => Nested(v).asInstanceOf[A < S]
+            case v        => v.asInstanceOf[A < S]
+
+    @static def strip[A](v: Any): A =
         v match
             case n: Nested[?] => n.value.asInstanceOf[A]
             case _            => v.asInstanceOf[A]

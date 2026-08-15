@@ -42,14 +42,6 @@ object CanLift:
     /** The lift's emission, expanded at the site the conversion lands on. */
     private[proto] inline def lift[A, S](inline v: A): A < S = ${ liftImpl[A, S]('v) }
 
-    /** The runtime arm the emission calls when a value of the type could be a computation. A monomorphic bridge rather than the box
-      * directly: the emission lands at every generic lift site, and the shortest call keeps those sites inside the JIT's inline budget.
-      */
-    private[proto] def box[A, S](v: A): A < S =
-        v match
-            case v: Boxed => Nested(v).asInstanceOf[A < S]
-            case v        => v.asInstanceOf[A < S]
-
     private def liftImpl[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
 
@@ -68,7 +60,7 @@ object CanLift:
 
         if isModule then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
-        else if isNothing || isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ CanLift.box[A, S]($v) }
+        else if isNothing || isValue || isSafeFinalClass then '{ $v.asInstanceOf[A < S] } else '{ Nested.box[A, S]($v) }
         end if
     end liftImpl
 
