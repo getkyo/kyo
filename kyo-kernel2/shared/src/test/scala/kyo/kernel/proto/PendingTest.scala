@@ -139,6 +139,18 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerSay(payload)) == 6)
     }
 
+    "a fused continuation receives the answer payload" in {
+        val inner: Int < Ask = ask
+        var got: Int < Ask   = 0
+        val body: Int < Give = ArrowEffect.suspendWith[Any](Tag[Give], ()) { c =>
+            got = c
+            3
+        }
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => continue(settled(inner)), a => a)
+        assert(Eval(r) == 3)
+        assert(Eval(answerAsk(41)(got.map(_ + 1))) == 42)
+    }
+
     "double nesting round trips" in {
         val inner: Int < Ask                 = ask.map(_ + 1)
         val twice: ((Int < Ask) < Any) < Any = settled(settled(inner))

@@ -36,7 +36,7 @@ object ArrowEffect:
         new Suspend[I, O, E, C, B, S]:
             def tag                  = effectTag
             def input                = input0
-            def cont(v: O[C]): B < S = f(v)
+            def cont(v: O[C]): B < S = f(Nested.unnest[O[C]](v))
     end suspendWith
 
     @nowarn("msg=anonymous")
