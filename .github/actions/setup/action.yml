@@ -107,7 +107,27 @@ runs:
       if: ${{ contains(inputs.os, 'linux') }}
       shell: bash
       run: |
-        bash scripts/apt-install.sh podman uidmap
+        # Use the podman the runner image ships when there is one. Since image 20260810.x the
+        # runners carry podman under /usr/local with matching helpers (conmon, netavark) in
+        # /usr/local/lib/podman, and installing Ubuntu's podman package ON TOP of that breaks
+        # every container start: the package's containers.conf selects the journald log driver,
+        # the image's conmon is built without journald support, conmon exits 1, the container
+        # never leaves the "created" state, and each exec then fails with HTTP 500 "container
+        # state improper" across the kyo-pod suites. See #1881. The apt stack is only coherent
+        # on its own, so install it only when the image provides no podman at all.
+        bash scripts/apt-install.sh uidmap
+        if command -v podman >/dev/null 2>&1; then
+          echo "using the runner image's podman at $(command -v podman): $(podman --version)"
+        else
+          bash scripts/apt-install.sh podman
+          # Force the runc OCI runtime for the apt stack. The crun shipped on the pre-20260810
+          # runner images fails to start containers with "crun: unknown version specified" (an
+          # OCI config version it rejects), which fails every kyo-pod container integration
+          # test. runc accepts the config podman writes. The image podman above needs no pin:
+          # its own crun matches it (verified by the #1881 probe on both architectures).
+          mkdir -p "$HOME/.config/containers"
+          printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
+        fi
         # Install runc separately, and only when the runner has none. Ubuntu's runc package Conflicts
         # with Docker's containerd.io, so `apt-get install runc` resolves the conflict by REMOVING
         # containerd.io and docker-ce. That leaves no Docker daemon, which fails the `docker version`
@@ -135,12 +155,6 @@ runs:
           exit 1
         fi
         export XDG_RUNTIME_DIR="/run/user/$uid"
-        # Force the runc OCI runtime. The crun shipped on the runners fails to start containers with
-        # "crun: unknown version specified" (an OCI config version it rejects), which fails every
-        # kyo-pod container integration test. runc accepts the config podman writes, so the service and
-        # every container it starts use runc instead.
-        mkdir -p "$HOME/.config/containers"
-        printf '[engine]\nruntime = "runc"\n' > "$HOME/.config/containers/containers.conf"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
         sock="$XDG_RUNTIME_DIR/podman/podman.sock"
         # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the
@@ -165,10 +179,31 @@ runs:
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
         podman info | grep -iE 'cgroup|rootless' || true
         podman version
-        # Which OCI runtime podman resolved. Printed rather than asserted on: containers.conf above
-        # pins runc, and a silent fall back to crun shows up downstream as "crun: unknown version
-        # specified" on every kyo-pod container test, which this line attributes.
-        podman info | grep -iE 'ociRuntime|runc|crun' || true
+        # Which OCI runtime and conmon podman resolved. Printed rather than asserted on: the smoke
+        # probe below is the real gate; these lines attribute a probe failure to the component.
+        podman info | grep -iE 'ociRuntime|runc|crun|conmon|path:' || true
+        # Smoke-probe the container runtime end to end (create, start, exec) so a broken podman
+        # stack fails this step with a named cause instead of surfacing two hours later as
+        # HTTP 500 "container state improper" across the kyo-pod suites. This is exactly the
+        # cycle that the 20260810.x runner image regression broke. See #1881.
+        probe_ok=""
+        if podman pull -q docker.io/library/alpine:3 \
+          && podman create --name setup-probe docker.io/library/alpine:3 sleep 60 >/dev/null \
+          && podman start setup-probe >/dev/null \
+          && [ "$(podman inspect --format '{{.State.Status}}' setup-probe)" = "running" ] \
+          && [ "$(podman exec setup-probe echo probe-exec-ok)" = "probe-exec-ok" ]; then
+          probe_ok=1
+        fi
+        if [ -z "$probe_ok" ]; then
+          echo "podman smoke probe failed: a freshly started container is not running or not" >&2
+          echo "exec-able. Every kyo-pod podman case would fail the same way. Container state:" >&2
+          podman inspect --format '{{.State.Status}} exit={{.State.ExitCode}} err={{.State.Error}}' setup-probe >&2 || true
+          echo "service log:" >&2
+          cat /tmp/podman.log >&2 || true
+          exit 1
+        fi
+        podman rm -f setup-probe >/dev/null
+        echo "podman smoke probe passed (create + start + exec)"
         # docker is load-bearing too, and it has been removed out from under this step before, so name
         # what broke rather than letting `set -e` end the step on a bare exit code.
         if ! docker version; then
