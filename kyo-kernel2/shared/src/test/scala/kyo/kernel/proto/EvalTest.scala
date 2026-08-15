@@ -81,67 +81,49 @@ class EvalTest extends AnyFreeSpec:
         assert(runs.forall(_ == 1))
     }
 
-    "a continuation applied twice replays trailing maps twice" in {
-        val runs = new Array[Int](8)
-        val both: Int < Any =
-            new Transform[Any, Int, Any]:
-                def frame = kyo.Frame.internal
-                def apply[C, S2](v: Any < S2, next: Arrow[Int, C, S2]): C < S2 =
-                    Eval(Identity(3, next.asInstanceOf[Arrow[Any, C, Any]]).asInstanceOf[C < Any])
-                    Bind(10, next)
-        var r: Int < Any = both
-        for i <- 0 until 8 do
-            val j = i
-            r = r.map { x =>
-                runs(j) += 1
-                x + 1
-            }
-        end for
-        assert(Eval(r) == 18)
-        assert(runs.forall(_ == 2))
-    }
-
-    "each map contributes once to the value across any dump boundary" in {
-        val runs = new Array[Int](64)
-        val both: Int < Any =
-            new Transform[Any, Int, Any]:
-                def frame = kyo.Frame.internal
-                def apply[C, S2](v: Any < S2, next: Arrow[Int, C, S2]): C < S2 =
-                    Eval(Identity(3, next.asInstanceOf[Arrow[Any, C, Any]]).asInstanceOf[C < Any])
-                    Bind(10, next)
-        var r: Int < Any = both
-        for i <- 0 until 64 do
-            val j = i
-            r = r.map { x =>
-                runs(j) += 1
-                x + 1
-            }
-        end for
-        assert(Eval(r) == 74)
-        assert(runs.forall(c => c == 1 || c == 2))
+    "a continuation applied twice replays trailing maps twice at any depth" in {
+        for depth <- List(8, 64) do
+            val runs = new Array[Int](depth)
+            val both: Int < Any =
+                new Transform[Any, Int, Any]:
+                    def frame = kyo.Frame.internal
+                    def apply[C, S2](v: Any < S2, next: Arrow[Int, C, S2]): C < S2 =
+                        Eval(Identity(3, next.asInstanceOf[Arrow[Any, C, Any]]).asInstanceOf[C < Any])
+                        Bind(10, next)
+            var r: Int < Any = both
+            for i <- 0 until depth do
+                val j = i
+                r = r.map { x =>
+                    runs(j) += 1
+                    x + 1
+                }
+            end for
+            assert(Eval(r) == 10 + depth)
+            assert(runs.forall(_ == 2))
     }
 
     "a reified continuation stays valid after its drive completes" in {
-        val runs                        = new Array[Int](8)
-        var stash: Arrow[Any, Any, Any] = null
-        val node: Int < Any =
-            new Transform[Any, Int, Any]:
-                def frame = kyo.Frame.internal
-                def apply[C, S2](v: Any < S2, next: Arrow[Int, C, S2]): C < S2 =
-                    stash = next.asInstanceOf[Arrow[Any, Any, Any]]
-                    Bind(0, next)
-        var r: Int < Any = node
-        for i <- 0 until 8 do
-            val j = i
-            r = r.map { x =>
-                runs(j) += 1
-                x + 1
-            }
-        end for
-        assert(Eval(r) == 8)
-        assert(runs.forall(_ == 1))
-        assert(Eval(Identity(100, stash).asInstanceOf[Int < Any]) == 108)
-        assert(runs.forall(_ == 2))
+        for depth <- List(8, 64) do
+            val runs                        = new Array[Int](depth)
+            var stash: Arrow[Any, Any, Any] = null
+            val node: Int < Any =
+                new Transform[Any, Int, Any]:
+                    def frame = kyo.Frame.internal
+                    def apply[C, S2](v: Any < S2, next: Arrow[Int, C, S2]): C < S2 =
+                        stash = next.asInstanceOf[Arrow[Any, Any, Any]]
+                        Bind(0, next)
+            var r: Int < Any = node
+            for i <- 0 until depth do
+                val j = i
+                r = r.map { x =>
+                    runs(j) += 1
+                    x + 1
+                }
+            end for
+            assert(Eval(r) == depth)
+            assert(runs.forall(_ == 1))
+            assert(Eval(Identity(100, stash).asInstanceOf[Int < Any]) == 100 + depth)
+            assert(runs.forall(_ == 2))
     }
 
     "a throw inside a region leaves no findable handler behind" in {
