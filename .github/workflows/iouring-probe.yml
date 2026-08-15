@@ -1,0 +1,62 @@
+# Temporary diagnostic workflow for the IoUringDriverAcceptTransientErrnoTest
+# NoClassDefFoundError seen twice on linux-x64 CI (PR #1882). Checks the compiled
+# classfile set, then runs the suite in isolation in a loop with -verbose:class to
+# see whether the anon class is present on disk and where its load fails.
+# Delete this file once the cause is fixed.
+name: iouring-probe
+on:
+  push:
+    branches:
+      - ci/podman-runner-image-probe
+jobs:
+  iouring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ci/podman-runner-image-fix
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          os: linux-x64
+          target: JVM
+      - uses: coursier/setup-action@v3.0.2
+        with:
+          jvm: corretto:25
+          apps: sbt
+      - name: Compile and check classfiles
+        env:
+          JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+          JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+        run: |
+          sbt 'kyo-netJVM/Test/compile'
+          echo "== anon classfiles emitted on linux:"
+          ls kyo-net/jvm/target/scala-3.8.4/test-classes/kyo/net/internal/posix/ | grep 'IoUringDriverAcceptTransientErrnoTest' | sort
+          if ls kyo-net/jvm/target/scala-3.8.4/test-classes/kyo/net/internal/posix/ | grep -q 'AcceptTransientErrnoTest..anon.8.class'; then
+            echo "anon8: PRESENT"
+          else
+            echo "anon8: MISSING"
+          fi
+      - name: Run the suite in isolation, 5 iterations
+        env:
+          JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+          JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+        run: |
+          fails=0
+          for i in 1 2 3 4 5; do
+            echo "=== iteration $i"
+            if ! sbt 'kyo-netJVM/testOnly kyo.net.internal.posix.IoUringDriverAcceptTransientErrnoTest' > /tmp/iter-$i.log 2>&1; then
+              fails=$((fails+1))
+              echo "iteration $i FAILED"
+              grep -m5 'NoClassDefFound\|ClassNotFound\|FAIL\]\|stranded' /tmp/iter-$i.log || tail -30 /tmp/iter-$i.log
+            else
+              echo "iteration $i passed"
+            fi
+          done
+          echo "failures: $fails/5"
+          echo "== one more iteration with -verbose:class for the anon load trace:"
+          sbt 'set kyo-netJVM/Test/javaOptions += "-verbose:class"' 'kyo-netJVM/testOnly kyo.net.internal.posix.IoUringDriverAcceptTransientErrnoTest' > /tmp/verbose.log 2>&1 || true
+          grep 'IoUringDriverAcceptTransientErrnoTest' /tmp/verbose.log | grep -i 'load' | head -30
+          grep -m5 'NoClassDefFound\|ClassNotFound' /tmp/verbose.log || echo "verbose run: no classload failure"
+          exit 0
