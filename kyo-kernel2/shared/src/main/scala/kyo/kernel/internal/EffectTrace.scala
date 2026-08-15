@@ -203,7 +203,7 @@ private[kyo] object EffectTrace:
                     frame(s.frame)
                 case d: Kyo.Defer[?, ?, ?] =>
                     arrow(d.cont)
-                case h: Kyo.HandleCont[?, ?, ?, ?, ?, ?, ?] =>
+                case h: Kyo.HandleCont[?, ?, ?, ?, ?, ?] =>
                     region(h.tag)
                 case h: Kyo.HandleLoop[?, ?, ?, ?, ?, ?] =>
                     region(h.tag)

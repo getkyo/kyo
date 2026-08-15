@@ -5,6 +5,7 @@ import kyo.Frame
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.Loop.Outcome
+import kyo.kernel.Loop.Outcome2
 import scala.annotation.static
 import scala.annotation.tailrec
 
@@ -78,14 +79,17 @@ object Kyo:
             s"Kyo(${tag.show}, Input($input), ${frame.position.show}, ${frame.snippetShort})"
     end Suspend
 
-    abstract class HandleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2] extends Kyo[B, S & S2]:
+    sealed abstract class Handle[E, A, S] extends Kyo[A, S]:
+        def tag: Tag[E]
+
+    abstract class HandleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handle[E, B, S]:
         self =>
 
         def tag: Tag[E]
         def value: A < (E & S)
 
-        def run[X](input: I[X], cont: O[X] => A < (E & S)): B < (S & S2)
-        def complete(v: A): B < (S & S2)
+        def run[X](input: I[X], cont: O[X] => A < (E & S)): A < (E & S)
+        def complete(v: A): B < S
 
         /** A deep region stays installed while its clause result runs, so a re-raise dispatches back to it and the region itself
           * discharges the effect from the result's row.
@@ -95,7 +99,7 @@ object Kyo:
         final override def toString: String = s"Kyo(HandleCont(${tag.show}, $value))"
     end HandleCont
 
-    abstract class HandleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Kyo[B, S]:
+    abstract class HandleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Handle[E, B, S]:
         self =>
 
         def tag: Tag[E]
@@ -106,4 +110,18 @@ object Kyo:
 
         final override def toString: String = s"Kyo(HandleLoop(${tag.show}, $value))"
     end HandleLoop
+
+    abstract class HandleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, State] extends Handle[E, B, S]:
+
+        def tag: Tag[E]
+        def value: A < (E & S)
+
+        def initialState: State
+        def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B] < S
+        def complete(state: State, v: A): B < S
+
+        final override def toString: String = s"Kyo(HandleLoopState(${tag.show}, $value))"
+
+    end HandleLoopState
+
 end Kyo

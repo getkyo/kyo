@@ -1,0 +1,178 @@
+package kyo.kernel.bench
+
+import java.util.concurrent.TimeUnit
+import kyo.Frame
+import kyo.Loop
+import kyo.Loop.Outcome
+import kyo.Loop.Outcome2
+import kyo.Tag
+import kyo.kernel.proto.*
+import org.openjdk.jmh.annotations.*
+
+@State(Scope.Benchmark)
+@BenchmarkMode(Array(Mode.AverageTime))
+@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@Warmup(iterations = 5, time = 1)
+@Measurement(iterations = 5, time = 1)
+@Fork(value = 2)
+class ProtoKernelBench:
+
+    import ProtoKernelBench.*
+
+    private var seed = 1
+
+    @Benchmark
+    def evalFixedOverhead: Int =
+        Eval((seed: Int < Any).map(_ + 1))
+
+    @Benchmark
+    def fusionAllocatesNothing: Int =
+        def loop(i: Int): Int < Any =
+            if i > FusedDepth then 0
+            else
+                ((i & 63): Int < Any)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        Eval(loop(0))
+    end fusionAllocatesNothing
+
+    @Benchmark
+    def fusionPastBudgetPaysRescuesOnly: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then 0
+            else
+                ((i & 63): Int < Any)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        Eval(loop(0))
+    end fusionPastBudgetPaysRescuesOnly
+
+    @Benchmark
+    def uncachedValuesPayBoxingOnly: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then i
+            else
+                ((i + 11): Int < Any)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(loop)
+        Eval(loop(0))
+    end uncachedValuesPayBoxingOnly
+
+    @Benchmark
+    def deepRecursionPaysRescuesOnly: Int =
+        def loop(i: Int): Int < Any =
+            ((): Unit < Any).map { _ =>
+                if i > Depth then 0 else loop(i + 1)
+            }
+        Eval(loop(0))
+    end deepRecursionPaysRescuesOnly
+
+    @Benchmark
+    def suspensionBaseline: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        Eval(r)
+    end suspensionBaseline
+
+    @Benchmark
+    def suspensionFusesContinuation: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else askWith(a => loop(i + a))
+        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        Eval(r)
+    end suspensionFusesContinuation
+
+    @Benchmark
+    def handleLoopAnswersInPlace: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => continue(1), a => a)
+        Eval(r)
+    end handleLoopAnswersInPlace
+
+    @Benchmark
+    def statefulAnswersPaySuccessor: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
+            [C] => (state, _) => continue2(state + 1, 1),
+            (_, a) => a
+        )
+        Eval(r)
+    end statefulAnswersPaySuccessor
+
+    @Benchmark
+    def idleHandlerAddsNothing: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then 0
+            else
+                ((i & 63): Int < Any)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63)
+                    .map(_ => loop(i + 1))
+        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0).asInstanceOf[Int < Ask])([C] => (_, cont) => cont(1), a => a)
+        Eval(r)
+    end idleHandlerAddsNothing
+
+    @Benchmark
+    def trailingMapsStayLinear: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a)).map(x => x)
+        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        Eval(r)
+    end trailingMapsStayLinear
+
+    @Benchmark
+    def continuationBodiesFuse: Int =
+        def loop(i: Int): Int < Ask =
+            if i > NarrowDepth then i
+            else
+                ask.map { a =>
+                    (((i + a) & 63): Int < Any)
+                        .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                        .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                        .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                        .map(v => (v + 1) & 63)
+                        .map(_ => loop(i + 1))
+                }
+        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        Eval(r)
+    end continuationBodiesFuse
+
+end ProtoKernelBench
+
+object ProtoKernelBench:
+
+    inline def Depth       = 10000
+    inline def NarrowDepth = 1000
+    inline def FusedDepth  = 32
+
+    sealed trait Ask extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
+
+    def ask(using Frame): Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    inline def askWith[B, S](inline f: Int => B < S)(using inline frame: Frame): B < (Ask & S) =
+        ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
+
+    def continue[A, O](v: A): Outcome[A, O] < Any =
+        Loop.continue[A, O, Any](v).asInstanceOf[Outcome[A, O] < Any]
+
+    def continue2[State, A, O](s: State, v: A): Outcome2[State, A, O] < Any =
+        Loop.continue[State, A, O](s, v).asInstanceOf[Outcome2[State, A, O] < Any]
+
+end ProtoKernelBench
