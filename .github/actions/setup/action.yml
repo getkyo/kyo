@@ -168,41 +168,11 @@ runs:
           exit 1
         fi
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-        podman info | grep -iE 'cgroup|rootless' || true
-        podman version
-        # Which OCI runtime and conmon podman resolved. Printed rather than asserted on: the smoke
-        # probe below is the real gate; these lines attribute a probe failure to the component.
-        podman info | grep -iE 'ociRuntime|runc|crun|conmon|path:' || true
-        # Smoke-probe the container runtime end to end (create, start, exec) so a broken podman
-        # stack fails this step with a named cause instead of surfacing two hours later as
-        # HTTP 500 "container state improper" across the kyo-pod suites. This is exactly the
-        # cycle that the 20260810.x runner image regression broke. See #1881.
-        probe_ok=""
-        if podman pull -q docker.io/library/alpine:3 \
-          && podman create --name setup-probe docker.io/library/alpine:3 sleep 60 >/dev/null \
-          && podman start setup-probe >/dev/null \
-          && [ "$(podman inspect --format '{{.State.Status}}' setup-probe)" = "running" ] \
-          && [ "$(podman exec setup-probe echo probe-exec-ok)" = "probe-exec-ok" ]; then
-          probe_ok=1
-        fi
-        if [ -z "$probe_ok" ]; then
-          echo "podman smoke probe failed: a freshly started container is not running or not" >&2
-          echo "exec-able. Every kyo-pod podman case would fail the same way. Container state:" >&2
-          podman inspect --format '{{.State.Status}} exit={{.State.ExitCode}} err={{.State.Error}}' setup-probe >&2 || true
-          echo "service log:" >&2
-          cat /tmp/podman.log >&2 || true
-          exit 1
-        fi
-        podman rm -f setup-probe >/dev/null
-        echo "podman smoke probe passed (create + start + exec)"
-        # docker is load-bearing too, and it has been removed out from under this step before, so name
-        # what broke rather than letting `set -e` end the step on a bare exit code.
-        if ! docker version; then
-          echo "docker daemon unreachable. The kyo-pod suite runs its container cases against docker as" >&2
-          echo "well as podman, so this is fatal. Check the apt output in the podman install step: the" >&2
-          echo "ubuntu runc package Conflicts with containerd.io, and installing it removes docker-ce." >&2
-          exit 1
-        fi
+        # Health gate: exercises the full podman cycle (create, start, exec) and the docker
+        # daemon, with per-component diagnostics, so a broken container stack fails here with a
+        # named cause instead of surfacing two hours later across the kyo-pod suites (#1881).
+        # Pass --warn-only to degrade the gate to a loud warning annotation.
+        bash scripts/container-check.sh
 
     - name: Configure build environment (Windows)
       if: ${{ contains(inputs.os, 'windows') }}
