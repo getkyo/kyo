@@ -1,6 +1,7 @@
 package kyo.kernel.proto
 
 import kyo.bug
+import kyo.kernel.proto.`<`.fromAny
 import kyo.kernel.proto.Arrow.*
 
 object Eval:
@@ -18,10 +19,10 @@ object Eval:
             while i > base && !stack.marked(i - 1) do i -= 1
             if i == top then Arrow[Any]
             else
-                var acc = stack(i).asInstanceOf[Arrow[Any, Any, Any]]
+                var acc = stack(i)
                 var j   = i + 1
                 while j < top do
-                    acc = stack(j).asInstanceOf[Arrow[Any, Any, Any]].chain(acc)
+                    acc = stack(j).chain(acc)
                     j += 1
                 stack.truncate(i)
                 acc
@@ -36,7 +37,7 @@ object Eval:
                         case p: Arrow[Any, Any, S2] @unchecked =>
                             Chain(p, this.chain(next))
                         case o =>
-                            Identity(s(o).asInstanceOf[Any < S2], next)
+                            Identity(fromAny(s(o)), next)
 
         var cur: Any = v
         var running  = true
@@ -63,7 +64,7 @@ object Eval:
                                         var k: Arrow[Any, Any, Any] = Arrow[Any]
                                         var m                       = i + 1
                                         while m < top do
-                                            k = stack(m).asInstanceOf[Arrow[Any, Any, Any]].chain(k)
+                                            k = stack(m).chain(k)
                                             m += 1
                                         stack.truncate(i + 1)
                                         val cont = k
@@ -92,7 +93,7 @@ object Eval:
                                 hls.run(stack.state(i), s.input) match
                                     case out: Arrow[?, ?, ?] => ???
                                     case c: Loop.Continue2[?, ?] =>
-                                        stack.setState(i, c._1.asInstanceOf[AnyRef])
+                                        stack.setState(i, c._1)
                                         c._2 match
                                             case p: Arrow[Any, Any, Any] @unchecked =>
                                                 stack.push(resume(s))
@@ -108,7 +109,7 @@ object Eval:
                         stack.push(h.cont)
                         h.handler match
                             case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                                stack.push(h, h.handler.tag.erased, hls.initialState.asInstanceOf[AnyRef])
+                                stack.push(h, h.handler.tag.erased, hls.initialState)
                             case _ =>
                                 stack.push(h, h.handler.tag.erased)
                         end match
@@ -116,9 +117,9 @@ object Eval:
                     case e: Arrow.Eval[?, ?, ?] =>
                         stack.pushAll(e.entries, e.tags, e.states)
                         cur = e.value
-                    case a: Arrow[?, ?, ?] =>
-                        val s = a.asInstanceOf[Arrow[Any, Any, Any]].step
-                        cur = s.head(().asInstanceOf[Any < Any], s.tail.chain(dump()))
+                    case a: Arrow[Any, Any, Any] @unchecked =>
+                        val s = a.step
+                        cur = s.head(fromAny(()), s.tail.chain(dump()))
                     case settled =>
                         if stack.size == base then running = false
                         else
@@ -147,8 +148,8 @@ object Eval:
                                 case d: Defer[?, ?, ?] =>
                                     cur = d
                                 case a =>
-                                    val s = a.asInstanceOf[Arrow[Any, Any, Any]].step
-                                    cur = s.head(settled.asInstanceOf[Any < Any], s.tail.chain(dump()))
+                                    val s = a.step
+                                    cur = s.head(fromAny(settled), s.tail.chain(dump()))
                             end match
         finally stack.truncate(base)
         end try

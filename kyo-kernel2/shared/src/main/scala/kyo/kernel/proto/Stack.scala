@@ -15,13 +15,13 @@ final private[proto] class Stack:
 
     def size: Int = top
 
-    def apply(i: Int): Arrow[?, ?, ?] = entries(i)
+    def apply(i: Int): Arrow[Any, Any, Any] = entries(i).asInstanceOf[Arrow[Any, Any, Any]]
 
     def marked(i: Int): Boolean = tags(i) ne null
 
-    def state(i: Int): AnyRef = states(i)
+    def state(i: Int): Any = states(i)
 
-    def setState(i: Int, s: AnyRef): Unit = states(i) = s
+    def setState(i: Int, s: Any): Unit = states(i) = s.asInstanceOf[AnyRef]
 
     def push(f: Arrow[?, ?, ?]): Unit =
         if top == entries.length then grow()
@@ -36,21 +36,21 @@ final private[proto] class Stack:
         top += 1
     end push
 
-    def push(f: Arrow[?, ?, ?], t: Tag[Any], s: AnyRef): Unit =
+    def push(f: Arrow[?, ?, ?], t: Tag[Any], s: Any): Unit =
         if top == entries.length then grow()
         entries(top) = f
         tags(top) = t.asInstanceOf[AnyRef]
-        states(top) = s
+        states(top) = s.asInstanceOf[AnyRef]
         top += 1
     end push
 
-    def pop(): Arrow[?, ?, ?] =
+    def pop(): Arrow[Any, Any, Any] =
         top -= 1
         val f = entries(top)
         entries(top) = null
         tags(top) = null
         states(top) = null
-        f
+        f.asInstanceOf[Arrow[Any, Any, Any]]
     end pop
 
     def truncate(n: Int): Unit =

@@ -25,15 +25,18 @@ object Nested:
             case v        => v.asInstanceOf[A < S]
 
     @static def unnest[A](v: Any): A =
-        v match
-            case n: Nested[?] => n.value.asInstanceOf[A]
-            case _            => v.asInstanceOf[A]
+        (v match
+            case n: Nested[?] => n.value
+            case _            => v
+        ).asInstanceOf[A]
 end Nested
 
 object `<`:
     implicit def lift[A, S](v: Arrow[Any, A, S]): A < S = v
 
     implicit inline def liftValue[A: CanLift](v: A): A < Any = CanLift.lift[A, Any](v)
+
+    private[proto] inline def fromAny[S](inline v: Any): Any < S = v
 
     extension [A, S](self: A < S)
 

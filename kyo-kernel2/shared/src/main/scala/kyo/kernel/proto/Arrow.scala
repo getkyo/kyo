@@ -67,11 +67,11 @@ object Arrow:
                     case v: Arrow[Any, Any, S2] @unchecked => Chain(v, next)
                     case v =>
                         next match
-                            case next: Defer[?, ?, ?] =>
-                                Bind(v, next.asInstanceOf[Arrow[Any, C, S2]])
-                            case next =>
+                            case _: Defer[?, ?, ?] =>
+                                Bind(v, next)
+                            case _ =>
                                 val s = next.step
-                                s.head(v.asInstanceOf[Any < S2], s.tail)
+                                s.head(v, s.tail)
 
     end Identity
 
