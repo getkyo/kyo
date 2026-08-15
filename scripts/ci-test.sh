@@ -12,17 +12,24 @@ set -uo pipefail
 #
 # JVM, JS, and Wasm run as three separate sbt processes (compile-main, then
 # compile-test, then run) so the driver never holds the whole compile heap while
-# the test phase forks. Native runs single-process: the aggregate nativeLink is
-# linked once upfront, then a crash-retry loop tolerates libunwind shutdown hangs
-# and mid-RPC errno-104 resets. The strategy is derived from the platform; no
-# caller selects it.
+# the test phase forks. Native takes the same compile-upfront split and then links
+# each module exactly once, inside its own test session: it compiles main and test
+# (no link), runs the heavy modules isolated in a full-heap, CPU-capped driver via
+# `testKyo --only`, then runs the rest in the capped aggregate driver via
+# `testKyo --exclude`, under a crash-retry loop that tolerates libunwind shutdown
+# hangs and mid-RPC errno-104 resets. Linking must stay inside the test session and
+# must not be split into an upfront link: Scala Native's cross-invocation build-skip
+# is unreliable (scala-native #2514), so an upfront link in a separate sbt process
+# gets relinked from scratch by the test session, and the `native-settings` work-dir
+# prune (guarding #1821 disk pressure) has by then deleted the codegen cache, making
+# that second link a full re-codegen. One in-session link per module sidesteps both.
+# The strategy is derived from the platform; no caller selects it.
 #
 # Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, and
-# NATIVE_LINK_CPUS from the environment; mutates none of them (the nativeLink
-# invocations append -XX:ActiveProcessorCount per invocation when
-# NATIVE_LINK_CPUS is set). The caller (a CI workflow, or build.sh --env
-# podman-ci) owns the environment, so this one runner is correct in every
-# environment.
+# NATIVE_LINK_CPUS from the environment; mutates none of them (the heavy --only
+# session appends -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
+# caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so this
+# one runner is correct in every environment.
 
 PLATFORMS="JVM JS Native Wasm"
 ACTIONS="test testDiff compile link"
@@ -46,9 +53,11 @@ contains_word() {
 # call log and the JAVA_OPTS it inherited to a heap log, so each case asserts
 # the RECORDED CALLS or the RECORDED HEAP, not just the exit code: the
 # JVM/JS/Wasm three-phase split (compile-main, compile-test, run) on full AND
-# diff; the Native single-process aggregate-link path with no --phase; the
-# platform-derived strategy; the exit-code mapping; and the NATIVE_LINK_CPUS
-# cap reaching the nativeLink invocations but never the test run.
+# diff; the Native compile-upfront then single-link path (two compile phases, no
+# nativeLink, the heavy module isolated via --only ahead of the --exclude
+# aggregate); the platform-derived strategy; the exit-code mapping; and the
+# NATIVE_LINK_CPUS cap reaching the isolated heavy session but not the compiles
+# or the aggregate run.
 if [ "${1:-}" = "--self-test" ]; then
     SELF="$0"
     PASS=0; FAIL=0; TOTAL=0
@@ -124,16 +133,16 @@ if [ "${1:-}" = "--self-test" ]; then
     else record no "JS and Wasm take the same three-process split"; fi
 
     # 2b. The run-phase heap cap is applied to the out-of-JVM targets' run process and to nothing else:
-    # not the JVM run (its tests run in the driver), not the compile phases, not the native link.
+    # not the JVM run (its tests run in the driver), and not the compile phases.
     run_runner JVM test 'exit 0'
     jvm_uncapped=no
     if call_nth_is 3 "testKyo --all JVM"; then jvm_uncapped=yes; fi
     run_runner Native test 'echo "Tests: succeeded 1, failed 0"; exit 0'
     if [ "$jvm_uncapped" = yes ] \
        && calls_have "-J-Xmx6G testKyo --all Native" \
-       && calls_lack "-J-Xmx6G kyoNative/Test/nativeLink"
-    then record ok "run-phase heap cap: out-of-JVM run only, never JVM/compile/link"
-    else record no "run-phase heap cap: out-of-JVM run only, never JVM/compile/link"; fi
+       && calls_lack "-J-Xmx6G testKyo --phase"
+    then record ok "run-phase heap cap: out-of-JVM run only, never JVM or compile"
+    else record no "run-phase heap cap: out-of-JVM run only, never JVM or compile"; fi
 
     # 3. Phase-split fails fast on a compile-main failure.
     run_runner JVM test 'exit 1'
@@ -155,59 +164,61 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "compile action runs only the two compile phases"
     else record no "compile action runs only the two compile phases"; fi
 
-    # 6. Native links upfront before any test process.
-    run_runner Native test 'echo "Tests: succeeded 100, failed 0"; exit 0'
-    if call_nth_is 1 "kyoNative/Test/nativeLink" && calls_have "testKyo --all Native" && exit_is 0
-    then record ok "Native links upfront before any test process"
-    else record no "Native links upfront before any test process"; fi
+    # 6. Native compiles main+test upfront, then runs once, with no upfront link.
+    run_runner Native test 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
+    if calls_count 3 \
+       && call_nth_is 1 "testKyo --phase compile-main --all Native" \
+       && call_nth_is 2 "testKyo --phase compile-test --all Native" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --all Native" \
+       && calls_lack "nativeLink" && exit_is 0
+    then record ok "Native compiles upfront then runs once, no upfront link"
+    else record no "Native compiles upfront then runs once, no upfront link"; fi
 
-    # 7. Native never receives a --phase argument (strategy derived from platform).
-    run_runner Native test 'echo "Tests: succeeded 100, failed 0"; exit 0'
-    if calls_lack "--phase compile-main" && calls_lack "--phase compile-test"
-    then record ok "Native never receives a --phase argument"
-    else record no "Native never receives a --phase argument"; fi
+    # 7. Native fails fast on a compile-main failure, before linking or running anything.
+    run_runner Native test 'case "$*" in *"--phase compile-main"*) exit 1;; esac; echo "Tests: succeeded 1, failed 0"; exit 0'
+    if calls_count 1 && call_nth_is 1 "testKyo --phase compile-main --all Native" && exit_is 1
+    then record ok "Native fails fast on a compile-main failure"
+    else record no "Native fails fast on a compile-main failure"; fi
 
-    # 8. Native link failure exits 1 before any test runs.
-    run_runner Native test 'if [ "$*" = "kyoNative/Test/nativeLink" ]; then exit 3; fi; echo "Tests: succeeded 1, failed 0"; exit 0'
-    if calls_count 1 && calls_lack "testKyo" && exit_is 1
-    then record ok "Native link failure exits 1 before any test runs"
-    else record no "Native link failure exits 1 before any test runs"; fi
-
-    # 8a. NATIVE_HEAVY pre-links each heavy module in its own process before the aggregate link.
-    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'echo "Tests: succeeded 100, failed 0"; exit 0'
+    # 8. NATIVE_HEAVY runs the heavy module isolated via --only, then the rest via --exclude; no link.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
     PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
         NATIVE_HEAVY="kyo-schema-tests" "$SELF" Native test >/dev/null 2>&1
     CT_EXIT=$?
-    if call_nth_is 1 "kyo-schema-testsNative/Test/nativeLink" && call_nth_is 2 "kyoNative/Test/nativeLink" \
-       && calls_have "testKyo --all Native" && exit_is 0
-    then record ok "NATIVE_HEAVY pre-links heavy modules before the aggregate link"
-    else record no "NATIVE_HEAVY pre-links heavy modules before the aggregate link"; fi
+    if calls_count 4 \
+       && call_nth_is 3 "testKyo --only kyo-schema-tests --all Native" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --exclude kyo-schema-tests --all Native" \
+       && calls_lack "nativeLink" && exit_is 0
+    then record ok "NATIVE_HEAVY runs the heavy module via --only, then the rest via --exclude"
+    else record no "NATIVE_HEAVY runs the heavy module via --only, then the rest via --exclude"; fi
 
-    # 8a2. NATIVE_LINK_CPUS caps the two link invocations but never the test run.
-    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'echo "Tests: succeeded 100, failed 0"; exit 0'
+    # 8a. NATIVE_LINK_CPUS caps the isolated heavy --only session, never the compiles or the aggregate run.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'case "$*" in *--phase*) exit 0;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
     PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
         NATIVE_HEAVY="kyo-schema-tests" NATIVE_LINK_CPUS=2 "$SELF" Native test >/dev/null 2>&1
     CT_EXIT=$?
-    if heap_nth_has 1 "-XX:ActiveProcessorCount=2" && heap_nth_has 2 "-XX:ActiveProcessorCount=2" \
-       && ! heap_nth_has 3 "-XX:ActiveProcessorCount=2" && exit_is 0
-    then record ok "NATIVE_LINK_CPUS caps link invocations, never the test run"
-    else record no "NATIVE_LINK_CPUS caps link invocations, never the test run"; fi
+    if ! heap_nth_has 1 "-XX:ActiveProcessorCount=2" && ! heap_nth_has 2 "-XX:ActiveProcessorCount=2" \
+       && heap_nth_has 3 "-XX:ActiveProcessorCount=2" && ! heap_nth_has 4 "-XX:ActiveProcessorCount=2" \
+       && exit_is 0
+    then record ok "NATIVE_LINK_CPUS caps the heavy --only session, never the compiles or aggregate"
+    else record no "NATIVE_LINK_CPUS caps the heavy --only session, never the compiles or aggregate"; fi
 
-    # 8b. A heavy pre-link failure aborts before the aggregate link and before any tests.
+    # 8b. A heavy --only failure aborts before the --exclude aggregate run.
     : > "$CALLS"; : > "$HEAP"
-    make_fake_sbt 'if [ "$*" = "kyo-schema-testsNative/Test/nativeLink" ]; then exit 3; fi; echo "Tests: succeeded 100, failed 0"; exit 0'
+    make_fake_sbt 'case "$*" in *--phase*) exit 0;; *--only*) echo "Tests: succeeded 5, failed 1"; exit 1;; esac; echo "Tests: succeeded 100, failed 0"; exit 0'
     PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
         NATIVE_HEAVY="kyo-schema-tests" "$SELF" Native test >/dev/null 2>&1
     CT_EXIT=$?
-    if calls_count 1 && call_nth_is 1 "kyo-schema-testsNative/Test/nativeLink" \
-       && calls_lack "kyoNative/Test/nativeLink" && calls_lack "testKyo" && exit_is 1
-    then record ok "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"
-    else record no "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"; fi
+    if calls_count 3 && call_nth_is 3 "testKyo --only kyo-schema-tests --all Native" \
+       && calls_lack "--exclude" && exit_is 1
+    then record ok "a heavy --only failure aborts before the --exclude aggregate run"
+    else record no "a heavy --only failure aborts before the --exclude aggregate run"; fi
 
     # 9-20: Native crash-retry / check_log scenarios.
-    # For these the fake sbt's link call must pass, so the body branches on $*.
+    # The two compile phases must pass, so the body exits 0 for any --phase call and applies the
+    # scenario ($3) to the aggregate run.
     nat() {  # nat <name> <expected-exit> <run-body>
-        run_runner Native test "if [ \"\$*\" = \"kyoNative/Test/nativeLink\" ]; then exit 0; fi; $3"
+        run_runner Native test "case \"\$*\" in *--phase*) exit 0;; esac; $3"
         if exit_is "$2"; then record ok "$1"; else record no "$1"; fi
     }
     nat "clean Native pass exits 0"                 0 'echo "Tests: succeeded 100, failed 0"; exit 0'
@@ -270,27 +281,27 @@ STALE_TIMEOUT=${STALE_TIMEOUT:-600}
 POLL_INTERVAL=${POLL_INTERVAL:-10}
 
 # Space-separated module names (e.g. "kyo-schema-tests", which links every serialization format
-# into one binary) whose SOLO native-link optimize peak needs an isolated, fresh-heap sbt driver.
-# Each is linked first in its own process, keeping its whole-program optimize off the shared
-# aggregate driver where the preceding modules have already filled the 2G metaspace. Measured
-# before the format-module split: the then-monolithic kyo-schema alone peaked ~7.7G RSS in a clean
-# process vs ~9.9G in the accumulated aggregate (the delta is that accumulation), which OOM-killed
-# the 8G-capped Native driver. nativeLink is disk-cached per project, so the aggregate link below
-# skips a module already linked here. Empty by default; the CI workflow sets it for the Native
-# target.
+# into one binary) whose whole-program native-link optimize peak needs an isolated, full-heap sbt
+# driver. Each runs its link+test in its own process via `testKyo --only`, keeping that optimize off
+# the aggregate driver, which is heap-capped for fork headroom (run_phase_heap, below) and would OOM
+# under it. Measured before the format-module split: the then-monolithic kyo-schema alone peaked
+# ~7.7G RSS in a clean process vs ~9.9G stacked on an accumulated aggregate driver, which OOM-killed
+# the capped Native driver. The aggregate run excludes these via `testKyo --exclude`, so each is
+# linked and run exactly once. Empty by default; the CI workflow sets it for the Native target.
 NATIVE_HEAVY="${NATIVE_HEAVY:-}"
 
-# When non-empty, the nativeLink sbt invocations run with -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS.
-# The scala-native toolchain sizes its optimizer pool and its concurrent clang forks from
-# availableProcessors, and the fork fleet stacked on top of the driver heap is what overcommits the
-# 16GB CI runners. Scoped to the link invocations only; compile and the test run keep every CPU.
+# When non-empty, the isolated heavy-module native-link drivers run with
+# -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS: the heavy `testKyo --only` link+test session (test path)
+# and the standalone pre-links (link action). The scala-native toolchain sizes its optimizer pool and
+# its concurrent clang forks from availableProcessors, and that fork fleet stacked on the driver heap
+# is what overcommits the 16GB CI runners. The compile phases and the aggregate run keep every CPU.
 NATIVE_LINK_CPUS="${NATIVE_LINK_CPUS:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
-# sbt for a nativeLink invocation: applies the NATIVE_LINK_CPUS cap when set. The flag is added
-# via the invocation's environment; .jvmopts only overrides flags it duplicates, so a flag that
-# appears only here always reaches the JVM.
+# sbt for a standalone native link invocation (the link action's pre-links and aggregate link):
+# applies the NATIVE_LINK_CPUS cap when set. The flag is added via the invocation's environment;
+# .jvmopts only overrides flags it duplicates, so a flag that appears only here always reaches the JVM.
 link_sbt() {
     if [ -n "$NATIVE_LINK_CPUS" ]; then
         JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
@@ -316,8 +327,9 @@ run_arg() {
 # 9-11GB RSS) leaves under 1GB for the Node/Wasm runtime plus podman and its containers, so the kyo-pod
 # container suites hit memory pressure: in-container `sh: Cannot fork` (EAGAIN) and OOM-killed
 # containers. Cap the run-phase driver for those targets so the containers keep their headroom; JVM
-# keeps the full heap because its tests run inside the driver, and the compile and native-link phases
-# keep it because they are the heap-heavy ones. `-J-Xmx` is appended after .jvmopts on the java command
+# keeps the full heap because its tests run inside the driver, and the compile phases and the isolated
+# heavy-module link+test session keep it because they are the heap-heavy ones. `-J-Xmx` is appended
+# after .jvmopts on the java command
 # line, so it wins. Overridable via RUN_HEAP_CAP.
 RUN_HEAP_CAP="${RUN_HEAP_CAP:-6G}"
 run_phase_heap() {
@@ -347,7 +359,7 @@ run_phase_split() {
     esac
 }
 
-# -- Native: upfront aggregate link, then crash-retry (single process) --
+# -- Native: compile upfront, then link+run each module once (heavy isolated), under crash-retry --
 LOG=""
 tail_pid=""
 watchdog_killed=0
@@ -403,38 +415,22 @@ check_log() {
     return 2
 }
 
-run_native() {
-    if [ "$ACTION" = "compile" ]; then
-        sbt "testKyo --phase compile-main Native" || return $?
-        sbt "testKyo --phase compile-test Native" || return $?
-        return 0
-    fi
-    # Isolate each heavy module's native link in its own sbt driver before the aggregate link, so its
-    # whole-program optimize runs against a fresh heap and empty metaspace. The aggregate below reuses
-    # the on-disk nativeLink cache and skips what was linked here.
-    for heavy in $NATIVE_HEAVY; do
-        log "pre-linking heavy native module in an isolated driver: sbt ${heavy}Native/Test/nativeLink"
-        link_sbt "${heavy}Native/Test/nativeLink" || { log "native pre-link of $heavy failed"; return 1; }
-    done
-    log "linking native test binaries: sbt kyoNative/Test/nativeLink"
-    link_sbt "kyoNative/Test/nativeLink"
-    link_exit=$?
-    if [ "$link_exit" -ne 0 ]; then
-        log "native linking failed (exit $link_exit)"; return 1
-    fi
-    [ "$ACTION" = "link" ] && { log "link complete"; return 0; }
-
-    local arg; arg=$(run_arg)
+# Run one sbt invocation ("$@") under the stale-output watchdog and native crash-retry loop: a hung
+# process (no output for STALE_TIMEOUT) is killed and retried, a mid-RPC errno-104 reset is retried, a
+# clean pass or a real test failure returns immediately. Returns 0 (pass) or 1 (real failure, or no test
+# output after MAX_RETRIES). The caller sets the driver heap (a leading -J-Xmx arg) and any
+# NATIVE_LINK_CPUS cap via the environment; this loop just runs whatever sbt command it is handed.
+run_native_retry() {
     LOG=$(mktemp)
     trap native_cleanup EXIT
     local attempt
     for attempt in $(seq 1 "$MAX_RETRIES"); do
-        log "attempt $attempt/$MAX_RETRIES running: sbt testKyo $arg Native"
+        log "attempt $attempt/$MAX_RETRIES running: sbt $*"
         : > "$LOG"; watchdog_killed=0
         if command -v setsid >/dev/null 2>&1; then
-            setsid sbt $(run_phase_heap) "testKyo $arg Native" >> "$LOG" 2>&1 &
+            setsid sbt "$@" >> "$LOG" 2>&1 &
         else
-            sbt $(run_phase_heap) "testKyo $arg Native" >> "$LOG" 2>&1 &
+            sbt "$@" >> "$LOG" 2>&1 &
         fi
         sbt_pid=$!
         tail -f "$LOG" 2>/dev/null & tail_pid=$!
@@ -464,6 +460,59 @@ run_native() {
     done
     log "FAILED: no test output after $MAX_RETRIES attempts"
     return 1
+}
+
+run_native() {
+    local arg; arg=$(run_arg)
+
+    # compile: compile main and test only, no link, no run.
+    if [ "$ACTION" = "compile" ]; then
+        sbt "testKyo --phase compile-main $arg Native" || return $?
+        sbt "testKyo --phase compile-test $arg Native" || return $?
+        return 0
+    fi
+
+    # link: compile + a standalone aggregate link, no run. This is the local/standalone
+    # link-validation action (build.sh); CI's Native path is the 'test' action below, which links
+    # inside the test session instead. NATIVE_HEAVY still gets its own isolated driver here.
+    if [ "$ACTION" = "link" ]; then
+        for heavy in $NATIVE_HEAVY; do
+            log "pre-linking heavy native module in an isolated driver: sbt ${heavy}Native/Test/nativeLink"
+            link_sbt "${heavy}Native/Test/nativeLink" || { log "native pre-link of $heavy failed"; return 1; }
+        done
+        log "linking native test binaries: sbt kyoNative/Test/nativeLink"
+        link_sbt "kyoNative/Test/nativeLink" || { log "native linking failed"; return 1; }
+        log "link complete"; return 0
+    fi
+
+    # test / testDiff: single-link. Compile upfront (no link) so a compile error fails fast, then run
+    # the heavy modules isolated and the rest in the aggregate. Each module links exactly once, inside
+    # its test session (see the file header on scala-native #2514 / #1822).
+    sbt "testKyo --phase compile-main $arg Native" || return $?
+    sbt "testKyo --phase compile-test $arg Native" || return $?
+
+    # Comma-separated base names for the --only / --exclude split (NATIVE_HEAVY is space-separated).
+    local heavy_csv; heavy_csv=$(printf '%s' "$NATIVE_HEAVY" | tr -s ' ' ',' | sed 's/^,//; s/,$//')
+    if [ -n "$heavy_csv" ]; then
+        # Heavy modules: link+run in their own full-heap driver (the .jvmopts 12G, uncapped) so the
+        # whole-program optimize does not stack on the aggregate's accumulated heap, CPU-capped so the
+        # clang fork fleet does not overcommit the runner. --only is diff-gated by testKyo, so in a diff
+        # run the heavy runs only when it is actually affected.
+        log "linking+running heavy native modules isolated: sbt testKyo --only $heavy_csv $arg Native"
+        (
+            if [ -n "$NATIVE_LINK_CPUS" ]; then
+                export JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS"
+                export JVM_OPTS="${JVM_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS"
+            fi
+            run_native_retry "testKyo --only $heavy_csv $arg Native"
+        ) || return $?
+        # The rest: the run-phase heap cap keeps headroom for the podman/chrome forks the container and
+        # browser modules spawn; every heavy module is excluded, already run above.
+        log "linking+running remaining native modules: sbt testKyo --exclude $heavy_csv $arg Native"
+        run_native_retry $(run_phase_heap) "testKyo --exclude $heavy_csv $arg Native"
+    else
+        run_native_retry $(run_phase_heap) "testKyo $arg Native"
+    fi
 }
 
 # -- strategy derivation: the platform decides, never the caller --

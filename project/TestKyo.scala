@@ -54,10 +54,25 @@ object TestKyo {
         val phaseIdx = args.indexOf("--phase")
         val phase    = if (phaseIdx >= 0 && phaseIdx + 1 < args.length) args(phaseIdx + 1) else "test"
 
+        // --exclude <base>[,<base>...] drops modules by cross-project base name (platform suffix stripped);
+        // --only <base>[,<base>...] keeps only those modules. They are complements: CI's Native pass runs
+        // the heavy module in an isolated driver via --only and the rest via --exclude, so each module is
+        // linked and run exactly once across the two passes. Both honor the diff/scala/platform scoping.
+        val excludeIdx = args.indexOf("--exclude")
+        val excludeBases: Set[String] =
+            (if (excludeIdx >= 0 && excludeIdx + 1 < args.length) args(excludeIdx + 1) else "")
+                .split(",").map(_.trim).filter(_.nonEmpty).toSet
+        val onlyIdx = args.indexOf("--only")
+        val onlyBases: Set[String] =
+            (if (onlyIdx >= 0 && onlyIdx + 1 < args.length) args(onlyIdx + 1) else "")
+                .split(",").map(_.trim).filter(_.nonEmpty).toSet
+
         val remaining = args
             .filterNot(a => a == "--all" || a == "--dry-run")
             .filterNot(a => a == "--scala" || (scalaIdx >= 0 && args.indexOf(a) == scalaIdx + 1))
             .filterNot(a => a == "--phase" || (phaseIdx >= 0 && args.indexOf(a) == phaseIdx + 1))
+            .filterNot(a => a == "--exclude" || (excludeIdx >= 0 && args.indexOf(a) == excludeIdx + 1))
+            .filterNot(a => a == "--only" || (onlyIdx >= 0 && args.indexOf(a) == onlyIdx + 1))
 
         val (platformArgs, refArgs) = remaining.partition(a => platformNames.exists(_.equalsIgnoreCase(a)))
         val platform                = platformArgs.headOption.map(a => platformNames.find(_.equalsIgnoreCase(a)).get)
@@ -83,8 +98,8 @@ object TestKyo {
         }
 
         def runForScala(st: State, sv: String): State =
-            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun, phase)
-            else runDiff(st, baseRef, platform, sv, isDryRun, phase)
+            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun, phase, excludeBases, onlyBases)
+            else runDiff(st, baseRef, platform, sv, isDryRun, phase, excludeBases, onlyBases)
 
         val state2 = runForScala(state1, targetScala)
 
@@ -117,7 +132,9 @@ object TestKyo {
         platform: Option[String],
         scalaVersion: String,
         isDryRun: Boolean = false,
-        phase: String = "test"
+        phase: String = "test",
+        exclude: Set[String] = Set.empty,
+        only: Set[String] = Set.empty
     ): State = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
@@ -133,7 +150,7 @@ object TestKyo {
                 case None    => true
             }
             val matchesScala = versions.contains(scalaVersion)
-            platformMatch && matchesScala
+            platformMatch && matchesScala && !exclude.contains(baseName(name)) && (only.isEmpty || only.contains(baseName(name)))
         }
 
         if (testable.isEmpty) {
@@ -160,7 +177,9 @@ object TestKyo {
         platform: Option[String],
         scalaVersion: String,
         isDryRun: Boolean = false,
-        phase: String = "test"
+        phase: String = "test",
+        exclude: Set[String] = Set.empty,
+        only: Set[String] = Set.empty
     ): State = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
@@ -173,7 +192,7 @@ object TestKyo {
 
         if (metaBuildChanged(changedFiles)) {
             log("meta-build changed (project/ or .github/), running all modules")
-            return runAll(state, platform, scalaVersion, isDryRun, phase)
+            return runAll(state, platform, scalaVersion, isDryRun, phase, exclude, only)
         }
 
         val extracted = Project.extract(state)
@@ -188,7 +207,7 @@ object TestKyo {
             if (!changedFiles.contains("build.sbt")) Set.empty
             else buildSbtAffectedProjects(extracted, baseRef) match {
                 case Some(names) => names
-                case None        => return runAll(state, platform, scalaVersion, isDryRun, phase)
+                case None        => return runAll(state, platform, scalaVersion, isDryRun, phase, exclude, only)
             }
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
@@ -214,6 +233,7 @@ object TestKyo {
             case Some(p) => allAffected.filter(matchesPlatform(_, p))
             case None    => allAffected
         }).filter { name =>
+            !exclude.contains(baseName(name)) && (only.isEmpty || only.contains(baseName(name))) &&
             allRefs.find(_.project == name).exists { ref =>
                 (ref / crossScalaVersions).get(structure.data).getOrElse(Nil).contains(scalaVersion)
             }
@@ -247,6 +267,13 @@ object TestKyo {
             case "Wasm"   => name.endsWith("Wasm")
             case _        => false
         }
+
+    /** Strip the platform suffix to the cross-project base name, so `--exclude` can name a module
+      * once (e.g. `kyo-schema-tests`) and match every platform variant (`kyo-schema-testsNative`).
+      * Suffix-less JVM-only projects (kyo-compat-plugin) return unchanged.
+      */
+    private def baseName(name: String): String =
+        platformNames.find(p => name.endsWith(p)).map(p => name.dropRight(p.length)).getOrElse(name)
 
     /** Map a changed file path to affected sbt project names.
       *

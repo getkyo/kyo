@@ -80,15 +80,17 @@ jobs:
       # because .jvmopts holds no conflicting duplicates for them.
       JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      # Link kyo-schema-tests' native test binary in its own sbt driver before the aggregate link: its
-      # whole-program optimize runs against a fresh heap instead of a driver that has accumulated
-      # ~10 prior modules of heap and metaspace. ci-test.sh honors this only for the Native target.
+      # Run kyo-schema-tests' native link+test in its own sbt driver (via testKyo --only) instead of the
+      # aggregate: its whole-program optimize needs a full, fresh heap, while the aggregate driver is
+      # heap-capped for container/browser fork headroom and has accumulated ~10 prior modules. ci-test.sh
+      # honors this only for the Native target; the aggregate run then excludes it via testKyo --exclude,
+      # so each module is linked and run exactly once.
       NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema-tests' || '' }}"
-      # Cap the Native link drivers to 2 CPUs (-XX:ActiveProcessorCount). The scala-native
-      # toolchain sizes its optimizer pool and its concurrent clang forks from
-      # availableProcessors, and the fork fleet stacked on the driver heap is what overcommits
-      # the 16GB runner (kernel OOM, exit 143). ci-test.sh applies this to the nativeLink
-      # invocations only; compile and the test run keep all 4 CPUs.
+      # Cap the isolated heavy-module link+test driver to 2 CPUs (-XX:ActiveProcessorCount). The
+      # scala-native toolchain sizes its optimizer pool and its concurrent clang forks from
+      # availableProcessors, and that fork fleet stacked on the driver heap is what overcommits the
+      # 16GB runner (kernel OOM, exit 143). ci-test.sh applies this to the heavy --only session only;
+      # the compile phases and the aggregate run keep all 4 CPUs.
       NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && '2' || '' }}"
       # Below 512MB free the runner is minutes from dying WITHOUT uploading its log (observed twice
       # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,
@@ -115,9 +117,9 @@ jobs:
       # Guards issue #1821. The `native-settings` hook drops each module's Scala Native work directory
       # right after its test binary links, to keep the row's ~40 modules inside the runner's disk; a
       # drop that leaves state describing the deleted IR makes the next link hand clang object paths
-      # for files nobody wrote, and the row dies an hour in on a missing .ll.o with no diagnostic.
-      # kyo-data is the cheapest module with a Native test binary, and the row reuses the binary linked
-      # here, so the guard costs the row a couple of minutes and fails fast when it trips.
+      # for files nobody wrote, and the row dies an hour in on a missing .ll.o with no diagnostic. This
+      # guard reproduces the link-prune-relink cycle on kyo-data (the cheapest module with a Native test
+      # binary), so a hook regression fails fast in a couple of minutes instead of hours into the row.
       - name: native relink guard (${{ inputs.os }})
         if: ${{ matrix.target == 'Native' }}
         shell: bash
