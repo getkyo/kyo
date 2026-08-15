@@ -1,33 +1,20 @@
-# Temporary diagnostic workflow for the IoUringDriverAcceptTransientErrnoTest
-# NoClassDefFoundError on linux-x64 CI (PR #1882). Round 2: capture the runner's
-# fd limits (the leading theory is a transient EMFILE during classload turning
-# into ClassNotFoundException) and re-run the full kyo-netJVM suite set, which is
-# the context where the failure reproduces, while sampling the forked JVM's fd
-# count. Delete this file once the cause is fixed.
+# Temporary diagnostic workflow for the kyo-sql-tests fd leak (issue #1885, PR #1882).
+# Round 5: run kyo-sql-testsJVM with KYO_TEST_LEAK_DEBUG=1 (serial leaves, per-leaf
+# descriptor attribution) in a loop until the leaked ESTABLISHED client socket
+# reproduces, then print the attribution. Delete this file once the leak is fixed.
 name: iouring-probe
 on:
   push:
     branches:
       - ci/podman-runner-image-probe
 jobs:
-  fdlimits:
+  sqlleak:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    steps:
-      - name: Print fd limits
-        run: |
-          echo "shell soft: $(ulimit -Sn)  hard: $(ulimit -Hn)"
-          cat /proc/self/limits | grep -i 'open files'
-          echo "fs.nr_open: $(cat /proc/sys/fs/nr_open)"
-          echo "fs.file-max: $(cat /proc/sys/fs/file-max)"
-          systemctl show actions.runner.* 2>/dev/null | grep -i limit | head -5 || true
-  fullnet:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
         with:
@@ -35,46 +22,28 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
-          os: linux-x64
+          os: ${{ matrix.os == 'ubuntu-latest' && 'linux-x64' || 'linux-arm64' }}
           target: JVM
       - uses: coursier/setup-action@v3.0.2
         with:
           jvm: corretto:25
           apps: sbt
-      - name: Run full kyo-netJVM tests with fd sampling
+      - name: Loop kyo-sql-tests with leak attribution
         env:
           JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
           JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+          KYO_TEST_LEAK_DEBUG: '1'
           SBT_TASK_LIMIT: '1'
           CI: 'true'
         run: |
-          echo "shell soft limit: $(ulimit -Sn) hard: $(ulimit -Hn)"
-          # Sample fd counts of every java process each second while the tests run,
-          # so an fd spike at the failure moment is visible in the log.
-          (
-            while true; do
-              for pid in $(pgrep java); do
-                n=$(ls /proc/$pid/fd 2>/dev/null | wc -l)
-                soft=$(grep -i 'open files' /proc/$pid/limits 2>/dev/null | awk '{print $4}')
-                echo "[fd-mon $(date -u +%H:%M:%S)] pid=$pid fds=$n soft=$soft"
-              done
-              sleep 1
-            done
-          ) > /tmp/fd-mon.log 2>&1 &
-          monpid=$!
-          rc=0
-          for i in 1 2 3; do
-            echo "=== full kyo-netJVM test attempt $i"
-            if sbt 'kyo-netJVM/test' > /tmp/net-$i.log 2>&1; then
+          for i in 1 2 3 4; do
+            echo "=== attempt $i"
+            if sbt 'kyo-sql-testsJVM/test' > /tmp/sql-$i.log 2>&1; then
               echo "attempt $i passed"
             else
-              rc=1
-              echo "attempt $i FAILED:"
-              grep -m8 'NoClassDefFound\|ClassNotFound\|Failed tests\|stranded-op\|EMFILE\|Too many open files' /tmp/net-$i.log
+              echo "attempt $i FAILED, leak report:"
+              grep -B2 -A25 'leak check failed' /tmp/sql-$i.log | head -60
+              exit 0
             fi
           done
-          kill $monpid 2>/dev/null || true
-          echo "== fd monitor peaks:"
-          sort -t= -k3 -rn /tmp/fd-mon.log 2>/dev/null | head -5 || true
-          awk -F'fds=' '{print $2+0}' /tmp/fd-mon.log | sort -rn | head -3
-          exit $rc
+          echo "no repro in 4 attempts"
