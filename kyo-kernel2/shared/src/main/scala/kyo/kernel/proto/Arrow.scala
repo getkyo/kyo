@@ -6,6 +6,7 @@ import kyo.Loop.Outcome2
 import kyo.Span
 import kyo.Tag
 import scala.annotation.nowarn
+import scala.annotation.static
 import scala.language.implicitConversions
 import scala.runtime.AbstractFunction1
 
@@ -16,7 +17,7 @@ sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S]:
     def step: Arrow.Step[A, B, S]
 
     def chain[C, S2](f: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-        if f eq Arrow.Identity then
+        if f eq Arrow.identity then
             this.asInstanceOf[Arrow[A, C, S & S2]]
         else
             Arrow.Chain(this, f)
@@ -24,7 +25,7 @@ end Arrow
 
 object Arrow:
 
-    inline def apply[A]: Transform[A, A, Any] = (Identity: Transform[Any, Any, Any]).asInstanceOf[Transform[A, A, Any]]
+    inline def apply[A]: Transform[A, A, Any] = identity.asInstanceOf[Transform[A, A, Any]]
 
     sealed abstract class Step[-A, +B, -S] extends Arrow[A, B, S]:
         type X
@@ -46,7 +47,7 @@ object Arrow:
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
 
         override def chain[C, S2](f: Arrow[B, C, S2]) =
-            if f eq Identity then
+            if f eq identity then
                 this.asInstanceOf[Arrow[A, C, S & S2]]
             else
                 new Step[A, C, S & S2]:
@@ -57,23 +58,22 @@ object Arrow:
 
     end Transform
 
-    object Identity extends Transform[Any, Any, Any]:
-        def frame                                       = Frame.internal
-        override def chain[C, S2](f: Arrow[Any, C, S2]) = f
-        def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
-            if next eq Identity then v.asInstanceOf[C < S2]
-            else
-                v match
-                    case v: Arrow[Any, Any, S2] @unchecked => Chain(v, next)
-                    case v =>
-                        next match
-                            case next: Defer[?, ?, ?] =>
-                                Bind(v, next.asInstanceOf[Arrow[Any, C, S2]])
-                            case next =>
-                                val s = next.step
-                                s.head(v.asInstanceOf[Any < S2], s.tail)
-
-    end Identity
+    @static val identity: Transform[Any, Any, Any] =
+        new Transform[Any, Any, Any]:
+            def frame                                       = Frame.internal
+            override def chain[C, S2](f: Arrow[Any, C, S2]) = f
+            def apply[C, S2](v: Any < S2, next: Arrow[Any, C, S2]): C < S2 =
+                if next eq identity then v.asInstanceOf[C < S2]
+                else
+                    v match
+                        case v: Arrow[Any, Any, S2] @unchecked => Chain(v, next)
+                        case v =>
+                            next match
+                                case next: Defer[?, ?, ?] =>
+                                    Bind(v, next.asInstanceOf[Arrow[Any, C, S2]])
+                                case next =>
+                                    val s = next.step
+                                    s.head(v.asInstanceOf[Any < S2], s.tail)
 
     sealed abstract class Defer[A, +B, -S] extends Step[A, B, S]:
         type X = A
@@ -110,7 +110,7 @@ object Arrow:
         final override def apply(v: Any) = cont(v.asInstanceOf[O[A]])
 
         override def chain[C, S2](f: Arrow[B, C, S2]): Arrow[Any, C, E & S & S2] =
-            if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2]]
+            if f eq identity then this.asInstanceOf[Arrow[Any, C, E & S & S2]]
             else
                 new Suspend[I, O, E, A, C, S & S2]:
                     def tag           = self.tag
