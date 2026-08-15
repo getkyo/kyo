@@ -202,6 +202,15 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "a handle capture crossing an inner region" ignore {
+        val inner: Int < Say = ArrowEffect.handleLoop(
+            Tag[Ask],
+            ask.map(a => say("x").map(_ => ask.map(b => a + b)))
+        )([C] => _ => continue(1), a => a)
+        val r: Int < Any = ArrowEffect.handle(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
+        assert(Eval(r) == 2)
+    }
+
     "a map after the region applies to the result" in {
         val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => continue(41), a => a)
         assert(Eval(r.map(_ * 10)) == 420)

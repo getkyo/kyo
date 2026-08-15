@@ -47,7 +47,9 @@ object Arrow:
 
         def apply[C, S2](v: A < S2, next: Arrow[B, C, S2]): C < (S & S2)
 
-        override def chain[C, S2](f: Arrow[B, C, S2]) = Step(this, f)
+        override def chain[C, S2](f: Arrow[B, C, S2]) =
+            if f eq Identity then this.asInstanceOf[Arrow[A, C, S & S2]]
+            else Step(this, f)
 
     end Transform
 

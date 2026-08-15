@@ -10,6 +10,22 @@ object Eval:
         val stack = Stack.current()
         val base  = stack.size
 
+        def dump(): Arrow[Any, Any, Any] =
+            val top = stack.size
+            var i   = top
+            while i > base && stack(i - 1).isInstanceOf[Transform[?, ?, ?]] do i -= 1
+            if i == top then Arrow[Any]
+            else
+                var acc = stack(i).asInstanceOf[Arrow[Any, Any, Any]]
+                var j   = i + 1
+                while j < top do
+                    acc = stack(j).asInstanceOf[Arrow[Any, Any, Any]].chain(acc)
+                    j += 1
+                stack.truncate(i)
+                acc
+            end if
+        end dump
+
         var cur: Any = v
         var running  = true
         try
@@ -22,7 +38,7 @@ object Eval:
                         stack.push(b.cont)
                         cur = b.value
                     case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                        stack.push(s.cont)
+                        if s.cont ne Identity then stack.push(s.cont)
                         val i = stack.find(s.tag.erased, base)
                         if i < 0 then bug(s"unhandled suspension: $s")
                         stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]].handler match
@@ -66,7 +82,7 @@ object Eval:
                         cur = e.value
                     case a: Arrow[?, ?, ?] =>
                         val s = a.asInstanceOf[Arrow[Any, Any, Any]].step
-                        cur = s.head(().asInstanceOf[Any < Any], s.tail)
+                        cur = s.head(().asInstanceOf[Any < Any], s.tail.chain(dump()))
                     case settled =>
                         if stack.size == base then running = false
                         else
@@ -96,7 +112,7 @@ object Eval:
                                     cur = d
                                 case a =>
                                     val s = a.asInstanceOf[Arrow[Any, Any, Any]].step
-                                    cur = s.head(settled.asInstanceOf[Any < Any], s.tail)
+                                    cur = s.head(settled.asInstanceOf[Any < Any], s.tail.chain(dump()))
                             end match
         finally stack.truncate(base)
         end try
