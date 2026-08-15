@@ -64,7 +64,7 @@ object Arrow:
             if next eq Identity then v.asInstanceOf[C < S2]
             else
                 v match
-                    case v: Arrow[Any, Any, S2] @unchecked => v.chain(next)
+                    case v: Arrow[Any, Any, S2] @unchecked => Chain(v, next)
                     case v =>
                         next match
                             case next: Defer[?, ?, ?] =>
