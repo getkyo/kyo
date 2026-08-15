@@ -48,6 +48,14 @@ private[kyo] object WriterMsg:
     case class SuppressIfCancelled(id: JsonRpcId, env: JsonRpcEnvelope) extends WriterMsg
 end WriterMsg
 
+/** Enqueue a required response from a Sync-only callback with the backpressuring delivery guarantee the notify,
+  * sendUnmatched, and progress paths already use: fork a fiber that `put`s. A full writerChannel (a progress flood
+  * outpacing the transport drain) then delays the response instead of dropping it and hanging the caller. The put
+  * fails Closed only when the endpoint is closing, where the response is genuinely undeliverable.
+  */
+private def enqueueResponse(writerChannel: Channel[WriterMsg], msg: WriterMsg)(using Frame, AllowUnsafe): Unit =
+    discard(Fiber.Unsafe.init(Abort.run[Closed](writerChannel.put(msg)).unit))
+
 final class JsonRpcEndpointImpl private[kyo] (
     private[kyo] val callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
     private[kyo] val pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry],
@@ -606,14 +614,14 @@ object JsonRpcEndpointImpl:
                                                                                     val replying =
                                                                                         InboundEntry.Replying(method, suppressUnsafe.safe)
                                                                                     if pendingInbound.replace(id, running, replying) then
-                                                                                        // Unsafe: writer-channel offer from Sync-only onComplete callback
-                                                                                        // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                                        discard(writerChannel.unsafe.offer(
+                                                                                        // Guaranteed delivery from the Sync-only onComplete callback (see enqueueResponse).
+                                                                                        enqueueResponse(
+                                                                                            writerChannel,
                                                                                             WriterMsg.SuppressIfCancelled(
                                                                                                 id,
                                                                                                 responseEnvelope
                                                                                             )
-                                                                                        )(using AllowUnsafe.embrace.danger, frame))
+                                                                                        )(using frame, AllowUnsafe.embrace.danger)
                                                                                     end if
                                                                                 case _: InboundEntry.Cancelled =>
                                                                                     // Cancel won the CAS. If the policy demands a reply for cancelled
@@ -623,11 +631,11 @@ object JsonRpcEndpointImpl:
                                                                                         case Present(p) => p.expectReplyForCancelledRequest
                                                                                         case Absent     => false
                                                                                     if mustReply then
-                                                                                        // Unsafe: SendEnvelope bypasses suppress check because the policy demands a reply.
-                                                                                        // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                                        discard(writerChannel.unsafe.offer(
+                                                                                        // SendEnvelope bypasses the suppress check because the policy demands a reply; guaranteed delivery.
+                                                                                        enqueueResponse(
+                                                                                            writerChannel,
                                                                                             WriterMsg.SendEnvelope(responseEnvelope)
-                                                                                        )(using AllowUnsafe.embrace.danger, frame))
+                                                                                        )(using frame, AllowUnsafe.embrace.danger)
                                                                                         discard(pendingInbound.remove(id))
                                                                                     end if
                                                                                 case _ => ()
@@ -649,13 +657,12 @@ object JsonRpcEndpointImpl:
                                                                         )(using frame)),
                                                                         Absent
                                                                     )
-                                                                    // Unsafe: offer to writerChannel inside Exchange decode callback
+                                                                    // Guaranteed delivery from the Sync-only decode callback (see enqueueResponse).
                                                                     Sync.Unsafe.defer {
-                                                                        val msg = WriterMsg.SendEnvelope(response)
-                                                                        // format: off
-                                                                        // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                        discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
-                                                                        // format: on
+                                                                        enqueueResponse(
+                                                                            writerChannel,
+                                                                            WriterMsg.SendEnvelope(response)
+                                                                        )(using frame, AllowUnsafe.embrace.danger)
                                                                     }.andThen(Exchange.Message.Skip)
                                                                 case JsonRpcUnknownMethodPolicy.UnknownAction.Drop =>
                                                                     Exchange.Message.Skip
@@ -670,13 +677,12 @@ object JsonRpcEndpointImpl:
                                                                         )(using frame)),
                                                                         Absent
                                                                     )
-                                                                    // Unsafe: offer to writerChannel inside Exchange decode callback
+                                                                    // Guaranteed delivery from the Sync-only decode callback (see enqueueResponse).
                                                                     Sync.Unsafe.defer {
-                                                                        val msg = WriterMsg.SendEnvelope(response)
-                                                                        // format: off
-                                                                        // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                        discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
-                                                                        // format: on
+                                                                        enqueueResponse(
+                                                                            writerChannel,
+                                                                            WriterMsg.SendEnvelope(response)
+                                                                        )(using frame, AllowUnsafe.embrace.danger)
                                                                     }.andThen {
                                                                         // Unsafe: read implRef to trigger close; implRef set before any messages arrive
                                                                         Sync.Unsafe.defer {
@@ -700,11 +706,10 @@ object JsonRpcEndpointImpl:
                                                                 // Request has an id: send the gate-supplied response so caller is not left hanging
                                                                 // Unsafe: offer to writerChannel inside gate decision handler
                                                                 Sync.Unsafe.defer {
-                                                                    val msg = WriterMsg.SendEnvelope(response)
-                                                                    // format: off
-                                                                    // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                    discard(writerChannel.unsafe.offer(msg)(using AllowUnsafe.embrace.danger, frame))
-                                                                    // format: on
+                                                                    enqueueResponse(writerChannel, WriterMsg.SendEnvelope(response))(using
+                                                                        frame,
+                                                                        AllowUnsafe.embrace.danger
+                                                                    )
                                                                 }.andThen(Exchange.Message.Skip)
                                                             case JsonRpcMessageGate.Decision.Drop =>
                                                                 Exchange.Message.Skip
