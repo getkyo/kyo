@@ -168,20 +168,15 @@ object Tag:
           * if any of the tags are dynamic.
           *
           * This method runs on the kernel's per-operation dispatch path, so it relies on the memoized `String.hashCode` and must not
-          * recompute a content hash per call. Content-stable cross-process hashing is `hash`'s job, not this method's.
+          * recompute a content hash per call. Content-stable cross-process hashing is `hash`'s job, not this method's. The body uses plain
+          * instanceof checks instead of pattern binders to stay within the JVM's 35-byte inline threshold, so it inlines at any call site,
+          * not only hot ones.
           */
         private def fastPathEqual[B](that: Tag[B]): Boolean =
-            (self eq that) || {
-                self match
-                    case self: String =>
-                        that match
-                            case that: String =>
-                                self.hashCode == that.hashCode
-                            case _ =>
-                                false
-                    case _ =>
-                        false
-            }
+            (self eq that) || (
+                (self.isInstanceOf[String] & that.isInstanceOf[String]) &&
+                    (self: AnyRef).hashCode == (that: AnyRef).hashCode
+            )
 
         /** Checks if this Tag represents a concrete class type (without type parameters).
           *
