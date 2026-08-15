@@ -1,7 +1,7 @@
 # Temporary diagnostic workflow for the kyo-sql-tests fd leak (issue #1885, PR #1882).
-# Round 5: run kyo-sql-testsJVM with KYO_TEST_LEAK_DEBUG=1 (serial leaves, per-leaf
-# descriptor attribution) in a loop until the leaked ESTABLISHED client socket
-# reproduces, then print the attribution. Delete this file once the leak is fixed.
+# Round 6: reproduce with KYO_TEST_LEAK_DEBUG=1 AND kyo debug logging, so the pool's
+# per-connection lifecycle lines (cancelling / pooled / closed reason=discarded) show
+# which step never ran for the leaked connection. Delete once the leak is fixed.
 name: iouring-probe
 on:
   push:
@@ -28,22 +28,34 @@ jobs:
         with:
           jvm: corretto:25
           apps: sbt
-      - name: Loop kyo-sql-tests with leak attribution
+      - name: Loop kyo-sql-tests with leak attribution and debug logs
         env:
           JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
           JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
           KYO_TEST_LEAK_DEBUG: '1'
+          KYO_LOG_DEFAULTLEVEL: 'debug'
           SBT_TASK_LIMIT: '1'
           CI: 'true'
         run: |
-          for i in 1 2 3 4; do
+          for i in 1 2 3 4 5 6; do
             echo "=== attempt $i"
-            if sbt 'kyo-sql-testsJVM/test' > /tmp/sql-$i.log 2>&1; then
+            if sbt 'kyo-sql-testsJVM/testOnly kyo.postgres.CancelIntegrationTest' > /tmp/sql-$i.log 2>&1; then
               echo "attempt $i passed"
             else
               echo "attempt $i FAILED, leak report:"
-              grep -B2 -A25 'leak check failed' /tmp/sql-$i.log | head -60
+              grep -B2 -A8 'leak check failed' /tmp/sql-$i.log | head -30
+              echo "== pool lifecycle lines around the cancel test:"
+              grep -nE 'kyo.sql: (cancelling|pooled|closed) connection|CancelExchange|cancel budget|SqlConnectionCancel' /tmp/sql-$i.log | tail -40
+              echo "== all debug lines of the leaf that leaked (interrupting the query):"
+              awk '/interrupting the query/{on=1} on{print} on&&/---/{exit}' /tmp/sql-$i.log | head -60
               exit 0
             fi
           done
-          echo "no repro in 4 attempts"
+          echo "no repro in 6 attempts of the single suite; falling back to one full module run"
+          if sbt 'kyo-sql-testsJVM/test' > /tmp/sql-full.log 2>&1; then
+            echo "full run passed too"
+          else
+            echo "full run FAILED, leak report:"
+            grep -B2 -A8 'leak check failed' /tmp/sql-full.log | head -30
+            grep -nE 'kyo.sql: (cancelling|pooled|closed) connection|CancelExchange' /tmp/sql-full.log | tail -40
+          fi
