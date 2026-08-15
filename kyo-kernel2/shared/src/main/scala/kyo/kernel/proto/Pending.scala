@@ -49,11 +49,11 @@ object `<`:
                     case v: Arrow[Any, A, S3] @unchecked =>
                         v.chain(arrow.chain(next))
                     case v =>
-                        val res  = v.asInstanceOf[A]
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Arrow.Bind(res, arrow.chain(next))
+                            Arrow.Bind(v.asInstanceOf[A], arrow.chain(next))
                         else
+                            val res  = Nested.unnest[A](v)
                             val step = next.step
                             val out  = step.head(f(res), step.tail)
                             Safepoint.exit(slot)

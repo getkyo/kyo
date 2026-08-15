@@ -58,7 +58,7 @@ object ArrowEffect:
                             def complete(a: A)                                 = done(a)
                     def cont = Arrow[B]
             case a =>
-                done(a.asInstanceOf[A])
+                done(Nested.unnest[A](a))
     end handle
 
     @nowarn("msg=anonymous")
@@ -80,7 +80,7 @@ object ArrowEffect:
                             def complete(a: A)      = done(a)
                     def cont = Arrow[B]
             case a =>
-                done(a.asInstanceOf[A])
+                done(Nested.unnest[A](a))
     end handleLoop
 
     @nowarn("msg=anonymous")
@@ -104,7 +104,7 @@ object ArrowEffect:
                             def complete(st: State, a: A)      = done(st, a)
                     def cont = Arrow[B]
             case a =>
-                done(state, a.asInstanceOf[A])
+                done(state, Nested.unnest[A](a))
     end handleLoopState
 
 end ArrowEffect
