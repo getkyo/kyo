@@ -17,15 +17,16 @@ final private[proto] case class Nested[+A](value: A) extends Boxed
 
 object Nested:
 
-    /** The runtime arm the lift emission calls when a value of the type could be a computation. A monomorphic bridge rather than the box
-      * directly: the emission lands at every generic lift site, and the shortest call keeps those sites inside the JIT's inline budget.
+    /** The runtime arm the lift emission calls when a value of the type could be a computation. A monomorphic bridge rather than the
+      * wrapping directly: the emission lands at every generic lift site, and the shortest call keeps those sites inside the JIT's inline
+      * budget.
       */
-    @static def box[A, S](v: A): A < S =
+    @static def nest[A, S](v: A): A < S =
         v match
             case v: Boxed => Nested(v).asInstanceOf[A < S]
             case v        => v.asInstanceOf[A < S]
 
-    @static def strip[A](v: Any): A =
+    @static def unnest[A](v: Any): A =
         v match
             case n: Nested[?] => n.value.asInstanceOf[A]
             case _            => v.asInstanceOf[A]
@@ -50,7 +51,7 @@ object `<`:
                     case v: Arrow[Any, A, S3] @unchecked =>
                         v.chain(arrow.chain(next))
                     case v =>
-                        val res  = Nested.strip[A](v)
+                        val res  = Nested.unnest[A](v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
                             Arrow.Bind(v, arrow.chain(next))

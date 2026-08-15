@@ -7,7 +7,7 @@ import kyo.kernel.proto.Arrow.*
 object Eval:
 
     def apply[A](v: A < Any): A =
-        Nested.strip[A](loop(v))
+        Nested.unnest[A](loop(v))
 
     private def loop[A](v: A < Any): Any =
         val stack = Stack.current()
