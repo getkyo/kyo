@@ -68,7 +68,7 @@ object Arrow:
                     case v =>
                         next match
                             case next: Defer[?, ?, ?] =>
-                                Bind(v.asInstanceOf[Any < S2], next.asInstanceOf[Arrow[Any, C, S2]])
+                                Bind(v, next.asInstanceOf[Arrow[Any, C, S2]])
                             case next =>
                                 val s = next.step
                                 s.head(v.asInstanceOf[Any < S2], s.tail)
@@ -80,7 +80,7 @@ object Arrow:
         final def head = Arrow[A]
         final def tail = this
 
-        def apply(v: A) = Bind(v.asInstanceOf[A < S], this)
+        def apply(v: A) = Bind(v, this)
     end Defer
 
     final class Chain[A, XX, +B, -S](
