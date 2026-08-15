@@ -37,7 +37,7 @@ object Eval:
                         case p: Arrow[Any, Any, S2] @unchecked =>
                             Chain(p, this.chain(next))
                         case o =>
-                            identity(s(o), next)
+                            Identity(s(o), next)
 
         var cur: Any = v
         var running  = true
@@ -68,7 +68,7 @@ object Eval:
                                             m += 1
                                         stack.truncate(i + 1)
                                         val cont = k
-                                        cur = hc.run(s.input, o => identity(s(o), cont))
+                                        cur = hc.run(s.input, o => Identity(s(o), cont))
                                 else
                                     val entries = stack.copyEntries(i + 1)
                                     val tags    = stack.copyTags(i + 1)
