@@ -254,4 +254,31 @@ class ArrowEffectTest extends AnyFreeSpec:
         assert(Eval(r.map(_ * 10)) == 420)
     }
 
+    "an unresumed handler skips trailing maps at any depth" in {
+        for depth <- List(4, 64) do
+            val runs         = new Array[Int](depth)
+            var v: Int < Ask = ask
+            for i <- 0 until depth do
+                val j = i
+                v = v.map { x =>
+                    runs(j) += 1
+                    x + 1
+                }
+            end for
+            val r: Int < Any = ArrowEffect.handle(Tag[Ask], v)([C] => (_, _) => 999, a => a * 2)
+            assert(Eval(r) == 1998)
+            assert(runs.forall(_ == 0))
+    }
+
+    "state survives dumping above a live region" in {
+        def tower(v: Int < Ask, n: Int): Int < Ask =
+            if n == 0 then v else tower(v.map(_ + 1), n - 1)
+        val body = ask.map(a => tower(ask.map(b => a + b), 64))
+        val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, body)(
+            [C] => (st, _) => continue2(st + 1, st),
+            (st, a) => a * 1000 + st
+        )
+        assert(Eval(r) == 85012)
+    }
+
 end ArrowEffectTest
