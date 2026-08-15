@@ -177,6 +177,92 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
+    "handleWith" - {
+        "applies the continuation to the region result" in {
+            val r: Int < Any = ArrowEffect.handleWith(Tag[Ask], ask.map(_ + 1))(
+                [C] => (_, cont) => cont(20),
+                a => a * 2
+            )(b => b + 100)
+            assert(Eval(r) == 142)
+        }
+
+        "applies the continuation to a settled input" in {
+            val r: Int < Any = ArrowEffect.handleWith(Tag[Ask], 5: Int < Ask)(
+                [C] => (_, cont) => cont(0),
+                a => a + 1
+            )(b => b * 10)
+            assert(Eval(r) == 60)
+        }
+
+        "the continuation can suspend on an outer effect" in {
+            var seen = ""
+            val inner: Int < Say =
+                ArrowEffect.handleWith(Tag[Ask], ask)([C] => (_, cont) => cont(1), a => a)(b => say("s").map(_ => b + 1))
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)(
+                [C] =>
+                    s =>
+                        seen = s
+                        Loop.continue(())
+                ,
+                a => a
+            )
+            assert(Eval(r) == 2)
+            assert(seen == "s")
+        }
+
+        "deep sequential operations stay stack safe through the continuation" in {
+            def loop(n: Int): Int < Ask =
+                if n == 0 then 0 else ask.map(_ => loop(n - 1))
+            val r: Int < Any = ArrowEffect.handleWith(Tag[Ask], loop(100000))([C] => (_, cont) => cont(1), a => a)(b => b + 7)
+            assert(Eval(r) == 7)
+        }
+    }
+
+    "handleLoopWith" - {
+        "applies the continuation to the region result" in {
+            val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
+                [C] => _ => Loop.continue(41),
+                a => a * 10
+            )(b => b + 1)
+            assert(Eval(r) == 421)
+        }
+
+        "applies the continuation to a settled input" in {
+            val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], 41: Int < Ask)(
+                [C] => _ => Loop.continue(0),
+                a => a + 1
+            )(b => b * 10)
+            assert(Eval(r) == 420)
+        }
+
+        "Loop.done flows through the continuation" in {
+            val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
+                [C] => _ => Loop.done(-1),
+                a => a
+            )(b => b * 2)
+            assert(Eval(r) == -2)
+        }
+    }
+
+    "handleLoopStateWith" - {
+        "applies the continuation with the final state observed" in {
+            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val r: Int < Any = ArrowEffect.handleLoopStateWith(Tag[Ask], 1, v)(
+                [C] => (s, _) => Loop.continue(s + 1, s),
+                (s, a) => s * 100 + a
+            )(b => b + 1)
+            assert(Eval(r) == 313)
+        }
+
+        "applies the continuation to a settled input" in {
+            val r: Int < Any = ArrowEffect.handleLoopStateWith(Tag[Ask], 7, 35: Int < Ask)(
+                [C] => (s, _) => Loop.continue(s, 0),
+                (s, a) => s + a
+            )(b => b * 2)
+            assert(Eval(r) == 84)
+        }
+    }
+
     "suspendWith" - {
         "suspends and continues in one node" in {
             val v: Int < Ask = ArrowEffect.suspendWith[Any](Tag[Ask], ())(_ + 1)
