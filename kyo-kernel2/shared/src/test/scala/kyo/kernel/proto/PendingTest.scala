@@ -164,4 +164,31 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerAsk(41)(payload)) == 42)
     }
 
+    "a loop answer payload delivers unwrapped through a bare suspension" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val r: (Int < Ask) < Any =
+            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue(settled(inner)), a => settled(a))
+        val payload: Int < Ask = Eval(r)
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a suspended loop answer delivering a payload resumes unwrapped" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val handled: (Int < Ask) < Ask =
+            ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue(after(inner)), a => settled(a))
+        val payload: Int < Ask = Eval(answerAsk(0)(handled))
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "a stateful loop answer payload delivers unwrapped through a bare suspension" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val r: (Int < Ask) < Any =
+            ArrowEffect.handleLoopState(Tag[Give], 0, give)(
+                [C] => (s, _) => Loop.continue(s + 1, settled(inner)),
+                (_, a) => settled(a)
+            )
+        val payload: Int < Ask = Eval(r)
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
 end PendingTest

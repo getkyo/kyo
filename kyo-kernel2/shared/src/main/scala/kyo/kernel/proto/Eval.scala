@@ -37,7 +37,7 @@ object Eval:
                         case p: Arrow[Any, Any, S2] @unchecked =>
                             Chain(p, this.chain(next))
                         case o =>
-                            Identity(fromAny(s(o)), next)
+                            Identity(fromAny(s(Nested.unnest[Any](o))), next)
 
         var cur: Any = v
         var running  = true
@@ -85,7 +85,7 @@ object Eval:
                                                 stack.push(resume(s))
                                                 cur = p
                                             case o =>
-                                                cur = s(o)
+                                                cur = s(Nested.unnest[Any](o))
                                     case done =>
                                         stack.truncate(i)
                                         cur = done
@@ -99,7 +99,7 @@ object Eval:
                                                 stack.push(resume(s))
                                                 cur = p
                                             case o =>
-                                                cur = s(o)
+                                                cur = s(Nested.unnest[Any](o))
                                         end match
                                     case done =>
                                         stack.truncate(i)
