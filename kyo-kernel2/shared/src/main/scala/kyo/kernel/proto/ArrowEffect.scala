@@ -6,6 +6,7 @@ import kyo.Loop.Outcome2
 import kyo.Tag
 import kyo.kernel.proto.Arrow.*
 import scala.annotation.nowarn
+import scala.language.implicitConversions
 
 abstract class ArrowEffect[-I[_], +O[_]]
 
@@ -19,9 +20,9 @@ object ArrowEffect:
         inline input0: I[C]
     ): O[C] < E =
         new Suspend[I, O, E, C, O[C], Any]:
-            def tag   = effectTag
-            def input = input0
-            def cont  = Arrow[O[C]]
+            def tag                       = effectTag
+            def input                     = input0
+            def cont(v: O[C]): O[C] < Any = v
 
     @nowarn("msg=anonymous")
     inline def suspendWith[C](
@@ -32,31 +33,10 @@ object ArrowEffect:
     )(
         inline f: O[C] => B < S
     ): B < (E & S) =
-        def arrow =
-            new Transform[O[C], B, S]:
-                def frame = _frame
-                def apply[C2, S2](v: O[C] < S2, next: Arrow[B, C2, S2]): C2 < (S & S2) =
-                    run(v, next)
-        def run[C2, S2](v: O[C] < S2, next: Arrow[B, C2, S2]): C2 < (S & S2) =
-            v match
-                case p: Arrow[Any, O[C], S2] @unchecked =>
-                    p.chain(arrow.chain(next))
-                case o: O[C] @unchecked =>
-                    val slot = Safepoint.get()
-                    if !Safepoint.enter(slot) then
-                        Bind(o, arrow.chain(next))
-                    else
-                        val step = next.step
-                        val out  = step.head(f(o), step.tail)
-                        Safepoint.exit(slot)
-                        out
-                    end if
-        end run
         new Suspend[I, O, E, C, B, S]:
-            def tag   = effectTag
-            def input = input0
-            val cont  = arrow
-        end new
+            def tag                  = effectTag
+            def input                = input0
+            def cont(v: O[C]): B < S = f(v)
     end suspendWith
 
     @nowarn("msg=anonymous")

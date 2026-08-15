@@ -29,6 +29,16 @@ object Eval:
             end if
         end dump
 
+        def resume(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]): Arrow[Any, Any, Any] =
+            new Transform[Any, Any, Any]:
+                def frame = kyo.Frame.internal
+                def apply[C2, S2](v: Any < S2, next: Arrow[Any, C2, S2]): C2 < S2 =
+                    v match
+                        case p: Arrow[Any, Any, S2] @unchecked =>
+                            Chain(p, this.chain(next))
+                        case o =>
+                            Identity(s(o), next)
+
         var cur: Any = v
         var running  = true
         try
@@ -41,7 +51,6 @@ object Eval:
                         stack.push(b.cont)
                         cur = b.value
                     case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                        if s.cont ne Identity then stack.push(s.cont)
                         val i = stack.find(s.tag.erased, base)
                         if i < 0 then bug(s"unhandled suspension: $s")
                         stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]].handler match
@@ -50,25 +59,33 @@ object Eval:
                                 var j   = i + 1
                                 while j < top && !stack.marked(j) do j += 1
                                 if j == top then
-                                    var k: Arrow[Any, Any, Any] = Arrow[Any]
-                                    var m                       = i + 1
-                                    while m < top do
-                                        k = stack(m).asInstanceOf[Arrow[Any, Any, Any]].chain(k)
-                                        m += 1
-                                    stack.truncate(i + 1)
-                                    val cont = k
-                                    cur = hc.run(s.input, o => Bind(o, cont))
+                                    if i + 1 == top then cur = hc.run(s.input, s)
+                                    else
+                                        var k: Arrow[Any, Any, Any] = Arrow[Any]
+                                        var m                       = i + 1
+                                        while m < top do
+                                            k = stack(m).asInstanceOf[Arrow[Any, Any, Any]].chain(k)
+                                            m += 1
+                                        stack.truncate(i + 1)
+                                        val cont = k
+                                        cur = hc.run(s.input, o => Identity(s(o), cont))
                                 else
                                     val entries = stack.copyEntries(i + 1)
                                     val tags    = stack.copyTags(i + 1)
                                     val states  = stack.copyStates(i + 1)
                                     stack.truncate(i + 1)
-                                    cur = hc.run(s.input, o => Arrow.Eval(entries, tags, states, o.asInstanceOf[Any < Any]))
+                                    cur = hc.run(s.input, o => Arrow.Eval(entries, tags, states, s(o)))
                                 end if
                             case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                                 hl.run(s.input) match
                                     case out: Arrow[?, ?, ?] => ???
-                                    case c: Loop.Continue[?] => cur = c._1
+                                    case c: Loop.Continue[?] =>
+                                        c._1 match
+                                            case p: Arrow[Any, Any, Any] @unchecked =>
+                                                stack.push(resume(s))
+                                                cur = p
+                                            case o =>
+                                                cur = s(o)
                                     case done =>
                                         stack.truncate(i)
                                         cur = done
@@ -77,7 +94,13 @@ object Eval:
                                     case out: Arrow[?, ?, ?] => ???
                                     case c: Loop.Continue2[?, ?] =>
                                         stack.setState(i, c._1.asInstanceOf[AnyRef])
-                                        cur = c._2
+                                        c._2 match
+                                            case p: Arrow[Any, Any, Any] @unchecked =>
+                                                stack.push(resume(s))
+                                                cur = p
+                                            case o =>
+                                                cur = s(o)
+                                        end match
                                     case done =>
                                         stack.truncate(i)
                                         cur = done
