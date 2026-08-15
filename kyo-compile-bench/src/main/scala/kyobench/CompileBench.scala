@@ -42,11 +42,13 @@ class CompileBench:
     ))
     var fixture: String = ""
 
-    private var fixturePath: String = ""
-    private var oldCp: String       = ""
-    private var newCp: String       = ""
-    private var outOld: File        = null
-    private var outNew: File        = null
+    private var fixturePath: String      = ""
+    private var protoFixturePath: String = ""
+    private var oldCp: String            = ""
+    private var newCp: String            = ""
+    private var outOld: File             = null
+    private var outNew: File             = null
+    private var outProto: File           = null
 
     @Setup
     def setup(): Unit =
@@ -60,6 +62,9 @@ class CompileBench:
         val file = new File(root, s"kyo-compile-bench/fixtures/$fixture.scala")
         require(file.isFile, s"missing fixture: $file")
         fixturePath = file.getAbsolutePath
+        val protoFile = new File(root, s"kyo-compile-bench/fixtures-proto/$fixture.scala")
+        require(protoFile.isFile, s"missing proto fixture: $protoFile")
+        protoFixturePath = protoFile.getAbsolutePath
         val base = sys.props("java.class.path")
         def kernelCp(dir: String): String =
             val d = new File(root, dir)
@@ -70,16 +75,20 @@ class CompileBench:
         newCp = kernelCp("kyo-kernel2/jvm/target/scala-3.8.4/classes")
         outOld = Files.createTempDirectory("kyocb-old").toFile
         outNew = Files.createTempDirectory("kyocb-new").toFile
+        outProto = Files.createTempDirectory("kyocb-proto").toFile
     end setup
 
-    private def compile(cp: String, out: File): Unit =
-        val rep = dotty.tools.dotc.Main.process(Array("-classpath", cp, "-d", out.getAbsolutePath, fixturePath))
+    private def compile(cp: String, out: File, path: String): Unit =
+        val rep = dotty.tools.dotc.Main.process(Array("-classpath", cp, "-d", out.getAbsolutePath, path))
         require(!rep.hasErrors, s"$fixture failed to compile")
 
     @Benchmark
-    def oldKernel(): Unit = compile(oldCp, outOld)
+    def oldKernel(): Unit = compile(oldCp, outOld, fixturePath)
 
     @Benchmark
-    def newKernel(): Unit = compile(newCp, outNew)
+    def newKernel(): Unit = compile(newCp, outNew, fixturePath)
+
+    @Benchmark
+    def protoKernel(): Unit = compile(newCp, outProto, protoFixturePath)
 
 end CompileBench
