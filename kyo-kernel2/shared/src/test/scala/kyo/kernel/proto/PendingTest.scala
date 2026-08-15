@@ -1,6 +1,7 @@
 package kyo.kernel.proto
 
 import kyo.Const
+import kyo.Maybe
 import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -203,6 +204,91 @@ class PendingTest extends AnyFreeSpec:
         }
         assert(Eval(r) == 9)
         assert(Eval(answerAsk(41)(got)) == 42)
+    }
+
+    "flatMap chains a settled value into an effectful computation" in {
+        val r: Int < Ask = (5: Int < Ask).flatMap(a => ask.map(_ + a))
+        assert(Eval(answerAsk(1)(r)) == 6)
+    }
+
+    "flatMap receives a pending payload as a value" in {
+        val inner: Int < Ask    = ask
+        var received: Int < Ask = 0
+        val r: Int < Any = settled(inner).flatMap { c =>
+            received = c
+            7
+        }
+        assert(Eval(r) == 7)
+        assert(Eval(answerAsk(41)(received.map(_ + 1))) == 42)
+    }
+
+    "andThen sequences effects and discards the value" in {
+        var ran = false
+        val r: Int < Ask = ask.andThen {
+            ran = true
+            ask.map(_ + 1)
+        }
+        assert(Eval(answerAsk(41)(r)) == 42)
+        assert(ran)
+    }
+
+    "andThen leaves a discarded payload untouched" in {
+        val inner: Int < Ask = ask
+        val r: Int < Any     = settled(inner).andThen(7)
+        assert(Eval(r) == 7)
+    }
+
+    "unit discards the result" in {
+        assert(Eval((42: Int < Any).unit) == ())
+        assert(Eval(answerAsk(1)(ask.unit)) == ())
+    }
+
+    "eval returns the settled result" in {
+        assert((42: Int < Any).eval == 42)
+        assert((1: Int < Any).map(_ + 1).eval == 2)
+    }
+
+    "evalNow returns a settled value" in {
+        assert((42: Int < Any).evalNow == Maybe(42))
+    }
+
+    "evalNow is absent for a suspended computation" in {
+        assert(ask.evalNow == Maybe.Absent)
+    }
+
+    "evalNow returns a payload unwrapped" in {
+        val inner: Int < Ask   = ask.map(_ + 1)
+        val payload: Int < Ask = settled(inner).evalNow.getOrElse(0)
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
+    "flatten runs a nested payload" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        assert(Eval(answerAsk(41)(settled(inner).flatten)) == 42)
+    }
+
+    "flatten merges the effects of both layers" in {
+        val inner: Int < Ask          = ask.map(_ + 1)
+        val nested: (Int < Ask) < Ask = after(inner)
+        assert(Eval(answerAsk(20)(nested.flatten)) == 21)
+    }
+
+    "handle applies transformations fluently" in {
+        assert(ask.map(_ + 1).handle(v => answerAsk(41)(v)).handle(v => Eval(v)) == 42)
+        assert(ask.handle(v => answerAsk(1)(v), v => Eval(v)) == 1)
+        val ten: Int = (0: Int < Any).handle(
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => v.map(_ + 1),
+            v => Eval(v)
+        )
+        assert(ten == 9)
     }
 
 end PendingTest
