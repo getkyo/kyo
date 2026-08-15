@@ -27,11 +27,11 @@ object `<`:
                 v match
                     case v: Arrow[Any, A, S3] @unchecked =>
                         v.chain(arrow.chain(next))
-                    case v: A =>
+                    case v =>
                         val res  = v.asInstanceOf[A]
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Arrow.Bind(v, arrow.chain(next))
+                            Arrow.Bind(res, arrow.chain(next))
                         else
                             val step = next.step
                             val out  = step.head(f(res), step.tail)
