@@ -115,7 +115,7 @@ object Arrow:
                 new Suspend[I, O, E, A, C, S & S2]:
                     def tag           = self.tag
                     def input         = self.input
-                    def cont(v: O[A]) = Identity(self.cont(v), f.asInstanceOf[Arrow[Any, C, S & S2]])
+                    def cont(v: O[A]) = Arrow[B](self.cont(v), f)
     end Suspend
 
     abstract class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Defer[Any, C, S]:
