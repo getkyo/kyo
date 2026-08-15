@@ -326,12 +326,28 @@ class SqlConnectionCancelTest extends kyo.Test:
     "Async.timeout on a statement in flight fires the wire cancel" in {
         val config = baseConfig("timeout")
         withProbePool("timeout") { (pool, events) =>
-            Abort.run[Timeout](Async.timeout(100.millis)(lease(pool, config)(_.simpleQuery(Sql.hang)))).flatMap { outcome =>
-                report(events, 3).map { seen =>
-                    assert(seen == Chunk("statement", "cancel", "drain"), s"expected the reclaim chain to run, saw $seen")
-                    outcome match
-                        case Result.Failure(_: Timeout) => succeed
-                        case other                      => fail(s"expected the lease to end in a Timeout, got $other")
+            // Deterministic per this suite's contract (no wall-clock assumption): freeze time and run the timed lease in
+            // a child fiber, wait for the statement to reach the wire so the interrupt lands IN FLIGHT rather than during
+            // connect, then advance the clock to fire Async.timeout's own sleep as the interruption source. A bare
+            // Async.timeout(100.millis) here races the timer against lease-acquire plus the statement reaching the wire,
+            // which a loaded runner loses: the timeout fires pre-flight, no cancel is owed, and report blocks forever.
+            Clock.withTimeControl { control =>
+                Fiber.initUnscoped(
+                    Abort.run[Timeout](Async.timeout(100.millis)(lease(pool, config)(_.simpleQuery(Sql.hang))))
+                ).map { fiber =>
+                    report(events, 1).flatMap { first =>
+                        assert(first == Chunk("statement"), s"expected the statement to reach the wire, saw $first")
+                        control.advance(101.millis).andThen {
+                            fiber.get.flatMap { outcome =>
+                                report(events, 2).map { seen =>
+                                    assert(seen == Chunk("cancel", "drain"), s"expected the reclaim chain to run, saw $seen")
+                                    outcome match
+                                        case Result.Failure(_: Timeout) => succeed
+                                        case other                      => fail(s"expected the lease to end in a Timeout, got $other")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -764,12 +780,26 @@ class SqlConnectionCancelTest extends kyo.Test:
         // connection and owes the server a cancel exactly as any other interrupt does.
         val config = baseConfig("querytimeout").copy(queryTimeout = 100.millis)
         withProbePool("querytimeout", Script(), config) { (pool, events) =>
-            Abort.run[SqlException](pool.leaseStatement(address, Absent, config)(_.simpleQuery(Sql.hang))).flatMap { outcome =>
-                report(events, 3).map { seen =>
-                    assert(seen == Chunk("statement", "cancel", "drain"), s"expected the timeout to fire the reclaim, saw $seen")
-                    outcome match
-                        case Result.Failure(_: SqlConnectionQueryTimeoutException) => succeed
-                        case other => fail(s"expected the query timeout to surface, got $other")
+            // Deterministic per this suite's contract: the per-statement timeout timer arms before the statement reaches
+            // the wire, so a bare wall-clock 100ms races connect the same way. Freeze time, wait for the statement in
+            // flight, then advance the clock so the query timeout, not connect latency, is what interrupts.
+            Clock.withTimeControl { control =>
+                Fiber.initUnscoped(
+                    Abort.run[SqlException](pool.leaseStatement(address, Absent, config)(_.simpleQuery(Sql.hang)))
+                ).map { fiber =>
+                    report(events, 1).flatMap { first =>
+                        assert(first == Chunk("statement"), s"expected the statement to reach the wire, saw $first")
+                        control.advance(101.millis).andThen {
+                            fiber.get.flatMap { outcome =>
+                                report(events, 2).map { seen =>
+                                    assert(seen == Chunk("cancel", "drain"), s"expected the timeout to fire the reclaim, saw $seen")
+                                    outcome match
+                                        case Result.Failure(_: SqlConnectionQueryTimeoutException) => succeed
+                                        case other => fail(s"expected the query timeout to surface, got $other")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
