@@ -6,17 +6,14 @@ import kyo.kernel.proto.Arrow.*
 
 object Eval:
 
-    private inline def DumpLimit = 16
-
     def apply[A](v: A < Any): A =
         val stack = Stack.current()
         val base  = stack.size
 
         def dump(): Arrow[Any, Any, Any] =
-            val top   = stack.size
-            val floor = Math.max(base, top - DumpLimit)
-            var i     = top
-            while i > floor && stack(i - 1).isInstanceOf[Transform[?, ?, ?]] do i -= 1
+            val top = stack.size
+            var i   = top
+            while i > base && !stack.marked(i - 1) do i -= 1
             if i == top then Arrow[Any]
             else
                 var acc = stack(i).asInstanceOf[Arrow[Any, Any, Any]]
