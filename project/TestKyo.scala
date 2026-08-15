@@ -90,39 +90,38 @@ object TestKyo {
 
         // Run for the specified or primary Scala version
         val targetScala = scalaVersionOpt.getOrElse(scala3)
-        val state1 = scalaVersionOpt match {
-            case Some(v) if v != scala3 =>
-                log(s"switching to Scala $v")
-                Command.process(s"++$v", state, msg => state.log.error(msg))
-            case _ => state
+
+        def commandForScala(sv: String): String =
+            if (isAll || scalaVersionOpt.isDefined) runAll(state, platform, sv, phase, excludeBases, onlyBases)
+            else runDiff(state, baseRef, platform, sv, phase, excludeBases, onlyBases)
+
+        // Assemble the whole run as ONE ordered command string. sbt's Command.process queues a command
+        // onto the state's remaining commands rather than running it inline, so issuing each Scala-version
+        // pass as its own Command.process call drains them out of order and at the wrong version: the ++
+        // switches run first and the batches after, leaving each batch to execute under whatever version
+        // was switched to last. Queuing one ordered string instead runs each batch under the version its
+        // preceding ++ switch selected. Module selection reads crossScalaVersions (version-independent),
+        // so every batch is computed from the current state without switching first.
+        val parts = scala.collection.mutable.ListBuffer.empty[String]
+        scalaVersionOpt.foreach(v => if (v != scala3) parts += s"++$v")
+        val primary = commandForScala(targetScala)
+        if (primary.nonEmpty) parts += primary
+        if (runBothScala) findScala2Versions(extracted) match {
+            case Nil => log("no Scala 2.x cross-build modules found")
+            case versions =>
+                // One pass per distinct Scala 2.x version: 2.13 for the cross-build library modules,
+                // 2.12 for the sbt plugins (kyo-compat-plugin, kyo-doctest-plugin).
+                versions.foreach { v =>
+                    val cmd = commandForScala(v)
+                    if (cmd.nonEmpty) { log(s"including Scala $v cross-build modules"); parts += s"++$v"; parts += cmd }
+                }
+                // Restore the primary version if any pass switched away from it.
+                if (parts.exists(_.startsWith("++"))) parts += s"++$scala3"
         }
 
-        def runForScala(st: State, sv: String): State =
-            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun, phase, excludeBases, onlyBases)
-            else runDiff(st, baseRef, platform, sv, isDryRun, phase, excludeBases, onlyBases)
-
-        val state2 = runForScala(state1, targetScala)
-
-        if (runBothScala) {
-            findScala2Versions(extracted) match {
-                case Nil =>
-                    log("no Scala 2.x cross-build modules found")
-                    state2
-                case versions =>
-                    // One pass per distinct Scala 2.x version: 2.13 for the cross-build library
-                    // modules, 2.12 for the sbt plugins. This is why the regular test run also
-                    // covers the 2.12-only plugins (kyo-compat-plugin, kyo-doctest-plugin).
-                    val afterScala2 = versions.foldLeft(state2) { (st, v) =>
-                        log(s"switching to Scala $v for cross-build modules")
-                        val switched = if (isDryRun) st else Command.process(s"++$v", st, msg => st.log.error(msg))
-                        runForScala(switched, v)
-                    }
-                    log(s"restoring Scala $scala3")
-                    if (isDryRun) afterScala2 else Command.process(s"++$scala3", afterScala2, msg => afterScala2.log.error(msg))
-            }
-        } else {
-            state2
-        }
+        val plan = parts.mkString("; ")
+        if (isDryRun || plan.isEmpty) state
+        else Command.process(plan, state, msg => state.log.error(msg))
     }
 
     // --- Full test mode ---
@@ -131,11 +130,10 @@ object TestKyo {
         state: State,
         platform: Option[String],
         scalaVersion: String,
-        isDryRun: Boolean = false,
         phase: String = "test",
         exclude: Set[String] = Set.empty,
         only: Set[String] = Set.empty
-    ): State = {
+    ): String = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
@@ -154,14 +152,14 @@ object TestKyo {
         }
 
         if (testable.isEmpty) {
-            log("no projects found for current Scala version and platform")
-            state
+            log(s"no projects found for Scala $scalaVersion and platform ${platform.getOrElse("all")}")
+            ""
         } else {
             val sorted = testable.map(_.project).sorted
-            log(s"${phaseLabel(phase)} ${sorted.size} projects: ${sorted.mkString(", ")}")
+            log(s"${phaseLabel(phase)} ${sorted.size} projects (Scala $scalaVersion): ${sorted.mkString(", ")}")
             val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
             log(s"running: $commands")
-            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
+            commands
         }
     }
 
@@ -176,15 +174,14 @@ object TestKyo {
         baseRef: String,
         platform: Option[String],
         scalaVersion: String,
-        isDryRun: Boolean = false,
         phase: String = "test",
         exclude: Set[String] = Set.empty,
         only: Set[String] = Set.empty
-    ): State = {
+    ): String = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
             log(s"no changed files vs $baseRef, skipping tests")
-            return state
+            return ""
         }
 
         log(s"${changedFiles.size} changed files vs $baseRef:")
@@ -192,7 +189,7 @@ object TestKyo {
 
         if (metaBuildChanged(changedFiles)) {
             log("meta-build changed (project/ or .github/), running all modules")
-            return runAll(state, platform, scalaVersion, isDryRun, phase, exclude, only)
+            return runAll(state, platform, scalaVersion, phase, exclude, only)
         }
 
         val extracted = Project.extract(state)
@@ -207,7 +204,7 @@ object TestKyo {
             if (!changedFiles.contains("build.sbt")) Set.empty
             else buildSbtAffectedProjects(extracted, baseRef) match {
                 case Some(names) => names
-                case None        => return runAll(state, platform, scalaVersion, isDryRun, phase, exclude, only)
+                case None        => return runAll(state, platform, scalaVersion, phase, exclude, only)
             }
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
@@ -218,7 +215,7 @@ object TestKyo {
 
         if (filtered.isEmpty) {
             log("no affected projects found, skipping tests")
-            return state
+            return ""
         }
 
         val dependentMap = transitiveDependents(allRefs, bd)
@@ -241,14 +238,14 @@ object TestKyo {
 
         if (toTest.isEmpty) {
             log("no testable affected projects found, skipping tests")
-            state
+            ""
         } else {
             val sorted = toTest.toSeq.sorted
             log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
             log(s"with dependents (${phaseLabel(phase)}): ${sorted.mkString(", ")}")
             val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
             log(s"running: $commands")
-            if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
+            commands
         }
     }
 
