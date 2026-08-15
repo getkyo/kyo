@@ -105,9 +105,7 @@ jobs:
       - name: Install BoringSSL + posix build dependencies
         shell: bash
         run: |
-          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
-          command -v go >/dev/null 2>&1 || bash scripts/apt-install.sh golang-go
-          dpkg -s liburing-dev >/dev/null 2>&1 || bash scripts/apt-install.sh liburing-dev
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev
       - name: Build linux-x86_64 (glibc) natives
         shell: bash
         run: |
@@ -171,9 +169,7 @@ jobs:
       - name: Install BoringSSL + posix build dependencies
         shell: bash
         run: |
-          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
-          command -v go >/dev/null 2>&1 || bash scripts/apt-install.sh golang-go
-          dpkg -s liburing-dev >/dev/null 2>&1 || bash scripts/apt-install.sh liburing-dev
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev
       - name: Build linux-aarch64 (glibc) natives
         shell: bash
         run: |

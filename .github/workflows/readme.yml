@@ -35,9 +35,8 @@ jobs:
       - name: Prepare libaeron
         shell: bash
         run: |
-          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
           # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
           # target is not preinstalled.
-          dpkg -s uuid-dev >/dev/null 2>&1 || bash scripts/apt-install.sh uuid-dev
+          bash scripts/apt-install.sh --if-missing cmake uuid-dev
           bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
       - run: sbt doctest

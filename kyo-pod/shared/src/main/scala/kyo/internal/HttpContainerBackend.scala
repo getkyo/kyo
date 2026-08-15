@@ -359,7 +359,7 @@ final private[kyo] class HttpContainerBackend(
     end create
 
     /** Build the HostConfig portion of a create request from configuration values resolved by the caller. */
-    private def buildHostConfig(
+    private[internal] def buildHostConfig(
         config: Config,
         binds: Chunk[String],
         portBindings: Map[String, Seq[PortBindingEntry]],
@@ -2305,7 +2305,7 @@ final private[kyo] class HttpContainerBackend(
         Aliases: Seq[String] = Seq.empty
     ) derives Schema
 
-    final private case class HostConfig(
+    final private[internal] case class HostConfig(
         Binds: Seq[String] = Seq.empty,
         PortBindings: Map[String, Seq[PortBindingEntry]] = Map.empty,
         NetworkMode: String = "",
@@ -2330,17 +2330,17 @@ final private[kyo] class HttpContainerBackend(
         Init: Boolean = false
     ) derives Schema
 
-    final private case class PortBindingEntry(
+    final private[internal] case class PortBindingEntry(
         HostIp: String = "",
         HostPort: String = ""
     ) derives Schema
 
-    final private case class RestartPolicyEntry(
+    final private[internal] case class RestartPolicyEntry(
         Name: String = "",
         MaximumRetryCount: Int = 0
     ) derives Schema
 
-    final private case class MountEntry(
+    final private[internal] case class MountEntry(
         Type: String = "",
         Source: String = "",
         Target: String = ""
@@ -2355,7 +2355,7 @@ final private[kyo] class HttpContainerBackend(
         StatusCode: Int = 0
     ) derives Schema
 
-    final private case class UpdateRequest(
+    final private[internal] case class UpdateRequest(
         Memory: Long = 0,
         MemorySwap: Long = 0,
         NanoCPUs: Long = 0,
