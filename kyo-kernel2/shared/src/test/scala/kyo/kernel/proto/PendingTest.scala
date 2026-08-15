@@ -23,6 +23,9 @@ class PendingTest extends AnyFreeSpec:
     def answerAsk[A](value: Int)(v: A < Ask): A < Any =
         ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => continue(value), a => a)
 
+    def answerSay[A](v: A < Say): A < Any =
+        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => continue(()), a => a)
+
     def settled[A](v: A): A < Any = v
 
     def after[A](v: A): A < Ask = ask.map(_ => v)
@@ -112,6 +115,35 @@ class PendingTest extends AnyFreeSpec:
         val body: Int < Give = give.map(_ => 9)
         val r: Int < Any     = ArrowEffect.handle(Tag[Give], body)([C] => (_, cont) => cont(inner), a => a)
         assert(Eval(r) == 9)
+    }
+
+    "mapping over a payload derives a new payload" in {
+        val inner: Int < Ask           = ask
+        val derived: (Int < Ask) < Any = settled(inner).map(c => c.map(_ * 2))
+        val payload: Int < Ask         = Eval(derived)
+        assert(Eval(answerAsk(21)(payload)) == 42)
+    }
+
+    "a payload handles inside map" in {
+        def deliver[B](f: Int => B): B < Ask = ask.map(a => f(a))
+        val comp: (Int < Say) < Ask          = deliver(a => say("s").map(_ => a + 1))
+        val handled: (Int < Any) < Any       = answerAsk(10)(comp.map(c => answerSay[Int](c)))
+        assert(Eval(Eval(handled)) == 11)
+    }
+
+    "a generic function nests its result across effects" in {
+        def f(a: Int): Int < Say       = say("x").map(_ => a + 5)
+        def g[B](f: Int => B): B < Ask = ask.map(a => f(a))
+        val nested: (Int < Say) < Ask  = g(f)
+        val payload: Int < Say         = Eval(answerAsk(1)(nested))
+        assert(Eval(answerSay(payload)) == 6)
+    }
+
+    "double nesting round trips" in {
+        val inner: Int < Ask                 = ask.map(_ + 1)
+        val twice: ((Int < Ask) < Any) < Any = settled(settled(inner))
+        val payload: Int < Ask               = Eval(Eval(twice))
+        assert(Eval(answerAsk(41)(payload)) == 42)
     }
 
 end PendingTest
