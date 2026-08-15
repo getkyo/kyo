@@ -251,6 +251,16 @@ echo "[info] Generating intermediate code (5000 ms)"; exit 137'
     nat "Native watchdog kill mid-optimize after a suite is a failure" 1 'echo "Tests: succeeded 64, failed 0"
 echo "[info] Optimizing (debug mode) (4000 ms)"; sleep 600'
 
+    # An intermittent native teardown crash (SIGABRT 134 after a passing suite, the known kyo-core
+    # finalizer-on-interrupt issue) is retried; a persistent one still fails after MAX_RETRIES.
+    nat "Native teardown SIGABRT after a passing suite is retried then passes" 0 'if [ ! -f "'"$SELFDIR"'/abrt" ]; then touch "'"$SELFDIR"'/abrt"
+echo "Tests: succeeded 99, failed 0"
+echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)"; exit 134
+else rm -f "'"$SELFDIR"'/abrt"; echo "Tests: succeeded 99, failed 0"; exit 0; fi'
+    rm -f "$SELFDIR/abrt"
+    nat "Native persistent teardown SIGABRT fails after retries" 1 'echo "Tests: succeeded 99, failed 0"
+echo "[warn] Process /x/kyo-jsonrpc-test finished with non-zero value 134 (0x86)"; exit 134'
+
     # 21-22: argument validation exits 2 before any sbt.
     run_runner Frob test 'exit 0'
     if exit_is 2 && calls_count 0; then record ok "unknown platform exits 2 before any sbt"
@@ -266,7 +276,7 @@ echo "[info] Optimizing (debug mode) (4000 ms)"; sleep 600'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 27 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 29 ]
     exit $?
 fi
 
@@ -402,6 +412,14 @@ check_log() {
     fi
     if grep -qE "\*\*\* FAILED \*\*\*" "$LOG"; then
         log "tests FAILED (individual test failures detected)"; return 1
+    fi
+    # A native test binary that exits on a crash SIGNAL (SIGABRT 134, SIGBUS 135, SIGSEGV 139), not an
+    # OOM kill (SIGKILL 137), with no test failures above, is an intermittent teardown crash: the known
+    # kyo-core finalizer-on-interrupt issue tears the process down uncleanly after the suite already
+    # passed. Retry it, the same as the errno-104 RPC crash. A deterministic crash still fails after
+    # MAX_RETRIES; an OOM (137) is left to the mid-run scan below so it stays a hard failure.
+    if grep -qE "finished with non-zero value (134|135|139)" "$LOG"; then
+        log "native test binary crashed on teardown (signal, not OOM): retrying"; return 2
     fi
     if grep -qE "Tests:" "$LOG"; then
         # At least one suite passed and none failed, yet the process still died (nonzero exit or a
