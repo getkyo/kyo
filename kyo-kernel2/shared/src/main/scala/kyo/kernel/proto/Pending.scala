@@ -24,6 +24,13 @@ object Nested:
             case _ =>
                 strip[A](v)
 
+    private[kyo] inline def carry[A](v: Any, inline res: A): A =
+        inline scala.compiletime.erasedValue[A] match
+            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
+                res
+            case _ =>
+                v.asInstanceOf[A]
+
     @static private[kyo] def strip[A](v: Any): A =
         v match
             case n: Nested[?] => n.value.asInstanceOf[A]
@@ -49,11 +56,11 @@ object `<`:
                     case v: Arrow[Any, A, S3] @unchecked =>
                         v.chain(arrow.chain(next))
                     case v =>
+                        val res  = Nested.unnest[A](v)
                         val slot = Safepoint.get()
                         if !Safepoint.enter(slot) then
-                            Arrow.Bind(v.asInstanceOf[A], arrow.chain(next))
+                            Arrow.Bind(Nested.carry[A](v, res), arrow.chain(next))
                         else
-                            val res  = Nested.unnest[A](v)
                             val step = next.step
                             val out  = step.head(f(res), step.tail)
                             Safepoint.exit(slot)

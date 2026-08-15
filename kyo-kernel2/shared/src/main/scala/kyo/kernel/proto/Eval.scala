@@ -7,6 +7,9 @@ import kyo.kernel.proto.Arrow.*
 object Eval:
 
     def apply[A](v: A < Any): A =
+        Nested.strip[A](loop(v))
+
+    private def loop[A](v: A < Any): Any =
         val stack = Stack.current()
         val base  = stack.size
 
@@ -150,6 +153,6 @@ object Eval:
                             end match
         finally stack.truncate(base)
         end try
-        Nested.strip[A](cur)
-    end apply
+        cur
+    end loop
 end Eval
