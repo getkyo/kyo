@@ -9,7 +9,7 @@ import scala.annotation.nowarn
 import scala.language.implicitConversions
 import scala.runtime.AbstractFunction1
 
-sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S]:
+sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with Boxed:
 
     def apply(v: A): B < S
 

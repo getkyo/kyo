@@ -150,6 +150,6 @@ object Eval:
                             end match
         finally stack.truncate(base)
         end try
-        cur.asInstanceOf[A]
+        Nested.strip[A](cur)
     end apply
 end Eval

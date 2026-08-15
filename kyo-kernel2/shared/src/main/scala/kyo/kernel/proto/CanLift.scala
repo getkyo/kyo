@@ -47,9 +47,8 @@ object CanLift:
       */
     private[proto] def box[A, S](v: A): A < S =
         v match
-            case v: Arrow[?, ?, ?] => Nested(v).asInstanceOf[A < S]
-            case v: Nested[?]      => Nested(v).asInstanceOf[A < S]
-            case v                 => v.asInstanceOf[A < S]
+            case v: Boxed => Nested(v).asInstanceOf[A < S]
+            case v        => v.asInstanceOf[A < S]
 
     private def liftImpl[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
@@ -61,11 +60,11 @@ object CanLift:
         def isNothing = tpe =:= TypeRepr.of[Nothing]
         def isModule  = sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case)
         def isValue   = wide <:< TypeRepr.of[AnyVal] || wide <:< TypeRepr.of[String]
-        // a final class admits no Arrow or Nested subtype, so a value of the
-        // type is provably not a computation and the box test can never fire
+        // a final class admits no Boxed subtype, so a value of the type is
+        // provably not a computation and the box test can never fire
         def isSafeFinalClass =
             sym.isClassDef && sym.flags.is(Flags.Final) && !sym.flags.is(Flags.Trait) &&
-                !(wide <:< TypeRepr.of[Arrow[Nothing, Any, Nothing]]) && !(wide <:< TypeRepr.of[Nested[Any]])
+                !(wide <:< TypeRepr.of[Boxed])
 
         if isModule then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)

@@ -6,11 +6,29 @@ import kyo.Loop.Outcome2
 import kyo.Span
 import kyo.Tag
 import scala.annotation.nowarn
+import scala.annotation.static
 import scala.language.implicitConversions
 
-opaque type <[+A, -S] = A | Arrow[Any, A, S]
+opaque type <[+A, -S] = A | Arrow[Any, A, S] | Nested[A]
 
-final private[proto] case class Nested[+A](value: A)
+private[kyo] trait Boxed
+
+final private[proto] case class Nested[+A](value: A) extends Boxed
+
+object Nested:
+
+    private[kyo] inline def unnest[A](v: Any): A =
+        inline scala.compiletime.erasedValue[A] match
+            case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
+                v.asInstanceOf[A]
+            case _ =>
+                strip[A](v)
+
+    @static private[kyo] def strip[A](v: Any): A =
+        v match
+            case n: Nested[?] => n.value.asInstanceOf[A]
+            case _            => v.asInstanceOf[A]
+end Nested
 
 object `<`:
     implicit def lift[A, S](v: Arrow[Any, A, S]): A < S = v
