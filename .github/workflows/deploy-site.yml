@@ -54,8 +54,7 @@ jobs:
       - name: Prepare BoringSSL
         shell: bash
         run: |
-          command -v cmake >/dev/null 2>&1 || bash scripts/apt-install.sh cmake
-          command -v go >/dev/null 2>&1 || bash scripts/apt-install.sh golang-go
+          bash scripts/apt-install.sh --if-missing cmake go:golang-go
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
       - name: Link the browser bundle (fullLinkJS)
         run: sbt 'kyo-website-bundleJS/Compile/fullLinkJS'
