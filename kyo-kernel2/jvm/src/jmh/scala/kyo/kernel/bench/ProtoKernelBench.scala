@@ -2,9 +2,6 @@ package kyo.kernel.bench
 
 import java.util.concurrent.TimeUnit
 import kyo.Frame
-import kyo.Loop
-import kyo.Loop.Outcome
-import kyo.Loop.Outcome2
 import kyo.Tag
 import kyo.kernel.proto.*
 import org.openjdk.jmh.annotations.*
@@ -97,7 +94,7 @@ class ProtoKernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => continue(1), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)
         Eval(r)
     end handleLoopAnswersInPlace
 
@@ -107,7 +104,7 @@ class ProtoKernelBench:
             if i > Depth then i
             else ask.map(a => loop(i + a))
         val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
-            [C] => (state, _) => continue2(state + 1, 1),
+            [C] => (state, _) => Loop.continue(state + 1, 1),
             (_, a) => a
         )
         Eval(r)
@@ -168,11 +165,5 @@ object ProtoKernelBench:
 
     inline def askWith[B, S](inline f: Int => B < S)(using inline frame: Frame): B < (Ask & S) =
         ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
-
-    def continue[A, O](v: A): Outcome[A, O] < Any =
-        Loop.continue[A, O, Any](v).asInstanceOf[Outcome[A, O] < Any]
-
-    def continue2[State, A, O](s: State, v: A): Outcome2[State, A, O] < Any =
-        Loop.continue[State, A, O](s, v).asInstanceOf[Outcome2[State, A, O] < Any]
 
 end ProtoKernelBench
