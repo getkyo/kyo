@@ -51,7 +51,17 @@ upstreamable.
 - **FIX-2 (committed d098748dd2):** vendored `nativelib` (0.5.12 + the `decodeFDE` null guard
   in `DwarfParser.hpp`), resolved from `.local-sn-repo` via a self-verifying `0.5.12-kyo`
   `dependencyOverride`. Pending an upstream scala-native release, then drop + bump.
-- Validation: `validate-unwind` (40-loop `kyo-coreNative/test`) RUNNING; baseline crashed loop 1.
+- Validation (first attempt): crashed loop 3, `si_addr=0x10`. BUT the `dependencyOverride`
+  DID NOT APPLY: `allDependencies` shows `org.scala-native:nativelib:0.5.12` (base name, the
+  `_native0.5_3` suffix is applied at resolution via `%%%`). The override used the full name
+  `nativelib_native0.5_3`, which does not match the base-name `%%%` dependency, so stock 0.5.12
+  was linked and the guard was NEVER TESTED. The loop-3 crash was the unpatched runtime; the
+  "si_addr=0x10 -> race/whack-a-mole" read was premature.
+- Re-validation (reliable): patch the coursier-CACHED nativelib jar directly (bypasses the
+  cross-version resolution mismatch), verify the guard is unpacked into the binary, then loop.
+  RUNNING. This is the actual first test of whether the null-FDE guard fixes the crash.
+- Clean CI vendoring (if the guard holds): fix the override to `%%% "nativelib"` cross-version
+  form, or cache-patch in ci-test.sh, or build a proper patched nativelib.
 
 ## ROOT CAUSE (E6b backtrace) — NOT module-init, NOT GC
 
