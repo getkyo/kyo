@@ -194,7 +194,14 @@ private[kyo] object Trace:
                     val prefix = ex.getStackTrace.takeWhile(e =>
                         e.getFileName() != elements(0).getFileName() || e.getLineNumber != elements(0).getLineNumber()
                     )
-                    val suffix = (new Exception).getStackTrace().drop(2)
+                    // Scala Native's libunwind unwinder null-derefs under concurrent stack walks,
+                    // so constructing an exception to capture the runtime frames here crashes the
+                    // process when many fibers enrich in parallel. Those native frames are mangled
+                    // and low-value; the kyo trace elements above are the portable part. Skip the
+                    // runtime suffix on Native; keep it on JVM/JS where the unwinder is sound.
+                    val suffix =
+                        if kyo.internal.Platform.isNative then Array.empty[StackTraceElement]
+                        else (new Exception).getStackTrace().drop(2)
                     ex.setStackTrace(prefix ++ elements ++ suffix)
                 end if
             end if
