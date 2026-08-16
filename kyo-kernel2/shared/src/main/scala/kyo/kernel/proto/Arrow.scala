@@ -5,8 +5,6 @@ import kyo.Span
 import kyo.Tag
 import kyo.kernel.proto.Loop.Outcome
 import kyo.kernel.proto.Loop.Outcome2
-import scala.annotation.nowarn
-import scala.language.implicitConversions
 import scala.runtime.AbstractFunction1
 
 sealed abstract class Arrow[-A, +B, -S] extends AbstractFunction1[A, B < S] with Boxed:
@@ -114,7 +112,7 @@ object Arrow:
             else SuspendWith(this, f)
     end Suspend
 
-    final class SuspendWith[I[_], O[_], E <: ArrowEffect[I, O], A, X, B, S, S2](
+    final private[proto] class SuspendWith[I[_], O[_], E <: ArrowEffect[I, O], A, X, B, S, S2](
         val susp: Suspend[I, O, E, A, X, S],
         val cont: Arrow[X, B, S2]
     ) extends Defer[Any, B, E & S & S2]:

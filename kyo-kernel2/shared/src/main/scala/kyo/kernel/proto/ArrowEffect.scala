@@ -6,7 +6,6 @@ import kyo.kernel.proto.Arrow.*
 import kyo.kernel.proto.Loop.Outcome
 import kyo.kernel.proto.Loop.Outcome2
 import scala.annotation.nowarn
-import scala.language.implicitConversions
 
 abstract class ArrowEffect[-I[_], +O[_]]
 
