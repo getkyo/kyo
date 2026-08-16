@@ -34,10 +34,24 @@ root, green the native CI.
 | E6c | gdb-wrapper on the fixed HEAD | the REMAINING unwind trigger | RUNNING |
 
 The crash is any concurrent `fillInStackTrace` hitting scala-native's libunwind (thread-local
-cursors, but a shared `LocalAddressSpace`/DWARF FDE lookup). `_LIBUNWIND_HAS_NO_THREADS` is
-not config-defined, so the FDE-cache RWMutex is likely real; the exact libunwind mechanism is
-open pending E6c. A complete fix is probably upstream (scala-native unwinder) or a broad
-kyo-side "no native stack traces under concurrency" change; decide from E6c evidence.
+cursors, but a shared `LocalAddressSpace`/DWARF FDE lookup). enrich's suffix was one trigger;
+exception CONSTRUCTION is the dominant one (unavoidable for user/test exceptions), so a
+trigger-side fix cannot be complete.
+
+## ROOT FIX (at the crash site)
+
+The fault is a missing null-check in the DWARF parser: `CFI_Parser::decodeFDE` starts with
+`get32(fdeStart)` and crashes when `fdeStart == 0` (a null FDE, produced for some frame's PC
+under concurrent walks). The caller `stepWithDwarf` already treats a non-NULL `decodeFDE`
+return as `UNW_EBADFRAME` (graceful stop), so guarding `decodeFDE` against `fdeStart == 0`
+converts the SIGSEGV into a normal "cannot unwind this frame". Trigger-agnostic, safe,
+upstreamable.
+
+- FIX-1 (enrich suffix skip): **reverted** (wrong layer; superseded).
+- **FIX-2 (committed d098748dd2):** vendored `nativelib` (0.5.12 + the `decodeFDE` null guard
+  in `DwarfParser.hpp`), resolved from `.local-sn-repo` via a self-verifying `0.5.12-kyo`
+  `dependencyOverride`. Pending an upstream scala-native release, then drop + bump.
+- Validation: `validate-unwind` (40-loop `kyo-coreNative/test`) RUNNING; baseline crashed loop 1.
 
 ## ROOT CAUSE (E6b backtrace) — NOT module-init, NOT GC
 
