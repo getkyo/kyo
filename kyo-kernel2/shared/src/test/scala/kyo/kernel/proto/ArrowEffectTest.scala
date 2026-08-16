@@ -61,6 +61,48 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Eval(outer) == 1)
         }
 
+        "a clause answers effectfully" in {
+            var seen = List.empty[String]
+            val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
+                [C] => _ => say("consult").map(_ => Loop.continue(41)),
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
+                [C] =>
+                    s =>
+                        seen = s :: seen
+                        Loop.continue(())
+                ,
+                a => a
+            )
+            assert(Eval(r) == 42)
+            assert(seen == List("consult"))
+        }
+
+        "a clause ends the region effectfully" in {
+            var reached = false
+            var seen    = List.empty[String]
+            val body = ask.map { a =>
+                reached = true
+                a + 1
+            }
+            val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], body)(
+                [C] => _ => say("stop").map(_ => Loop.done(-1)),
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
+                [C] =>
+                    s =>
+                        seen = s :: seen
+                        Loop.continue(())
+                ,
+                a => a
+            )
+            assert(Eval(r) == -1)
+            assert(!reached)
+            assert(seen == List("stop"))
+        }
+
         "a foreign operation crosses the region in place" in {
             var order                   = List.empty[String]
             val body: Int < (Ask & Say) = say("a").map(_ => ask).map(i => i + 1)
@@ -156,6 +198,25 @@ class ArrowEffectTest extends AnyFreeSpec:
                 (s, a) => s"done $a"
             )
             assert(Eval(r) == "stopped")
+        }
+
+        "a stateful clause answers effectfully" in {
+            var seen = List.empty[String]
+            val v    = ask.map(a => ask.map(b => a * 10 + b))
+            val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
+                [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s)),
+                (_, a) => a
+            )
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
+                [C] =>
+                    s =>
+                        seen = s :: seen
+                        Loop.continue(())
+                ,
+                a => a
+            )
+            assert(Eval(r) == 12)
+            assert(seen == List("state 2", "state 1"))
         }
 
         "state survives a foreign crossing" in {
