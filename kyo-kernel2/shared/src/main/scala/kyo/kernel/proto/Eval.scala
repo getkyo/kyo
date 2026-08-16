@@ -1,6 +1,5 @@
 package kyo.kernel.proto
 
-import kyo.Maybe
 import kyo.bug
 import kyo.kernel.proto.Arrow.*
 
@@ -95,9 +94,7 @@ object Eval:
         var cur: Any = v
         var running  = true
 
-        var suspended: Maybe[Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]] = Maybe.Absent
-
-        def dispatch(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any], whole: Arrow[Any, Any, Any]): Any =
+        inline def dispatchInline(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any], whole: Arrow[Any, Any, Any]): Any =
             try
                 val i = stack.find(s.tag.erased, base)
                 if i < 0 then bug(s"unhandled suspension: $s")
@@ -151,24 +148,23 @@ object Eval:
                     EffectTrace.attach(ex, s, stack, base)
                     throw ex
             end try
-        end dispatch
+        end dispatchInline
+
+        def dispatch(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any], whole: Arrow[Any, Any, Any]): Any =
+            dispatchInline(s, whole)
 
         try
             while running do
                 cur match
                     case c: Chain[?, ?, ?, ?] =>
-                        suspended = Maybe.Absent
                         stack.push(c.b)
                         cur = c.a
                     case b: Bind[?, ?, ?] =>
-                        suspended = Maybe.Absent
                         stack.push(b.cont)
                         cur = b.value
                     case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                        suspended = Maybe(s)
-                        cur = dispatch(s, s.asInstanceOf[Arrow[Any, Any, Any]])
+                        cur = dispatchInline(s, s.asInstanceOf[Arrow[Any, Any, Any]])
                     case h: Handle[Nothing, Any, Any, Any, Any] @unchecked =>
-                        suspended = Maybe.Absent
                         stack.push(h.cont)
                         h.handler match
                             case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
@@ -178,22 +174,19 @@ object Eval:
                         end match
                         cur = h.v
                     case e: Arrow.Eval[?, ?, ?] =>
-                        suspended = Maybe.Absent
                         stack.pushAll(e.entries, e.tags, e.states)
                         cur = e.value
                     case a: Arrow[Any, Any, Any] @unchecked =>
                         val s0 = a.step
                         s0.head match
                             case sus: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                suspended = Maybe(sus)
                                 cur = dispatch(sus, a)
                             case h =>
-                                suspended = Maybe.Absent
                                 val next = s0.tail.chain(dump())
                                 try cur = h((), next)
                                 catch
                                     case ex: Throwable =>
-                                        EffectTrace.attach(ex, Maybe.Absent, a, next, stack, base)
+                                        EffectTrace.attach(ex, a, next, stack, base)
                                         throw ex
                                 end try
                         end match
@@ -225,7 +218,7 @@ object Eval:
                                                 cur = hls.complete(st, settled)
                                     catch
                                         case ex: Throwable =>
-                                            EffectTrace.attach(ex, suspended, h, stack, base)
+                                            EffectTrace.attach(ex, h, stack, base)
                                             throw ex
                                     end try
                                 case d: Defer[?, ?, ?] =>
@@ -236,7 +229,7 @@ object Eval:
                                     try cur = s.head(settled.asInstanceOf[Any < Any], next)
                                     catch
                                         case ex: Throwable =>
-                                            EffectTrace.attach(ex, suspended, a, next, stack, base)
+                                            EffectTrace.attach(ex, a, next, stack, base)
                                             throw ex
                                     end try
                             end match
