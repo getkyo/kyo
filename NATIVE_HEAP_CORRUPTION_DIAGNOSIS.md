@@ -113,6 +113,47 @@ change can fix. Boehm is the discriminator: boehm-fixes-it means a live referenc
 GC-cleared/moved (immix bug, GC-specific); boehm-still-crashes points here (scala-native
 MT memory model) or to kyo's unsafe native paths.
 
+## Two upstream scala-native bugs (maintainer-confirmed)
+
+The crash is not one bug. The branch owner's repro (scala-native#4992) surfaced two,
+per maintainer WojciechMazur's review on that PR:
+
+1. **Module-init publish-ordering race (#4992).** `module_load.c`
+   `__scalanative_startAndWaitForModuleInitialization` writes the InitializationContext
+   fields after the publishing CAS; a concurrent first-touch reader can read `instance`
+   before it is written, dereferencing null. GC-independent (explains immix/commix/boehm
+   crashing identically). Fix is a 3-line reorder, open upstream, not yet released.
+2. **GC rapid-thread-startup bug.** Maintainer: "the test scenario discovered a bug in
+   the GC (issue with rapid startup of 256 threads and issues with heap growth)." Locus
+   in `gc/immix/MutatorThread.c` `MutatorThread_init`: a new thread switches to `Managed`
+   and initializes its allocators from the shared `blockAllocator` (lines 63-68) BEFORE
+   `MutatorThreads_add` (69) puts it in the list the stop-the-world Synchronizer iterates.
+   In that window many rapidly-starting threads touch heap/allocator state while a
+   growth-triggered collection runs without stopping them. Fix promised by maintainer,
+   not yet published.
+
+kyo hits the startup trigger: workers start lazily via `exec.execute(this)` on a
+`newCachedThreadPool`, so work flooding in spins threads up near-simultaneously.
+
+## Vendoring: resource-override does NOT work
+
+Dropping a patched `module_load.c` into `kyo-core/native/src/main/resources/scala-native/`
+fails: scala-native unpacks each classpath entry's `scala-native/` resources into a
+separate `classes-N/` dir, so the override compiles in isolation (`fatal error:
+'gc/shared/ScalaNativeGC.h' file not found`) and, if it did compile, would duplicate the
+symbol. Vendoring any scala-native C fix requires a locally-built patched `nativelib`.
+
+## Attribution plan (keep each fix isolated)
+
+Never test both fixes at once first; a green would hide which mattered.
+- serialize thread startup (kyo-side Scheduler change): isolates the GC startup bug's
+  trigger. Crash gone -> GC bug bites kyo; crash persists -> module-init race is
+  independently crashing.
+- #4992 only (patched nativelib): isolates the module-init race.
+- both: the sound end-state. When the maintainer's GC fix lands (or one is derived from
+  the MutatorThread_init window), it goes into the same patched nativelib as a separate
+  patch so attribution stays clean.
+
 ## Reproduction plan
 
 Loop `kyo-coreNative/test` in one sbt session (links once, reruns the binary) under
