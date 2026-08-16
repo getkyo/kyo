@@ -1,5 +1,6 @@
 package kyo.kernel.proto
 
+import kyo.Maybe
 import kyo.bug
 import kyo.kernel.proto.Arrow.*
 
@@ -41,21 +42,21 @@ object Eval:
         var cur: Any = v
         var running  = true
 
-        var suspended: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] | Null = null
+        var suspended: Maybe[Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]] = Maybe.Absent
 
         try
             while running do
                 cur match
                     case c: Chain[?, ?, ?, ?] =>
-                        suspended = null
+                        suspended = Maybe.Absent
                         stack.push(c.b)
                         cur = c.a
                     case b: Bind[?, ?, ?] =>
-                        suspended = null
+                        suspended = Maybe.Absent
                         stack.push(b.cont)
                         cur = b.value
                     case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                        suspended = s
+                        suspended = Maybe(s)
                         try
                             val i = stack.find(s.tag.erased, base)
                             if i < 0 then bug(s"unhandled suspension: $s")
@@ -117,7 +118,7 @@ object Eval:
                                 throw ex
                         end try
                     case h: Handle[Nothing, Any, Any, Any, Any] @unchecked =>
-                        suspended = null
+                        suspended = Maybe.Absent
                         stack.push(h.cont)
                         h.handler match
                             case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
@@ -127,17 +128,17 @@ object Eval:
                         end match
                         cur = h.v
                     case e: Arrow.Eval[?, ?, ?] =>
-                        suspended = null
+                        suspended = Maybe.Absent
                         stack.pushAll(e.entries, e.tags, e.states)
                         cur = e.value
                     case a: Arrow[Any, Any, Any] @unchecked =>
-                        suspended = null
+                        suspended = Maybe.Absent
                         val s    = a.step
                         val next = s.tail.chain(dump())
                         try cur = s.head((), next)
                         catch
                             case ex: Throwable =>
-                                EffectTrace.attach(ex, null, a, next, stack, base)
+                                EffectTrace.attach(ex, Maybe.Absent, a, next, stack, base)
                                 throw ex
                         end try
                     case settled =>
