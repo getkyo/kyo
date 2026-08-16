@@ -27,9 +27,30 @@ root, green the native CI.
 | E4 | patched module_load.c as project resource | vendoring path A | BUILD FAIL (separate classes-N dir, missing gc headers, dup symbol) -> resource-override unviable |
 | E5 | serialize worker-thread starts (kyo Scheduler) | cause B trigger | CRASH after several clean loops -> **not sufficient alone** |
 | E6a | gdb on a core dump (DWARF binary) | LOCUS of the fault | NO CORE: scala-native `stackOverflowHandler` (stackOverflowGuards.c:254) `exit(sig)`s on an unhandled fault, so no core; also high crash variance |
-| E6b | gdb-wrapper: run real binary under gdb, `break exit if $x0==11`, loop test | LOCUS of the fault | RUNNING |
+| E6b | gdb-wrapper: run real binary under gdb, `break exit if $x0==11`, loop test | LOCUS of the fault | **CAPTURED loop 1** (see below + NATIVE_CRASH_BACKTRACE.txt) |
 | E7 | #4992 via patched nativelib (in-tree maven repo, 0.5.12-kyo, self-verifying override) | cause A | PREPPED (build.sbt override + .local-sn-repo), not yet run |
 | E8 | #4992 + serialize-startup (both) | combined | PENDING (needs E7 working) |
+
+## ROOT CAUSE (E6b backtrace) — NOT module-init, NOT GC
+
+The faulting thread crashes in **scala-native's libunwind DWARF unwinder**, dereferencing
+NULL: `libunwind::CFI_Parser::decodeFDE(fdeStart=0)` -> `LocalAddressSpace::get32(addr=0)`,
+reached from `Throwable.fillInStackTrace` -> `StackTrace.currentRawStackTrace`
+(scala-native runtime). The kyo trigger is `kyo.kernel.internal.Trace.Owner.enrich`
+(Trace.scala:197): `val suffix = (new Exception).getStackTrace().drop(2)`. kyo enriches
+every propagating exception (Abort/Retry through a Safepoint) with the native runtime
+stack, and that `new Exception` runs the buggy concurrent unwinder. `findFDE` returns 0
+for a frame's PC under concurrent unwinds (the other threads unwind the same frame shapes
+fine), so it is a concurrency race in libunwind's shared FDE lookup, not a bad PC.
+
+This retires candidates A and B for the crash we actually hit: GC-swap could not help
+(E1/E2), serialize-startup could not help (E5), module-init vendoring is irrelevant to
+this frame. Candidate A/B may still be real upstream bugs, but they are not this crash.
+
+**Fix direction:** on Scala Native, do not capture the native-stack suffix in `enrich`
+(the `new Exception` unwind). Native suffixes are cryptic mangled frames and the unwinder
+is the crashing, low-value facility; kyo's own `elements` trace is preserved. Validate by
+fix-and-verify against the repro. Also worth an upstream scala-native report.
 
 ## What E6 decides (why it is first)
 
