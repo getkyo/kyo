@@ -152,6 +152,19 @@ class ProtoKernelBench:
     end trailingMapsStayLinear
 
     @Benchmark
+    def emittingClausesPayRegionRebuild: Int =
+        def loop(i: Int): Int < Ask =
+            if i > NarrowDepth then i
+            else ask.map(a => loop(i + a))
+        val emitted: Int < Tick = ArrowEffect.handleLoop(Tag[Ask], loop(0))(
+            [C] => _ => tick.map(t => Loop.continue(t)),
+            a => a
+        )
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Tick], emitted)([C] => _ => Loop.continue(1), a => a)
+        Eval(r)
+    end emittingClausesPayRegionRebuild
+
+    @Benchmark
     def continuationBodiesFuse: Int =
         def loop(i: Int): Int < Ask =
             if i > NarrowDepth then i
@@ -179,6 +192,10 @@ object ProtoKernelBench:
     sealed trait Ask extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
 
     def ask(using Frame): Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    sealed trait Tick extends ArrowEffect[[B] =>> Unit, [B] =>> Int]
+
+    def tick(using Frame): Int < Tick = ArrowEffect.suspend[Any](Tag[Tick], ())
 
     inline def askWith[B, S](inline f: Int => B < S)(using inline frame: Frame): B < (Ask & S) =
         ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)

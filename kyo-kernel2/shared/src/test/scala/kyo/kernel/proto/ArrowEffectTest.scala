@@ -165,6 +165,38 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(Eval(r) == 42)
         }
 
+        "a clause suspends on its own effect per operation" in {
+            var answered        = 0
+            val body: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
+            val doubled: Int < Ask = ArrowEffect.handleLoop(Tag[Ask], body)(
+                [C] => _ => ask.map(v => Loop.continue(v * 2)),
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], doubled)(
+                [C] =>
+                    _ =>
+                        answered += 1
+                        Loop.continue(3)
+                ,
+                a => a
+            )
+            assert(Eval(r) == 66)
+            assert(answered == 2)
+        }
+
+        "a suspended clause dispatch is multi-shot" in {
+            val body: Int < Ask = ask.map(_ + 1)
+            val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], body)(
+                [C] => _ => say("s").map(_ => Loop.continue(10)),
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handle(Tag[Say], handled)(
+                [C] => (_, cont) => cont(()).map(x => cont(()).map(y => x * 100 + y)),
+                a => a
+            )
+            assert(Eval(r) == 1111)
+        }
+
         "a foreign operation crosses the region in place" in {
             var order                   = List.empty[String]
             val body: Int < (Ask & Say) = say("a").map(_ => ask).map(i => i + 1)
