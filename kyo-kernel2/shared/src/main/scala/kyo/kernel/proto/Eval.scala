@@ -39,6 +39,44 @@ object Eval:
                         case o =>
                             Identity(s(Nested.unnest[Any](o)).asInstanceOf[Any < S2], next)
 
+        def rehandled(
+            s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+            out: Any < Any,
+            h: Handle[Nothing, Any, Any, Any, Any],
+            i: Int
+        ): Any < Any =
+            val entries = stack.copyEntries(i + 1)
+            val tags    = stack.copyTags(i + 1)
+            val states  = stack.copyStates(i + 1)
+            stack.truncate(i)
+            def region(regionHandler: Handler[Nothing, Any, Any, Any], payload: Any): Any < Any =
+                new Handle[Nothing, Any, Any, Any, Any]:
+                    def v       = Arrow.Eval(entries, tags, states, Identity(payload.asInstanceOf[Any < Any], resume(s)))
+                    def handler = regionHandler
+                    def cont    = Arrow[Any]
+            out.map {
+                case c: Loop.Continue[?] =>
+                    region(h.handler, c._1)
+                case c: Loop.Continue2[?, ?] =>
+                    h.handler match
+                        case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                            val st = c._1
+                            region(
+                                new Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
+                                    def tag                         = hls.tag
+                                    def initialState                = st
+                                    def run[C](s2: Any, input: Any) = hls.run[C](s2, input)
+                                    def complete(s2: Any, a: Any)   = hls.complete(s2, a)
+                                ,
+                                c._2
+                            )
+                        case other =>
+                            bug(s"stateful answer for a stateless region: $other")
+                case done =>
+                    done
+            }(using kyo.Frame.internal)
+        end rehandled
+
         var cur: Any = v
         var running  = true
 
@@ -60,7 +98,8 @@ object Eval:
                         try
                             val i = stack.find(s.tag.erased, base)
                             if i < 0 then bug(s"unhandled suspension: $s")
-                            stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]].handler match
+                            val h = stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]]
+                            h.handler match
                                 case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                                     val top = stack.size
                                     var j   = i + 1
@@ -85,7 +124,8 @@ object Eval:
                                     end if
                                 case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                                     hl.run(s.input) match
-                                        case out: Arrow[?, ?, ?] => ???
+                                        case out: Arrow[Any, Any, Any] @unchecked =>
+                                            cur = rehandled(s, out, h, i)
                                         case c: Loop.Continue[?] =>
                                             c._1 match
                                                 case p: Arrow[Any, Any, Any] @unchecked =>
@@ -98,7 +138,8 @@ object Eval:
                                             cur = done
                                 case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                                     hls.run(stack.state(i), s.input) match
-                                        case out: Arrow[?, ?, ?] => ???
+                                        case out: Arrow[Any, Any, Any] @unchecked =>
+                                            cur = rehandled(s, out, h, i)
                                         case c: Loop.Continue2[?, ?] =>
                                             stack.setState(i, c._1)
                                             c._2 match

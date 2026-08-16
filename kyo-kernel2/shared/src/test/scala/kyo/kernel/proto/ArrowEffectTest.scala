@@ -80,15 +80,18 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "a clause ends the region effectfully" in {
-            var reached = false
-            var seen    = List.empty[String]
+            var reached   = false
+            var completed = false
+            var seen      = List.empty[String]
             val body = ask.map { a =>
                 reached = true
                 a + 1
             }
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], body)(
                 [C] => _ => say("stop").map(_ => Loop.done(-1)),
-                a => a
+                a =>
+                    completed = true
+                    a
             )
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
                 [C] =>
@@ -100,7 +103,66 @@ class ArrowEffectTest extends AnyFreeSpec:
             )
             assert(Eval(r) == -1)
             assert(!reached)
+            assert(!completed)
             assert(seen == List("stop"))
+        }
+
+        "every clause suspension re-arms the region" in {
+            var seen = List.empty[String]
+            val v    = ask.map(a => ask.map(b => a * 10 + b))
+            val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], v)(
+                [C] => _ => say("x").map(_ => Loop.continue(1)),
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
+                [C] =>
+                    s =>
+                        seen = s :: seen
+                        Loop.continue(())
+                ,
+                a => a
+            )
+            assert(Eval(r) == 11)
+            assert(seen == List("x", "x"))
+        }
+
+        "a clause suspension resolves outside the region" in {
+            var interiorSeen = List.empty[String]
+            var outerSeen    = List.empty[String]
+            val body: Int < Ask =
+                ArrowEffect.handleLoop(Tag[Say], ask.map(_ + 1))(
+                    [C] =>
+                        s =>
+                            interiorSeen = s :: interiorSeen
+                            Loop.continue(())
+                    ,
+                    a => a
+                )
+            val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], body)(
+                [C] => _ => say("clause").map(_ => Loop.continue(41)),
+                a => a
+            )
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
+                [C] =>
+                    s =>
+                        outerSeen = s :: outerSeen
+                        Loop.continue(())
+                ,
+                a => a
+            )
+            assert(Eval(r) == 42)
+            assert(interiorSeen.isEmpty)
+            assert(outerSeen == List("clause"))
+        }
+
+        "a clause answer survives its own deep evaluation" in {
+            def deep(i: Int): Int < Any =
+                if i == 0 then 41 else (0: Int < Any).map(_ => deep(i - 1))
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
+                [C] => _ => deep(10000).map(n => Loop.continue(n)),
+                a => a
+            )
+            assert(Eval(r) == 42)
         }
 
         "a foreign operation crosses the region in place" in {

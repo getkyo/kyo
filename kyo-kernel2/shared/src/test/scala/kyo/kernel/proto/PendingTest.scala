@@ -192,6 +192,16 @@ class PendingTest extends AnyFreeSpec:
         assert(Eval(answerAsk(41)(payload)) == 42)
     }
 
+    "a loop can end its region effectfully with a computation result" in {
+        val inner: Int < Ask = ask.map(_ + 1)
+        val r: (Int < Ask) < Ask = ArrowEffect.handleLoop(Tag[Give], give)(
+            [C] => _ => after(0).map(_ => Loop.done(inner)),
+            a => settled(a)
+        )
+        val payload: Int < Ask = Eval(answerAsk(0)(r))
+        assert(Eval(answerAsk(41)(payload)) == 42)
+    }
+
     "a fused handler continuation receives a payload as a value" in {
         val inner: Int < Ask = ask.map(_ + 1)
         var got: Int < Ask   = 0
