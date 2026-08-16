@@ -98,6 +98,20 @@ way) plus `libgc-dev` in the CI toolchain. If boehm also crashes, the fault is n
 implementation choice but scala-native's multithreaded runtime or a kyo memory-safety
 bug, and the next step is a direct null-deref hunt.
 
+## The "not GC" candidate (if boehm also crashes)
+
+`kyo-scheduler/.../WorkerQueue.scala` is a spin-lock-protected 4-ary min-heap: it
+extends `AtomicBoolean`, locks via `compareAndSet`, unlocks via `set(false)`, guards
+plain-array writes to `arr`/`keys`, and reads a `@volatile count` behind
+`VarHandle.acquireFence()`. This is correct under the JVM memory model (the unlock's
+volatile write releases, the lock's CAS acquires, establishing happens-before for the
+plain array writes). If scala-native's multithreaded runtime does not honor
+`AtomicBoolean` release/acquire or `VarHandle.acquireFence`, a stealing thread
+(`stealingBy`) can observe a torn heap and dereference a null `Task`: a null-deref no GC
+change can fix. Boehm is the discriminator: boehm-fixes-it means a live reference was
+GC-cleared/moved (immix bug, GC-specific); boehm-still-crashes points here (scala-native
+MT memory model) or to kyo's unsafe native paths.
+
 ## Reproduction plan
 
 Loop `kyo-coreNative/test` in one sbt session (links once, reruns the binary) under
