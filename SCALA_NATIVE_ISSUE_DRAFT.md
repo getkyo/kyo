@@ -47,13 +47,25 @@ walks colliding — a single thread's cursor is corrupted by concurrent activity
   ByteArray is per-thread, not shared by inheritance.
 
 ## Hypothesis for the maintainers
-A per-thread unwind cursor (in the `StackTrace$Context` GC-heap `ByteArray`) is being corrupted
-mid-capture under concurrency — candidates: the GC reclaiming/relocating the `ByteArray` while the
-raw cursor pointer is live in C, or a safepoint/GC interaction during the unwind. Serializing the
-capture is unlikely to fix it (only one thread unwinds at the fault).
+The fault is GC-independent (immix, commix, and non-moving boehm all crash identically), so it is
+NOT the GC relocating or reclaiming the cursor buffer. What remains is a thread-management /
+stack-capture concurrency bug: a thread's unwind cursor holds a garbage IP that looks written by
+OTHER concurrent activity, not by this thread's own valid frame. The backtrace shows exactly one
+thread inside the C unwinder with a corrupt cursor, which is consistent with the cursor being
+aliased/shared across threads (one thread unwinding while another writes the same buffer) or with a
+thread-creation/`ThreadLocal`-setup race rather than two concurrent unwinds colliding. This matches
+the branch owner's standing hunch of a scala-native thread-management race (cf. their #4992).
 
 ## Reproduction
-Any multithreaded program that constructs stack-trace-bearing exceptions on many threads under GC
-pressure. kyo's `kyo-coreNative` test suite reproduces within a few `test` iterations; a minimal
-standalone repro (N threads each looping `new Exception().getStackTrace` while others allocate) is
-the next step if the maintainers want one.
+Reproduces reliably in kyo's `kyo-coreNative` test suite within 1-3 `test` iterations (fiber
+scheduler: carrier threads created on-demand under load, work-stealing, exception-heavy code).
+
+Standalone minimization did NOT reproduce it, which is itself diagnostic (rules candidates out):
+- N threads each looping `new Exception().getStackTrace()` + allocation: clean over 15 runs (~1.6M
+  concurrent captures) -> not raw frequency.
+- Same but throwing from ~120 deep frames: clean over 15 runs -> not stack depth.
+- Same but under heavy fragmenting allocation (varied sizes + rotating retention -> frequent
+  immix collections): clean -> reinforces GC-independence.
+- All three create their threads UP FRONT, before any capture. The untested differentiator is
+  kyo's pattern of creating carrier threads WHILE other threads are actively capturing; a repro
+  that spawns threads concurrently with in-flight captures is the next minimization step.
