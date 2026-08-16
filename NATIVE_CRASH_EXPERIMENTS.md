@@ -6,7 +6,33 @@ si_addr=(nil)` under concurrency. Reliable repro: loop `kyo-coreNative/test` on
 linux-arm64 podman, crashes within a few loops. Goal: locate the true cause(s), fix at
 root, green the native CI.
 
-## LEADING HYPOTHESIS = candidate B (Fable-redirected, 2026-08-16)
+## MECHANISM = ThreadLocal aliasing, NOT external clobber (instrumentation, 2026-08-16)
+
+Built an instrumented `StackTrace.scala` via the validated NIR-factory (recompile a shadowing
+StackTrace in a minimal scala-native project, swap ALL StackTrace* NIR/class/tasty into the vendored
+0.5.12-kyo jar; kyo links + stays faithful, confirmed by a stock recompile+swap that still crashed).
+Instrumentation: 64-byte canaries bracketing the cursor+context region of `Context.data` (checked
+before every unwind step) + an owner-thread id on `Context` asserted per capture.
+
+**Result (v2, identityHashCode owner id): crashes=4, canary=0, owner-mismatch=4 (43 markers),
+crash-without-marker=0.** So:
+- **candidate B REFUTED**: the canary NEVER tripped -> the cursor region is NOT overwritten by an
+  external heap clobber. The cursor is corrupted from WITHIN (consistent with two threads writing one
+  cursor concurrently), not by block reuse spilling into the region.
+- **Owner MISMATCH on every crash run** -> a `Context` is reaching a thread other than its first user:
+  ThreadLocal ALIASING (matches the branch owner's long-standing "scala-native thread-management race"
+  hunch). This is a DIFFERENT mechanism than Fable's candidate B.
+
+**Caveat + confirmation in flight (v3):** v2's owner id was `identityHashCode`, which can be unstable
+if immix moves the object (address-derived hash) -> a same-thread mismatch would be spurious. v3
+re-checks with a STABLE `Thread.currentThread().getId` (plus the hash as a cross-check) and RETURNS
+EMPTY on a stable-tid mismatch (causal test): tid-aliasing>0 AND crashes==0 => aliasing IS the cause;
+tid-aliasing==0 => v2 was hash instability and the mechanism is elsewhere. (Note: the InheritableThreadLocal
+inheritance copy is CORRECT - `Values(fromParent)`/`inheritValues` applies `childValue`, giving each
+child a fresh Context - so if aliasing is real its source is the get()/Values lookup or thread
+lifecycle, not inheritance.)
+
+## LEADING HYPOTHESIS = candidate B (Fable-redirected, 2026-08-16) [SUPERSEDED by the section above]
 
 Fable reviewed the full evidence and redirected the fix hunt. Both fixes I was about to try are weak
 by our OWN data, and the real suspect was never tested:
