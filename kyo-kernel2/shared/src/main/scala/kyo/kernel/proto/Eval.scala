@@ -40,71 +40,84 @@ object Eval:
 
         var cur: Any = v
         var running  = true
+
+        var suspended: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] | Null = null
+
         try
             while running do
                 cur match
                     case c: Chain[?, ?, ?, ?] =>
+                        suspended = null
                         stack.push(c.b)
                         cur = c.a
                     case b: Bind[?, ?, ?] =>
+                        suspended = null
                         stack.push(b.cont)
                         cur = b.value
                     case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                        val i = stack.find(s.tag.erased, base)
-                        if i < 0 then bug(s"unhandled suspension: $s")
-                        stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]].handler match
-                            case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                val top = stack.size
-                                var j   = i + 1
-                                while j < top && !stack.marked(j) do j += 1
-                                if j == top then
-                                    if i + 1 == top then cur = hc.run(s.input, s)
+                        suspended = s
+                        try
+                            val i = stack.find(s.tag.erased, base)
+                            if i < 0 then bug(s"unhandled suspension: $s")
+                            stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]].handler match
+                                case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                    val top = stack.size
+                                    var j   = i + 1
+                                    while j < top && !stack.marked(j) do j += 1
+                                    if j == top then
+                                        if i + 1 == top then cur = hc.run(s.input, s)
+                                        else
+                                            var k: Arrow[Any, Any, Any] = Arrow[Any]
+                                            var m                       = i + 1
+                                            while m < top do
+                                                k = stack(m).chain(k)
+                                                m += 1
+                                            stack.truncate(i + 1)
+                                            val cont = k
+                                            cur = hc.run(s.input, o => Identity(s(o), cont))
                                     else
-                                        var k: Arrow[Any, Any, Any] = Arrow[Any]
-                                        var m                       = i + 1
-                                        while m < top do
-                                            k = stack(m).chain(k)
-                                            m += 1
+                                        val entries = stack.copyEntries(i + 1)
+                                        val tags    = stack.copyTags(i + 1)
+                                        val states  = stack.copyStates(i + 1)
                                         stack.truncate(i + 1)
-                                        val cont = k
-                                        cur = hc.run(s.input, o => Identity(s(o), cont))
-                                else
-                                    val entries = stack.copyEntries(i + 1)
-                                    val tags    = stack.copyTags(i + 1)
-                                    val states  = stack.copyStates(i + 1)
-                                    stack.truncate(i + 1)
-                                    cur = hc.run(s.input, o => Arrow.Eval(entries, tags, states, s(o)))
-                                end if
-                            case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                hl.run(s.input) match
-                                    case out: Arrow[?, ?, ?] => ???
-                                    case c: Loop.Continue[?] =>
-                                        c._1 match
-                                            case p: Arrow[Any, Any, Any] @unchecked =>
-                                                stack.push(resume(s))
-                                                cur = p
-                                            case o =>
-                                                cur = s(Nested.unnest[Any](o))
-                                    case done =>
-                                        stack.truncate(i)
-                                        cur = done
-                            case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                                hls.run(stack.state(i), s.input) match
-                                    case out: Arrow[?, ?, ?] => ???
-                                    case c: Loop.Continue2[?, ?] =>
-                                        stack.setState(i, c._1)
-                                        c._2 match
-                                            case p: Arrow[Any, Any, Any] @unchecked =>
-                                                stack.push(resume(s))
-                                                cur = p
-                                            case o =>
-                                                cur = s(Nested.unnest[Any](o))
-                                        end match
-                                    case done =>
-                                        stack.truncate(i)
-                                        cur = done
-                        end match
+                                        cur = hc.run(s.input, o => Arrow.Eval(entries, tags, states, s(o)))
+                                    end if
+                                case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                    hl.run(s.input) match
+                                        case out: Arrow[?, ?, ?] => ???
+                                        case c: Loop.Continue[?] =>
+                                            c._1 match
+                                                case p: Arrow[Any, Any, Any] @unchecked =>
+                                                    stack.push(resume(s))
+                                                    cur = p
+                                                case o =>
+                                                    cur = s(Nested.unnest[Any](o))
+                                        case done =>
+                                            stack.truncate(i)
+                                            cur = done
+                                case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                                    hls.run(stack.state(i), s.input) match
+                                        case out: Arrow[?, ?, ?] => ???
+                                        case c: Loop.Continue2[?, ?] =>
+                                            stack.setState(i, c._1)
+                                            c._2 match
+                                                case p: Arrow[Any, Any, Any] @unchecked =>
+                                                    stack.push(resume(s))
+                                                    cur = p
+                                                case o =>
+                                                    cur = s(Nested.unnest[Any](o))
+                                            end match
+                                        case done =>
+                                            stack.truncate(i)
+                                            cur = done
+                            end match
+                        catch
+                            case ex: Throwable =>
+                                EffectTrace.attach(ex, s, stack, base)
+                                throw ex
+                        end try
                     case h: Handle[Nothing, Any, Any, Any, Any] @unchecked =>
+                        suspended = null
                         stack.push(h.cont)
                         h.handler match
                             case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
@@ -114,11 +127,19 @@ object Eval:
                         end match
                         cur = h.v
                     case e: Arrow.Eval[?, ?, ?] =>
+                        suspended = null
                         stack.pushAll(e.entries, e.tags, e.states)
                         cur = e.value
                     case a: Arrow[Any, Any, Any] @unchecked =>
-                        val s = a.step
-                        cur = s.head((), s.tail.chain(dump()))
+                        suspended = null
+                        val s    = a.step
+                        val next = s.tail.chain(dump())
+                        try cur = s.head((), next)
+                        catch
+                            case ex: Throwable =>
+                                EffectTrace.attach(ex, null, a, next, stack, base)
+                                throw ex
+                        end try
                     case settled =>
                         if stack.size == base then running = false
                         else
@@ -129,27 +150,43 @@ object Eval:
                                     stack.push(c.b)
                                     stack.push(c.a)
                                 case h: Handle[Nothing, Any, Any, Any, Any] @unchecked if marked =>
-                                    h.handler match
-                                        case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                            cur = hc.complete(settled)
-                                        case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                            cur = hl.complete(settled)
-                                        case hls: Handler.HandleLoopState[
-                                                [X] =>> Any,
-                                                [X] =>> Any,
-                                                Nothing,
-                                                Any,
-                                                Any,
-                                                Any,
-                                                Any
-                                            ] @unchecked =>
-                                            cur = hls.complete(st, settled)
+                                    try
+                                        h.handler match
+                                            case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                                cur = hc.complete(settled)
+                                            case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                                cur = hl.complete(settled)
+                                            case hls: Handler.HandleLoopState[
+                                                    [X] =>> Any,
+                                                    [X] =>> Any,
+                                                    Nothing,
+                                                    Any,
+                                                    Any,
+                                                    Any,
+                                                    Any
+                                                ] @unchecked =>
+                                                cur = hls.complete(st, settled)
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, suspended, h, stack, base)
+                                            throw ex
+                                    end try
                                 case d: Defer[?, ?, ?] =>
                                     cur = d
                                 case a =>
-                                    val s = a.step
-                                    cur = s.head(settled.asInstanceOf[Any < Any], s.tail.chain(dump()))
+                                    val s    = a.step
+                                    val next = s.tail.chain(dump())
+                                    try cur = s.head(settled.asInstanceOf[Any < Any], next)
+                                    catch
+                                        case ex: Throwable =>
+                                            EffectTrace.attach(ex, suspended, a, next, stack, base)
+                                            throw ex
+                                    end try
                             end match
+        catch
+            case ex: Throwable =>
+                EffectTrace.splice(ex)
+                throw ex
         finally stack.truncate(base)
         end try
         cur

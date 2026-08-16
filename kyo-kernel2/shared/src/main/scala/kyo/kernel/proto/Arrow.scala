@@ -103,6 +103,7 @@ object Arrow:
     abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Defer[Any, B, E & S]:
         self =>
 
+        def frame: Frame
         def tag: Tag[E]
         def input: I[A]
         def cont(v: O[A]): B < S
@@ -113,6 +114,7 @@ object Arrow:
             if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2]]
             else
                 new Suspend[I, O, E, A, C, S & S2]:
+                    def frame         = self.frame
                     def tag           = self.tag
                     def input         = self.input
                     def cont(v: O[A]) = Arrow[B](self.cont(v), f)

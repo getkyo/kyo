@@ -20,6 +20,7 @@ object ArrowEffect:
         inline input0: I[C]
     ): O[C] < E =
         new Suspend[I, O, E, C, O[C], Any]:
+            def frame                     = _frame
             def tag                       = effectTag
             def input                     = input0
             def cont(v: O[C]): O[C] < Any = v
@@ -34,6 +35,7 @@ object ArrowEffect:
         inline f: O[C] => B < S
     ): B < (E & S) =
         new Suspend[I, O, E, C, B, S]:
+            def frame                = _frame
             def tag                  = effectTag
             def input                = input0
             def cont(v: O[C]): B < S = f(Nested.unnest[O[C]](v))
