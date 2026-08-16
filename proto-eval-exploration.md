@@ -26,6 +26,12 @@ Working discipline: all design decisions are made in the main session's context 
 agents may be used for analysis (reading, auditing, proposing); Sonnet for mechanical execution (applying a
 specified diff, running suites, collecting numbers). No agent decides a design question.
 
+Isolation protocol: an experiment is a working-tree probe on the prototype, validated by the proto suite and
+the boards, then reverted or presented as a reviewable diff; nothing lands in `kyo.kernel.proto` without user
+review. No parallel copies of the kernel: a package-renamed copy carries its own CanLift macro, and a second
+same-run macro summoned by a scope full of its users re-creates the suspended-unit cascade that crashes the
+clean batch build (reproduced twice, main scope and Test scope, before the copy was abandoned).
+
 ## Baseline (2026-08-16, commit b345a1412d)
 
 | metric | value |
@@ -172,7 +178,7 @@ their entries and their reasons.
 
 | path | status | notes |
 |---|---|---|
-| 1. named outcome driver | pending | starts first; design agreed in session |
+| 1. named outcome driver | in progress | dispatcher in working tree; fixes the clean batch build; suite run next |
 | 2. types to their owners | pending | run after 1; HandleLoop first as the probe |
 | 3. typed helpers | pending | after 2, on what 2 leaves unowned |
 | 4. typed currency | pending | after 3; strictest gate (bytecode identical) |
@@ -183,11 +189,26 @@ their entries and their reasons.
 | date | path | experiment | result | numbers |
 |---|---|---|---|---|
 | 2026-08-16 | (pre-charter) | E1: dispatch in place, region kept | failed as predicted | interior stole clause effect; `completed was true` |
-| 2026-08-16 | (pre-charter) | E2: capture + recompose via map | green, landed 22c675072d | 110/110; settled paths untouched |
+| 2026-08-16 | (pre-charter) | E2: capture + recompose via map | green, landed 22c675072d | 110/110; settled paths untouched; broke the clean batch build (see decisions) |
+| 2026-08-16 | (infra) | E3: exp package copy, main then Test scope | crashed both scopes, abandoned | StaleSymbolException in every clean batch compile |
+| 2026-08-16 | 1 | E4: `outcome` dispatcher replaces `rehandled` | clean build green | suspension set back to 4-file equilibrium; suite pending |
 
 ### Decisions
 
 - 2026-08-16: charter written; baseline recorded; order 1 -> 2 -> 3 -> 4 -> 5.
+- 2026-08-16: the branch's clean batch build is broken at 22c675072d: `rehandled`'s `out.map` put CanLift
+  macro summons inside Eval.scala, deepening the suspended-unit cascade past the equilibrium the module
+  compiles in, and dotty crashes (StaleSymbolException). Incremental builds masked it. Reproduces unchanged
+  on Scala 3.9.0-RC5, so no compiler bump fixes it.
+- 2026-08-16: user rulings on the lift: a single lift implicit, the macro-backed one, usable in the proto's
+  own files; no `liftInternal` port, no explicit `Nested.nest` spellings as a workaround. The old kernel is
+  the reference: same-module macro summons are survivable when only leaf files suspend; the fix space is
+  keeping the evaluator itself free of lift summons, which the path 1 dispatcher does by construction.
+- 2026-08-16: the exp package copy is abandoned (see isolation protocol); experiments are working-tree
+  probes on the prototype, user-gated before landing.
+- 2026-08-16: path 1's `outcome` dispatcher written in the working tree as the fix for the clean build and
+  the first path 1 result: clean batch compile green, suspension set back to the four-file equilibrium,
+  the `done` arm passes the union through untouched (silent lift gone).
 - 2026-08-16: the landed map-based dispatch is superseded by path 1's named driver (silent lift in the `done`
   arm; representation round trip; user-boundary machinery in a currency position).
 

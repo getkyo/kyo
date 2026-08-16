@@ -39,43 +39,66 @@ object Eval:
                         case o =>
                             Identity(s(Nested.unnest[Any](o)).asInstanceOf[Any < S2], next)
 
-        def rehandled(
+        def outcome(
             s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
-            out: Any < Any,
             h: Handle[Nothing, Any, Any, Any, Any],
             i: Int
-        ): Any < Any =
-            val entries = stack.copyEntries(i + 1)
-            val tags    = stack.copyTags(i + 1)
-            val states  = stack.copyStates(i + 1)
-            stack.truncate(i)
-            def region(regionHandler: Handler[Nothing, Any, Any, Any], payload: Any): Any < Any =
+        ): Arrow[Any, Any, Any] =
+            val top = stack.size
+            var j   = i + 1
+            while j < top && !stack.marked(j) do j += 1
+            val rebuild: Any => Arrow[Any, Any, Any] =
+                if j == top then
+                    var k: Arrow[Any, Any, Any] = Arrow[Any]
+                    var m                       = i + 1
+                    while m < top do
+                        k = stack(m).chain(k)
+                        m += 1
+                    stack.truncate(i)
+                    val cont = resume(s).chain(k)
+                    payload => Bind(payload.asInstanceOf[Any < Any], cont)
+                else
+                    val entries = stack.copyEntries(i + 1)
+                    val tags    = stack.copyTags(i + 1)
+                    val states  = stack.copyStates(i + 1)
+                    stack.truncate(i)
+                    val cont = resume(s)
+                    payload => Arrow.Eval(entries, tags, states, Identity(payload.asInstanceOf[Any < Any], cont))
+            def region(regionHandler: Handler[Nothing, Any, Any, Any], payload: Any): Arrow[Any, Any, Any] =
                 new Handle[Nothing, Any, Any, Any, Any]:
-                    def v       = Arrow.Eval(entries, tags, states, Identity(payload.asInstanceOf[Any < Any], resume(s)))
+                    def v       = rebuild(payload)
                     def handler = regionHandler
                     def cont    = Arrow[Any]
-            out.map {
-                case c: Loop.Continue[?] =>
-                    region(h.handler, c._1)
-                case c: Loop.Continue2[?, ?] =>
-                    h.handler match
-                        case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                            val st = c._1
-                            region(
-                                new Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
-                                    def tag                         = hls.tag
-                                    def initialState                = st
-                                    def run[C](s2: Any, input: Any) = hls.run[C](s2, input)
-                                    def complete(s2: Any, a: Any)   = hls.complete(s2, a)
-                                ,
-                                c._2
-                            )
-                        case other =>
-                            bug(s"stateful answer for a stateless region: $other")
-                case done =>
-                    done
-            }(using kyo.Frame.internal)
-        end rehandled
+            new Transform[Any, Any, Any]:
+                def frame = kyo.Frame.internal
+                def apply[C2, S2](v: Any < S2, next: Arrow[Any, C2, S2]): C2 < S2 =
+                    v match
+                        case p: Arrow[Any, Any, S2] @unchecked =>
+                            Chain(p, this.chain(next))
+                        case c: Loop.Continue[?] =>
+                            Identity(region(h.handler, c._1).asInstanceOf[Any < S2], next)
+                        case c: Loop.Continue2[?, ?] =>
+                            h.handler match
+                                case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                                    val st = c._1
+                                    Identity(
+                                        region(
+                                            new Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any]:
+                                                def tag                         = hls.tag
+                                                def initialState                = st
+                                                def run[C](s2: Any, input: Any) = hls.run[C](s2, input)
+                                                def complete(s2: Any, a: Any)   = hls.complete(s2, a)
+                                            ,
+                                            c._2
+                                        ).asInstanceOf[Any < S2],
+                                        next
+                                    )
+                                case other =>
+                                    bug(s"stateful answer for a stateless region: $other")
+                        case done =>
+                            Identity(done.asInstanceOf[Any < S2], next)
+            end new
+        end outcome
 
         var cur: Any = v
         var running  = true
@@ -125,7 +148,7 @@ object Eval:
                                 case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                                     hl.run(s.input) match
                                         case out: Arrow[Any, Any, Any] @unchecked =>
-                                            cur = rehandled(s, out, h, i)
+                                            cur = Chain(out, outcome(s, h, i))
                                         case c: Loop.Continue[?] =>
                                             c._1 match
                                                 case p: Arrow[Any, Any, Any] @unchecked =>
@@ -139,7 +162,7 @@ object Eval:
                                 case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
                                     hls.run(stack.state(i), s.input) match
                                         case out: Arrow[Any, Any, Any] @unchecked =>
-                                            cur = rehandled(s, out, h, i)
+                                            cur = Chain(out, outcome(s, h, i))
                                         case c: Loop.Continue2[?, ?] =>
                                             stack.setState(i, c._1)
                                             c._2 match
