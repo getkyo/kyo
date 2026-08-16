@@ -100,8 +100,7 @@ object Arrow:
         val value: A < S
     ) extends Defer[Any, B, S]
 
-    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Defer[Any, B, E & S]:
-        self =>
+    abstract class Suspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Transform[Any, B, E & S]:
 
         def frame: Frame
         def tag: Tag[E]
@@ -110,14 +109,13 @@ object Arrow:
 
         final override def apply(v: Any) = cont(v.asInstanceOf[O[A]])
 
-        override def chain[C, S2](f: Arrow[B, C, S2]): Arrow[Any, C, E & S & S2] =
-            if f eq Identity then this.asInstanceOf[Arrow[Any, C, E & S & S2]]
-            else
-                new Suspend[I, O, E, A, C, S & S2]:
-                    def frame         = self.frame
-                    def tag           = self.tag
-                    def input         = self.input
-                    def cont(v: O[A]) = Arrow[B](self.cont(v), f)
+        final def apply[C, S2](v: Any < S2, next: Arrow[B, C, S2]): C < (E & S & S2) =
+            v match
+                case p: Arrow[Any, Any, S2] @unchecked =>
+                    Chain(p, this.chain(next))
+                case o =>
+                    val step = next.step
+                    step.head(cont(Nested.unnest[O[A]](o)), step.tail)
     end Suspend
 
     abstract class Handle[E <: ArrowEffect[?, ?], A, B, +C, -S] extends Defer[Any, C, S]:

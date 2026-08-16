@@ -30,6 +30,12 @@ class EvalTest extends AnyFreeSpec:
         assert(Eval(tower(0, 1000000)) == 1000000)
     }
 
+    "a deep map tower over a suspension evaluates in bounded stack" in {
+        @tailrec def tower(v: Int < Ask, n: Int): Int < Ask =
+            if n == 0 then v else tower(v.map(_ + 1), n - 1)
+        assert(Eval(answerAsk(1)(tower(ask, 100000))) == 100001)
+    }
+
     "deep recursion through map pays rescues only" in {
         def loop(i: Int): Int < Any =
             if i == 0 then 0 else (0: Int < Any).map(_ => loop(i - 1))

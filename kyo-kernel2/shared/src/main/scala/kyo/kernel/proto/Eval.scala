@@ -32,18 +32,8 @@ object Eval:
             end if
         end dump
 
-        def resume(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]): Arrow[Any, Any, Any] =
-            new Transform[Any, Any, Any]:
-                def frame = kyo.Frame.internal
-                def apply[C2, S2](v: Any < S2, next: Arrow[Any, C2, S2]): C2 < S2 =
-                    v match
-                        case p: Arrow[Any, Any, S2] @unchecked =>
-                            Chain(p, this.chain(next))
-                        case o =>
-                            Identity(s(Nested.unnest[Any](o)).asInstanceOf[Any < S2], next)
-
         def outcome(
-            s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any],
+            resume: Arrow[Any, Any, Any],
             h: Handle[Nothing, Any, Any, Any, Any],
             i: Int
         ): Arrow[Any, Any, Any] =
@@ -57,7 +47,7 @@ object Eval:
             val body =
                 if marked then
                     stack.truncate(i)
-                    resume(s)
+                    resume
                 else
                     var k: Arrow[Any, Any, Any] = Arrow[Any]
                     var m                       = i + 1
@@ -65,7 +55,7 @@ object Eval:
                         k = stack(m).chain(k)
                         m += 1
                     stack.truncate(i)
-                    resume(s).chain(k)
+                    resume.chain(k)
             def region(regionHandler: Handler[Nothing, Any, Any, Any], payload: Any): Arrow[Any, Any, Any] =
                 new Handle[Nothing, Any, Any, Any, Any]:
                     def v       = Arrow.Eval(entries, tags, states, Identity(payload.asInstanceOf[Any < Any], body))
@@ -107,6 +97,62 @@ object Eval:
 
         var suspended: Maybe[Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any]] = Maybe.Absent
 
+        def dispatch(s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any], whole: Arrow[Any, Any, Any]): Any =
+            try
+                val i = stack.find(s.tag.erased, base)
+                if i < 0 then bug(s"unhandled suspension: $s")
+                val h = stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]]
+                h.handler match
+                    case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                        val top = stack.size
+                        var j   = i + 1
+                        while j < top && !stack.marked(j) do j += 1
+                        if j == top then
+                            if i + 1 == top then hc.run(s.input, whole)
+                            else
+                                var k: Arrow[Any, Any, Any] = Arrow[Any]
+                                var m                       = i + 1
+                                while m < top do
+                                    k = stack(m).chain(k)
+                                    m += 1
+                                stack.truncate(i + 1)
+                                hc.run(s.input, whole.chain(k))
+                        else
+                            val entries = stack.copyEntries(i + 1)
+                            val tags    = stack.copyTags(i + 1)
+                            val states  = stack.copyStates(i + 1)
+                            stack.truncate(i + 1)
+                            hc.run(s.input, o => Arrow.Eval(entries, tags, states, whole(o)))
+                        end if
+                    case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                        hl.run(s.input) match
+                            case out: Arrow[Any, Any, Any] @unchecked =>
+                                Chain(out, outcome(whole, h, i))
+                            case c: Loop.Continue[?] =>
+                                val st = whole.step
+                                st.head(c._1.asInstanceOf[Any < Any], st.tail)
+                            case done =>
+                                stack.truncate(i)
+                                done
+                    case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+                        hls.run(stack.state(i), s.input) match
+                            case out: Arrow[Any, Any, Any] @unchecked =>
+                                Chain(out, outcome(whole, h, i))
+                            case c: Loop.Continue2[?, ?] =>
+                                stack.setState(i, c._1)
+                                val st = whole.step
+                                st.head(c._2.asInstanceOf[Any < Any], st.tail)
+                            case done =>
+                                stack.truncate(i)
+                                done
+                end match
+            catch
+                case ex: Throwable =>
+                    EffectTrace.attach(ex, s, stack, base)
+                    throw ex
+            end try
+        end dispatch
+
         try
             while running do
                 cur match
@@ -120,69 +166,7 @@ object Eval:
                         cur = b.value
                     case s: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
                         suspended = Maybe(s)
-                        try
-                            val i = stack.find(s.tag.erased, base)
-                            if i < 0 then bug(s"unhandled suspension: $s")
-                            val h = stack(i).asInstanceOf[Handle[Nothing, Any, Any, Any, Any]]
-                            h.handler match
-                                case hc: Handler.HandleCont[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                    val top = stack.size
-                                    var j   = i + 1
-                                    while j < top && !stack.marked(j) do j += 1
-                                    if j == top then
-                                        if i + 1 == top then cur = hc.run(s.input, s)
-                                        else
-                                            var k: Arrow[Any, Any, Any] = Arrow[Any]
-                                            var m                       = i + 1
-                                            while m < top do
-                                                k = stack(m).chain(k)
-                                                m += 1
-                                            stack.truncate(i + 1)
-                                            val cont = k
-                                            cur = hc.run(s.input, o => Identity(s(o), cont))
-                                    else
-                                        val entries = stack.copyEntries(i + 1)
-                                        val tags    = stack.copyTags(i + 1)
-                                        val states  = stack.copyStates(i + 1)
-                                        stack.truncate(i + 1)
-                                        cur = hc.run(s.input, o => Arrow.Eval(entries, tags, states, s(o)))
-                                    end if
-                                case hl: Handler.HandleLoop[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
-                                    hl.run(s.input) match
-                                        case out: Arrow[Any, Any, Any] @unchecked =>
-                                            cur = Chain(out, outcome(s, h, i))
-                                        case c: Loop.Continue[?] =>
-                                            c._1 match
-                                                case p: Arrow[Any, Any, Any] @unchecked =>
-                                                    stack.push(resume(s))
-                                                    cur = p
-                                                case o =>
-                                                    cur = s(Nested.unnest[Any](o))
-                                        case done =>
-                                            stack.truncate(i)
-                                            cur = done
-                                case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
-                                    hls.run(stack.state(i), s.input) match
-                                        case out: Arrow[Any, Any, Any] @unchecked =>
-                                            cur = Chain(out, outcome(s, h, i))
-                                        case c: Loop.Continue2[?, ?] =>
-                                            stack.setState(i, c._1)
-                                            c._2 match
-                                                case p: Arrow[Any, Any, Any] @unchecked =>
-                                                    stack.push(resume(s))
-                                                    cur = p
-                                                case o =>
-                                                    cur = s(Nested.unnest[Any](o))
-                                            end match
-                                        case done =>
-                                            stack.truncate(i)
-                                            cur = done
-                            end match
-                        catch
-                            case ex: Throwable =>
-                                EffectTrace.attach(ex, s, stack, base)
-                                throw ex
-                        end try
+                        cur = dispatch(s, s.asInstanceOf[Arrow[Any, Any, Any]])
                     case h: Handle[Nothing, Any, Any, Any, Any] @unchecked =>
                         suspended = Maybe.Absent
                         stack.push(h.cont)
@@ -198,15 +182,21 @@ object Eval:
                         stack.pushAll(e.entries, e.tags, e.states)
                         cur = e.value
                     case a: Arrow[Any, Any, Any] @unchecked =>
-                        suspended = Maybe.Absent
-                        val s    = a.step
-                        val next = s.tail.chain(dump())
-                        try cur = s.head((), next)
-                        catch
-                            case ex: Throwable =>
-                                EffectTrace.attach(ex, Maybe.Absent, a, next, stack, base)
-                                throw ex
-                        end try
+                        val s0 = a.step
+                        s0.head match
+                            case sus: Suspend[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any] @unchecked =>
+                                suspended = Maybe(sus)
+                                cur = dispatch(sus, a)
+                            case h =>
+                                suspended = Maybe.Absent
+                                val next = s0.tail.chain(dump())
+                                try cur = h((), next)
+                                catch
+                                    case ex: Throwable =>
+                                        EffectTrace.attach(ex, Maybe.Absent, a, next, stack, base)
+                                        throw ex
+                                end try
+                        end match
                     case settled =>
                         if stack.size == base then running = false
                         else

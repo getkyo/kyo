@@ -38,7 +38,7 @@ object ArrowEffect:
             def frame                = _frame
             def tag                  = effectTag
             def input                = input0
-            def cont(v: O[C]): B < S = f(Nested.unnest[O[C]](v))
+            def cont(v: O[C]): B < S = f(v)
     end suspendWith
 
     @nowarn("msg=anonymous")
