@@ -6,6 +6,9 @@ import kyo.kernel.proto.Arrow.*
 
 object Eval:
 
+    private val noEntries = kyo.Span.empty[Arrow[?, ?, ?]]
+    private val noRefs    = kyo.Span.empty[AnyRef]
+
     def apply[A](v: A < Any): A =
         Nested.unnest[A](loop(v))
 
@@ -47,26 +50,25 @@ object Eval:
             val top = stack.size
             var j   = i + 1
             while j < top && !stack.marked(j) do j += 1
-            val rebuild: Any => Arrow[Any, Any, Any] =
-                if j == top then
+            val marked  = j < top
+            val entries = if marked then stack.copyEntries(i + 1) else noEntries
+            val tags    = if marked then stack.copyTags(i + 1) else noRefs
+            val states  = if marked then stack.copyStates(i + 1) else noRefs
+            val body =
+                if marked then
+                    stack.truncate(i)
+                    resume(s)
+                else
                     var k: Arrow[Any, Any, Any] = Arrow[Any]
                     var m                       = i + 1
                     while m < top do
                         k = stack(m).chain(k)
                         m += 1
                     stack.truncate(i)
-                    val cont = resume(s).chain(k)
-                    payload => Bind(payload.asInstanceOf[Any < Any], cont)
-                else
-                    val entries = stack.copyEntries(i + 1)
-                    val tags    = stack.copyTags(i + 1)
-                    val states  = stack.copyStates(i + 1)
-                    stack.truncate(i)
-                    val cont = resume(s)
-                    payload => Arrow.Eval(entries, tags, states, Identity(payload.asInstanceOf[Any < Any], cont))
+                    resume(s).chain(k)
             def region(regionHandler: Handler[Nothing, Any, Any, Any], payload: Any): Arrow[Any, Any, Any] =
                 new Handle[Nothing, Any, Any, Any, Any]:
-                    def v       = rebuild(payload)
+                    def v       = Arrow.Eval(entries, tags, states, Identity(payload.asInstanceOf[Any < Any], body))
                     def handler = regionHandler
                     def cont    = Arrow[Any]
             new Transform[Any, Any, Any]:
