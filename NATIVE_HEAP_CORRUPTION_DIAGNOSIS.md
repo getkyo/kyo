@@ -64,6 +64,23 @@ hides real failures and is illegitimate. This must be answered from a reproducti
 before any mitigation-only path is chosen. This is the strategic call to bring to Fable
 once the reproduction data exists.
 
+## Reproduced locally (confirmed)
+
+`kyo-coreNative/test` looped on linux-arm64 podman crashes on the **first iteration**
+(`ScalaNative: Unhandled signal 11, si_addr=(nil)`, exit 11), right after the QueueTest
+`closeAwaitEmpty > race between closeAwaitEmpty and close` concurrency test: the same
+locus as CI. Local arm64 reproduces readily where arm64 CI passed the same tip, so the
+per-run probability is environment-sensitive (CPU count / timing), not arch-exclusive.
+
+**Correctness finding (answers the open question): the corruption is fail-stop, not
+silent.** When the binary crashes, sbt-native relaunches it to finish the remaining
+suites; the interrupted suites are reported failed *because they did not complete*, and
+every test that ran before the fault carries its legitimate PASS/FAIL. No evidence of a
+corrupted-to-PASS result. So a *convergent* retry would mask only crashes, not wrong
+answers, and is legitimate on that axis. The fault is a consistent NULL dereference
+(`si_addr=(nil)`) under the concurrent scheduler, the signature of a mutator reading a
+reference the GC concurrently cleared: a GC/mutator race, not a test-logic bug.
+
 ## Reproduction plan
 
 Loop `kyo-coreNative/test` in one sbt session (links once, reruns the binary) under
