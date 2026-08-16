@@ -1,0 +1,72 @@
+# Native heap-corruption crash: diagnosis
+
+## Symptom (CI run 31913770016, linux-x64 Native, tip 6543956d39)
+
+The x64 Native job failed. Summary across the aggregate + retries:
+`Total 1628, Failed 0, Errors 11, Passed 1612, Skipped 5, Canceled 10`.
+Two modules crashed:
+
+- **kyo-coreNative**: exit 134. Sequence in the log:
+  ```
+  [PASS] closeAwaitEmpty > race between closeAwaitEmpty and close  (3ms)
+  ScalaNative: Unhandled signal 11, si_addr=(nil)
+  Fatal glibc error: malloc.c:3351 (__libc_malloc): assertion failed:
+      !victim || chunk_is_mmapped (mem2chunk (victim)) || ar_ptr == arena_for_chunk (mem2chunk (victim))
+  [error] Test runner interrupted by fatal signal 6
+  ```
+- **kyo-browserNative**: exit 139 (SIGSEGV, `si_addr=(nil)`), after the
+  `isolate.clone` / `withFork` parallel-fork suites. Crashed on **both** aggregate
+  retries (persistent, not a one-roll fluke).
+
+## What this is (and is not)
+
+It is **not** a clean post-suite teardown crash. It is **heap corruption during
+concurrency-heavy tests**: a SIGSEGV on a null address, and in the kyo-core case a
+glibc malloc arena assertion (`ar_ptr == arena_for_chunk`) that fires the moment the
+signal handler touches malloc. The arena assertion proves the heap metadata was
+**already corrupt** before the fault: a chunk is being reconciled against the wrong
+arena. That is the signature of concurrent unsynchronized allocation/free, i.e. a
+memory-safety race under scala-native multithreading.
+
+## Configuration
+
+- scala-native 0.5.12, multithreading ON (scala-native default; `native-settings-base`
+  sets `SCALANATIVE_THREAD_STACK_SIZE=32MB`, and the scheduler runs multiple carrier
+  threads, `threads=0/4` in the ci-mon line).
+- Default GC (`immix`): no `withGC` / `SCALANATIVE_GC` override anywhere in the tree.
+- kyo scheduler sizes `coreWorkers` from `availableProcessors` (4 on the runner).
+
+## Why the current mitigation cannot converge
+
+`ci-test.sh check_log` retries the run on a native crash-signal exit (134/135/139).
+But the retry re-runs the **whole 51-module aggregate**. With N modules each carrying
+a small independent per-run crash probability p, P(some module crashes) is
+`1-(1-p)^N`, which stays high for N=51; each retry rerolls **all** modules and a
+different one crashes (core, then browser twice here). Whole-aggregate retry is the
+wrong granularity for a per-module probabilistic crash.
+
+## Candidate root causes (ranked)
+
+1. **scala-native 0.5.12 immix GC race under multithreading.** Most likely given the
+   arena-corruption signature and that it is config-driven, not test-specific. Levers
+   to test once reproduced: `SCALANATIVE_GC=commix` (concurrent-mark variant), or a
+   scala-native patch bump.
+2. **A memory-safety bug in kyo native code** (scheduler, off-heap, or FFI) exercised
+   under concurrency. Would need per-site narrowing.
+3. glibc/runner-arch interaction (x64 hit it here; arm64 passed the same run, so it is
+   at minimum arch-probability-sensitive, not arch-exclusive).
+
+## Open correctness question (blocks any masking decision)
+
+Does the corruption ever produce **wrong test results** (silent), or does it only ever
+**crash**? If it can corrupt a result without crashing, retry-masking (even per-module)
+hides real failures and is illegitimate. This must be answered from a reproduction
+before any mitigation-only path is chosen. This is the strategic call to bring to Fable
+once the reproduction data exists.
+
+## Reproduction plan
+
+Loop `kyo-coreNative/test` in one sbt session (links once, reruns the binary) under
+glibc hardening (`MALLOC_CHECK_=3` aborts on the first heap inconsistency; turns silent
+corruption into a reliable abort) on linux-arm64 podman first (faithful, no emulation),
+escalating to x86 emulation / higher worker counts if arm64 will not reproduce.
