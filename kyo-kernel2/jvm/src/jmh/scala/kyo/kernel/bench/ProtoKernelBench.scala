@@ -76,7 +76,7 @@ class ProtoKernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
         Eval(r)
     end suspensionBaseline
 
@@ -85,7 +85,7 @@ class ProtoKernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else askWith(a => loop(i + a))
-        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
         Eval(r)
     end suspensionFusesContinuation
 
@@ -138,7 +138,7 @@ class ProtoKernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .map(_ => loop(i + 1))
-        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0): Int < Ask)([C] => (_, cont) => cont(1), a => a)
+        val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0): Int < Ask)([C] => (_, cont) => cont(1), a => a)
         Eval(r)
     end idleHandlerAddsNothing
 
@@ -147,7 +147,7 @@ class ProtoKernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a)).map(x => x)
-        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
         Eval(r)
     end trailingMapsStayLinear
 
@@ -177,7 +177,7 @@ class ProtoKernelBench:
                         .map(v => (v + 1) & 63)
                         .map(_ => loop(i + 1))
                 }
-        val r: Int < Any = ArrowEffect.handle(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
+        val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
         Eval(r)
     end continuationBodiesFuse
 

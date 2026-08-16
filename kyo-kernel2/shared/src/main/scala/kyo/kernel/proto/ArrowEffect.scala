@@ -42,7 +42,7 @@ object ArrowEffect:
     end suspendWith
 
     @nowarn("msg=anonymous")
-    inline def handle[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
@@ -61,10 +61,10 @@ object ArrowEffect:
                     def cont = Arrow[B]
             case a =>
                 done(Nested.unnest[A](a))
-    end handle
+    end handleCont
 
     @nowarn("msg=anonymous")
-    inline def handleWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
+    inline def handleContWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
@@ -106,7 +106,7 @@ object ArrowEffect:
             case a =>
                 arrow(done(Nested.unnest[A](a)), Arrow[C2])
         end match
-    end handleWith
+    end handleContWith
 
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](

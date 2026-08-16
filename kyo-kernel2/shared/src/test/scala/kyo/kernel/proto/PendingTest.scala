@@ -109,7 +109,7 @@ class PendingTest extends AnyFreeSpec:
     "a captured continuation accepts a computation answer" in {
         val inner: Int < Ask = ask
         val body: Int < Give = give.map(_ => 9)
-        val r: Int < Any     = ArrowEffect.handle(Tag[Give], body)([C] => (_, cont) => cont(inner), a => a)
+        val r: Int < Any     = ArrowEffect.handleCont(Tag[Give], body)([C] => (_, cont) => cont(inner), a => a)
         assert(Eval(r) == 9)
     }
 
