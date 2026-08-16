@@ -77,22 +77,6 @@ private[kyo] object EffectTrace:
             builder.entries(stack, base)
         }
 
-    /** The frame-only boundary: `Effect.catching`'s outer arm, where the guarded computation has already been consumed and only the
-      * `catching` call site remains in scope.
-      */
-    def attach(ex: Throwable, frame: Frame): Unit =
-        reconstruct(ex)(_.frame(frame))
-
-    /** The chain boundary: `Effect.catching`'s guard arm, which holds the steps that were running inside the guard (`cont`) and the steps
-      * that follow it (`next`), with the `catching` site between them.
-      */
-    def attach(ex: Throwable, frame: Frame, cont: Arrow[?, ?, ?], next: Arrow[?, ?, ?]): Unit =
-        reconstruct(ex) { builder =>
-            builder.arrow(cont)
-            builder.frame(frame)
-            builder.arrow(next)
-        }
-
     /** Runs one reconstruction into the exception's carrier.
       *
       * A fatal error is returned unmodified: the test lives here rather than in a catch guard so that every guarded site rethrows
