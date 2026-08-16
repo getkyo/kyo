@@ -6,6 +6,40 @@ si_addr=(nil)` under concurrency. Reliable repro: loop `kyo-coreNative/test` on
 linux-arm64 podman, crashes within a few loops. Goal: locate the true cause(s), fix at
 root, green the native CI.
 
+## CURRENT STATE (latest, read this first)
+
+The crash is a scala-native 0.5.12 runtime concurrency bug, GC-independent, that only reproduces
+under kyo's full fiber scheduler. Nailed down by:
+
+**Standalone minimization series (no kyo, plain scala-native project, linux-arm64 podman).** Each
+isolates one variable against the kyo repro; ALL are clean, which rules candidates out:
+
+| id | shape (N threads, `new Exception`+alloc) | isolates | result |
+|----|------------------------------------------|----------|--------|
+| M-freq | shallow capture loop, 8 threads x 200k | raw frequency | CLEAN (15 runs, ~1.6M captures) |
+| M-deep | throw from ~120 deep frames | stack depth | CLEAN (15 runs) |
+| M-gc | heavy fragmenting alloc (varied sizes + rotating retention -> frequent immix evacuation) | GC pressure / moving | CLEAN (20 runs) |
+| M-spawn | steady capturers + a spawner creating threads WHILE they capture | thread-creation-during-capture | CLEAN (run 1, ~80k creation events; kyo crashes in ~dozens) |
+
+So the trigger is NOT frequency, NOT depth, NOT GC (consistent with E2 boehm), NOT plain
+thread-creation-during-capture. It needs kyo's specific scheduler machinery (work-stealing carriers
++ deep varied kyo stacks + fiber allocation + the Abort/enrich exception timing). kyo IS the repro.
+
+**Source reading (scala-native 0.5.12 `StackTrace.scala`).** The unwind cursor is NOT a separate
+object: `Context` holds one `data: ByteArray` and `unwindCursor`/`unwindContext`/`ip` are raw
+pointers into fixed offsets of it (`data.atUnsafe(UnwindCursorOffset)`). `ThreadLocalContext extends
+InheritableThreadLocal[Context]`; `initialValue`/`childValue` each `ByteArray.alloc` a FRESH buffer,
+so it is genuinely per-thread. In `currentRawStackTrace` the `isFillingStackTrace` reentrancy guard
+is set AFTER `get_context`/`init_local` (before the step loop). Corruption is neither GC-move (E2)
+nor cross-thread buffer sharing; the remaining consistent candidate is an unsafe-publication race in
+thread creation (child reads a half-constructed `Context`/`data` pointer), same CLASS as #4992 and
+matching the branch owner's thread-management hunch.
+
+**Decisive diagnostic IN FLIGHT:** loop `kyo-coreNative/test` with the scheduler forced to a SINGLE
+carrier (patched `Flags.scala` core/min/maxWorkers=1). Baseline crashes in 1-3 loops. Clean over 20
+single-carrier loops => concurrency-in-capture is NECESSARY (enables a targeted fix without a
+scala-native source build); still crashing => not concurrent-capture, rethink.
+
 ## Candidate causes (both upstream scala-native, maintainer-confirmed on SN#4992)
 
 - **A: module-init publish race (SN#4992).** `module_load.c` writes the
