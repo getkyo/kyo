@@ -7,6 +7,32 @@ object ForCompDeep25:
     def step(i: Int): Int < Any = i + 1
 
     def flow(a0: Int): Int < Any =
-        step(a0).map(a1 => step(a1).map(a2 => step(a2).map(a3 => step(a3).map(a4 => step(a4).map(a5 => step(a5).map(a6 => step(a6).map(a7 => step(a7).map(a8 => step(a8).map(a9 => step(a9).map(a10 => step(a10).map(a11 => step(a11).map(a12 => step(a12).map(a13 => step(a13).map(a14 => step(a14).map(a15 => step(a15).map(a16 => step(a16).map(a17 => step(a17).map(a18 => step(a18).map(a19 => step(a19).map(a20 => step(a20).map(a21 => step(a21).map(a22 => step(a22).map(a23 => step(a23).map(a24 => step(a24).map(a25 => a25)))))))))))))))))))))))))
+        for
+            a1  <- step(a0)
+            a2  <- step(a1)
+            a3  <- step(a2)
+            a4  <- step(a3)
+            a5  <- step(a4)
+            a6  <- step(a5)
+            a7  <- step(a6)
+            a8  <- step(a7)
+            a9  <- step(a8)
+            a10 <- step(a9)
+            a11 <- step(a10)
+            a12 <- step(a11)
+            a13 <- step(a12)
+            a14 <- step(a13)
+            a15 <- step(a14)
+            a16 <- step(a15)
+            a17 <- step(a16)
+            a18 <- step(a17)
+            a19 <- step(a18)
+            a20 <- step(a19)
+            a21 <- step(a20)
+            a22 <- step(a21)
+            a23 <- step(a22)
+            a24 <- step(a23)
+            a25 <- step(a24)
+        yield a25
 
 end ForCompDeep25

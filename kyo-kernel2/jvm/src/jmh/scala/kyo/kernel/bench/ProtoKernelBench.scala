@@ -99,6 +99,23 @@ class ProtoKernelBench:
     end handleLoopAnswersInPlace
 
     @Benchmark
+    def handleLoopFusesContinuation: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        val r: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)(b => b + 1)
+        Eval(r)
+    end handleLoopFusesContinuation
+
+    @Benchmark
+    def nestedPayloadsUnwrapInMaps: Int =
+        def loop(i: Int): Int < Any =
+            if i > NarrowDepth then 0
+            else boxed(ask).map(_ => loop(i + 1))
+        Eval(loop(0))
+    end nestedPayloadsUnwrapInMaps
+
+    @Benchmark
     def statefulAnswersPaySuccessor: Int =
         def loop(i: Int): Int < Ask =
             if i > Depth then i
@@ -165,5 +182,7 @@ object ProtoKernelBench:
 
     inline def askWith[B, S](inline f: Int => B < S)(using inline frame: Frame): B < (Ask & S) =
         ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
+
+    def boxed[A](a: A): A < Any = a
 
 end ProtoKernelBench
