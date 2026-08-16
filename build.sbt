@@ -63,7 +63,15 @@ inThisBuild(List(
         )
     ),
     resolvers += Resolver.sonatypeCentralSnapshots,
-    resolvers += Resolver.sonatypeCentralRepo("staging")
+    resolvers += Resolver.sonatypeCentralRepo("staging"),
+    // Vendored scala-native libunwind fix pending an upstream release: a repackaged nativelib
+    // (0.5.12 plus a null-FDE guard in DwarfParser.hpp) resolved from the in-tree maven repo.
+    // scala-native's DWARF unwinder null-dereferences a null FDE pointer during concurrent
+    // Throwable.fillInStackTrace, crashing native binaries under kyo's concurrent scheduler. The
+    // distinct 0.5.12-kyo version makes the override self-verifying: wrong wiring fails to resolve
+    // rather than silently linking the unpatched runtime.
+    resolvers += ("local-sn-patched" at file(".local-sn-repo").getAbsoluteFile.toURI.toString),
+    dependencyOverrides += "org.scala-native" % "nativelib_native0.5_3" % "0.5.12-kyo"
 ))
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
