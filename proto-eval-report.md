@@ -62,7 +62,56 @@ Path 1 verdict: complete. Commits 81e73be81d (dispatcher) and d4639377bc (pinnin
 
 ## Path 2: types to their owners
 
-PENDING
+Verdict: killed by evidence, with one documented optional trade.
+
+Most of the path's scope turned out to be dissolved by path 1 before it started: the HandleLoop cold tail is
+already a named method (`outcome`), the hot settled arms are excluded by the charter's own scope statement
+("hot fast arms remain inline branches") and by the session's standing ban on naked virtual handler
+dispatch, and `Suspend.apply` already is the typed answer method the charter asked for.
+
+The residual probe, `Stack.pushRegion` (the cont-marker-state pairing moves from Eval's Handle arm into
+Stack, which owns the marker storage), was implemented and measured: suite 112, clean build green, and a
+same-session A/B (3 forks per side) showed a REAL trade with no fork lottery:
+
+| row | control | probe | delta |
+|---|---|---|---|
+| emittingClausesPayRegionRebuild | 87.28 | 82.29 | -5.7% |
+| statefulAnswersPaySuccessor | 124.98 | 122.42 | -2.0% |
+| handleLoopAnswersInPlace | 89.14 | 88.39 | -0.8% |
+| handleLoopFusesContinuation | 85.99 | 88.81 | +3.3% |
+
+The fused row pays consistently (every probe fork above every control fork), which fires the charter's kill
+criterion: it does not land. The mechanism is the known cold-bytes effect: shrinking the loop method's
+Handle arm shifts JIT decisions inside the fused tower. The patch is preserved below should you judge the
+streaming gain worth the fused cost; my recommendation is no.
+
+```diff
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/proto/Eval.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/proto/Eval.scala
+@@
+                     case h: Handle[Nothing, Any, Any, Any, Any] @unchecked =>
+                         suspended = Maybe.Absent
+-                        stack.push(h.cont)
+-                        h.handler match
+-                            case hls: Handler.HandleLoopState[[X] =>> Any, [X] =>> Any, Nothing, Any, Any, Any, Any] @unchecked =>
+-                                stack.push(h, h.handler.tag.erased, hls.initialState)
+-                            case _ =>
+-                                stack.push(h, h.handler.tag.erased)
+-                        end match
++                        stack.pushRegion(h)
+                         cur = h.v
+--- a/kyo-kernel2/shared/src/main/scala/kyo/kernel/proto/Stack.scala
++++ b/kyo-kernel2/shared/src/main/scala/kyo/kernel/proto/Stack.scala
+@@
+     end push
++
++    def pushRegion(h: Arrow.Handle[?, ?, ?, ?, ?]): Unit =
++        push(h.cont)
++        h.handler match
++            case hls: Arrow.Handler.HandleLoopState[?, ?, ?, ?, ?, ?, ?] => push(h, h.handler.tag.erased, hls.initialState)
++            case _                                                       => push(h, h.handler.tag.erased)
++    end pushRegion
+```
 
 ## Path 3: typed helpers for the unowned logic
 

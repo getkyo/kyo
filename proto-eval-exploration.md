@@ -179,7 +179,7 @@ their entries and their reasons.
 | path | status | notes |
 |---|---|---|
 | 1. named outcome driver | complete | 81e73be81d + d4639377bc; all gates green (suite 112, clean build, bytecode, boards A/B flat) |
-| 2. types to their owners | pending | run after 1; HandleLoop first as the probe |
+| 2. types to their owners | killed by evidence | most of its scope dissolved by path 1 (outcome is the named cold tail; hot arms excluded by scope and the banned virtual dispatch); the residual pushRegion probe moved the fused row (E9/E10) |
 | 3. typed helpers | pending | after 2, on what 2 leaves unowned |
 | 4. typed currency | pending | after 3; strictest gate (bytecode identical) |
 | 5. integrated rewrite + net | pending | only after 1 to 4 report |
@@ -196,6 +196,8 @@ their entries and their reasons.
 | 2026-08-16 | 1 | E6: bytecode gate on Eval classfiles | zero nest calls | only unnest delivery sites remain |
 | 2026-08-16 | 1 | E7: board v20 with emittingClausesPayRegionRebuild | flat; new row 85.6us | two flags investigated in E8 |
 | 2026-08-16 | 1 | E8: A/B reruns of the two flagged rows, 3 forks each side | no regression | nestedPayloads pure noise (5.95 both sides); trailingMaps median forks equal (508 vs 507), one bad-JIT fork at HEAD plus ~4% session drift on both sides |
+| 2026-08-16 | 2 | E9: Stack.pushRegion owns the cont-marker-state pairing | reverted, patch kept | suite 112, clean build green; same-session A/B: emitting -5.7%, stateful -2.0%, answersInPlace flat, fused +3.3% consistent across all forks |
+| 2026-08-16 | 2 | E10: fork-spread check on E9 | trade confirmed real | no JIT lottery: every probe fork of the fused row above every control fork; every emitting fork below |
 
 ### Decisions
 
