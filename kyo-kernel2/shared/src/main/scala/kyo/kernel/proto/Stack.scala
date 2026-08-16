@@ -106,6 +106,6 @@ private[proto] object Stack:
         new ThreadLocal[Stack]:
             override def initialValue() = new Stack
 
-    @static def current(): Stack = local.get()
+    def current(): Stack = local.get()
 
 end Stack
