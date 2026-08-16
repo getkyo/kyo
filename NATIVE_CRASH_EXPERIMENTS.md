@@ -6,7 +6,51 @@ si_addr=(nil)` under concurrency. Reliable repro: loop `kyo-coreNative/test` on
 linux-arm64 podman, crashes within a few loops. Goal: locate the true cause(s), fix at
 root, green the native CI.
 
-## CURRENT STATE (latest, read this first)
+## LEADING HYPOTHESIS = candidate B (Fable-redirected, 2026-08-16)
+
+Fable reviewed the full evidence and redirected the fix hunt. Both fixes I was about to try are weak
+by our OWN data, and the real suspect was never tested:
+
+- Serialize-capture (global lock around currentRawStackTrace): ~refuted by M-freq (1.6M concurrent
+  captures clean, and those DID call getStackTrace so shared DWARF state was exercised). Also a global
+  lock perturbs timing so hard that 20 clean loops cannot distinguish "fixed" from "false-green" on a
+  1-in-1-to-3-loops probabilistic repro. Do NOT try this first.
+- Publication-fence / non-inheritable ThreadLocal: refuted by M-spawn (~80k creation events clean) +
+  childValue allocs the fresh ByteArray on the PARENT before Thread.start (pthread_create is a sync
+  point). Rank last.
+- **candidate B (scala-native GC rapid-thread-startup race)** fits EVERYTHING and was never tested:
+  a new mutator can allocate from the shared blockAllocator while a concurrent collection is in flight
+  and it is not yet stopped, causing wild block reuse that overwrites ANY live heap object, including a
+  walking thread's cursor ByteArray. Explains: all 3 GCs crash identically (shared startup path), the
+  cursor overwritten mid-walk with heap-looking garbage, GC-independence, and the need for kyo's
+  scheduler (creates carriers under load + heavy fiber allocation = creation + GC pressure together).
+  The minimization matrix never tested that combined cell: M-gc had pressure with threads up front;
+  M-spawn had creation but no heavy pressure (n=1).
+
+**Code confirms the window (v0.5.12 gc/immix/MutatorThread.c `MutatorThread_init`):**
+`switchState(Managed)` -> `Allocator_Init` -> `MutatorThreads_add` (register in stop-the-world list)
+-> `Allocator_InitCursors` (claims first block, "might trigger GC") -> `scalanative_GC_yield` (stop if
+GC ongoing). The yieldpoint trap is created DISARMED mid-init. So the explicit "stop if a collection is
+already running" (GC_yield) happens AFTER the first block claim (InitCursors), and a thread that
+started during an in-progress stop-the-world can claim a block the collector is reclaiming.
+Candidate fix (to validate, not yet applied): move `scalanative_GC_yield()` to BEFORE
+`Allocator_InitCursors`, so a late-starting thread parks at the in-progress collection before it
+touches the shared heap. C-side -> the proven C-resource swap, not NIR.
+
+**Upstream recon (2026-08-16): NO fix to backport.** 0.5.12 is the latest release (2026-05-21).
+main through 2026-07-21 (41 commits) has nothing for the thread-startup GC race. #4875 (per-thread
+yieldpoints) is already IN 0.5.12. #4992 (module-init = candidate A) is still OPEN. The GC bug is
+maintainer-known (WojciechMazur) but undescribed and unfixed; fwbrasil is waiting on them (PR comment
+2026-08-16). So the fix is ours to craft (and a clean standalone repro would also unblock the maintainer).
+
+**Plan (Fable-ordered):** (1) upstream recon DONE, nothing there. (2) M-gc x M-spawn combined repro
+(v6, IN FLIGHT) to reproduce candidate B standalone -> a fast fix-iteration harness. If it stays clean,
+(3) an instrumented nativelib build (canary words around the cursor+context region + owner-thread-id in
+Context, asserted per capture) to separate mechanisms: canary tripped = external clobber (candidate B);
+owner mismatch = aliasing; neither = libunwind-internal. Then craft + vendor the C fix, validate 30+
+loops (not 20, probabilistic), and file/update the upstream issue.
+
+## CURRENT STATE (earlier this session, superseded on mechanism by the section above)
 
 The crash is a scala-native 0.5.12 runtime concurrency bug, GC-independent, that only reproduces
 under kyo's full fiber scheduler. Nailed down by:
